@@ -58,7 +58,8 @@ import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, op
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
 import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
-import { installFindReplace, openReplace, renderTextMatches } from './find-replace-ui.js';
+import { installFindReplace, openFind, openReplace, renderTextMatches } from './find-replace-ui.js';
+import { installCommandLine } from './command-line-ui.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
@@ -611,7 +612,7 @@ export function undo() {
   render();
 }
 
-function redo() {
+export function redo() {
   const cancelled = cancelDirectDraft();
   if (!future.length) {
     if (cancelled) render();
@@ -6344,7 +6345,8 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
-  else if (key === 'S') toggleAnalysisDock();
+  // The canvas keeps focus, so a second Shift+S closes the dock again.
+  else if (key === 'S') toggleAnalysisDock({ focus: false });
   else if (key === '?') showHelp();
   else return false;
   return true;
@@ -6691,7 +6693,8 @@ installHelp();
 
 // ----- command console ---------------------------------------------------
 
-function runLine(line) {
+/** Run one document command line; returns the error message when it fails. */
+export function runLine(line) {
   const trimmed = line.trim();
   if (!trimmed) return;
 
@@ -6702,8 +6705,9 @@ function runLine(line) {
   try {
     result = runCommand(circuit, trimmed);
   } catch (err) {
-    logLine(String(err.message || err));
-    return;
+    const message = String(err.message || err);
+    logLine(message);
+    return message;
   }
 
   let output = result ? result.text : '';
@@ -7119,10 +7123,7 @@ window.addEventListener('keydown', (ev) => {
     const filter = document.getElementById('panel-filter');
     if (filter && !filter.closest('[hidden]') && !inlineInput) {
       ev.preventDefault();
-      // A hidden panel is inert and cannot take focus; reveal it first.
-      if (!sidePanelVisible()) setSidePanelVisible(true);
-      filter.focus();
-      filter.select();
+      openFind();
       return;
     }
   }
@@ -7380,38 +7381,7 @@ window.addEventListener('keydown', (ev) => {
   ev.preventDefault();
 });
 
-// The command line keeps its own history; the drawer stays open after Enter
-// so the output lands right above the input.
-const commandHistory = [];
-let commandHistoryIndex = -1;
-cmdInput.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') {
-    const line = cmdInput.value.replace(/^:+/, '').trim();
-    cmdInput.value = '';
-    commandHistoryIndex = -1;
-    if (!line) {
-      cmdInput.blur();
-      return;
-    }
-    if (commandHistory.at(-1) !== line) commandHistory.push(line);
-    runLine(line);
-  } else if (ev.key === 'Escape') {
-    ev.preventDefault();
-    ev.stopPropagation();
-    cmdInput.value = '';
-    commandHistoryIndex = -1;
-    cmdInput.blur();
-    applyLogDrawerEvent({ type: 'command-done' });
-    canvasEl.focus();
-  } else if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && commandHistory.length) {
-    ev.preventDefault();
-    const last = commandHistory.length - 1;
-    commandHistoryIndex = ev.key === 'ArrowUp'
-      ? (commandHistoryIndex < 0 ? last : Math.max(0, commandHistoryIndex - 1))
-      : (commandHistoryIndex < 0 || commandHistoryIndex >= last ? -1 : commandHistoryIndex + 1);
-    cmdInput.value = commandHistoryIndex < 0 ? '' : commandHistory[commandHistoryIndex];
-  }
-});
+installCommandLine();
 
 // ----- boot ------------------------------------------------------------
 

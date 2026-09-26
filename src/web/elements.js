@@ -12,6 +12,7 @@ export const statusEl = document.getElementById('status');
 export const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
 export const logEl = document.getElementById('log');
 export const cmdInput = document.getElementById('cmd-input');
+export const cmdSuggestionsEl = document.getElementById('cmd-suggestions');
 export const consoleEl = document.getElementById('console-panel');
 export const statusModeEl = document.getElementById('status-mode');
 export const statusSelectionEl = document.getElementById('status-selection');

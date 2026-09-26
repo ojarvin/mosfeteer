@@ -708,10 +708,11 @@ function renderAnalysisResult(report) {
   setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
-/** Open the analysis dock (targeting the suggested output net) or close it. */
-export function toggleAnalysisDock() {
+/** Open the analysis dock (targeting the suggested output net) or close it.
+ *  `focus: false` opens it without moving focus into its first field. */
+export function toggleAnalysisDock({ focus = true } = {}) {
   if (isAnalysisDockOpen()) closeAnalysisDock();
-  else openAnalysisDialog(suggestedAnalysisTarget());
+  else openAnalysisDialog(suggestedAnalysisTarget(), { focus });
 }
 
 function syncAnalysisButton(open) {
@@ -732,7 +733,7 @@ function analysisAnnotationAssumptions(report) {
   return lines;
 }
 
-function openAnalysisDialog(targetNetId) {
+function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (!analysisDialog) return;
   const defaults = fillAnalysisDialog(targetNetId);
   const restored = restoreAnalysisForm(defaults);
@@ -748,7 +749,7 @@ function openAnalysisDialog(targetNetId) {
   analysisDockRevision = editor.modelRevision;
   analysisDialog.hidden = false;
   syncAnalysisButton(true);
-  analysisInput?.focus();
+  if (focus) analysisInput?.focus();
 }
 
 let analysisInputPrevious = '';
@@ -1121,7 +1122,7 @@ export function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
-  analysisButton?.addEventListener('click', toggleAnalysisDock);
+  analysisButton?.addEventListener('click', () => toggleAnalysisDock());
 
   analysisCancel?.addEventListener('click', closeAnalysisDock);
 

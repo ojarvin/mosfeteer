@@ -179,7 +179,10 @@ topology must contain, and check the style guide for how to draw it.
 ## Command reference
 
 The command language is the same in the CLI, the in-browser `:`, and
-`window.__run(cmd)`. Use it for everything in the workflow; back up each
+`window.__run(cmd)`. The in-browser `:` also takes editor-only commands that
+work the window rather than the document (`grid off`, `panel`, `analysis`,
+`settings`, `export`; `src/web/command-line.js` lists them), and Tab completes
+command names and their synonyms there. Use it for everything in the workflow; back up each
 step with `node src/cli/index.js <circuit> state` to read back the result.
 
 ```text

@@ -271,10 +271,11 @@ test('small windows: rail follows canvas height, one-row toolbar, drawer panel',
   assert.match(html, /id="btn-side-panel"[^>]*aria-controls="side-panel"/);
   assert.match(css, /body\.side-panel-collapsed \.side-panel \{\s*display: none;/);
   assert.match(css, /body\.side-panel-open \.side-panel \{\s*transform: none;/);
-  assert.match(main, /else if \(key === 'P'\) toggleSidePanel\(\);\s*else if \(key === 'S'\) toggleAnalysisDock\(\);/);
+  assert.match(main, /else if \(key === 'P'\) toggleSidePanel\(\);[\s\S]{0,120}else if \(key === 'S'\) toggleAnalysisDock\(\{ focus: false \}\);/);
   assert.match(main, /window\.matchMedia\('\(max-width: 600px\)'\)/);
   // Ctrl+F reveals a hidden panel before focusing its filter; inert fields take no focus.
-  assert.match(main, /if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);\s*filter\.focus\(\);/);
+  const findUi = readFileSync(new URL('../src/web/find-replace-ui.js', import.meta.url), 'utf8');
+  assert.match(findUi, /export function openFind\(\) \{\s*if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);\s*filterEl\.focus\(\);/);
 });
 
 test('the panel filter finds label text and Ctrl+H opens replace beside it', async () => {

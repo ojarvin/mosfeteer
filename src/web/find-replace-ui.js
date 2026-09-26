@@ -90,6 +90,14 @@ export function renderTextMatches() {
   }
 }
 
+/** Ctrl/Cmd+F: focus the panel filter. A hidden panel is inert and cannot
+ *  take focus, so it is revealed first. */
+export function openFind() {
+  if (!sidePanelVisible()) setSidePanelVisible(true);
+  filterEl.focus();
+  filterEl.select();
+}
+
 export function openReplace() {
   if (!sidePanelVisible()) setSidePanelVisible(true);
   rowEl.hidden = false;

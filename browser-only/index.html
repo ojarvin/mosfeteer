@@ -539,9 +539,11 @@
         <button id="log-clear" type="button" class="icon-button" data-icon="trash" aria-label="Clear the log" title="Clear the log">Clear</button>
       </header>
       <pre class="log" id="log"></pre>
+      <!-- Completions for the command word; Tab steps through them. -->
+      <ul id="cmd-suggestions" class="cmd-suggestions" role="listbox" aria-label="Command completions" hidden></ul>
       <div class="console-row">
         <span class="console-prompt" aria-hidden="true">:</span>
-        <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" aria-label="Command" />
+        <input id="cmd-input" type="text" placeholder="Enter a command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)" autocomplete="off" spellcheck="false" aria-label="Command" aria-autocomplete="list" aria-controls="cmd-suggestions" aria-expanded="false" />
       </div>
     </section>
   </footer>

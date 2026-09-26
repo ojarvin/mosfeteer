@@ -26079,10 +26079,11 @@ function renderAnalysisResult(report) {
   setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
-/** Open the analysis dock (targeting the suggested output net) or close it. */
-function toggleAnalysisDock() {
+/** Open the analysis dock (targeting the suggested output net) or close it.
+ *  `focus: false` opens it without moving focus into its first field. */
+function toggleAnalysisDock({ focus = true } = {}) {
   if (isAnalysisDockOpen()) closeAnalysisDock();
-  else openAnalysisDialog(suggestedAnalysisTarget());
+  else openAnalysisDialog(suggestedAnalysisTarget(), { focus });
 }
 
 function syncAnalysisButton(open) {
@@ -26103,7 +26104,7 @@ function analysisAnnotationAssumptions(report) {
   return lines;
 }
 
-function openAnalysisDialog(targetNetId) {
+function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (!analysisDialog) return;
   const defaults = fillAnalysisDialog(targetNetId);
   const restored = restoreAnalysisForm(defaults);
@@ -26119,7 +26120,7 @@ function openAnalysisDialog(targetNetId) {
   analysisDockRevision = editor.modelRevision;
   analysisDialog.hidden = false;
   syncAnalysisButton(true);
-  analysisInput?.focus();
+  if (focus) analysisInput?.focus();
 }
 
 let analysisInputPrevious = '';
@@ -26492,7 +26493,7 @@ function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
-  analysisButton?.addEventListener('click', toggleAnalysisDock);
+  analysisButton?.addEventListener('click', () => toggleAnalysisDock());
 
   analysisCancel?.addEventListener('click', closeAnalysisDock);
 
@@ -27830,6 +27831,441 @@ function writeDrawingToClipboard(svg, {
   return clipboard.write([new ClipboardItem({ 'image/png': png, 'text/plain': text })]);
 }
 
+};
+
+__modules["src/web/command-line-ui.js"] = function (__require, __exports) {
+__exports.runCommandLine = runCommandLine;
+__exports.installCommandLine = installCommandLine;
+let canonicalDocumentLine, commandCompletions, commandWord, didYouMean, resolveEditorCommand, tabComplete; __bind(() => { ({ canonicalDocumentLine, commandCompletions, commandWord, didYouMean, resolveEditorCommand, tabComplete } = __require("src/web/command-line.js")); });
+let analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, scrollSchemeButton, tipsButton; __bind(() => { ({ analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, scrollSchemeButton, tipsButton } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let applyLogDrawerEvent, logCommand, logLine; __bind(() => { ({ applyLogDrawerEvent, logCommand, logLine } = __require("src/web/status-bar-ui.js")); });
+let toggleTheme, setGrid, setCrosshair, setGuides; __bind(() => { ({ toggleTheme, setGrid, setCrosshair, setGuides } = __require("src/web/toolbar-ui.js")); });
+let setSidePanelVisible, sidePanelVisible; __bind(() => { ({ setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
+let toggleAnalysisDock; __bind(() => { ({ toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
+let openPresenter, toggleBeatStrip; __bind(() => { ({ openPresenter, toggleBeatStrip } = __require("src/web/beats-ui.js")); });
+let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
+let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
+let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
+let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
+let redo, render, runLine, undo; __bind(() => { ({ redo, render, runLine, undo } = __require("src/web/main.js")); });
+/**
+ * The `:` command line: history, Tab completion with a suggestion list, and
+ * the editor commands (panels, view toggles, menus, dialogs). Everything else
+ * goes to the shared document command language through runLine. The
+ * vocabulary and completion rules are command-line.js.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const click = (id) => document.getElementById(id)?.click();
+const checked = (button) => button?.getAttribute('aria-checked') === 'true';
+
+/** Flip a toggle unless it already shows the requested state. */
+function toggleTo(state, current, flip) {
+  if (state === undefined || state !== current) flip();
+}
+
+function openMenu(buttonId) {
+  const button = document.getElementById(buttonId);
+  if (button?.getAttribute('aria-expanded') !== 'true') button?.click();
+}
+
+/** What each editor command does. `state` is resolveEditorCommand's. */
+const ACTIONS = {
+  settings: () => openMenu('btn-settings'),
+  more: () => openMenu('btn-document-menu'),
+  panel: (state) => setSidePanelVisible(state ?? !sidePanelVisible()),
+  analysis: (state) => toggleTo(state, !analysisDialog.hidden, () => toggleAnalysisDock()),
+  grid: (state) => setGrid(state ?? !editor.showGrid),
+  guides: (state) => setGuides(state ?? !editor.guidesVisible),
+  crosshair: (state) => setCrosshair(state ?? !editor.crosshairVisible),
+  dark: (state) => toggleTo(state, document.documentElement.classList.contains('dark'), toggleTheme),
+  beats: (state) => toggleTo(state, editor.beatStripOpen, toggleBeatStrip),
+  tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
+  trackpad: (state) => toggleTo(state, checked(scrollSchemeButton), () => scrollSchemeButton?.click()),
+  'page-guide': (state) => (state
+    ? document.querySelector(`[data-page-guide="${state === 'none' ? '' : state}"]`)?.click()
+    : openMenu('btn-settings')),
+  fit: () => fitView({ animate: true }),
+  shortcuts: () => showHelp(),
+  check: () => runCheck(),
+  find: () => openFind(),
+  replace: () => openReplace(),
+  undo: () => undo(),
+  redo: () => redo(),
+  save: () => click('btn-save'),
+  'save-as': () => click('btn-save-as'),
+  open: () => click('btn-open-file'),
+  new: () => click('btn-new-document'),
+  export: () => click('btn-export'),
+  present: () => openPresenter(),
+  workspace: () => click('btn-workspace'),
+  tutorial: () => click('btn-tutorial'),
+};
+
+/** Run one command line: an editor command here, anything else as a
+ *  document command (its synonyms mapped to the command's own name). */
+function runCommandLine(line) {
+  const command = resolveEditorCommand(line);
+  if (!command) {
+    const canonical = canonicalDocumentLine(line);
+    const error = runLine(canonical);
+    // An unknown word gets a pointer at what it might have meant.
+    const hint = /^unknown command/.test(error || '') && didYouMean(commandWord(canonical).word);
+    if (hint) logLine(hint);
+    return;
+  }
+  logCommand(line);
+  ACTIONS[command.name](command.state);
+  render();
+}
+
+// ----- completion list ------------------------------------------------------
+
+let completion = null; // the Tab session: typed word, candidates, index
+
+function renderSuggestions() {
+  if (!cmdSuggestionsEl) return;
+  const { word, spaced } = commandWord(cmdInput.value);
+  const candidates = completion?.candidates || (spaced ? [] : commandCompletions(word));
+  const shown = candidates.slice(0, 8);
+  cmdSuggestionsEl.replaceChildren(...shown.map((entry, index) => {
+    const item = document.createElement('li');
+    item.setAttribute('role', 'option');
+    item.id = `cmd-suggestion-${index}`;
+    item.setAttribute('aria-selected', String(completion?.index === index));
+    const name = document.createElement('span');
+    name.className = 'cmd-suggestion-name';
+    name.textContent = entry.name;
+    item.append(name);
+    if (entry.via) {
+      const via = document.createElement('span');
+      via.className = 'cmd-suggestion-via';
+      via.textContent = `(${entry.via})`;
+      item.append(via);
+    }
+    const help = document.createElement('span');
+    help.className = 'cmd-suggestion-help';
+    help.textContent = entry.help;
+    item.append(help);
+    // Keep focus in the input: a press there would blur it and close the drawer.
+    item.addEventListener('pointerdown', (ev) => ev.preventDefault());
+    item.addEventListener('click', () => {
+      completion = { word, candidates, index: index - 1 };
+      stepCompletion(1);
+    });
+    return item;
+  }));
+  const open = shown.length > 0 && document.activeElement === cmdInput;
+  cmdSuggestionsEl.hidden = !open;
+  cmdInput.setAttribute('aria-expanded', String(open));
+  if (open && completion && completion.index < shown.length) cmdInput.setAttribute('aria-activedescendant', `cmd-suggestion-${completion.index}`);
+  else cmdInput.removeAttribute('aria-activedescendant');
+}
+
+function stepCompletion(step) {
+  const next = tabComplete(cmdInput.value, completion, step);
+  if (!next) return;
+  completion = next.session;
+  cmdInput.value = next.line;
+  cmdInput.setSelectionRange(next.line.length, next.line.length);
+  renderSuggestions();
+}
+
+function closeSuggestions() {
+  completion = null;
+  if (cmdSuggestionsEl) cmdSuggestionsEl.hidden = true;
+  cmdInput.setAttribute('aria-expanded', 'false');
+  cmdInput.removeAttribute('aria-activedescendant');
+}
+
+// ----- wiring ---------------------------------------------------------------
+
+// The command line keeps its own history; the drawer stays open after Enter
+// so the output lands right above the input.
+const commandHistory = [];
+let commandHistoryIndex = -1;
+
+function installCommandLine() {
+  cmdInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Tab' && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+      // Tab never leaves the command line: it completes, or does nothing.
+      ev.preventDefault();
+      ev.stopPropagation();
+      stepCompletion(ev.shiftKey ? -1 : 1);
+    } else if (ev.key === 'Enter') {
+      const line = cmdInput.value.replace(/^:+/, '').trim();
+      cmdInput.value = '';
+      commandHistoryIndex = -1;
+      closeSuggestions();
+      if (!line) {
+        cmdInput.blur();
+        return;
+      }
+      if (commandHistory.at(-1) !== line) commandHistory.push(line);
+      runCommandLine(line);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      cmdInput.value = '';
+      commandHistoryIndex = -1;
+      closeSuggestions();
+      cmdInput.blur();
+      applyLogDrawerEvent({ type: 'command-done' });
+      canvasEl.focus();
+    } else if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && commandHistory.length) {
+      ev.preventDefault();
+      const last = commandHistory.length - 1;
+      commandHistoryIndex = ev.key === 'ArrowUp'
+        ? (commandHistoryIndex < 0 ? last : Math.max(0, commandHistoryIndex - 1))
+        : (commandHistoryIndex < 0 || commandHistoryIndex >= last ? -1 : commandHistoryIndex + 1);
+      cmdInput.value = commandHistoryIndex < 0 ? '' : commandHistory[commandHistoryIndex];
+      closeSuggestions();
+    }
+  });
+  cmdInput.addEventListener('input', () => {
+    completion = null;
+    renderSuggestions();
+  });
+  cmdInput.addEventListener('focus', renderSuggestions);
+  cmdInput.addEventListener('blur', closeSuggestions);
+}
+
+};
+
+__modules["src/web/command-line.js"] = function (__require, __exports) {
+__exports.commandWord = commandWord;
+__exports.resolveEditorCommand = resolveEditorCommand;
+__exports.commandCompletions = commandCompletions;
+__exports.tabComplete = tabComplete;
+__exports.canonicalDocumentLine = canonicalDocumentLine;
+__exports.didYouMean = didYouMean;
+/**
+ * The `:` command line's vocabulary. Document commands go to `runCommand`
+ * (src/core/commands.js), the one command language every entry point shares.
+ * Editor commands work the editor itself -- panels, view toggles, menus,
+ * dialogs -- so they exist only here, and the editor binds each name to its
+ * action. Both kinds complete with Tab, matching names and synonyms.
+ */
+
+/** Values a toggle command accepts, mapped to the state it asks for. */
+const TOGGLE_VALUES = {
+  on: true, show: true, open: true, yes: true, true: true, 1: true, dark: true,
+  off: false, hide: false, close: false, no: false, false: false, 0: false, light: false,
+  toggle: undefined,
+};
+
+/**
+ * Editor commands. `toggle` commands take an optional on/off (show/hide, ...)
+ * and flip without one; `choices` commands take one of the listed values.
+ * The rest take no argument: a line with arguments falls through to the
+ * document command of the same name (`save FILE`, `find TEXT`, `beats list`).
+ */
+const EDITOR_COMMANDS = [
+  { name: 'settings', aliases: ['preferences', 'prefs', 'options', 'config'], help: 'open the settings menu' },
+  { name: 'panel', aliases: ['sidebar', 'side-panel', 'sidepanel', 'inspector'], toggle: true, help: 'show or hide the components, nets, and selection panel (Shift+P)' },
+  { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis panel (Shift+S)' },
+  { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
+  { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },
+  { name: 'crosshair', aliases: ['cursor'], toggle: true, help: 'show or hide the crosshair (Shift+C)' },
+  { name: 'dark', aliases: ['theme', 'dark-mode', 'darkmode', 'night', 'light'], toggle: true, help: 'switch the dark theme on or off (Shift+D)' },
+  { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beat strip (Shift+B)' },
+  { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
+  { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
+  { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col'], help: 'frame the drawing for a page: none, ieee-1col, or ieee-2col' },
+  { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
+  { name: 'shortcuts', aliases: ['keys', 'keybindings', 'hotkeys', 'cheatsheet', 'keymap'], help: 'show every keyboard shortcut (?)' },
+  { name: 'check', aliases: ['design-check', 'drc', 'lint', 'verify'], help: 'run Design Check (x)' },
+  { name: 'find', aliases: ['search', 'filter'], help: 'find parts, nets, and text in the panel (Ctrl/Cmd+F)' },
+  { name: 'replace', aliases: ['substitute'], help: 'replace text in labels (Ctrl/Cmd+H)' },
+  { name: 'undo', help: 'undo the last edit (u)' },
+  { name: 'redo', help: 'redo the last undone edit (Shift+U)' },
+  { name: 'save', aliases: ['write'], help: 'save the document (Ctrl/Cmd+S)' },
+  { name: 'save-as', aliases: ['saveas'], help: 'save a copy under any name (Ctrl/Cmd+Shift+S)' },
+  { name: 'open', aliases: ['browse', 'files'], help: 'open a document file (Ctrl/Cmd+O)' },
+  { name: 'new', aliases: ['new-document', 'blank'], help: 'start a new schematic' },
+  { name: 'export', aliases: ['download', 'pdf', 'png'], help: 'export as SVG, PDF, or PNG (Ctrl/Cmd+E)' },
+  { name: 'present', aliases: ['presentation', 'slideshow', 'play'], help: 'present the beats full screen (Shift+F5)' },
+  { name: 'workspace', aliases: ['folder'], help: 'choose the workspace folder' },
+  { name: 'more', aliases: ['menu', 'document-menu'], help: 'open the More menu of document actions' },
+  { name: 'tutorial', aliases: ['learn', 'tour'], help: 'draw a 5T OTA step by step, in a new document' },
+];
+
+/** Document commands (`runCommand`), for completion. Arguments are the
+ *  command's own; `help` lists them. */
+const DOCUMENT_COMMANDS = [
+  { name: 'add', aliases: ['place', 'insert'], help: 'add <type> [refdes] [--at X Y]' },
+  { name: 'connect', aliases: ['wire'], help: 'connect REF.TERM REF.TERM ... [--name N]' },
+  { name: 'disconnect', help: 'disconnect REF.TERM' },
+  { name: 'move', help: 'move <refdes> <X> <Y>' },
+  { name: 'rotate', help: 'rotate <refdes> [deg=90]' },
+  { name: 'mirror', aliases: ['flip'], help: 'mirror <refdes> <x|y>' },
+  { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
+  { name: 'rename', help: 'rename <refdes> <new>' },
+  { name: 'rm', aliases: ['remove', 'delete'], help: 'rm <refdes>' },
+  { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
+  { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labelled wire stubs)' },
+  { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },
+  { name: 'net', help: 'net <id> add|drop|name|label|rm ...' },
+  { name: 'nets', help: 'list nets' },
+  { name: 'netlabel', aliases: ['net-label', 'nlabel', 'wirelabel', 'wire-label'], help: 'netlabel add|rename|rm ...' },
+  { name: 'annotation', aliases: ['annotate', 'label', 'note', 'text'], help: 'annotation add TEXT X Y ...' },
+  { name: 'switch', help: 'switch REF|PHASE open|closed' },
+  { name: 'beat', help: 'beat list|add|rm|show|dim|hide ...' },
+  { name: 'timing', help: 'add a timing diagram template' },
+  { name: 'list', aliases: ['ls', 'components', 'parts'], help: 'list components' },
+  { name: 'eval', help: 'quality report' },
+  { name: 'explain', aliases: ['diagnose'], help: 'explain eval | explain connect ...' },
+  { name: 'state', help: 'full JSON state' },
+  { name: 'bounds', help: 'drawing extents' },
+  { name: 'svg', help: 'svg [file] [--grid] [--beat N]' },
+  { name: 'load', help: 'load <file>' },
+  { name: 'clear', help: 'start an empty circuit' },
+  { name: 'help', help: 'list the document commands' },
+  { name: 'version', help: 'show the version' },
+];
+
+/** Split a line into its command word and the rest. */
+function commandWord(line) {
+  const text = String(line).replace(/^:+/, '').trimStart();
+  const match = text.match(/^(\S*)(\s*)([\s\S]*)$/);
+  return { word: match[1], spaced: !!match[2], rest: match[3].trim() };
+}
+
+function entryNamed(catalog, word) {
+  const key = word.toLowerCase();
+  return catalog.find((entry) => entry.name === key) ||
+    catalog.find((entry) => (entry.aliases || []).includes(key)) || null;
+}
+
+/**
+ * The editor command a line runs, or null for a document command. Returns
+ * `{ name, state }`: `state` is true/false for an explicit toggle value,
+ * undefined to flip, or the chosen value of a `choices` command.
+ */
+function resolveEditorCommand(line, catalog = EDITOR_COMMANDS) {
+  const { word, rest } = commandWord(line);
+  const entry = word && entryNamed(catalog, word);
+  if (!entry) return null;
+  if (!rest) {
+    // A bare `light` asks for the light theme, not a flip.
+    return { name: entry.name, state: entry.toggle && word.toLowerCase() === 'light' ? false : undefined };
+  }
+  const args = rest.split(/\s+/);
+  if (args.length !== 1) return null;
+  const value = args[0].toLowerCase();
+  if (entry.toggle && Object.hasOwn(TOGGLE_VALUES, value)) return { name: entry.name, state: TOGGLE_VALUES[value] };
+  if (entry.choices?.includes(value)) return { name: entry.name, state: value };
+  return null;
+}
+
+/**
+ * Ranked completions for the command word being typed: exact names, then
+ * exact synonyms, then name and synonym prefixes, then (from two letters)
+ * words that merely contain it; failing all of those, near misses (typos).
+ * Each entry appears once, as its canonical
+ * name, with the synonym that matched when that is how it was found.
+ * Editor commands sort before document commands of the same rank; a document
+ * command whose name an editor command already answers to is left out.
+ */
+function commandCompletions(word, { editor = EDITOR_COMMANDS, document = DOCUMENT_COMMANDS } = {}) {
+  const key = String(word || '').toLowerCase();
+  if (!key) return [];
+  const editorWords = new Set(editor.flatMap((entry) => [entry.name, ...(entry.aliases || [])]));
+  const entries = [
+    ...editor.map((entry) => ({ ...entry, kind: 'editor' })),
+    ...document.filter((entry) => !editorWords.has(entry.name)).map((entry) => ({ ...entry, kind: 'document' })),
+  ];
+  const ranked = [];
+  for (const [order, entry] of entries.entries()) {
+    const aliases = entry.aliases || [];
+    let rank = null;
+    let via = null;
+    if (entry.name === key) rank = 0;
+    else if (aliases.includes(key)) { rank = 1; via = key; }
+    else if (entry.name.startsWith(key)) rank = 2;
+    else if ((via = aliases.find((alias) => alias.startsWith(key)) || null)) rank = 3;
+    else if (key.length >= 2 && entry.name.includes(key)) rank = 4;
+    else if (key.length >= 2 && (via = aliases.find((alias) => alias.includes(key)) || null)) rank = 5;
+    if (rank !== null) ranked.push({ name: entry.name, via, help: entry.help, kind: entry.kind, rank, order });
+  }
+  // Nothing even contains the word: offer near misses, so a typo still finds
+  // its command.
+  if (!ranked.length && key.length >= 3) {
+    const reach = key.length >= 5 ? 2 : 1;
+    for (const [order, entry] of entries.entries()) {
+      const distances = [entry.name, ...(entry.aliases || [])].map((word) => [word, editDistance(key, word)]);
+      const [via, distance] = distances.reduce((best, next) => (next[1] < best[1] ? next : best));
+      if (distance <= reach) ranked.push({ name: entry.name, via: via === entry.name ? null : via, help: entry.help, kind: entry.kind, rank: 6 + distance, order });
+    }
+  }
+  return ranked
+    .sort((a, b) => a.rank - b.rank || a.order - b.order)
+    .map(({ name, via, help, kind }) => ({ name, via, help, kind }));
+}
+
+/** Levenshtein distance between two short words. */
+function editDistance(a, b) {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    row = next;
+  }
+  return row[b.length];
+}
+
+/**
+ * The line after one Tab (or Shift+Tab, `step` -1) press. `session` carries
+ * the typed word and its completions across presses; pass the returned one
+ * back while the user keeps tabbing, and null once they type. Completes only
+ * the command word; returns null when nothing matches.
+ */
+function tabComplete(line, session = null, step = 1) {
+  const { word, spaced, rest } = commandWord(line);
+  if (spaced && !session) return null;
+  const base = session || { word, candidates: commandCompletions(word), index: -1 };
+  if (!base.candidates.length) return null;
+  const count = base.candidates.length;
+  const index = base.index < 0 ? (step > 0 ? 0 : count - 1) : (base.index + step + count) % count;
+  const next = base.candidates[index];
+  // A document command takes arguments: leave the cursor ready for them.
+  const tail = rest ? ` ${rest}` : (next.kind === 'document' && count === 1 ? ' ' : '');
+  return { line: `${next.name}${tail}`, session: { ...base, index } };
+}
+
+/** The line with a document command's synonym (`delete R1`, `ls`) replaced
+ *  by the command's own name, so the synonyms completion offers also run. */
+function canonicalDocumentLine(line) {
+  const { word, rest } = commandWord(line);
+  const entry = word && entryNamed(DOCUMENT_COMMANDS, word);
+  if (!entry) return String(line).replace(/^:+/, '').trim();
+  return rest ? `${entry.name} ${rest}` : entry.name;
+}
+
+/** "did you mean …" for an unknown command word, or ''. */
+function didYouMean(word) {
+  const names = commandCompletions(word).slice(0, 3).map((entry) => entry.name);
+  return names.length ? `did you mean ${names.join(', ')}?` : '';
+}
+
+__exports.EDITOR_COMMANDS = EDITOR_COMMANDS;
+__exports.DOCUMENT_COMMANDS = DOCUMENT_COMMANDS;
 };
 
 __modules["src/web/commit-feedback.js"] = function (__require, __exports) {
@@ -30700,6 +31136,7 @@ const statusEl = document.getElementById('status');
 const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
 const logEl = document.getElementById('log');
 const cmdInput = document.getElementById('cmd-input');
+const cmdSuggestionsEl = document.getElementById('cmd-suggestions');
 const consoleEl = document.getElementById('console-panel');
 const statusModeEl = document.getElementById('status-mode');
 const statusSelectionEl = document.getElementById('status-selection');
@@ -30801,6 +31238,7 @@ __exports.statusEl = statusEl;
 __exports.accessibilityAnnouncementEl = accessibilityAnnouncementEl;
 __exports.logEl = logEl;
 __exports.cmdInput = cmdInput;
+__exports.cmdSuggestionsEl = cmdSuggestionsEl;
 __exports.consoleEl = consoleEl;
 __exports.statusModeEl = statusModeEl;
 __exports.statusSelectionEl = statusSelectionEl;
@@ -31477,6 +31915,7 @@ function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Can
 
 __modules["src/web/find-replace-ui.js"] = function (__require, __exports) {
 __exports.renderTextMatches = renderTextMatches;
+__exports.openFind = openFind;
 __exports.openReplace = openReplace;
 __exports.installFindReplace = installFindReplace;
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
@@ -31576,6 +32015,14 @@ function renderTextMatches() {
     row.addEventListener('click', () => selectMatch(entry));
     listEl.appendChild(row);
   }
+}
+
+/** Ctrl/Cmd+F: focus the panel filter. A hidden panel is inert and cannot
+ *  take focus, so it is revealed first. */
+function openFind() {
+  if (!sidePanelVisible()) setSidePanelVisible(true);
+  filterEl.focus();
+  filterEl.select();
 }
 
 function openReplace() {
@@ -34236,6 +34683,7 @@ __exports.recordHistoryEntry = recordHistoryEntry;
 __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.applyJson = applyJson;
 __exports.undo = undo;
+__exports.redo = redo;
 __exports.cloneFixedPaths = cloneFixedPaths;
 __exports.captureRouteGeometry = captureRouteGeometry;
 __exports.sortedComps = sortedComps;
@@ -34299,6 +34747,7 @@ __exports.snappedWorld = snappedWorld;
 __exports.canvasMouseMove = canvasMouseMove;
 __exports.canvasMouseUp = canvasMouseUp;
 __exports.transformPendingComponent = transformPendingComponent;
+__exports.runLine = runLine;
 __exports.interactionState = interactionState;
 __exports.hasWireDraft = hasWireDraft;
 __exports.activateNetLabel = activateNetLabel;
@@ -34354,7 +34803,8 @@ let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDoc
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
 let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } = __require("src/web/side-panel.js")); });
-let installFindReplace, openReplace, renderTextMatches; __bind(() => { ({ installFindReplace, openReplace, renderTextMatches } = __require("src/web/find-replace-ui.js")); });
+let installFindReplace, openFind, openReplace, renderTextMatches; __bind(() => { ({ installFindReplace, openFind, openReplace, renderTextMatches } = __require("src/web/find-replace-ui.js")); });
+let installCommandLine; __bind(() => { ({ installCommandLine } = __require("src/web/command-line-ui.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
@@ -34374,6 +34824,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -40701,7 +41152,8 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
-  else if (key === 'S') toggleAnalysisDock();
+  // The canvas keeps focus, so a second Shift+S closes the dock again.
+  else if (key === 'S') toggleAnalysisDock({ focus: false });
   else if (key === '?') showHelp();
   else return false;
   return true;
@@ -41048,6 +41500,7 @@ installHelp();
 
 // ----- command console ---------------------------------------------------
 
+/** Run one document command line; returns the error message when it fails. */
 function runLine(line) {
   const trimmed = line.trim();
   if (!trimmed) return;
@@ -41059,8 +41512,9 @@ function runLine(line) {
   try {
     result = runCommand(circuit, trimmed);
   } catch (err) {
-    logLine(String(err.message || err));
-    return;
+    const message = String(err.message || err);
+    logLine(message);
+    return message;
   }
 
   let output = result ? result.text : '';
@@ -41476,10 +41930,7 @@ window.addEventListener('keydown', (ev) => {
     const filter = document.getElementById('panel-filter');
     if (filter && !filter.closest('[hidden]') && !inlineInput) {
       ev.preventDefault();
-      // A hidden panel is inert and cannot take focus; reveal it first.
-      if (!sidePanelVisible()) setSidePanelVisible(true);
-      filter.focus();
-      filter.select();
+      openFind();
       return;
     }
   }
@@ -41737,38 +42188,7 @@ window.addEventListener('keydown', (ev) => {
   ev.preventDefault();
 });
 
-// The command line keeps its own history; the drawer stays open after Enter
-// so the output lands right above the input.
-const commandHistory = [];
-let commandHistoryIndex = -1;
-cmdInput.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') {
-    const line = cmdInput.value.replace(/^:+/, '').trim();
-    cmdInput.value = '';
-    commandHistoryIndex = -1;
-    if (!line) {
-      cmdInput.blur();
-      return;
-    }
-    if (commandHistory.at(-1) !== line) commandHistory.push(line);
-    runLine(line);
-  } else if (ev.key === 'Escape') {
-    ev.preventDefault();
-    ev.stopPropagation();
-    cmdInput.value = '';
-    commandHistoryIndex = -1;
-    cmdInput.blur();
-    applyLogDrawerEvent({ type: 'command-done' });
-    canvasEl.focus();
-  } else if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && commandHistory.length) {
-    ev.preventDefault();
-    const last = commandHistory.length - 1;
-    commandHistoryIndex = ev.key === 'ArrowUp'
-      ? (commandHistoryIndex < 0 ? last : Math.max(0, commandHistoryIndex - 1))
-      : (commandHistoryIndex < 0 || commandHistoryIndex >= last ? -1 : commandHistoryIndex + 1);
-    cmdInput.value = commandHistoryIndex < 0 ? '' : commandHistory[commandHistoryIndex];
-  }
-});
+installCommandLine();
 
 // ----- boot ------------------------------------------------------------
 
@@ -45741,6 +46161,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
     ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
     [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
+    [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
     ['explain eval', 'group design-check issues with repair hints'],
     ['explain connect A.t B.t', 'dry-run a route and report path/bends/pin escapes'],
