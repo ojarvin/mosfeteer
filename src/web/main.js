@@ -65,6 +65,7 @@ import { installFindReplace, openFind, openReplace, renderTextMatches } from './
 import { installTagsField, renderTagsField } from './tags-ui.js';
 import { installCommandLine } from './command-line-ui.js';
 import { atlasOpen, installAtlas, onAtlasKey, openAtlas } from './atlas.js';
+import { revealStartup } from './startup.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
@@ -7633,11 +7634,13 @@ window.__app ||= { renders: [] };
 try {
   restoreDraft();
   draftReady = true;
-  // Paint the editor shell immediately. The native last-opened lookup and
-  // document load continue in the background, so storage migration can never
-  // leave the user staring at an unpainted/blank window.
+  // Lay out the editor under the startup cover while storage and drawings load.
   fitView();
-  restoreStartup().catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'));
+  restoreStartup().then(async (showAtlas) => {
+    await syncActiveCircuit();
+    if (showAtlas) await openAtlas({ startup: true });
+  }).catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'))
+    .finally(revealStartup);
   startSessionHeartbeat();
   syncActiveCircuit(); // pick up the agent's active circuit immediately
   window.setInterval(syncActiveCircuit, 500);
@@ -7653,8 +7656,6 @@ try {
   }
   throw err;
 }
-const bb = banner();
-if (bb) bb.remove();
 
 
 if (paneEl && typeof ResizeObserver !== 'undefined') {
@@ -7666,4 +7667,3 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
 }
 
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
-

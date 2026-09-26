@@ -22,12 +22,13 @@ import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTil
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
-import { persistence, openDocumentPath } from './document-session.js';
+import { persistence, openDocumentPath, requestDocumentAction, startNewDocument } from './document-session.js';
 import { toggleTheme } from './toolbar-ui.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
 import { render, setLabelSelection, setSelection } from './main.js';
 import { setDocumentTags } from './tags-ui.js';
+import { revealStartup } from './startup.js';
 
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
@@ -36,6 +37,7 @@ const titleEl = document.getElementById('atlas-title');
 const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
+const newCircuitEl = document.getElementById('atlas-new-circuit');
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
@@ -303,6 +305,27 @@ async function warmSmallImages(generation, budget) {
     state.bitmaps.set(key, await createImageBitmap(blob));
   });
   await Promise.race([Promise.allSettled([...baking, ...loads]), new Promise((resolve) => setTimeout(resolve, budget))]);
+}
+
+/** Startup has no editor drawing to bridge from: prepare the desk before revealing it. */
+async function prepareStartupImages(generation, target) {
+  await document.fonts.ready;
+  const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
+  for (const tile of state.tiles) {
+    const entry = state.entries.get(tile.id);
+    const levels = tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large'];
+    for (const level of levels) {
+      const key = bitmapKey(entry, level);
+      try {
+        const bitmap = await bake(entry, level);
+        if (!state || state.generation !== generation) { bitmap.close?.(); return; }
+        state.bitmaps.set(key, bitmap);
+      } catch {
+        if (!state || state.generation !== generation) return;
+        state.failed.add(key);
+      }
+    }
+  }
 }
 
 /** Bake what the frame asked for, nearest the middle of the screen first. */
@@ -846,15 +869,16 @@ function focusTile(tile, { zoom = false } = {}) {
 // ----- entering and leaving ---------------------------------------------------------
 
 /** Shift+Backspace: step back from the drawing to the whole workspace. */
-export async function openAtlas({ source = 'workspace' } = {}) {
+export async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
   if (state || !rootEl) return;
   const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
   state = {
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
-    bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: false,
+    bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
   };
   if (hintEl) hintEl.textContent = HINTS[source];
+  if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
   if (searchEl) {
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
@@ -862,7 +886,7 @@ export async function openAtlas({ source = 'workspace' } = {}) {
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
-  if (source === 'workspace') showOpenDesign();
+  if (source === 'workspace' && animate && !startup) showOpenDesign();
   let ready = false;
   try {
     ready = source === 'symbols' ? loadSymbols() : await loadWorkspace(generation);
@@ -884,7 +908,22 @@ export async function openAtlas({ source = 'workspace' } = {}) {
     requestDraw();
     return;
   }
-  if (state.fromEditor) {
+  if (startup) {
+    const target = clampView(fitAllView());
+    await prepareStartupImages(generation, target);
+    if (!state || state.generation !== generation) return;
+    state.baking = false;
+    // Start farther out around the same centre, then approach the fitted desk.
+    const factor = 1.8;
+    state.view = clampView({
+      x: target.x - target.w * (factor - 1) / 2,
+      y: target.y - target.h * (factor - 1) / 2,
+      w: target.w * factor, h: target.h * factor,
+    });
+    state.revealAt = 0;
+    draw();
+    await Promise.all([revealStartup(), animateView(target, 1100)]);
+  } else if (state.fromEditor) {
     draw();
     // Decode the small images first, while the view still matches the
     // editor: decoding in the middle of the zoom would stall its frames.
@@ -1003,6 +1042,7 @@ function selectHits(hits) {
 
 export function onAtlasKey(ev) {
   if (!state) return;
+  if (ev.target.closest?.('.atlas-head button')) return;
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
@@ -1179,6 +1219,13 @@ export function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  newCircuitEl?.addEventListener('click', () => {
+    if (state?.source !== 'workspace') return;
+    requestDocumentAction('Starting a new circuit', () => {
+      finishClose();
+      startNewDocument();
+    });
+  });
   searchEl?.addEventListener('input', () => applySearch(searchEl.value));
   searchEl?.addEventListener('keydown', (ev) => {
     // The desk's own keys (z, f, arrows) are text here.

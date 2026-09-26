@@ -107,6 +107,26 @@ body {
   overflow: hidden;
 }
 
+.startup-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #101318;
+}
+
+.startup-cover .boot-banner {
+  animation: startup-message 300ms 3s both;
+}
+
+.startup-cover .boot-banner.error {
+  animation: none;
+}
+
+@keyframes startup-message {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .boot-banner {
   position: fixed;
   left: 16px;

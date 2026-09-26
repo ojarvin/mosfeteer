@@ -1,11 +1,24 @@
 # Atlas view
 
+The app starts in the Atlas when the workspace (or browser-only document
+cache) contains more than one circuit. With zero or one circuit it starts in
+the editor. Launching a specific file opens that file in the editor instead.
+The restored drawing and any unsaved draft remain available behind the Atlas.
+At startup, a dark cover stays up while the drawings load, then fades as the
+Atlas zooms in from afar to fit the workspace. Later visits keep the usual
+editor-to-Atlas zoom. Reduced-motion preferences skip the startup animation.
+
 `Shift+Backspace` (or `:atlas`; `Shift+Esc` where the browser passes it
 on, which Chromium does not) steps back from the drawing to the whole
 workspace: every design at its real size on one continuous sheet of the
 editor's paper and grid, to look around, compare, and open. It is a viewing mode with no tools; pan and zoom
 work as in the editor (wheel or trackpad scheme, drag, pinch), and the open
 design zooms out of, and back into, exactly where the editor shows it.
+
+**New circuit** in the top bar opens a blank schematic in the editor, with
+the name field focused. Unsaved changes in the current drawing trigger the
+usual discard prompt; canceling keeps the Atlas open. Name and save the new
+circuit to add it to the workspace. This button is hidden in the Symbols view.
 
 | Keys | |
 | --- | --- |

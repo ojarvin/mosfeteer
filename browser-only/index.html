@@ -9,9 +9,11 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div id="startup-cover" class="startup-cover" role="status" aria-label="Loading Mosfeteer">
   <div id="boot-banner" class="boot-banner">
     Loading Mosfeteer&hellip; If this stays visible, the app could not start. Start it with
     <code>node launch.mjs</code> instead of opening the HTML file directly.
+  </div>
   </div>
 
   <header class="toolbar">
@@ -197,6 +199,7 @@
       <span id="atlas-title" class="atlas-title">Workspace</span>
       <input id="atlas-search" class="atlas-search" type="search" placeholder="Find parts, nets, text, #tags  (/ or Ctrl+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
       <span id="atlas-status" class="atlas-status" aria-live="polite"></span>
+      <button id="atlas-new-circuit" type="button" title="Start a new schematic">New circuit</button>
       <button id="atlas-close" type="button" class="atlas-close" title="Back to the editor (Esc)">Back to editor</button>
     </header>
     <p id="atlas-hint" class="atlas-hint glass">Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · Z zooms to it · F fits all · Esc returns</p>

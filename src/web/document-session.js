@@ -174,7 +174,8 @@ export async function restoreStartup() {
   const openPath = params.get('open');
   if (openPath) window.history.replaceState(null, '', window.location.pathname);
   await listPromise;
-  if (openPath && openPath !== editor.currentDocumentPath) requestCircuitLoad(openPath);
+  if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
+  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit').length > 1;
 }
 
 export async function saveCircuit({ saveAs = false } = {}) {

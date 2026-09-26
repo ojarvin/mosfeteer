@@ -28889,12 +28889,13 @@ let ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, re
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
+let persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
 let toggleTheme; __bind(() => { ({ toggleTheme } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let render, setLabelSelection, setSelection; __bind(() => { ({ render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let setDocumentTags; __bind(() => { ({ setDocumentTags } = __require("src/web/tags-ui.js")); });
+let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -28926,6 +28927,7 @@ let setDocumentTags; __bind(() => { ({ setDocumentTags } = __require("src/web/ta
 
 
 
+
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
@@ -28933,6 +28935,7 @@ const titleEl = document.getElementById('atlas-title');
 const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
+const newCircuitEl = document.getElementById('atlas-new-circuit');
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
@@ -29200,6 +29203,27 @@ async function warmSmallImages(generation, budget) {
     state.bitmaps.set(key, await createImageBitmap(blob));
   });
   await Promise.race([Promise.allSettled([...baking, ...loads]), new Promise((resolve) => setTimeout(resolve, budget))]);
+}
+
+/** Startup has no editor drawing to bridge from: prepare the desk before revealing it. */
+async function prepareStartupImages(generation, target) {
+  await document.fonts.ready;
+  const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
+  for (const tile of state.tiles) {
+    const entry = state.entries.get(tile.id);
+    const levels = tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large'];
+    for (const level of levels) {
+      const key = bitmapKey(entry, level);
+      try {
+        const bitmap = await bake(entry, level);
+        if (!state || state.generation !== generation) { bitmap.close?.(); return; }
+        state.bitmaps.set(key, bitmap);
+      } catch {
+        if (!state || state.generation !== generation) return;
+        state.failed.add(key);
+      }
+    }
+  }
 }
 
 /** Bake what the frame asked for, nearest the middle of the screen first. */
@@ -29743,15 +29767,16 @@ function focusTile(tile, { zoom = false } = {}) {
 // ----- entering and leaving ---------------------------------------------------------
 
 /** Shift+Backspace: step back from the drawing to the whole workspace. */
-async function openAtlas({ source = 'workspace' } = {}) {
+async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
   if (state || !rootEl) return;
   const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
   state = {
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
-    bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: false,
+    bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
   };
   if (hintEl) hintEl.textContent = HINTS[source];
+  if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
   if (searchEl) {
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
@@ -29759,7 +29784,7 @@ async function openAtlas({ source = 'workspace' } = {}) {
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
-  if (source === 'workspace') showOpenDesign();
+  if (source === 'workspace' && animate && !startup) showOpenDesign();
   let ready = false;
   try {
     ready = source === 'symbols' ? loadSymbols() : await loadWorkspace(generation);
@@ -29781,7 +29806,22 @@ async function openAtlas({ source = 'workspace' } = {}) {
     requestDraw();
     return;
   }
-  if (state.fromEditor) {
+  if (startup) {
+    const target = clampView(fitAllView());
+    await prepareStartupImages(generation, target);
+    if (!state || state.generation !== generation) return;
+    state.baking = false;
+    // Start farther out around the same centre, then approach the fitted desk.
+    const factor = 1.8;
+    state.view = clampView({
+      x: target.x - target.w * (factor - 1) / 2,
+      y: target.y - target.h * (factor - 1) / 2,
+      w: target.w * factor, h: target.h * factor,
+    });
+    state.revealAt = 0;
+    draw();
+    await Promise.all([revealStartup(), animateView(target, 1100)]);
+  } else if (state.fromEditor) {
     draw();
     // Decode the small images first, while the view still matches the
     // editor: decoding in the middle of the zoom would stall its frames.
@@ -29900,6 +29940,7 @@ function selectHits(hits) {
 
 function onAtlasKey(ev) {
   if (!state) return;
+  if (ev.target.closest?.('.atlas-head button')) return;
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
@@ -30076,6 +30117,13 @@ function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  newCircuitEl?.addEventListener('click', () => {
+    if (state?.source !== 'workspace') return;
+    requestDocumentAction('Starting a new circuit', () => {
+      finishClose();
+      startNewDocument();
+    });
+  });
   searchEl?.addEventListener('input', () => applySearch(searchEl.value));
   searchEl?.addEventListener('keydown', (ev) => {
     // The desk's own keys (z, f, arrows) are text here.
@@ -34280,7 +34328,8 @@ async function restoreStartup() {
   const openPath = params.get('open');
   if (openPath) window.history.replaceState(null, '', window.location.pathname);
   await listPromise;
-  if (openPath && openPath !== editor.currentDocumentPath) requestCircuitLoad(openPath);
+  if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
+  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit').length > 1;
 }
 
 async function saveCircuit({ saveAs = false } = {}) {
@@ -38814,6 +38863,7 @@ let installFindReplace, openFind, openReplace, renderTextMatches; __bind(() => {
 let installTagsField, renderTagsField; __bind(() => { ({ installTagsField, renderTagsField } = __require("src/web/tags-ui.js")); });
 let installCommandLine; __bind(() => { ({ installCommandLine } = __require("src/web/command-line-ui.js")); });
 let atlasOpen, installAtlas, onAtlasKey, openAtlas; __bind(() => { ({ atlasOpen, installAtlas, onAtlasKey, openAtlas } = __require("src/web/atlas.js")); });
+let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
@@ -38833,6 +38883,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -46449,11 +46500,13 @@ window.__app ||= { renders: [] };
 try {
   restoreDraft();
   draftReady = true;
-  // Paint the editor shell immediately. The native last-opened lookup and
-  // document load continue in the background, so storage migration can never
-  // leave the user staring at an unpainted/blank window.
+  // Lay out the editor under the startup cover while storage and drawings load.
   fitView();
-  restoreStartup().catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'));
+  restoreStartup().then(async (showAtlas) => {
+    await syncActiveCircuit();
+    if (showAtlas) await openAtlas({ startup: true });
+  }).catch((err) => logLine(`Could not restore the last document: ${err.message}`, 'error'))
+    .finally(revealStartup);
   startSessionHeartbeat();
   syncActiveCircuit(); // pick up the agent's active circuit immediately
   window.setInterval(syncActiveCircuit, 500);
@@ -46469,8 +46522,6 @@ try {
   }
   throw err;
 }
-const bb = banner();
-if (bb) bb.remove();
 
 
 if (paneEl && typeof ResizeObserver !== 'undefined') {
@@ -46482,7 +46533,6 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
 }
 
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
-
 
 };
 
@@ -48602,6 +48652,24 @@ function installSidePanel() {
 
 __exports.PANEL_COLLAPSED_KEY = PANEL_COLLAPSED_KEY;
 __exports.collapsedPanels = collapsedPanels;
+};
+
+__modules["src/web/startup.js"] = function (__require, __exports) {
+__exports.revealStartup = revealStartup;
+/** Keep the first frame covered until its document or Atlas drawings are ready. */
+let reveal = null;
+
+function revealStartup() {
+  if (reveal) return reveal;
+  const cover = document.getElementById('startup-cover');
+  if (!cover) return Promise.resolve();
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  reveal = cover.animate([{ opacity: 1 }, { opacity: 0 }], {
+    duration: reduced ? 0 : 700, easing: 'ease-out', fill: 'forwards',
+  }).finished.finally(() => cover.remove());
+  return reveal;
+}
+
 };
 
 __modules["src/web/status-bar-ui.js"] = function (__require, __exports) {

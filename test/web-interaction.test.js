@@ -392,6 +392,15 @@ test('new document control starts a schematic directly', () => {
   assert.match(main, /newDocumentButton\?\.addEventListener\('click', \(\) => \{[\s\S]*?startNewDocument\(\);/);
 });
 
+test('Atlas creates a circuit through the unsaved-changes guard and preserves name focus', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  assert.match(html, /id="atlas-new-circuit"[^>]+type="button"[^>]*>New circuit<\/button>/);
+  assert.match(atlas, /newCircuitEl.hidden = source !== 'workspace'/);
+  assert.match(atlas, /newCircuitEl\?\.addEventListener\('click', \(\) => \{\s*if \(state\?\.source !== 'workspace'\) return;\s*requestDocumentAction\('Starting a new circuit', \(\) => \{\s*finishClose\(\);\s*startNewDocument\(\);/);
+  assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\)\) return;/);
+});
+
 test('an explicit new document is protected from active-document auto-loads', () => {
   const main = editorSource();
   const start = main.indexOf('function startNewDocument(');
@@ -526,9 +535,34 @@ test('wire previews exclude the destination net and transformed nets keep termin
 test('startup paints before listing documents and restoring the requested document', () => {
   const main = editorSource();
   assert.match(main, /const listPromise = refreshCircuitList\(\);/);
-  assert.match(main, /if \(openPath && openPath !== currentDocumentPath\) requestCircuitLoad\(openPath\);/);
+  assert.match(main, /if \(openPath && openPath !== currentDocumentPath\) await openDocumentPath\(openPath\);/);
   assert.match(main, /fitView\(\);\s*restoreStartup\(\)/);
   assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreStartup/);
+});
+
+test('startup chooses Atlas only for multiple circuits without an explicit file', async () => {
+  const source = functionSource('restoreStartup');
+  for (const count of [0, 1, 2, 3]) {
+    for (const openPath of ['', '/workspace/requested.json']) {
+      const loaded = [];
+      const context = {
+        URLSearchParams,
+        window: { location: { search: openPath ? `?open=${encodeURIComponent(openPath)}` : '', pathname: '/' }, history: { replaceState() {} } },
+        currentDocumentPath: null,
+        workspaceState: null,
+        openDocumentPath: async (path) => loaded.push(path),
+      };
+      context.refreshCircuitList = async () => {
+        context.workspaceState = { documents: [
+          ...Array.from({ length: count }, () => ({ kind: 'circuit' })),
+          { kind: 'other' },
+        ], recent: [{ kind: 'circuit' }, { kind: 'circuit' }] };
+      };
+      const restore = vm.runInNewContext(`(${source})`, context);
+      assert.equal(await restore(), !openPath && count > 1);
+      assert.deepEqual(loaded, openPath ? [openPath] : []);
+    }
+  }
 });
 
 test('fit reserves the axis the mode rail is thin along', () => {
