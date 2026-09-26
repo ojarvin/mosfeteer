@@ -195,6 +195,7 @@
     <div id="atlas-overlays" class="atlas-overlays" aria-hidden="true"></div>
     <header class="atlas-head glass">
       <span id="atlas-title" class="atlas-title">Workspace</span>
+      <input id="atlas-search" class="atlas-search" type="search" placeholder="Find parts, nets, text, #tags  (/ or Ctrl+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
       <span id="atlas-status" class="atlas-status" aria-live="polite"></span>
       <button id="atlas-close" type="button" class="atlas-close" title="Back to the editor (Esc)">Back to editor</button>
     </header>
@@ -393,8 +394,12 @@
 
       <div class="panel-filter" data-doc-kind="schematic">
         <div class="panel-filter-row">
-          <input id="panel-filter" type="search" placeholder="Find parts, nets, and text (Ctrl+F)" aria-label="Find parts, nets, and text" aria-keyshortcuts="Control+F Meta+F" autocomplete="off" spellcheck="false" />
+          <input id="panel-filter" type="search" placeholder="Find parts, nets, and text (/ or Ctrl+F)" aria-label="Find parts, nets, and text" aria-keyshortcuts="/ Control+F Meta+F" autocomplete="off" spellcheck="false" />
           <button type="button" id="panel-replace-toggle" class="icon-button" data-icon="replace" aria-expanded="false" aria-controls="panel-replace" aria-keyshortcuts="Control+H Meta+H" aria-label="Replace text" title="Replace text in labels (Ctrl+H)">Replace</button>
+        </div>
+        <div class="panel-filter-row panel-tags">
+          <label for="panel-tags" class="panel-tags-label">Tags</label>
+          <input id="panel-tags" type="text" placeholder="ota bias …  (find designs by them in the Atlas)" aria-label="This document's tags, separated by spaces" autocomplete="off" spellcheck="false" />
         </div>
         <div class="panel-filter-row" id="panel-replace" hidden>
           <input id="panel-replace-input" type="text" placeholder="Replace with" aria-label="Replace with" autocomplete="off" spellcheck="false" />

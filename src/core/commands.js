@@ -1,4 +1,4 @@
-import { Circuit, canonicalNetName, netTerminalPositionKey, parseTermRef, transformComponentWorld } from './model.js';
+import { Circuit, canonicalNetName, netTerminalPositionKey, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
@@ -504,6 +504,7 @@ export function commandHelp() {
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
+    '  tag [list] | tag add|rm|set NAME ... - the document\'s tags, for finding it in the Atlas (#NAME searches them)',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
@@ -878,6 +879,18 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const from = circuit.getComponent(pos[0]).type;
     const c = swapComponentType(circuit, pos[0], pos[1]);
     return result(`${pos[0]} (${from}) is now ${c.refdes} (${c.type})`, { refdes: c.refdes, type: c.type }, true);
+  }
+  if (cmd === 'tag' || cmd === 'tags') {
+    const [action, ...names] = pos;
+    if (!action || action === 'list') return result(circuit.tags.length ? circuit.tags.map((tag) => `#${tag}`).join(' ') : '(no tags)', [...circuit.tags]);
+    if (!['add', 'rm', 'set'].includes(action) || (action !== 'set' && !names.length)) throw new Error('usage: tag [list] | tag add NAME ... | tag rm NAME ... | tag set NAME ...');
+    const before = circuit.tags.join('\n');
+    const drop = new Set(normalizeTags(names).map((tag) => tag.toLowerCase()));
+    circuit.tags = action === 'set' ? normalizeTags(names)
+      : action === 'add' ? normalizeTags([...circuit.tags, ...names])
+        : circuit.tags.filter((tag) => !drop.has(tag.toLowerCase()));
+    const text = circuit.tags.length ? circuit.tags.map((tag) => `#${tag}`).join(' ') : '(no tags)';
+    return result(text, [...circuit.tags], circuit.tags.join('\n') !== before);
   }
   if (cmd === 'tidy') {
     if (!pos.length) throw new Error('usage: tidy <refdes> ...');

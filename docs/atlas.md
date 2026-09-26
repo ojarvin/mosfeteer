@@ -13,11 +13,36 @@ design zooms out of, and back into, exactly where the editor shows it.
 | right-drag | zoom to the box |
 | click / arrows / Tab | pick a design |
 | double-click / Enter | open it (after the unsaved-changes check) |
+| `/` or Ctrl/Cmd+F | search the designs |
+| `#` | edit the picked design's tags |
 | `z` or Space | zoom to the picked design |
 | `f` | fit the whole workspace |
 | `+` / `-` | zoom about the middle |
 | `Shift+D` | theme |
-| Esc / Backspace | back to the editor |
+| Esc | clear the search, else back to the editor |
+| Backspace | back to the editor |
+
+## Search and tags
+
+The search field finds designs by what is in them: part names, part types
+(`pmos`, `current source`), net names, and any text, looking through markup
+(`vcm`, `V_CM`, and `V_{CM}` are the same word). Every word must be found;
+`#word` looks only at the document's tags. Designs it does not find fade,
+and what it finds is marked in each design. Enter (Shift+Enter) steps
+through the designs found, and when one is left it is picked. Esc leaves
+the field with the search still on and a found design picked, so Enter opens
+it; the arrows and Tab move among the found designs, and Esc on the desk
+clears the search (the next one returns to the editor). Opening a design
+selects what was found in it. The search stays for the session, so the
+next match is one Shift+Backspace away.
+
+Tags are the document's own (`tags` in its JSON) and show after the
+design's name. Set them in the side panel's Tags field for the open design,
+with `#` on a picked design in the Atlas (Enter saves; another design's file
+is rewritten with only its tags changed), or with `:tag add NAME`, `tag rm`,
+and `tag set`. The index behind
+the search (`src/core/design-index.js`) is cached beside each design's
+drawing, by file revision.
 
 ## Symbols
 

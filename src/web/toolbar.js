@@ -235,7 +235,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+E', 'open the export dialog'],
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
-    ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
+    ['/ / Ctrl/Cmd+F', 'find parts, nets, and any label text (in the Atlas: search every design); Esc clears, then returns to the canvas'],
     ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
     [':', 'find and run anything: type words to search every action, toggle, and menu item, Up/Down pick, Enter runs; or type a command (:connect R1.a R2.a); Up/Down on an empty line recall history'],
     [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],

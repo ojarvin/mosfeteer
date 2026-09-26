@@ -62,6 +62,7 @@ import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
 import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
 import { installFindReplace, openFind, openReplace, renderTextMatches } from './find-replace-ui.js';
+import { installTagsField, renderTagsField } from './tags-ui.js';
 import { installCommandLine } from './command-line-ui.js';
 import { atlasOpen, installAtlas, onAtlasKey, openAtlas } from './atlas.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
@@ -2204,6 +2205,7 @@ export function render() {
     renderNets();
     renderDetail();
   }
+  renderTagsField();
   renderCheckSummary();
   syncAnalysisDock();
   renderBeatStrip();
@@ -6299,6 +6301,7 @@ canvasEl.addEventListener(
 
 installSidePanel();
 installFindReplace();
+installTagsField();
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
@@ -6671,6 +6674,13 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'T') {
     tidyNow();
+    return;
+  }
+
+  // / searches, as Ctrl/Cmd+F does, here and in the Atlas. (While wiring it
+  // flips the draft corner instead; see onWireKey.)
+  if (key === '/') {
+    openFind();
     return;
   }
 

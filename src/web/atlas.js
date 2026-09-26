@@ -13,6 +13,7 @@
 
 import { loadDocument } from '../core/document.js';
 import { svgString } from '../core/render.js';
+import { designIndex, parseTags, searchDesign, tagsText } from '../core/design-index.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
 import { GRID } from '../core/grid.js';
@@ -25,6 +26,8 @@ import { persistence, openDocumentPath } from './document-session.js';
 import { toggleTheme } from './toolbar-ui.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
+import { render, setLabelSelection, setSelection } from './main.js';
+import { setDocumentTags } from './tags-ui.js';
 
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
@@ -32,9 +35,14 @@ const overlayEl = document.getElementById('atlas-overlays');
 const titleEl = document.getElementById('atlas-title');
 const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
+const searchEl = document.getElementById('atlas-search');
+
+/** The workspace search outlives one visit, so a design found, opened, and
+ *  left can be followed by the next match. Session state only. */
+let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · Z zooms to it · F fits all · Esc returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -157,14 +165,17 @@ const EMPTY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${8 * GRID}" h
 /** The design as it stands: the open one from the editor, unsaved edits and
  *  all; the others from their files, through the cache. */
 async function drawingFor(documentInfo, current) {
-  if (current) return { svg: drawingSvg(editor.circuit), revision: null };
+  if (current) return { svg: drawingSvg(editor.circuit), index: designIndex(editor.circuit), revision: null };
   const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v3');
-  const cached = key && await cacheGet(key);
-  if (cached) return { svg: cached, revision: documentInfo.revision };
+  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v1');
+  const [cached, cachedIndex] = key ? await Promise.all([cacheGet(key), cacheGet(indexKey)]) : [null, null];
+  if (cached && cachedIndex) return { svg: cached, index: cachedIndex, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
-  const svg = drawingSvg(loadDocument(data.state));
-  if (key) await cachePut(key, svg);
-  return { svg, revision: documentInfo.revision };
+  const circuit = loadDocument(data.state);
+  const svg = cached || drawingSvg(circuit);
+  const index = designIndex(circuit);
+  if (key) await Promise.all([cached ? null : cachePut(key, svg), cachePut(indexKey, index)]);
+  return { svg, index, revision: documentInfo.revision };
 }
 
 /** The symbol reference: one sheet, built from the registry on the spot. */
@@ -194,9 +205,9 @@ async function loadWorkspace(generation) {
   for (const [index, doc] of documents.entries()) {
     const current = doc.path === editor.currentDocumentPath;
     try {
-      const { svg, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
+      const { svg, index, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
       const box = viewBoxOf(svg);
-      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, revision, current, svg, box });
+      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, revision, current, svg, box, index });
     } catch (err) {
       logLine(`Atlas: could not draw ${doc.name}: ${err.message}`, 'error');
     }
@@ -227,6 +238,7 @@ async function loadWorkspace(generation) {
   state.bounds = bounds;
   state.revealAt = performance.now();
   statusEl.textContent = `${entries.length} design${entries.length === 1 ? '' : 's'}`;
+  applySearch(lastQuery);
   void trimCache();
   return true;
 }
@@ -393,7 +405,12 @@ function draw() {
   if (reveal < 1) requestDraw();
   for (const { tile, rect, detail } of placed) {
     const entry = state.entries.get(tile.id);
-    ctx.globalAlpha = entry.current ? 1 : reveal;
+    const found = state.matches?.get(tile.id);
+    // A search fades every design it does not find; what it finds in one is
+    // marked under the drawing, like a highlighter.
+    const fade = state.matches && !found ? 0.18 : 1;
+    if (found?.hits.length) drawHits(ctx, tile, entry, found.hits, palette);
+    ctx.globalAlpha = (entry.current ? 1 : reveal) * fade;
     const level = detail === 'small' ? 'small' : 'large';
     const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
       state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
@@ -418,6 +435,179 @@ function draw() {
   state.wanted = wanted;
   void pump();
   syncVectorOverlays(vector, moving);
+}
+
+/** A search's hits in one design: a translucent mark under each. */
+function drawHits(ctx, tile, entry, hits, palette) {
+  const dx = tile.x - entry.box.x;
+  const dy = tile.y - entry.box.y;
+  ctx.save();
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = palette.accent;
+  for (const hit of hits) {
+    for (const b of hit.boxes) {
+      const rect = worldToScreen({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h });
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    }
+  }
+  ctx.restore();
+}
+
+// ----- search ---------------------------------------------------------------
+
+/** Search the designs for `query` (core/design-index.js); an empty query
+ *  shows every design again. */
+function applySearch(query) {
+  if (!state || state.source !== 'workspace') return;
+  lastQuery = query;
+  const text = query.trim();
+  if (!text) {
+    state.matches = null;
+    statusEl.textContent = `${state.tiles.length} design${state.tiles.length === 1 ? '' : 's'}`;
+    for (const el of state.overlays.values()) el.style.opacity = '';
+    requestDraw();
+    return;
+  }
+  state.matches = new Map();
+  for (const tile of state.tiles) {
+    const entry = state.entries.get(tile.id);
+    const found = searchDesign(entry.index, entry.name, text);
+    if (found) state.matches.set(tile.id, found);
+  }
+  const count = state.matches.size;
+  statusEl.textContent = count
+    ? `${count} of ${state.tiles.length} design${state.tiles.length === 1 ? '' : 's'} · Enter steps through them`
+    : 'No design matches';
+  for (const [id, el] of state.overlays) el.style.opacity = state.matches.has(id) ? '' : '0.18';
+  // One design left is the one being looked for: pick it, so Esc and Enter
+  // open it.
+  if (count === 1) {
+    const only = tileById([...state.matches.keys()][0]);
+    if (only && state.selected !== only.id) focusTile(only);
+  }
+  requestDraw();
+}
+
+// ----- tags ---------------------------------------------------------------------
+
+/** `#` on a picked design: its tags in a field at its caption. Enter saves
+ *  them -- into the editor for the open design, straight into the file for
+ *  any other -- and Escape or clicking away leaves them as they were. */
+function openTagEditor(tile) {
+  const entry = state.entries.get(tile.id);
+  if (!entry || state.tagEditor) return;
+  const rect = worldToScreen(tile);
+  const pane = paneSize();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'atlas-tags glass';
+  input.value = tagsText(entry.index?.tags);
+  input.placeholder = 'tags, separated by spaces · Enter saves';
+  input.setAttribute('aria-label', `Tags of ${entry.name}`);
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.style.left = `${Math.max(8, Math.min(rect.x, pane.w - 280))}px`;
+  input.style.top = `${Math.max(56, Math.min(rect.y + rect.h + 6, pane.h - 80))}px`;
+  rootEl.appendChild(input);
+  state.tagEditor = input;
+  input.focus();
+  input.select();
+  let closed = false;
+  // Removing the field blurs it, which calls this again.
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    input.remove();
+    if (state?.tagEditor === input) state.tagEditor = null;
+    rootEl.focus({ preventScroll: true });
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      const text = input.value;
+      close();
+      void saveTags(entry, text);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      close();
+    }
+  });
+  input.addEventListener('blur', close);
+}
+
+/** Give a design new tags. Another design's file is rewritten with only its
+ *  tags changed; its cached drawing moves to the new revision as it is. */
+async function saveTags(entry, text) {
+  const tags = parseTags(text);
+  if (tagsText(tags) === tagsText(entry.index?.tags)) return;
+  try {
+    if (entry.current) {
+      setDocumentTags(text);
+      entry.index = designIndex(editor.circuit);
+    } else {
+      const data = await persistence.load(entry.path);
+      const document = { ...data.state };
+      if (tags.length) document.tags = tags;
+      else delete document.tags;
+      const saved = await persistence.save({ path: entry.path }, document, { overwrite: true });
+      const index = { ...(entry.index || designIndex(loadDocument(document))), tags };
+      const revision = saved?.revision || null;
+      if (revision) {
+        await cachePut(renderingKey(entry.path, revision, 'svg-v3'), entry.svg);
+        await cachePut(renderingKey(entry.path, revision, 'index-v1'), index);
+        for (const level of ['small', 'large']) {
+          const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
+          if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);
+        }
+      }
+      entry.revision = revision;
+      entry.index = index;
+      logLine(`${entry.name}: ${tags.length ? tags.map((tag) => `#${tag}`).join(' ') : 'tags cleared'} (saved)`);
+    }
+  } catch (err) {
+    logLine(`Could not tag ${entry.name}: ${err.message || err}`, 'error');
+    return;
+  }
+  if (!state) return;
+  applySearch(lastQuery);
+  requestDraw();
+}
+
+/** Esc in the search: back to the desk with the search still on and a found
+ *  design picked, so Enter opens it. */
+function leaveSearch() {
+  const tiles = navigableTiles();
+  if (state.matches && tiles.length && !state.matches.has(state.selected)) focusTile(tiles[0]);
+  rootEl.focus({ preventScroll: true });
+  requestDraw();
+}
+
+/** Esc on the desk drops a search before it leaves the Atlas. */
+function clearSearch() {
+  if (searchEl) searchEl.value = '';
+  applySearch('');
+}
+
+/** The designs a search found, in desk order (or all, with no search). */
+function navigableTiles() {
+  return state.matches ? state.tiles.filter((tile) => state.matches.has(tile.id)) : state.tiles;
+}
+
+/** Enter in the search: the next (Shift: previous) design it found, zoomed
+ *  to so its marks are readable. */
+function stepMatch(step) {
+  const tiles = navigableTiles();
+  if (!tiles.length) return;
+  const index = tiles.findIndex((tile) => tile.id === state.selected);
+  const next = tiles[index < 0 ? (step > 0 ? 0 : tiles.length - 1) : (index + step + tiles.length) % tiles.length];
+  focusTile(next, { zoom: true });
+}
+
+function focusSearch() {
+  if (!searchEl || state?.source !== 'workspace') return;
+  searchEl.focus();
+  searchEl.select();
 }
 
 /** The editor's grid: one-unit lines every cell, fading out as the cells
@@ -515,7 +705,8 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   ctx.font = `${selected ? 600 : 500} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   ctx.fillStyle = selected || hovered ? palette.text : palette.dim;
   ctx.textBaseline = 'top';
-  ctx.fillText(fitText(ctx, `${marker}${entry.name}`, room), rect.x, rect.y + rect.h + size * 0.6);
+  const tags = entry.index?.tags?.length ? `   ${entry.index.tags.map((tag) => `#${tag}`).join(' ')}` : '';
+  ctx.fillText(fitText(ctx, `${marker}${entry.name}${tags}`, room), rect.x, rect.y + rect.h + size * 0.6);
 }
 
 /** `text`, cut with an ellipsis to fit `width` pixels. */
@@ -556,6 +747,7 @@ function syncVectorOverlays(list, moving = false) {
       const svg = el.querySelector('svg');
       svg?.removeAttribute('width');
       svg?.removeAttribute('height');
+      if (state.matches && !state.matches.has(tile.id)) el.style.opacity = '0.18';
       overlayEl.appendChild(el);
       state.overlays.set(tile.id, el);
       // Until the SVG has painted once, its image stands in for it.
@@ -663,6 +855,10 @@ export async function openAtlas({ source = 'workspace' } = {}) {
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
   };
   if (hintEl) hintEl.textContent = HINTS[source];
+  if (searchEl) {
+    searchEl.hidden = source !== 'workspace';
+    searchEl.value = source === 'workspace' ? lastQuery : '';
+  }
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
@@ -713,7 +909,7 @@ function showOpenDesign() {
   state.view = view;
   state.fromEditor = true;
   if (path && box && svg !== EMPTY_SVG) {
-    const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box };
+    const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box, index: designIndex(editor.circuit) };
     state.entries = new Map([[path, entry]]);
     state.tiles = [{ id: path, x: box.x, y: box.y, w: box.w, h: box.h }];
     state.bounds = { ...box };
@@ -767,8 +963,10 @@ async function openTile(tile) {
   }
   const entry = state.entries.get(tile.id);
   state.selected = tile.id;
+  const hits = state.matches?.get(tile.id)?.hits || [];
   if (entry.current) {
     await closeAtlas();
+    selectHits(hits);
     return;
   }
   const { w, h } = paneSize();
@@ -784,6 +982,21 @@ async function openTile(tile) {
   const exact = editorEquivalentView(tile, entry);
   if (exact) await animateView(exact, 220);
   finishClose();
+  selectHits(hits);
+}
+
+/** What the search found in the design just opened becomes the selection. */
+function selectHits(hits) {
+  if (!hits.length) return;
+  const circuit = editor.circuit;
+  const parts = hits.filter((hit) => hit.kind === 'part' && circuit.components.has(hit.id)).map((hit) => hit.id);
+  const labels = hits.filter((hit) => hit.kind === 'text' && circuit.labels.has(hit.id)).map((hit) => hit.id);
+  const nets = hits.filter((hit) => hit.kind === 'net' && circuit.nets.has(hit.id)).map((hit) => hit.id);
+  setSelection(parts);
+  setLabelSelection(labels, undefined, true);
+  editor.selectedNets = new Set(nets);
+  logLine(`${hits.length} match${hits.length === 1 ? '' : 'es'} for "${lastQuery.trim()}" selected`);
+  render();
 }
 
 // ----- input --------------------------------------------------------------------------
@@ -793,16 +1006,22 @@ export function onAtlasKey(ev) {
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
-  if (key === 'Escape' || key === 'Backspace') void closeAtlas();
+  if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
+  else if (key === 'Escape' && state.matches) clearSearch();
+  else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
   else if (key === 'Enter' && selected) void openTile(selected);
   else if (arrows[key]) {
-    const next = selected ? neighbourTile(state.tiles, selected, arrows[key]) : state.tiles[0];
+    // While a search is on, the arrows and Tab move among what it found.
+    const tiles = navigableTiles();
+    const next = selected && tiles.includes(selected) ? neighbourTile(tiles, selected, arrows[key]) : tiles[0];
     if (next) focusTile(next);
-  } else if (key === 'Tab' && state.tiles.length) {
-    const index = selected ? state.tiles.indexOf(selected) : -1;
+  } else if (key === 'Tab' && navigableTiles().length) {
+    const tiles = navigableTiles();
+    const index = selected ? tiles.indexOf(selected) : -1;
     const step = ev.shiftKey ? -1 : 1;
-    focusTile(state.tiles[(index + step + state.tiles.length) % state.tiles.length]);
-  } else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
+    focusTile(tiles[(index + step + tiles.length) % tiles.length]);
+  } else if (key === '#' && selected && state.source === 'workspace') openTagEditor(selected);
+  else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centreOf().x, centreOf().y);
   else if (key === '-' || key === '_') zoomAbout(1.5, centreOf().x, centreOf().y);
@@ -830,7 +1049,7 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || ev.target.closest?.('.atlas-head')) return;
+  if (!state || ev.target.closest?.('.atlas-head, .atlas-tags')) return;
   if (ev.button === 2) {
     ev.preventDefault();
     stopAnimation();
@@ -960,6 +1179,22 @@ export function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  searchEl?.addEventListener('input', () => applySearch(searchEl.value));
+  searchEl?.addEventListener('keydown', (ev) => {
+    // The desk's own keys (z, f, arrows) are text here.
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      stepMatch(ev.shiftKey ? -1 : 1);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      leaveSearch();
+    } else if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      rootEl.focus({ preventScroll: true });
+      stepMatch(1);
+    }
+  });
   document.getElementById('btn-symbols')?.addEventListener('click', () => void openAtlas({ source: 'symbols' }));
   // The theme flips inside a view transition, a frame after the key.
   new MutationObserver(() => requestDraw()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });

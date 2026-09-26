@@ -110,6 +110,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
   { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labelled wire stubs)' },
   { name: 'swap', help: 'swap <refdes> [type] (change a part\'s type, keeping its wiring)' },
+  { name: 'tag', aliases: ['tags', 'label-design'], help: 'tag add|rm|set NAME ... (the document\'s tags, searched in the Atlas)' },
   { name: 'fix', aliases: ['autofix', 'repair'], help: 'fix (apply every safe Design Check repair)' },
   { name: 'rail', help: 'rail REF.TERM ground|supply (a rail wired to a pin)' },
   { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },

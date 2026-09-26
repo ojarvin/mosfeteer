@@ -10516,7 +10516,7 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
-let Circuit, canonicalNetName, netTerminalPositionKey, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, netTerminalPositionKey, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
+let Circuit, canonicalNetName, netTerminalPositionKey, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, netTerminalPositionKey, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
 let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
 let GRID, onGrid, snap, ceilGrid; __bind(() => { ({ GRID, onGrid, snap, ceilGrid } = __require("src/core/grid.js")); });
 let applyDir, applyTransform, fmt, rectsOverlap; __bind(() => { ({ applyDir, applyTransform, fmt, rectsOverlap } = __require("src/core/geometry.js")); });
@@ -11038,6 +11038,7 @@ function commandHelp() {
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
+    '  tag [list] | tag add|rm|set NAME ... - the document\'s tags, for finding it in the Atlas (#NAME searches them)',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
@@ -11412,6 +11413,18 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const from = circuit.getComponent(pos[0]).type;
     const c = swapComponentType(circuit, pos[0], pos[1]);
     return result(`${pos[0]} (${from}) is now ${c.refdes} (${c.type})`, { refdes: c.refdes, type: c.type }, true);
+  }
+  if (cmd === 'tag' || cmd === 'tags') {
+    const [action, ...names] = pos;
+    if (!action || action === 'list') return result(circuit.tags.length ? circuit.tags.map((tag) => `#${tag}`).join(' ') : '(no tags)', [...circuit.tags]);
+    if (!['add', 'rm', 'set'].includes(action) || (action !== 'set' && !names.length)) throw new Error('usage: tag [list] | tag add NAME ... | tag rm NAME ... | tag set NAME ...');
+    const before = circuit.tags.join('\n');
+    const drop = new Set(normalizeTags(names).map((tag) => tag.toLowerCase()));
+    circuit.tags = action === 'set' ? normalizeTags(names)
+      : action === 'add' ? normalizeTags([...circuit.tags, ...names])
+        : circuit.tags.filter((tag) => !drop.has(tag.toLowerCase()));
+    const text = circuit.tags.length ? circuit.tags.map((tag) => `#${tag}`).join(' ') : '(no tags)';
+    return result(text, [...circuit.tags], circuit.tags.join('\n') !== before);
   }
   if (cmd === 'tidy') {
     if (!pos.length) throw new Error('usage: tidy <refdes> ...');
@@ -13307,6 +13320,112 @@ const vcm = defineSymbol({
 __exports.vcm = vcm;
 };
 
+__modules["src/core/design-index.js"] = function (__require, __exports) {
+__exports.parseTags = parseTags;
+__exports.tagsText = tagsText;
+__exports.searchKey = searchKey;
+__exports.designIndex = designIndex;
+__exports.searchDesign = searchDesign;
+let isReferenceMarker, normalizeTags; __bind(() => { ({ isReferenceMarker, normalizeTags } = __require("src/core/model.js")); });
+/**
+ * What a design contains, for searching a workspace: its tags, parts (name,
+ * label, type), named nets, and texts, each with where it is drawn. It is
+ * small and plain JSON, so the Atlas keeps it beside a design's cached
+ * drawing and never reparses an unchanged file to search it.
+ *
+ * Matching looks through markup: `vcm`, `V_CM`, and `V_{CM}` are the same
+ * word, as are `phi1` and `$\phi_1$`.
+ */
+
+
+
+
+
+/** Tags as typed in a tag field: words split on spaces or commas. */
+function parseTags(text) {
+  return normalizeTags(String(text ?? '').split(/[\s,]+/));
+}
+
+/** Tags as a tag field shows them. */
+function tagsText(tags) {
+  return normalizeTags(tags).join(' ');
+}
+
+/** Text as it is searched: lower case, markup and spacing gone. */
+function searchKey(text) {
+  return String(text ?? '').toLowerCase().replace(/[\s$\\_^{}]/g, '');
+}
+
+const box = (r) => ({ x: r.x, y: r.y, w: r.w, h: r.h });
+
+/** A wire segment as a thin box along it, to highlight the wire itself. */
+function segmentBox(a, b, pad = 10) {
+  return { x: Math.min(a.x, b.x) - pad, y: Math.min(a.y, b.y) - pad, w: Math.abs(b.x - a.x) + 2 * pad, h: Math.abs(b.y - a.y) + 2 * pad };
+}
+
+/**
+ * The index of one circuit: `{ tags, items }`, each item
+ * `{ kind: 'part'|'net'|'text', id, text, type?, boxes }` in drawing units.
+ */
+function designIndex(circuit) {
+  const items = [];
+  for (const component of circuit.components.values()) {
+    if (component.type === 'solder') continue;
+    const label = circuit.labelOf(component.refdes);
+    const words = [isReferenceMarker(component) && !label ? '' : component.refdes, label?.text, component.type === 'block' ? component.value : ''];
+    items.push({
+      kind: 'part',
+      id: component.refdes,
+      text: words.filter(Boolean).join(' '),
+      type: component.type,
+      boxes: [box(component.bboxWorld())],
+    });
+  }
+  for (const net of circuit.nets.values()) {
+    if (!net.name) continue;
+    const boxes = [];
+    for (const path of net.paths()) for (let i = 1; i < path.length; i++) boxes.push(segmentBox(path[i - 1], path[i]));
+    for (const label of circuit.netLabels(net)) boxes.push(box(label.inkRect()));
+    items.push({ kind: 'net', id: net.id, text: net.name, boxes });
+  }
+  for (const label of circuit.labels.values()) {
+    if (label.owner || label.netId || label.role || !label.text) continue;
+    items.push({ kind: 'text', id: label.id, text: label.text, boxes: [box(label.inkRect())] });
+  }
+  return { tags: normalizeTags(circuit.tags), items };
+}
+
+/**
+ * Search one design. Every word of `query` must be found -- in the design's
+ * name, its tags, or one of its items (a part's type counts: `pmos`,
+ * `current source`); `#word` looks only at tags. Returns null when the design
+ * does not match, else `{ hits }`: the items that matched a word.
+ */
+function searchDesign(index, name, query) {
+  const terms = String(query ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!terms.length) return null;
+  const tagKeys = (index?.tags || []).map(searchKey);
+  const items = index?.items || [];
+  const hits = new Set();
+  for (const term of terms) {
+    const tagOnly = term.startsWith('#');
+    const key = searchKey(tagOnly ? term.slice(1) : term);
+    if (!key) continue;
+    const inTags = tagKeys.some((tag) => tag.includes(key));
+    if (tagOnly) {
+      if (!inTags) return null;
+      continue;
+    }
+    const matching = items.filter((item) => searchKey(item.text).includes(key) || (item.type && searchKey(item.type).includes(key)));
+    for (const item of matching) hits.add(item);
+    if (!matching.length && !inTags && !searchKey(name).includes(key)) return null;
+  }
+  return { hits: [...hits] };
+}
+
+__exports.normalizeTags = normalizeTags;
+};
+
 __modules["src/core/document.js"] = function (__require, __exports) {
 __exports.validDocumentName = validDocumentName;
 __exports.documentKind = documentKind;
@@ -13850,6 +13969,7 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 
 __modules["src/core/model.js"] = function (__require, __exports) {
 __exports.canonicalNetName = canonicalNetName;
+__exports.normalizeTags = normalizeTags;
 __exports.referenceMarkerInfo = referenceMarkerInfo;
 __exports.referenceMarkerGlobalNames = referenceMarkerGlobalNames;
 __exports.isReferenceMarkerGlobalName = isReferenceMarkerGlobalName;
@@ -13980,6 +14100,19 @@ function serializedTerminalName(type, term) {
   if (term === 'CLKN') return 'CLKB';
   if (term === 'RSTN') return 'RSTB';
   return term;
+}
+
+/** A document's tags, normalized: trimmed, no leading `#`, unique, in order. */
+function normalizeTags(tags) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(tags) ? tags : []) {
+    const tag = String(raw ?? '').trim().replace(/^#+/, '').replace(/\s+/g, '-');
+    if (!tag || seen.has(tag.toLowerCase())) continue;
+    seen.add(tag.toLowerCase());
+    out.push(tag);
+  }
+  return out;
 }
 
 function referenceMarkerInfo(type) {
@@ -15716,6 +15849,8 @@ class Circuit {
     this.netHighlights = new Map();
     /** Presentation steps over this drawing (see beats.js). */
     this.beats = [];
+    // Document tags, for finding a design in a workspace (the Atlas search).
+    this.tags = [];
     this._routingEnvCache = new Map();
   }
 
@@ -20027,6 +20162,7 @@ class Circuit {
       suppressedJunctions: [...this.suppressedJunctions],
       ...this._netHighlightsJSON(),
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
+      ...(this.tags.length ? { tags: [...this.tags] } : {}),
     };
   }
 
@@ -20041,6 +20177,7 @@ class Circuit {
     const circuit = new Circuit();
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
+    circuit.tags = normalizeTags(data.tags);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }
@@ -28029,6 +28166,7 @@ __exports.onAtlasKey = onAtlasKey;
 __exports.installAtlas = installAtlas;
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
+let designIndex, parseTags, searchDesign, tagsText; __bind(() => { ({ designIndex, parseTags, searchDesign, tagsText } = __require("src/core/design-index.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sheet.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -28041,6 +28179,8 @@ let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPa
 let toggleTheme; __bind(() => { ({ toggleTheme } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let render, setLabelSelection, setSelection; __bind(() => { ({ render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let setDocumentTags; __bind(() => { ({ setDocumentTags } = __require("src/web/tags-ui.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -28069,15 +28209,23 @@ let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); 
 
 
 
+
+
+
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
 const titleEl = document.getElementById('atlas-title');
 const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
+const searchEl = document.getElementById('atlas-search');
+
+/** The workspace search outlives one visit, so a design found, opened, and
+ *  left can be followed by the next match. Session state only. */
+let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · Z zooms to it · F fits all · Esc returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -28200,14 +28348,17 @@ const EMPTY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${8 * GRID}" h
 /** The design as it stands: the open one from the editor, unsaved edits and
  *  all; the others from their files, through the cache. */
 async function drawingFor(documentInfo, current) {
-  if (current) return { svg: drawingSvg(editor.circuit), revision: null };
+  if (current) return { svg: drawingSvg(editor.circuit), index: designIndex(editor.circuit), revision: null };
   const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v3');
-  const cached = key && await cacheGet(key);
-  if (cached) return { svg: cached, revision: documentInfo.revision };
+  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v1');
+  const [cached, cachedIndex] = key ? await Promise.all([cacheGet(key), cacheGet(indexKey)]) : [null, null];
+  if (cached && cachedIndex) return { svg: cached, index: cachedIndex, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
-  const svg = drawingSvg(loadDocument(data.state));
-  if (key) await cachePut(key, svg);
-  return { svg, revision: documentInfo.revision };
+  const circuit = loadDocument(data.state);
+  const svg = cached || drawingSvg(circuit);
+  const index = designIndex(circuit);
+  if (key) await Promise.all([cached ? null : cachePut(key, svg), cachePut(indexKey, index)]);
+  return { svg, index, revision: documentInfo.revision };
 }
 
 /** The symbol reference: one sheet, built from the registry on the spot. */
@@ -28237,9 +28388,9 @@ async function loadWorkspace(generation) {
   for (const [index, doc] of documents.entries()) {
     const current = doc.path === editor.currentDocumentPath;
     try {
-      const { svg, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
+      const { svg, index, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
       const box = viewBoxOf(svg);
-      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, revision, current, svg, box });
+      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, revision, current, svg, box, index });
     } catch (err) {
       logLine(`Atlas: could not draw ${doc.name}: ${err.message}`, 'error');
     }
@@ -28270,6 +28421,7 @@ async function loadWorkspace(generation) {
   state.bounds = bounds;
   state.revealAt = performance.now();
   statusEl.textContent = `${entries.length} design${entries.length === 1 ? '' : 's'}`;
+  applySearch(lastQuery);
   void trimCache();
   return true;
 }
@@ -28436,7 +28588,12 @@ function draw() {
   if (reveal < 1) requestDraw();
   for (const { tile, rect, detail } of placed) {
     const entry = state.entries.get(tile.id);
-    ctx.globalAlpha = entry.current ? 1 : reveal;
+    const found = state.matches?.get(tile.id);
+    // A search fades every design it does not find; what it finds in one is
+    // marked under the drawing, like a highlighter.
+    const fade = state.matches && !found ? 0.18 : 1;
+    if (found?.hits.length) drawHits(ctx, tile, entry, found.hits, palette);
+    ctx.globalAlpha = (entry.current ? 1 : reveal) * fade;
     const level = detail === 'small' ? 'small' : 'large';
     const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
       state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
@@ -28461,6 +28618,179 @@ function draw() {
   state.wanted = wanted;
   void pump();
   syncVectorOverlays(vector, moving);
+}
+
+/** A search's hits in one design: a translucent mark under each. */
+function drawHits(ctx, tile, entry, hits, palette) {
+  const dx = tile.x - entry.box.x;
+  const dy = tile.y - entry.box.y;
+  ctx.save();
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = palette.accent;
+  for (const hit of hits) {
+    for (const b of hit.boxes) {
+      const rect = worldToScreen({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h });
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    }
+  }
+  ctx.restore();
+}
+
+// ----- search ---------------------------------------------------------------
+
+/** Search the designs for `query` (core/design-index.js); an empty query
+ *  shows every design again. */
+function applySearch(query) {
+  if (!state || state.source !== 'workspace') return;
+  lastQuery = query;
+  const text = query.trim();
+  if (!text) {
+    state.matches = null;
+    statusEl.textContent = `${state.tiles.length} design${state.tiles.length === 1 ? '' : 's'}`;
+    for (const el of state.overlays.values()) el.style.opacity = '';
+    requestDraw();
+    return;
+  }
+  state.matches = new Map();
+  for (const tile of state.tiles) {
+    const entry = state.entries.get(tile.id);
+    const found = searchDesign(entry.index, entry.name, text);
+    if (found) state.matches.set(tile.id, found);
+  }
+  const count = state.matches.size;
+  statusEl.textContent = count
+    ? `${count} of ${state.tiles.length} design${state.tiles.length === 1 ? '' : 's'} · Enter steps through them`
+    : 'No design matches';
+  for (const [id, el] of state.overlays) el.style.opacity = state.matches.has(id) ? '' : '0.18';
+  // One design left is the one being looked for: pick it, so Esc and Enter
+  // open it.
+  if (count === 1) {
+    const only = tileById([...state.matches.keys()][0]);
+    if (only && state.selected !== only.id) focusTile(only);
+  }
+  requestDraw();
+}
+
+// ----- tags ---------------------------------------------------------------------
+
+/** `#` on a picked design: its tags in a field at its caption. Enter saves
+ *  them -- into the editor for the open design, straight into the file for
+ *  any other -- and Escape or clicking away leaves them as they were. */
+function openTagEditor(tile) {
+  const entry = state.entries.get(tile.id);
+  if (!entry || state.tagEditor) return;
+  const rect = worldToScreen(tile);
+  const pane = paneSize();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'atlas-tags glass';
+  input.value = tagsText(entry.index?.tags);
+  input.placeholder = 'tags, separated by spaces · Enter saves';
+  input.setAttribute('aria-label', `Tags of ${entry.name}`);
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.style.left = `${Math.max(8, Math.min(rect.x, pane.w - 280))}px`;
+  input.style.top = `${Math.max(56, Math.min(rect.y + rect.h + 6, pane.h - 80))}px`;
+  rootEl.appendChild(input);
+  state.tagEditor = input;
+  input.focus();
+  input.select();
+  let closed = false;
+  // Removing the field blurs it, which calls this again.
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    input.remove();
+    if (state?.tagEditor === input) state.tagEditor = null;
+    rootEl.focus({ preventScroll: true });
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      const text = input.value;
+      close();
+      void saveTags(entry, text);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      close();
+    }
+  });
+  input.addEventListener('blur', close);
+}
+
+/** Give a design new tags. Another design's file is rewritten with only its
+ *  tags changed; its cached drawing moves to the new revision as it is. */
+async function saveTags(entry, text) {
+  const tags = parseTags(text);
+  if (tagsText(tags) === tagsText(entry.index?.tags)) return;
+  try {
+    if (entry.current) {
+      setDocumentTags(text);
+      entry.index = designIndex(editor.circuit);
+    } else {
+      const data = await persistence.load(entry.path);
+      const document = { ...data.state };
+      if (tags.length) document.tags = tags;
+      else delete document.tags;
+      const saved = await persistence.save({ path: entry.path }, document, { overwrite: true });
+      const index = { ...(entry.index || designIndex(loadDocument(document))), tags };
+      const revision = saved?.revision || null;
+      if (revision) {
+        await cachePut(renderingKey(entry.path, revision, 'svg-v3'), entry.svg);
+        await cachePut(renderingKey(entry.path, revision, 'index-v1'), index);
+        for (const level of ['small', 'large']) {
+          const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
+          if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);
+        }
+      }
+      entry.revision = revision;
+      entry.index = index;
+      logLine(`${entry.name}: ${tags.length ? tags.map((tag) => `#${tag}`).join(' ') : 'tags cleared'} (saved)`);
+    }
+  } catch (err) {
+    logLine(`Could not tag ${entry.name}: ${err.message || err}`, 'error');
+    return;
+  }
+  if (!state) return;
+  applySearch(lastQuery);
+  requestDraw();
+}
+
+/** Esc in the search: back to the desk with the search still on and a found
+ *  design picked, so Enter opens it. */
+function leaveSearch() {
+  const tiles = navigableTiles();
+  if (state.matches && tiles.length && !state.matches.has(state.selected)) focusTile(tiles[0]);
+  rootEl.focus({ preventScroll: true });
+  requestDraw();
+}
+
+/** Esc on the desk drops a search before it leaves the Atlas. */
+function clearSearch() {
+  if (searchEl) searchEl.value = '';
+  applySearch('');
+}
+
+/** The designs a search found, in desk order (or all, with no search). */
+function navigableTiles() {
+  return state.matches ? state.tiles.filter((tile) => state.matches.has(tile.id)) : state.tiles;
+}
+
+/** Enter in the search: the next (Shift: previous) design it found, zoomed
+ *  to so its marks are readable. */
+function stepMatch(step) {
+  const tiles = navigableTiles();
+  if (!tiles.length) return;
+  const index = tiles.findIndex((tile) => tile.id === state.selected);
+  const next = tiles[index < 0 ? (step > 0 ? 0 : tiles.length - 1) : (index + step + tiles.length) % tiles.length];
+  focusTile(next, { zoom: true });
+}
+
+function focusSearch() {
+  if (!searchEl || state?.source !== 'workspace') return;
+  searchEl.focus();
+  searchEl.select();
 }
 
 /** The editor's grid: one-unit lines every cell, fading out as the cells
@@ -28558,7 +28888,8 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   ctx.font = `${selected ? 600 : 500} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   ctx.fillStyle = selected || hovered ? palette.text : palette.dim;
   ctx.textBaseline = 'top';
-  ctx.fillText(fitText(ctx, `${marker}${entry.name}`, room), rect.x, rect.y + rect.h + size * 0.6);
+  const tags = entry.index?.tags?.length ? `   ${entry.index.tags.map((tag) => `#${tag}`).join(' ')}` : '';
+  ctx.fillText(fitText(ctx, `${marker}${entry.name}${tags}`, room), rect.x, rect.y + rect.h + size * 0.6);
 }
 
 /** `text`, cut with an ellipsis to fit `width` pixels. */
@@ -28599,6 +28930,7 @@ function syncVectorOverlays(list, moving = false) {
       const svg = el.querySelector('svg');
       svg?.removeAttribute('width');
       svg?.removeAttribute('height');
+      if (state.matches && !state.matches.has(tile.id)) el.style.opacity = '0.18';
       overlayEl.appendChild(el);
       state.overlays.set(tile.id, el);
       // Until the SVG has painted once, its image stands in for it.
@@ -28706,6 +29038,10 @@ async function openAtlas({ source = 'workspace' } = {}) {
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
   };
   if (hintEl) hintEl.textContent = HINTS[source];
+  if (searchEl) {
+    searchEl.hidden = source !== 'workspace';
+    searchEl.value = source === 'workspace' ? lastQuery : '';
+  }
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
@@ -28756,7 +29092,7 @@ function showOpenDesign() {
   state.view = view;
   state.fromEditor = true;
   if (path && box && svg !== EMPTY_SVG) {
-    const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box };
+    const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box, index: designIndex(editor.circuit) };
     state.entries = new Map([[path, entry]]);
     state.tiles = [{ id: path, x: box.x, y: box.y, w: box.w, h: box.h }];
     state.bounds = { ...box };
@@ -28810,8 +29146,10 @@ async function openTile(tile) {
   }
   const entry = state.entries.get(tile.id);
   state.selected = tile.id;
+  const hits = state.matches?.get(tile.id)?.hits || [];
   if (entry.current) {
     await closeAtlas();
+    selectHits(hits);
     return;
   }
   const { w, h } = paneSize();
@@ -28827,6 +29165,21 @@ async function openTile(tile) {
   const exact = editorEquivalentView(tile, entry);
   if (exact) await animateView(exact, 220);
   finishClose();
+  selectHits(hits);
+}
+
+/** What the search found in the design just opened becomes the selection. */
+function selectHits(hits) {
+  if (!hits.length) return;
+  const circuit = editor.circuit;
+  const parts = hits.filter((hit) => hit.kind === 'part' && circuit.components.has(hit.id)).map((hit) => hit.id);
+  const labels = hits.filter((hit) => hit.kind === 'text' && circuit.labels.has(hit.id)).map((hit) => hit.id);
+  const nets = hits.filter((hit) => hit.kind === 'net' && circuit.nets.has(hit.id)).map((hit) => hit.id);
+  setSelection(parts);
+  setLabelSelection(labels, undefined, true);
+  editor.selectedNets = new Set(nets);
+  logLine(`${hits.length} match${hits.length === 1 ? '' : 'es'} for "${lastQuery.trim()}" selected`);
+  render();
 }
 
 // ----- input --------------------------------------------------------------------------
@@ -28836,16 +29189,22 @@ function onAtlasKey(ev) {
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
-  if (key === 'Escape' || key === 'Backspace') void closeAtlas();
+  if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
+  else if (key === 'Escape' && state.matches) clearSearch();
+  else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
   else if (key === 'Enter' && selected) void openTile(selected);
   else if (arrows[key]) {
-    const next = selected ? neighbourTile(state.tiles, selected, arrows[key]) : state.tiles[0];
+    // While a search is on, the arrows and Tab move among what it found.
+    const tiles = navigableTiles();
+    const next = selected && tiles.includes(selected) ? neighbourTile(tiles, selected, arrows[key]) : tiles[0];
     if (next) focusTile(next);
-  } else if (key === 'Tab' && state.tiles.length) {
-    const index = selected ? state.tiles.indexOf(selected) : -1;
+  } else if (key === 'Tab' && navigableTiles().length) {
+    const tiles = navigableTiles();
+    const index = selected ? tiles.indexOf(selected) : -1;
     const step = ev.shiftKey ? -1 : 1;
-    focusTile(state.tiles[(index + step + state.tiles.length) % state.tiles.length]);
-  } else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
+    focusTile(tiles[(index + step + tiles.length) % tiles.length]);
+  } else if (key === '#' && selected && state.source === 'workspace') openTagEditor(selected);
+  else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centreOf().x, centreOf().y);
   else if (key === '-' || key === '_') zoomAbout(1.5, centreOf().x, centreOf().y);
@@ -28873,7 +29232,7 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || ev.target.closest?.('.atlas-head')) return;
+  if (!state || ev.target.closest?.('.atlas-head, .atlas-tags')) return;
   if (ev.button === 2) {
     ev.preventDefault();
     stopAnimation();
@@ -29003,6 +29362,22 @@ function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  searchEl?.addEventListener('input', () => applySearch(searchEl.value));
+  searchEl?.addEventListener('keydown', (ev) => {
+    // The desk's own keys (z, f, arrows) are text here.
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      stepMatch(ev.shiftKey ? -1 : 1);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      leaveSearch();
+    } else if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      rootEl.focus({ preventScroll: true });
+      stepMatch(1);
+    }
+  });
   document.getElementById('btn-symbols')?.addEventListener('click', () => void openAtlas({ source: 'symbols' }));
   // The theme flips inside a view transition, a frame after the key.
   new MutationObserver(() => requestDraw()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
@@ -30337,6 +30712,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
   { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labelled wire stubs)' },
   { name: 'swap', help: 'swap <refdes> [type] (change a part\'s type, keeping its wiring)' },
+  { name: 'tag', aliases: ['tags', 'label-design'], help: 'tag add|rm|set NAME ... (the document\'s tags, searched in the Atlas)' },
   { name: 'fix', aliases: ['autofix', 'repair'], help: 'fix (apply every safe Design Check repair)' },
   { name: 'rail', help: 'rail REF.TERM ground|supply (a rail wired to a pin)' },
   { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },
@@ -37294,6 +37670,7 @@ let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, 
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
 let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } = __require("src/web/side-panel.js")); });
 let installFindReplace, openFind, openReplace, renderTextMatches; __bind(() => { ({ installFindReplace, openFind, openReplace, renderTextMatches } = __require("src/web/find-replace-ui.js")); });
+let installTagsField, renderTagsField; __bind(() => { ({ installTagsField, renderTagsField } = __require("src/web/tags-ui.js")); });
 let installCommandLine; __bind(() => { ({ installCommandLine } = __require("src/web/command-line-ui.js")); });
 let atlasOpen, installAtlas, onAtlasKey, openAtlas; __bind(() => { ({ atlasOpen, installAtlas, onAtlasKey, openAtlas } = __require("src/web/atlas.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
@@ -37315,6 +37692,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -39502,6 +39880,7 @@ function render() {
     renderNets();
     renderDetail();
   }
+  renderTagsField();
   renderCheckSummary();
   syncAnalysisDock();
   renderBeatStrip();
@@ -43597,6 +43976,7 @@ canvasEl.addEventListener(
 
 installSidePanel();
 installFindReplace();
+installTagsField();
 const TERM_LETTERS = new Set(['a', 'b', 'c', 'd', 'e', 'g', 'p', 's']);
 
 function onWireKey(key) {
@@ -43969,6 +44349,13 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'T') {
     tidyNow();
+    return;
+  }
+
+  // / searches, as Ctrl/Cmd+F does, here and in the Atlas. (While wiring it
+  // flips the draft corner instead; see onWireKey.)
+  if (key === '/') {
+    openFind();
     return;
   }
 
@@ -47844,6 +48231,71 @@ function installStyleControls() {
 
 };
 
+__modules["src/web/tags-ui.js"] = function (__require, __exports) {
+__exports.setDocumentTags = setDocumentTags;
+__exports.renderTagsField = renderTagsField;
+__exports.installTagsField = installTagsField;
+let parseTags, tagsText; __bind(() => { ({ parseTags, tagsText } = __require("src/core/design-index.js")); });
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let commit, render; __bind(() => { ({ commit, render } = __require("src/web/main.js")); });
+/**
+ * The open document's tags, in the side panel: a text field of
+ * space-separated words. Enter or leaving the field sets them (one undo
+ * entry, saved with the document); Escape puts the field back. The Atlas
+ * finds designs by them (`#tag`); docs/atlas.md.
+ */
+
+
+
+
+
+
+
+const fieldEl = document.getElementById('panel-tags');
+
+/** Set the open document's tags from typed text; returns whether they changed. */
+function setDocumentTags(text) {
+  const next = parseTags(text);
+  if (tagsText(next) === tagsText(editor.circuit.tags)) return false;
+  commit(() => { editor.circuit.tags = next; });
+  logLine(next.length ? `tags: ${next.map((tag) => `#${tag}`).join(' ')}` : 'tags cleared');
+  return true;
+}
+
+/** Show the document's tags, unless they are being typed. */
+function renderTagsField() {
+  if (!fieldEl || document.activeElement === fieldEl) return;
+  const text = tagsText(editor.circuit.tags);
+  if (fieldEl.value !== text) fieldEl.value = text;
+}
+
+function installTagsField() {
+  if (!fieldEl) return;
+  let cancelled = false;
+  fieldEl.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      canvasEl.focus({ preventScroll: true });
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      cancelled = true;
+      fieldEl.value = tagsText(editor.circuit.tags);
+      canvasEl.focus({ preventScroll: true });
+    }
+  });
+  fieldEl.addEventListener('blur', () => {
+    if (!cancelled) setDocumentTags(fieldEl.value);
+    cancelled = false;
+    fieldEl.value = tagsText(editor.circuit.tags);
+    render();
+  });
+}
+
+};
+
 __modules["src/web/tips.js"] = function (__require, __exports) {
 __exports.loadTipState = loadTipState;
 // Contextual tips: one short line in a corner of the canvas, offered when the
@@ -48986,7 +49438,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+E', 'open the export dialog'],
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
-    ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
+    ['/ / Ctrl/Cmd+F', 'find parts, nets, and any label text (in the Atlas: search every design); Esc clears, then returns to the canvas'],
     ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
     [':', 'find and run anything: type words to search every action, toggle, and menu item, Up/Down pick, Enter runs; or type a command (:connect R1.a R2.a); Up/Down on an empty line recall history'],
     [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],

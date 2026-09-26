@@ -95,6 +95,19 @@ function serializedTerminalName(type, term) {
   return term;
 }
 
+/** A document's tags, normalized: trimmed, no leading `#`, unique, in order. */
+export function normalizeTags(tags) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(tags) ? tags : []) {
+    const tag = String(raw ?? '').trim().replace(/^#+/, '').replace(/\s+/g, '-');
+    if (!tag || seen.has(tag.toLowerCase())) continue;
+    seen.add(tag.toLowerCase());
+    out.push(tag);
+  }
+  return out;
+}
+
 export function referenceMarkerInfo(type) {
   return REFERENCE_MARKER_INFO[type] || null;
 }
@@ -1829,6 +1842,8 @@ export class Circuit {
     this.netHighlights = new Map();
     /** Presentation steps over this drawing (see beats.js). */
     this.beats = [];
+    // Document tags, for finding a design in a workspace (the Atlas search).
+    this.tags = [];
     this._routingEnvCache = new Map();
   }
 
@@ -6140,6 +6155,7 @@ export class Circuit {
       suppressedJunctions: [...this.suppressedJunctions],
       ...this._netHighlightsJSON(),
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
+      ...(this.tags.length ? { tags: [...this.tags] } : {}),
     };
   }
 
@@ -6154,6 +6170,7 @@ export class Circuit {
     const circuit = new Circuit();
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
+    circuit.tags = normalizeTags(data.tags);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }
