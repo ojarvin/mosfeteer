@@ -124,7 +124,7 @@ test('the key strip offers at most three keys for what is selected or pointed at
 test('the key strip follows the pointer when nothing is selected', () => {
   assert.deepEqual(keysOf({ hover: { pin: { connected: false } } }), ['drag', 'g / v', 'w']);
   assert.deepEqual(keysOf({ hover: { pin: { connected: true } } }), ['drag', 'w']);
-  assert.deepEqual(keysOf({ hover: { part: 'resistor' } }), ['q', 'right-drag', 'double-click']);
+  assert.deepEqual(keysOf({ hover: { part: 'resistor' } }), ['t', 'q', 'right-drag']);
   // A selection outranks the pointer.
   assert.deepEqual(keysOf({ selection: { labels: 1 }, hover: { part: 'resistor' } }), ['t', 'Shift+←/→', 'arrows']);
 });

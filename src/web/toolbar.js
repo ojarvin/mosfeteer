@@ -191,7 +191,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Space', 'wire stubs: a labelled stub (net1, net2, ...) on every unconnected terminal of the selected parts; any that would short are skipped'],
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
-    ['t', 'edit the primary selected label (no-op otherwise)'],
+    ['t / = / F2', 'edit the text of the selection (a label, a part\'s name, a net\'s label) or of what the cursor points at; with several switches or rails selected, the phase or rail name goes to all'],
     ['Ctrl/Cmd+I', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+B', 'toggle bold on selected labels'],
   ]],
@@ -261,7 +261,7 @@ export const EDITOR_KEYMAP = Object.freeze([
   ['labels', [
     ['Shift+L', 'click an unambiguous wire to place a net label; Esc exits'],
     ['Shift+N', 'click anywhere to place one annotation; returns to selection'],
-    ['t', 'edit the primary selected label'],
+    ['t / = / F2', 'edit the selected (or pointed-at) label or part name'],
     ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
     ['dd / Delete', 'delete the selected label'],
     ['double-click', 'edit the label text inline'],

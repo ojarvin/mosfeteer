@@ -131,9 +131,9 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
     return hints;
   }
   if (hover.part) {
+    add('t', 'edit its label');
     add('q', 'change type');
     add('right-drag', 'quick actions');
-    add('double-click', 'rename');
     return hints;
   }
   if (empty) {

@@ -23449,6 +23449,73 @@ function netLabelPasteKind(net, name) {
 
 };
 
+__modules["src/core/shared-labels.js"] = function (__require, __exports) {
+__exports.sharedLabelKind = sharedLabelKind;
+__exports.sharedLabelPeers = sharedLabelPeers;
+__exports.setSharedLabel = setSharedLabel;
+let isReferenceMarker, referenceMarkerInfo; __bind(() => { ({ isReferenceMarker, referenceMarkerInfo } = __require("src/core/model.js")); });
+let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
+/**
+ * Labels that carry a shared value rather than an identity: a switch's phase
+ * and a rail marker's local rail name. Several parts may hold the same one, so
+ * one edit can set it on a whole selection. Part names, which must be unique,
+ * never go through here.
+ */
+
+
+
+
+/** What kind of shared value a part's label holds, or null for a name. */
+function sharedLabelKind(component) {
+  if (!component) return null;
+  if (switchState(component)) return 'switch';
+  if (isReferenceMarker(component)) return component.type;
+  return null;
+}
+
+/** The parts among `refs` whose label holds the same kind of value as
+ *  `owner`'s: every switch for a switch, the same rail type for a marker. */
+function sharedLabelPeers(circuit, owner, refs = []) {
+  const kind = sharedLabelKind(owner);
+  if (!kind) return [];
+  return refs
+    .filter((refdes) => refdes !== owner.refdes)
+    .map((refdes) => circuit.components.get(refdes))
+    .filter((component) => sharedLabelKind(component) === kind);
+}
+
+/** Set the phase or local rail name of `refdes`; empty text clears it (a
+ *  marker goes back to its global rail). */
+function setSharedLabel(circuit, refdes, text) {
+  const component = circuit.getComponent(refdes);
+  const kind = sharedLabelKind(component);
+  if (!kind) throw new Error(`${refdes} has a name, not a shared label`);
+  const value = String(text ?? '').trim();
+  if (kind === 'switch') {
+    circuit.setValue(refdes, value);
+    return component;
+  }
+  let label = circuit.labelOf(refdes);
+  if (!value) {
+    if (label) {
+      label.setText('');
+      circuit.removeLabel(label.id);
+    }
+    return component;
+  }
+  label ||= circuit.addLabel({
+    text: '',
+    owner: refdes,
+    offset: referenceMarkerInfo(component.type).labelOffset,
+    align: 'parent',
+    style: { color: component.style.color },
+  });
+  label.setText(value);
+  return component;
+}
+
+};
+
 __modules["src/core/stubs.js"] = function (__require, __exports) {
 __exports.addTerminalStubs = addTerminalStubs;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -35546,17 +35613,19 @@ __exports.inlineEditLabel = inlineEditLabel;
 let INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup } = __require("src/core/model.js")); });
 let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
+let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel; __bind(() => { ({ confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel } = __require("src/web/net-names.js")); });
-let commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, snapshot, supplyBarGroup; __bind(() => { ({ commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, snapshot, supplyBarGroup } = __require("src/web/main.js")); });
+let commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, selectedComps, snapshot, supplyBarGroup; __bind(() => { ({ commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, selectedComps, snapshot, supplyBarGroup } = __require("src/web/main.js")); });
 /**
  * The inline editors that open over the canvas: label and annotation text,
  * a part's name and child labels, a supply bar's rail name, a reference
  * marker's value, and a schematic block's caption.
  */
+
 
 
 
@@ -35725,6 +35794,18 @@ function inlineEditLabel(label, options = {}) {
   const nameBar = (text) => {
     if (barRefs.length > 1) editor.circuit.nameSupplyBar(barRefs, text);
   };
+  // Editing one of several selected switches (or rail markers of one type)
+  // sets the phase (rail name) on all of them, in the same undo entry.
+  const selectedRefs = selectedComps().map((c) => c.refdes);
+  const labelOwner = label.owner && !label.role ? editor.circuit.components.get(label.owner) : null;
+  const peers = labelOwner && selectedRefs.includes(labelOwner.refdes)
+    ? sharedLabelPeers(editor.circuit, labelOwner, selectedRefs).map((c) => c.refdes)
+    : [];
+  const namePeers = (text) => {
+    const live = peers.filter((refdes) => editor.circuit.components.has(refdes));
+    for (const refdes of live) setSharedLabel(editor.circuit, refdes, text);
+    if (live.length) logLine(`${text ? `"${text}"` : 'cleared'} on ${[labelOwner.refdes, ...live].join(', ')}`);
+  };
   editor.lastLabelClick = null; // starting an edit clears any pending double-click state
   const pane = document.querySelector('.canvas-pane');
   const align = label.textAlign();
@@ -35848,6 +35929,7 @@ function inlineEditLabel(label, options = {}) {
           label.setText(v);
           if (!v) editor.circuit.removeLabel(label.id);
           nameBar(v);
+          namePeers(v);
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
@@ -35876,7 +35958,7 @@ function inlineEditLabel(label, options = {}) {
       if (applyText && stripMathDelimiters(v)) {
         if (v !== label.text) commit(() => renameLabelThroughModel(label, v));
       } else if (editor.circuit.labels.has(label.id)) commit(() => editor.circuit.removeLabel(label.id));
-    } else if (applyText && v && v !== label.text) {
+    } else if (applyText && v && (v !== label.text || peers.length)) {
       const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
       // Interface pins validate exactly like every other instance label: the
       // label is the component's identity, and a port additionally names its
@@ -35895,6 +35977,7 @@ function inlineEditLabel(label, options = {}) {
         commit(() => {
           renameLabelThroughModel(label, v);
           nameBar(v);
+          namePeers(v);
         });
       }
     }
@@ -35902,6 +35985,7 @@ function inlineEditLabel(label, options = {}) {
       if (label.owner && isReferenceMarker(editor.circuit.components.get(label.owner))) label.setText('');
       editor.circuit.removeLabel(label.id);
       nameBar('');
+      namePeers('');
     });
     render();
     return true;
@@ -36565,6 +36649,7 @@ __exports.canvasMouseMove = canvasMouseMove;
 __exports.canvasMouseUp = canvasMouseUp;
 __exports.transformPendingComponent = transformPendingComponent;
 __exports.rememberAction = rememberAction;
+__exports.editSelectionText = editSelectionText;
 __exports.swapTargets = swapTargets;
 __exports.keyHintContext = keyHintContext;
 __exports.runLine = runLine;
@@ -43029,6 +43114,32 @@ function repeatLastAction(count = 1) {
   for (let i = 0; i < count; i++) lastAction.run();
 }
 
+/** t / = / F2: edit the text of what is selected -- a label, a part's name
+ *  (a switch's phase, a rail's name), a net's label -- else of what the
+ *  cursor points at. Several switches or rails take the same edit. */
+function editSelectionText() {
+  const editPart = (part) => {
+    if (part.type === 'solder') hintLine('a junction dot has no text to edit');
+    else openComponentChildLabelEditor(part);
+  };
+  const label = selectedLabel() || selectedLabels()[0];
+  if (label) return inlineEditLabel(label);
+  const part = selectedComp() || selectedComps()[0];
+  if (part) return editPart(part);
+  const netId = [...selectedNets][0] || selectedWire?.netId;
+  if (netId) {
+    const netLabel = circuit.nets.has(netId) && circuit.netLabels(netId)[0];
+    if (netLabel) return inlineEditLabel(netLabel);
+    hintLine('this net has no label to edit; Shift+L places one to name it');
+    return;
+  }
+  const pointed = pickLabel(cursor);
+  if (pointed) return inlineEditLabel(pointed);
+  const hovered = compUnderCursor();
+  if (hovered) return editPart(hovered);
+  hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
+}
+
 /** The parts q swaps: the selected ones, else the one under the cursor. */
 function swapTargets() {
   const comps = selectedComps();
@@ -43205,15 +43316,8 @@ function onNormalKey(key, shiftKey = false) {
 
   // Normal-mode t edits only the primary selected label. Insert-mode t keeps
   // its separate label-placement behavior in onInsertKey.
-  if (key === 't') {
-    const lab = selectedLabel() || selectedLabels()[0];
-    if (lab) inlineEditLabel(lab);
-    else {
-      const part = selectedComp();
-      hintLine(part
-        ? `t edits a selected label; double-click ${part.refdes} to rename it`
-        : 't edits the selected label; click one first, or double-click any text');
-    }
+  if (key === 't' || key === '=') {
+    editSelectionText();
     return;
   }
 
@@ -44037,6 +44141,11 @@ window.addEventListener('keydown', (ev) => {
   if (key === 'F3') {
     ev.preventDefault();
     toggleRouteMode();
+    return;
+  }
+  if (key === 'F2' && mode === 'normal' && !wire && !directWire && !visual && !labelMode && !drag) {
+    ev.preventDefault();
+    editSelectionText();
     return;
   }
   if (key.startsWith('F') && /^F\d+$/.test(key)) return;
@@ -46318,7 +46427,6 @@ __exports.noteActionPrevented = noteActionPrevented;
 __exports.renderStatus = renderStatus;
 __exports.installStatusBar = installStatusBar;
 let LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
-let describeGuides; __bind(() => { ({ describeGuides } = __require("src/web/layout.js")); });
 let statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
@@ -46329,7 +46437,6 @@ let keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, 
  * readouts, the message chip, and the log it opens. The fields' wording is
  * in status-bar.js.
  */
-
 
 
 
@@ -46438,7 +46545,6 @@ function renderStatus() {
       ? `SYMMETRY about ${symmetryAxisText()}${editor.symmetry.settled ? ' (held)' : ''}${editor.activeSymmetryCells ? ` · ${editor.activeSymmetryCells} ${editor.activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${editor.activeSymmetryCells * 2} apart` : ''}${mirroring ? (editor.drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
       : `SYMMETRY armed at (${editor.symmetry.pin.x},${editor.symmetry.pin.y}) · move to mirror`);
   }
-  if (editor.activePlacementGuides.length) parts.push(describeGuides(editor.activePlacementGuides));
   if (editor.labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
   if (editor.labelMode === 'highlight') parts.push('click a wire, pin, net label, rail marker, or port to cycle its net color · 8 removes all · Esc exits');
   if (editor.labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
@@ -46691,9 +46797,9 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
     return hints;
   }
   if (hover.part) {
+    add('t', 'edit its label');
     add('q', 'change type');
     add('right-drag', 'quick actions');
-    add('double-click', 'rename');
     return hints;
   }
   if (empty) {
@@ -48181,7 +48287,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Space', 'wire stubs: a labelled stub (net1, net2, ...) on every unconnected terminal of the selected parts; any that would short are skipped'],
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
-    ['t', 'edit the primary selected label (no-op otherwise)'],
+    ['t / = / F2', 'edit the text of the selection (a label, a part\'s name, a net\'s label) or of what the cursor points at; with several switches or rails selected, the phase or rail name goes to all'],
     ['Ctrl/Cmd+I', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+B', 'toggle bold on selected labels'],
   ]],
@@ -48251,7 +48357,7 @@ const EDITOR_KEYMAP = Object.freeze([
   ['labels', [
     ['Shift+L', 'click an unambiguous wire to place a net label; Esc exits'],
     ['Shift+N', 'click anywhere to place one annotation; returns to selection'],
-    ['t', 'edit the primary selected label'],
+    ['t / = / F2', 'edit the selected (or pointed-at) label or part name'],
     ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
     ['dd / Delete', 'delete the selected label'],
     ['double-click', 'edit the label text inline'],

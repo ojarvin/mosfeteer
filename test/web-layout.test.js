@@ -366,9 +366,10 @@ test('the editor draws and names the guides it computed', () => {
   // Guides describe the object being placed or moved against what is already
   // committed, so the moving set and generated junction dots are not peers.
   assert.match(main, /!ghostRefs\.has\(component\.refdes\) && component\.type !== 'solder'/);
-  // The status line names the same relationship the dimension lines measure.
+  // The dimension lines alone carry the relationship: a status-line readout
+  // changed on every cursor step and drowned the tool's own hint.
   assert.match(main, /activePlacementGuides = placementGuide\?\.guides \|\| \[\]/);
-  assert.match(main, /parts\.push\(describeGuides\(activePlacementGuides\)\)/);
+  assert.doesNotMatch(main, /describeGuides\(/);
 
   const render = readFileSync(new URL('../src/core/render.js', import.meta.url), 'utf8');
   const overlay = render.slice(render.indexOf('if (opts.placementGuide?.guides?.length)'),

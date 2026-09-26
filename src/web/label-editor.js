@@ -7,12 +7,13 @@
 import { INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup } from '../core/model.js';
 import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
+import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
 import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
 import { logLine } from './status-bar-ui.js';
 import { editor } from './editor-state.js';
 import { confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel } from './net-names.js';
-import { commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, snapshot, supplyBarGroup } from './main.js';
+import { commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, selectedComps, snapshot, supplyBarGroup } from './main.js';
 
 /** Standard inline-editor keys: Enter or blur commits, Escape cancels, and
  *  Shift+Enter inserts a line break where the field accepts one. Extra keys
@@ -171,6 +172,18 @@ export function inlineEditLabel(label, options = {}) {
   const nameBar = (text) => {
     if (barRefs.length > 1) editor.circuit.nameSupplyBar(barRefs, text);
   };
+  // Editing one of several selected switches (or rail markers of one type)
+  // sets the phase (rail name) on all of them, in the same undo entry.
+  const selectedRefs = selectedComps().map((c) => c.refdes);
+  const labelOwner = label.owner && !label.role ? editor.circuit.components.get(label.owner) : null;
+  const peers = labelOwner && selectedRefs.includes(labelOwner.refdes)
+    ? sharedLabelPeers(editor.circuit, labelOwner, selectedRefs).map((c) => c.refdes)
+    : [];
+  const namePeers = (text) => {
+    const live = peers.filter((refdes) => editor.circuit.components.has(refdes));
+    for (const refdes of live) setSharedLabel(editor.circuit, refdes, text);
+    if (live.length) logLine(`${text ? `"${text}"` : 'cleared'} on ${[labelOwner.refdes, ...live].join(', ')}`);
+  };
   editor.lastLabelClick = null; // starting an edit clears any pending double-click state
   const pane = document.querySelector('.canvas-pane');
   const align = label.textAlign();
@@ -294,6 +307,7 @@ export function inlineEditLabel(label, options = {}) {
           label.setText(v);
           if (!v) editor.circuit.removeLabel(label.id);
           nameBar(v);
+          namePeers(v);
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
           logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
@@ -322,7 +336,7 @@ export function inlineEditLabel(label, options = {}) {
       if (applyText && stripMathDelimiters(v)) {
         if (v !== label.text) commit(() => renameLabelThroughModel(label, v));
       } else if (editor.circuit.labels.has(label.id)) commit(() => editor.circuit.removeLabel(label.id));
-    } else if (applyText && v && v !== label.text) {
+    } else if (applyText && v && (v !== label.text || peers.length)) {
       const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
       // Interface pins validate exactly like every other instance label: the
       // label is the component's identity, and a port additionally names its
@@ -341,6 +355,7 @@ export function inlineEditLabel(label, options = {}) {
         commit(() => {
           renameLabelThroughModel(label, v);
           nameBar(v);
+          namePeers(v);
         });
       }
     }
@@ -348,6 +363,7 @@ export function inlineEditLabel(label, options = {}) {
       if (label.owner && isReferenceMarker(editor.circuit.components.get(label.owner))) label.setText('');
       editor.circuit.removeLabel(label.id);
       nameBar('');
+      namePeers('');
     });
     render();
     return true;

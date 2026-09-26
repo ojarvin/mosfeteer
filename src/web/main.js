@@ -6400,6 +6400,32 @@ function repeatLastAction(count = 1) {
   for (let i = 0; i < count; i++) lastAction.run();
 }
 
+/** t / = / F2: edit the text of what is selected -- a label, a part's name
+ *  (a switch's phase, a rail's name), a net's label -- else of what the
+ *  cursor points at. Several switches or rails take the same edit. */
+export function editSelectionText() {
+  const editPart = (part) => {
+    if (part.type === 'solder') hintLine('a junction dot has no text to edit');
+    else openComponentChildLabelEditor(part);
+  };
+  const label = selectedLabel() || selectedLabels()[0];
+  if (label) return inlineEditLabel(label);
+  const part = selectedComp() || selectedComps()[0];
+  if (part) return editPart(part);
+  const netId = [...selectedNets][0] || selectedWire?.netId;
+  if (netId) {
+    const netLabel = circuit.nets.has(netId) && circuit.netLabels(netId)[0];
+    if (netLabel) return inlineEditLabel(netLabel);
+    hintLine('this net has no label to edit; Shift+L places one to name it');
+    return;
+  }
+  const pointed = pickLabel(cursor);
+  if (pointed) return inlineEditLabel(pointed);
+  const hovered = compUnderCursor();
+  if (hovered) return editPart(hovered);
+  hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
+}
+
 /** The parts q swaps: the selected ones, else the one under the cursor. */
 export function swapTargets() {
   const comps = selectedComps();
@@ -6576,15 +6602,8 @@ function onNormalKey(key, shiftKey = false) {
 
   // Normal-mode t edits only the primary selected label. Insert-mode t keeps
   // its separate label-placement behavior in onInsertKey.
-  if (key === 't') {
-    const lab = selectedLabel() || selectedLabels()[0];
-    if (lab) inlineEditLabel(lab);
-    else {
-      const part = selectedComp();
-      hintLine(part
-        ? `t edits a selected label; double-click ${part.refdes} to rename it`
-        : 't edits the selected label; click one first, or double-click any text');
-    }
+  if (key === 't' || key === '=') {
+    editSelectionText();
     return;
   }
 
@@ -7408,6 +7427,11 @@ window.addEventListener('keydown', (ev) => {
   if (key === 'F3') {
     ev.preventDefault();
     toggleRouteMode();
+    return;
+  }
+  if (key === 'F2' && mode === 'normal' && !wire && !directWire && !visual && !labelMode && !drag) {
+    ev.preventDefault();
+    editSelectionText();
     return;
   }
   if (key.startsWith('F') && /^F\d+$/.test(key)) return;

@@ -5,7 +5,6 @@
  */
 
 import { LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
-import { describeGuides } from './layout.js';
 import { statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { paneSize } from './canvas-view.js';
@@ -112,7 +111,6 @@ export function renderStatus() {
       ? `SYMMETRY about ${symmetryAxisText()}${editor.symmetry.settled ? ' (held)' : ''}${editor.activeSymmetryCells ? ` · ${editor.activeSymmetryCells} ${editor.activeSymmetryCells === 1 ? 'cell' : 'cells'} each side, ${editor.activeSymmetryCells * 2} apart` : ''}${mirroring ? (editor.drag?.mode === 'copyghost' ? ' · commits both' : ' · Enter places both') : ' · on the axis'}`
       : `SYMMETRY armed at (${editor.symmetry.pin.x},${editor.symmetry.pin.y}) · move to mirror`);
   }
-  if (editor.activePlacementGuides.length) parts.push(describeGuides(editor.activePlacementGuides));
   if (editor.labelMode === 'net') parts.push('click wire · selected/highlighted net resolves crossings · Esc cancel');
   if (editor.labelMode === 'highlight') parts.push('click a wire, pin, net label, rail marker, or port to cycle its net color · 8 removes all · Esc exits');
   if (editor.labelMode === 'annotation') parts.push('click anywhere for free text · Esc cancel');
