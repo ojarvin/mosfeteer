@@ -1111,6 +1111,289 @@ function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}) {
 __exports.AC_GROUND = AC_GROUND;
 };
 
+__modules["src/core/analysis/definitions.js"] = function (__require, __exports) {
+__exports.dimensionOf = dimensionOf;
+__exports.chooseDefinitions = chooseDefinitions;
+__exports.nameDefinitions = nameDefinitions;
+__exports.symbolsIn = symbolsIn;
+let structuralKey, symbolText; __bind(() => { ({ structuralKey, symbolText } = __require("src/core/analysis/present.js")); });
+/**
+ * Named sub-expressions for the displayed equations: the textbook's
+ * "where Z_1 = ...". A large parameter-only sum that recurs, or that sits in
+ * an equation too long to read at once, is shown as one symbol, and its
+ * definition is shown once below.
+ *
+ * This is presentation only. The renderer (`present.js`) swaps a named node
+ * for its symbol wherever the node occurs; nothing here changes a value.
+ * Sums that carry the frequency variable stay inline, so a denominator's
+ * structure in `s` is never hidden behind a name, although its coefficients
+ * may be named.
+ */
+
+
+const MIN_LEAVES = 5;
+const LONG_ROW_LEAVES = 16;
+const MAX_DEFINITIONS = 8;
+
+function children(node) {
+  switch (node?.kind) {
+    case 'rational': return [node.numerator, node.denominator];
+    case 'multiply': return node.factors;
+    case 'add': return node.terms;
+    case 'power': return [node.base];
+    case 'quadratic-formula': return [node.numerator?.linear, node.discriminant, node.denominator].filter(Boolean);
+    default: return [];
+  }
+}
+
+function leaves(node) {
+  if (node?.kind === 'symbol') return 1;
+  return children(node).reduce((sum, child) => sum + leaves(child), 0);
+}
+
+function carriesVariable(node, variable) {
+  if (node?.kind === 'symbol') return node.name === variable;
+  return children(node).some((child) => carriesVariable(child, variable));
+}
+
+/**
+ * Physical dimension of a parameter name as exponents of ohms and seconds,
+ * or null when the name says nothing certain (a flicker coefficient, a
+ * channel length, a controlled-source gain).
+ */
+function symbolDimension(name, variable) {
+  if (name === variable) return [0, -1];
+  if (name === '\\gamma') return [0, 0];
+  if (name.includes('_{')) return null;
+  if (/^gmb?[A-Za-z0-9_]*$/.test(name)) return [-1, 0];
+  if (/^r(?:o|ds)[A-Za-z0-9_]*$/.test(name) || /^R[A-Za-z0-9_]*$/.test(name)) return [1, 0];
+  if (/^C[A-Za-z0-9_]*$/.test(name)) return [-1, 1];
+  if (/^L[A-Za-z0-9_]*$/.test(name)) return [1, 1];
+  return null;
+}
+
+function dimensionOf(node, variable = 's') {
+  switch (node?.kind) {
+    case 'number': return [0, 0];
+    case 'symbol': return symbolDimension(node.name, variable);
+    case 'power': {
+      const base = dimensionOf(node.base, variable);
+      return base && base.map((exponent) => exponent * node.exponent);
+    }
+    case 'multiply':
+    case 'rational': {
+      const parts = children(node).map((child) => dimensionOf(child, variable));
+      if (parts.some((part) => !part)) return null;
+      const sign = (index) => (node.kind === 'rational' && index === 1 ? -1 : 1);
+      return parts.reduce((total, part, index) => total.map((exponent, axis) => exponent + sign(index) * part[axis]), [0, 0]);
+    }
+    case 'add': {
+      const parts = node.terms.map((term) => dimensionOf(term, variable));
+      if (parts.some((part) => !part)) return null;
+      return parts.every((part) => part[0] === parts[0][0] && part[1] === parts[0][1]) ? parts[0] : null;
+    }
+    default: return null;
+  }
+}
+
+/** Z for an impedance, Y an admittance, τ a time constant, X anything else. */
+function letterFor(dimension) {
+  const [ohms, seconds] = dimension || [];
+  if (ohms === 1 && seconds === 0) return 'Z';
+  if (ohms === -1 && seconds === 0) return 'Y';
+  if (ohms === 0 && seconds === 1) return '\\tau';
+  return 'X';
+}
+
+/** The display root: a rational over one is shown as its numerator. */
+function displayRoot(node) {
+  if (node?.kind === 'rational' && node.denominator?.kind === 'number'
+    && node.denominator.numerator === node.denominator.denominator) return node.numerator;
+  return node;
+}
+
+const EXPANSION_LIMIT = 256;
+
+function gcd(a, b) {
+  a = a < 0n ? -a : a;
+  b = b < 0n ? -b : b;
+  while (b) [a, b] = [b, a % b];
+  return a;
+}
+
+function addCoefficient(map, key, [numerator, denominator]) {
+  const [n, d] = map.get(key) || [0n, 1n];
+  const sumNumerator = n * denominator + numerator * d;
+  const sumDenominator = d * denominator;
+  if (sumNumerator === 0n) { map.delete(key); return; }
+  const divisor = gcd(sumNumerator, sumDenominator);
+  map.set(key, [sumNumerator / divisor, sumDenominator / divisor]);
+}
+
+function monomialKey(exponents) {
+  return [...exponents].filter(([, exponent]) => exponent).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, exponent]) => `${name}^${exponent}`).join('*');
+}
+
+/**
+ * Expand a polynomial into monomial -> rational coefficient, or null for a
+ * node that is not one (a fraction) or grows past the limit. Two sums with
+ * equal expansions are one quantity however they were factored.
+ */
+function expand(node) {
+  switch (node?.kind) {
+    case 'number': return new Map([['', [node.numerator, node.denominator]]]);
+    case 'symbol': return new Map([[`${node.name}^1`, [1n, 1n]]]);
+    case 'add': {
+      const total = new Map();
+      for (const term of node.terms) {
+        const part = expand(term);
+        if (!part) return null;
+        for (const [key, coefficient] of part) addCoefficient(total, key, coefficient);
+        if (total.size > EXPANSION_LIMIT) return null;
+      }
+      return total;
+    }
+    case 'multiply':
+    case 'power': {
+      const factors = node.kind === 'multiply' ? node.factors
+        : node.exponent > 0 && node.exponent <= 8 ? Array(node.exponent).fill(node.base) : null;
+      if (!factors) return null;
+      let product = new Map([['', [1n, 1n]]]);
+      for (const factor of factors) {
+        const part = expand(factor);
+        if (!part) return null;
+        const next = new Map();
+        for (const [leftKey, [ln, ld]] of product) {
+          for (const [rightKey, [rn, rd]] of part) {
+            const exponents = new Map();
+            for (const key of [leftKey, rightKey]) {
+              for (const piece of key ? key.split('*') : []) {
+                const at = piece.lastIndexOf('^');
+                const name = piece.slice(0, at);
+                exponents.set(name, (exponents.get(name) || 0) + Number(piece.slice(at + 1)));
+              }
+            }
+            addCoefficient(next, monomialKey(exponents), [ln * rn, ld * rd]);
+            if (next.size > EXPANSION_LIMIT) return null;
+          }
+        }
+        product = next;
+      }
+      return product;
+    }
+    default: return null;
+  }
+}
+
+/** A key equal for every spelling of one polynomial, else the structural key. */
+function valueKey(node) {
+  const expanded = expand(node);
+  if (!expanded) return `s:${structuralKey(node)}`;
+  return `e:${[...expanded].map(([key, [n, d]]) => `${key}:${n}/${d}`).sort().join('+')}`;
+}
+
+/**
+ * Choose sub-expressions to name from the rows about to be displayed. Each
+ * row is a list of expressions (a noise row has one per generator). Returns
+ * `[{ value, keys }]`: the shortest spelling of each chosen quantity and the
+ * structural keys of every spelling that occurs, those shared by the most
+ * rows first. A sum inside a chosen one counts only where it also occurs on
+ * its own.
+ */
+function chooseDefinitions(rows, options = {}) {
+  const variable = options.variable || 's';
+  const limit = options.maxDefinitions ?? MAX_DEFINITIONS;
+  const values = new Map();
+  const valueKeyOf = (node) => {
+    const key = structuralKey(node);
+    if (!values.has(key)) values.set(key, valueKey(node));
+    return values.get(key);
+  };
+  const chosen = new Map();
+  while (chosen.size < limit) {
+    const candidates = new Map();
+    rows.forEach((expressions, row) => {
+      const long = expressions.reduce((sum, value) => sum + leaves(value), 0) >= LONG_ROW_LEAVES;
+      for (const expression of expressions) {
+        const roots = new Set([expression, displayRoot(expression)]
+          .filter((node) => node?.kind === 'add').map(valueKeyOf));
+        const visit = (node) => {
+          if (!node || typeof node !== 'object') return;
+          const eligible = node.kind === 'add' && leaves(node) >= MIN_LEAVES && !carriesVariable(node, variable);
+          const key = eligible ? valueKeyOf(node) : null;
+          if (key && chosen.has(key)) {
+            chosen.get(key).forms.set(structuralKey(node), node);
+            return;
+          }
+          if (key && !roots.has(key)) {
+            const entry = candidates.get(key) || { forms: new Map(), count: 0, rows: new Set(), long: false };
+            entry.forms.set(structuralKey(node), node);
+            entry.count += 1;
+            entry.rows.add(row);
+            entry.long ||= long;
+            candidates.set(key, entry);
+          }
+          children(node).forEach(visit);
+        };
+        visit(expression);
+      }
+    });
+    // A sum shared by several rows says the most once named; then size.
+    let best = null;
+    for (const [key, entry] of candidates) {
+      if (entry.count < 2 && !entry.long) continue;
+      const size = Math.min(...[...entry.forms.values()].map(leaves));
+      const score = [entry.rows.size, size * entry.count];
+      if (!best || score[0] > best.score[0] || (score[0] === best.score[0] && score[1] > best.score[1])) {
+        best = { key, entry, score };
+      }
+    }
+    if (!best) break;
+    chosen.set(best.key, { forms: best.entry.forms });
+  }
+  return [...chosen.values()].map(({ forms }) => ({
+    value: [...forms.values()].reduce((short, form) => (leaves(form) < leaves(short) ? form : short)),
+    keys: [...forms.keys()],
+  }));
+}
+
+/**
+ * Give each chosen quantity a symbol by its dimension, numbered in order and
+ * skipping any spelling already displayed (an impedance component `Z1`
+ * renders as `Z_{1}` too). Returns `[{ keys, value, name }]`.
+ */
+function nameDefinitions(chosen, options = {}) {
+  const variable = options.variable || 's';
+  const taken = new Set([...(options.takenSymbols || [])].map(symbolText));
+  const counters = new Map();
+  return chosen.map(({ value, keys }) => {
+    const letter = letterFor(dimensionOf(value, variable));
+    let index = counters.get(letter) || 0;
+    let name;
+    do {
+      index += 1;
+      name = `${letter}_{${index}}`;
+    } while (taken.has(name));
+    counters.set(letter, index);
+    taken.add(name);
+    return { keys, value, name };
+  });
+}
+
+/** Every symbol name in a set of expressions, for `takenSymbols`. */
+function symbolsIn(values) {
+  const names = new Set();
+  const visit = (node) => {
+    if (node?.kind === 'symbol') names.add(node.name);
+    children(node).forEach(visit);
+  };
+  values.forEach(visit);
+  return names;
+}
+
+};
+
 __modules["src/core/analysis/devices.js"] = function (__require, __exports) {
 __exports.componentToPrimitives = componentToPrimitives;
 __exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
@@ -5776,6 +6059,8 @@ function cancelCommonPolynomialFactor(value, options = {}) {
 };
 
 __modules["src/core/analysis/present.js"] = function (__require, __exports) {
+__exports.structuralKey = structuralKey;
+__exports.symbolText = symbolText;
 __exports.stripProvenanceMarkers = stripProvenanceMarkers;
 __exports.renderExpression = renderExpression;
 __exports.renderExpressionWithProvenance = renderExpressionWithProvenance;
@@ -6184,8 +6469,13 @@ function renderProduct(value, context, options) {
     ? visible.map((factor) => render(factor, PRECEDENCE.product, context, options)).join(' \\, ')
     : '1';
   if (!negative) return body;
-  if (visible.length === 1 && visible[0]?.kind === 'add') return `-${parenthesize(render(visible[0], 0, context, options))}`;
+  if (visible.length === 1 && visible[0]?.kind === 'add' && !isDefined(visible[0], options)) return `-${parenthesize(render(visible[0], 0, context, options))}`;
   return `-${body}`;
+}
+
+/** A sum shown as a named symbol (`definitions.js`), which needs no parentheses. */
+function isDefined(value, options) {
+  return value?.kind === 'add' && Boolean(options.definitions?.get?.(structuralKey(value)));
 }
 
 function renderSum(value, context, options) {
@@ -6274,6 +6564,8 @@ function renderQuadraticFormula(value, context, options) {
 }
 
 function renderNode(value, parentPrecedence, context, options = {}) {
+  // A named sub-expression (`definitions.js`) is an atom wherever it occurs.
+  if (isDefined(value, options)) return options.definitions.get(structuralKey(value));
   if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
   let text;
   const proof = options.equivalences?.get?.(structuralKey(value));
@@ -7556,6 +7848,8 @@ let OWN, firstDefined; __bind(() => { ({ OWN, firstDefined } = __require("src/co
 let analyzeResponse; __bind(() => { ({ analyzeResponse } = __require("src/core/analysis/response.js")); });
 let joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance; __bind(() => { ({ joinProvenanceRenders, renderExpression, renderExpressionWithProvenance, renderRootEquation, renderRootEquationWithProvenance } = __require("src/core/analysis/present.js")); });
 let infinity; __bind(() => { ({ infinity } = __require("src/core/analysis/rational.js")); });
+let chooseDefinitions, nameDefinitions, symbolsIn; __bind(() => { ({ chooseDefinitions, nameDefinitions, symbolsIn } = __require("src/core/analysis/definitions.js")); });
+
 
 
 
@@ -7735,14 +8029,15 @@ function dcValue(limit) {
   return undefined;
 }
 
-function equivalenceOptions(source) {
+function equivalenceOptions(source, presentation = {}) {
   return {
+    ...presentation,
     ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
     ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
   };
 }
 
-function dcResult(label, selected, exact, source) {
+function dcResult(label, selected, exact, source, presentation = {}) {
   const selectedLimit = selected?.dc || source?.dc;
   const exactLimit = exact?.dc || selectedLimit;
   const selectedValue = dcValue(selectedLimit);
@@ -7754,11 +8049,11 @@ function dcResult(label, selected, exact, source) {
     };
   }
   const changed = !sameValue(selectedValue, exactValue);
-  const options = equivalenceOptions(source);
+  const options = equivalenceOptions(source, presentation);
   return {
     ok: true,
     equation: equation(label, selectedValue, changed, options),
-    exactEquation: equation(label, exactValue, false, options),
+    exactEquation: equation(label, exactValue, false, equivalenceOptions(source)),
     equationProvenance: equationProvenance(label, selectedValue, changed, options),
     expression: selectedValue,
     exactExpression: exactValue,
@@ -7775,13 +8070,13 @@ function rootValue(root) {
  * rendered under different options would highlight terms the displayed row
  * does not contain.
  */
-function rootProvenance(kind, index, value) {
+function rootProvenance(kind, index, value, presentation = {}) {
   if (value === undefined || value === null || typeof value === 'string') return undefined;
   if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
-  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value, presentation);
 }
 
-function rootsOf(response, kind) {
+function rootsOf(response, kind, presentation = {}) {
   const roots = response?.[kind] || [];
   return roots.map((root, index) => {
     const value = rootValue(root);
@@ -7791,15 +8086,15 @@ function rootsOf(response, kind) {
       ...(value !== undefined
         ? {
           root: value,
-          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
-          equationProvenance: rootProvenance(kind, index, value),
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value, presentation),
+          equationProvenance: rootProvenance(kind, index, value, presentation),
         }
         : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
     };
   });
 }
 
-function frequencyResponse(selected, exact, source) {
+function frequencyResponse(selected, exact, source, presentation = {}) {
   const has = Boolean(firstDefined(
     selected?.hasFrequency,
     exact?.hasFrequency,
@@ -7814,8 +8109,8 @@ function frequencyResponse(selected, exact, source) {
     exactExpression: responseExpression(exact),
     numerator: selected?.numerator,
     denominator: selected?.denominator,
-    poles: rootsOf(selected || exact, 'poles'),
-    zeros: rootsOf(selected || exact, 'zeros'),
+    poles: rootsOf(selected || exact, 'poles', presentation),
+    zeros: rootsOf(selected || exact, 'zeros', presentation),
   };
 }
 
@@ -7862,7 +8157,7 @@ function childPairs(combined) {
   }));
 }
 
-function adaptChild(combined, key, quantity) {
+function adaptChild(combined, key, quantity, presentation = {}) {
   const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
   const raw = childSource(combined, key, quantity);
   const pair = pairFor(raw);
@@ -7876,7 +8171,7 @@ function adaptChild(combined, key, quantity) {
   const reactive = Boolean(frequencyResponse(selected, exact, source));
   const label = reactive ? `${labelBase}(s)` : labelBase;
   const changed = !sameValue(selectedExpression, exactExpression);
-  const renderOptions = equivalenceOptions(source);
+  const renderOptions = equivalenceOptions(source, presentation);
   const result = {
     ...source,
     ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
@@ -7885,7 +8180,7 @@ function adaptChild(combined, key, quantity) {
     ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
     ...(exactExpression !== undefined ? { exactExpression } : {}),
     ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, equivalenceOptions(source)) } : {}),
     ...(selectedExpression !== undefined
       ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
       : {}),
@@ -7893,7 +8188,7 @@ function adaptChild(combined, key, quantity) {
     assumptions: unique([combined?.assumptions, source?.assumptions]),
     approximations: unique([combined?.approximations, source?.approximations]),
     dependencies: unique([combined?.dependencies, source?.dependencies]),
-    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
+    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source, presentation) } : {}),
   };
   if (reactive && key !== 'transfer') delete result.acTransfer;
   if (!reactive) {
@@ -7921,19 +8216,19 @@ function adaptChild(combined, key, quantity) {
   return result;
 }
 
-function transferCompanions(combined, children) {
+function transferCompanions(combined, children, presentation = {}) {
   const transfer = children.transfer;
   const input = children.input;
   const output = children.output;
-  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
-  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
-  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
+  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source, presentation);
+  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source, presentation);
+  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source, presentation);
   for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
     child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
   }
   for (const [key, , , label] of QUANTITIES.slice(3)) {
     const child = children[key];
-    if (child) child.dcValue = dcResult(`${label}(0)`, child._selected, child._exact, child._source);
+    if (child) child.dcValue = dcResult(`${label}(0)`, child._selected, child._exact, child._source, presentation);
   }
   transfer.dcValue = dcGain;
   transfer.dcGain = dcGain;
@@ -7963,6 +8258,7 @@ function rootRow(roots) {
   return {
     ok: true,
     equation,
+    expressions: roots.map((root) => root.root).filter((value) => value?.kind),
     ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
   };
 }
@@ -7982,15 +8278,17 @@ function topLevelSum(value) {
  * provenance render joins the terms' own renders, so it always describes the
  * displayed string.
  */
-function noiseRow(row) {
+function noiseRow(row, presentation = {}) {
   const approximate = row.terms.some(({ expression, exactExpression }) => !sameValue(expression, exactExpression));
   const relation = approximate ? '\\approx' : '=';
+  // A lone term after the fractional 1/f prefix would read as one fraction.
+  const joiner = row.kind === 'flicker' ? ' \\cdot ' : ' ';
   const wrap = (body) => (row.terms.length > 1 || topLevelSum(row.terms[0].expression)
     ? `${row.prefix}\\left(${body}\\right)`
-    : `${row.prefix} ${body}`);
-  const body = row.terms.map(({ expression }) => render(expression)).join(NOISE_SEPARATOR);
+    : `${row.prefix}${joiner}${body}`);
+  const body = row.terms.map(({ expression }) => render(expression, presentation)).join(NOISE_SEPARATOR);
   const exactBody = row.terms.map(({ exactExpression }) => render(exactExpression)).join(NOISE_SEPARATOR);
-  const joined = joinProvenanceRenders(row.terms.map(({ expression }) => renderExpressionWithProvenance(expression)), NOISE_SEPARATOR);
+  const joined = joinProvenanceRenders(row.terms.map(({ expression }) => renderExpressionWithProvenance(expression, presentation)), NOISE_SEPARATOR);
   return {
     ok: true,
     query: `noise-${row.key}`,
@@ -8001,9 +8299,9 @@ function noiseRow(row) {
   };
 }
 
-function noiseEntries(report) {
+function noiseEntries(report, presentation) {
   const rows = report?.noise?.ok ? report.noise.rows : [];
-  return rows.map((row) => ({ title: row.title, result: noiseRow(row) }));
+  return rows.map((row) => ({ title: row.title, result: noiseRow(row, presentation) }));
 }
 
 /** What the quantities are ratios of, named by the nodes they were taken at. */
@@ -8015,27 +8313,38 @@ function portEntry(report) {
   const lines = definitions.map(({ tex }) => tex);
   return {
     title: 'Ports',
+    group: 'ports',
     result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
   };
 }
 
-function equationEntries(reports, report) {
+/** Report sections, in order; the panel shows each as one collapsible group. */
+const EQUATION_GROUPS = Object.freeze([
+  ['ports', 'Ports'],
+  ['impedances', 'Impedances'],
+  ['transfers', 'Transfer functions'],
+  ['roots', 'Poles and zeros'],
+  ['noise', 'Noise'],
+  ['definitions', 'Where'],
+]);
+
+function equationEntries(reports, report, presentation = {}) {
   const entries = [];
   const ports = portEntry(report);
   if (ports) entries.push(ports);
-  const add = (title, result) => {
-    if (result?.ok && result.equation) entries.push({ title, result });
+  const add = (title, result, group) => {
+    if (result?.ok && result.equation) entries.push({ title, group, result });
   };
-  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
-  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
-  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
-  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
+  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input, 'impedances');
+  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance, 'impedances');
+  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output, 'impedances');
+  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance, 'impedances');
   const transfers = selectedTransfers(report);
   for (const [, key, name] of transfers) {
     const child = reports[key];
     if (!child) continue;
-    if (child.frequencyResponse?.hasFrequency) add(`AC ${name}`, child);
-    add(`DC ${name}`, child.dcValue);
+    if (child.frequencyResponse?.hasFrequency) add(`AC ${name}`, child, 'transfers');
+    add(`DC ${name}`, child.dcValue, 'transfers');
   }
   // Each transfer function has its own poles and zeros: a current input or a
   // shorted output terminates the circuit differently. Name whose they are
@@ -8043,11 +8352,94 @@ function equationEntries(reports, report) {
   for (const [, key, name] of transfers) {
     const frequency = reports[key]?.frequencyResponse;
     const suffix = transfers.length > 1 ? ` (${name})` : '';
-    if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles));
-    if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros));
+    if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
+    if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
   }
-  for (const { title, result } of noiseEntries(report)) add(title, result);
+  for (const { title, result } of noiseEntries(report, presentation)) add(title, result, 'noise');
+  const where = definitionEntry(presentation);
+  if (where) entries.push(where);
   return entries;
+}
+
+/**
+ * The "where" block: each named sub-expression once, rendered with the other
+ * names (never its own), so a definition may use a smaller one.
+ */
+function definitionEntry(presentation) {
+  const named = presentation.named || [];
+  if (!named.length) return null;
+  const rendered = named.map(({ keys, value, name }) => {
+    const definitions = new Map(presentation.definitions);
+    for (const key of keys) definitions.delete(key);
+    const { tex, nodes } = renderExpressionWithProvenance(value, { ...presentation, definitions });
+    return { line: `${name} = ${render(value, { ...presentation, definitions })}`, provenance: { tex: `${name} = ${tex}`, nodes } };
+  });
+  const lines = rendered.map(({ line }) => line);
+  return {
+    title: 'Where',
+    group: 'definitions',
+    result: {
+      ok: true,
+      definition: true,
+      lines,
+      lineProvenance: rendered.map(({ provenance }) => provenance),
+      equation: lines.join(' \\quad '),
+      // A single definition is shown as an ordinary equation row.
+      ...(rendered.length === 1 ? { equationProvenance: rendered[0].provenance } : {}),
+    },
+  };
+}
+
+/** The expressions a displayed row renders. */
+function displayedExpressions(result) {
+  if (result?.definition) return [];
+  if (Array.isArray(result?.terms)) return result.terms.map(({ expression }) => expression);
+  if (Array.isArray(result?.expressions)) return result.expressions;
+  return result?.expression?.kind ? [result.expression] : [];
+}
+
+function renderedText(adapted) {
+  return (adapted.equationEntries || []).map(({ result }) => result.equation || '').join('\n');
+}
+
+/**
+ * Name large or recurring sub-expressions (`definitions.js`). A first pass
+ * with placeholder names finds which candidates actually render -- a proven
+ * product or parallel form may show different operands than the solved
+ * expression holds -- then the survivors are numbered in reading order.
+ */
+function presentationWithDefinitions(report, plain) {
+  const rows = plain.equationEntries.map(({ result }) => displayedExpressions(result)).filter((row) => row.length);
+  const variable = report?.details?.pipeline?.context?.variable || 's';
+  const chosen = chooseDefinitions(rows, { variable });
+  if (!chosen.length) return null;
+  const trial = chosen.map((entry, index) => ({ ...entry, placeholder: `\\mathrm{def${index}}` }));
+  const trialMap = new Map(trial.flatMap(({ keys, placeholder }) => keys.map((key) => [key, placeholder])));
+  const trialText = renderedText(buildAdapted(report, { definitions: trialMap }));
+  // A definition shown only inside another shown one still counts.
+  let used = trial.filter(({ placeholder }) => trialText.includes(placeholder));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const candidate of trial) {
+      if (used.includes(candidate)) continue;
+      const inside = used.some(({ value, keys }) => {
+        const definitions = new Map(trialMap);
+        for (const key of keys) definitions.delete(key);
+        return render(value, { definitions }).includes(candidate.placeholder);
+      });
+      if (inside) { used.push(candidate); changed = true; }
+    }
+  }
+  if (!used.length) return null;
+  used = used.sort((left, right) => {
+    const at = (entry) => {
+      const index = trialText.indexOf(entry.placeholder);
+      return index < 0 ? Infinity : index;
+    };
+    return at(left) - at(right);
+  });
+  const named = nameDefinitions(used, { variable, takenSymbols: symbolsIn(rows.flat()) });
+  return { definitions: new Map(named.flatMap(({ keys, name }) => keys.map((key) => [key, name]))), named };
 }
 
 /** Report keys to adapt: the three always solved, and each derived transfer requested. */
@@ -8056,16 +8448,27 @@ function childKeys(report) {
   return ['input', 'output', 'transfer', ...derived];
 }
 
-/** Convert one exact/selected v2 response set into the legacy child reports. */
-function adaptCombinedReport(report) {
+/**
+ * Convert one exact/selected v2 response set into the legacy child reports.
+ * `options.nameSubexpressions` shows large or recurring sums as named symbols
+ * with a "where" block (`definitions.js`); exact equations stay whole.
+ */
+function adaptCombinedReport(report, options = {}) {
   if (!report || typeof report !== 'object') {
     return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
   }
+  const plain = buildAdapted(report);
+  if (!options.nameSubexpressions || !plain.ok) return plain;
+  const presentation = presentationWithDefinitions(report, plain);
+  return presentation ? buildAdapted(report, presentation) : plain;
+}
+
+function buildAdapted(report, presentation = {}) {
   const pairs = childPairs(report);
   const children = {};
   for (const [key, quantity] of QUANTITIES) {
     if (!childKeys(report).includes(key)) continue;
-    const child = adaptChild(report, key, quantity);
+    const child = adaptChild(report, key, quantity, presentation);
     children[key] = child;
   }
   for (const key of Object.keys(children)) {
@@ -8073,11 +8476,11 @@ function adaptCombinedReport(report) {
     children[key]._exact = pairs[key].exact;
     children[key]._source = pairs[key].source;
   }
-  const companions = transferCompanions(report, children);
+  const companions = transferCompanions(report, children, presentation);
   const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
   const details = detailsFor(report, report);
   const reports = { ...cleaned };
-  const entries = equationEntries(reports, report);
+  const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
   const context = report.context || {};
   const inputPort = firstDefined(context.input);
@@ -8123,6 +8526,7 @@ function adaptCombinedReport(report) {
   return base;
 }
 
+__exports.EQUATION_GROUPS = EQUATION_GROUPS;
 };
 
 __modules["src/core/analysis/response.js"] = function (__require, __exports) {
@@ -24376,6 +24780,8 @@ const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Equation approximations: they change only the displayed expression.
   highIntrinsicGain: true,
   dominantPole: false,
+  // Show large or recurring sums as named symbols with a "where" block.
+  nameSubexpressions: true,
   // Which transfer functions to derive, in report order; zero or more.
   transferFunctions: Object.freeze(['Av']),
   // Noise densities: each generator adds one solve column, so both are off
@@ -24427,6 +24833,7 @@ const OPTION_ALIASES = Object.freeze({
   parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
   noiseThermal: [],
   noiseFlicker: [],
+  nameSubexpressions: [],
 });
 
 const LEGACY_LIST_FIELDS = Object.freeze({
@@ -24515,6 +24922,11 @@ function normalizeDeviceRegions(value) {
 function normalizedList(value) {
   const values = Array.isArray(value) || value instanceof Set ? [...value] : String(value || '').split(',');
   return [...new Set(values.map((item) => String(item).trim()).filter(Boolean))].join(', ');
+}
+
+/** Distinct non-empty strings from a stored list; anything else is empty. */
+function stringList(value) {
+  return Array.isArray(value) ? [...new Set(value.map((item) => String(item).trim()).filter(Boolean))] : [];
 }
 
 function firstField(source, names) {
@@ -24634,6 +25046,8 @@ function migrateAnalysisFormState(value = {}) {
       acGrounds: normalizedList(firstField(source, LEGACY_LIST_FIELDS.acGrounds)),
       deviceRegions,
       options,
+      annotationExcluded: stringList(source.annotationExcluded),
+      collapsedGroups: stringList(source.collapsedGroups),
     },
     diagnostics,
   };
@@ -24779,7 +25193,7 @@ __exports.applyNetAnalysis = applyNetAnalysis;
 __exports.installAnalysisUi = installAnalysisUi;
 let INTERFACE_PIN_TYPES, parseLabelRuns; __bind(() => { ({ INTERFACE_PIN_TYPES, parseLabelRuns } = __require("src/core/model.js")); });
 let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
-let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
+let EQUATION_GROUPS, adaptCombinedReport; __bind(() => { ({ EQUATION_GROUPS, adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
 let svgString, texToMathML; __bind(() => { ({ svgString, texToMathML } = __require("src/core/render.js")); });
 let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("src/core/analysis/provenance.js")); });
@@ -24787,7 +25201,7 @@ let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/a
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
-let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
+let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -24946,6 +25360,7 @@ function analysisFormOptions() {
     highIntrinsicGain: !!analysisApproxGmRo?.checked,
     neglectChannelLengthModulation: !!analysisApproxRo?.checked,
     dominantPole: !!analysisApproxDominantPole?.checked,
+    nameSubexpressions: !!analysisNameSubexpressions?.checked,
     transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
     noiseThermal: !!analysisNoiseThermal?.checked,
@@ -24963,8 +25378,15 @@ function analysisFormValues() {
     acGrounds: analysisAcGrounds?.value || '',
     deviceRegions,
     options,
+    annotationExcluded: [...annotationExcluded],
+    collapsedGroups: [...collapsedGroups],
   };
 }
+
+// Result-panel choices that outlive one derivation: rows left out of the
+// annotation, and groups folded away. Keyed by row title and group id.
+let annotationExcluded = new Set();
+let collapsedGroups = new Set();
 
 function analysisDeviceOptions() {
   const devices = {};
@@ -25015,8 +25437,11 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisParasitics) analysisParasitics.checked = options.parasitics;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
+    if (analysisNameSubexpressions) analysisNameSubexpressions.checked = options.nameSubexpressions;
     setAnalysisTransferInputs(options.transferFunctions);
     setNoiseInputs(options);
+    annotationExcluded = new Set();
+    collapsedGroups = new Set();
     return false;
   }
   const { state, diagnostics } = migrateAnalysisFormState(saved);
@@ -25042,8 +25467,11 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
+  if (analysisNameSubexpressions) analysisNameSubexpressions.checked = state.options.nameSubexpressions;
   setAnalysisTransferInputs(state.options.transferFunctions);
   setNoiseInputs(state.options);
+  annotationExcluded = new Set(state.annotationExcluded);
+  collapsedGroups = new Set(state.collapsedGroups);
   return true;
 }
 
@@ -25096,10 +25524,37 @@ function analysisEquationEntries(report) {
   return Array.isArray(report?.equationEntries) ? report.equationEntries : [];
 }
 
+/**
+ * The rows the drawing gets: every checked row, and after them the
+ * definitions those rows use (and the ones those use), whatever their own
+ * rows say -- a named symbol must never reach the drawing undefined.
+ */
 function analysisAnnotationEntries(report) {
-  return analysisEquationEntries(report).flatMap(({ title, result }) => (
-    result?.ok && result.equation ? [{ title, equation: result.equation }] : []
-  ));
+  const entries = analysisEquationEntries(report).filter(({ result }) => result?.ok && result.equation);
+  const chosen = entries.filter(({ group, title }) => group !== 'definitions' && !annotationExcluded.has(title));
+  const where = entries.find(({ group }) => group === 'definitions');
+  const lines = where ? neededDefinitionLines(where.result.lines, chosen.map(({ result }) => result.equation)) : [];
+  return [
+    ...chosen.map(({ title, result }) => ({ title, equation: result.equation })),
+    ...(lines.length ? [{ title: where.title, lines }] : []),
+  ];
+}
+
+function neededDefinitionLines(lines, equations) {
+  const nameOf = (line) => line.slice(0, line.indexOf(' = '));
+  const uses = (text, name) => text.includes(name);
+  const needed = new Set();
+  let texts = equations;
+  for (let grown = true; grown;) {
+    grown = false;
+    for (const line of lines) {
+      if (needed.has(line) || !texts.some((text) => uses(text, nameOf(line)))) continue;
+      needed.add(line);
+      grown = true;
+    }
+    texts = [...equations, ...needed];
+  }
+  return lines.filter((line) => needed.has(line));
 }
 
 /**
@@ -25229,6 +25684,95 @@ function renderSmallSignalModel(report) {
   return true;
 }
 
+const GROUP_TITLES = new Map(EQUATION_GROUPS);
+
+/** One collapsible report section; its toggle annotates all of its rows. */
+function analysisEquationGroup(id) {
+  const group = document.createElement('details');
+  group.className = 'analysis-equation-group';
+  group.dataset.group = id;
+  group.open = !collapsedGroups.has(id);
+  const summary = document.createElement('summary');
+  const title = document.createElement('span');
+  title.className = 'analysis-equation-group-title';
+  title.textContent = GROUP_TITLES.get(id) || 'Other';
+  summary.append(title);
+  if (id !== 'definitions') {
+    const toggle = annotateToggle(`Annotate all ${title.textContent.toLowerCase()}`);
+    toggle.dataset.annotateGroup = id;
+    summary.prepend(toggle);
+  } else {
+    const note = document.createElement('span');
+    note.className = 'analysis-equation-group-note';
+    note.textContent = 'annotated with the rows that use them';
+    summary.append(note);
+  }
+  group.append(summary);
+  group.addEventListener('toggle', () => {
+    if (group.open) collapsedGroups.delete(id);
+    else collapsedGroups.add(id);
+    persistAnalysisForm();
+  });
+  return group;
+}
+
+function annotateToggle(label) {
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.className = 'analysis-annotate-toggle';
+  input.title = label;
+  input.setAttribute('aria-label', label);
+  return input;
+}
+
+function syncGroupAnnotateToggle(group) {
+  const toggle = group.querySelector(':scope > summary [data-annotate-group]');
+  if (!toggle) return;
+  const rows = [...group.querySelectorAll('[data-annotate-row]')];
+  const checked = rows.filter((input) => input.checked).length;
+  toggle.checked = checked > 0;
+  toggle.indeterminate = checked > 0 && checked < rows.length;
+}
+
+function analysisEquationRow({ title, group, result: child }, report) {
+  const row = document.createElement('div');
+  row.className = 'analysis-equation-row';
+  const heading = document.createElement('div');
+  heading.className = 'analysis-equation-label';
+  if (group !== 'definitions' && child?.ok && child.equation) {
+    const toggle = annotateToggle(`Annotate ${title.toLowerCase()}`);
+    toggle.dataset.annotateRow = title;
+    toggle.checked = !annotationExcluded.has(title);
+    heading.append(toggle);
+  }
+  heading.append(title);
+  // A group's only row under the group's own title needs no second heading;
+  // the group toggle drives its hidden row toggle.
+  heading.hidden = title === GROUP_TITLES.get(group);
+  row.appendChild(heading);
+  if (child?.ok && child.equation) {
+    const equation = document.createElement('div');
+    equation.className = 'analysis-equation-value';
+    // A definition row states several things at once; stack them so the
+    // row reads down instead of scrolling sideways.
+    if (child.definition && Array.isArray(child.lines) && child.lines.length > 1) {
+      equation.classList.add('analysis-equation-lines');
+      child.lines.forEach((line, index) => {
+        const item = document.createElement('div');
+        renderEquationMath(item, line, child.lineProvenance?.[index], report.symbolProvenance);
+        equation.appendChild(item);
+      });
+    } else renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
+    row.appendChild(equation);
+  } else {
+    const unavailable = document.createElement('div');
+    unavailable.className = 'analysis-equation-unavailable';
+    unavailable.textContent = `Unsupported: ${child?.error || 'analysis unavailable'}`;
+    row.appendChild(unavailable);
+  }
+  return row;
+}
+
 function renderAnalysisResult(report) {
   if (!analysisResult) return;
   analysisResult.hidden = !report;
@@ -25252,34 +25796,15 @@ function renderAnalysisResult(report) {
     analysisEquation.replaceChildren();
     const entries = analysisEquationEntries(report);
     if (entries.length) {
-      for (const { title, result: child } of entries) {
-        const row = document.createElement('div');
-        row.className = 'analysis-equation-row';
-        const heading = document.createElement('div');
-        heading.className = 'analysis-equation-label';
-        heading.textContent = title;
-        row.appendChild(heading);
-        if (child?.ok && child.equation) {
-          const equation = document.createElement('div');
-          equation.className = 'analysis-equation-value';
-          // A definition row states several things at once; stack them so the
-          // row reads down instead of scrolling sideways.
-          if (child.definition && Array.isArray(child.lines) && child.lines.length > 1) {
-            equation.classList.add('analysis-equation-lines');
-            for (const line of child.lines) {
-              const item = document.createElement('div');
-              renderEquationMath(item, line);
-              equation.appendChild(item);
-            }
-          } else renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
-          row.appendChild(equation);
-        } else {
-          const unavailable = document.createElement('div');
-          unavailable.className = 'analysis-equation-unavailable';
-          unavailable.textContent = `Unsupported: ${child?.error || 'analysis unavailable'}`;
-          row.appendChild(unavailable);
-        }
-        analysisEquation.appendChild(row);
+      const groups = new Map();
+      for (const entry of entries) {
+        const id = entry.group || 'other';
+        if (!groups.has(id)) groups.set(id, analysisEquationGroup(id));
+        groups.get(id).append(analysisEquationRow(entry, report));
+      }
+      for (const group of groups.values()) {
+        syncGroupAnnotateToggle(group);
+        analysisEquation.appendChild(group);
       }
       analysisEquation.setAttribute('aria-label', text);
     } else {
@@ -25487,7 +26012,9 @@ function annotateAnalysisResult() {
   commit(() => {
     for (const entry of entries) {
       const label = editor.circuit.addLabel({
-        text: equationForLabel(`\\text{${entry.title}: }\\;${entry.equation}`),
+        text: entry.lines
+          ? [`\\text{${entry.title}:}`, ...entry.lines.map(equationForLabel)].join('\n')
+          : equationForLabel(`\\text{${entry.title}: }\\;${entry.equation}`),
         x: 0,
         y: 0,
         align: 'left',
@@ -25610,6 +26137,21 @@ function installAnalysisUi() {
   setAnalysisResultTab();
 
   if (analysisEquation) {
+    analysisEquation.addEventListener('change', (event) => {
+      const input = event.target;
+      const group = input.closest?.('.analysis-equation-group');
+      if (!group) return;
+      const rows = input.dataset.annotateGroup
+        ? [...group.querySelectorAll('[data-annotate-row]')]
+        : input.dataset.annotateRow ? [input] : [];
+      for (const row of rows) {
+        row.checked = input.checked;
+        if (row.checked) annotationExcluded.delete(row.dataset.annotateRow);
+        else annotationExcluded.add(row.dataset.annotateRow);
+      }
+      syncGroupAnnotateToggle(group);
+      persistAnalysisForm();
+    });
     analysisEquation.addEventListener('pointermove', (event) => {
       setEquationEmphasis(event.target.closest?.('[data-components]') || null);
     });
@@ -25655,7 +26197,7 @@ function installAnalysisUi() {
     };
     let report;
     try {
-      report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request));
+      report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request), { nameSubexpressions: formOptions.nameSubexpressions });
       report.analysisOptions = {
         ...formOptions,
         devices,
@@ -25684,7 +26226,7 @@ function installAnalysisUi() {
     analysisInputPrevious = analysisInput.value;
   });
 
-  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
+  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
     control?.addEventListener('input', persistAnalysisForm);
     control?.addEventListener('change', persistAnalysisForm);
   }
@@ -29941,6 +30483,7 @@ const analysisReference = document.getElementById('analysis-reference');
 const analysisInput = document.getElementById('analysis-input');
 const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
 const analysisDeviceRegions = document.getElementById('analysis-device-regions');
+const analysisNameSubexpressions = document.getElementById('analysis-name-subexpressions');
 const analysisNoiseThermal = document.getElementById('analysis-noise-thermal');
 const analysisNoiseFlicker = document.getElementById('analysis-noise-flicker');
 const analysisNoiseSources = document.getElementById('analysis-noise-sources');
@@ -30041,6 +30584,7 @@ __exports.analysisReference = analysisReference;
 __exports.analysisInput = analysisInput;
 __exports.analysisAcGrounds = analysisAcGrounds;
 __exports.analysisDeviceRegions = analysisDeviceRegions;
+__exports.analysisNameSubexpressions = analysisNameSubexpressions;
 __exports.analysisNoiseThermal = analysisNoiseThermal;
 __exports.analysisNoiseFlicker = analysisNoiseFlicker;
 __exports.analysisNoiseSources = analysisNoiseSources;

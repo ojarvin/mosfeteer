@@ -8,6 +8,7 @@ import {
   renderRootEquationWithProvenance,
 } from './present.js';
 import { infinity } from './rational.js';
+import { chooseDefinitions, nameDefinitions, symbolsIn } from './definitions.js';
 
 const QUANTITIES = Object.freeze([
   ['input', 'Zin', 'input-impedance', 'Z_{in}'],
@@ -183,14 +184,15 @@ function dcValue(limit) {
   return undefined;
 }
 
-function equivalenceOptions(source) {
+function equivalenceOptions(source, presentation = {}) {
   return {
+    ...presentation,
     ...(source?.equivalence ? { equivalence: source.equivalence } : {}),
     ...(source?.equivalences ? { equivalences: source.equivalences } : {}),
   };
 }
 
-function dcResult(label, selected, exact, source) {
+function dcResult(label, selected, exact, source, presentation = {}) {
   const selectedLimit = selected?.dc || source?.dc;
   const exactLimit = exact?.dc || selectedLimit;
   const selectedValue = dcValue(selectedLimit);
@@ -202,11 +204,11 @@ function dcResult(label, selected, exact, source) {
     };
   }
   const changed = !sameValue(selectedValue, exactValue);
-  const options = equivalenceOptions(source);
+  const options = equivalenceOptions(source, presentation);
   return {
     ok: true,
     equation: equation(label, selectedValue, changed, options),
-    exactEquation: equation(label, exactValue, false, options),
+    exactEquation: equation(label, exactValue, false, equivalenceOptions(source)),
     equationProvenance: equationProvenance(label, selectedValue, changed, options),
     expression: selectedValue,
     exactExpression: exactValue,
@@ -223,13 +225,13 @@ function rootValue(root) {
  * rendered under different options would highlight terms the displayed row
  * does not contain.
  */
-function rootProvenance(kind, index, value) {
+function rootProvenance(kind, index, value, presentation = {}) {
   if (value === undefined || value === null || typeof value === 'string') return undefined;
   if (!(value.kind === 'infinity' || value.kind === 'rational' || isExpression(value))) return undefined;
-  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value);
+  return renderRootEquationWithProvenance(kind === 'poles' ? 'pole' : 'zero', index, value, presentation);
 }
 
-function rootsOf(response, kind) {
+function rootsOf(response, kind, presentation = {}) {
   const roots = response?.[kind] || [];
   return roots.map((root, index) => {
     const value = rootValue(root);
@@ -239,15 +241,15 @@ function rootsOf(response, kind) {
       ...(value !== undefined
         ? {
           root: value,
-          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value),
-          equationProvenance: rootProvenance(kind, index, value),
+          equation: renderRootEquation(kind === 'poles' ? 'pole' : 'zero', index, value, presentation),
+          equationProvenance: rootProvenance(kind, index, value, presentation),
         }
         : { ...(root.equation ? { equation: root.equation.replace(/([pz])_\{?\d+\}?/i, `$1_{${index}}`) } : {}) }),
     };
   });
 }
 
-function frequencyResponse(selected, exact, source) {
+function frequencyResponse(selected, exact, source, presentation = {}) {
   const has = Boolean(firstDefined(
     selected?.hasFrequency,
     exact?.hasFrequency,
@@ -262,8 +264,8 @@ function frequencyResponse(selected, exact, source) {
     exactExpression: responseExpression(exact),
     numerator: selected?.numerator,
     denominator: selected?.denominator,
-    poles: rootsOf(selected || exact, 'poles'),
-    zeros: rootsOf(selected || exact, 'zeros'),
+    poles: rootsOf(selected || exact, 'poles', presentation),
+    zeros: rootsOf(selected || exact, 'zeros', presentation),
   };
 }
 
@@ -310,7 +312,7 @@ function childPairs(combined) {
   }));
 }
 
-function adaptChild(combined, key, quantity) {
+function adaptChild(combined, key, quantity, presentation = {}) {
   const [, , query, labelBase] = QUANTITIES.find(([role]) => role === key);
   const raw = childSource(combined, key, quantity);
   const pair = pairFor(raw);
@@ -324,7 +326,7 @@ function adaptChild(combined, key, quantity) {
   const reactive = Boolean(frequencyResponse(selected, exact, source));
   const label = reactive ? `${labelBase}(s)` : labelBase;
   const changed = !sameValue(selectedExpression, exactExpression);
-  const renderOptions = equivalenceOptions(source);
+  const renderOptions = equivalenceOptions(source, presentation);
   const result = {
     ...source,
     ok: failed ? false : Boolean(selectedExpression || source?.ok === true),
@@ -333,7 +335,7 @@ function adaptChild(combined, key, quantity) {
     ...(selectedExpression !== undefined ? { expression: selectedExpression } : {}),
     ...(exactExpression !== undefined ? { exactExpression } : {}),
     ...(selectedExpression !== undefined ? { equation: equation(label, selectedExpression, changed, renderOptions) } : {}),
-    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, renderOptions) } : {}),
+    ...(exactExpression !== undefined ? { exactEquation: equation(label, exactExpression, false, equivalenceOptions(source)) } : {}),
     ...(selectedExpression !== undefined
       ? { equationProvenance: equationProvenance(label, selectedExpression, changed, renderOptions) }
       : {}),
@@ -341,7 +343,7 @@ function adaptChild(combined, key, quantity) {
     assumptions: unique([combined?.assumptions, source?.assumptions]),
     approximations: unique([combined?.approximations, source?.approximations]),
     dependencies: unique([combined?.dependencies, source?.dependencies]),
-    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source) } : {}),
+    ...(reactive ? { frequencyResponse: frequencyResponse(selected, exact, source, presentation) } : {}),
   };
   if (reactive && key !== 'transfer') delete result.acTransfer;
   if (!reactive) {
@@ -369,19 +371,19 @@ function adaptChild(combined, key, quantity) {
   return result;
 }
 
-function transferCompanions(combined, children) {
+function transferCompanions(combined, children, presentation = {}) {
   const transfer = children.transfer;
   const input = children.input;
   const output = children.output;
-  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source);
-  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source);
-  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source);
+  const dcGain = dcResult('A_v(0)', transfer._selected, transfer._exact, transfer._source, presentation);
+  const dcInput = dcResult('Z_{in}(0)', input._selected, input._exact, input._source, presentation);
+  const dcOutput = dcResult('Z_{out}(0)', output._selected, output._exact, output._source, presentation);
   for (const [child, value] of [[input, dcInput], [output, dcOutput]]) {
     child[`dc${child === input ? 'Input' : 'Output'}Impedance`] = value;
   }
   for (const [key, , , label] of QUANTITIES.slice(3)) {
     const child = children[key];
-    if (child) child.dcValue = dcResult(`${label}(0)`, child._selected, child._exact, child._source);
+    if (child) child.dcValue = dcResult(`${label}(0)`, child._selected, child._exact, child._source, presentation);
   }
   transfer.dcValue = dcGain;
   transfer.dcGain = dcGain;
@@ -411,6 +413,7 @@ function rootRow(roots) {
   return {
     ok: true,
     equation,
+    expressions: roots.map((root) => root.root).filter((value) => value?.kind),
     ...(parts.every(Boolean) ? { equationProvenance: joinProvenanceRenders(parts, ROOT_SEPARATOR) } : {}),
   };
 }
@@ -430,15 +433,17 @@ function topLevelSum(value) {
  * provenance render joins the terms' own renders, so it always describes the
  * displayed string.
  */
-function noiseRow(row) {
+function noiseRow(row, presentation = {}) {
   const approximate = row.terms.some(({ expression, exactExpression }) => !sameValue(expression, exactExpression));
   const relation = approximate ? '\\approx' : '=';
+  // A lone term after the fractional 1/f prefix would read as one fraction.
+  const joiner = row.kind === 'flicker' ? ' \\cdot ' : ' ';
   const wrap = (body) => (row.terms.length > 1 || topLevelSum(row.terms[0].expression)
     ? `${row.prefix}\\left(${body}\\right)`
-    : `${row.prefix} ${body}`);
-  const body = row.terms.map(({ expression }) => render(expression)).join(NOISE_SEPARATOR);
+    : `${row.prefix}${joiner}${body}`);
+  const body = row.terms.map(({ expression }) => render(expression, presentation)).join(NOISE_SEPARATOR);
   const exactBody = row.terms.map(({ exactExpression }) => render(exactExpression)).join(NOISE_SEPARATOR);
-  const joined = joinProvenanceRenders(row.terms.map(({ expression }) => renderExpressionWithProvenance(expression)), NOISE_SEPARATOR);
+  const joined = joinProvenanceRenders(row.terms.map(({ expression }) => renderExpressionWithProvenance(expression, presentation)), NOISE_SEPARATOR);
   return {
     ok: true,
     query: `noise-${row.key}`,
@@ -449,9 +454,9 @@ function noiseRow(row) {
   };
 }
 
-function noiseEntries(report) {
+function noiseEntries(report, presentation) {
   const rows = report?.noise?.ok ? report.noise.rows : [];
-  return rows.map((row) => ({ title: row.title, result: noiseRow(row) }));
+  return rows.map((row) => ({ title: row.title, result: noiseRow(row, presentation) }));
 }
 
 /** What the quantities are ratios of, named by the nodes they were taken at. */
@@ -463,27 +468,38 @@ function portEntry(report) {
   const lines = definitions.map(({ tex }) => tex);
   return {
     title: 'Ports',
+    group: 'ports',
     result: { ok: true, definition: true, lines, equation: lines.join(' \\quad ') },
   };
 }
 
-function equationEntries(reports, report) {
+/** Report sections, in order; the panel shows each as one collapsible group. */
+export const EQUATION_GROUPS = Object.freeze([
+  ['ports', 'Ports'],
+  ['impedances', 'Impedances'],
+  ['transfers', 'Transfer functions'],
+  ['roots', 'Poles and zeros'],
+  ['noise', 'Noise'],
+  ['definitions', 'Where'],
+]);
+
+function equationEntries(reports, report, presentation = {}) {
   const entries = [];
   const ports = portEntry(report);
   if (ports) entries.push(ports);
-  const add = (title, result) => {
-    if (result?.ok && result.equation) entries.push({ title, result });
+  const add = (title, result, group) => {
+    if (result?.ok && result.equation) entries.push({ title, group, result });
   };
-  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input);
-  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance);
-  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output);
-  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance);
+  if (reports.input.frequencyResponse?.hasFrequency) add('AC input impedance', reports.input, 'impedances');
+  add('DC input impedance', reports.transfer.dcInputImpedance || reports.input.dcInputImpedance, 'impedances');
+  if (reports.output.frequencyResponse?.hasFrequency) add('AC output impedance', reports.output, 'impedances');
+  add('DC output impedance', reports.transfer.dcOutputImpedance || reports.output.dcOutputImpedance, 'impedances');
   const transfers = selectedTransfers(report);
   for (const [, key, name] of transfers) {
     const child = reports[key];
     if (!child) continue;
-    if (child.frequencyResponse?.hasFrequency) add(`AC ${name}`, child);
-    add(`DC ${name}`, child.dcValue);
+    if (child.frequencyResponse?.hasFrequency) add(`AC ${name}`, child, 'transfers');
+    add(`DC ${name}`, child.dcValue, 'transfers');
   }
   // Each transfer function has its own poles and zeros: a current input or a
   // shorted output terminates the circuit differently. Name whose they are
@@ -491,11 +507,94 @@ function equationEntries(reports, report) {
   for (const [, key, name] of transfers) {
     const frequency = reports[key]?.frequencyResponse;
     const suffix = transfers.length > 1 ? ` (${name})` : '';
-    if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles));
-    if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros));
+    if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
+    if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
   }
-  for (const { title, result } of noiseEntries(report)) add(title, result);
+  for (const { title, result } of noiseEntries(report, presentation)) add(title, result, 'noise');
+  const where = definitionEntry(presentation);
+  if (where) entries.push(where);
   return entries;
+}
+
+/**
+ * The "where" block: each named sub-expression once, rendered with the other
+ * names (never its own), so a definition may use a smaller one.
+ */
+function definitionEntry(presentation) {
+  const named = presentation.named || [];
+  if (!named.length) return null;
+  const rendered = named.map(({ keys, value, name }) => {
+    const definitions = new Map(presentation.definitions);
+    for (const key of keys) definitions.delete(key);
+    const { tex, nodes } = renderExpressionWithProvenance(value, { ...presentation, definitions });
+    return { line: `${name} = ${render(value, { ...presentation, definitions })}`, provenance: { tex: `${name} = ${tex}`, nodes } };
+  });
+  const lines = rendered.map(({ line }) => line);
+  return {
+    title: 'Where',
+    group: 'definitions',
+    result: {
+      ok: true,
+      definition: true,
+      lines,
+      lineProvenance: rendered.map(({ provenance }) => provenance),
+      equation: lines.join(' \\quad '),
+      // A single definition is shown as an ordinary equation row.
+      ...(rendered.length === 1 ? { equationProvenance: rendered[0].provenance } : {}),
+    },
+  };
+}
+
+/** The expressions a displayed row renders. */
+function displayedExpressions(result) {
+  if (result?.definition) return [];
+  if (Array.isArray(result?.terms)) return result.terms.map(({ expression }) => expression);
+  if (Array.isArray(result?.expressions)) return result.expressions;
+  return result?.expression?.kind ? [result.expression] : [];
+}
+
+function renderedText(adapted) {
+  return (adapted.equationEntries || []).map(({ result }) => result.equation || '').join('\n');
+}
+
+/**
+ * Name large or recurring sub-expressions (`definitions.js`). A first pass
+ * with placeholder names finds which candidates actually render -- a proven
+ * product or parallel form may show different operands than the solved
+ * expression holds -- then the survivors are numbered in reading order.
+ */
+function presentationWithDefinitions(report, plain) {
+  const rows = plain.equationEntries.map(({ result }) => displayedExpressions(result)).filter((row) => row.length);
+  const variable = report?.details?.pipeline?.context?.variable || 's';
+  const chosen = chooseDefinitions(rows, { variable });
+  if (!chosen.length) return null;
+  const trial = chosen.map((entry, index) => ({ ...entry, placeholder: `\\mathrm{def${index}}` }));
+  const trialMap = new Map(trial.flatMap(({ keys, placeholder }) => keys.map((key) => [key, placeholder])));
+  const trialText = renderedText(buildAdapted(report, { definitions: trialMap }));
+  // A definition shown only inside another shown one still counts.
+  let used = trial.filter(({ placeholder }) => trialText.includes(placeholder));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const candidate of trial) {
+      if (used.includes(candidate)) continue;
+      const inside = used.some(({ value, keys }) => {
+        const definitions = new Map(trialMap);
+        for (const key of keys) definitions.delete(key);
+        return render(value, { definitions }).includes(candidate.placeholder);
+      });
+      if (inside) { used.push(candidate); changed = true; }
+    }
+  }
+  if (!used.length) return null;
+  used = used.sort((left, right) => {
+    const at = (entry) => {
+      const index = trialText.indexOf(entry.placeholder);
+      return index < 0 ? Infinity : index;
+    };
+    return at(left) - at(right);
+  });
+  const named = nameDefinitions(used, { variable, takenSymbols: symbolsIn(rows.flat()) });
+  return { definitions: new Map(named.flatMap(({ keys, name }) => keys.map((key) => [key, name]))), named };
 }
 
 /** Report keys to adapt: the three always solved, and each derived transfer requested. */
@@ -504,16 +603,27 @@ function childKeys(report) {
   return ['input', 'output', 'transfer', ...derived];
 }
 
-/** Convert one exact/selected v2 response set into the legacy child reports. */
-export function adaptCombinedReport(report) {
+/**
+ * Convert one exact/selected v2 response set into the legacy child reports.
+ * `options.nameSubexpressions` shows large or recurring sums as named symbols
+ * with a "where" block (`definitions.js`); exact equations stay whole.
+ */
+export function adaptCombinedReport(report, options = {}) {
   if (!report || typeof report !== 'object') {
     return { query: 'combined', ok: false, complete: false, error: 'analysis report is required', reports: {} };
   }
+  const plain = buildAdapted(report);
+  if (!options.nameSubexpressions || !plain.ok) return plain;
+  const presentation = presentationWithDefinitions(report, plain);
+  return presentation ? buildAdapted(report, presentation) : plain;
+}
+
+function buildAdapted(report, presentation = {}) {
   const pairs = childPairs(report);
   const children = {};
   for (const [key, quantity] of QUANTITIES) {
     if (!childKeys(report).includes(key)) continue;
-    const child = adaptChild(report, key, quantity);
+    const child = adaptChild(report, key, quantity, presentation);
     children[key] = child;
   }
   for (const key of Object.keys(children)) {
@@ -521,11 +631,11 @@ export function adaptCombinedReport(report) {
     children[key]._exact = pairs[key].exact;
     children[key]._source = pairs[key].source;
   }
-  const companions = transferCompanions(report, children);
+  const companions = transferCompanions(report, children, presentation);
   const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
   const details = detailsFor(report, report);
   const reports = { ...cleaned };
-  const entries = equationEntries(reports, report);
+  const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
   const context = report.context || {};
   const inputPort = firstDefined(context.input);

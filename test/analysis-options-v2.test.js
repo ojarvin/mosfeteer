@@ -16,6 +16,7 @@ test('defaults select the concise textbook presentation', () => {
     parasitics: false,
     highIntrinsicGain: true,
     dominantPole: false,
+    nameSubexpressions: true,
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
@@ -45,6 +46,7 @@ test('normalization accepts only canonical option names and device regions', () 
     millerApproximation: false,
     parasitics: false,
     dominantPole: true,
+    nameSubexpressions: true,
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
@@ -64,6 +66,7 @@ test('channel-length omission supersedes high intrinsic gain', () => {
     millerApproximation: true,
     parasitics: false,
     dominantPole: false,
+    nameSubexpressions: true,
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
@@ -85,6 +88,7 @@ test('canonical nested form state remains canonical during normalization', () =>
     millerApproximation: true,
     parasitics: false,
     dominantPole: false,
+    nameSubexpressions: true,
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
@@ -124,11 +128,14 @@ test('persistence migration maps legacy aliases and drops removed fields', () =>
       millerApproximation: true,
       parasitics: false,
       dominantPole: true,
+      nameSubexpressions: true,
       transferFunctions: ['Av'],
       noiseThermal: false,
       noiseFlicker: false,
       noiseSources: null,
     },
+    annotationExcluded: [],
+    collapsedGroups: [],
   });
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0].code, 'legacy-mos-current-source');
@@ -153,6 +160,7 @@ test('canonical persisted values win over legacy aliases and lists', () => {
     millerApproximation: true,
     parasitics: false,
     dominantPole: false,
+    nameSubexpressions: true,
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
@@ -205,4 +213,10 @@ test('noise options persist their source list and build the engine request', () 
   assert.equal(state.options.noiseFlicker, true);
   assert.deepEqual(state.options.noiseSources, ['M2']);
   assert.equal(migrateAnalysisFormState({ options: { noiseSources: null } }).state.options.noiseSources, null);
+});
+
+test('result-panel choices persist as clean string lists', () => {
+  const { state } = migrateAnalysisFormState({ annotationExcluded: ['DC voltage gain', ' ', 'DC voltage gain'], collapsedGroups: 'noise' });
+  assert.deepEqual(state.annotationExcluded, ['DC voltage gain']);
+  assert.deepEqual(state.collapsedGroups, []);
 });

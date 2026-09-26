@@ -135,9 +135,28 @@ The report order is:
 5. each selected transfer function's `(s)` and `(0)` rows, in the table's order
 6. poles, then zeros, of each selected transfer function
 7. noise densities, when requested (input-referred, then output)
-8. assumptions
+8. definitions of named sub-expressions ("Where")
+9. assumptions
 
-Rows that add no information are omitted.
+Rows that add no information are omitted. The Equations tab groups the rows
+into collapsible sections (`EQUATION_GROUPS` in `report-adapter.js`): ports,
+impedances, transfer functions, poles and zeros, noise, and definitions.
+
+## Named sub-expressions
+
+With **Name large or repeated sub-expressions** (on by default;
+`adaptCombinedReport(report, { nameSubexpressions: true })`), a parameter-only
+sum of at least five symbols is shown as one symbol. That happens when it
+occurs more than once, or sits in a row too long to read at once. Its
+definition is listed once under "Where" (`src/core/analysis/definitions.js`).
+The symbol's letter follows the sum's dimension, inferred from parameter
+names: `Z` for resistance, `Y` for conductance, `\tau` for time, `X`
+otherwise. Numbers follow reading order and skip any spelling a displayed
+symbol already has. Spellings with equal expansions, factored or not, share
+one name, and the definition shows the shortest. Sums that carry `s` stay
+inline, so a response's structure in frequency is never hidden, though its
+coefficients may be named. Exact equations in the Log tab are never
+abbreviated.
 
 ## Noise
 
@@ -175,7 +194,10 @@ whose share is negligible is best left out rather than approximated away.
 ## Schematic annotations
 
 **Annotate schematic** places the displayed equations below the figure,
-left-aligned with its edge and separated by two grid cells. AC equations,
+left-aligned with its edge and separated by two grid cells. Each row, and
+each group, has a checkbox that keeps it out of the annotation; the choice is
+remembered with the form. The definitions the annotated rows use, directly
+or through another definition, are always added after them. AC equations,
 poles, and zeros are added only when reactive terms remain in the final forms.
 The assumptions block is omitted when no selected approximation changes the
 displayed equations.

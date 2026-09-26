@@ -476,14 +476,14 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /\.\.\.\(Object\.keys\(devices\)\.length \? \{ devices \} : \{\}\)/);
   assert.match(main, /resistance: 'infinite'/);
   assert.equal((main.match(/analyzeSmallSignalV2\(/g) || []).length, 1);
-  assert.match(main, /adaptCombinedReport\(analyzeSmallSignalV2\(circuit, request\)\)/);
+  assert.match(main, /adaptCombinedReport\(analyzeSmallSignalV2\(circuit, request\), \{ nameSubexpressions: formOptions\.nameSubexpressions \}\)/);
   assert.doesNotMatch(main, /analyzeInputImpedance|analyzeOutputImpedance|analyzeTransferFunction/);
   assert.doesNotMatch(main, /core\/analysis\/index\.js/);
   // Whole identifiers: `analysisModelEl` (the drawn small-signal model) is
   // not the removed `analysisMode` control.
   assert.doesNotMatch(main, /\b(?:analysisKind|analysisMode|analysisComplementary|analysisContext|analysisModels|analysisApproxCascode|dcOnly)\b/);
   assert.match(main, /Array\.isArray\(report\?\.equationEntries\)/);
-  assert.match(main, /for \(const \{ title, result: child \} of entries\)/);
+  assert.match(main, /function analysisEquationRow\(\{ title, group, result: child \}, report\)/);
   // A tab whose content this report has no data for falls back to Equations.
   assert.match(main, /selectedTab === 'netlist' && !netlist/);
   assert.match(main, /selectedTab === 'model' && !drawn/);

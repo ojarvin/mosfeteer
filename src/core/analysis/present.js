@@ -13,7 +13,7 @@ function isNegative(value) {
   return value?.kind === 'multiply' && isNegativeNumber(value.factors[0]);
 }
 
-function structuralKey(value) {
+export function structuralKey(value) {
   if (value?.kind === 'rational') {
     return `q:${value.variable}:${structuralKey(value.numerator)}/${structuralKey(value.denominator)}`;
   }
@@ -153,7 +153,7 @@ function unsigned(value) {
   return value;
 }
 
-function symbolText(name) {
+export function symbolText(name) {
   const raw = String(name);
   if (INFINITY_NAMES.has(raw.toLowerCase())) return '\\infty';
   if (raw === 's') return 's';
@@ -390,8 +390,13 @@ function renderProduct(value, context, options) {
     ? visible.map((factor) => render(factor, PRECEDENCE.product, context, options)).join(' \\, ')
     : '1';
   if (!negative) return body;
-  if (visible.length === 1 && visible[0]?.kind === 'add') return `-${parenthesize(render(visible[0], 0, context, options))}`;
+  if (visible.length === 1 && visible[0]?.kind === 'add' && !isDefined(visible[0], options)) return `-${parenthesize(render(visible[0], 0, context, options))}`;
   return `-${body}`;
+}
+
+/** A sum shown as a named symbol (`definitions.js`), which needs no parentheses. */
+function isDefined(value, options) {
+  return value?.kind === 'add' && Boolean(options.definitions?.get?.(structuralKey(value)));
 }
 
 function renderSum(value, context, options) {
@@ -480,6 +485,8 @@ function renderQuadraticFormula(value, context, options) {
 }
 
 function renderNode(value, parentPrecedence, context, options = {}) {
+  // A named sub-expression (`definitions.js`) is an atom wherever it occurs.
+  if (isDefined(value, options)) return options.definitions.get(structuralKey(value));
   if (value?.kind === 'quadratic-formula') return renderQuadraticFormula(value, context, options);
   let text;
   const proof = options.equivalences?.get?.(structuralKey(value));

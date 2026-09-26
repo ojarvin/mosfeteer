@@ -7,7 +7,7 @@
 
 import { INTERFACE_PIN_TYPES, parseLabelRuns } from '../core/model.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
-import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
+import { EQUATION_GROUPS, adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
@@ -15,7 +15,7 @@ import { noiseCandidates } from '../core/analysis/noise.js';
 import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
+import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
@@ -152,6 +152,7 @@ function analysisFormOptions() {
     highIntrinsicGain: !!analysisApproxGmRo?.checked,
     neglectChannelLengthModulation: !!analysisApproxRo?.checked,
     dominantPole: !!analysisApproxDominantPole?.checked,
+    nameSubexpressions: !!analysisNameSubexpressions?.checked,
     transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
     noiseThermal: !!analysisNoiseThermal?.checked,
@@ -169,8 +170,15 @@ function analysisFormValues() {
     acGrounds: analysisAcGrounds?.value || '',
     deviceRegions,
     options,
+    annotationExcluded: [...annotationExcluded],
+    collapsedGroups: [...collapsedGroups],
   };
 }
+
+// Result-panel choices that outlive one derivation: rows left out of the
+// annotation, and groups folded away. Keyed by row title and group id.
+let annotationExcluded = new Set();
+let collapsedGroups = new Set();
 
 function analysisDeviceOptions() {
   const devices = {};
@@ -221,8 +229,11 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisParasitics) analysisParasitics.checked = options.parasitics;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
+    if (analysisNameSubexpressions) analysisNameSubexpressions.checked = options.nameSubexpressions;
     setAnalysisTransferInputs(options.transferFunctions);
     setNoiseInputs(options);
+    annotationExcluded = new Set();
+    collapsedGroups = new Set();
     return false;
   }
   const { state, diagnostics } = migrateAnalysisFormState(saved);
@@ -248,8 +259,11 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
+  if (analysisNameSubexpressions) analysisNameSubexpressions.checked = state.options.nameSubexpressions;
   setAnalysisTransferInputs(state.options.transferFunctions);
   setNoiseInputs(state.options);
+  annotationExcluded = new Set(state.annotationExcluded);
+  collapsedGroups = new Set(state.collapsedGroups);
   return true;
 }
 
@@ -302,10 +316,37 @@ function analysisEquationEntries(report) {
   return Array.isArray(report?.equationEntries) ? report.equationEntries : [];
 }
 
+/**
+ * The rows the drawing gets: every checked row, and after them the
+ * definitions those rows use (and the ones those use), whatever their own
+ * rows say -- a named symbol must never reach the drawing undefined.
+ */
 function analysisAnnotationEntries(report) {
-  return analysisEquationEntries(report).flatMap(({ title, result }) => (
-    result?.ok && result.equation ? [{ title, equation: result.equation }] : []
-  ));
+  const entries = analysisEquationEntries(report).filter(({ result }) => result?.ok && result.equation);
+  const chosen = entries.filter(({ group, title }) => group !== 'definitions' && !annotationExcluded.has(title));
+  const where = entries.find(({ group }) => group === 'definitions');
+  const lines = where ? neededDefinitionLines(where.result.lines, chosen.map(({ result }) => result.equation)) : [];
+  return [
+    ...chosen.map(({ title, result }) => ({ title, equation: result.equation })),
+    ...(lines.length ? [{ title: where.title, lines }] : []),
+  ];
+}
+
+function neededDefinitionLines(lines, equations) {
+  const nameOf = (line) => line.slice(0, line.indexOf(' = '));
+  const uses = (text, name) => text.includes(name);
+  const needed = new Set();
+  let texts = equations;
+  for (let grown = true; grown;) {
+    grown = false;
+    for (const line of lines) {
+      if (needed.has(line) || !texts.some((text) => uses(text, nameOf(line)))) continue;
+      needed.add(line);
+      grown = true;
+    }
+    texts = [...equations, ...needed];
+  }
+  return lines.filter((line) => needed.has(line));
 }
 
 /**
@@ -435,6 +476,95 @@ function renderSmallSignalModel(report) {
   return true;
 }
 
+const GROUP_TITLES = new Map(EQUATION_GROUPS);
+
+/** One collapsible report section; its toggle annotates all of its rows. */
+function analysisEquationGroup(id) {
+  const group = document.createElement('details');
+  group.className = 'analysis-equation-group';
+  group.dataset.group = id;
+  group.open = !collapsedGroups.has(id);
+  const summary = document.createElement('summary');
+  const title = document.createElement('span');
+  title.className = 'analysis-equation-group-title';
+  title.textContent = GROUP_TITLES.get(id) || 'Other';
+  summary.append(title);
+  if (id !== 'definitions') {
+    const toggle = annotateToggle(`Annotate all ${title.textContent.toLowerCase()}`);
+    toggle.dataset.annotateGroup = id;
+    summary.prepend(toggle);
+  } else {
+    const note = document.createElement('span');
+    note.className = 'analysis-equation-group-note';
+    note.textContent = 'annotated with the rows that use them';
+    summary.append(note);
+  }
+  group.append(summary);
+  group.addEventListener('toggle', () => {
+    if (group.open) collapsedGroups.delete(id);
+    else collapsedGroups.add(id);
+    persistAnalysisForm();
+  });
+  return group;
+}
+
+function annotateToggle(label) {
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.className = 'analysis-annotate-toggle';
+  input.title = label;
+  input.setAttribute('aria-label', label);
+  return input;
+}
+
+function syncGroupAnnotateToggle(group) {
+  const toggle = group.querySelector(':scope > summary [data-annotate-group]');
+  if (!toggle) return;
+  const rows = [...group.querySelectorAll('[data-annotate-row]')];
+  const checked = rows.filter((input) => input.checked).length;
+  toggle.checked = checked > 0;
+  toggle.indeterminate = checked > 0 && checked < rows.length;
+}
+
+function analysisEquationRow({ title, group, result: child }, report) {
+  const row = document.createElement('div');
+  row.className = 'analysis-equation-row';
+  const heading = document.createElement('div');
+  heading.className = 'analysis-equation-label';
+  if (group !== 'definitions' && child?.ok && child.equation) {
+    const toggle = annotateToggle(`Annotate ${title.toLowerCase()}`);
+    toggle.dataset.annotateRow = title;
+    toggle.checked = !annotationExcluded.has(title);
+    heading.append(toggle);
+  }
+  heading.append(title);
+  // A group's only row under the group's own title needs no second heading;
+  // the group toggle drives its hidden row toggle.
+  heading.hidden = title === GROUP_TITLES.get(group);
+  row.appendChild(heading);
+  if (child?.ok && child.equation) {
+    const equation = document.createElement('div');
+    equation.className = 'analysis-equation-value';
+    // A definition row states several things at once; stack them so the
+    // row reads down instead of scrolling sideways.
+    if (child.definition && Array.isArray(child.lines) && child.lines.length > 1) {
+      equation.classList.add('analysis-equation-lines');
+      child.lines.forEach((line, index) => {
+        const item = document.createElement('div');
+        renderEquationMath(item, line, child.lineProvenance?.[index], report.symbolProvenance);
+        equation.appendChild(item);
+      });
+    } else renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
+    row.appendChild(equation);
+  } else {
+    const unavailable = document.createElement('div');
+    unavailable.className = 'analysis-equation-unavailable';
+    unavailable.textContent = `Unsupported: ${child?.error || 'analysis unavailable'}`;
+    row.appendChild(unavailable);
+  }
+  return row;
+}
+
 function renderAnalysisResult(report) {
   if (!analysisResult) return;
   analysisResult.hidden = !report;
@@ -458,34 +588,15 @@ function renderAnalysisResult(report) {
     analysisEquation.replaceChildren();
     const entries = analysisEquationEntries(report);
     if (entries.length) {
-      for (const { title, result: child } of entries) {
-        const row = document.createElement('div');
-        row.className = 'analysis-equation-row';
-        const heading = document.createElement('div');
-        heading.className = 'analysis-equation-label';
-        heading.textContent = title;
-        row.appendChild(heading);
-        if (child?.ok && child.equation) {
-          const equation = document.createElement('div');
-          equation.className = 'analysis-equation-value';
-          // A definition row states several things at once; stack them so the
-          // row reads down instead of scrolling sideways.
-          if (child.definition && Array.isArray(child.lines) && child.lines.length > 1) {
-            equation.classList.add('analysis-equation-lines');
-            for (const line of child.lines) {
-              const item = document.createElement('div');
-              renderEquationMath(item, line);
-              equation.appendChild(item);
-            }
-          } else renderEquationMath(equation, child.equation, child.equationProvenance, report.symbolProvenance);
-          row.appendChild(equation);
-        } else {
-          const unavailable = document.createElement('div');
-          unavailable.className = 'analysis-equation-unavailable';
-          unavailable.textContent = `Unsupported: ${child?.error || 'analysis unavailable'}`;
-          row.appendChild(unavailable);
-        }
-        analysisEquation.appendChild(row);
+      const groups = new Map();
+      for (const entry of entries) {
+        const id = entry.group || 'other';
+        if (!groups.has(id)) groups.set(id, analysisEquationGroup(id));
+        groups.get(id).append(analysisEquationRow(entry, report));
+      }
+      for (const group of groups.values()) {
+        syncGroupAnnotateToggle(group);
+        analysisEquation.appendChild(group);
       }
       analysisEquation.setAttribute('aria-label', text);
     } else {
@@ -693,7 +804,9 @@ function annotateAnalysisResult() {
   commit(() => {
     for (const entry of entries) {
       const label = editor.circuit.addLabel({
-        text: equationForLabel(`\\text{${entry.title}: }\\;${entry.equation}`),
+        text: entry.lines
+          ? [`\\text{${entry.title}:}`, ...entry.lines.map(equationForLabel)].join('\n')
+          : equationForLabel(`\\text{${entry.title}: }\\;${entry.equation}`),
         x: 0,
         y: 0,
         align: 'left',
@@ -816,6 +929,21 @@ export function installAnalysisUi() {
   setAnalysisResultTab();
 
   if (analysisEquation) {
+    analysisEquation.addEventListener('change', (event) => {
+      const input = event.target;
+      const group = input.closest?.('.analysis-equation-group');
+      if (!group) return;
+      const rows = input.dataset.annotateGroup
+        ? [...group.querySelectorAll('[data-annotate-row]')]
+        : input.dataset.annotateRow ? [input] : [];
+      for (const row of rows) {
+        row.checked = input.checked;
+        if (row.checked) annotationExcluded.delete(row.dataset.annotateRow);
+        else annotationExcluded.add(row.dataset.annotateRow);
+      }
+      syncGroupAnnotateToggle(group);
+      persistAnalysisForm();
+    });
     analysisEquation.addEventListener('pointermove', (event) => {
       setEquationEmphasis(event.target.closest?.('[data-components]') || null);
     });
@@ -861,7 +989,7 @@ export function installAnalysisUi() {
     };
     let report;
     try {
-      report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request));
+      report = adaptCombinedReport(analyzeSmallSignalV2(editor.circuit, request), { nameSubexpressions: formOptions.nameSubexpressions });
       report.analysisOptions = {
         ...formOptions,
         devices,
@@ -890,7 +1018,7 @@ export function installAnalysisUi() {
     analysisInputPrevious = analysisInput.value;
   });
 
-  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
+  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
     control?.addEventListener('input', persistAnalysisForm);
     control?.addEventListener('change', persistAnalysisForm);
   }

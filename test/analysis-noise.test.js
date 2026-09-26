@@ -100,10 +100,10 @@ test('the report adapter renders one prefixed row per referral and kind', () => 
   assert.equal(stripProvenanceMarkers(row.equationProvenance.tex), row.equation);
 });
 
-test('a row with a single term keeps the prefix without parentheses', () => {
+test('a single flicker term follows its 1/f prefix with a dot, not parentheses', () => {
   const adapted = adaptCombinedReport(analyze('nmos-common-source', { thermal: false }));
   const row = adapted.equationEntries.find(({ title }) => title === 'Input-referred flicker noise').result;
-  assert.equal(row.equation, '\\overline{v_{n,in,1/f}^2} = \\frac{1}{f} \\frac{K_{f,n}}{C_{ox} \\, L_{1} \\, W_{1}}');
+  assert.equal(row.equation, '\\overline{v_{n,in,1/f}^2} = \\frac{1}{f} \\cdot \\frac{K_{f,n}}{C_{ox} \\, L_{1} \\, W_{1}}');
 });
 
 test('a triode device contributes the thermal noise of its r_ds', () => {

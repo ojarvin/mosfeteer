@@ -9,6 +9,8 @@ export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Equation approximations: they change only the displayed expression.
   highIntrinsicGain: true,
   dominantPole: false,
+  // Show large or recurring sums as named symbols with a "where" block.
+  nameSubexpressions: true,
   // Which transfer functions to derive, in report order; zero or more.
   transferFunctions: Object.freeze(['Av']),
   // Noise densities: each generator adds one solve column, so both are off
@@ -60,6 +62,7 @@ const OPTION_ALIASES = Object.freeze({
   parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
   noiseThermal: [],
   noiseFlicker: [],
+  nameSubexpressions: [],
 });
 
 const LEGACY_LIST_FIELDS = Object.freeze({
@@ -148,6 +151,11 @@ function normalizeDeviceRegions(value) {
 function normalizedList(value) {
   const values = Array.isArray(value) || value instanceof Set ? [...value] : String(value || '').split(',');
   return [...new Set(values.map((item) => String(item).trim()).filter(Boolean))].join(', ');
+}
+
+/** Distinct non-empty strings from a stored list; anything else is empty. */
+function stringList(value) {
+  return Array.isArray(value) ? [...new Set(value.map((item) => String(item).trim()).filter(Boolean))] : [];
 }
 
 function firstField(source, names) {
@@ -267,6 +275,8 @@ export function migrateAnalysisFormState(value = {}) {
       acGrounds: normalizedList(firstField(source, LEGACY_LIST_FIELDS.acGrounds)),
       deviceRegions,
       options,
+      annotationExcluded: stringList(source.annotationExcluded),
+      collapsedGroups: stringList(source.collapsedGroups),
     },
     diagnostics,
   };

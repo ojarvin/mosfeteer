@@ -261,7 +261,8 @@ selected generator to that same solve. The main implementation is in
 - `reduceNetwork` pre-reduces parallel branches only. It records equivalence
   proofs used by presentation; do not add series pre-reduction to the solver.
   `report-adapter.js` re-renders every displayed AC/DC row, so pass its
-  equivalence options and provenance through every row, including poles/zeros.
+  equivalence options, named sub-expressions (`definitions.js`), and
+  provenance through every row, including poles/zeros and noise.
 - The GUI calls `adaptCombinedReport(analyzeSmallSignalV2(...))`, never the v2
   analyzer directly. Provenance is opt-in and only decorates live equation
   MathML; it must not leak into labels, documents, or exports.
