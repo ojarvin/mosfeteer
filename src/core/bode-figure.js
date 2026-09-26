@@ -23,13 +23,45 @@ function niceRange(values, step, pad) {
 }
 
 /**
+ * A curve cut to a value range: `samples` are `{ at, value }`, `x` and `y`
+ * place them. Where it leaves the range it ends at the edge (and starts again
+ * where it returns), rather than running flat along the edge as if the
+ * curve stopped falling.
+ */
+function clippedPaths(samples, x, y, low, high, role) {
+  const paths = [];
+  let current = null;
+  const inside = (value) => value >= low && value <= high;
+  const edgePoint = (a, b) => {
+    const edge = (a.value > high) !== (b.value > high) ? high : low;
+    const t = (edge - a.value) / (b.value - a.value);
+    return { x: x(a) + t * (x(b) - x(a)), y: y(edge) };
+  };
+  samples.forEach((sample, index) => {
+    const previous = samples[index - 1];
+    if (inside(sample.value)) {
+      if (!current) {
+        current = [];
+        if (previous && Number.isFinite(previous.value)) current.push(edgePoint(previous, sample));
+        paths.push({ type: 'path', points: current, role });
+      }
+      current.push({ x: x(sample), y: y(sample.value) });
+    } else if (current) {
+      if (Number.isFinite(sample.value)) current.push(edgePoint(previous, sample));
+      current = null;
+    }
+  });
+  return paths.filter((path) => path.points.length > 1);
+}
+
+/**
  * Lay out `sketch` (bode.js's bodeSketch) in a `width` x `height` box.
  * `corners` are `{ w, text }` to mark (ω_{p1}, ω_{z1}); `quantity` names the
  * magnitude axis (`A_{v}`). `numbers: false` gives the textbook sketch: no
  * figures on the axes, only the marked frequencies.
  */
 export function bodeFigure(sketch, {
-  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 160,
+  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 180,
   fontSize = 11,
 } = {}) {
   const items = [];
@@ -107,9 +139,10 @@ export function bodeFigure(sketch, {
   }
 
   // The straight-line sketch under the exact curve.
-  items.push({ type: 'path', points: sketch.asymptote.map((p) => ({ x: x(p.w), y: yDb(p.db) })), role: 'asymptote' });
-  items.push({ type: 'path', points: sketch.points.map((p) => ({ x: x(p.w), y: yDb(p.db) })), role: 'curve' });
-  if (phase) items.push({ type: 'path', points: sketch.points.map((p) => ({ x: x(p.w), y: yPh(p.phase) })), role: 'curve' });
+  const atW = (sample) => x(sample.w);
+  items.push(...clippedPaths(sketch.asymptote.map((p) => ({ w: p.w, value: p.db })), atW, yDb, dbLow, dbHigh, 'asymptote'));
+  items.push(...clippedPaths(sketch.points.map((p) => ({ w: p.w, value: p.db })), atW, yDb, dbLow, dbHigh, 'curve'));
+  if (phase) items.push(...clippedPaths(sketch.points.map((p) => ({ w: p.w, value: p.phase })), atW, yPh, phLow, phHigh, 'curve'));
 
   // Marked frequencies: a dotted drop line and the name at the axis.
   const axisPane = phase ? ph : mag;

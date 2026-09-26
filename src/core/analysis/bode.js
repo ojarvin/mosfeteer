@@ -206,8 +206,11 @@ function distinctCorners(roots) {
 export function bodeSketch(numerator, denominator, { pointsPerDecade = 40 } = {}) {
   const num = trimmed(numerator);
   const den = trimmed(denominator);
-  const zeros = polynomialRoots(num);
-  const poles = polynomialRoots(den);
+  // The exact solve can leave a factor common to both sides (a symmetric
+  // half-circuit's, say): a pole standing exactly on a zero cancels in the
+  // function itself. Leave such pairs out of the corners and the asymptote;
+  // the curve, evaluated from the coefficients, is the same either way.
+  const { zeros, poles, cancelled } = cancelCommonRoots(polynomialRoots(num), polynomialRoots(den));
   const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0 && Number.isFinite(w));
   const low = corners.length ? Math.floor(log10(Math.min(...corners))) - 1 : -2;
   let high = corners.length ? Math.ceil(log10(Math.max(...corners))) + 1 : 2;
@@ -245,9 +248,29 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40 } = {}
     points,
     zeros,
     poles,
+    cancelled,
     asymptote: magnitudeAsymptote(num, den, zeros, poles, low, high),
     unityGain: unityCrossing(points),
   };
+}
+
+/** Pair every zero with a pole at the same point (to a part in 10^7 of its
+ *  size) and drop both; returns what is left and how many pairs went. */
+export function cancelCommonRoots(zeros, poles, tolerance = 1e-7) {
+  const leftPoles = [...poles];
+  const leftZeros = [];
+  let cancelled = 0;
+  for (const zero of zeros) {
+    const size = Math.max(cabs(zero), Number.MIN_VALUE);
+    const index = leftPoles.findIndex((pole) => cabs(csub(pole, zero)) <= tolerance * Math.max(size, cabs(pole)));
+    if (index >= 0) {
+      leftPoles.splice(index, 1);
+      cancelled += 1;
+    } else {
+      leftZeros.push(zero);
+    }
+  }
+  return { zeros: leftZeros, poles: leftPoles, cancelled };
 }
 
 /** The textbook straight-line magnitude: the low-frequency behavior k ω^m,

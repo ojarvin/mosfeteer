@@ -4845,3 +4845,8 @@ circle.bode-corner {
   width: auto;
   margin: 0;
 }
+
+.analysis-bode .bode-cancelled {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}

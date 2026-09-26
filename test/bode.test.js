@@ -112,3 +112,43 @@ test('the sketch keeps every word off the plot, names crowding each other in two
     assert.equal(rows.size, 2, 'the two close poles sit in two rows');
   }
 });
+
+test('a pole standing on a zero cancels; a near one does not', async () => {
+  const { cancelCommonRoots } = await import('../src/core/analysis/bode.js');
+  const at = (re, im = 0) => ({ re, im });
+  const { zeros, poles, cancelled } = cancelCommonRoots([at(-1e-3), at(-2)], [at(-1e-3 * (1 + 1e-10)), at(-5), at(-1.001e-3)]);
+  assert.equal(cancelled, 1);
+  assert.deepEqual(zeros.map((z) => z.re), [-2]);
+  assert.deepEqual(poles.map((p) => p.re), [-5, -1.001e-3]);
+});
+
+test('a factor common to both sides of the exact solve leaves no pole-zero pairs behind', () => {
+  // A Miller stage's shape -- dominant pole, second pole, right-half-plane
+  // zero -- with both sides multiplied by the same cubic, as the exact solve
+  // of a two-stage OTA leaves them.
+  const multiply = (a, b) => a.flatMap((x, i) => b.map((y, j) => [i + j, x * y]))
+    .reduce((out, [k, v]) => { out[k] = (out[k] || 0) + v; return out; }, []);
+  const common = multiply(multiply([3.414e-3, 1], [5.858e-4, 1]), [1e-3, 1]);
+  const numerator = multiply([1e4, -1e4 / 0.1], common); // zero at +0.1
+  const denominator = multiply(multiply([3.6e-5, 1], [0.037, 1]), common);
+  const sketch = bodeSketch(numerator, denominator);
+  assert.equal(sketch.cancelled, 3);
+  assert.deepEqual(sketch.poles.map((p) => Number((-p.re).toPrecision(3))).sort((a, b) => a - b), [3.6e-5, 0.037]);
+  assert.equal(sketch.zeros.length, 1);
+  close(sketch.zeros[0].re, 0.1, 1e-6);
+  // -20 dB/decade past the first pole, -40 between the second pole and the zero.
+  const slopes = sketch.asymptote.slice(1).map((point, i) => (point.db - sketch.asymptote[i].db) / Math.log10(point.w / sketch.asymptote[i].w));
+  assert.ok(slopes.some((slope) => Math.abs(slope + 40) < 1e-6), slopes.join(', '));
+});
+
+test('a curve leaving the frame ends at its edge instead of running along it', async () => {
+  const { bodeFigure } = await import('../src/core/bode-figure.js');
+  // Three poles: the magnitude falls 60 dB/decade out of any 180 dB frame.
+  const sketch = bodeSketch([1e6], [1, 3e3, 3e6, 1e9].map((value, i) => value / 1e9 * [1e9, 1, 1, 1][i] || value));
+  const figure = bodeFigure(sketch, { width: 400, height: 300, phase: false, maxSpanDb: 60 });
+  const bottom = figure.panes.magnitude.y + figure.panes.magnitude.h;
+  for (const path of figure.items.filter((item) => item.type === 'path')) {
+    const onEdge = path.points.filter((p) => Math.abs(p.y - bottom) < 1e-6);
+    assert.ok(onEdge.length <= 1, `${path.role} runs along the bottom edge`);
+  }
+});

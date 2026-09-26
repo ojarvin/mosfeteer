@@ -246,6 +246,12 @@ function drawSketch() {
     if (Math.abs(corner.root.im) > 0) item.append(` (complex pair, Q = ${formatNumber(corner.w / (2 * Math.abs(corner.root.re)))})`);
     list.appendChild(item);
   }
+  if (sketch.cancelled) {
+    const item = document.createElement('li');
+    item.className = 'bode-cancelled';
+    item.textContent = `${sketch.cancelled} pole–zero pair${sketch.cancelled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out`;
+    list.appendChild(item);
+  }
   if (sketch.unityGain && quantity.key === 'transfer') {
     const item = document.createElement('li');
     item.appendChild(mathElement(`\\omega_{u} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase there } ${Math.round(sketch.unityGain.phase)}\\text{°}`));

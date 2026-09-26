@@ -678,6 +678,7 @@ __exports.numericCoefficients = numericCoefficients;
 __exports.polynomialRoots = polynomialRoots;
 __exports.responseAt = responseAt;
 __exports.bodeSketch = bodeSketch;
+__exports.cancelCommonRoots = cancelCommonRoots;
 __exports.sketchCorners = sketchCorners;
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 /**
@@ -888,8 +889,11 @@ function distinctCorners(roots) {
 function bodeSketch(numerator, denominator, { pointsPerDecade = 40 } = {}) {
   const num = trimmed(numerator);
   const den = trimmed(denominator);
-  const zeros = polynomialRoots(num);
-  const poles = polynomialRoots(den);
+  // The exact solve can leave a factor common to both sides (a symmetric
+  // half-circuit's, say): a pole standing exactly on a zero cancels in the
+  // function itself. Leave such pairs out of the corners and the asymptote;
+  // the curve, evaluated from the coefficients, is the same either way.
+  const { zeros, poles, cancelled } = cancelCommonRoots(polynomialRoots(num), polynomialRoots(den));
   const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0 && Number.isFinite(w));
   const low = corners.length ? Math.floor(log10(Math.min(...corners))) - 1 : -2;
   let high = corners.length ? Math.ceil(log10(Math.max(...corners))) + 1 : 2;
@@ -927,9 +931,29 @@ function bodeSketch(numerator, denominator, { pointsPerDecade = 40 } = {}) {
     points,
     zeros,
     poles,
+    cancelled,
     asymptote: magnitudeAsymptote(num, den, zeros, poles, low, high),
     unityGain: unityCrossing(points),
   };
+}
+
+/** Pair every zero with a pole at the same point (to a part in 10^7 of its
+ *  size) and drop both; returns what is left and how many pairs went. */
+function cancelCommonRoots(zeros, poles, tolerance = 1e-7) {
+  const leftPoles = [...poles];
+  const leftZeros = [];
+  let cancelled = 0;
+  for (const zero of zeros) {
+    const size = Math.max(cabs(zero), Number.MIN_VALUE);
+    const index = leftPoles.findIndex((pole) => cabs(csub(pole, zero)) <= tolerance * Math.max(size, cabs(pole)));
+    if (index >= 0) {
+      leftPoles.splice(index, 1);
+      cancelled += 1;
+    } else {
+      leftZeros.push(zero);
+    }
+  }
+  return { zeros: leftZeros, poles: leftPoles, cancelled };
 }
 
 /** The textbook straight-line magnitude: the low-frequency behavior k ω^m,
@@ -10861,13 +10885,45 @@ function niceRange(values, step, pad) {
 }
 
 /**
+ * A curve cut to a value range: `samples` are `{ at, value }`, `x` and `y`
+ * place them. Where it leaves the range it ends at the edge (and starts again
+ * where it returns), rather than running flat along the edge as if the
+ * curve stopped falling.
+ */
+function clippedPaths(samples, x, y, low, high, role) {
+  const paths = [];
+  let current = null;
+  const inside = (value) => value >= low && value <= high;
+  const edgePoint = (a, b) => {
+    const edge = (a.value > high) !== (b.value > high) ? high : low;
+    const t = (edge - a.value) / (b.value - a.value);
+    return { x: x(a) + t * (x(b) - x(a)), y: y(edge) };
+  };
+  samples.forEach((sample, index) => {
+    const previous = samples[index - 1];
+    if (inside(sample.value)) {
+      if (!current) {
+        current = [];
+        if (previous && Number.isFinite(previous.value)) current.push(edgePoint(previous, sample));
+        paths.push({ type: 'path', points: current, role });
+      }
+      current.push({ x: x(sample), y: y(sample.value) });
+    } else if (current) {
+      if (Number.isFinite(sample.value)) current.push(edgePoint(previous, sample));
+      current = null;
+    }
+  });
+  return paths.filter((path) => path.points.length > 1);
+}
+
+/**
  * Lay out `sketch` (bode.js's bodeSketch) in a `width` x `height` box.
  * `corners` are `{ w, text }` to mark (ω_{p1}, ω_{z1}); `quantity` names the
  * magnitude axis (`A_{v}`). `numbers: false` gives the textbook sketch: no
  * figures on the axes, only the marked frequencies.
  */
 function bodeFigure(sketch, {
-  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 160,
+  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 180,
   fontSize = 11,
 } = {}) {
   const items = [];
@@ -10945,9 +11001,10 @@ function bodeFigure(sketch, {
   }
 
   // The straight-line sketch under the exact curve.
-  items.push({ type: 'path', points: sketch.asymptote.map((p) => ({ x: x(p.w), y: yDb(p.db) })), role: 'asymptote' });
-  items.push({ type: 'path', points: sketch.points.map((p) => ({ x: x(p.w), y: yDb(p.db) })), role: 'curve' });
-  if (phase) items.push({ type: 'path', points: sketch.points.map((p) => ({ x: x(p.w), y: yPh(p.phase) })), role: 'curve' });
+  const atW = (sample) => x(sample.w);
+  items.push(...clippedPaths(sketch.asymptote.map((p) => ({ w: p.w, value: p.db })), atW, yDb, dbLow, dbHigh, 'asymptote'));
+  items.push(...clippedPaths(sketch.points.map((p) => ({ w: p.w, value: p.db })), atW, yDb, dbLow, dbHigh, 'curve'));
+  if (phase) items.push(...clippedPaths(sketch.points.map((p) => ({ w: p.w, value: p.phase })), atW, yPh, phLow, phHigh, 'curve'));
 
   // Marked frequencies: a dotted drop line and the name at the axis.
   const axisPane = phase ? ph : mag;
@@ -30798,6 +30855,12 @@ function drawSketch() {
     item.appendChild(mathElement(tex));
     if (corner.rightHalf) item.append(' (right half-plane)');
     if (Math.abs(corner.root.im) > 0) item.append(` (complex pair, Q = ${formatNumber(corner.w / (2 * Math.abs(corner.root.re)))})`);
+    list.appendChild(item);
+  }
+  if (sketch.cancelled) {
+    const item = document.createElement('li');
+    item.className = 'bode-cancelled';
+    item.textContent = `${sketch.cancelled} pole–zero pair${sketch.cancelled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out`;
     list.appendChild(item);
   }
   if (sketch.unityGain && quantity.key === 'transfer') {
