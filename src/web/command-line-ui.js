@@ -17,6 +17,7 @@ import { fitView } from './canvas-view.js';
 import { showHelp } from './help.js';
 import { runCheck } from './design-check-ui.js';
 import { openFind, openReplace } from './find-replace-ui.js';
+import { toggleCollage } from './collage.js';
 import { redo, render, runLine, undo } from './main.js';
 
 const click = (id) => document.getElementById(id)?.click();
@@ -48,6 +49,7 @@ const ACTIONS = {
   'page-guide': (state) => (state
     ? document.querySelector(`[data-page-guide="${state === 'none' ? '' : state}"]`)?.click()
     : openMenu('btn-settings')),
+  collage: () => toggleCollage(),
   fit: () => fitView({ animate: true }),
   shortcuts: () => showHelp(),
   check: () => runCheck(),

@@ -327,12 +327,12 @@ function hasUnsavedChanges() {
 let pendingDocumentAction = null;
 
 /** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
-export function requestDocumentAction(description, run) {
+export function requestDocumentAction(description, run, cancel = null) {
   if (!hasUnsavedChanges()) {
     run();
     return;
   }
-  pendingDocumentAction = run;
+  pendingDocumentAction = { run, cancel };
   if (switchDialogMessage) {
     switchDialogMessage.textContent = `${description} will discard the unsaved changes in "${editor.currentCircuitName || circuitNameEl.value.trim() || 'this design'}".`;
   }
@@ -343,6 +343,16 @@ export function requestDocumentAction(description, run) {
 function requestCircuitLoad(path) {
   if (!path) return;
   requestDocumentAction(`Opening "${documentNameForPath(path)}"`, () => loadCircuit(path, false, { open: true }));
+}
+
+/** Open a document by path, after the unsaved-changes check. Resolves true
+ *  once it is open, false when the load fails or the user keeps editing. */
+export function openDocumentPath(path) {
+  return new Promise((resolve) => {
+    requestDocumentAction(`Opening "${documentNameForPath(path)}"`,
+      async () => resolve(await loadCircuit(path, false, { open: true })),
+      () => resolve(false));
+  });
 }
 
 export async function openDocumentDialog() {
@@ -686,10 +696,13 @@ export function installDocumentSession() {
 
   if (switchDialog) {
     switchDialog.addEventListener('close', () => {
-      const run = pendingDocumentAction;
+      const action = pendingDocumentAction;
       pendingDocumentAction = null;
-      if (switchDialog.returnValue === 'discard' && run) run();
-      else circuitSelectEl.value = editor.currentDocumentPath || '';
+      if (switchDialog.returnValue === 'discard' && action) action.run();
+      else {
+        action?.cancel?.();
+        circuitSelectEl.value = editor.currentDocumentPath || '';
+      }
     });
   }
 

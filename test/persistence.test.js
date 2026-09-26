@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import {
-  browseFolder, documentNameFromPath, documentPathFor, listDocuments, readDocumentFile, validDocumentName, writeFileAtomic,
+  browseFolder, documentNameFromPath, fileRevision, documentPathFor, listDocuments, readDocumentFile, validDocumentName, writeFileAtomic,
 } from '../src/server/documents.js';
 import { decodePngToRgb, pngToPdf } from '../src/server/pdf-raster.js';
 import { findChromium } from '../src/server/browser.js';
@@ -71,6 +71,11 @@ test('workspace listing and folder browsing show documents, folders, and other J
 
   assert.deepEqual((await listDocuments(dir)).map(({ name, kind }) => [name, kind]), [['a9', 'circuit'], ['b', 'circuit']]);
   assert.deepEqual(await listDocuments(join(dir, 'missing')), []);
+  // Each entry carries its file revision; an edit changes it.
+  const [{ revision }] = await listDocuments(dir);
+  assert.equal(revision, await fileRevision(join(dir, 'a9.json')));
+  await writeFile(join(dir, 'a9.json'), `${state}\n`);
+  assert.notEqual((await listDocuments(dir))[0].revision, revision);
   const listing = await browseFolder(dir);
   assert.deepEqual(listing.entries.map(({ name, type }) => [name, type]), [
     ['project', 'folder'], ['a9', 'document'], ['b', 'document'], ['a10.json', 'json'], ['notes.json', 'json'],

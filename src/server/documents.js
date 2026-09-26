@@ -126,8 +126,12 @@ async function documentKindOf(path) {
   }
 }
 
+/** A document's listing entry. `revision` (the ETag of its content) lets a
+ *  client keep derived data, such as the collage's renderings, until the file
+ *  changes. */
 export async function describeDocument(path) {
-  return { name: documentNameFromPath(path), path, dir: dirname(path), kind: await documentKindOf(path) };
+  const [kind, revision] = await Promise.all([documentKindOf(path), fileRevision(path)]);
+  return { name: documentNameFromPath(path), path, dir: dirname(path), kind, revision };
 }
 
 /** Documents saved directly in a folder (not recursive). */

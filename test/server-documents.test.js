@@ -30,7 +30,8 @@ serverTest('documents save by name into the workspace and reopen by path', async
 
   const workspace = await (await app.request('/api/workspace')).json();
   assert.equal(workspace.workspace, app.workspace);
-  assert.deepEqual(workspace.documents, [{ name: 'bulk mos', path: app.file('bulk mos'), dir: app.workspace, kind: 'circuit' }]);
+  assert.deepEqual(workspace.documents.map(({ revision, ...doc }) => doc), [{ name: 'bulk mos', path: app.file('bulk mos'), dir: app.workspace, kind: 'circuit' }]);
+  assert.match(workspace.documents[0].revision, /^[0-9a-z]+-[0-9a-z]+$/);
 
   const loaded = await (await app.request(`/api/document?path=${encodeURIComponent(app.file('bulk mos'))}`)).json();
   assert.deepEqual(loaded.state, state);

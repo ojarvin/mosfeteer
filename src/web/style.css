@@ -35,6 +35,7 @@
   --align: #c026d3;
   --ink: #111111;
   --paper: #ffffff;
+  --collage-desk: #e3e7ee;
   --svg-ink: #111111;
   --svg-mid: #292929;
   --svg-faint: #666666;
@@ -3082,6 +3083,7 @@ html.dark {
   --ok: #4ade80;
   --align: #e879f9;
   --paper: #15171c;
+  --collage-desk: #0b0c10;
   --svg-ink: #dde1e8;
   --svg-mid: #dde1e8;
   --svg-faint: #9aa3b2;
@@ -4388,6 +4390,108 @@ button.off {
 /* Presenting: the figure alone, fitted, on the theme's paper and ink.
    Equation labels take their color from --svg-ink, so the ink must be set
    here as it is on the canvas. */
+/* ----- workspace collage ---------------------------------------------- */
+
+.collage {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  overflow: hidden;
+  background: var(--collage-desk);
+  outline: none;
+  touch-action: none;
+  animation: collage-in 180ms ease-out;
+}
+
+.collage[hidden] {
+  display: none;
+}
+
+.collage.leaving {
+  opacity: 0;
+  transition: opacity 160ms ease-in;
+  pointer-events: none;
+}
+
+.collage.panning {
+  cursor: grabbing;
+}
+
+@keyframes collage-in {
+  from { opacity: 0; }
+}
+
+.collage-desk,
+.collage-overlays {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.collage-overlays {
+  pointer-events: none;
+}
+
+.collage-vector {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.collage-vector svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.collage-head {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 24px);
+  padding: 6px 6px 6px 14px;
+  border-radius: 10px;
+}
+
+.collage-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collage-status {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.collage-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collage { animation: none; }
+  .collage.leaving { transition: none; }
+}
+
 .presenter {
   position: fixed;
   z-index: 100;
