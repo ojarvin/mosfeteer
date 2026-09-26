@@ -49,6 +49,49 @@ export const EDITOR_COMMANDS = [
   { name: 'workspace', aliases: ['folder'], help: 'choose the workspace folder' },
   { name: 'more', aliases: ['menu', 'document-menu'], help: 'open the More menu of document actions' },
   { name: 'tutorial', aliases: ['learn', 'tour'], help: 'draw a 5T OTA step by step, in a new document' },
+  { name: 'phase-beats', aliases: ['beats-from-phases'], help: 'add one beat per switch phase (More menu)' },
+  { name: 'show-in-folder', aliases: ['reveal'], help: 'show the document file in the file manager' },
+  { name: 'delete-document', help: 'permanently delete the current document file (asks first)' },
+  // Canvas actions: what a key does to the selection or the tools. `canvas`
+  // hands the keyboard back to the drawing once they run. A line with
+  // arguments still goes to the document command of the same name
+  // (`rotate R1 180`, `swap M1 pmos`).
+  { name: 'insert', aliases: ['part', 'component', 'symbol'], canvas: true, help: 'insert a part, fuzzy-searching every symbol (i)' },
+  { name: 'wire', aliases: ['draw-wire', 'route'], canvas: true, help: 'draw a wire (w)' },
+  { name: 'rotate', aliases: ['turn'], canvas: true, help: 'rotate the selection 90° clockwise (r)' },
+  { name: 'mirror-horizontal', aliases: ['mirror-h', 'flip-horizontal'], canvas: true, help: 'mirror the selection horizontally (Shift+R)' },
+  { name: 'mirror-vertical', aliases: ['mirror-v', 'flip-vertical'], canvas: true, help: 'mirror the selection vertically (Ctrl/Cmd+R)' },
+  { name: 'move', aliases: ['drag'], canvas: true, help: 'move the selection with its wiring (m)' },
+  { name: 'move-detached', aliases: ['detach'], canvas: true, help: 'move the selection without its wires (Shift+M)' },
+  { name: 'copy', aliases: ['duplicate', 'clone'], canvas: true, help: 'copy the selection and place the copy (c)' },
+  { name: 'copy-image', aliases: ['screenshot', 'clipboard-image'], canvas: true, help: 'copy the selection (or drawing) as an image (Ctrl/Cmd+Shift+C)' },
+  { name: 'paste', canvas: true, help: 'paste the copied objects at the cursor (p)' },
+  { name: 'delete', aliases: ['erase', 'cut'], canvas: true, help: 'delete the selection (dd)' },
+  { name: 'select-all', aliases: ['all'], canvas: true, help: 'select everything (Ctrl/Cmd+A)' },
+  { name: 'box-select', aliases: ['visual', 'marquee'], canvas: true, help: 'grow a selection box with the arrow keys (v)' },
+  { name: 'net-label', aliases: ['name-net', 'label-wire'], canvas: true, help: 'place net labels on wires (Shift+L)' },
+  { name: 'free-text', aliases: ['annotation-tool', 'comment'], canvas: true, help: 'place a free annotation (Shift+N)' },
+  { name: 'equation', aliases: ['latex', 'math', 'formula'], canvas: true, help: 'place a LaTeX equation (e)' },
+  { name: 'arrow', canvas: true, help: 'draw an annotation arrow (a)' },
+  { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box (b)' },
+  { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
+  { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
+  { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },
+  { name: 'distribute', aliases: ['spread', 'even'], needsArg: true, choices: ['x', 'y'], canvas: true, help: 'space the selection evenly: x (horizontal) or y (vertical)' },
+  { name: 'front', aliases: ['bring-to-front', 'raise'], canvas: true, help: 'bring the selection to the front (Shift+Up)' },
+  { name: 'back', aliases: ['send-to-back', 'lower'], canvas: true, help: 'send the selection to the back (Shift+Down)' },
+  { name: 'highlight', aliases: ['color-net', 'net-color', 'colour'], canvas: true, help: 'color whole nets, click by click (9)' },
+  { name: 'clear-highlights', aliases: ['uncolor', 'remove-highlights'], canvas: true, help: 'remove every net highlight (8)' },
+  { name: 'stubs', aliases: ['wire-stubs'], canvas: true, help: 'labelled wire stubs on the selected parts\' unconnected pins (Space)' },
+  { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (q)' },
+  { name: 'repeat', aliases: ['again'], canvas: true, help: 'repeat the last rotate, mirror, swap, rail, or stubs (.)' },
+  { name: 'edit', aliases: ['edit-text', 'rename-selection'], canvas: true, help: 'edit the selected label or part name (t, =, F2)' },
+  { name: 'add-beat', aliases: ['new-beat'], canvas: true, help: 'add a beat after the one on screen (+)' },
+  { name: 'next-beat', canvas: true, help: 'step to the next beat (Alt+→)' },
+  { name: 'previous-beat', aliases: ['prev-beat'], canvas: true, help: 'step to the previous beat (Alt+←)' },
+  { name: 'hide', canvas: true, help: 'hide the selection from this beat on (h)' },
+  { name: 'dim', canvas: true, help: 'dim the selection from this beat on (Shift+H)' },
+  { name: 'flip-switches', aliases: ['toggle-switches', 'open-switches', 'close-switches'], canvas: true, help: 'open or close the selected switches with their phase (s)' },
 ];
 
 /** Document commands (`runCommand`), for completion. Arguments are the
@@ -106,10 +149,12 @@ function entryNamed(catalog, word) {
  * undefined to flip, or the chosen value of a `choices` command.
  */
 export function resolveEditorCommand(line, catalog = EDITOR_COMMANDS) {
+  // A command that needs its argument (align left) only runs with it.
   const { word, rest } = commandWord(line);
   const entry = word && entryNamed(catalog, word);
   if (!entry) return null;
   if (!rest) {
+    if (entry.needsArg) return null;
     // A bare `light` asks for the light theme, not a flip.
     return { name: entry.name, state: entry.toggle && word.toLowerCase() === 'light' ? false : undefined };
   }
@@ -131,39 +176,51 @@ export function resolveEditorCommand(line, catalog = EDITOR_COMMANDS) {
  * command whose name an editor command already answers to is left out.
  */
 export function commandCompletions(word, { editor = EDITOR_COMMANDS, document = DOCUMENT_COMMANDS } = {}) {
-  const key = String(word || '').toLowerCase();
-  if (!key) return [];
+  const query = String(word || '').toLowerCase().trim();
+  if (!query) return [];
+  // Several words search what the commands do: every word must appear in a
+  // name, a synonym, or the description ("mirror hor", "beats phase").
+  const tokens = query.split(/\s+/);
+  const key = tokens.length > 1 ? '' : query;
   const editorWords = new Set(editor.flatMap((entry) => [entry.name, ...(entry.aliases || [])]));
   const entries = [
     ...editor.map((entry) => ({ ...entry, kind: 'editor' })),
     ...document.filter((entry) => !editorWords.has(entry.name)).map((entry) => ({ ...entry, kind: 'document' })),
   ];
   const ranked = [];
+  const described1 = []; // one word found only in descriptions: a fallback
   for (const [order, entry] of entries.entries()) {
     const aliases = entry.aliases || [];
     let rank = null;
     let via = null;
-    if (entry.name === key) rank = 0;
+    const described = () => {
+      const text = [entry.name, ...aliases, entry.help].join(' ').toLowerCase();
+      return tokens.every((token) => token.length >= 2 && text.includes(token));
+    };
+    if (!key) rank = described() ? 6 : null;
+    else if (entry.name === key) rank = 0;
     else if (aliases.includes(key)) { rank = 1; via = key; }
     else if (entry.name.startsWith(key)) rank = 2;
     else if ((via = aliases.find((alias) => alias.startsWith(key)) || null)) rank = 3;
     else if (key.length >= 2 && entry.name.includes(key)) rank = 4;
     else if (key.length >= 2 && (via = aliases.find((alias) => alias.includes(key)) || null)) rank = 5;
-    if (rank !== null) ranked.push({ name: entry.name, via, help: entry.help, kind: entry.kind, rank, order });
+    else if (key.length >= 3 && described()) described1.push({ name: entry.name, via: null, help: entry.help, kind: entry.kind, needsArg: !!entry.needsArg, rank: 6, order });
+    if (rank !== null) ranked.push({ name: entry.name, via, help: entry.help, kind: entry.kind, needsArg: !!entry.needsArg, rank, order });
   }
-  // Nothing even contains the word: offer near misses, so a typo still finds
-  // its command.
+  // No name contains the word: offer what it describes, then near misses, so
+  // a typo still finds its command.
+  if (!ranked.length) ranked.push(...described1);
   if (!ranked.length && key.length >= 3) {
     const reach = key.length >= 5 ? 2 : 1;
     for (const [order, entry] of entries.entries()) {
       const distances = [entry.name, ...(entry.aliases || [])].map((word) => [word, editDistance(key, word)]);
       const [via, distance] = distances.reduce((best, next) => (next[1] < best[1] ? next : best));
-      if (distance <= reach) ranked.push({ name: entry.name, via: via === entry.name ? null : via, help: entry.help, kind: entry.kind, rank: 6 + distance, order });
+      if (distance <= reach) ranked.push({ name: entry.name, via: via === entry.name ? null : via, help: entry.help, kind: entry.kind, rank: 7 + distance, order });
     }
   }
   return ranked
     .sort((a, b) => a.rank - b.rank || a.order - b.order)
-    .map(({ name, via, help, kind }) => ({ name, via, help, kind }));
+    .map(({ name, via, help, kind, needsArg }) => ({ name, via, help, kind, needsArg: !!needsArg }));
 }
 
 /** Levenshtein distance between two short words. */
@@ -211,4 +268,45 @@ export function canonicalDocumentLine(line) {
 export function didYouMean(word) {
   const names = commandCompletions(word).slice(0, 3).map((entry) => entry.name);
   return names.length ? `did you mean ${names.join(', ')}?` : '';
+}
+
+/** Whether `word` is exactly a command's name or synonym. */
+export function knownCommandWord(word) {
+  return !!word && !!(entryNamed(EDITOR_COMMANDS, word) || entryNamed(DOCUMENT_COMMANDS, word));
+}
+
+/**
+ * The suggestions for a whole line. Until its first word names a command,
+ * every word searches. After that the rest are arguments, unless every word
+ * describes a different editor action that runs bare ("mirror hor" is
+ * mirror-horizontal, "move R1 40 40" stays a move).
+ */
+export function lineSuggestions(line) {
+  const text = String(line).replace(/^:+/, '').trim();
+  const { word, spaced } = commandWord(text);
+  const candidates = commandCompletions(text);
+  if (!spaced || !knownCommandWord(word)) return candidates;
+  const own = (entryNamed(EDITOR_COMMANDS, word) || entryNamed(DOCUMENT_COMMANDS, word)).name;
+  return candidates.filter((entry) => entry.kind === 'editor' && !entry.needsArg && entry.name !== own);
+}
+
+/**
+ * What Enter does with a line when `index` is the highlighted suggestion:
+ * `{ run }` runs a line as typed (an exact command with its arguments, or one
+ * nothing matches, for its error), `{ run: name }` runs the highlighted
+ * command, and `{ fill }` puts a command that needs arguments into the line
+ * to finish.
+ */
+export function commandLineIntent(line, index = 0) {
+  const text = String(line).replace(/^:+/, '').trim();
+  if (resolveEditorCommand(text)) return { run: text };
+  const { word, spaced } = commandWord(text);
+  if (!spaced && knownCommandWord(word)) {
+    const entry = entryNamed(EDITOR_COMMANDS, word);
+    return entry?.needsArg ? { fill: `${entry.name} ` } : { run: text };
+  }
+  const candidates = lineSuggestions(text);
+  if (!candidates.length) return { run: text };
+  const pick = candidates[Math.max(0, Math.min(index, candidates.length - 1))];
+  return pick.kind === 'document' || pick.needsArg ? { fill: `${pick.name} ` } : { run: pick.name };
 }

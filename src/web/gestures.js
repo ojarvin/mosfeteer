@@ -8,6 +8,7 @@
  */
 
 import { applyTransform } from '../core/geometry.js';
+import { pointOnPath } from '../core/wiring.js';
 
 /** A press on a terminal of a multi-terminal part starts a wire when dragged.
  * Single-terminal parts (ground, supply, ports, markers) are mostly terminal,
@@ -226,4 +227,53 @@ export function lerpView(from, to, t) {
     w: from.w + (to.w - from.w) * k,
     h: from.h + (to.h - from.h) * k,
   };
+}
+
+/**
+ * Which of `pins` ({x, y, netId}) will join something when the parts carrying
+ * them land: another part's pin, a free end of a managed wire, or -- for a pin
+ * on no net yet -- the middle of one managed wire, which it tees into
+ * (Circuit#teeTerminalsOntoWires). `carried` names the parts that move with
+ * the pins, which are never targets. A pin already on the only net standing
+ * there joins nothing new.
+ */
+export function pinJoinPoints(circuit, pins, carried = new Set()) {
+  if (!pins.length) return [];
+  const targets = new Map(); // "x,y" -> ids of the nets already there
+  const add = (x, y, netId) => {
+    const key = `${x},${y}`;
+    if (!targets.has(key)) targets.set(key, new Set());
+    targets.get(key).add(netId);
+  };
+  const standing = new Set();
+  for (const component of circuit.components.values()) {
+    if (carried.has(component.refdes)) continue;
+    for (const t of component.worldTerminals()) {
+      standing.add(`${t.x},${t.y}`);
+      add(t.x, t.y, circuit.netOfTerminal({ comp: component.refdes, term: t.name })?.id || null);
+    }
+  }
+  const carriedNets = new Set(pins.map((pin) => pin.netId).filter(Boolean));
+  for (const net of circuit.nets.values()) {
+    if (net.routingMode === 'fixed' || carriedNets.has(net.id)) continue;
+    const paths = net.paths();
+    paths.forEach((path, index) => {
+      if (path.length < 2) return;
+      for (const end of [path[0], path.at(-1)]) {
+        if (standing.has(`${end.x},${end.y}`)) continue;
+        if (net.junctions.some((p) => p.x === end.x && p.y === end.y)) continue;
+        if (paths.some((other, i) => i !== index && pointOnPath(end, other))) continue;
+        add(end.x, end.y, net.id);
+      }
+    });
+  }
+  const managed = [...circuit.nets.values()].filter((net) => net.routingMode !== 'fixed' && !carriedNets.has(net.id));
+  const points = new Map();
+  for (const pin of pins) {
+    const there = targets.get(`${pin.x},${pin.y}`);
+    const tee = !there && !pin.netId
+      && managed.filter((net) => net.paths().some((path) => pointOnPath(pin, path))).length === 1;
+    if (tee || (there && !(pin.netId && there.size === 1 && there.has(pin.netId)))) points.set(`${pin.x},${pin.y}`, { x: pin.x, y: pin.y });
+  }
+  return [...points.values()];
 }

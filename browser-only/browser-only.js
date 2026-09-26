@@ -19780,6 +19780,51 @@ class Circuit {
 
   }
 
+  /**
+   * Tee the unconnected pins of `refs` into the managed wire they rest on:
+   * a pin dropped on the interior of one net's wire (a port on a rail, a gate
+   * on a bias line) joins that net there, with a junction. Pins already on a
+   * net never join another this way (that would short two nets from a drop),
+   * and a point where two nets' wires meet is ambiguous and left alone. Wire
+   * ends are reconnectCoincidentNets' business. Returns the pins joined.
+   */
+  teeTerminalsOntoWires(refs) {
+    const joined = [];
+    for (const refdes of refs) {
+      const component = this.components.get(refdes);
+      if (!component || component.type === 'solder') continue;
+      for (const terminal of component.worldTerminals()) {
+        const ref = { comp: refdes, term: terminal.name };
+        if (this.netOfTerminal(ref)) continue;
+        const point = { x: terminal.x, y: terminal.y };
+        const hits = [...this.nets.values()].filter((net) => net.routingMode !== 'fixed'
+          && this._explicitBranches(net).some((path) => pointOnPath(point, path)));
+        if (hits.length !== 1) continue;
+        const [net] = hits;
+        const paths = this._explicitBranches(net);
+        const interior = paths.some((path) => pointOnPath(point, path)
+          && !(path[0].x === point.x && path[0].y === point.y)
+          && !(path.at(-1).x === point.x && path.at(-1).y === point.y));
+        if (!interior) continue;
+        this.invalidateRoutingCache();
+        const pieces = this._splitBranchesPreservingStyles(net, paths, [point]);
+        net.branches = pieces;
+        net.route = pieces[0] ? clonePath(pieces[0], net.allowDiagonal) : null;
+        if (!net.junctions.some((p) => p.x === point.x && p.y === point.y)) net.junctions.push(point);
+        net.terminals.push(ref);
+        this._syncReferenceMarkerNetName(net);
+        // A port still carrying its automatic name takes the name of the net
+        // it was dropped on; one already named names the net.
+        const prefix = component.def.refPrefix || component.type.toUpperCase();
+        const automatic = INTERFACE_PIN_TYPES.has(component.type) && new RegExp(`^${prefix}\\d+$`).test(refdes);
+        this._syncInterfacePinLabels(net, { enforceName: !(automatic && net.name) });
+        joined.push(ref);
+      }
+    }
+    if (joined.length) this.syncJunctionSolders();
+    return joined;
+  }
+
   /** Add one terminal to an existing net. */
   connectTo(netId, ref) {
     this.invalidateRoutingCache();
@@ -29628,26 +29673,34 @@ function writeDrawingToClipboard(svg, {
 __modules["src/web/command-line-ui.js"] = function (__require, __exports) {
 __exports.runCommandLine = runCommandLine;
 __exports.installCommandLine = installCommandLine;
-let canonicalDocumentLine, commandCompletions, commandWord, didYouMean, resolveEditorCommand, tabComplete; __bind(() => { ({ canonicalDocumentLine, commandCompletions, commandWord, didYouMean, resolveEditorCommand, tabComplete } = __require("src/web/command-line.js")); });
+let EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete; __bind(() => { ({ EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete } = __require("src/web/command-line.js")); });
 let analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, scrollSchemeButton, tipsButton; __bind(() => { ({ analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, scrollSchemeButton, tipsButton } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let applyLogDrawerEvent, logCommand, logLine; __bind(() => { ({ applyLogDrawerEvent, logCommand, logLine } = __require("src/web/status-bar-ui.js")); });
+let applyLogDrawerEvent, hintLine, logCommand, logLine; __bind(() => { ({ applyLogDrawerEvent, hintLine, logCommand, logLine } = __require("src/web/status-bar-ui.js")); });
 let toggleTheme, setGrid, setCrosshair, setGuides; __bind(() => { ({ toggleTheme, setGrid, setCrosshair, setGuides } = __require("src/web/toolbar-ui.js")); });
 let setSidePanelVisible, sidePanelVisible; __bind(() => { ({ setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
 let toggleAnalysisDock; __bind(() => { ({ toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
-let openPresenter, toggleBeatStrip; __bind(() => { ({ openPresenter, toggleBeatStrip } = __require("src/web/beats-ui.js")); });
+let addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat; __bind(() => { ({ addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } = __require("src/web/beats-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
 let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
 let toggleAtlas, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleSymbolSheet } = __require("src/web/atlas.js")); });
-let redo, render, runLine, undo; __bind(() => { ({ redo, render, runLine, undo } = __require("src/web/main.js")); });
+let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, undo } = __require("src/web/main.js")); });
+let removeAllNetHighlights; __bind(() => { ({ removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
+let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
+let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy-paste.js")); });
+let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
 /**
  * The `:` command line: history, Tab completion with a suggestion list, and
  * the editor commands (panels, view toggles, menus, dialogs). Everything else
  * goes to the shared document command language through runLine. The
  * vocabulary and completion rules are command-line.js.
  */
+
+
+
+
 
 
 
@@ -29710,6 +29763,45 @@ const ACTIONS = {
   present: () => openPresenter(),
   workspace: () => click('btn-workspace'),
   tutorial: () => click('btn-tutorial'),
+  'phase-beats': () => click('btn-phase-beats'),
+  'show-in-folder': () => click('btn-reveal-document'),
+  'delete-document': () => click('btn-delete-circuit'),
+  insert: () => activatePlace(),
+  wire: () => activateWire(),
+  rotate: () => selectedTransform('rotate'),
+  'mirror-horizontal': () => selectedTransform('mirror-x'),
+  'mirror-vertical': () => selectedTransform('mirror-y'),
+  move: () => activateMove('connected'),
+  'move-detached': () => activateMove('detached'),
+  copy: () => activateCopy(),
+  'copy-image': () => copyAsImage(),
+  paste: () => pasteClipboard(),
+  delete: () => { if (!deleteSelection()) hintLine('delete: select something first'); },
+  'select-all': () => selectAll(),
+  'box-select': () => activateVisual(),
+  'net-label': () => activateNetLabel(),
+  'free-text': () => activateAnnotation(),
+  equation: () => activateEquation(),
+  arrow: () => activateShapeAnnotation('arrow'),
+  box: () => activateShapeAnnotation('box'),
+  line: () => activateShapeAnnotation('line'),
+  'align-to': () => activateAlign(),
+  align: (side) => applyLayoutPlan(layoutPlan(side)),
+  distribute: (axis) => applyLayoutPlan(layoutPlan(axis)),
+  front: () => restackSelected('front'),
+  back: () => restackSelected('back'),
+  highlight: () => activateHighlight(),
+  'clear-highlights': () => removeAllNetHighlights(),
+  stubs: () => stubSelection(),
+  swap: () => openSwapPicker(swapTargets()),
+  repeat: () => repeatLastAction(),
+  edit: () => editSelectionText(),
+  'add-beat': () => addBeatHere(),
+  'next-beat': () => stepBeat(1),
+  'previous-beat': () => stepBeat(-1),
+  hide: () => toggleSelectionInBeat('hide'),
+  dim: () => toggleSelectionInBeat('dim'),
+  'flip-switches': () => flipSelectedSwitches(),
 };
 
 /** Run one command line: an editor command here, anything else as a
@@ -29725,24 +29817,36 @@ function runCommandLine(line) {
     return;
   }
   logCommand(line);
+  // A canvas action hands the keyboard back to the drawing first, so a tool
+  // it arms (insert, wire, move) takes the next keys and clicks.
+  if (EDITOR_COMMANDS.find((entry) => entry.name === command.name)?.canvas) returnToCanvas();
   ACTIONS[command.name](command.state);
   render();
+}
+
+function returnToCanvas() {
+  cmdInput.value = '';
+  closeSuggestions();
+  cmdInput.blur();
+  applyLogDrawerEvent({ type: 'command-done' });
+  canvasEl.focus({ preventScroll: true });
 }
 
 // ----- completion list ------------------------------------------------------
 
 let completion = null; // the Tab session: typed word, candidates, index
+let active = 0; // the suggestion Up/Down highlight and Enter runs
 
 function renderSuggestions() {
   if (!cmdSuggestionsEl) return;
-  const { word, spaced } = commandWord(cmdInput.value);
-  const candidates = completion?.candidates || (spaced ? [] : commandCompletions(word));
+  const { word } = commandWord(cmdInput.value);
+  const candidates = completion?.candidates || lineSuggestions(cmdInput.value);
   const shown = candidates.slice(0, 8);
   cmdSuggestionsEl.replaceChildren(...shown.map((entry, index) => {
     const item = document.createElement('li');
     item.setAttribute('role', 'option');
     item.id = `cmd-suggestion-${index}`;
-    item.setAttribute('aria-selected', String(completion?.index === index));
+    item.setAttribute('aria-selected', String(completion ? completion.index === index : index === active));
     const name = document.createElement('span');
     name.className = 'cmd-suggestion-name';
     name.textContent = entry.name;
@@ -29768,7 +29872,8 @@ function renderSuggestions() {
   const open = shown.length > 0 && document.activeElement === cmdInput;
   cmdSuggestionsEl.hidden = !open;
   cmdInput.setAttribute('aria-expanded', String(open));
-  if (open && completion && completion.index < shown.length) cmdInput.setAttribute('aria-activedescendant', `cmd-suggestion-${completion.index}`);
+  const current = completion ? completion.index : active;
+  if (open && current >= 0 && current < shown.length) cmdInput.setAttribute('aria-activedescendant', `cmd-suggestion-${current}`);
   else cmdInput.removeAttribute('aria-activedescendant');
 }
 
@@ -29783,6 +29888,7 @@ function stepCompletion(step) {
 
 function closeSuggestions() {
   completion = null;
+  active = 0;
   if (cmdSuggestionsEl) cmdSuggestionsEl.hidden = true;
   cmdInput.setAttribute('aria-expanded', 'false');
   cmdInput.removeAttribute('aria-activedescendant');
@@ -29803,7 +29909,17 @@ function installCommandLine() {
       ev.stopPropagation();
       stepCompletion(ev.shiftKey ? -1 : 1);
     } else if (ev.key === 'Enter') {
-      const line = cmdInput.value.replace(/^:+/, '').trim();
+      const typed = cmdInput.value.replace(/^:+/, '').trim();
+      // Enter runs what the line says exactly, else the highlighted match;
+      // a match that needs arguments is filled in to finish.
+      const intent = typed && !completion ? commandLineIntent(typed, active) : { run: typed };
+      if (intent.fill) {
+        cmdInput.value = intent.fill;
+        closeSuggestions();
+        renderSuggestions();
+        return;
+      }
+      const line = intent.run;
       cmdInput.value = '';
       commandHistoryIndex = -1;
       closeSuggestions();
@@ -29822,6 +29938,15 @@ function installCommandLine() {
       cmdInput.blur();
       applyLogDrawerEvent({ type: 'command-done' });
       canvasEl.focus();
+    } else if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && cmdInput.value.trim() && !cmdSuggestionsEl?.hidden
+        && commandHistoryIndex < 0) {
+      // With matches listed, the arrows walk them; on an empty line they
+      // recall history.
+      ev.preventDefault();
+      const count = Math.min(8, cmdSuggestionsEl.children.length);
+      if (completion) { active = Math.max(0, completion.index); completion = null; }
+      active = (active + (ev.key === 'ArrowDown' ? 1 : -1) + count) % count;
+      renderSuggestions();
     } else if ((ev.key === 'ArrowUp' || ev.key === 'ArrowDown') && commandHistory.length) {
       ev.preventDefault();
       const last = commandHistory.length - 1;
@@ -29834,6 +29959,7 @@ function installCommandLine() {
   });
   cmdInput.addEventListener('input', () => {
     completion = null;
+    active = 0;
     renderSuggestions();
   });
   cmdInput.addEventListener('focus', renderSuggestions);
@@ -29849,6 +29975,9 @@ __exports.commandCompletions = commandCompletions;
 __exports.tabComplete = tabComplete;
 __exports.canonicalDocumentLine = canonicalDocumentLine;
 __exports.didYouMean = didYouMean;
+__exports.knownCommandWord = knownCommandWord;
+__exports.lineSuggestions = lineSuggestions;
+__exports.commandLineIntent = commandLineIntent;
 /**
  * The `:` command line's vocabulary. Document commands go to `runCommand`
  * (src/core/commands.js), the one command language every entry point shares.
@@ -29900,6 +30029,49 @@ const EDITOR_COMMANDS = [
   { name: 'workspace', aliases: ['folder'], help: 'choose the workspace folder' },
   { name: 'more', aliases: ['menu', 'document-menu'], help: 'open the More menu of document actions' },
   { name: 'tutorial', aliases: ['learn', 'tour'], help: 'draw a 5T OTA step by step, in a new document' },
+  { name: 'phase-beats', aliases: ['beats-from-phases'], help: 'add one beat per switch phase (More menu)' },
+  { name: 'show-in-folder', aliases: ['reveal'], help: 'show the document file in the file manager' },
+  { name: 'delete-document', help: 'permanently delete the current document file (asks first)' },
+  // Canvas actions: what a key does to the selection or the tools. `canvas`
+  // hands the keyboard back to the drawing once they run. A line with
+  // arguments still goes to the document command of the same name
+  // (`rotate R1 180`, `swap M1 pmos`).
+  { name: 'insert', aliases: ['part', 'component', 'symbol'], canvas: true, help: 'insert a part, fuzzy-searching every symbol (i)' },
+  { name: 'wire', aliases: ['draw-wire', 'route'], canvas: true, help: 'draw a wire (w)' },
+  { name: 'rotate', aliases: ['turn'], canvas: true, help: 'rotate the selection 90° clockwise (r)' },
+  { name: 'mirror-horizontal', aliases: ['mirror-h', 'flip-horizontal'], canvas: true, help: 'mirror the selection horizontally (Shift+R)' },
+  { name: 'mirror-vertical', aliases: ['mirror-v', 'flip-vertical'], canvas: true, help: 'mirror the selection vertically (Ctrl/Cmd+R)' },
+  { name: 'move', aliases: ['drag'], canvas: true, help: 'move the selection with its wiring (m)' },
+  { name: 'move-detached', aliases: ['detach'], canvas: true, help: 'move the selection without its wires (Shift+M)' },
+  { name: 'copy', aliases: ['duplicate', 'clone'], canvas: true, help: 'copy the selection and place the copy (c)' },
+  { name: 'copy-image', aliases: ['screenshot', 'clipboard-image'], canvas: true, help: 'copy the selection (or drawing) as an image (Ctrl/Cmd+Shift+C)' },
+  { name: 'paste', canvas: true, help: 'paste the copied objects at the cursor (p)' },
+  { name: 'delete', aliases: ['erase', 'cut'], canvas: true, help: 'delete the selection (dd)' },
+  { name: 'select-all', aliases: ['all'], canvas: true, help: 'select everything (Ctrl/Cmd+A)' },
+  { name: 'box-select', aliases: ['visual', 'marquee'], canvas: true, help: 'grow a selection box with the arrow keys (v)' },
+  { name: 'net-label', aliases: ['name-net', 'label-wire'], canvas: true, help: 'place net labels on wires (Shift+L)' },
+  { name: 'free-text', aliases: ['annotation-tool', 'comment'], canvas: true, help: 'place a free annotation (Shift+N)' },
+  { name: 'equation', aliases: ['latex', 'math', 'formula'], canvas: true, help: 'place a LaTeX equation (e)' },
+  { name: 'arrow', canvas: true, help: 'draw an annotation arrow (a)' },
+  { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box (b)' },
+  { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
+  { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
+  { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },
+  { name: 'distribute', aliases: ['spread', 'even'], needsArg: true, choices: ['x', 'y'], canvas: true, help: 'space the selection evenly: x (horizontal) or y (vertical)' },
+  { name: 'front', aliases: ['bring-to-front', 'raise'], canvas: true, help: 'bring the selection to the front (Shift+Up)' },
+  { name: 'back', aliases: ['send-to-back', 'lower'], canvas: true, help: 'send the selection to the back (Shift+Down)' },
+  { name: 'highlight', aliases: ['color-net', 'net-color', 'colour'], canvas: true, help: 'color whole nets, click by click (9)' },
+  { name: 'clear-highlights', aliases: ['uncolor', 'remove-highlights'], canvas: true, help: 'remove every net highlight (8)' },
+  { name: 'stubs', aliases: ['wire-stubs'], canvas: true, help: 'labelled wire stubs on the selected parts\' unconnected pins (Space)' },
+  { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (q)' },
+  { name: 'repeat', aliases: ['again'], canvas: true, help: 'repeat the last rotate, mirror, swap, rail, or stubs (.)' },
+  { name: 'edit', aliases: ['edit-text', 'rename-selection'], canvas: true, help: 'edit the selected label or part name (t, =, F2)' },
+  { name: 'add-beat', aliases: ['new-beat'], canvas: true, help: 'add a beat after the one on screen (+)' },
+  { name: 'next-beat', canvas: true, help: 'step to the next beat (Alt+→)' },
+  { name: 'previous-beat', aliases: ['prev-beat'], canvas: true, help: 'step to the previous beat (Alt+←)' },
+  { name: 'hide', canvas: true, help: 'hide the selection from this beat on (h)' },
+  { name: 'dim', canvas: true, help: 'dim the selection from this beat on (Shift+H)' },
+  { name: 'flip-switches', aliases: ['toggle-switches', 'open-switches', 'close-switches'], canvas: true, help: 'open or close the selected switches with their phase (s)' },
 ];
 
 /** Document commands (`runCommand`), for completion. Arguments are the
@@ -29957,10 +30129,12 @@ function entryNamed(catalog, word) {
  * undefined to flip, or the chosen value of a `choices` command.
  */
 function resolveEditorCommand(line, catalog = EDITOR_COMMANDS) {
+  // A command that needs its argument (align left) only runs with it.
   const { word, rest } = commandWord(line);
   const entry = word && entryNamed(catalog, word);
   if (!entry) return null;
   if (!rest) {
+    if (entry.needsArg) return null;
     // A bare `light` asks for the light theme, not a flip.
     return { name: entry.name, state: entry.toggle && word.toLowerCase() === 'light' ? false : undefined };
   }
@@ -29982,39 +30156,51 @@ function resolveEditorCommand(line, catalog = EDITOR_COMMANDS) {
  * command whose name an editor command already answers to is left out.
  */
 function commandCompletions(word, { editor = EDITOR_COMMANDS, document = DOCUMENT_COMMANDS } = {}) {
-  const key = String(word || '').toLowerCase();
-  if (!key) return [];
+  const query = String(word || '').toLowerCase().trim();
+  if (!query) return [];
+  // Several words search what the commands do: every word must appear in a
+  // name, a synonym, or the description ("mirror hor", "beats phase").
+  const tokens = query.split(/\s+/);
+  const key = tokens.length > 1 ? '' : query;
   const editorWords = new Set(editor.flatMap((entry) => [entry.name, ...(entry.aliases || [])]));
   const entries = [
     ...editor.map((entry) => ({ ...entry, kind: 'editor' })),
     ...document.filter((entry) => !editorWords.has(entry.name)).map((entry) => ({ ...entry, kind: 'document' })),
   ];
   const ranked = [];
+  const described1 = []; // one word found only in descriptions: a fallback
   for (const [order, entry] of entries.entries()) {
     const aliases = entry.aliases || [];
     let rank = null;
     let via = null;
-    if (entry.name === key) rank = 0;
+    const described = () => {
+      const text = [entry.name, ...aliases, entry.help].join(' ').toLowerCase();
+      return tokens.every((token) => token.length >= 2 && text.includes(token));
+    };
+    if (!key) rank = described() ? 6 : null;
+    else if (entry.name === key) rank = 0;
     else if (aliases.includes(key)) { rank = 1; via = key; }
     else if (entry.name.startsWith(key)) rank = 2;
     else if ((via = aliases.find((alias) => alias.startsWith(key)) || null)) rank = 3;
     else if (key.length >= 2 && entry.name.includes(key)) rank = 4;
     else if (key.length >= 2 && (via = aliases.find((alias) => alias.includes(key)) || null)) rank = 5;
-    if (rank !== null) ranked.push({ name: entry.name, via, help: entry.help, kind: entry.kind, rank, order });
+    else if (key.length >= 3 && described()) described1.push({ name: entry.name, via: null, help: entry.help, kind: entry.kind, needsArg: !!entry.needsArg, rank: 6, order });
+    if (rank !== null) ranked.push({ name: entry.name, via, help: entry.help, kind: entry.kind, needsArg: !!entry.needsArg, rank, order });
   }
-  // Nothing even contains the word: offer near misses, so a typo still finds
-  // its command.
+  // No name contains the word: offer what it describes, then near misses, so
+  // a typo still finds its command.
+  if (!ranked.length) ranked.push(...described1);
   if (!ranked.length && key.length >= 3) {
     const reach = key.length >= 5 ? 2 : 1;
     for (const [order, entry] of entries.entries()) {
       const distances = [entry.name, ...(entry.aliases || [])].map((word) => [word, editDistance(key, word)]);
       const [via, distance] = distances.reduce((best, next) => (next[1] < best[1] ? next : best));
-      if (distance <= reach) ranked.push({ name: entry.name, via: via === entry.name ? null : via, help: entry.help, kind: entry.kind, rank: 6 + distance, order });
+      if (distance <= reach) ranked.push({ name: entry.name, via: via === entry.name ? null : via, help: entry.help, kind: entry.kind, rank: 7 + distance, order });
     }
   }
   return ranked
     .sort((a, b) => a.rank - b.rank || a.order - b.order)
-    .map(({ name, via, help, kind }) => ({ name, via, help, kind }));
+    .map(({ name, via, help, kind, needsArg }) => ({ name, via, help, kind, needsArg: !!needsArg }));
 }
 
 /** Levenshtein distance between two short words. */
@@ -30062,6 +30248,47 @@ function canonicalDocumentLine(line) {
 function didYouMean(word) {
   const names = commandCompletions(word).slice(0, 3).map((entry) => entry.name);
   return names.length ? `did you mean ${names.join(', ')}?` : '';
+}
+
+/** Whether `word` is exactly a command's name or synonym. */
+function knownCommandWord(word) {
+  return !!word && !!(entryNamed(EDITOR_COMMANDS, word) || entryNamed(DOCUMENT_COMMANDS, word));
+}
+
+/**
+ * The suggestions for a whole line. Until its first word names a command,
+ * every word searches. After that the rest are arguments, unless every word
+ * describes a different editor action that runs bare ("mirror hor" is
+ * mirror-horizontal, "move R1 40 40" stays a move).
+ */
+function lineSuggestions(line) {
+  const text = String(line).replace(/^:+/, '').trim();
+  const { word, spaced } = commandWord(text);
+  const candidates = commandCompletions(text);
+  if (!spaced || !knownCommandWord(word)) return candidates;
+  const own = (entryNamed(EDITOR_COMMANDS, word) || entryNamed(DOCUMENT_COMMANDS, word)).name;
+  return candidates.filter((entry) => entry.kind === 'editor' && !entry.needsArg && entry.name !== own);
+}
+
+/**
+ * What Enter does with a line when `index` is the highlighted suggestion:
+ * `{ run }` runs a line as typed (an exact command with its arguments, or one
+ * nothing matches, for its error), `{ run: name }` runs the highlighted
+ * command, and `{ fill }` puts a command that needs arguments into the line
+ * to finish.
+ */
+function commandLineIntent(line, index = 0) {
+  const text = String(line).replace(/^:+/, '').trim();
+  if (resolveEditorCommand(text)) return { run: text };
+  const { word, spaced } = commandWord(text);
+  if (!spaced && knownCommandWord(word)) {
+    const entry = entryNamed(EDITOR_COMMANDS, word);
+    return entry?.needsArg ? { fill: `${entry.name} ` } : { run: text };
+  }
+  const candidates = lineSuggestions(text);
+  if (!candidates.length) return { run: text };
+  const pick = candidates[Math.max(0, Math.min(index, candidates.length - 1))];
+  return pick.kind === 'document' || pick.needsArg ? { fill: `${pick.name} ` } : { run: pick.name };
 }
 
 __exports.EDITOR_COMMANDS = EDITOR_COMMANDS;
@@ -31534,6 +31761,7 @@ function commitCopyGhost() {
   const refs = [...ghost.refs, ...(ghost.mirror?.refs || [])];
   editor.circuit.connectCoincident(refs);
   editor.circuit.reconnectCoincidentNets();
+  editor.circuit.teeTerminalsOntoWires(refs);
   editor.circuit.ensureUniqueTerminals(refs);
   editor.circuit.syncJunctionSolders();
   recordHistoryEntry(ghost.beforeSnapshot);
@@ -31683,7 +31911,10 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       }
       editor.circuit._loading = wasLoading;
       // Coincidence is resolved once, against the complete copied topology.
-      if (connect) editor.circuit.connectCoincident(addedComps);
+      if (connect) {
+        editor.circuit.connectCoincident(addedComps);
+        editor.circuit.teeTerminalsOntoWires(addedComps);
+      }
       editor.circuit.ensureUniqueTerminals(addedComps);
       editor.circuit.syncJunctionSolders();
       setSelection(addedComps, undefined, true);
@@ -33945,7 +34176,7 @@ let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/we
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
 let netMarkerRefs; __bind(() => { ({ netMarkerRefs } = __require("src/web/hover-preview.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let deleteSelection, keyToWire, nearestTerminal, netsTouching, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire; __bind(() => { ({ deleteSelection, keyToWire, nearestTerminal, netsTouching, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } = __require("src/web/main.js")); });
+let deleteSelection, keyToWire, nearestTerminal, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire; __bind(() => { ({ deleteSelection, keyToWire, nearestTerminal, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } = __require("src/web/main.js")); });
 /**
  * The canvas's gesture layer: pin handles, the snap pulse on the terminal a
  * wire will land on, and the Delete tool's knife stroke with the cuts it
@@ -33962,24 +34193,27 @@ let deleteSelection, keyToWire, nearestTerminal, netsTouching, setLabelSelection
 
 
 
-/** A wire end that lands on a pin gets one small ripple at that pin. */
+/** A wire end that lands on a pin gets one small ripple at that pin; so does
+ *  every pin of a part being placed, moved, or copied that will join a pin or
+ *  a free wire end, with a ring that stays while it would. */
 function syncSnapPulse() {
   if (!editor.snapLayerEl) return;
   const source = (editor.wire || editor.directWire)?.source;
-  let key = '';
+  let points = [];
   if (source) {
     const target = nearestTerminal(editor.cursor);
     if (target && target.x === editor.cursor.x && target.y === editor.cursor.y
-        && !(target.refdes === source.refdes && target.term === source.term)) key = `${target.x},${target.y}`;
+        && !(target.refdes === source.refdes && target.term === source.term)) points = [target];
+  } else {
+    points = placementJoinPoints();
   }
+  const key = points.map((p) => `${p.x},${p.y}`).sort().join(' ');
   if (key === editor.snapPulseKey) return;
+  const before = new Set(editor.snapPulseKey ? editor.snapPulseKey.split(' ') : []);
   editor.snapPulseKey = key;
-  if (!key) {
-    editor.snapLayerEl.replaceChildren();
-    return;
-  }
-  const [x, y] = key.split(',');
-  editor.snapLayerEl.innerHTML = `<circle class="snap-ring" cx="${x}" cy="${y}" r="10"/><circle class="snap-pulse" cx="${x}" cy="${y}" r="10"/>`;
+  // Only a newly reached point ripples; the rest keep their steady ring.
+  editor.snapLayerEl.innerHTML = points.map(({ x, y }) => `<circle class="snap-ring" cx="${x}" cy="${y}" r="10"/>${
+    before.has(`${x},${y}`) ? '' : `<circle class="snap-pulse" cx="${x}" cy="${y}" r="10"/>`}`).join('');
 }
 
 /** Every drawn wire path, fixed and managed, for knife hit tests. */
@@ -34132,7 +34366,9 @@ __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
 __exports.easeOutCubic = easeOutCubic;
 __exports.lerpView = lerpView;
+__exports.pinJoinPoints = pinJoinPoints;
 let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
+let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
 /**
  * Pure geometry and decision helpers for pointer gestures.
  *
@@ -34141,6 +34377,7 @@ let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geo
  * the wire? which radial sector is the pointer in? which wire segments did a
  * knife stroke cross?) without touching the DOM or the model.
  */
+
 
 
 
@@ -34361,6 +34598,55 @@ function lerpView(from, to, t) {
     w: from.w + (to.w - from.w) * k,
     h: from.h + (to.h - from.h) * k,
   };
+}
+
+/**
+ * Which of `pins` ({x, y, netId}) will join something when the parts carrying
+ * them land: another part's pin, a free end of a managed wire, or -- for a pin
+ * on no net yet -- the middle of one managed wire, which it tees into
+ * (Circuit#teeTerminalsOntoWires). `carried` names the parts that move with
+ * the pins, which are never targets. A pin already on the only net standing
+ * there joins nothing new.
+ */
+function pinJoinPoints(circuit, pins, carried = new Set()) {
+  if (!pins.length) return [];
+  const targets = new Map(); // "x,y" -> ids of the nets already there
+  const add = (x, y, netId) => {
+    const key = `${x},${y}`;
+    if (!targets.has(key)) targets.set(key, new Set());
+    targets.get(key).add(netId);
+  };
+  const standing = new Set();
+  for (const component of circuit.components.values()) {
+    if (carried.has(component.refdes)) continue;
+    for (const t of component.worldTerminals()) {
+      standing.add(`${t.x},${t.y}`);
+      add(t.x, t.y, circuit.netOfTerminal({ comp: component.refdes, term: t.name })?.id || null);
+    }
+  }
+  const carriedNets = new Set(pins.map((pin) => pin.netId).filter(Boolean));
+  for (const net of circuit.nets.values()) {
+    if (net.routingMode === 'fixed' || carriedNets.has(net.id)) continue;
+    const paths = net.paths();
+    paths.forEach((path, index) => {
+      if (path.length < 2) return;
+      for (const end of [path[0], path.at(-1)]) {
+        if (standing.has(`${end.x},${end.y}`)) continue;
+        if (net.junctions.some((p) => p.x === end.x && p.y === end.y)) continue;
+        if (paths.some((other, i) => i !== index && pointOnPath(end, other))) continue;
+        add(end.x, end.y, net.id);
+      }
+    });
+  }
+  const managed = [...circuit.nets.values()].filter((net) => net.routingMode !== 'fixed' && !carriedNets.has(net.id));
+  const points = new Map();
+  for (const pin of pins) {
+    const there = targets.get(`${pin.x},${pin.y}`);
+    const tee = !there && !pin.netId
+      && managed.filter((net) => net.paths().some((path) => pointOnPath(pin, path))).length === 1;
+    if (tee || (there && !(pin.netId && there.size === 1 && there.has(pin.netId)))) points.set(`${pin.x},${pin.y}`, { x: pin.x, y: pin.y });
+  }
+  return [...points.values()];
 }
 
 };
@@ -36618,6 +36904,7 @@ __exports.deleteSelection = deleteSelection;
 __exports.stubSelection = stubSelection;
 __exports.moveCursor = moveCursor;
 __exports.cycleLabelSelection = cycleLabelSelection;
+__exports.placementJoinPoints = placementJoinPoints;
 __exports.symmetryAxisText = symmetryAxisText;
 __exports.symmetryTwin = symmetryTwin;
 __exports.syncSymmetryOperation = syncSymmetryOperation;
@@ -36649,7 +36936,9 @@ __exports.canvasMouseMove = canvasMouseMove;
 __exports.canvasMouseUp = canvasMouseUp;
 __exports.transformPendingComponent = transformPendingComponent;
 __exports.rememberAction = rememberAction;
+__exports.repeatLastAction = repeatLastAction;
 __exports.editSelectionText = editSelectionText;
+__exports.selectAll = selectAll;
 __exports.swapTargets = swapTargets;
 __exports.keyHintContext = keyHintContext;
 __exports.runLine = runLine;
@@ -36658,6 +36947,7 @@ __exports.hasWireDraft = hasWireDraft;
 __exports.activateNetLabel = activateNetLabel;
 __exports.activateHighlight = activateHighlight;
 __exports.activateAnnotation = activateAnnotation;
+__exports.activateEquation = activateEquation;
 __exports.activateShapeAnnotation = activateShapeAnnotation;
 __exports.activatePlace = activatePlace;
 __exports.activateSelect = activateSelect;
@@ -36670,6 +36960,7 @@ __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
+let pinJoinPoints; __bind(() => { ({ pinJoinPoints } = __require("src/web/gestures.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
@@ -36731,6 +37022,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -37936,6 +38228,7 @@ function applyLayoutPlan(plan) {
     if (refs.length) {
       circuit.connectCoincident(refs);
       circuit.reconnectCoincidentNets();
+      circuit.teeTerminalsOntoWires(refs);
       circuit.ensureUniqueTerminals(refs);
     }
     for (const id of netsTouching(refs)) touched.add(id);
@@ -38334,7 +38627,10 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
         }
       }
     }
-    if (delta) circuit.reconnectCoincidentNets();
+    if (delta) {
+      circuit.reconnectCoincidentNets();
+      circuit.teeTerminalsOntoWires(refs);
+    }
     for (const { label, point } of deferredNetLabels) {
       if (!moveLabelSafely(label, point.x, point.y)) throw new Error(`unable to move net label ${label.id} safely`);
     }
@@ -38544,6 +38840,37 @@ function pendingTransform() {
   };
 }
 
+/**
+ * The points where the parts being placed, moved, or copied will join
+ * something on commit: another part's pin, or a free wire end. The commit
+ * paths connect exactly these (connectCoincident, reconnectCoincidentNets);
+ * the snap layer rings them first so the join is never a surprise.
+ */
+function placementJoinPoints() {
+  let carried = new Set();
+  let pins = [];
+  if (mode === 'insert' && pendingPlace?.kind === 'component') {
+    let def;
+    try { def = getSymbol(pendingPlace.type); } catch { return []; }
+    const base = pendingTransform();
+    for (const transform of [base, symmetryTwin(base)].filter(Boolean)) {
+      for (const t of def.terminals || []) pins.push({ ...applyTransform(transform, t.x, t.y), netId: null });
+    }
+  } else if (drag?.mode === 'move' || (drag?.mode === 'copyghost' && drag.ghost)) {
+    carried = new Set(drag.mode === 'move'
+      ? [...(drag.origins?.keys?.() || [])]
+      : [...drag.ghost.refs, ...(drag.ghost.mirror?.refs || [])]);
+    for (const refdes of carried) {
+      const component = circuit.components.get(refdes);
+      if (!component) continue;
+      for (const t of component.worldTerminals()) {
+        pins.push({ x: t.x, y: t.y, netId: circuit.netOfTerminal({ comp: refdes, term: t.name })?.id || null });
+      }
+    }
+  }
+  return pinJoinPoints(circuit, pins, carried);
+}
+
 /** The mirrored twin of one ghost transform, or null when symmetry is not
  *  armed, has no direction yet, or the ghost sits on the axis itself -- there
  *  is no pair to place when both halves would land on the same square. */
@@ -38737,6 +39064,8 @@ function placePending() {
     // and repairs any split net pieces at the landing point.
     for (const comp of placed) circuit.connectCoincident(comp.refdes);
     circuit.reconnectCoincidentNets();
+    // A pin dropped on the middle of a wire tees into it.
+    circuit.teeTerminalsOntoWires(placed.map((comp) => comp.refdes));
     circuit.ensureUniqueTerminals(placed.map((comp) => comp.refdes));
     // A solder dot placed on a crossing shorts the nets there. With several
     // given names the dot waits (unsynced) for the user's name choice.
@@ -41701,6 +42030,7 @@ function finishMoveMutation(moveDrag) {
   if (!moveDrag.detached && refs.length === 1) spliceIfOnWire(circuit.components.get(refs[0]));
   if (moveDrag.detached) {
     circuit.reconnectCoincidentNets();
+    circuit.teeTerminalsOntoWires(refs);
     markModelChanged();
     return;
   }
@@ -41727,6 +42057,7 @@ function finishMoveMutation(moveDrag) {
     }
   }
   circuit.reconnectCoincidentNets();
+  circuit.teeTerminalsOntoWires(refs);
   markModelChanged();
 }
 
@@ -43140,6 +43471,21 @@ function editSelectionText() {
   hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
 }
 
+/** Select the whole drawing (Ctrl/Cmd+A). */
+function selectAll() {
+  // Preserve the component selection while adding labels: the selection
+  // setters are exclusive by default, so Ctrl+A must explicitly request a
+  // mixed selection. Wire segments are not separately selected here;
+  // non-empty nets cover the complete drawing for delete/copy operations.
+  setSelection([...circuit.components.keys()], undefined, true);
+  setLabelSelection([...circuit.labels.keys()], undefined, true);
+  selectedWire = null;
+  selectedWires.clear();
+  // Select every non-empty net too, so Ctrl+A grabs the whole drawing.
+  selectedNets = new Set(selectAllNetIds(circuit));
+  render();
+}
+
 /** The parts q swaps: the selected ones, else the one under the cursor. */
 function swapTargets() {
   const comps = selectedComps();
@@ -44113,17 +44459,7 @@ window.addEventListener('keydown', (ev) => {
       }
     } else if (k === 'a') {
       ev.preventDefault();
-      // Preserve the component selection while adding labels: the selection
-      // setters are exclusive by default, so Ctrl+A must explicitly request a
-      // mixed selection. Wire segments are not separately selected here;
-      // non-empty nets cover the complete drawing for delete/copy operations.
-      setSelection([...circuit.components.keys()], undefined, true);
-      setLabelSelection([...circuit.labels.keys()], undefined, true);
-      selectedWire = null;
-      selectedWires.clear();
-      // Select every non-empty net too, so Ctrl+A grabs the whole drawing.
-      selectedNets = new Set(selectAllNetIds(circuit));
-      render();
+      selectAll();
     } else if (k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
       if (copySelection()) publishObjectClipboard();
@@ -48332,7 +48668,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['x / Shift+X', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
     ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
-    [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
+    [':', 'find and run anything: type words to search every action, toggle, and menu item, Up/Down pick, Enter runs; or type a command (:connect R1.a R2.a); Up/Down on an empty line recall history'],
     [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
     ['explain eval', 'group design-check issues with repair hints'],

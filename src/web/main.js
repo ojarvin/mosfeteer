@@ -12,6 +12,7 @@
 
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
+import { pinJoinPoints } from './gestures.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs } from '../core/stubs.js';
@@ -1222,6 +1223,7 @@ export function applyLayoutPlan(plan) {
     if (refs.length) {
       circuit.connectCoincident(refs);
       circuit.reconnectCoincidentNets();
+      circuit.teeTerminalsOntoWires(refs);
       circuit.ensureUniqueTerminals(refs);
     }
     for (const id of netsTouching(refs)) touched.add(id);
@@ -1620,7 +1622,10 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
         }
       }
     }
-    if (delta) circuit.reconnectCoincidentNets();
+    if (delta) {
+      circuit.reconnectCoincidentNets();
+      circuit.teeTerminalsOntoWires(refs);
+    }
     for (const { label, point } of deferredNetLabels) {
       if (!moveLabelSafely(label, point.x, point.y)) throw new Error(`unable to move net label ${label.id} safely`);
     }
@@ -1830,6 +1835,37 @@ function pendingTransform() {
   };
 }
 
+/**
+ * The points where the parts being placed, moved, or copied will join
+ * something on commit: another part's pin, or a free wire end. The commit
+ * paths connect exactly these (connectCoincident, reconnectCoincidentNets);
+ * the snap layer rings them first so the join is never a surprise.
+ */
+export function placementJoinPoints() {
+  let carried = new Set();
+  let pins = [];
+  if (mode === 'insert' && pendingPlace?.kind === 'component') {
+    let def;
+    try { def = getSymbol(pendingPlace.type); } catch { return []; }
+    const base = pendingTransform();
+    for (const transform of [base, symmetryTwin(base)].filter(Boolean)) {
+      for (const t of def.terminals || []) pins.push({ ...applyTransform(transform, t.x, t.y), netId: null });
+    }
+  } else if (drag?.mode === 'move' || (drag?.mode === 'copyghost' && drag.ghost)) {
+    carried = new Set(drag.mode === 'move'
+      ? [...(drag.origins?.keys?.() || [])]
+      : [...drag.ghost.refs, ...(drag.ghost.mirror?.refs || [])]);
+    for (const refdes of carried) {
+      const component = circuit.components.get(refdes);
+      if (!component) continue;
+      for (const t of component.worldTerminals()) {
+        pins.push({ x: t.x, y: t.y, netId: circuit.netOfTerminal({ comp: refdes, term: t.name })?.id || null });
+      }
+    }
+  }
+  return pinJoinPoints(circuit, pins, carried);
+}
+
 /** The mirrored twin of one ghost transform, or null when symmetry is not
  *  armed, has no direction yet, or the ghost sits on the axis itself -- there
  *  is no pair to place when both halves would land on the same square. */
@@ -2023,6 +2059,8 @@ export function placePending() {
     // and repairs any split net pieces at the landing point.
     for (const comp of placed) circuit.connectCoincident(comp.refdes);
     circuit.reconnectCoincidentNets();
+    // A pin dropped on the middle of a wire tees into it.
+    circuit.teeTerminalsOntoWires(placed.map((comp) => comp.refdes));
     circuit.ensureUniqueTerminals(placed.map((comp) => comp.refdes));
     // A solder dot placed on a crossing shorts the nets there. With several
     // given names the dot waits (unsynced) for the user's name choice.
@@ -4987,6 +5025,7 @@ function finishMoveMutation(moveDrag) {
   if (!moveDrag.detached && refs.length === 1) spliceIfOnWire(circuit.components.get(refs[0]));
   if (moveDrag.detached) {
     circuit.reconnectCoincidentNets();
+    circuit.teeTerminalsOntoWires(refs);
     markModelChanged();
     return;
   }
@@ -5013,6 +5052,7 @@ function finishMoveMutation(moveDrag) {
     }
   }
   circuit.reconnectCoincidentNets();
+  circuit.teeTerminalsOntoWires(refs);
   markModelChanged();
 }
 
@@ -6391,7 +6431,7 @@ export function rememberAction(label, run) {
   lastAction = { label, run };
 }
 
-function repeatLastAction(count = 1) {
+export function repeatLastAction(count = 1) {
   if (!lastAction) {
     logLine('. repeats the last rotate, mirror, swap, rail, or stubs; nothing to repeat yet');
     return;
@@ -6424,6 +6464,21 @@ export function editSelectionText() {
   const hovered = compUnderCursor();
   if (hovered) return editPart(hovered);
   hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
+}
+
+/** Select the whole drawing (Ctrl/Cmd+A). */
+export function selectAll() {
+  // Preserve the component selection while adding labels: the selection
+  // setters are exclusive by default, so Ctrl+A must explicitly request a
+  // mixed selection. Wire segments are not separately selected here;
+  // non-empty nets cover the complete drawing for delete/copy operations.
+  setSelection([...circuit.components.keys()], undefined, true);
+  setLabelSelection([...circuit.labels.keys()], undefined, true);
+  selectedWire = null;
+  selectedWires.clear();
+  // Select every non-empty net too, so Ctrl+A grabs the whole drawing.
+  selectedNets = new Set(selectAllNetIds(circuit));
+  render();
 }
 
 /** The parts q swaps: the selected ones, else the one under the cursor. */
@@ -6985,7 +7040,7 @@ export function activateAnnotation() {
   activateLabelPlacement('annotation');
 }
 
-function activateEquation() {
+export function activateEquation() {
   activateLabelPlacement('equation');
 }
 
@@ -7399,17 +7454,7 @@ window.addEventListener('keydown', (ev) => {
       }
     } else if (k === 'a') {
       ev.preventDefault();
-      // Preserve the component selection while adding labels: the selection
-      // setters are exclusive by default, so Ctrl+A must explicitly request a
-      // mixed selection. Wire segments are not separately selected here;
-      // non-empty nets cover the complete drawing for delete/copy operations.
-      setSelection([...circuit.components.keys()], undefined, true);
-      setLabelSelection([...circuit.labels.keys()], undefined, true);
-      selectedWire = null;
-      selectedWires.clear();
-      // Select every non-empty net too, so Ctrl+A grabs the whole drawing.
-      selectedNets = new Set(selectAllNetIds(circuit));
-      render();
+      selectAll();
     } else if (k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
       if (copySelection()) publishObjectClipboard();

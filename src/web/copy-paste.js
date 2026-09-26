@@ -422,6 +422,7 @@ export function commitCopyGhost() {
   const refs = [...ghost.refs, ...(ghost.mirror?.refs || [])];
   editor.circuit.connectCoincident(refs);
   editor.circuit.reconnectCoincidentNets();
+  editor.circuit.teeTerminalsOntoWires(refs);
   editor.circuit.ensureUniqueTerminals(refs);
   editor.circuit.syncJunctionSolders();
   recordHistoryEntry(ghost.beforeSnapshot);
@@ -571,7 +572,10 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       }
       editor.circuit._loading = wasLoading;
       // Coincidence is resolved once, against the complete copied topology.
-      if (connect) editor.circuit.connectCoincident(addedComps);
+      if (connect) {
+        editor.circuit.connectCoincident(addedComps);
+        editor.circuit.teeTerminalsOntoWires(addedComps);
+      }
       editor.circuit.ensureUniqueTerminals(addedComps);
       editor.circuit.syncJunctionSolders();
       setSelection(addedComps, undefined, true);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
-import { DOCUMENT_COMMANDS, EDITOR_COMMANDS, canonicalDocumentLine, commandCompletions, didYouMean, resolveEditorCommand, tabComplete } from '../src/web/command-line.js';
+import { DOCUMENT_COMMANDS, EDITOR_COMMANDS, canonicalDocumentLine, commandCompletions, commandLineIntent, didYouMean, resolveEditorCommand, tabComplete } from '../src/web/command-line.js';
 
 test('Tab completes a prefix, then Enter runs the editor command', () => {
   const step = tabComplete('sett');
@@ -34,7 +34,7 @@ test('Tab cycles through ranked candidates both ways', () => {
 
 test('a single document completion leaves room for its arguments', () => {
   assert.equal(tabComplete('disc').line, 'disconnect ');
-  assert.equal(tabComplete('del').line, 'rm ');
+  assert.equal(tabComplete('supplyb').line, 'supplybar ');
 });
 
 test('toggles take on/off and friends; other arguments fall through to documents', () => {
@@ -102,4 +102,43 @@ test('a typo completes to its nearest command when nothing else matches', () => 
   assert.equal(commandCompletions('crosshiar')[0].name, 'crosshair');
   // A real prefix match never gives way to near misses.
   assert.ok(commandCompletions('gri').every((entry) => entry.name === 'grid'));
+});
+
+test('several words search what commands do', () => {
+  assert.equal(commandCompletions('mirror hor')[0].name, 'mirror-horizontal');
+  assert.equal(commandCompletions('beats phase')[0].name, 'phase-beats');
+  assert.equal(commandCompletions('change type')[0].name, 'swap');
+  // One word found only in a description is still found, after every name.
+  assert.equal(commandCompletions('clockwise')[0].name, 'rotate');
+  assert.equal(commandCompletions('rot')[0].name, 'rotate');
+});
+
+test('canvas actions run bare; with arguments their document command runs', () => {
+  assert.deepEqual(resolveEditorCommand('rotate'), { name: 'rotate', state: undefined });
+  assert.equal(resolveEditorCommand('rotate R1 180'), null);
+  assert.equal(resolveEditorCommand('swap M1 pmos'), null);
+  assert.equal(resolveEditorCommand('delete R1'), null);
+  assert.equal(canonicalDocumentLine('delete R1'), 'rm R1');
+  // align needs its side.
+  assert.equal(resolveEditorCommand('align'), null);
+  assert.deepEqual(resolveEditorCommand('align left'), { name: 'align', state: 'left' });
+  for (const entry of EDITOR_COMMANDS.filter((command) => command.canvas)) assert.ok(/\(/.test(entry.help), `${entry.name} names its key`);
+});
+
+test('Enter runs an exact line, else the highlighted match, else fills in arguments', () => {
+  assert.deepEqual(commandLineIntent('grid off'), { run: 'grid off' });
+  assert.deepEqual(commandLineIntent('move R1 40 40'), { run: 'move R1 40 40' });
+  assert.deepEqual(commandLineIntent('mirror hor'), { run: 'mirror-horizontal' });
+  assert.deepEqual(commandLineIntent('rot'), { run: 'rotate' });
+  // The second match when it is the one highlighted.
+  assert.deepEqual(commandLineIntent('mirror-', 1), { run: commandCompletions('mirror-')[1].name });
+  // A command's own words never hand its line to something else.
+  assert.deepEqual(commandLineIntent('explain eval'), { run: 'explain eval' });
+  assert.deepEqual(commandLineIntent('find VOUT'), { run: 'find VOUT' });
+  // A document command or a choice needs its arguments first.
+  assert.deepEqual(commandLineIntent('discon'), { fill: 'disconnect ' });
+  assert.deepEqual(commandLineIntent('align'), { fill: 'align ' });
+  assert.deepEqual(commandLineIntent('alig', 1), { fill: 'align ' });
+  // Nothing matches: the line runs as typed, for its error and "did you mean".
+  assert.deepEqual(commandLineIntent('zzzz'), { run: 'zzzz' });
 });

@@ -5908,6 +5908,51 @@ export class Circuit {
 
   }
 
+  /**
+   * Tee the unconnected pins of `refs` into the managed wire they rest on:
+   * a pin dropped on the interior of one net's wire (a port on a rail, a gate
+   * on a bias line) joins that net there, with a junction. Pins already on a
+   * net never join another this way (that would short two nets from a drop),
+   * and a point where two nets' wires meet is ambiguous and left alone. Wire
+   * ends are reconnectCoincidentNets' business. Returns the pins joined.
+   */
+  teeTerminalsOntoWires(refs) {
+    const joined = [];
+    for (const refdes of refs) {
+      const component = this.components.get(refdes);
+      if (!component || component.type === 'solder') continue;
+      for (const terminal of component.worldTerminals()) {
+        const ref = { comp: refdes, term: terminal.name };
+        if (this.netOfTerminal(ref)) continue;
+        const point = { x: terminal.x, y: terminal.y };
+        const hits = [...this.nets.values()].filter((net) => net.routingMode !== 'fixed'
+          && this._explicitBranches(net).some((path) => pointOnPath(point, path)));
+        if (hits.length !== 1) continue;
+        const [net] = hits;
+        const paths = this._explicitBranches(net);
+        const interior = paths.some((path) => pointOnPath(point, path)
+          && !(path[0].x === point.x && path[0].y === point.y)
+          && !(path.at(-1).x === point.x && path.at(-1).y === point.y));
+        if (!interior) continue;
+        this.invalidateRoutingCache();
+        const pieces = this._splitBranchesPreservingStyles(net, paths, [point]);
+        net.branches = pieces;
+        net.route = pieces[0] ? clonePath(pieces[0], net.allowDiagonal) : null;
+        if (!net.junctions.some((p) => p.x === point.x && p.y === point.y)) net.junctions.push(point);
+        net.terminals.push(ref);
+        this._syncReferenceMarkerNetName(net);
+        // A port still carrying its automatic name takes the name of the net
+        // it was dropped on; one already named names the net.
+        const prefix = component.def.refPrefix || component.type.toUpperCase();
+        const automatic = INTERFACE_PIN_TYPES.has(component.type) && new RegExp(`^${prefix}\\d+$`).test(refdes);
+        this._syncInterfacePinLabels(net, { enforceName: !(automatic && net.name) });
+        joined.push(ref);
+      }
+    }
+    if (joined.length) this.syncJunctionSolders();
+    return joined;
+  }
+
   /** Add one terminal to an existing net. */
   connectTo(netId, ref) {
     this.invalidateRoutingCache();

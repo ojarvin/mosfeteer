@@ -236,7 +236,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['x / Shift+X', 'check / save without checking'],
     ['Ctrl/Cmd+F', 'find parts, nets, and any label text; Esc clears, then returns to the canvas'],
     ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
-    [':', 'command line in the log drawer (for example, :connect R1.a R2.a); Up/Down recall history'],
+    [':', 'find and run anything: type words to search every action, toggle, and menu item, Up/Down pick, Enter runs; or type a command (:connect R1.a R2.a); Up/Down on an empty line recall history'],
     [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
     ['explain eval', 'group design-check issues with repair hints'],

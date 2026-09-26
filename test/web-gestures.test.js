@@ -5,8 +5,10 @@ import { getSymbol } from '../src/core/components/index.js';
 import { applyTransform } from '../src/core/geometry.js';
 import {
   arrivalDirection, easeOutCubic, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement,
-  radialRingRadius, radialSector, segmentsIntersect, spliceCandidate, wheelIntent,
+  pinJoinPoints, radialRingRadius, radialSector, segmentsIntersect, spliceCandidate, wheelIntent,
 } from '../src/web/gestures.js';
+import { Circuit } from '../src/core/model.js';
+import { runCommand } from '../src/core/commands.js';
 
 const def = (type) => getSymbol(type);
 
@@ -330,4 +332,27 @@ test('radial tiles on the ring are separated by the same gap', () => {
     assert.ok(chord - 64 >= 10 && chord - 64 < 12, `count ${count}: gap ${chord - 64}`);
   }
   assert.equal(radialRingRadius(1, 64, 10), 0);
+});
+
+test('a carried pin joins another pin or a free wire end, and nothing it is already on', () => {
+  const circuit = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'connect R1.b R2.a', 'disconnect R2.a', 'rm R2',
+    'add capacitor C1 --at 0 400']) runCommand(circuit, line);
+  // R1.b's wire now ends free at (320,0); C1's pins are at (-80,400) and (80,400).
+  const ghost = (x, y) => [{ x: x - 80, y, netId: null }, { x: x + 80, y, netId: null }];
+  assert.deepEqual(pinJoinPoints(circuit, ghost(400, 0)), [{ x: 320, y: 0 }]);
+  assert.deepEqual(pinJoinPoints(circuit, ghost(160, 400)), [{ x: 80, y: 400 }]);
+  assert.deepEqual(pinJoinPoints(circuit, ghost(1000, 1000)), []);
+  // Moving C1 itself: its own pins are carried, never targets.
+  const c1 = circuit.components.get('C1');
+  const pins = c1.worldTerminals().map((t) => ({ x: t.x, y: t.y, netId: null }));
+  assert.deepEqual(pinJoinPoints(circuit, pins, new Set(['C1'])), []);
+  // A pin already on the net there joins nothing new; the wire's own end is
+  // not offered to a part carrying that net.
+  const net = circuit.netOfTerminal({ comp: 'R1', term: 'b' });
+  assert.deepEqual(pinJoinPoints(circuit, [{ x: 320, y: 0, netId: net.id }]), []);
+  // The middle of the wire: a pin on no net tees in; a wired pin never does.
+  assert.deepEqual(pinJoinPoints(circuit, [{ x: 200, y: 0, netId: null }]), [{ x: 200, y: 0 }]);
+  const other = circuit.netOfTerminal({ comp: 'C1', term: 'a' })?.id || 'N9';
+  assert.deepEqual(pinJoinPoints(circuit, [{ x: 200, y: 0, netId: other }]), []);
 });

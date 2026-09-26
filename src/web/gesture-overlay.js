@@ -12,26 +12,29 @@ import { logLine, hintLine } from './status-bar-ui.js';
 import { paneSize } from './canvas-view.js';
 import { netMarkerRefs } from './hover-preview.js';
 import { editor } from './editor-state.js';
-import { deleteSelection, keyToWire, nearestTerminal, netsTouching, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } from './main.js';
+import { deleteSelection, keyToWire, nearestTerminal, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } from './main.js';
 
-/** A wire end that lands on a pin gets one small ripple at that pin. */
+/** A wire end that lands on a pin gets one small ripple at that pin; so does
+ *  every pin of a part being placed, moved, or copied that will join a pin or
+ *  a free wire end, with a ring that stays while it would. */
 export function syncSnapPulse() {
   if (!editor.snapLayerEl) return;
   const source = (editor.wire || editor.directWire)?.source;
-  let key = '';
+  let points = [];
   if (source) {
     const target = nearestTerminal(editor.cursor);
     if (target && target.x === editor.cursor.x && target.y === editor.cursor.y
-        && !(target.refdes === source.refdes && target.term === source.term)) key = `${target.x},${target.y}`;
+        && !(target.refdes === source.refdes && target.term === source.term)) points = [target];
+  } else {
+    points = placementJoinPoints();
   }
+  const key = points.map((p) => `${p.x},${p.y}`).sort().join(' ');
   if (key === editor.snapPulseKey) return;
+  const before = new Set(editor.snapPulseKey ? editor.snapPulseKey.split(' ') : []);
   editor.snapPulseKey = key;
-  if (!key) {
-    editor.snapLayerEl.replaceChildren();
-    return;
-  }
-  const [x, y] = key.split(',');
-  editor.snapLayerEl.innerHTML = `<circle class="snap-ring" cx="${x}" cy="${y}" r="10"/><circle class="snap-pulse" cx="${x}" cy="${y}" r="10"/>`;
+  // Only a newly reached point ripples; the rest keep their steady ring.
+  editor.snapLayerEl.innerHTML = points.map(({ x, y }) => `<circle class="snap-ring" cx="${x}" cy="${y}" r="10"/>${
+    before.has(`${x},${y}`) ? '' : `<circle class="snap-pulse" cx="${x}" cy="${y}" r="10"/>`}`).join('');
 }
 
 /** Every drawn wire path, fixed and managed, for knife hit tests. */
