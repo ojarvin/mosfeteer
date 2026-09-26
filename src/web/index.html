@@ -361,6 +361,7 @@
             <button id="analysis-tab-log" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-log" data-analysis-tab="log">Log</button>
             <button id="analysis-tab-netlist" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-netlist" data-analysis-tab="netlist">Small-signal netlist</button>
             <button id="analysis-tab-model" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-model" data-analysis-tab="model">Model</button>
+            <button id="analysis-tab-bode" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-bode" data-analysis-tab="bode">Bode</button>
           </div>
           <div class="analysis-tab-panels">
             <section id="analysis-panel-equations" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-equations">
@@ -372,6 +373,7 @@
             <section id="analysis-panel-netlist" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-netlist" hidden>
               <pre id="analysis-netlist" class="analysis-netlist"></pre>
             </section>
+            <section id="analysis-panel-bode" class="analysis-tab-panel analysis-bode" role="tabpanel" aria-labelledby="analysis-tab-bode" hidden></section>
             <section id="analysis-panel-model" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-model" hidden>
               <div id="analysis-model" class="analysis-model"></div>
               <div class="dialog-actions analysis-model-actions">

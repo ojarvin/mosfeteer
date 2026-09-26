@@ -4701,3 +4701,133 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 .text-match-next {
   color: var(--accent);
 }
+
+/* ----- analysis: Bode sketch ------------------------------------------ */
+
+.analysis-bode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bode-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bode-head select {
+  flex: 1 1 auto;
+}
+
+.bode-note {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.bode-figure {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+.bode-axis,
+.bode-tick {
+  stroke: var(--text);
+  stroke-width: 1;
+}
+
+.bode-grid {
+  stroke: var(--border);
+  stroke-width: 0.6;
+}
+
+.bode-zero {
+  stroke: var(--text-dim);
+  stroke-width: 0.8;
+  stroke-dasharray: 2 3;
+}
+
+.bode-curve {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.bode-asymptote {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.2;
+  stroke-dasharray: 6 4;
+}
+
+line.bode-corner {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  stroke-dasharray: 1 3;
+}
+
+circle.bode-corner {
+  fill: var(--accent);
+}
+
+.bode-number {
+  fill: var(--text-dim);
+  font-size: 10px;
+}
+
+.bode-label {
+  fill: var(--text);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.bode-corners {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 0.8rem;
+}
+
+.bode-corners li + li {
+  margin-top: 2px;
+}
+
+.bode-sliders {
+  display: grid;
+  gap: 2px;
+}
+
+.analysis-bode .bode-slider {
+  display: grid;
+  grid-template-columns: 5.5em minmax(0, 1fr) 4.5em;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysis-bode .bode-slider-value {
+  text-align: right;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.analysis-bode .bode-slider-name {
+  text-align: left;
+}
+
+.analysis-bode .bode-slider input {
+  width: 100%;
+  margin: 0;
+}
+
+.analysis-bode .bode-math math {
+  display: inline;
+}
+
+.analysis-bode .bode-slider-name {
+  color: var(--text);
+}

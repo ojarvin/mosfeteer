@@ -669,6 +669,329 @@ function applyApproximations(input, options = {}) {
 
 };
 
+__modules["src/core/analysis/bode.js"] = function (__require, __exports) {
+__exports.sketchParameters = sketchParameters;
+__exports.sketchValues = sketchValues;
+__exports.expressionSymbols = expressionSymbols;
+__exports.evaluateExpression = evaluateExpression;
+__exports.numericCoefficients = numericCoefficients;
+__exports.polynomialRoots = polynomialRoots;
+__exports.responseAt = responseAt;
+__exports.bodeSketch = bodeSketch;
+__exports.sketchCorners = sketchCorners;
+let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
+/**
+ * Relative Bode sketches of an exact transfer function.
+ *
+ * A linear small-signal circuit's response depends only on dimensionless
+ * ratios once units are chosen. Here every transconductance starts at one
+ * unit g, every capacitance at one unit C, and every output resistance at
+ * A0/g, where A0 = g_m r_o is the one intrinsic ratio a design has. Frequency
+ * is then in units of g/C and impedance in units of 1/g: absolute values only
+ * slide the plot along its axis, so the shape -- pole spacing, phase, DC gain
+ * -- is exact. The user moves ratios (this g_m ten times that one, this load
+ * ten times the internal capacitances), never plugs in design values.
+ *
+ * Pure: numbers in, numbers out. The expressions are rational.js's.
+ */
+
+
+
+const DEFAULT_INTRINSIC_GAIN = 30;
+/** A capacitor on the output node starts this many units: loads dominate. */
+const OUTPUT_CAPACITANCE = 10;
+/** MOS parasitic capacitances start at this fraction of a unit. */
+const DEFAULT_PARASITIC_RATIO = 0.1;
+/** A body-effect transconductance starts at this fraction of a unit g_m. */
+const BODY_EFFECT_RATIO = 0.2;
+
+const PARASITIC_ROLES = new Set(['cgs', 'cgd']);
+
+/**
+ * The sketch's parameters: one per symbol of the transfer function, with its
+ * starting value in units of g and C, its display TeX, and what it is.
+ * `provenance` is the report's symbolProvenance; `outputComponents` names the
+ * parts touching the output node (their capacitors start as loads).
+ */
+function sketchParameters(symbols, provenance = {}, { outputComponents = new Set() } = {}) {
+  return [...symbols].sort().map((name) => {
+    const source = provenance[name] || {};
+    const role = source.role || source.kind || '';
+    const kind = role === 'gm' || role === 'gmb' ? 'transconductance'
+      : role === 'ro' || role === 'rds' || role === 'resistor' ? 'resistance'
+        : role === 'capacitor' || PARASITIC_ROLES.has(role) ? 'capacitance'
+          : role === 'inductor' ? 'inductance' : 'other';
+    return {
+      name,
+      tex: symbolText(name),
+      role,
+      kind,
+      component: source.component || null,
+      parasitic: PARASITIC_ROLES.has(role),
+      load: role === 'capacitor' && outputComponents.has(source.component),
+    };
+  });
+}
+
+/** Every parameter's value: its starting value times its multiplier. */
+function sketchValues(parameters, { intrinsicGain = DEFAULT_INTRINSIC_GAIN, parasiticRatio = DEFAULT_PARASITIC_RATIO, multipliers = {} } = {}) {
+  const values = {};
+  for (const parameter of parameters) {
+    let base = 1;
+    if (parameter.role === 'gmb') base = BODY_EFFECT_RATIO;
+    else if (parameter.role === 'ro' || parameter.role === 'resistor') base = intrinsicGain;
+    else if (parameter.parasitic) base = parasiticRatio;
+    else if (parameter.load) base = OUTPUT_CAPACITANCE;
+    values[parameter.name] = base * (multipliers[parameter.name] ?? 1);
+  }
+  return values;
+}
+
+/** The symbols an expression uses, `s` aside. */
+function expressionSymbols(value, variable = 's', out = new Set()) {
+  if (!value || typeof value !== 'object') return out;
+  if (value.kind === 'symbol') {
+    if (value.name !== variable) out.add(value.name);
+    return out;
+  }
+  for (const key of ['terms', 'factors']) for (const item of value[key] || []) expressionSymbols(item, variable, out);
+  for (const key of ['base', 'numerator', 'denominator', 'coefficient']) expressionSymbols(value[key], variable, out);
+  return out;
+}
+
+/** An expression's value with every symbol given a number. */
+function evaluateExpression(value, values) {
+  switch (value?.kind) {
+    case 'number': return Number(value.numerator) / Number(value.denominator);
+    case 'symbol': {
+      const number = values[value.name];
+      if (!Number.isFinite(number)) throw new Error(`no value for ${value.name}`);
+      return number;
+    }
+    case 'add': return value.terms.reduce((sum, term) => sum + evaluateExpression(term, values), 0);
+    case 'multiply': return value.factors.reduce((product, factor) => product * evaluateExpression(factor, values), 1);
+    case 'power': return evaluateExpression(value.base, values) ** Number(value.exponent);
+    case 'rational': return evaluateExpression(value.numerator, values) / evaluateExpression(value.denominator, values);
+    case 'infinity': return (value.sign ?? 1) * Infinity;
+    default: throw new Error(`cannot evaluate ${value?.kind}`);
+  }
+}
+
+/** Dense coefficients [c0, c1, ...] of a coefficient list `[{power, coefficient}]`. */
+function numericCoefficients(list, values) {
+  const out = [];
+  for (const { power, coefficient } of list || []) {
+    while (out.length <= power) out.push(0);
+    out[power] += evaluateExpression(coefficient, values);
+  }
+  return out;
+}
+
+// ----- complex arithmetic -------------------------------------------------------
+
+const c = (re, im = 0) => ({ re, im });
+const cadd = (a, b) => c(a.re + b.re, a.im + b.im);
+const csub = (a, b) => c(a.re - b.re, a.im - b.im);
+const cmul = (a, b) => c(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
+const cdiv = (a, b) => {
+  const d = b.re * b.re + b.im * b.im;
+  return c((a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d);
+};
+const cabs = (a) => Math.hypot(a.re, a.im);
+
+/** p(z) and p'(z) by Horner, coefficients low power first. */
+function horner(coefficients, z) {
+  let value = c(0);
+  let derivative = c(0);
+  for (let i = coefficients.length - 1; i >= 0; i--) {
+    derivative = cadd(cmul(derivative, z), value);
+    value = cadd(cmul(value, z), c(coefficients[i]));
+  }
+  return { value, derivative };
+}
+
+/** Coefficients with numerical noise at the top dropped (relative to the rest). */
+function trimmed(coefficients) {
+  const scale = Math.max(...coefficients.map(Math.abs), 0);
+  const out = [...coefficients];
+  while (out.length > 1 && Math.abs(out.at(-1)) <= scale * 1e-13) out.pop();
+  return out;
+}
+
+/**
+ * Every root of a real polynomial (coefficients low power first), by the
+ * Aberth-Ehrlich iteration. Roots at the origin are split off exactly first;
+ * the rest are found on a variable scaled to their geometric mean, so roots
+ * decades apart converge alike.
+ */
+function polynomialRoots(coefficients) {
+  let a = trimmed(coefficients);
+  const roots = [];
+  while (a.length > 1 && a[0] === 0) {
+    roots.push(c(0));
+    a = a.slice(1);
+  }
+  const n = a.length - 1;
+  if (n < 1) return roots;
+  // Scale s = k t so the scaled roots sit around the unit circle.
+  const k = Math.abs(a[0] / a[n]) ** (1 / n) || 1;
+  const b = a.map((value, i) => value * k ** i);
+  const lead = b[n];
+  const monic = b.map((value) => value / lead);
+  let z = Array.from({ length: n }, (_, i) => {
+    const angle = (2 * Math.PI * i) / n + 0.4;
+    return c(Math.cos(angle), Math.sin(angle));
+  });
+  for (let iteration = 0; iteration < 500; iteration++) {
+    let moved = 0;
+    const next = z.map((zi, i) => {
+      const { value, derivative } = horner(monic, zi);
+      if (cabs(value) === 0) return zi;
+      const ratio = cdiv(value, derivative);
+      let sum = c(0);
+      for (let j = 0; j < n; j++) if (j !== i) sum = cadd(sum, cdiv(c(1), csub(zi, z[j])));
+      const step = cdiv(ratio, csub(c(1), cmul(ratio, sum)));
+      moved = Math.max(moved, cabs(step) / Math.max(1, cabs(zi)));
+      return csub(zi, step);
+    });
+    z = next;
+    if (moved < 1e-14) break;
+  }
+  for (const root of z) {
+    // A conjugate pair's imaginary dust on a real root is noise.
+    const real = Math.abs(root.im) <= 1e-9 * Math.max(1, Math.abs(root.re));
+    roots.push(c(root.re * k, real ? 0 : root.im * k));
+  }
+  return roots;
+}
+
+/** H(jω) from dense numerator and denominator coefficients. */
+function responseAt(numerator, denominator, omega) {
+  const s = c(0, omega);
+  return cdiv(horner(numerator, s).value, horner(denominator, s).value);
+}
+
+const log10 = Math.log10;
+const decibels = (h) => 20 * log10(cabs(h));
+
+/** Roots with positive imaginary part stand for their pair; the rest once. */
+function distinctCorners(roots) {
+  return roots.filter((root) => root.im >= 0);
+}
+
+/**
+ * The sketch of `N(s)/D(s)` (dense coefficient arrays): the exact magnitude
+ * and phase over a frequency range around its corners, the poles and zeros,
+ * the straight-line magnitude asymptote, and the unity-gain crossing.
+ * Frequencies are in the units the coefficients were evaluated in.
+ */
+function bodeSketch(numerator, denominator, { pointsPerDecade = 40 } = {}) {
+  const num = trimmed(numerator);
+  const den = trimmed(denominator);
+  const zeros = polynomialRoots(num);
+  const poles = polynomialRoots(den);
+  const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0 && Number.isFinite(w));
+  const low = corners.length ? Math.floor(log10(Math.min(...corners))) - 1 : -2;
+  let high = corners.length ? Math.ceil(log10(Math.max(...corners))) + 1 : 2;
+  // A falling gain is shown on down to unity: where the straight line
+  // crosses 0 dB, and a decade past it.
+  const reach = magnitudeAsymptote(num, den, zeros, poles, low, high);
+  const end = reach.at(-1);
+  const before = reach.at(-2);
+  if (end && before && end.db > -20) {
+    const slope = (end.db - before.db) / log10(end.w / before.w);
+    if (slope < 0) high = Math.max(high, Math.min(low + 12, Math.ceil(log10(end.w) + end.db / -slope) + 1));
+  }
+  const points = [];
+  let previousPhase = null;
+  for (let i = 0; i <= (high - low) * pointsPerDecade; i++) {
+    const w = 10 ** (low + i / pointsPerDecade);
+    const h = responseAt(num, den, w);
+    let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
+    // Unwrap, so a phase running past -180 keeps going instead of jumping.
+    if (previousPhase !== null) {
+      while (phase - previousPhase > 180) phase -= 360;
+      while (phase - previousPhase < -180) phase += 360;
+    }
+    previousPhase = phase;
+    points.push({ w, db: decibels(h), phase });
+  }
+  // Start the phase near its low-frequency value (0 or ±180 for an
+  // inverting stage, not an arbitrary multiple of 360).
+  if (points.length) {
+    const shift = Math.round(points[0].phase / 360) * 360;
+    for (const point of points) point.phase -= shift;
+  }
+  return {
+    range: { low, high },
+    points,
+    zeros,
+    poles,
+    asymptote: magnitudeAsymptote(num, den, zeros, poles, low, high),
+    unityGain: unityCrossing(points),
+  };
+}
+
+/** The textbook straight-line magnitude: the low-frequency behavior k ω^m,
+ *  bending ±20 dB/decade at every zero and pole (a complex pair bends twice). */
+function magnitudeAsymptote(num, den, zeros, poles, low, high) {
+  const valuation = (a) => a.findIndex((value) => value !== 0);
+  const vn = valuation(num);
+  const vd = valuation(den);
+  if (vn < 0 || vd < 0) return [];
+  // Low-frequency asymptote from the lowest nonzero coefficients, after the
+  // roots at the origin (which it already accounts for).
+  const k = Math.abs(num[vn] / den[vd]);
+  let slope = vn - vd; // in decades of |H| per decade of ω
+  const breaks = [
+    ...zeros.filter((z) => cabs(z) > 0).map((z) => ({ w: cabs(z), step: 1 })),
+    ...poles.filter((p) => cabs(p) > 0).map((p) => ({ w: cabs(p), step: -1 })),
+  ].sort((a, b) => a.w - b.w);
+  const at = (logW) => 20 * (log10(k) + slope * logW);
+  // Corners below the plotted range have already bent the line.
+  for (const corner of breaks) if (log10(corner.w) <= low) slope += corner.step;
+  const k0 = at(low);
+  const out = [{ w: 10 ** low, db: k0 }];
+  let base = { logW: low, db: k0 };
+  for (const corner of breaks) {
+    const logW = log10(corner.w);
+    if (logW <= low || logW >= high) continue;
+    const db = base.db + 20 * slope * (logW - base.logW);
+    out.push({ w: corner.w, db });
+    slope += corner.step;
+    base = { logW, db };
+  }
+  out.push({ w: 10 ** high, db: base.db + 20 * slope * (high - base.logW) });
+  return out;
+}
+
+/** Where the magnitude first falls through 0 dB, or null. */
+function unityCrossing(points) {
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (a.db >= 0 && b.db < 0) {
+      const t = a.db / (a.db - b.db);
+      const logW = log10(a.w) + t * (log10(b.w) - log10(a.w));
+      return { w: 10 ** logW, phase: a.phase + t * (b.phase - a.phase) };
+    }
+  }
+  return null;
+}
+
+/** Corners for labelling: each real root, and each complex pair once. */
+function sketchCorners(sketch) {
+  return {
+    zeros: distinctCorners(sketch.zeros),
+    poles: distinctCorners(sketch.poles),
+  };
+}
+
+__exports.DEFAULT_INTRINSIC_GAIN = DEFAULT_INTRINSIC_GAIN;
+__exports.OUTPUT_CAPACITANCE = OUTPUT_CAPACITANCE;
+__exports.DEFAULT_PARASITIC_RATIO = DEFAULT_PARASITIC_RATIO;
+};
+
 __modules["src/core/analysis/compact.js"] = function (__require, __exports) {
 __exports.compactRational = compactRational;
 let add, integer, multiply, rationalFunction; __bind(() => { ({ add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js")); });
@@ -10508,6 +10831,138 @@ function resolveBeat(circuit, index) {
 
 __exports.SWITCH_TYPES = SWITCH_TYPES;
 __exports.PRESENCES = PRESENCES;
+};
+
+__modules["src/core/bode-figure.js"] = function (__require, __exports) {
+__exports.bodeFigure = bodeFigure;
+__exports.cornerNames = cornerNames;
+/**
+ * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
+ * and short texts (with `_{}`/`^{}` markup). One layout, two renderers -- the
+ * analysis panel draws it in the theme's colors, and a plot annotation on the
+ * canvas draws it in the drawing's own ink -- so the figure on the paper is
+ * the one in the panel.
+ *
+ * Items: `{ type: 'line', x1, y1, x2, y2, role }`, `{ type: 'path', points,
+ * role }`, `{ type: 'text', x, y, text, anchor, role }`, `{ type: 'dot', x, y,
+ * role }`. Roles: axis, zero (the 0 dB line), tick, grid, curve, asymptote,
+ * corner, label, number.
+ */
+
+const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+
+function niceRange(values, step, pad) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return [-step, step];
+  const low = Math.floor((Math.min(...finite) - pad) / step) * step;
+  const high = Math.ceil((Math.max(...finite) + pad) / step) * step;
+  // `+ 0` turns a -0 bound into 0.
+  return low === high ? [low - step + 0, high + step + 0] : [low + 0, high + 0];
+}
+
+/**
+ * Lay out `sketch` (bode.js's bodeSketch) in a `width` x `height` box.
+ * `corners` are `{ w, text }` to mark (ω_{p1}, ω_{z1}); `quantity` names the
+ * magnitude axis (`A_{v}`). `numbers: false` gives the textbook sketch: no
+ * figures on the axes, only the marked frequencies.
+ */
+function bodeFigure(sketch, {
+  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 160,
+} = {}) {
+  const items = [];
+  const left = numbers ? 46 : 22;
+  const right = 10;
+  const top = 12;
+  const bottom = numbers ? 22 : 16;
+  const gap = phase ? 14 : 0;
+  const plotW = Math.max(10, width - left - right);
+  const available = height - top - bottom - gap;
+  const magH = phase ? available * 0.62 : available;
+  const phaseH = phase ? available - magH : 0;
+  const mag = { x: left, y: top, w: plotW, h: magH };
+  const ph = { x: left, y: top + magH + gap, w: plotW, h: phaseH };
+  const { low, high } = sketch.range;
+  const x = (w) => mag.x + ((Math.log10(w) - low) / (high - low)) * plotW;
+
+  let [dbLow, dbHigh] = niceRange([...sketch.points.map((p) => p.db), ...sketch.asymptote.map((p) => p.db)], 20, 3);
+  if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
+  const yDb = (db) => mag.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * mag.h;
+  const [phLow, phHigh] = niceRange(sketch.points.map((p) => p.phase), 90, 5);
+  const yPh = (deg) => ph.y + ((phHigh - clamp(deg, phLow, phHigh)) / (phHigh - phLow)) * ph.h;
+
+  // Axes: the frequency axis runs along the bottom of each pane.
+  for (const pane of phase ? [mag, ph] : [mag]) {
+    items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+    items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  }
+  if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: mag.x, y1: yDb(0), x2: mag.x + mag.w, y2: yDb(0), role: 'zero' });
+
+  // Decades along the bottom; dB and degrees up the side.
+  for (let decade = Math.ceil(low); decade <= high; decade++) {
+    const at = x(10 ** decade);
+    for (const pane of phase ? [mag, ph] : [mag]) {
+      items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 4, role: 'tick' });
+      if (numbers) items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
+    }
+    if (numbers) {
+      const pane = phase ? ph : mag;
+      items.push({ type: 'text', x: at, y: pane.y + pane.h + 14, text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}`, anchor: 'middle', role: 'number' });
+    }
+  }
+  if (numbers) {
+    for (let db = dbLow; db <= dbHigh; db += 20) {
+      items.push({ type: 'line', x1: mag.x, y1: yDb(db), x2: mag.x + 4, y2: yDb(db), role: 'tick' });
+      items.push({ type: 'text', x: mag.x - 5, y: yDb(db) + 4, text: `${db}`, anchor: 'end', role: 'number' });
+    }
+    if (phase) {
+      for (let deg = phLow; deg <= phHigh; deg += 90) {
+        items.push({ type: 'line', x1: ph.x, y1: yPh(deg), x2: ph.x + 4, y2: yPh(deg), role: 'tick' });
+        items.push({ type: 'text', x: ph.x - 5, y: yPh(deg) + 4, text: `${deg}°`, anchor: 'end', role: 'number' });
+      }
+    }
+  }
+
+  // The straight-line sketch under the exact curve.
+  items.push({ type: 'path', points: sketch.asymptote.map((p) => ({ x: x(p.w), y: yDb(p.db) })), role: 'asymptote' });
+  items.push({ type: 'path', points: sketch.points.map((p) => ({ x: x(p.w), y: yDb(p.db) })), role: 'curve' });
+  if (phase) items.push({ type: 'path', points: sketch.points.map((p) => ({ x: x(p.w), y: yPh(p.phase) })), role: 'curve' });
+
+  // Marked frequencies: a dotted drop line and the name at the axis.
+  for (const corner of corners) {
+    if (!(corner.w > 0)) continue;
+    const at = x(corner.w);
+    if (at < mag.x || at > mag.x + mag.w) continue;
+    const bottomY = (phase ? ph : mag).y + (phase ? ph : mag).h;
+    items.push({ type: 'line', x1: at, y1: mag.y, x2: at, y2: bottomY, role: 'corner' });
+    // Near the right edge the name goes on the corner's left.
+    const nearEdge = at > mag.x + mag.w - 36;
+    items.push({ type: 'text', x: nearEdge ? at - 3 : at + 3, y: mag.y + mag.h - 5, text: corner.text, anchor: nearEdge ? 'end' : 'start', role: 'label' });
+  }
+  if (unityGain && sketch.unityGain && dbLow < 0 && dbHigh > 0) {
+    const at = x(sketch.unityGain.w);
+    items.push({ type: 'dot', x: at, y: yDb(0), role: 'corner' });
+    const nearEdge = at > mag.x + mag.w - 30;
+    items.push({ type: 'text', x: nearEdge ? at - 4 : at + 4, y: yDb(0) - 5, text: 'ω_{u}', anchor: nearEdge ? 'end' : 'start', role: 'label' });
+  }
+
+  // What the axes are.
+  items.push({ type: 'text', x: mag.x + 4, y: mag.y + 10, text: `|${quantity}|${numbers ? ' (dB)' : ''}`, anchor: 'start', role: 'label' });
+  if (phase) items.push({ type: 'text', x: ph.x + 4, y: ph.y + 10, text: `∠${quantity}`, anchor: 'start', role: 'label' });
+  const axisPane = phase ? ph : mag;
+  items.push({ type: 'text', x: axisPane.x + axisPane.w, y: axisPane.y + axisPane.h - 5, text: numbers ? 'ω (g/C)' : 'ω', anchor: 'end', role: 'label' });
+  return { width, height, items, panes: { magnitude: mag, phase: phase ? ph : null }, ranges: { db: [dbLow, dbHigh], phase: [phLow, phHigh] } };
+}
+
+/** Number the marked frequencies in order: ω_{p1}, ω_{p2}, ω_{z1}, ... */
+function cornerNames(poles, zeros) {
+  const named = (roots, letter) => roots
+    .map((root) => ({ root, w: Math.hypot(root.re, root.im) }))
+    .filter(({ w }) => w > 0)
+    .sort((a, b) => a.w - b.w)
+    .map(({ root, w }, index) => ({ root, w, kind: letter === 'p' ? 'pole' : 'zero', text: `ω_{${letter}${index + 1}}`, rightHalf: root.re > 0 }));
+  return [...named(poles, 'p'), ...named(zeros, 'z')];
+}
+
 };
 
 __modules["src/core/commands.js"] = function (__require, __exports) {
@@ -26328,6 +26783,7 @@ let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("
 let svgString, texToMathML; __bind(() => { ({ svgString, texToMathML } = __require("src/core/render.js")); });
 let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("src/core/analysis/provenance.js")); });
 let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/analysis/noise.js")); });
+let renderBode; __bind(() => { ({ renderBode } = __require("src/web/bode-ui.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
@@ -26342,6 +26798,7 @@ let commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, se
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -27000,7 +27457,8 @@ function renderAnalysisResult(report) {
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
     renderSmallSignalModel(null);
     if (analysisModelPanel) analysisModelPanel.hidden = true;
-    for (const id of ['analysis-tab-netlist', 'analysis-tab-model']) {
+    renderBode(null);
+    for (const id of ['analysis-tab-netlist', 'analysis-tab-model', 'analysis-tab-bode']) {
       const tab = document.getElementById(id);
       if (tab) tab.disabled = true;
     }
@@ -27046,8 +27504,9 @@ function renderAnalysisResult(report) {
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
   if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
+  const plotted = renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
-  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
+  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn) || (selectedTab === 'bode' && !plotted);
   setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
@@ -29956,6 +30415,361 @@ function installBeatsUi() {
 
 __exports.plainMarkup = plainMarkup;
 __exports.beatLabel = beatLabel;
+};
+
+__modules["src/web/bode-ui.js"] = function (__require, __exports) {
+__exports.formatNumber = formatNumber;
+__exports.bodeAvailable = bodeAvailable;
+__exports.figureElement = figureElement;
+__exports.renderBode = renderBode;
+__exports.currentBodeSketch = currentBodeSketch;
+let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
+let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
+let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
+let bodeFigure, cornerNames; __bind(() => { ({ bodeFigure, cornerNames } = __require("src/core/bode-figure.js")); });
+let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let render; __bind(() => { ({ render } = __require("src/web/main.js")); });
+/**
+ * The analysis panel's Bode tab: a relative sketch of the derived transfer
+ * function (core/analysis/bode.js). Every g_m starts at one unit, every r_o
+ * and resistor at g_m r_o units, capacitors at one unit (loads on the output
+ * at ten); sliders scale any of them by ratios, and the plot, its poles and
+ * zeros, and their names follow at once. Nothing here solves the circuit
+ * again: only the derived coefficients are re-evaluated.
+ */
+
+
+
+
+
+
+
+
+
+
+const QUANTITIES = [
+  { key: 'transfer', label: 'Voltage gain', tex: 'A_{v}' },
+  { key: 'output', label: 'Output impedance', tex: 'Z_{out}' },
+  { key: 'input', label: 'Input impedance', tex: 'Z_{in}' },
+];
+
+const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance', 'other'];
+
+/** Ratios chosen so far, by symbol: they outlast a re-analysis. */
+const state = {
+  quantity: 'transfer',
+  intrinsicGain: DEFAULT_INTRINSIC_GAIN,
+  parasiticRatio: DEFAULT_PARASITIC_RATIO,
+  multipliers: {},
+  report: null,
+};
+
+const panelEl = () => document.getElementById('analysis-panel-bode');
+
+// ----- steps ---------------------------------------------------------------------
+
+/** 1-2-5 per decade, `index` 0 being 1. */
+function step125(index) {
+  const decade = Math.floor(index / 3);
+  return [1, 2, 5][((index % 3) + 3) % 3] * 10 ** decade;
+}
+
+function index125(value) {
+  const decade = Math.floor(Math.log10(value) + 1e-9);
+  const mantissa = value / 10 ** decade;
+  return decade * 3 + (mantissa >= 4.9 ? 2 : mantissa >= 1.9 ? 1 : 0);
+}
+
+/** 1-2-3-5 per decade, for g_m r_o (30 is a common starting point). */
+function step1235(index) {
+  const decade = Math.floor(index / 4);
+  return [1, 2, 3, 5][((index % 4) + 4) % 4] * 10 ** decade;
+}
+
+function index1235(value) {
+  const decade = Math.floor(Math.log10(value) + 1e-9);
+  const mantissa = value / 10 ** decade;
+  return decade * 4 + (mantissa >= 4.9 ? 3 : mantissa >= 2.9 ? 2 : mantissa >= 1.9 ? 1 : 0);
+}
+
+/** A slider's plain readout: ×0.002, ×1, ×500. */
+function ratioText(value) {
+  return `×${Number(value.toPrecision(3))}`;
+}
+
+/** A number as a reader wants it: 3 significant figures, powers of ten when
+ *  it is very large or small. */
+function formatNumber(value) {
+  if (!Number.isFinite(value)) return String(value);
+  const magnitude = Math.abs(value);
+  if (magnitude !== 0 && (magnitude < 1e-2 || magnitude >= 1e4)) {
+    let exponent = Math.floor(Math.log10(magnitude));
+    let mantissa = Number((value / 10 ** exponent).toPrecision(2));
+    // 9.98 rounds to 10: that is the next power.
+    if (Math.abs(mantissa) >= 10) {
+      mantissa /= 10;
+      exponent += 1;
+    }
+    return `${mantissa}·10^{${exponent}}`;
+  }
+  return String(Number(value.toPrecision(3)));
+}
+
+// ----- the model -------------------------------------------------------------------
+
+function exactOf(report, key) {
+  const exact = report?.reports?.[key]?.exact;
+  return exact?.numeratorCoefficients && exact?.denominatorCoefficients ? exact : null;
+}
+
+/** Whether a report has anything with a frequency to plot. */
+function bodeAvailable(report) {
+  return QUANTITIES.some(({ key }) => {
+    const exact = exactOf(report, key);
+    return exact && (exact.numeratorDegree > 0 || exact.denominatorDegree > 0);
+  });
+}
+
+function outputComponents(report) {
+  const netId = report?.outputPort?.netId;
+  const net = netId && editor.circuit.nets.get(netId);
+  return new Set(net ? net.terminals.map((terminal) => terminal.comp) : []);
+}
+
+function currentModel() {
+  const report = state.report;
+  const exact = exactOf(report, state.quantity);
+  if (!exact) return null;
+  const symbols = new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
+    .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]));
+  const parameters = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(report) });
+  const values = sketchValues(parameters, state);
+  const sketch = bodeSketch(numericCoefficients(exact.numeratorCoefficients, values), numericCoefficients(exact.denominatorCoefficients, values));
+  const corners = cornerNames(sketch.poles, sketch.zeros);
+  // A corner whose factor is first order has its exact expression.
+  const symbolic = [...(report.reports[state.quantity].poles || []).map((root) => ({ ...root, kind: 'pole' })),
+    ...(report.reports[state.quantity].zeros || []).map((root) => ({ ...root, kind: 'zero' }))];
+  for (const corner of corners) {
+    for (const root of symbolic) {
+      if (root.kind !== corner.kind || !root.root || root.order !== 1) continue;
+      let value;
+      try { value = evaluateExpression(root.root, values); } catch { continue; }
+      if (Math.abs(Math.abs(value) - corner.w) <= 1e-6 * corner.w) {
+        corner.tex = renderExpression(value < 0 ? negate(root.root) : root.root);
+        break;
+      }
+    }
+  }
+  return { parameters, values, sketch, corners, quantity: QUANTITIES.find((q) => q.key === state.quantity) };
+}
+
+// ----- drawing -----------------------------------------------------------------------
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+function svgElement(name, attributes = {}) {
+  const element = document.createElementNS(SVG, name);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+  return element;
+}
+
+/** `ω_{p1}`, `10^{-3}` as text with real sub- and superscripts. */
+function markupText(element, text) {
+  for (const run of parseLabelRuns(text)) {
+    const span = svgElement('tspan', run.sub ? { 'baseline-shift': 'sub', 'font-size': '72%' } : run.super ? { 'baseline-shift': 'super', 'font-size': '72%' } : {});
+    span.textContent = run.text;
+    element.appendChild(span);
+  }
+}
+
+/** The figure (core/bode-figure.js) as an SVG in the theme's colors. */
+function figureElement(figure) {
+  const svg = svgElement('svg', { viewBox: `0 0 ${figure.width} ${figure.height}`, class: 'bode-figure', role: 'img' });
+  for (const item of figure.items) {
+    const cls = `bode-${item.role}`;
+    if (item.type === 'line') svg.appendChild(svgElement('line', { x1: item.x1, y1: item.y1, x2: item.x2, y2: item.y2, class: cls }));
+    else if (item.type === 'path' && item.points.length) {
+      svg.appendChild(svgElement('polyline', { points: item.points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '), class: cls }));
+    } else if (item.type === 'dot') svg.appendChild(svgElement('circle', { cx: item.x, cy: item.y, r: 2.5, class: cls }));
+    else if (item.type === 'text') {
+      const text = svgElement('text', { x: item.x, y: item.y, 'text-anchor': item.anchor, class: cls });
+      markupText(text, item.text);
+      svg.appendChild(text);
+    }
+  }
+  return svg;
+}
+
+function mathElement(tex, tag = 'span') {
+  const element = document.createElement(tag);
+  element.className = 'bode-math';
+  element.innerHTML = texToMathML(tex);
+  return element;
+}
+
+function emphasize(components) {
+  const next = components.filter(Boolean);
+  if (next.join(' ') === editor.equationEmphasis.join(' ')) return;
+  editor.equationEmphasis = next;
+  render();
+}
+
+function slider({ label, tex, index, min, max, text, onInput, components = [], title = '' }) {
+  const row = document.createElement('label');
+  row.className = 'bode-slider';
+  if (title) row.title = title;
+  const name = tex ? mathElement(tex) : document.createElement('span');
+  if (!tex) name.textContent = label;
+  name.classList.add('bode-slider-name');
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.min = String(min);
+  input.max = String(max);
+  input.step = '1';
+  input.value = String(index);
+  input.setAttribute('aria-label', label);
+  const value = document.createElement('span');
+  value.className = 'bode-slider-value';
+  value.textContent = text(index);
+  input.addEventListener('input', () => {
+    value.textContent = text(Number(input.value));
+    onInput(Number(input.value));
+  });
+  if (components.length) {
+    row.addEventListener('pointerenter', () => emphasize(components));
+    row.addEventListener('pointerleave', () => emphasize([]));
+    input.addEventListener('focus', () => emphasize(components));
+    input.addEventListener('blur', () => emphasize([]));
+  }
+  row.append(name, input, value);
+  return row;
+}
+
+/** Redraw the figure and the corner list; the sliders stay (so a drag goes on). */
+function drawSketch() {
+  const panel = panelEl();
+  const figureHost = panel?.querySelector('.bode-figure-host');
+  const list = panel?.querySelector('.bode-corners');
+  if (!figureHost || !list) return;
+  const model = currentModel();
+  figureHost.replaceChildren();
+  list.replaceChildren();
+  if (!model) {
+    figureHost.textContent = 'This quantity has no derived expression to plot.';
+    return;
+  }
+  const { sketch, corners, quantity } = model;
+  figureHost.appendChild(figureElement(bodeFigure(sketch, { width: 480, height: 300, corners, quantity: quantity.tex })));
+  for (const corner of corners) {
+    const item = document.createElement('li');
+    const where = `${formatNumber(corner.w)}\\,g/C`;
+    const name = corner.text.replace('ω', '\\omega');
+    const tex = corner.tex ? `${name} = ${corner.tex} \\approx ${where}` : `${name} \\approx ${where}`;
+    item.appendChild(mathElement(tex));
+    if (corner.rightHalf) item.append(' (right half-plane)');
+    if (Math.abs(corner.root.im) > 0) item.append(` (complex pair, Q = ${formatNumber(corner.w / (2 * Math.abs(corner.root.re)))})`);
+    list.appendChild(item);
+  }
+  if (sketch.unityGain && quantity.key === 'transfer') {
+    const item = document.createElement('li');
+    item.appendChild(mathElement(`\\omega_{u} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase there } ${Math.round(sketch.unityGain.phase)}\\text{°}`));
+    list.appendChild(item);
+  }
+}
+
+/** Rebuild the tab for a new report (or a new quantity). */
+function renderBode(report) {
+  state.report = report || null;
+  const panel = panelEl();
+  const tab = document.getElementById('analysis-tab-bode');
+  const available = bodeAvailable(report);
+  if (tab) tab.disabled = !available;
+  if (!panel) return available;
+  panel.replaceChildren();
+  if (!available) return available;
+  if (!exactOf(report, state.quantity)) state.quantity = QUANTITIES.find(({ key }) => exactOf(report, key))?.key || 'transfer';
+
+  const head = document.createElement('div');
+  head.className = 'bode-head';
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'Quantity to plot');
+  for (const quantity of QUANTITIES) {
+    if (!exactOf(report, quantity.key)) continue;
+    const option = document.createElement('option');
+    option.value = quantity.key;
+    option.textContent = quantity.label;
+    option.selected = quantity.key === state.quantity;
+    select.appendChild(option);
+  }
+  select.addEventListener('change', () => {
+    state.quantity = select.value;
+    renderBode(state.report);
+  });
+  const note = document.createElement('span');
+  note.className = 'bode-note';
+  note.textContent = 'A relative sketch: each gm starts at one unit g, each capacitor at one unit C (loads on the output at 10), each ro and resistor at gm·ro units. Frequency is in g/C.';
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.textContent = 'Reset ratios';
+  reset.addEventListener('click', () => {
+    Object.assign(state, { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} });
+    renderBode(state.report);
+  });
+  head.append(select, reset);
+  const figureHost = document.createElement('div');
+  figureHost.className = 'bode-figure-host';
+  const corners = document.createElement('ul');
+  corners.className = 'bode-corners';
+  const sliders = document.createElement('div');
+  sliders.className = 'bode-sliders';
+  panel.append(head, note, figureHost, corners, sliders);
+
+  const model = currentModel();
+  // The one ratio every MOS design has.
+  sliders.appendChild(slider({
+    label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: index1235(state.intrinsicGain), min: 0, max: 16,
+    text: (i) => String(step1235(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
+    onInput: (i) => { state.intrinsicGain = step1235(i); drawSketch(); },
+  }));
+  if (model?.parameters.some((parameter) => parameter.parasitic)) {
+    sliders.appendChild(slider({
+      label: 'Parasitic capacitance', tex: 'C_{par}/C', index: index125(state.parasiticRatio), min: -6, max: 3,
+      text: (i) => String(Number(step125(i).toPrecision(3))), title: 'Every MOS C_gs and C_gd, in units of C',
+      onInput: (i) => { state.parasiticRatio = step125(i); drawSketch(); },
+    }));
+  }
+  const own = [...(model?.parameters || [])].filter((parameter) => !parameter.parasitic)
+    .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  for (const parameter of own) {
+    sliders.appendChild(slider({
+      label: parameter.name,
+      tex: parameter.tex,
+      index: index125(state.multipliers[parameter.name] ?? 1),
+      min: -9,
+      max: 9,
+      text: (i) => ratioText(step125(i)),
+      components: [parameter.component],
+      title: parameter.load ? 'A load on the output: starts at 10 units' : '',
+      onInput: (i) => {
+        const value = step125(i);
+        if (value === 1) delete state.multipliers[parameter.name];
+        else state.multipliers[parameter.name] = value;
+        drawSketch();
+      },
+    }));
+  }
+  drawSketch();
+  return available;
+}
+
+/** The sketch as it stands, for a plot annotation on the canvas. */
+function currentBodeSketch() {
+  const model = currentModel();
+  return model && { sketch: model.sketch, corners: model.corners, quantity: model.quantity };
+}
+
 };
 
 __modules["src/web/canvas-view.js"] = function (__require, __exports) {

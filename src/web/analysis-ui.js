@@ -12,6 +12,7 @@ import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
+import { renderBode } from './bode-ui.js';
 import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
@@ -662,7 +663,8 @@ function renderAnalysisResult(report) {
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
     renderSmallSignalModel(null);
     if (analysisModelPanel) analysisModelPanel.hidden = true;
-    for (const id of ['analysis-tab-netlist', 'analysis-tab-model']) {
+    renderBode(null);
+    for (const id of ['analysis-tab-netlist', 'analysis-tab-model', 'analysis-tab-bode']) {
       const tab = document.getElementById(id);
       if (tab) tab.disabled = true;
     }
@@ -708,8 +710,9 @@ function renderAnalysisResult(report) {
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
   if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
+  const plotted = renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
-  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
+  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn) || (selectedTab === 'bode' && !plotted);
   setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
