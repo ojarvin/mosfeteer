@@ -96,14 +96,14 @@ test('the report adapter renders one prefixed row per referral and kind', () => 
   const titles = adapted.equationEntries.map(({ title }) => title);
   assert.deepEqual(titles.slice(-2), ['Input-referred thermal noise', 'Output thermal noise']);
   const row = adapted.equationEntries.find(({ title }) => title === 'Input-referred thermal noise').result;
-  assert.equal(row.equation, '\\overline{v_{n,in,th}^2} = 4kT\\left(\\frac{\\gamma}{g_{m1}} + \\frac{1}{g_{m1}^{2} \\, R_{D}}\\right)');
+  assert.equal(row.equation, 'S_{v,in,th} = 4kT\\left(\\frac{\\gamma}{g_{m1}} + \\frac{1}{g_{m1}^{2} \\, R_{D}}\\right)');
   assert.equal(stripProvenanceMarkers(row.equationProvenance.tex), row.equation);
 });
 
 test('a single flicker term follows its 1/f prefix with a dot, not parentheses', () => {
   const adapted = adaptCombinedReport(analyze('nmos-common-source', { thermal: false }));
   const row = adapted.equationEntries.find(({ title }) => title === 'Input-referred flicker noise').result;
-  assert.equal(row.equation, '\\overline{v_{n,in,1/f}^2} = \\frac{1}{f} \\cdot \\frac{K_{f,n}}{C_{ox} \\, L_{1} \\, W_{1}}');
+  assert.equal(row.equation, 'S_{v,in,1/f} = \\frac{1}{f} \\cdot \\frac{K_{f,n}}{C_{ox} \\, L_{1} \\, W_{1}}');
 });
 
 test('a triode device contributes the thermal noise of its r_ds', () => {
@@ -113,4 +113,19 @@ test('a triode device contributes the thermal noise of its r_ds', () => {
   // A triode M1 has no gain, so nothing refers to its gate; the output row stays.
   assert.equal(terms(report, 'input-thermal'), null);
   assert.ok(terms(report, 'output-thermal').M1);
+});
+
+test('factors every term shares move in front of the sum, with 1/f in a flicker row', () => {
+  const entry = smallSignalGoldenCorpus.find(({ id }) => id === 'current-mirror-load');
+  const adapted = adaptCombinedReport(analyzeSmallSignalV2(entry.build(), { ...entry.ports, noise: true }));
+  const equation = (title) => adapted.equationEntries.find((candidate) => candidate.title === title).result;
+  assert.equal(equation('Input-referred thermal noise').equation,
+    'S_{v,in,th} \\approx 4kT \\frac{\\gamma}{g_{m1}}\\left(1 + \\frac{g_{m2}}{g_{m1}} + \\frac{g_{m2}^{2}}{g_{m1} \\, g_{m3}}\\right)');
+  assert.match(equation('Output flicker noise').equation, /^S_\{v,out,1\/f\} \\approx \\frac\{g_\{m3\}\^\{2\} \\, r_\{o3\}\^\{2\}\}\{C_\{ox\} \\, f\}\\left\(/);
+  for (const title of ['Input-referred thermal noise', 'Output flicker noise']) {
+    const row = equation(title);
+    assert.equal(stripProvenanceMarkers(row.equationProvenance.tex), row.equation);
+  }
+  // The exact equation keeps one unfactored term per generator.
+  assert.match(equation('Input-referred thermal noise').exactEquation, /^S_\{v,in,th\} = 4kT\\left\(/);
 });

@@ -184,8 +184,14 @@ noise. `H_k` and `A_v` share the system determinant, so the input-referred
 ratio has the circuit's poles cancelled.
 
 Each row is the DC limit of every transfer, so the result is the density
-below the first pole. The row shows the `4kT` or `1/f` prefix times one term
-per generator, e.g. `4kT(γ/g_{m1} + 1/(g_{m1}^2 R_D))`. The selected equation
+below the first pole. Rows are power spectral densities in V²/Hz, labelled
+`S_{v,in,th}`, `S_{v,in,1/f}`, `S_{v,out,th}`, and `S_{v,out,1/f}`. A row shows
+the `4kT` or `1/f` prefix times one term per generator, e.g.
+`4kT(γ/g_{m1} + 1/(g_{m1}^2 R_D))`. A factor every term shares moves in front
+of the sum when that helps: one carrying a sum (a shared load such as
+`Z_1^2`), one with a numerator of its own, or any shared factor of a flicker
+row, which absorbs the `1/f`. A bare reciprocal like `1/g_{m1}` stays in the
+terms. The exact equation in the Log tab keeps the unfactored terms. The selected equation
 approximations act on each generator's transfer before it is squared. A
 generator outside the coupled network, or one whose gain vanishes at DC, is
 named in the Log tab instead. Unchecking a device drops its column; a device

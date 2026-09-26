@@ -113,9 +113,10 @@ export function noiseProvenancePrimitives(sources = []) {
   })));
 }
 
+// Voltage noise densities in V^2/Hz, named S as a power spectral density.
 const LABELS = Object.freeze({
-  input: { thermal: '\\overline{v_{n,in,th}^2}', flicker: '\\overline{v_{n,in,1/f}^2}' },
-  output: { thermal: '\\overline{v_{n,out,th}^2}', flicker: '\\overline{v_{n,out,1/f}^2}' },
+  input: { thermal: 'S_{v,in,th}', flicker: 'S_{v,in,1/f}' },
+  output: { thermal: 'S_{v,out,th}', flicker: 'S_{v,out,1/f}' },
 });
 
 export const NOISE_PREFIXES = Object.freeze({ thermal: '4kT', flicker: '\\frac{1}{f}' });

@@ -1408,8 +1408,10 @@ button:disabled {
   display: flex;
   list-style: none;
   align-items: center;
-  gap: 7px;
-  padding: 6px 4px;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 6px;
+  border-radius: 4px;
   color: var(--text);
   font: 700 0.75rem/1.2 ui-sans-serif, system-ui, sans-serif;
   text-align: left;
@@ -1420,17 +1422,25 @@ button:disabled {
   display: none;
 }
 
+.analysis-equation-group > summary:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
 .analysis-equation-group > summary::before {
-  content: "\25B8";
+  content: "";
   flex: none;
-  width: 0.75em;
-  color: var(--text-dim);
-  text-align: center;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  margin: 0 5px 0 3px;
+  border-right: 2px solid var(--text-dim);
+  border-bottom: 2px solid var(--text-dim);
+  transform: rotate(-45deg);
   transition: transform 0.12s ease;
 }
 
 .analysis-equation-group[open] > summary::before {
-  transform: rotate(90deg);
+  transform: translateY(-2px) rotate(45deg);
 }
 
 .analysis-equation-label[hidden] {

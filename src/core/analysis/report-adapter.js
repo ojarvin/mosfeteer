@@ -6,8 +6,9 @@ import {
   renderExpressionWithProvenance,
   renderRootEquation,
   renderRootEquationWithProvenance,
+  structuralKey,
 } from './present.js';
-import { infinity } from './rational.js';
+import { infinity, multiply, power, rationalFunction, symbol } from './rational.js';
 import { chooseDefinitions, nameDefinitions, symbolsIn } from './definitions.js';
 
 const QUANTITIES = Object.freeze([
@@ -419,6 +420,7 @@ function rootRow(roots) {
 }
 
 const NOISE_SEPARATOR = ' + ';
+const PROVENANCE_SPLIT = '\u0000';
 
 /** A term whose own top level is a sum needs parentheses after a prefix. */
 function topLevelSum(value) {
@@ -433,23 +435,131 @@ function topLevelSum(value) {
  * provenance render joins the terms' own renders, so it always describes the
  * displayed string.
  */
+/** `[base, exponent]` pairs of a product or quotient; numbers stay out. */
+function factorPairs(value, sign = 1) {
+  if (value?.kind === 'rational') return [...factorPairs(value.numerator, sign), ...factorPairs(value.denominator, -sign)];
+  if (value?.kind === 'multiply') return value.factors.flatMap((factor) => factorPairs(factor, sign));
+  if (value?.kind === 'power' && Number.isInteger(value.exponent)) return [[value.base, sign * value.exponent]];
+  if (value?.kind === 'number') return [];
+  return [[value, sign]];
+}
+
+function numberFactors(value, sign = 1) {
+  if (value?.kind === 'rational') return [...numberFactors(value.numerator, sign), ...numberFactors(value.denominator, -sign)];
+  if (value?.kind === 'multiply') return value.factors.flatMap((factor) => numberFactors(factor, sign));
+  return value?.kind === 'number' ? [[value, sign]] : [];
+}
+
+function quotient(pairs, variable) {
+  const side = (wanted) => multiply(pairs.filter(([, exponent]) => Math.sign(exponent) === wanted)
+    .map(([base, exponent]) => (Math.abs(exponent) === 1 ? base : power(base, Math.abs(exponent)))));
+  return rationalFunction(side(1), side(-1), { variable });
+}
+
+/**
+ * Split what every term of a noise row shares -- the same load in each
+ * denominator, the same gain in each numerator -- out in front of the sum.
+ * A sum shown under one name (`definitions.js`) is one factor however each
+ * term happens to spell it. Returns null when nothing is shared.
+ */
+function commonNoiseFactor(terms, presentation) {
+  if (terms.length < 2) return null;
+  const keyOf = (base) => {
+    const key = structuralKey(base);
+    const name = base?.kind === 'add' && presentation.definitions?.get?.(key);
+    return name ? `name:${name}` : key;
+  };
+  const exponents = terms.map((term) => {
+    const map = new Map();
+    for (const [base, exponent] of factorPairs(term)) {
+      const key = keyOf(base);
+      map.set(key, { base, exponent: (map.get(key)?.exponent || 0) + exponent });
+    }
+    return map;
+  });
+  const shared = [];
+  for (const [key, { base }] of exponents[0]) {
+    const values = exponents.map((map) => map.get(key)?.exponent || 0);
+    const exponent = values.every((value) => value > 0) ? Math.min(...values)
+      : values.every((value) => value < 0) ? Math.max(...values) : 0;
+    if (exponent) shared.push([key, base, exponent]);
+  }
+  if (!shared.length) return null;
+  const variable = terms[0]?.variable || 's';
+  const common = quotient(shared.map(([, base, exponent]) => [base, exponent]), variable);
+  const rest = exponents.map((map, index) => {
+    const pairs = [];
+    for (const [key, { base, exponent }] of map) {
+      const left = exponent - (shared.find(([sharedKey]) => sharedKey === key)?.[2] || 0);
+      if (left) pairs.push([base, left]);
+    }
+    const coefficient = numberFactors(terms[index]).map(([number, sign]) => (sign > 0 ? number : power(number, -1)));
+    const remainder = quotient(pairs, variable);
+    return coefficient.length ? rationalFunction(multiply([...coefficient, remainder.numerator]), remainder.denominator, { variable }) : remainder;
+  });
+  return { common, rest };
+}
+
+function carriesAddition(value) {
+  switch (value?.kind) {
+    case 'add': return true;
+    case 'rational': return carriesAddition(value.numerator) || carriesAddition(value.denominator);
+    case 'power': return carriesAddition(value.base);
+    case 'multiply': return value.factors.some(carriesAddition);
+    default: return false;
+  }
+}
+
+/**
+ * A bare reciprocal such as `1/g_{m1}` in front of the sum reads worse than
+ * the textbook's one fraction per term. Factor out a shared load or gain
+ * (anything carrying a sum), a factor with a numerator of its own, or any
+ * shared factor of a flicker row, where it absorbs the 1/f.
+ */
+function worthFactoring(factored, row) {
+  if (!factored) return null;
+  const { numerator } = factored.common;
+  const unitNumerator = numerator?.kind === 'number' && numerator.numerator === numerator.denominator;
+  return row.kind === 'flicker' || carriesAddition(factored.common) || !unitNumerator ? factored : null;
+}
+
 function noiseRow(row, presentation = {}) {
   const approximate = row.terms.some(({ expression, exactExpression }) => !sameValue(expression, exactExpression));
   const relation = approximate ? '\\approx' : '=';
+  const factored = worthFactoring(commonNoiseFactor(row.terms.map(({ expression }) => expression), presentation), row);
+  const shown = factored ? factored.rest : row.terms.map(({ expression }) => expression);
+  // A shared factor takes the flicker row's 1/f into its own denominator.
+  const merged = factored && row.kind === 'flicker';
+  if (merged) {
+    factored.common = rationalFunction(factored.common.numerator,
+      multiply([factored.common.denominator, symbol('f')]), { variable: factored.common.variable });
+  }
   // A lone term after the fractional 1/f prefix would read as one fraction.
   const joiner = row.kind === 'flicker' ? ' \\cdot ' : ' ';
-  const wrap = (body) => (row.terms.length > 1 || topLevelSum(row.terms[0].expression)
-    ? `${row.prefix}\\left(${body}\\right)`
+  const prefix = (common) => {
+    if (common === null) return row.prefix;
+    return merged ? common : `${row.prefix}${joiner}${common}`;
+  };
+  const wrap = (body, common = null) => (shown.length > 1 || topLevelSum(shown[0])
+    ? `${prefix(common)}\\left(${body}\\right)`
     : `${row.prefix}${joiner}${body}`);
-  const body = row.terms.map(({ expression }) => render(expression, presentation)).join(NOISE_SEPARATOR);
+  const body = shown.map((expression) => render(expression, presentation)).join(NOISE_SEPARATOR);
   const exactBody = row.terms.map(({ exactExpression }) => render(exactExpression)).join(NOISE_SEPARATOR);
-  const joined = joinProvenanceRenders(row.terms.map(({ expression }) => renderExpressionWithProvenance(expression, presentation)), NOISE_SEPARATOR);
+  const commonRender = factored ? renderExpressionWithProvenance(factored.common, presentation) : null;
+  // One join keeps node ids unique across the shared factor and the terms.
+  const joined = joinProvenanceRenders([
+    ...(commonRender ? [commonRender] : []),
+    ...shown.map((expression) => renderExpressionWithProvenance(expression, presentation)),
+  ], PROVENANCE_SPLIT);
+  const pieces = joined.tex.split(PROVENANCE_SPLIT);
+  const commonTex = commonRender ? pieces.shift() : null;
+  const commonText = factored ? render(factored.common, presentation) : null;
   return {
     ok: true,
     query: `noise-${row.key}`,
-    equation: `${row.label} ${relation} ${wrap(body)}`,
-    exactEquation: `${row.label} = ${wrap(exactBody)}`,
-    equationProvenance: { tex: `${row.label} ${relation} ${wrap(joined.tex)}`, nodes: joined.nodes },
+    equation: `${row.label} ${relation} ${wrap(body, commonText)}`,
+    exactEquation: `${row.label} = ${row.terms.length > 1 ? `${row.prefix}\\left(${exactBody}\\right)` : `${row.prefix}${joiner}${exactBody}`}`,
+    equationProvenance: { tex: `${row.label} ${relation} ${wrap(pieces.join(NOISE_SEPARATOR), commonTex)}`, nodes: joined.nodes },
     terms: row.terms,
   };
 }
