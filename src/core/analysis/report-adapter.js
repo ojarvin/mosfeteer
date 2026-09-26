@@ -564,9 +564,55 @@ function noiseRow(row, presentation = {}) {
   };
 }
 
+const NOISE_KINDS_ORDER = Object.freeze(['thermal', 'flicker']);
+
+/** A column heading: the density with its row prefix divided out. */
+const NOISE_TABLE_HEADERS = Object.freeze({
+  thermal: (label) => `\\frac{${label}}{4kT}`,
+  flicker: (label) => `f \\cdot ${label}`,
+});
+
+/**
+ * Each generator's share, one row per device: the terms the summed rows add,
+ * set side by side. It lives in the panel only; a drawing takes equations.
+ */
+function noiseTable(rows, presentation) {
+  if (!rows.length) return null;
+  const referrals = ['input', 'output'].filter((referral) => rows.some((row) => row.referral === referral));
+  const kinds = NOISE_KINDS_ORDER.filter((kind) => rows.some((row) => row.kind === kind));
+  const components = [...new Set(rows.flatMap((row) => row.terms.map(({ component }) => component)))];
+  const cell = ({ expression }) => ({
+    tex: render(expression, presentation),
+    provenance: renderExpressionWithProvenance(expression, presentation),
+  });
+  return {
+    title: 'Noise by device',
+    group: 'noise',
+    result: {
+      ok: true,
+      table: {
+        referrals,
+        kinds,
+        headers: Object.fromEntries(rows.map((row) => [`${row.referral}-${row.kind}`, NOISE_TABLE_HEADERS[row.kind](row.label)])),
+        rows: components.map((component) => ({
+          component,
+          cells: Object.fromEntries(rows.flatMap((row) => {
+            const term = row.terms.find((candidate) => candidate.component === component);
+            return term ? [[`${row.referral}-${row.kind}`, cell(term)]] : [];
+          })),
+        })),
+      },
+    },
+  };
+}
+
 function noiseEntries(report, presentation) {
   const rows = report?.noise?.ok ? report.noise.rows : [];
-  return rows.map((row) => ({ title: row.title, result: noiseRow(row, presentation) }));
+  const table = noiseTable(rows, presentation);
+  return [
+    ...rows.map((row) => ({ title: row.title, result: noiseRow(row, presentation) })),
+    ...(table ? [table] : []),
+  ];
 }
 
 /** What the quantities are ratios of, named by the nodes they were taken at. */
@@ -620,7 +666,10 @@ function equationEntries(reports, report, presentation = {}) {
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
   }
-  for (const { title, result } of noiseEntries(report, presentation)) add(title, result, 'noise');
+  for (const { title, result } of noiseEntries(report, presentation)) {
+    if (result.table) entries.push({ title, group: 'noise', result });
+    else add(title, result, 'noise');
+  }
   const where = definitionEntry(presentation);
   if (where) entries.push(where);
   return entries;
@@ -664,7 +713,10 @@ function displayedExpressions(result) {
 }
 
 function renderedText(adapted) {
-  return (adapted.equationEntries || []).map(({ result }) => result.equation || '').join('\n');
+  return (adapted.equationEntries || []).flatMap(({ result }) => [
+    result.equation || '',
+    ...(result.table?.rows || []).flatMap(({ cells }) => Object.values(cells).map(({ tex }) => tex)),
+  ]).join('\n');
 }
 
 /**

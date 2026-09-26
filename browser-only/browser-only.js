@@ -8409,9 +8409,55 @@ function noiseRow(row, presentation = {}) {
   };
 }
 
+const NOISE_KINDS_ORDER = Object.freeze(['thermal', 'flicker']);
+
+/** A column heading: the density with its row prefix divided out. */
+const NOISE_TABLE_HEADERS = Object.freeze({
+  thermal: (label) => `\\frac{${label}}{4kT}`,
+  flicker: (label) => `f \\cdot ${label}`,
+});
+
+/**
+ * Each generator's share, one row per device: the terms the summed rows add,
+ * set side by side. It lives in the panel only; a drawing takes equations.
+ */
+function noiseTable(rows, presentation) {
+  if (!rows.length) return null;
+  const referrals = ['input', 'output'].filter((referral) => rows.some((row) => row.referral === referral));
+  const kinds = NOISE_KINDS_ORDER.filter((kind) => rows.some((row) => row.kind === kind));
+  const components = [...new Set(rows.flatMap((row) => row.terms.map(({ component }) => component)))];
+  const cell = ({ expression }) => ({
+    tex: render(expression, presentation),
+    provenance: renderExpressionWithProvenance(expression, presentation),
+  });
+  return {
+    title: 'Noise by device',
+    group: 'noise',
+    result: {
+      ok: true,
+      table: {
+        referrals,
+        kinds,
+        headers: Object.fromEntries(rows.map((row) => [`${row.referral}-${row.kind}`, NOISE_TABLE_HEADERS[row.kind](row.label)])),
+        rows: components.map((component) => ({
+          component,
+          cells: Object.fromEntries(rows.flatMap((row) => {
+            const term = row.terms.find((candidate) => candidate.component === component);
+            return term ? [[`${row.referral}-${row.kind}`, cell(term)]] : [];
+          })),
+        })),
+      },
+    },
+  };
+}
+
 function noiseEntries(report, presentation) {
   const rows = report?.noise?.ok ? report.noise.rows : [];
-  return rows.map((row) => ({ title: row.title, result: noiseRow(row, presentation) }));
+  const table = noiseTable(rows, presentation);
+  return [
+    ...rows.map((row) => ({ title: row.title, result: noiseRow(row, presentation) })),
+    ...(table ? [table] : []),
+  ];
 }
 
 /** What the quantities are ratios of, named by the nodes they were taken at. */
@@ -8465,7 +8511,10 @@ function equationEntries(reports, report, presentation = {}) {
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
   }
-  for (const { title, result } of noiseEntries(report, presentation)) add(title, result, 'noise');
+  for (const { title, result } of noiseEntries(report, presentation)) {
+    if (result.table) entries.push({ title, group: 'noise', result });
+    else add(title, result, 'noise');
+  }
   const where = definitionEntry(presentation);
   if (where) entries.push(where);
   return entries;
@@ -8509,7 +8558,10 @@ function displayedExpressions(result) {
 }
 
 function renderedText(adapted) {
-  return (adapted.equationEntries || []).map(({ result }) => result.equation || '').join('\n');
+  return (adapted.equationEntries || []).flatMap(({ result }) => [
+    result.equation || '',
+    ...(result.table?.rows || []).flatMap(({ cells }) => Object.values(cells).map(({ tex }) => tex)),
+  ]).join('\n');
 }
 
 /**
@@ -25860,7 +25912,9 @@ function analysisEquationRow({ title, group, result: child }, report) {
   // the group toggle drives its hidden row toggle.
   heading.hidden = title === GROUP_TITLES.get(group);
   row.appendChild(heading);
-  if (child?.ok && child.equation) {
+  if (child?.ok && child.table) {
+    row.appendChild(noiseTableElement(child.table, report));
+  } else if (child?.ok && child.equation) {
     const equation = document.createElement('div');
     equation.className = 'analysis-equation-value';
     // A definition row states several things at once; stack them so the
@@ -25881,6 +25935,80 @@ function analysisEquationRow({ title, group, result: child }, report) {
     row.appendChild(unavailable);
   }
   return row;
+}
+
+// Which referral the per-device noise table shows; a viewing choice only.
+let noiseTableReferral = 'input';
+
+const NOISE_REFERRAL_NAMES = Object.freeze({ input: 'Input-referred', output: 'Output' });
+
+/**
+ * Each device's share of the noise, one row per device and one column per
+ * noise kind, for the referral picked above the table. A device's name
+ * highlights it on the canvas like any term does.
+ */
+function noiseTableElement(table, report) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'analysis-noise-table';
+  if (!table.referrals.includes(noiseTableReferral)) noiseTableReferral = table.referrals[0];
+  const switcher = document.createElement('div');
+  switcher.className = 'analysis-noise-referral';
+  switcher.setAttribute('role', 'group');
+  switcher.setAttribute('aria-label', 'Noise referral');
+  const scroller = document.createElement('div');
+  scroller.className = 'analysis-noise-table-scroll';
+  const draw = () => {
+    for (const button of switcher.children) button.setAttribute('aria-pressed', String(button.dataset.referral === noiseTableReferral));
+    scroller.replaceChildren(noiseTableFor(table, noiseTableReferral, report));
+  };
+  if (table.referrals.length > 1) {
+    for (const referral of table.referrals) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.referral = referral;
+      button.textContent = NOISE_REFERRAL_NAMES[referral];
+      button.addEventListener('click', () => { noiseTableReferral = referral; draw(); });
+      switcher.appendChild(button);
+    }
+    wrapper.appendChild(switcher);
+  }
+  wrapper.appendChild(scroller);
+  draw();
+  return wrapper;
+}
+
+function noiseTableFor(table, referral, report) {
+  const element = document.createElement('table');
+  const head = element.createTHead().insertRow();
+  const device = document.createElement('th');
+  device.scope = 'col';
+  device.textContent = 'Device';
+  head.appendChild(device);
+  for (const kind of table.kinds) {
+    const header = document.createElement('th');
+    header.scope = 'col';
+    renderEquationMath(header, table.headers[`${referral}-${kind}`] || '');
+    head.appendChild(header);
+  }
+  const body = element.createTBody();
+  for (const { component, cells } of table.rows) {
+    const row = body.insertRow();
+    const name = document.createElement('th');
+    name.scope = 'row';
+    name.textContent = component;
+    name.dataset.components = component;
+    row.appendChild(name);
+    for (const kind of table.kinds) {
+      const cell = row.insertCell();
+      const value = cells[`${referral}-${kind}`];
+      if (value) renderEquationMath(cell, value.tex, value.provenance, report.symbolProvenance);
+      else {
+        cell.className = 'analysis-noise-empty';
+        cell.textContent = '—';
+      }
+    }
+  }
+  return element;
 }
 
 function renderAnalysisResult(report) {

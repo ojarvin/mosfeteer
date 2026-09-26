@@ -94,7 +94,7 @@ test('a generator that cannot reach the ports is reported, not solved', () => {
 test('the report adapter renders one prefixed row per referral and kind', () => {
   const adapted = adaptCombinedReport(analyze('nmos-common-source', { flicker: false }));
   const titles = adapted.equationEntries.map(({ title }) => title);
-  assert.deepEqual(titles.slice(-2), ['Input-referred thermal noise', 'Output thermal noise']);
+  assert.deepEqual(titles.slice(-3), ['Input-referred thermal noise', 'Output thermal noise', 'Noise by device']);
   const row = adapted.equationEntries.find(({ title }) => title === 'Input-referred thermal noise').result;
   assert.equal(row.equation, 'S_{v,in,th} = 4kT\\left(\\frac{\\gamma}{g_{m1}} + \\frac{1}{g_{m1}^{2} \\, R_{D}}\\right)');
   assert.equal(stripProvenanceMarkers(row.equationProvenance.tex), row.equation);
@@ -128,4 +128,22 @@ test('factors every term shares move in front of the sum, with 1/f in a flicker 
   }
   // The exact equation keeps one unfactored term per generator.
   assert.match(equation('Input-referred thermal noise').exactEquation, /^S_\{v,in,th\} = 4kT\\left\(/);
+});
+
+test('the per-device table sets each generator term beside the others, for the panel only', () => {
+  const entry = smallSignalGoldenCorpus.find(({ id }) => id === 'source-degeneration');
+  const adapted = adaptCombinedReport(analyzeSmallSignalV2(entry.build(), { ...entry.ports, noise: true }));
+  const table = adapted.equationEntries.find(({ title }) => title === 'Noise by device');
+  assert.equal(table.group, 'noise');
+  assert.equal(table.result.equation, undefined);
+  const { referrals, kinds, headers, rows } = table.result.table;
+  assert.deepEqual(referrals, ['input', 'output']);
+  assert.deepEqual(kinds, ['thermal', 'flicker']);
+  assert.equal(headers['input-thermal'], '\\frac{S_{v,in,th}}{4kT}');
+  assert.equal(headers['output-flicker'], 'f \\cdot S_{v,out,1/f}');
+  assert.deepEqual(rows.map(({ component }) => component), ['M1', 'RD', 'RS']);
+  const rs = rows.find(({ component }) => component === 'RS');
+  assert.equal(rs.cells['input-thermal'].tex, 'R_{S}');
+  assert.equal(rs.cells['input-flicker'], undefined);
+  assert.equal(stripProvenanceMarkers(rs.cells['input-thermal'].provenance.tex), 'R_{S}');
 });

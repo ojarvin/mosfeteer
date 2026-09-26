@@ -542,7 +542,9 @@ function analysisEquationRow({ title, group, result: child }, report) {
   // the group toggle drives its hidden row toggle.
   heading.hidden = title === GROUP_TITLES.get(group);
   row.appendChild(heading);
-  if (child?.ok && child.equation) {
+  if (child?.ok && child.table) {
+    row.appendChild(noiseTableElement(child.table, report));
+  } else if (child?.ok && child.equation) {
     const equation = document.createElement('div');
     equation.className = 'analysis-equation-value';
     // A definition row states several things at once; stack them so the
@@ -563,6 +565,80 @@ function analysisEquationRow({ title, group, result: child }, report) {
     row.appendChild(unavailable);
   }
   return row;
+}
+
+// Which referral the per-device noise table shows; a viewing choice only.
+let noiseTableReferral = 'input';
+
+const NOISE_REFERRAL_NAMES = Object.freeze({ input: 'Input-referred', output: 'Output' });
+
+/**
+ * Each device's share of the noise, one row per device and one column per
+ * noise kind, for the referral picked above the table. A device's name
+ * highlights it on the canvas like any term does.
+ */
+function noiseTableElement(table, report) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'analysis-noise-table';
+  if (!table.referrals.includes(noiseTableReferral)) noiseTableReferral = table.referrals[0];
+  const switcher = document.createElement('div');
+  switcher.className = 'analysis-noise-referral';
+  switcher.setAttribute('role', 'group');
+  switcher.setAttribute('aria-label', 'Noise referral');
+  const scroller = document.createElement('div');
+  scroller.className = 'analysis-noise-table-scroll';
+  const draw = () => {
+    for (const button of switcher.children) button.setAttribute('aria-pressed', String(button.dataset.referral === noiseTableReferral));
+    scroller.replaceChildren(noiseTableFor(table, noiseTableReferral, report));
+  };
+  if (table.referrals.length > 1) {
+    for (const referral of table.referrals) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.referral = referral;
+      button.textContent = NOISE_REFERRAL_NAMES[referral];
+      button.addEventListener('click', () => { noiseTableReferral = referral; draw(); });
+      switcher.appendChild(button);
+    }
+    wrapper.appendChild(switcher);
+  }
+  wrapper.appendChild(scroller);
+  draw();
+  return wrapper;
+}
+
+function noiseTableFor(table, referral, report) {
+  const element = document.createElement('table');
+  const head = element.createTHead().insertRow();
+  const device = document.createElement('th');
+  device.scope = 'col';
+  device.textContent = 'Device';
+  head.appendChild(device);
+  for (const kind of table.kinds) {
+    const header = document.createElement('th');
+    header.scope = 'col';
+    renderEquationMath(header, table.headers[`${referral}-${kind}`] || '');
+    head.appendChild(header);
+  }
+  const body = element.createTBody();
+  for (const { component, cells } of table.rows) {
+    const row = body.insertRow();
+    const name = document.createElement('th');
+    name.scope = 'row';
+    name.textContent = component;
+    name.dataset.components = component;
+    row.appendChild(name);
+    for (const kind of table.kinds) {
+      const cell = row.insertCell();
+      const value = cells[`${referral}-${kind}`];
+      if (value) renderEquationMath(cell, value.tex, value.provenance, report.symbolProvenance);
+      else {
+        cell.className = 'analysis-noise-empty';
+        cell.textContent = '—';
+      }
+    }
+  }
+  return element;
 }
 
 function renderAnalysisResult(report) {

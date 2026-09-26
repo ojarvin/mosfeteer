@@ -191,7 +191,13 @@ the `4kT` or `1/f` prefix times one term per generator, e.g.
 of the sum when that helps: one carrying a sum (a shared load such as
 `Z_1^2`), one with a numerator of its own, or any shared factor of a flicker
 row, which absorbs the `1/f`. A bare reciprocal like `1/g_{m1}` stays in the
-terms. The exact equation in the Log tab keeps the unfactored terms. The selected equation
+terms. The exact equation in the Log tab keeps the unfactored terms.
+
+**Noise by device**, below the density rows, sets the same terms side by
+side: one row per generator, one column per noise kind with its prefix
+divided out (`S_{v,in,th}/4kT`, `f · S_{v,in,1/f}`), and a switch between
+input-referred and output values. It is part of the panel only: the
+schematic annotation takes the density rows. The selected equation
 approximations act on each generator's transfer before it is squared. A
 generator outside the coupled network, or one whose gain vanishes at DC, is
 named in the Log tab instead. Unchecking a device drops its column; a device

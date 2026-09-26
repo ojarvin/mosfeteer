@@ -1466,6 +1466,73 @@ button:disabled {
   vertical-align: -2px;
 }
 
+.analysis-noise-referral {
+  display: inline-flex;
+  margin: 2px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  font: 0.75rem/1.2 ui-sans-serif, system-ui, sans-serif;
+}
+
+.analysis-noise-referral button {
+  padding: 4px 10px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.analysis-noise-referral button[aria-pressed="true"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.analysis-noise-table {
+  text-align: left;
+}
+
+.analysis-noise-table-scroll {
+  overflow-x: auto;
+}
+
+.analysis-noise-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.analysis-noise-table th,
+.analysis-noise-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.analysis-noise-table thead th {
+  font-weight: normal;
+}
+
+.analysis-noise-table thead th:first-child,
+.analysis-noise-table tbody th {
+  font: 700 0.75rem/1.2 ui-sans-serif, system-ui, sans-serif;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.analysis-noise-table tbody th {
+  cursor: pointer;
+}
+
+.analysis-noise-table math {
+  margin-inline: auto;
+}
+
+.analysis-noise-empty {
+  color: var(--text-dim);
+}
+
 .analysis-equation-row {
   padding: 7px 4px;
   border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
@@ -3487,16 +3554,19 @@ button.off {
 
 /* A term in a derived equation that resolves to something on the canvas. The
    whole row stays selectable text; only the resolvable groups light up. */
-.analysis-equation-value [data-node][data-components] {
+.analysis-equation-value [data-node][data-components],
+.analysis-noise-table [data-node][data-components] {
   cursor: pointer;
   border-radius: 3px;
 }
 
-.analysis-equation-value [data-node].equation-term-hover {
+.analysis-equation-value [data-node].equation-term-hover,
+.analysis-noise-table .equation-term-hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.analysis-equation-value [data-node].equation-term-locked {
+.analysis-equation-value [data-node].equation-term-locked,
+.analysis-noise-table .equation-term-locked {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
 }
