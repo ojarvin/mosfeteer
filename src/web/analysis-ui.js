@@ -538,6 +538,12 @@ function analysisEquationRow({ title, group, result: child }, report) {
     heading.append(toggle);
   }
   heading.append(title);
+  if (child?.table) {
+    const note = document.createElement('span');
+    note.className = 'analysis-equation-label-note';
+    note.textContent = 'panel only, not annotated';
+    heading.append(note);
+  }
   // A group's only row under the group's own title needs no second heading;
   // the group toggle drives its hidden row toggle.
   heading.hidden = title === GROUP_TITLES.get(group);

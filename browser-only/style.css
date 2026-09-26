@@ -1447,6 +1447,13 @@ button:disabled {
   display: none;
 }
 
+.analysis-equation-label-note {
+  margin-left: 8px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .analysis-equation-group-note {
   color: var(--muted);
   font-weight: 400;
