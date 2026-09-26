@@ -27386,6 +27386,9 @@ const MAX_VECTOR_TILES = 6;
 const MAX_LARGE_BITMAPS = 24;
 const ZOOM_IN_PX_PER_UNIT = 3; // the editor's closest zoom: 120 px per grid cell
 const ENTER_MS = 650;
+const REVEAL_MS = 350;
+/** A wheel zoom counts as motion until the wheel has been still this long. */
+const WHEEL_SETTLE_MS = 150;
 const OPEN_MS = 450;
 
 let state = null;
@@ -27396,8 +27399,13 @@ function atlasOpen() {
 
 // ----- geometry ---------------------------------------------------------------
 
+/** The Atlas's size, measured once per open and on resize: reading it from
+ *  the DOM in every frame forces a layout each time. */
 function paneSize() {
-  return { w: rootEl.clientWidth || window.innerWidth, h: rootEl.clientHeight || window.innerHeight };
+  if (state?.pane) return state.pane;
+  const pane = { w: rootEl.clientWidth || window.innerWidth, h: rootEl.clientHeight || window.innerHeight };
+  if (state) state.pane = pane;
+  return pane;
 }
 
 /** CSS pixels per world unit at the current view. */
@@ -27480,14 +27488,19 @@ function viewBoxOf(svg) {
 /** The design on transparent ground: the desk is the paper, one sheet for
  *  the whole workspace. */
 function drawingSvg(circuit) {
+  // An empty design is blank paper with its caption (the renderer's
+  // "empty schematic" card would be a white box on the desk).
+  if (!circuit.components.size && !circuit.labels.size) return EMPTY_SVG;
   return svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
 }
+
+const EMPTY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${8 * GRID}" height="${4 * GRID}" viewBox="0 0 ${8 * GRID} ${4 * GRID}"></svg>`;
 
 /** The design as it stands: the open one from the editor, unsaved edits and
  *  all; the others from their files, through the cache. */
 async function drawingFor(documentInfo, current) {
   if (current) return { svg: drawingSvg(editor.circuit), revision: null };
-  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v2');
+  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v3');
   const cached = key && await cacheGet(key);
   if (cached) return { svg: cached, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
@@ -27537,13 +27550,24 @@ async function loadWorkspace(generation) {
   }
   const { tiles, bounds } = placeDrawings(entries);
   // The open design stayed on screen while the rest loaded: move the view
-  // with it to its place in the layout, so it does not jump.
+  // with it to its place in the layout, so it does not jump. Without one
+  // (an unsaved or empty design) the view is bare paper and grid, so it can
+  // move by whole cells to the middle of the desk unseen.
   const provisional = state.tiles[0];
   const placed = provisional && tiles.find((tile) => tile.id === provisional.id);
   if (placed) state.view = { ...state.view, x: state.view.x + placed.x - provisional.x, y: state.view.y + placed.y - provisional.y };
+  else if (tiles.length) {
+    const cell = (value) => Math.round(value / GRID) * GRID;
+    state.view = {
+      ...state.view,
+      x: state.view.x + cell(bounds.x + bounds.w / 2 - (state.view.x + state.view.w / 2)),
+      y: state.view.y + cell(bounds.y + bounds.h / 2 - (state.view.y + state.view.h / 2)),
+    };
+  }
   state.entries = new Map(entries.map((entry) => [entry.id, entry]));
   state.tiles = tiles;
   state.bounds = bounds;
+  state.revealAt = performance.now();
   statusEl.textContent = `${entries.length} design${entries.length === 1 ? '' : 's'}`;
   void trimCache();
   return true;
@@ -27578,14 +27602,37 @@ async function rasterize(entry, level) {
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v2`);
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v3`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob);
+  // Drawing an SVG into a bitmap blocks the page; let a zoom finish first.
+  while (state?.animation) await new Promise((resolve) => setTimeout(resolve, 50));
+  if (!state) throw new Error('closed');
   const canvas = await rasterize(entry, level);
   if (cacheKey) {
     canvas.toBlob((png) => { if (png) void cachePut(cacheKey, png); }, 'image/png');
   }
   return createImageBitmap(canvas);
+}
+
+/** Load every cached small image, for at most `budget` ms. */
+async function warmSmallImages(generation, budget) {
+  // The open design is drawn live, never cached: bake both its images now,
+  // so the zoom out can show them instead of its live drawing.
+  const current = state.tiles.map((tile) => state.entries.get(tile.id)).find((entry) => entry.current);
+  const baking = current ? ['small', 'large'].map(async (level) => {
+    const key = bitmapKey(current, level);
+    if (!state.bitmaps.has(key)) state.bitmaps.set(key, await bake(current, level));
+  }) : [];
+  const loads = state.tiles.map(async (tile) => {
+    const entry = state.entries.get(tile.id);
+    const key = bitmapKey(entry, 'small');
+    if (!entry.revision || state.bitmaps.has(key)) return;
+    const blob = await cacheGet(renderingKey(entry.path, entry.revision, `${theme()}-small-v3`));
+    if (!blob || !state || state.generation !== generation) return;
+    state.bitmaps.set(key, await createImageBitmap(blob));
+  });
+  await Promise.race([Promise.allSettled([...baking, ...loads]), new Promise((resolve) => setTimeout(resolve, budget))]);
 }
 
 /** Bake what the frame asked for, nearest the middle of the screen first. */
@@ -27677,33 +27724,42 @@ function draw() {
     return { tile, rect, detail: tileDetail(Math.max(rect.w, rect.h) * dpr) };
   });
   // The tiles that fill the screen are drawn live; their images would only
-  // blur the vector lines through the transparent paper.
-  const vector = placed.filter((item) => item.detail === 'vector')
+  // blur the vector lines through the transparent paper. Not while the view
+  // animates, though: a live SVG changing size is redrawn whole every frame.
+  const moving = !!state.animation || performance.now() - (state.wheelAt || 0) < WHEEL_SETTLE_MS;
+  const vector = moving ? [] : placed.filter((item) => item.detail === 'vector')
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
+  const reveal = state.revealAt ? Math.min(1, (performance.now() - state.revealAt) / REVEAL_MS) : 1;
+  if (reveal < 1) requestDraw();
   for (const { tile, rect, detail } of placed) {
     const entry = state.entries.get(tile.id);
+    ctx.globalAlpha = entry.current ? 1 : reveal;
     const level = detail === 'small' ? 'small' : 'large';
     const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
       state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
     if (bitmap && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
-      ctx.imageSmoothingQuality = 'high';
+      // Best filtering at rest; in motion the cheap one, which no one sees.
+      ctx.imageSmoothingQuality = moving ? 'low' : 'high';
       ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
     }
     const distance = Math.hypot(tile.x + tile.w / 2 - centre.x, tile.y + tile.h / 2 - centre.y);
-    for (const need of level === 'large' ? ['small', 'large'] : ['small']) {
+    // Mid-animation only small images are fetched: decoding a large one
+    // would drop frames, and the view does not rest here anyway.
+    for (const need of level === 'large' && !moving ? ['small', 'large'] : ['small']) {
       const key = bitmapKey(entry, need);
       if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
     drawCaption(ctx, tile, entry, rect, palette);
   }
+  ctx.globalAlpha = 1;
   drawZoomBox(ctx, palette);
   // Every small image first (the whole desk becomes recognizable), then large.
   wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
   state.wanted = wanted;
   void pump();
-  syncVectorOverlays(vector);
+  syncVectorOverlays(vector, moving);
 }
 
 /** The editor's grid: one-unit lines every cell, fading out as the cells
@@ -27766,10 +27822,21 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   if (state.source === 'symbols') return;
   const selected = state.selected === tile.id;
   const hovered = state.hover === tile.id;
-  if (selected || hovered) {
+  // The pick is a dot at the design's top-left corner, the hover a faint
+  // frame: both mark a design without boxing in the drawing.
+  if (hovered && !selected) {
+    ctx.save();
+    ctx.globalAlpha = 0.3;
     ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = selected ? 2 : 1;
-    ctx.strokeRect(rect.x - 6, rect.y - 6, rect.w + 12, rect.h + 12);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rect.x - 6.5, rect.y - 6.5, rect.w + 13, rect.h + 13);
+    ctx.restore();
+  }
+  if (selected) {
+    ctx.fillStyle = palette.accent;
+    ctx.beginPath();
+    ctx.arc(rect.x - 8, rect.y - 8, 4, 0, Math.PI * 2);
+    ctx.fill();
   }
   // The caption may run on into the gap after its tile; its size follows
   // the caption band, so zoomed far out it gives way instead of crowding.
@@ -27798,13 +27865,19 @@ function fitText(ctx, text, width) {
 }
 
 /** Crisp vector drawings for the tiles that fill the screen. */
-function syncVectorOverlays(list) {
+function syncVectorOverlays(list, moving = false) {
   const keep = new Set(list.map(({ tile }) => tile.id));
   for (const [id, el] of state.overlays) {
-    if (!keep.has(id)) {
-      el.remove();
-      state.overlays.delete(id);
+    if (keep.has(id)) continue;
+    // Mid-animation the drawing only steps aside: it comes back when the
+    // view settles, without parsing its SVG again.
+    if (moving) {
+      el.hidden = true;
+      delete el.dataset.ready;
+      continue;
     }
+    el.remove();
+    state.overlays.delete(id);
   }
   for (const { tile, rect } of list) {
     let el = state.overlays.get(tile.id);
@@ -27819,6 +27892,13 @@ function syncVectorOverlays(list) {
       overlayEl.appendChild(el);
       state.overlays.set(tile.id, el);
       // Until the SVG has painted once, its image stands in for it.
+      requestAnimationFrame(() => {
+        el.dataset.ready = '1';
+        requestDraw();
+      });
+    }
+    if (el.hidden) {
+      el.hidden = false;
       requestAnimationFrame(() => {
         el.dataset.ready = '1';
         requestDraw();
@@ -27855,6 +27935,7 @@ function animateView(target, duration = 320) {
       if (t < 1) state.animation = { frame: requestAnimationFrame(step) };
       else {
         state.animation = null;
+        draw(); // settled: the live drawings return
         resolve();
       }
     };
@@ -27933,14 +28014,19 @@ async function openAtlas({ source = 'workspace' } = {}) {
     statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
   }
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id).current);
-  state.selected = source === 'symbols' ? null : currentTile?.id || state.tiles[0]?.id || null;
+  // The open design starts picked; otherwise nothing is until you choose.
+  state.selected = source === 'symbols' ? null : currentTile?.id || null;
   if (!state.tiles.length) {
-    state.view = { x: -500, y: -500, w: 1000, h: 1000 * paneSize().h / paneSize().w };
+    if (!state.fromEditor) state.view = { x: -500, y: -500, w: 1000, h: 1000 * paneSize().h / paneSize().w };
     requestDraw();
     return;
   }
-  if (currentTile) {
+  if (state.fromEditor) {
     draw();
+    // Decode the small images first, while the view still matches the
+    // editor: decoding in the middle of the zoom would stall its frames.
+    await warmSmallImages(generation, 400);
+    if (!state || state.generation !== generation) return;
     await animateView(clampView(fitAllView()), ENTER_MS);
   } else {
     setView(fitAllView());
@@ -27951,18 +28037,20 @@ async function openAtlas({ source = 'workspace' } = {}) {
  *  it, before the rest of the workspace has loaded. */
 function showOpenDesign() {
   const path = editor.currentDocumentPath;
-  if (!path) return;
   const svg = drawingSvg(editor.circuit);
   const box = viewBoxOf(svg);
-  if (!box) return;
-  const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box };
-  const tile = { id: path, x: 0, y: 0, w: box.w, h: box.h };
-  const view = editorEquivalentView(tile, entry);
+  // Without a design to carry over, start from the editor's own view of
+  // the paper: the grid lines stay put and the desk grows out of them.
+  const view = editorEquivalentView({ x: 0, y: 0 }, { box: { x: 0, y: 0 } });
   if (!view) return;
-  state.entries = new Map([[path, entry]]);
-  state.tiles = [tile];
-  state.bounds = { x: 0, y: 0, w: box.w, h: box.h };
   state.view = view;
+  state.fromEditor = true;
+  if (path && box && svg !== EMPTY_SVG) {
+    const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box };
+    state.entries = new Map([[path, entry]]);
+    state.tiles = [{ id: path, x: box.x, y: box.y, w: box.w, h: box.h }];
+    state.bounds = { ...box };
+  }
   draw();
 }
 
@@ -28066,6 +28154,10 @@ function onWheel(ev) {
     setView({ ...state.view, x: state.view.x + (ev.deltaX * unit) / k, y: state.view.y + (ev.deltaY * unit) / k });
     return;
   }
+  // Zooming rescales every frame: images only, until the wheel rests.
+  state.wheelAt = performance.now();
+  clearTimeout(state.wheelSettle);
+  state.wheelSettle = setTimeout(requestDraw, WHEEL_SETTLE_MS + 10);
   // The editor's zoom rates: pinch arrives as a ctrl-wheel with small deltas.
   zoomAbout(Math.pow(ev.ctrlKey && editor.scrollScheme === 'trackpad' ? 1.01 : 1.0016, ev.deltaY * unit), ev.clientX, ev.clientY);
 }
@@ -28196,6 +28288,7 @@ function installAtlas() {
   });
   window.addEventListener('resize', () => {
     if (!state) return;
+    state.pane = null;
     const { w, h } = paneSize();
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
