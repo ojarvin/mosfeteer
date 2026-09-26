@@ -2467,8 +2467,37 @@ button:disabled {
   color: var(--text);
 }
 
+.status:empty {
+  flex: 0 1 0;
+}
+
+/* The key strip stands in for the hint while no mode hint is showing. */
+.status-keys {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.status-keys[hidden] {
+  display: none;
+}
+
+.status-key kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: 0.6875rem/14px ui-monospace, Menlo, Consolas, monospace;
+}
+
 .status-chips {
   flex: 0 1 auto;
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 2px;

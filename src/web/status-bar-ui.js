@@ -4,13 +4,13 @@
  * in status-bar.js.
  */
 
-import { LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
+import { LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { describeGuides } from './layout.js';
-import { statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } from './elements.js';
+import { statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { paneSize } from './canvas-view.js';
 import { syncInteractionUI } from './toolbar-ui.js';
-import { selectedComp, selectedLabel, symmetryAxisText, symmetryTwin } from './main.js';
+import { keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, symmetryAxisText, symmetryTwin } from './main.js';
 
 let logPeekTimer = 0;
 
@@ -147,6 +147,7 @@ export function renderStatus() {
     hints: parts,
   });
   statusEl.textContent = fields.hint;
+  renderKeyHints(!fields.hint);
   statusEl.className = `status ${interaction.key}`;
   if (editor.directWire) statusEl.classList.add('direct-wire');
   else if (editor.wire) statusEl.classList.add('wire');
@@ -163,6 +164,37 @@ export function renderStatus() {
   // render() measured the pane before writing the DOM; measuring again here
   // would force a synchronous layout on every frame.
   if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`;
+}
+
+/** The footer's key strip: the few keys that matter now, while no mode hint
+ *  has the space. Kept out of the live status region, which it would flood. */
+function renderKeyHints(show) {
+  if (!statusKeysEl) return;
+  const busy = editor.mode !== 'normal' || editor.wire || editor.directWire || editor.visual || editor.labelMode
+    || editor.alignTool || editor.analysisPick || editor.symmetry || editor.inlineInput || editor.quickAdd
+    || (editor.drag && !editor.movePending && !editor.copyPending);
+  const hints = show && !busy ? contextKeyHints({
+    tool: editor.moveMode ? 'move' : editor.copyMode ? 'copy' : editor.deleteMode ? 'delete' : null,
+    selection: {
+      parts: selectedComps().map((c) => c.type),
+      labels: selectedLabels().length,
+      nets: editor.selectedNets.size + editor.selectedWires.size + (editor.selectedWire ? 1 : 0),
+    },
+    empty: !editor.circuit.components.size && !editor.circuit.labels.size,
+    ...keyHintContext(),
+  }) : [];
+  const key = JSON.stringify(hints);
+  if (statusKeysEl.dataset.key === key) return;
+  statusKeysEl.dataset.key = key;
+  statusKeysEl.replaceChildren(...hints.map(([keys, action]) => {
+    const item = document.createElement('span');
+    item.className = 'status-key';
+    const cap = document.createElement('kbd');
+    cap.textContent = keys;
+    item.append(cap, ` ${action}`);
+    return item;
+  }));
+  statusKeysEl.hidden = !hints.length;
 }
 
 export function installStatusBar() {

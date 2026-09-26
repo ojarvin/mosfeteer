@@ -13,7 +13,7 @@ import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, placementSearchScore
 import { arrivalDirection, quickAddPlacement } from './gestures.js';
 import { canvasEl } from './elements.js';
 import { ICON_PATHS } from './icons.js';
-import { logLine } from './status-bar-ui.js';
+import { hintLine, logLine } from './status-bar-ui.js';
 import { worldToClient } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { placeNetLabelAt } from './annotation-tools.js';
@@ -520,7 +520,7 @@ export function openSwapPicker(components) {
   const primary = components[0];
   const candidates = primary ? swapCandidates(primary.type) : [];
   if (!candidates.length) {
-    logLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'q swaps a part: select one or point at it', 'error');
+    hintLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'q changes a part\'s type: select one, or point at it');
     return false;
   }
   const origin = { x: primary.transform.x, y: primary.transform.y };

@@ -603,6 +603,7 @@ export function undo() {
   const cancelled = cancelDirectDraft();
   if (!history.length) {
     if (cancelled) render();
+    else hintLine('nothing to undo');
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
@@ -618,6 +619,7 @@ export function redo() {
   const cancelled = cancelDirectDraft();
   if (!future.length) {
     if (cancelled) render();
+    else hintLine('nothing to redo');
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
@@ -6411,6 +6413,20 @@ function pinUnderCursor() {
   return hit?.term ? hit : null;
 }
 
+/** What the footer's key strip needs to know that the editor state does not
+ *  say directly: the edit `.` repeats and what the pointer rests on. */
+export function keyHintContext() {
+  const pin = pinUnderCursor();
+  const part = pin ? null : compUnderCursor();
+  return {
+    repeat: lastAction?.label || null,
+    hover: {
+      pin: pin ? { connected: !!circuit.netOfTerminal({ comp: pin.refdes, term: pin.term }) } : null,
+      part: part && part.type !== 'solder' ? part.type : null,
+    },
+  };
+}
+
 /** g / v: a ground or supply wired one cell out from the pin under the
  *  cursor (core/pin-rails.js). */
 function railAtPointedPin(type) {
@@ -6563,6 +6579,12 @@ function onNormalKey(key, shiftKey = false) {
   if (key === 't') {
     const lab = selectedLabel() || selectedLabels()[0];
     if (lab) inlineEditLabel(lab);
+    else {
+      const part = selectedComp();
+      hintLine(part
+        ? `t edits a selected label; double-click ${part.refdes} to rename it`
+        : 't edits the selected label; click one first, or double-click any text');
+    }
     return;
   }
 
@@ -6642,6 +6664,7 @@ function onNormalKey(key, shiftKey = false) {
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
       if (deleteSelection()) render();
+      else hintLine('dd deletes the selection; select something first, or press Delete for the delete tool');
       pendingKey = null;
     } else {
       pendingKey = { key: 'd', at: Date.now() };
@@ -6700,6 +6723,8 @@ function onNormalKey(key, shiftKey = false) {
       cycleSelection(shiftKey ? -1 : 1);
     } else if (!hasWireSelection && selectedNets.size === 0 && multi.size === 0 && selLabels.size === 1 && labels.length === 1) {
       cycleLabelSelection(shiftKey ? -1 : 1);
+    } else {
+      hintLine('Tab steps from one selected part or label to the next; select just one');
     }
     return;
   }
@@ -6769,6 +6794,8 @@ function onNormalKey(key, shiftKey = false) {
     render();
     return;
   }
+  // Every bound key has returned by now: say so rather than doing nothing.
+  if (key.length === 1 && key !== ' ') hintLine(`${key} does nothing here; ? lists every key`);
 }
 
 installHelp();

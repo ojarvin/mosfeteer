@@ -64,3 +64,86 @@ export function statusFields({ mode, selection, cursor, hints = [] }) {
     hint: hints.filter(Boolean).join('  ·  '),
   };
 }
+
+/**
+ * The two or three keys that matter right now, as [keys, action] pairs, for
+ * the footer's key strip. Picked from the armed tool, then the selection,
+ * then what is under the pointer, then the empty editor. `ctx`:
+ *   tool: 'move' | 'copy' | 'delete' | null   (armed tools without a hint)
+ *   selection: { parts: [type...], labels, nets }
+ *   hover: { pin: { connected } | null, part: type | null }
+ *   repeat: label of the edit `.` repeats, or null
+ *   empty: the drawing has nothing in it
+ */
+export function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = null, empty = false } = {}) {
+  const hints = [];
+  const add = (keys, action) => { if (hints.length < 3) hints.push([keys, action]); };
+  if (tool === 'move') {
+    add('click', 'pick up / drop');
+    add('r', 'rotate while moving');
+    add('Esc', 'exit');
+    return hints;
+  }
+  if (tool === 'copy') {
+    add('click', 'pick / place a copy');
+    add('hold Alt', 'mirrored twin');
+    add('Esc', 'exit');
+    return hints;
+  }
+  if (tool === 'delete') {
+    add('click', 'delete');
+    add('Shift+drag', 'knife');
+    add('Esc', 'exit');
+    return hints;
+  }
+  const parts = selection.parts || [];
+  const selected = parts.length + (selection.labels || 0) + (selection.nets || 0);
+  if (selected && repeat) add('.', `repeat ${repeat}`);
+  if (parts.length === 1 && !selection.labels && !selection.nets) {
+    if (/^switch_/.test(parts[0])) add('s', 'open / close its phase');
+    add('q', 'change type');
+    add('r', 'rotate');
+    add('Space', 'wire stubs');
+    return hints;
+  }
+  if (parts.length > 1) {
+    add('m', 'move');
+    add('q', 'change type');
+    add('Ctrl+Shift+arrows', 'align');
+    return hints;
+  }
+  if (selection.labels) {
+    add('t', 'edit text');
+    add('Shift+←/→', 'align text');
+    add('arrows', 'nudge');
+    return hints;
+  }
+  if (selection.nets) {
+    add('drag', 'reroute');
+    add('Shift+L', 'net label');
+    add('dd', 'delete');
+    return hints;
+  }
+  if (hover.pin) {
+    add('drag', 'wire from this pin');
+    if (!hover.pin.connected) add('g / v', 'ground / supply');
+    add('w', 'wire tool');
+    return hints;
+  }
+  if (hover.part) {
+    add('q', 'change type');
+    add('right-drag', 'quick actions');
+    add('double-click', 'rename');
+    return hints;
+  }
+  if (empty) {
+    add('i', 'insert a part');
+    add('double-click', 'insert here');
+    add('?', 'every key');
+    return hints;
+  }
+  add('i', 'insert');
+  add('w', 'wire');
+  add('?', 'every key');
+  return hints;
+}

@@ -9,6 +9,7 @@ export const componentsListEl = document.getElementById('components-list');
 export const netsListEl = document.getElementById('nets-list');
 export const detailEl = document.getElementById('detail');
 export const statusEl = document.getElementById('status');
+export const statusKeysEl = document.getElementById('status-keys');
 export const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
 export const logEl = document.getElementById('log');
 export const cmdInput = document.getElementById('cmd-input');

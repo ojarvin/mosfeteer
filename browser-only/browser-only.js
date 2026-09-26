@@ -32887,6 +32887,7 @@ const componentsListEl = document.getElementById('components-list');
 const netsListEl = document.getElementById('nets-list');
 const detailEl = document.getElementById('detail');
 const statusEl = document.getElementById('status');
+const statusKeysEl = document.getElementById('status-keys');
 const accessibilityAnnouncementEl = document.getElementById('accessibility-announcement');
 const logEl = document.getElementById('log');
 const cmdInput = document.getElementById('cmd-input');
@@ -32990,6 +32991,7 @@ __exports.componentsListEl = componentsListEl;
 __exports.netsListEl = netsListEl;
 __exports.detailEl = detailEl;
 __exports.statusEl = statusEl;
+__exports.statusKeysEl = statusKeysEl;
 __exports.accessibilityAnnouncementEl = accessibilityAnnouncementEl;
 __exports.logEl = logEl;
 __exports.cmdInput = cmdInput;
@@ -34734,7 +34736,7 @@ let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, placementSearchScore, wit
 let arrivalDirection, quickAddPlacement; __bind(() => { ({ arrivalDirection, quickAddPlacement } = __require("src/web/gestures.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js")); });
-let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
 let worldToClient; __bind(() => { ({ worldToClient } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let placeNetLabelAt; __bind(() => { ({ placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
@@ -35261,7 +35263,7 @@ function openSwapPicker(components) {
   const primary = components[0];
   const candidates = primary ? swapCandidates(primary.type) : [];
   if (!candidates.length) {
-    logLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'q swaps a part: select one or point at it', 'error');
+    hintLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'q changes a part\'s type: select one, or point at it');
     return false;
   }
   const origin = { x: primary.transform.x, y: primary.transform.y };
@@ -36564,6 +36566,7 @@ __exports.canvasMouseUp = canvasMouseUp;
 __exports.transformPendingComponent = transformPendingComponent;
 __exports.rememberAction = rememberAction;
 __exports.swapTargets = swapTargets;
+__exports.keyHintContext = keyHintContext;
 __exports.runLine = runLine;
 __exports.interactionState = interactionState;
 __exports.hasWireDraft = hasWireDraft;
@@ -37229,6 +37232,7 @@ function undo() {
   const cancelled = cancelDirectDraft();
   if (!history.length) {
     if (cancelled) render();
+    else hintLine('nothing to undo');
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
@@ -37244,6 +37248,7 @@ function redo() {
   const cancelled = cancelDirectDraft();
   if (!future.length) {
     if (cancelled) render();
+    else hintLine('nothing to redo');
     return;
   }
   const toolState = { copyMode, moveMode, deleteMode };
@@ -43037,6 +43042,20 @@ function pinUnderCursor() {
   return hit?.term ? hit : null;
 }
 
+/** What the footer's key strip needs to know that the editor state does not
+ *  say directly: the edit `.` repeats and what the pointer rests on. */
+function keyHintContext() {
+  const pin = pinUnderCursor();
+  const part = pin ? null : compUnderCursor();
+  return {
+    repeat: lastAction?.label || null,
+    hover: {
+      pin: pin ? { connected: !!circuit.netOfTerminal({ comp: pin.refdes, term: pin.term }) } : null,
+      part: part && part.type !== 'solder' ? part.type : null,
+    },
+  };
+}
+
 /** g / v: a ground or supply wired one cell out from the pin under the
  *  cursor (core/pin-rails.js). */
 function railAtPointedPin(type) {
@@ -43189,6 +43208,12 @@ function onNormalKey(key, shiftKey = false) {
   if (key === 't') {
     const lab = selectedLabel() || selectedLabels()[0];
     if (lab) inlineEditLabel(lab);
+    else {
+      const part = selectedComp();
+      hintLine(part
+        ? `t edits a selected label; double-click ${part.refdes} to rename it`
+        : 't edits the selected label; click one first, or double-click any text');
+    }
     return;
   }
 
@@ -43268,6 +43293,7 @@ function onNormalKey(key, shiftKey = false) {
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
       if (deleteSelection()) render();
+      else hintLine('dd deletes the selection; select something first, or press Delete for the delete tool');
       pendingKey = null;
     } else {
       pendingKey = { key: 'd', at: Date.now() };
@@ -43326,6 +43352,8 @@ function onNormalKey(key, shiftKey = false) {
       cycleSelection(shiftKey ? -1 : 1);
     } else if (!hasWireSelection && selectedNets.size === 0 && multi.size === 0 && selLabels.size === 1 && labels.length === 1) {
       cycleLabelSelection(shiftKey ? -1 : 1);
+    } else {
+      hintLine('Tab steps from one selected part or label to the next; select just one');
     }
     return;
   }
@@ -43395,6 +43423,8 @@ function onNormalKey(key, shiftKey = false) {
     render();
     return;
   }
+  // Every bound key has returned by now: say so rather than doing nothing.
+  if (key.length === 1 && key !== ' ') hintLine(`${key} does nothing here; ? lists every key`);
 }
 
 installHelp();
@@ -46287,13 +46317,13 @@ __exports.announce = announce;
 __exports.noteActionPrevented = noteActionPrevented;
 __exports.renderStatus = renderStatus;
 __exports.installStatusBar = installStatusBar;
-let LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
+let LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
 let describeGuides; __bind(() => { ({ describeGuides } = __require("src/web/layout.js")); });
-let statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
+let statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
 let syncInteractionUI; __bind(() => { ({ syncInteractionUI } = __require("src/web/toolbar-ui.js")); });
-let selectedComp, selectedLabel, symmetryAxisText, symmetryTwin; __bind(() => { ({ selectedComp, selectedLabel, symmetryAxisText, symmetryTwin } = __require("src/web/main.js")); });
+let keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, symmetryAxisText, symmetryTwin; __bind(() => { ({ keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, symmetryAxisText, symmetryTwin } = __require("src/web/main.js")); });
 /**
  * The status bar and the log drawer: the mode chip, selection and cursor
  * readouts, the message chip, and the log it opens. The fields' wording is
@@ -46443,6 +46473,7 @@ function renderStatus() {
     hints: parts,
   });
   statusEl.textContent = fields.hint;
+  renderKeyHints(!fields.hint);
   statusEl.className = `status ${interaction.key}`;
   if (editor.directWire) statusEl.classList.add('direct-wire');
   else if (editor.wire) statusEl.classList.add('wire');
@@ -46459,6 +46490,37 @@ function renderStatus() {
   // render() measured the pane before writing the DOM; measuring again here
   // would force a synchronous layout on every frame.
   if (statusZoomEl) statusZoomEl.textContent = `${zoomPercent(editor.view, (editor.viewPane || paneSize())?.w, editor.zoom)}%`;
+}
+
+/** The footer's key strip: the few keys that matter now, while no mode hint
+ *  has the space. Kept out of the live status region, which it would flood. */
+function renderKeyHints(show) {
+  if (!statusKeysEl) return;
+  const busy = editor.mode !== 'normal' || editor.wire || editor.directWire || editor.visual || editor.labelMode
+    || editor.alignTool || editor.analysisPick || editor.symmetry || editor.inlineInput || editor.quickAdd
+    || (editor.drag && !editor.movePending && !editor.copyPending);
+  const hints = show && !busy ? contextKeyHints({
+    tool: editor.moveMode ? 'move' : editor.copyMode ? 'copy' : editor.deleteMode ? 'delete' : null,
+    selection: {
+      parts: selectedComps().map((c) => c.type),
+      labels: selectedLabels().length,
+      nets: editor.selectedNets.size + editor.selectedWires.size + (editor.selectedWire ? 1 : 0),
+    },
+    empty: !editor.circuit.components.size && !editor.circuit.labels.size,
+    ...keyHintContext(),
+  }) : [];
+  const key = JSON.stringify(hints);
+  if (statusKeysEl.dataset.key === key) return;
+  statusKeysEl.dataset.key = key;
+  statusKeysEl.replaceChildren(...hints.map(([keys, action]) => {
+    const item = document.createElement('span');
+    item.className = 'status-key';
+    const cap = document.createElement('kbd');
+    cap.textContent = keys;
+    item.append(cap, ` ${action}`);
+    return item;
+  }));
+  statusKeysEl.hidden = !hints.length;
 }
 
 function installStatusBar() {
@@ -46495,6 +46557,7 @@ __modules["src/web/status-bar.js"] = function (__require, __exports) {
 __exports.logDrawerTransition = logDrawerTransition;
 __exports.zoomPercent = zoomPercent;
 __exports.statusFields = statusFields;
+__exports.contextKeyHints = contextKeyHints;
 /**
  * Status bar and log drawer state.
  *
@@ -46560,6 +46623,89 @@ function statusFields({ mode, selection, cursor, hints = [] }) {
     cursor: cursor ? `${cursor.x}, ${cursor.y}` : '',
     hint: hints.filter(Boolean).join('  ·  '),
   };
+}
+
+/**
+ * The two or three keys that matter right now, as [keys, action] pairs, for
+ * the footer's key strip. Picked from the armed tool, then the selection,
+ * then what is under the pointer, then the empty editor. `ctx`:
+ *   tool: 'move' | 'copy' | 'delete' | null   (armed tools without a hint)
+ *   selection: { parts: [type...], labels, nets }
+ *   hover: { pin: { connected } | null, part: type | null }
+ *   repeat: label of the edit `.` repeats, or null
+ *   empty: the drawing has nothing in it
+ */
+function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = null, empty = false } = {}) {
+  const hints = [];
+  const add = (keys, action) => { if (hints.length < 3) hints.push([keys, action]); };
+  if (tool === 'move') {
+    add('click', 'pick up / drop');
+    add('r', 'rotate while moving');
+    add('Esc', 'exit');
+    return hints;
+  }
+  if (tool === 'copy') {
+    add('click', 'pick / place a copy');
+    add('hold Alt', 'mirrored twin');
+    add('Esc', 'exit');
+    return hints;
+  }
+  if (tool === 'delete') {
+    add('click', 'delete');
+    add('Shift+drag', 'knife');
+    add('Esc', 'exit');
+    return hints;
+  }
+  const parts = selection.parts || [];
+  const selected = parts.length + (selection.labels || 0) + (selection.nets || 0);
+  if (selected && repeat) add('.', `repeat ${repeat}`);
+  if (parts.length === 1 && !selection.labels && !selection.nets) {
+    if (/^switch_/.test(parts[0])) add('s', 'open / close its phase');
+    add('q', 'change type');
+    add('r', 'rotate');
+    add('Space', 'wire stubs');
+    return hints;
+  }
+  if (parts.length > 1) {
+    add('m', 'move');
+    add('q', 'change type');
+    add('Ctrl+Shift+arrows', 'align');
+    return hints;
+  }
+  if (selection.labels) {
+    add('t', 'edit text');
+    add('Shift+←/→', 'align text');
+    add('arrows', 'nudge');
+    return hints;
+  }
+  if (selection.nets) {
+    add('drag', 'reroute');
+    add('Shift+L', 'net label');
+    add('dd', 'delete');
+    return hints;
+  }
+  if (hover.pin) {
+    add('drag', 'wire from this pin');
+    if (!hover.pin.connected) add('g / v', 'ground / supply');
+    add('w', 'wire tool');
+    return hints;
+  }
+  if (hover.part) {
+    add('q', 'change type');
+    add('right-drag', 'quick actions');
+    add('double-click', 'rename');
+    return hints;
+  }
+  if (empty) {
+    add('i', 'insert a part');
+    add('double-click', 'insert here');
+    add('?', 'every key');
+    return hints;
+  }
+  add('i', 'insert');
+  add('w', 'wire');
+  add('?', 'every key');
+  return hints;
 }
 
 __exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
