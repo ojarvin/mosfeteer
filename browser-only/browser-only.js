@@ -34319,7 +34319,7 @@ let applyTransform, distanceToSegment; __bind(() => { ({ applyTransform, distanc
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
 let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
 let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js")); });
-let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection; __bind(() => { ({ selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } = __require("src/web/selection.js")); });
+let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection, componentPressSelection; __bind(() => { ({ selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection, componentPressSelection } = __require("src/web/selection.js")); });
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let layerActionForKey, layoutAlignKey, naturalCompare; __bind(() => { ({ layerActionForKey, layoutAlignKey, naturalCompare } = __require("src/web/toolbar.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
@@ -39105,12 +39105,12 @@ function beginComponentDrag(hit, startWorld, startClient, ev, options = {}) {
     render();
     return;
   }
-  // A click on an existing member confirms the complete mixed selection;
-  // clicking a new component starts a component-only selection.
   // A joined supply bar moves (or copies) as one part.
-  const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
-  const labels = multi.has(hit.refdes) ? [...selLabels] : [];
-  beginObjectMove(refs, labels, startWorld, startClient, { duplicate: false, detached: options.detached });
+  const press = componentPressSelection({
+    refdes: hit.refdes, selectedRefs: multi, selectedLabelIds: selLabels, group: supplyBarGroup(hit.refdes),
+  });
+  if (!press.keepMixed) setSelection([]);
+  beginObjectMove(press.refs, press.labelIds, startWorld, startClient, { duplicate: false, detached: options.detached });
 }
 /** Split selected wire runs before a detached component move.  The selected
  * islands become independent nets; unselected islands retain their exact
@@ -43064,6 +43064,7 @@ __exports.selectedSetMoveSource = selectedSetMoveSource;
 __exports.completeSelectedNetIds = completeSelectedNetIds;
 __exports.chooseWireHitCandidate = chooseWireHitCandidate;
 __exports.nextStackedSelection = nextStackedSelection;
+__exports.componentPressSelection = componentPressSelection;
 
 
 /** Convert any standalone visual label, including a net label, to the
@@ -43171,6 +43172,20 @@ function nextStackedSelection(candidates = [], current = null) {
   const index = current ? candidates.indexOf(current) : -1;
   if (index < 0 || candidates.length < 2) return null;
   return candidates[(index + 1) % candidates.length];
+}
+
+/**
+ * The selection a plain press on a component arms a move for. A press on a
+ * member of the current selection confirms the whole mixed selection (its
+ * labels, wires, and nets ride along); a press on any other component
+ * replaces it with that component's group, so nothing selected earlier (a
+ * double-clicked net, say) tags along into a move or copy.
+ */
+function componentPressSelection({ refdes, selectedRefs = new Set(), selectedLabelIds = new Set(), group = [refdes] } = {}) {
+  if (selectedRefs.has(refdes)) {
+    return { refs: [...selectedRefs], labelIds: [...selectedLabelIds], keepMixed: true };
+  }
+  return { refs: [...group], labelIds: [], keepMixed: false };
 }
 
 __exports.copySelectionParts = __require("src/core/selection.js").copySelectionParts;

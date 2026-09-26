@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseWireHitCandidate, completeSelectedNetIds, copySelectionParts, copyableLabelPayload, nextStackedSelection, selectedSetMoveSource } from '../src/web/selection.js';
+import { chooseWireHitCandidate, completeSelectedNetIds, copySelectionParts, copyableLabelPayload, nextStackedSelection, selectedSetMoveSource, componentPressSelection } from '../src/web/selection.js';
 
 const components = new Map([
   ['R1', { type: 'resistor' }],
@@ -155,4 +155,20 @@ test('clicking a selected object in a stack moves on to the next one under it, w
   assert.equal(nextStackedSelection(stack, 'component:R9'), null);
   assert.equal(nextStackedSelection(stack, null), null);
   assert.equal(nextStackedSelection(['component:M1'], 'component:M1'), null);
+});
+
+test('a press on a new component replaces the mixed selection', () => {
+  const press = componentPressSelection({
+    refdes: 'R2', selectedRefs: new Set(['R1']), selectedLabelIds: new Set(['L1']), group: ['R2'],
+  });
+  assert.deepEqual(press, { refs: ['R2'], labelIds: [], keepMixed: false });
+  // Nothing selected but a net: the press still starts a fresh selection.
+  assert.equal(componentPressSelection({ refdes: 'R1' }).keepMixed, false);
+});
+
+test('a press on a selected component keeps the whole mixed selection', () => {
+  const press = componentPressSelection({
+    refdes: 'R1', selectedRefs: new Set(['R1', 'R2']), selectedLabelIds: new Set(['L1']),
+  });
+  assert.deepEqual(press, { refs: ['R1', 'R2'], labelIds: ['L1'], keepMixed: true });
 });

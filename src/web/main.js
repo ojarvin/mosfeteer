@@ -24,7 +24,7 @@ import { applyTransform, distanceToSegment } from '../core/geometry.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
-import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection } from './selection.js';
+import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection, componentPressSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { layerActionForKey, layoutAlignKey, naturalCompare } from './toolbar.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
@@ -4757,12 +4757,12 @@ function beginComponentDrag(hit, startWorld, startClient, ev, options = {}) {
     render();
     return;
   }
-  // A click on an existing member confirms the complete mixed selection;
-  // clicking a new component starts a component-only selection.
   // A joined supply bar moves (or copies) as one part.
-  const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
-  const labels = multi.has(hit.refdes) ? [...selLabels] : [];
-  beginObjectMove(refs, labels, startWorld, startClient, { duplicate: false, detached: options.detached });
+  const press = componentPressSelection({
+    refdes: hit.refdes, selectedRefs: multi, selectedLabelIds: selLabels, group: supplyBarGroup(hit.refdes),
+  });
+  if (!press.keepMixed) setSelection([]);
+  beginObjectMove(press.refs, press.labelIds, startWorld, startClient, { duplicate: false, detached: options.detached });
 }
 /** Split selected wire runs before a detached component move.  The selected
  * islands become independent nets; unselected islands retain their exact

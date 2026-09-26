@@ -106,3 +106,17 @@ export function nextStackedSelection(candidates = [], current = null) {
   if (index < 0 || candidates.length < 2) return null;
   return candidates[(index + 1) % candidates.length];
 }
+
+/**
+ * The selection a plain press on a component arms a move for. A press on a
+ * member of the current selection confirms the whole mixed selection (its
+ * labels, wires, and nets ride along); a press on any other component
+ * replaces it with that component's group, so nothing selected earlier (a
+ * double-clicked net, say) tags along into a move or copy.
+ */
+export function componentPressSelection({ refdes, selectedRefs = new Set(), selectedLabelIds = new Set(), group = [refdes] } = {}) {
+  if (selectedRefs.has(refdes)) {
+    return { refs: [...selectedRefs], labelIds: [...selectedLabelIds], keepMixed: true };
+  }
+  return { refs: [...group], labelIds: [], keepMixed: false };
+}
