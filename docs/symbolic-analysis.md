@@ -206,6 +206,27 @@ generator outside the coupled network, or one whose gain vanishes at DC, is
 named in the Log tab instead. Unchecking a device drops its column; a device
 whose share is negligible is best left out rather than approximated away.
 
+## Bode sketch
+
+The **Bode** tab plots the exact transfer function (or `Z_out`, `Z_in`) in
+relative units, so it sketches shapes, not a design's numbers. Every `g_m`
+starts at one unit `g`, every capacitor at one unit `C` (capacitors on the
+output node at 10, as loads usually are), every `r_o` and resistor at
+`g_m r_o` units, MOS `C_gs`/`C_gd` at one shared fraction of `C`, and a body
+`g_mb` at 0.2 `g`. Frequency is then in units of `g/C` and impedance in `1/g`;
+absolute values would only slide the plot along its axes. Sliders scale
+`g_m r_o`, the parasitic fraction, and each symbol by 1-2-5 steps; the plot,
+its straight-line asymptote, its poles and zeros, and the unity-gain
+frequency follow at once, because only the derived coefficients are
+re-evaluated (`src/core/analysis/bode.js`), never solved again. A corner
+whose factor is first order is listed with its exact expression.
+
+**Place on drawing** puts a textbook sketch of the plot on the canvas: a box
+annotation carrying the sampled curve, asymptote, and named corners
+(`plot` in the document), drawn without numbers by `src/core/bode-figure.js`,
+the same layout the tab uses. With a sketch selected the button updates it
+in place.
+
 ## Schematic annotations
 
 **Annotate schematic** places the displayed equations below the figure,

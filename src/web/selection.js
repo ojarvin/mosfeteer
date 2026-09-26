@@ -20,6 +20,7 @@ export function copyableLabelPayload(label) {
     // An equation stays an equation, with its measured box until it renders.
     math: !!label.math,
     mathBox: (label.math && typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
+    ...(label.plot ? { plot: label.plot } : {}),
   };
 }
 

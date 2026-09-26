@@ -270,6 +270,9 @@ selected generator to that same solve. The main implementation is in
   `report-adapter.js` re-renders every displayed AC/DC row, so pass its
   equivalence options, named sub-expressions (`definitions.js`), and
   provenance through every row, including poles/zeros and noise.
+- The Bode tab evaluates the exact coefficients numerically in relative
+  units (`src/core/analysis/bode.js`); it never solves again and never takes
+  design values. A box annotation may carry its sketch (`plot`).
 - The GUI calls `adaptCombinedReport(analyzeSmallSignalV2(...))`, never the v2
   analyzer directly. Provenance is opt-in and only decorates live equation
   MathML; it must not leak into labels, documents, or exports.

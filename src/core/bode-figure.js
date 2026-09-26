@@ -30,13 +30,17 @@ function niceRange(values, step, pad) {
  */
 export function bodeFigure(sketch, {
   width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 160,
+  fontSize = 11,
 } = {}) {
   const items = [];
-  const left = numbers ? 46 : 22;
-  const right = 10;
-  const top = 12;
-  const bottom = numbers ? 22 : 16;
-  const gap = phase ? 14 : 0;
+  // Every margin and offset is in text heights, so the figure reads the
+  // same in the panel (11 px text) and on the drawing (label-sized text).
+  const em = fontSize;
+  const left = numbers ? 4.2 * em : 0.8 * em;
+  const right = 0.9 * em;
+  const top = 1.1 * em;
+  const bottom = numbers ? 2 * em : 0.6 * em;
+  const gap = phase ? 1.3 * em : 0;
   const plotW = Math.max(10, width - left - right);
   const available = height - top - bottom - gap;
   const magH = phase ? available * 0.62 : available;
@@ -63,23 +67,23 @@ export function bodeFigure(sketch, {
   for (let decade = Math.ceil(low); decade <= high; decade++) {
     const at = x(10 ** decade);
     for (const pane of phase ? [mag, ph] : [mag]) {
-      items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 4, role: 'tick' });
+      items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
       if (numbers) items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
     }
     if (numbers) {
       const pane = phase ? ph : mag;
-      items.push({ type: 'text', x: at, y: pane.y + pane.h + 14, text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}`, anchor: 'middle', role: 'number' });
+      items.push({ type: 'text', x: at, y: pane.y + pane.h + 1.3 * em, text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}`, anchor: 'middle', role: 'number' });
     }
   }
   if (numbers) {
     for (let db = dbLow; db <= dbHigh; db += 20) {
-      items.push({ type: 'line', x1: mag.x, y1: yDb(db), x2: mag.x + 4, y2: yDb(db), role: 'tick' });
-      items.push({ type: 'text', x: mag.x - 5, y: yDb(db) + 4, text: `${db}`, anchor: 'end', role: 'number' });
+      items.push({ type: 'line', x1: mag.x, y1: yDb(db), x2: mag.x + 0.36 * em, y2: yDb(db), role: 'tick' });
+      items.push({ type: 'text', x: mag.x - 0.45 * em, y: yDb(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
     }
     if (phase) {
       for (let deg = phLow; deg <= phHigh; deg += 90) {
-        items.push({ type: 'line', x1: ph.x, y1: yPh(deg), x2: ph.x + 4, y2: yPh(deg), role: 'tick' });
-        items.push({ type: 'text', x: ph.x - 5, y: yPh(deg) + 4, text: `${deg}°`, anchor: 'end', role: 'number' });
+        items.push({ type: 'line', x1: ph.x, y1: yPh(deg), x2: ph.x + 0.36 * em, y2: yPh(deg), role: 'tick' });
+        items.push({ type: 'text', x: ph.x - 0.45 * em, y: yPh(deg) + 0.36 * em, text: `${deg}°`, anchor: 'end', role: 'number' });
       }
     }
   }
@@ -97,21 +101,21 @@ export function bodeFigure(sketch, {
     const bottomY = (phase ? ph : mag).y + (phase ? ph : mag).h;
     items.push({ type: 'line', x1: at, y1: mag.y, x2: at, y2: bottomY, role: 'corner' });
     // Near the right edge the name goes on the corner's left.
-    const nearEdge = at > mag.x + mag.w - 36;
-    items.push({ type: 'text', x: nearEdge ? at - 3 : at + 3, y: mag.y + mag.h - 5, text: corner.text, anchor: nearEdge ? 'end' : 'start', role: 'label' });
+    const nearEdge = at > mag.x + mag.w - 3.3 * em;
+    items.push({ type: 'text', x: nearEdge ? at - 0.3 * em : at + 0.3 * em, y: mag.y + mag.h - 0.45 * em, text: corner.text, anchor: nearEdge ? 'end' : 'start', role: 'label' });
   }
   if (unityGain && sketch.unityGain && dbLow < 0 && dbHigh > 0) {
     const at = x(sketch.unityGain.w);
-    items.push({ type: 'dot', x: at, y: yDb(0), role: 'corner' });
-    const nearEdge = at > mag.x + mag.w - 30;
-    items.push({ type: 'text', x: nearEdge ? at - 4 : at + 4, y: yDb(0) - 5, text: 'ω_{u}', anchor: nearEdge ? 'end' : 'start', role: 'label' });
+    items.push({ type: 'dot', x: at, y: yDb(0), r: 0.23 * em, role: 'corner' });
+    const nearEdge = at > mag.x + mag.w - 2.7 * em;
+    items.push({ type: 'text', x: nearEdge ? at - 0.4 * em : at + 0.4 * em, y: yDb(0) - 0.45 * em, text: 'ω_{u}', anchor: nearEdge ? 'end' : 'start', role: 'label' });
   }
 
   // What the axes are.
-  items.push({ type: 'text', x: mag.x + 4, y: mag.y + 10, text: `|${quantity}|${numbers ? ' (dB)' : ''}`, anchor: 'start', role: 'label' });
-  if (phase) items.push({ type: 'text', x: ph.x + 4, y: ph.y + 10, text: `∠${quantity}`, anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: mag.x + 0.4 * em, y: mag.y + 0.9 * em, text: `|${quantity}|${numbers ? ' (dB)' : ''}`, anchor: 'start', role: 'label' });
+  if (phase) items.push({ type: 'text', x: ph.x + 0.4 * em, y: ph.y + 0.9 * em, text: `∠${quantity}`, anchor: 'start', role: 'label' });
   const axisPane = phase ? ph : mag;
-  items.push({ type: 'text', x: axisPane.x + axisPane.w, y: axisPane.y + axisPane.h - 5, text: numbers ? 'ω (g/C)' : 'ω', anchor: 'end', role: 'label' });
+  items.push({ type: 'text', x: axisPane.x + axisPane.w, y: axisPane.y + axisPane.h - 0.45 * em, text: numbers ? 'ω (g/C)' : 'ω', anchor: 'end', role: 'label' });
   return { width, height, items, panes: { magnitude: mag, phase: phase ? ph : null }, ranges: { db: [dbLow, dbHigh], phase: [phLow, phHigh] } };
 }
 

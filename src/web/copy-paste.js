@@ -515,6 +515,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         const shape = editor.circuit.addAnnotation(l.kind, {
           x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
           points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
+          ...(l.plot ? { plot: l.plot } : {}),
         });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);

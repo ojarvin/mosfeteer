@@ -10868,13 +10868,17 @@ function niceRange(values, step, pad) {
  */
 function bodeFigure(sketch, {
   width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 160,
+  fontSize = 11,
 } = {}) {
   const items = [];
-  const left = numbers ? 46 : 22;
-  const right = 10;
-  const top = 12;
-  const bottom = numbers ? 22 : 16;
-  const gap = phase ? 14 : 0;
+  // Every margin and offset is in text heights, so the figure reads the
+  // same in the panel (11 px text) and on the drawing (label-sized text).
+  const em = fontSize;
+  const left = numbers ? 4.2 * em : 0.8 * em;
+  const right = 0.9 * em;
+  const top = 1.1 * em;
+  const bottom = numbers ? 2 * em : 0.6 * em;
+  const gap = phase ? 1.3 * em : 0;
   const plotW = Math.max(10, width - left - right);
   const available = height - top - bottom - gap;
   const magH = phase ? available * 0.62 : available;
@@ -10901,23 +10905,23 @@ function bodeFigure(sketch, {
   for (let decade = Math.ceil(low); decade <= high; decade++) {
     const at = x(10 ** decade);
     for (const pane of phase ? [mag, ph] : [mag]) {
-      items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 4, role: 'tick' });
+      items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
       if (numbers) items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
     }
     if (numbers) {
       const pane = phase ? ph : mag;
-      items.push({ type: 'text', x: at, y: pane.y + pane.h + 14, text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}`, anchor: 'middle', role: 'number' });
+      items.push({ type: 'text', x: at, y: pane.y + pane.h + 1.3 * em, text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}`, anchor: 'middle', role: 'number' });
     }
   }
   if (numbers) {
     for (let db = dbLow; db <= dbHigh; db += 20) {
-      items.push({ type: 'line', x1: mag.x, y1: yDb(db), x2: mag.x + 4, y2: yDb(db), role: 'tick' });
-      items.push({ type: 'text', x: mag.x - 5, y: yDb(db) + 4, text: `${db}`, anchor: 'end', role: 'number' });
+      items.push({ type: 'line', x1: mag.x, y1: yDb(db), x2: mag.x + 0.36 * em, y2: yDb(db), role: 'tick' });
+      items.push({ type: 'text', x: mag.x - 0.45 * em, y: yDb(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
     }
     if (phase) {
       for (let deg = phLow; deg <= phHigh; deg += 90) {
-        items.push({ type: 'line', x1: ph.x, y1: yPh(deg), x2: ph.x + 4, y2: yPh(deg), role: 'tick' });
-        items.push({ type: 'text', x: ph.x - 5, y: yPh(deg) + 4, text: `${deg}°`, anchor: 'end', role: 'number' });
+        items.push({ type: 'line', x1: ph.x, y1: yPh(deg), x2: ph.x + 0.36 * em, y2: yPh(deg), role: 'tick' });
+        items.push({ type: 'text', x: ph.x - 0.45 * em, y: yPh(deg) + 0.36 * em, text: `${deg}°`, anchor: 'end', role: 'number' });
       }
     }
   }
@@ -10935,21 +10939,21 @@ function bodeFigure(sketch, {
     const bottomY = (phase ? ph : mag).y + (phase ? ph : mag).h;
     items.push({ type: 'line', x1: at, y1: mag.y, x2: at, y2: bottomY, role: 'corner' });
     // Near the right edge the name goes on the corner's left.
-    const nearEdge = at > mag.x + mag.w - 36;
-    items.push({ type: 'text', x: nearEdge ? at - 3 : at + 3, y: mag.y + mag.h - 5, text: corner.text, anchor: nearEdge ? 'end' : 'start', role: 'label' });
+    const nearEdge = at > mag.x + mag.w - 3.3 * em;
+    items.push({ type: 'text', x: nearEdge ? at - 0.3 * em : at + 0.3 * em, y: mag.y + mag.h - 0.45 * em, text: corner.text, anchor: nearEdge ? 'end' : 'start', role: 'label' });
   }
   if (unityGain && sketch.unityGain && dbLow < 0 && dbHigh > 0) {
     const at = x(sketch.unityGain.w);
-    items.push({ type: 'dot', x: at, y: yDb(0), role: 'corner' });
-    const nearEdge = at > mag.x + mag.w - 30;
-    items.push({ type: 'text', x: nearEdge ? at - 4 : at + 4, y: yDb(0) - 5, text: 'ω_{u}', anchor: nearEdge ? 'end' : 'start', role: 'label' });
+    items.push({ type: 'dot', x: at, y: yDb(0), r: 0.23 * em, role: 'corner' });
+    const nearEdge = at > mag.x + mag.w - 2.7 * em;
+    items.push({ type: 'text', x: nearEdge ? at - 0.4 * em : at + 0.4 * em, y: yDb(0) - 0.45 * em, text: 'ω_{u}', anchor: nearEdge ? 'end' : 'start', role: 'label' });
   }
 
   // What the axes are.
-  items.push({ type: 'text', x: mag.x + 4, y: mag.y + 10, text: `|${quantity}|${numbers ? ' (dB)' : ''}`, anchor: 'start', role: 'label' });
-  if (phase) items.push({ type: 'text', x: ph.x + 4, y: ph.y + 10, text: `∠${quantity}`, anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: mag.x + 0.4 * em, y: mag.y + 0.9 * em, text: `|${quantity}|${numbers ? ' (dB)' : ''}`, anchor: 'start', role: 'label' });
+  if (phase) items.push({ type: 'text', x: ph.x + 0.4 * em, y: ph.y + 0.9 * em, text: `∠${quantity}`, anchor: 'start', role: 'label' });
   const axisPane = phase ? ph : mag;
-  items.push({ type: 'text', x: axisPane.x + axisPane.w, y: axisPane.y + axisPane.h - 5, text: numbers ? 'ω (g/C)' : 'ω', anchor: 'end', role: 'label' });
+  items.push({ type: 'text', x: axisPane.x + axisPane.w, y: axisPane.y + axisPane.h - 0.45 * em, text: numbers ? 'ω (g/C)' : 'ω', anchor: 'end', role: 'label' });
   return { width, height, items, panes: { magnitude: mag, phase: phase ? ph : null }, ranges: { db: [dbLow, dbHigh], phase: [phLow, phHigh] } };
 }
 
@@ -14449,6 +14453,7 @@ __exports.mathTextForMetrics = mathTextForMetrics;
 __exports.normalizeMathSource = normalizeMathSource;
 __exports.normalizeComponentRefdes = normalizeComponentRefdes;
 __exports.componentLabelText = componentLabelText;
+__exports.normalizePlot = normalizePlot;
 __exports.pathHasDiagonal = pathHasDiagonal;
 __exports.diagonalDraftPath = diagonalDraftPath;
 let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect; __bind(() => { ({ applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js")); });
@@ -15188,6 +15193,42 @@ function labelMatchesRefdes(text, refdes) {
  * Owned labels ("instance labels", e.g. M1 on a transistor) live in local
  * component space via `offset` and follow the owner's transform.
  */
+const finite = (value) => Number.isFinite(value);
+const round = (value, digits = 4) => Number(value.toPrecision(digits));
+
+/**
+ * A plot annotation's data, as saved: the sketch's frequency range, its
+ * magnitude and phase samples, the straight-line asymptote, the marked
+ * frequencies and the quantity's name. Plain numbers only; a malformed
+ * plot is dropped rather than drawn wrong.
+ */
+function normalizePlot(plot) {
+  if (!plot || typeof plot !== 'object') return null;
+  const low = Number(plot.range?.low);
+  const high = Number(plot.range?.high);
+  const points = (Array.isArray(plot.points) ? plot.points : [])
+    .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db) && finite(p?.phase))
+    .map((p) => ({ w: round(p.w, 6), db: round(p.db), phase: round(p.phase) }));
+  if (!finite(low) || !finite(high) || high <= low || points.length < 2) return null;
+  const asymptote = (Array.isArray(plot.asymptote) ? plot.asymptote : [])
+    .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db))
+    .map((p) => ({ w: round(p.w, 6), db: round(p.db) }));
+  const corners = (Array.isArray(plot.corners) ? plot.corners : [])
+    .filter((corner) => finite(corner?.w) && corner.w > 0 && typeof corner.text === 'string')
+    .map((corner) => ({ w: round(corner.w, 6), text: corner.text.slice(0, 40) }));
+  const unity = plot.unityGain && finite(plot.unityGain.w) && finite(plot.unityGain.phase)
+    ? { w: round(plot.unityGain.w, 6), phase: round(plot.unityGain.phase) } : null;
+  return {
+    range: { low, high },
+    points,
+    asymptote,
+    corners,
+    unityGain: unity,
+    quantity: typeof plot.quantity === 'string' ? plot.quantity.slice(0, 40) : 'A_{v}',
+    phase: plot.phase === true,
+  };
+}
+
 class LabelInstance {
   constructor(circuit, opts = {}) {
     this.circuit = circuit;
@@ -15252,6 +15293,8 @@ class LabelInstance {
     this.points = ['arrow', 'line'].includes(this.kind) ? (points.length ? points : [{ ...p }, { ...e }]) : null;
     const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
+    // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
+    this.plot = this.kind === 'box' && opts.plot ? normalizePlot(opts.plot) : null;
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
@@ -15723,6 +15766,7 @@ class LabelInstance {
       end: this.kind === 'label' ? null : { ...this.end },
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
+      ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -20750,6 +20794,7 @@ class Circuit {
           end: l.end || null,
           points: l.points || null,
           textAnchor: l.textAnchor || null,
+          plot: l.plot || null,
           style: l.style || null,
           drawOrder: l.drawOrder,
         });
@@ -21190,6 +21235,8 @@ let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, po
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let drawnNetPaths, switchState; __bind(() => { ({ drawnNetPaths, switchState } = __require("src/core/beats.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
+let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure.js")); });
+
 
 
 
@@ -21742,11 +21789,59 @@ function shapeAnnotationSvg(label, opacity = '') {
     return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
   }
   const attrs = styleAttrs(label.style);
+  if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
 }
+/** Stroke widths and dashes of a plot's parts, in drawing units. */
+const PLOT_STROKES = {
+  axis: { width: 3 },
+  tick: { width: 3 },
+  zero: { width: 2, dash: '4 10' },
+  curve: { width: 6 },
+  asymptote: { width: 3, dash: '16 12' },
+  corner: { width: 2, dash: '4 10' },
+  grid: { width: 1 },
+};
+
+/**
+ * A plot annotation: the Bode sketch it carries (bode-figure.js), laid out
+ * to fill its box in the drawing's ink -- axes, the straight-line sketch
+ * dashed under the exact curve, and the marked frequencies by name. Its text
+ * scales with the box, within label sizes.
+ */
+function plotAnnotationSvg(label, opacity = '') {
+  const a = label.anchor; const b = label.end;
+  const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+  const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
+  const plot = label.plot;
+  const fontSize = Math.max(18, Math.min(38, h / (plot.phase ? 11 : 8)));
+  const figure = bodeFigure(plot, {
+    width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize,
+  });
+  const color = escapeSvg(resolveColor(label.style?.color || '#111'));
+  const stroke = (role) => {
+    const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
+    return `stroke="${color}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
+  };
+  const text = (item) => {
+    const runs = parseLabelRuns(item.text).map((run) => (run.sub || run.super
+      ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
+      : escapeSvg(run.text))).join('');
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="sans-serif" font-style="italic" font-size="${fmt(fontSize)}" fill="${color}" stroke="none">${runs}</text>`;
+  };
+  const parts = figure.items.map((item) => {
+    if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
+    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role)} stroke-linejoin="round"/>` : '';
+    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${color}" stroke="none"/>`;
+    if (item.type === 'text') return text(item);
+    return '';
+  }).join('');
+  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
+}
+
 /**
  * Bare drawable geometry of one component (body graphics plus symbol text),
  * without ids, labels, or accessibility wrappers. Editor effects restyle it
@@ -30422,15 +30517,18 @@ __exports.formatNumber = formatNumber;
 __exports.bodeAvailable = bodeAvailable;
 __exports.figureElement = figureElement;
 __exports.renderBode = renderBode;
-__exports.currentBodeSketch = currentBodeSketch;
+__exports.currentPlotData = currentPlotData;
 let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
 let bodeFigure, cornerNames; __bind(() => { ({ bodeFigure, cornerNames } = __require("src/core/bode-figure.js")); });
-let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let render; __bind(() => { ({ render } = __require("src/web/main.js")); });
+let commit, render, selectedLabel, setLabelSelection, setSelection; __bind(() => { ({ commit, render, selectedLabel, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 /**
  * The analysis panel's Bode tab: a relative sketch of the derived transfer
  * function (core/analysis/bode.js). Every g_m starts at one unit, every r_o
@@ -30439,6 +30537,9 @@ let render; __bind(() => { ({ render } = __require("src/web/main.js")); });
  * zeros, and their names follow at once. Nothing here solves the circuit
  * again: only the derived coefficients are re-evaluated.
  */
+
+
+
 
 
 
@@ -30460,6 +30561,7 @@ const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance
 /** Ratios chosen so far, by symbol: they outlast a re-analysis. */
 const state = {
   quantity: 'transfer',
+  withPhase: false,
   intrinsicGain: DEFAULT_INTRINSIC_GAIN,
   parasiticRatio: DEFAULT_PARASITIC_RATIO,
   multipliers: {},
@@ -30717,14 +30819,31 @@ function renderBode(report) {
     Object.assign(state, { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} });
     renderBode(state.report);
   });
+  const place = document.createElement('button');
+  place.type = 'button';
+  place.className = 'bode-place';
+  const selectedPlot = () => (selectedLabel()?.plot ? selectedLabel() : null);
+  place.textContent = selectedPlot() ? 'Update sketch' : 'Place on drawing';
+  place.title = 'A textbook sketch of this plot on the drawing: no numbers, the corners named. With a sketch selected, this updates it.';
+  place.addEventListener('click', () => placeSketch(selectedPlot()));
+  const phaseToggle = document.createElement('label');
+  phaseToggle.className = 'bode-phase-toggle';
+  const phaseBox = document.createElement('input');
+  phaseBox.type = 'checkbox';
+  phaseBox.checked = state.withPhase;
+  phaseBox.addEventListener('change', () => { state.withPhase = phaseBox.checked; });
+  phaseToggle.append(phaseBox, ' with phase');
   head.append(select, reset);
+  const placeRow = document.createElement('div');
+  placeRow.className = 'bode-head';
+  placeRow.append(place, phaseToggle);
   const figureHost = document.createElement('div');
   figureHost.className = 'bode-figure-host';
   const corners = document.createElement('ul');
   corners.className = 'bode-corners';
   const sliders = document.createElement('div');
   sliders.className = 'bode-sliders';
-  panel.append(head, note, figureHost, corners, sliders);
+  panel.append(head, note, figureHost, placeRow, corners, sliders);
 
   const model = currentModel();
   // The one ratio every MOS design has.
@@ -30764,10 +30883,51 @@ function renderBode(report) {
   return available;
 }
 
-/** The sketch as it stands, for a plot annotation on the canvas. */
-function currentBodeSketch() {
+/** The sketch as it stands, as a plot annotation's data (model.js normalizePlot). */
+function currentPlotData() {
   const model = currentModel();
-  return model && { sketch: model.sketch, corners: model.corners, quantity: model.quantity };
+  if (!model) return null;
+  const { sketch, corners, quantity } = model;
+  // Twenty samples a decade are plenty on paper.
+  const points = sketch.points.filter((_, index) => index % 2 === 0 || index === sketch.points.length - 1);
+  return {
+    range: sketch.range,
+    points,
+    asymptote: sketch.asymptote,
+    corners: corners.map((corner) => ({ w: corner.w, text: corner.text })),
+    unityGain: quantity.key === 'transfer' ? sketch.unityGain : null,
+    quantity: quantity.tex,
+    phase: state.withPhase,
+  };
+}
+
+/** Put the sketch on the drawing, right of what is there -- or, with a plot
+ *  annotation selected, redraw that one in place. One undo entry. */
+function placeSketch(existing) {
+  const plot = currentPlotData();
+  if (!plot) return;
+  let placed = existing;
+  commit(() => {
+    if (existing) {
+      existing.plot = normalizePlot(plot);
+      editor.circuit.invalidateRoutingCache();
+      return;
+    }
+    const bounds = editor.circuit.inkBounds();
+    const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
+    const x = empty ? 0 : snap(bounds.x + bounds.w + 2 * GRID);
+    const y = empty ? 0 : snap(bounds.y);
+    const w = 16 * GRID;
+    const h = (plot.phase ? 14 : 10) * GRID;
+    placed = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' } });
+  });
+  if (!placed) return;
+  setSelection([]);
+  setLabelSelection([placed.id]);
+  if (!existing) fitView({ animate: true });
+  logLine(existing ? 'updated the Bode sketch' : 'placed a Bode sketch on the drawing; drag to move it, its corners to resize');
+  renderBode(state.report);
+  render();
 }
 
 };
@@ -33293,6 +33453,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         const shape = editor.circuit.addAnnotation(l.kind, {
           x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
           points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
+          ...(l.plot ? { plot: l.plot } : {}),
         });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);
@@ -39593,6 +39754,8 @@ function annotationGeometryAt(world) {
       const y0 = Math.min(a.y, b.y); const y1 = Math.max(a.y, b.y);
       if (near({ x: x0, y: y0 }, { x: x1, y: y0 }) || near({ x: x1, y: y0 }, { x: x1, y: y1 }) ||
           near({ x: x1, y: y1 }, { x: x0, y: y1 }) || near({ x: x0, y: y1 }, { x: x0, y: y0 })) return label;
+      // A plot is a picture: anywhere on it picks it.
+      if (label.plot && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
     }
   }
   return null;
@@ -47428,6 +47591,7 @@ function copyableLabelPayload(label) {
     // An equation stays an equation, with its measured box until it renders.
     math: !!label.math,
     mathBox: (label.math && typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
+    ...(label.plot ? { plot: label.plot } : {}),
   };
 }
 
@@ -48016,7 +48180,9 @@ function renderDetail() {
     const rows = [['Role', role], ['Align', label.align], ['Anchor', `${a.x}, ${a.y}`]];
     if (label.owner) rows.push(['Owner', label.owner]);
     if (label.netId) rows.push(['Net', editor.circuit.nets.get(label.netId)?.name || label.netId]);
-    detailEl.appendChild(detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
+    detailEl.appendChild(label.plot
+      ? detailHeader('Bode sketch', 'plot')
+      : detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
     const list = document.createElement('dl');
     list.className = 'detail-props';
     for (const [key, value] of rows) {

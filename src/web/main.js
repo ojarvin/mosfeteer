@@ -1104,6 +1104,8 @@ export function annotationGeometryAt(world) {
       const y0 = Math.min(a.y, b.y); const y1 = Math.max(a.y, b.y);
       if (near({ x: x0, y: y0 }, { x: x1, y: y0 }) || near({ x: x1, y: y0 }, { x: x1, y: y1 }) ||
           near({ x: x1, y: y1 }, { x: x0, y: y1 }) || near({ x: x0, y: y1 }, { x: x0, y: y0 })) return label;
+      // A plot is a picture: anywhere on it picks it.
+      if (label.plot && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
     }
   }
   return null;

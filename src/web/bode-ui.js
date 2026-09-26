@@ -14,10 +14,13 @@ import {
 import { renderExpression } from '../core/analysis/present.js';
 import { negate } from '../core/analysis/rational.js';
 import { bodeFigure, cornerNames } from '../core/bode-figure.js';
-import { parseLabelRuns } from '../core/model.js';
+import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { editor } from './editor-state.js';
-import { render } from './main.js';
+import { commit, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
+import { fitView } from './canvas-view.js';
+import { logLine } from './status-bar-ui.js';
+import { GRID, snap } from '../core/grid.js';
 
 const QUANTITIES = [
   { key: 'transfer', label: 'Voltage gain', tex: 'A_{v}' },
@@ -30,6 +33,7 @@ const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance
 /** Ratios chosen so far, by symbol: they outlast a re-analysis. */
 const state = {
   quantity: 'transfer',
+  withPhase: false,
   intrinsicGain: DEFAULT_INTRINSIC_GAIN,
   parasiticRatio: DEFAULT_PARASITIC_RATIO,
   multipliers: {},
@@ -287,14 +291,31 @@ export function renderBode(report) {
     Object.assign(state, { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} });
     renderBode(state.report);
   });
+  const place = document.createElement('button');
+  place.type = 'button';
+  place.className = 'bode-place';
+  const selectedPlot = () => (selectedLabel()?.plot ? selectedLabel() : null);
+  place.textContent = selectedPlot() ? 'Update sketch' : 'Place on drawing';
+  place.title = 'A textbook sketch of this plot on the drawing: no numbers, the corners named. With a sketch selected, this updates it.';
+  place.addEventListener('click', () => placeSketch(selectedPlot()));
+  const phaseToggle = document.createElement('label');
+  phaseToggle.className = 'bode-phase-toggle';
+  const phaseBox = document.createElement('input');
+  phaseBox.type = 'checkbox';
+  phaseBox.checked = state.withPhase;
+  phaseBox.addEventListener('change', () => { state.withPhase = phaseBox.checked; });
+  phaseToggle.append(phaseBox, ' with phase');
   head.append(select, reset);
+  const placeRow = document.createElement('div');
+  placeRow.className = 'bode-head';
+  placeRow.append(place, phaseToggle);
   const figureHost = document.createElement('div');
   figureHost.className = 'bode-figure-host';
   const corners = document.createElement('ul');
   corners.className = 'bode-corners';
   const sliders = document.createElement('div');
   sliders.className = 'bode-sliders';
-  panel.append(head, note, figureHost, corners, sliders);
+  panel.append(head, note, figureHost, placeRow, corners, sliders);
 
   const model = currentModel();
   // The one ratio every MOS design has.
@@ -334,8 +355,49 @@ export function renderBode(report) {
   return available;
 }
 
-/** The sketch as it stands, for a plot annotation on the canvas. */
-export function currentBodeSketch() {
+/** The sketch as it stands, as a plot annotation's data (model.js normalizePlot). */
+export function currentPlotData() {
   const model = currentModel();
-  return model && { sketch: model.sketch, corners: model.corners, quantity: model.quantity };
+  if (!model) return null;
+  const { sketch, corners, quantity } = model;
+  // Twenty samples a decade are plenty on paper.
+  const points = sketch.points.filter((_, index) => index % 2 === 0 || index === sketch.points.length - 1);
+  return {
+    range: sketch.range,
+    points,
+    asymptote: sketch.asymptote,
+    corners: corners.map((corner) => ({ w: corner.w, text: corner.text })),
+    unityGain: quantity.key === 'transfer' ? sketch.unityGain : null,
+    quantity: quantity.tex,
+    phase: state.withPhase,
+  };
+}
+
+/** Put the sketch on the drawing, right of what is there -- or, with a plot
+ *  annotation selected, redraw that one in place. One undo entry. */
+function placeSketch(existing) {
+  const plot = currentPlotData();
+  if (!plot) return;
+  let placed = existing;
+  commit(() => {
+    if (existing) {
+      existing.plot = normalizePlot(plot);
+      editor.circuit.invalidateRoutingCache();
+      return;
+    }
+    const bounds = editor.circuit.inkBounds();
+    const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
+    const x = empty ? 0 : snap(bounds.x + bounds.w + 2 * GRID);
+    const y = empty ? 0 : snap(bounds.y);
+    const w = 16 * GRID;
+    const h = (plot.phase ? 14 : 10) * GRID;
+    placed = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' } });
+  });
+  if (!placed) return;
+  setSelection([]);
+  setLabelSelection([placed.id]);
+  if (!existing) fitView({ animate: true });
+  logLine(existing ? 'updated the Bode sketch' : 'placed a Bode sketch on the drawing; drag to move it, its corners to resize');
+  renderBode(state.report);
+  render();
 }

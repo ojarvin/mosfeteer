@@ -454,7 +454,9 @@ export function renderDetail() {
     const rows = [['Role', role], ['Align', label.align], ['Anchor', `${a.x}, ${a.y}`]];
     if (label.owner) rows.push(['Owner', label.owner]);
     if (label.netId) rows.push(['Net', editor.circuit.nets.get(label.netId)?.name || label.netId]);
-    detailEl.appendChild(detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
+    detailEl.appendChild(label.plot
+      ? detailHeader('Bode sketch', 'plot')
+      : detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
     const list = document.createElement('dl');
     list.className = 'detail-props';
     for (const [key, value] of rows) {

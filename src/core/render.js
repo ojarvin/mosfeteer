@@ -7,6 +7,7 @@ import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { drawnNetPaths, switchState } from './beats.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
+import { bodeFigure } from './bode-figure.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -550,11 +551,59 @@ function shapeAnnotationSvg(label, opacity = '') {
     return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
   }
   const attrs = styleAttrs(label.style);
+  if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
   }
 }
+/** Stroke widths and dashes of a plot's parts, in drawing units. */
+const PLOT_STROKES = {
+  axis: { width: 3 },
+  tick: { width: 3 },
+  zero: { width: 2, dash: '4 10' },
+  curve: { width: 6 },
+  asymptote: { width: 3, dash: '16 12' },
+  corner: { width: 2, dash: '4 10' },
+  grid: { width: 1 },
+};
+
+/**
+ * A plot annotation: the Bode sketch it carries (bode-figure.js), laid out
+ * to fill its box in the drawing's ink -- axes, the straight-line sketch
+ * dashed under the exact curve, and the marked frequencies by name. Its text
+ * scales with the box, within label sizes.
+ */
+function plotAnnotationSvg(label, opacity = '') {
+  const a = label.anchor; const b = label.end;
+  const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+  const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
+  const plot = label.plot;
+  const fontSize = Math.max(18, Math.min(38, h / (plot.phase ? 11 : 8)));
+  const figure = bodeFigure(plot, {
+    width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize,
+  });
+  const color = escapeSvg(resolveColor(label.style?.color || '#111'));
+  const stroke = (role) => {
+    const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
+    return `stroke="${color}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
+  };
+  const text = (item) => {
+    const runs = parseLabelRuns(item.text).map((run) => (run.sub || run.super
+      ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
+      : escapeSvg(run.text))).join('');
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="sans-serif" font-style="italic" font-size="${fmt(fontSize)}" fill="${color}" stroke="none">${runs}</text>`;
+  };
+  const parts = figure.items.map((item) => {
+    if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
+    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role)} stroke-linejoin="round"/>` : '';
+    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${color}" stroke="none"/>`;
+    if (item.type === 'text') return text(item);
+    return '';
+  }).join('');
+  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
+}
+
 /**
  * Bare drawable geometry of one component (body graphics plus symbol text),
  * without ids, labels, or accessibility wrappers. Editor effects restyle it

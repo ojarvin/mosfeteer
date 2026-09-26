@@ -726,6 +726,42 @@ function labelMatchesRefdes(text, refdes) {
  * Owned labels ("instance labels", e.g. M1 on a transistor) live in local
  * component space via `offset` and follow the owner's transform.
  */
+const finite = (value) => Number.isFinite(value);
+const round = (value, digits = 4) => Number(value.toPrecision(digits));
+
+/**
+ * A plot annotation's data, as saved: the sketch's frequency range, its
+ * magnitude and phase samples, the straight-line asymptote, the marked
+ * frequencies and the quantity's name. Plain numbers only; a malformed
+ * plot is dropped rather than drawn wrong.
+ */
+export function normalizePlot(plot) {
+  if (!plot || typeof plot !== 'object') return null;
+  const low = Number(plot.range?.low);
+  const high = Number(plot.range?.high);
+  const points = (Array.isArray(plot.points) ? plot.points : [])
+    .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db) && finite(p?.phase))
+    .map((p) => ({ w: round(p.w, 6), db: round(p.db), phase: round(p.phase) }));
+  if (!finite(low) || !finite(high) || high <= low || points.length < 2) return null;
+  const asymptote = (Array.isArray(plot.asymptote) ? plot.asymptote : [])
+    .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db))
+    .map((p) => ({ w: round(p.w, 6), db: round(p.db) }));
+  const corners = (Array.isArray(plot.corners) ? plot.corners : [])
+    .filter((corner) => finite(corner?.w) && corner.w > 0 && typeof corner.text === 'string')
+    .map((corner) => ({ w: round(corner.w, 6), text: corner.text.slice(0, 40) }));
+  const unity = plot.unityGain && finite(plot.unityGain.w) && finite(plot.unityGain.phase)
+    ? { w: round(plot.unityGain.w, 6), phase: round(plot.unityGain.phase) } : null;
+  return {
+    range: { low, high },
+    points,
+    asymptote,
+    corners,
+    unityGain: unity,
+    quantity: typeof plot.quantity === 'string' ? plot.quantity.slice(0, 40) : 'A_{v}',
+    phase: plot.phase === true,
+  };
+}
+
 export class LabelInstance {
   constructor(circuit, opts = {}) {
     this.circuit = circuit;
@@ -790,6 +826,8 @@ export class LabelInstance {
     this.points = ['arrow', 'line'].includes(this.kind) ? (points.length ? points : [{ ...p }, { ...e }]) : null;
     const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
+    // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
+    this.plot = this.kind === 'box' && opts.plot ? normalizePlot(opts.plot) : null;
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
@@ -1261,6 +1299,7 @@ export class LabelInstance {
       end: this.kind === 'label' ? null : { ...this.end },
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
+      ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -6288,6 +6327,7 @@ export class Circuit {
           end: l.end || null,
           points: l.points || null,
           textAnchor: l.textAnchor || null,
+          plot: l.plot || null,
           style: l.style || null,
           drawOrder: l.drawOrder,
         });
