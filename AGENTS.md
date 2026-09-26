@@ -292,7 +292,7 @@ Core keyboard vocabulary:
 | Context | Keys |
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `Shift+A` align to (selection outline edge/point, then another object's), `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
-| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis panel, `Shift+Esc` workspace collage ([`docs/collage.md`](docs/collage.md)), `?` help, `:` command line (log drawer) |
+| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis panel, `Shift+Backspace` workspace collage ([`docs/collage.md`](docs/collage.md)), `?` help, `:` command line (log drawer) |
 | editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `Ctrl/Cmd+F` find / `Ctrl/Cmd+H` replace in label text (`src/core/label-search.js`), `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped) |
 | beats | `Shift+B` beat strip, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or cursor snapping to the nearest terminal or free wire end while wiring; a click on a free wire end (`Circuit#openWireEnds`) finishes a draft there like a terminal |

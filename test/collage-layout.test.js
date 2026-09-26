@@ -10,64 +10,65 @@ const items = [
   { id: 'e', w: 2300, h: 1300 },
 ];
 // A workspace's worth of ordinary designs.
-const many = Array.from({ length: 12 }, (_, index) => ({ id: `d${index}`, w: 1200 + (index % 4) * 300, h: 1000 + (index % 3) * 500 }));
+const many = Array.from({ length: 12 }, (_, index) => ({ id: `d${index}`, w: 1200 + (index % 4) * 320, h: 1000 + (index % 3) * 480 }));
 
-test('designs keep their real size, in order, without overlapping', () => {
-  const { tiles, bounds } = layoutCollage(items);
-  assert.deepEqual(tiles.map((tile) => tile.id), ['a', 'b', 'c', 'd', 'e']);
+test('designs keep their real size and never crowd each other', () => {
+  const { tiles, bounds } = layoutCollage(many);
+  assert.deepEqual(tiles.map((tile) => tile.id), many.map((item) => item.id), 'tiles come back in input order');
   for (const [index, tile] of tiles.entries()) {
-    assert.equal(tile.w, items[index].w);
-    assert.equal(tile.h, items[index].h);
-    assert.ok(tile.x >= 0 && tile.x + tile.w <= bounds.w && tile.y >= 0 && tile.y + tile.h <= bounds.h);
+    assert.equal(tile.w, many[index].w);
+    assert.equal(tile.h, many[index].h);
+    assert.ok(tile.x >= bounds.x && tile.x + tile.w <= bounds.x + bounds.w);
+    assert.ok(tile.y >= bounds.y && tile.y + tile.h + COLLAGE_CAPTION <= bounds.y + bounds.h);
   }
   for (const a of tiles) {
     for (const b of tiles) {
       if (a === b) continue;
-      const room = { x: a.x, y: a.y, w: a.w + COLLAGE_GAP, h: a.h + COLLAGE_CAPTION };
-      assert.ok(!rectsIntersect(room, b), `${a.id} crowds ${b.id}`);
+      // The design plus its caption band, and the gap around it.
+      const room = { x: a.x - COLLAGE_GAP + 1, y: a.y - COLLAGE_GAP + 1, w: a.w + 2 * COLLAGE_GAP - 2, h: a.h + COLLAGE_CAPTION + 2 * COLLAGE_GAP - 2 };
+      assert.ok(!rectsIntersect(room, { ...b, h: b.h + COLLAGE_CAPTION }), `${a.id} crowds ${b.id}`);
     }
   }
 });
 
-test('a row shares one baseline for its captions and starts on the grid', () => {
-  const { tiles } = layoutCollage(many);
-  const rows = Map.groupBy(tiles, (tile) => tile.y + tile.h);
-  assert.ok(rows.size > 1 && rows.size < tiles.length);
-  for (const [, row] of rows) assert.equal(row[0].x, 0);
-  for (const tile of tiles) assert.equal(tile.x % 40, 0);
-});
-
-test('the rows fill a screen-shaped area, even beside one tall design', () => {
-  const tall = [...many, { id: 'symbols', w: 4200, h: 6200 }];
-  const { bounds } = layoutCollage(tall, { aspect: 1.6 });
-  const naive = layoutCollage(tall, { aspect: 0.2 }).bounds;
-  const fill = (b) => Math.min(1.6 / b.w, 1 / b.h);
-  assert.ok(fill(bounds) >= fill(naive));
-  assert.ok(bounds.w / bounds.h > 0.8, `${bounds.w} x ${bounds.h}`);
+test('the designs pack into a tight, screen-shaped ball on the grid', () => {
+  const tall = [...many, { id: 'symbols', w: 4200, h: 6240 }];
+  const { tiles, bounds } = layoutCollage(tall, { aspect: 1.6 });
+  const used = tiles.reduce((sum, tile) => sum + tile.w * (tile.h + COLLAGE_CAPTION), 0);
+  assert.ok(used / (bounds.w * bounds.h) > 0.5, `fill ${used / (bounds.w * bounds.h)}`);
+  assert.ok(bounds.w / bounds.h > 1 && bounds.w / bounds.h < 2.6, `${bounds.w} x ${bounds.h}`);
+  for (const tile of tiles) assert.ok(tile.x % 40 === 0 && tile.y % 40 === 0, `${tile.id} is off the grid`);
+  // The largest design sits in the middle.
+  const big = tiles.find((tile) => tile.id === 'symbols');
+  const middle = { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 };
+  assert.ok(Math.abs(big.x + big.w / 2 - middle.x) < bounds.w / 4 && Math.abs(big.y + big.h / 2 - middle.y) < bounds.h / 4);
 });
 
 test('the same designs always get the same layout', () => {
-  assert.deepEqual(layoutCollage(items), layoutCollage(items.map((item) => ({ ...item }))));
+  assert.deepEqual(layoutCollage(many), layoutCollage(many.map((item) => ({ ...item }))));
   assert.deepEqual(layoutCollage([]).tiles, []);
 });
 
 test('detail grows with the pixels a tile covers', () => {
-  assert.equal(tileDetail(10), 'sheet');
+  assert.equal(tileDetail(10), 'small');
   assert.equal(tileDetail(SMALL_PX), 'small');
   assert.equal(tileDetail(LARGE_PX), 'large');
   assert.equal(tileDetail(LARGE_PX * 2), 'vector');
 });
 
 test('picking and arrow navigation find the right tile', () => {
-  const { tiles } = layoutCollage(many);
-  const [a, b] = tiles;
-  assert.equal(tileAt(tiles, { x: a.x + 10, y: a.y + 10 }), a);
-  assert.equal(tileAt(tiles, { x: a.x + 10, y: a.y + a.h + COLLAGE_CAPTION / 2 }), a, 'the caption belongs to its tile');
+  const a = { id: 'a', x: 0, y: 0, w: 400, h: 400 };
+  const b = { id: 'b', x: 600, y: 40, w: 400, h: 300 };
+  const c = { id: 'c', x: 0, y: 700, w: 400, h: 400 };
+  const d = { id: 'd', x: 700, y: 900, w: 200, h: 200 };
+  const tiles = [a, b, c, d];
+  assert.equal(tileAt(tiles, { x: 10, y: 10 }), a);
+  assert.equal(tileAt(tiles, { x: 10, y: 400 + COLLAGE_CAPTION / 2 }), a, 'the caption belongs to its tile');
   assert.equal(tileAt(tiles, { x: -500, y: -500 }), null);
   assert.equal(neighbourTile(tiles, a, { x: 1, y: 0 }), b);
   assert.equal(neighbourTile(tiles, a, { x: -1, y: 0 }), null);
-  const below = neighbourTile(tiles, a, { x: 0, y: 1 });
-  assert.ok(below && below.y > a.y + a.h);
+  assert.equal(neighbourTile(tiles, a, { x: 0, y: 1 }), c, 'straight in line beats diagonal');
+  assert.equal(neighbourTile(tiles, c, { x: 1, y: 0 }), d);
 });
 
 test('a fitted view contains the rectangle at the pane aspect', () => {

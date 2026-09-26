@@ -14,6 +14,7 @@
 import { loadDocument } from '../core/document.js';
 import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
+import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { COLLAGE_CAPTION, COLLAGE_GAP, LARGE_PX, SMALL_PX, layoutCollage, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting } from './collage-layout.js';
 import { cacheGet, cachePut, renderingKey, trimCache } from './collage-cache.js';
@@ -98,6 +99,28 @@ function fitAllView() {
 
 // ----- the drawings -------------------------------------------------------------
 
+const cellFloor = (value) => Math.floor(value / GRID) * GRID;
+const cellCeil = (value) => Math.ceil(value / GRID) * GRID;
+
+/** Pack the designs by the whole grid cells they cover, then shift each
+ *  drawing by whole cells into its slot: its grid lines continue the desk's.
+ *  A tile is the drawing's rectangle on the desk. */
+function placeDrawings(entries) {
+  const cells = new Map(entries.map((entry) => {
+    const x = cellFloor(entry.box.x);
+    const y = cellFloor(entry.box.y);
+    return [entry.id, { x, y, w: cellCeil(entry.box.x + entry.box.w) - x, h: cellCeil(entry.box.y + entry.box.h) - y }];
+  }));
+  const boxes = new Map(entries.map((entry) => [entry.id, entry.box]));
+  const layout = layoutCollage(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })));
+  const tiles = layout.tiles.map((slot) => {
+    const box = boxes.get(slot.id);
+    const cell = cells.get(slot.id);
+    return { id: slot.id, x: box.x + slot.x - cell.x, y: box.y + slot.y - cell.y, w: box.w, h: box.h };
+  });
+  return { tiles, bounds: layout.bounds };
+}
+
 function viewBoxOf(svg) {
   const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
   if (!match) return null;
@@ -105,15 +128,17 @@ function viewBoxOf(svg) {
   return { x, y, w, h };
 }
 
+/** The design on transparent ground: the desk is the paper, one sheet for
+ *  the whole workspace. */
 function drawingSvg(circuit) {
-  return svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, emptyHint: false });
+  return svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
 }
 
 /** The design as it stands: the open one from the editor, unsaved edits and
  *  all; the others from their files, through the cache. */
 async function drawingFor(documentInfo, current) {
   if (current) return { svg: drawingSvg(editor.circuit), revision: null };
-  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg');
+  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v2');
   const cached = key && await cacheGet(key);
   if (cached) return { svg: cached, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
@@ -146,7 +171,7 @@ async function loadWorkspace(generation) {
       await new Promise((resolve) => setTimeout(resolve));
     }
   }
-  const { tiles, bounds } = layoutCollage(entries.map((entry) => ({ id: entry.id, w: entry.box.w, h: entry.box.h })));
+  const { tiles, bounds } = placeDrawings(entries);
   // The open design stayed on screen while the rest loaded: move the view
   // with it to its place in the layout, so it does not jump.
   const provisional = state.tiles[0];
@@ -189,7 +214,7 @@ async function rasterize(entry, level) {
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}`);
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v2`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob);
   const canvas = await rasterize(entry, level);
@@ -249,9 +274,9 @@ function colors() {
   const style = getComputedStyle(rootEl);
   const read = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
   return {
-    desk: read('--collage-desk', '#e8ebf0'),
     paper: read('--paper', '#fff'),
-    edge: read('--border', '#d3dae4'),
+    grid: read('--grid', '#e9e9e9'),
+    faint: read('--svg-faint', '#7a7d85'),
     text: read('--text', '#17181c'),
     dim: read('--text-dim', '#5a6372'),
     accent: read('--accent', '#1a56db'),
@@ -275,45 +300,102 @@ function draw() {
   }
   const palette = state.colors;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = palette.desk;
+  ctx.fillStyle = palette.paper;
   ctx.fillRect(0, 0, w, h);
+  drawGrid(ctx, palette, w, h);
 
   const screen = { x: state.view.x, y: state.view.y, w: state.view.w, h: state.view.h };
   const visible = state.tiles.filter((tile) => rectsIntersect(screen, { ...tile, h: tile.h + COLLAGE_CAPTION }));
   const wanted = [];
-  const vector = [];
   const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
-  for (const tile of visible) {
-    const entry = state.entries.get(tile.id);
+  const placed = visible.map((tile) => {
     const rect = worldToScreen(tile);
-    const detail = tileDetail(Math.max(rect.w, rect.h) * dpr);
-    ctx.fillStyle = palette.paper;
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    if (detail !== 'sheet') {
-      const level = detail === 'small' ? 'small' : 'large';
-      const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
-        state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
-      if (bitmap) {
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
-      }
-      const distance = Math.hypot(tile.x + tile.w / 2 - centre.x, tile.y + tile.h / 2 - centre.y);
-      for (const need of level === 'large' ? ['small', 'large'] : ['small']) {
-        const key = bitmapKey(entry, need);
-        if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
-      }
-      if (detail === 'vector') vector.push({ tile, rect, area: rect.w * rect.h });
+    return { tile, rect, detail: tileDetail(Math.max(rect.w, rect.h) * dpr) };
+  });
+  // The tiles that fill the screen are drawn live; their images would only
+  // blur the vector lines through the transparent paper.
+  const vector = placed.filter((item) => item.detail === 'vector')
+    .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
+    .slice(0, MAX_VECTOR_TILES);
+  const live = new Set(vector.map((item) => item.tile.id));
+  for (const { tile, rect, detail } of placed) {
+    const entry = state.entries.get(tile.id);
+    const level = detail === 'small' ? 'small' : 'large';
+    const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
+      state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
+    if (bitmap && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
     }
-    ctx.strokeStyle = palette.edge;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+    const distance = Math.hypot(tile.x + tile.w / 2 - centre.x, tile.y + tile.h / 2 - centre.y);
+    for (const need of level === 'large' ? ['small', 'large'] : ['small']) {
+      const key = bitmapKey(entry, need);
+      if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
+    }
     drawCaption(ctx, tile, entry, rect, palette);
   }
+  drawZoomBox(ctx, palette);
   // Every small image first (the whole desk becomes recognizable), then large.
   wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
   state.wanted = wanted;
   void pump();
-  syncVectorOverlays(vector.sort((a, b) => b.area - a.area).slice(0, MAX_VECTOR_TILES));
+  syncVectorOverlays(vector);
+}
+
+/** The editor's grid: one-unit lines every cell, fading out as the cells
+ *  shrink to a few pixels instead of turning into a grey wash. */
+function drawGrid(ctx, palette, w, h) {
+  if (!editor.showGrid) return;
+  const k = scale();
+  const spacing = GRID * k;
+  const alpha = Math.min(1, (spacing - 3) / 6);
+  if (alpha <= 0) return;
+  const { x, y } = state.view;
+  // Whole device pixels: a line straddling two pixels would antialias into
+  // a fainter, wider one, and the grid would shimmer unevenly.
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(k * dpr));
+  const offset = width % 2 ? 0.5 : 0;
+  const crisp = (value) => (Math.round(value * dpr) + offset) / dpr;
+  ctx.save();
+  // A line thinner than a pixel shows as a fainter one-pixel line, as the
+  // editor's one-unit grid does.
+  ctx.globalAlpha = alpha * Math.min(1, (k * dpr) / width);
+  ctx.strokeStyle = palette.grid;
+  ctx.lineWidth = width / dpr;
+  ctx.beginPath();
+  for (let gx = Math.ceil(x / GRID) * GRID; (gx - x) * k <= w; gx += GRID) {
+    const sx = crisp((gx - x) * k);
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx, h);
+  }
+  for (let gy = Math.ceil(y / GRID) * GRID; (gy - y) * k <= h; gy += GRID) {
+    const sy = crisp((gy - y) * k);
+    ctx.moveTo(0, sy);
+    ctx.lineTo(w, sy);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Right-drag: the editor's dashed zoom box. */
+function drawZoomBox(ctx, palette) {
+  const box = state.drag?.zoomBox;
+  if (!box?.to) return;
+  const x = Math.min(box.from.x, box.to.x);
+  const y = Math.min(box.from.y, box.to.y);
+  const w = Math.abs(box.to.x - box.from.x);
+  const h = Math.abs(box.to.y - box.from.y);
+  ctx.save();
+  ctx.fillStyle = palette.faint;
+  ctx.globalAlpha = 0.12;
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = palette.faint;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([5, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
 }
 
 function drawCaption(ctx, tile, entry, rect, palette) {
@@ -322,7 +404,7 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   if (selected || hovered) {
     ctx.strokeStyle = palette.accent;
     ctx.lineWidth = selected ? 2 : 1;
-    ctx.strokeRect(rect.x - 3, rect.y - 3, rect.w + 6, rect.h + 6);
+    ctx.strokeRect(rect.x - 6, rect.y - 6, rect.w + 12, rect.h + 12);
   }
   // The caption may run on into the gap after its tile; its size follows
   // the caption band, so zoomed far out it gives way instead of crowding.
@@ -371,6 +453,11 @@ function syncVectorOverlays(list) {
       svg?.removeAttribute('height');
       overlayEl.appendChild(el);
       state.overlays.set(tile.id, el);
+      // Until the SVG has painted once, its image stands in for it.
+      requestAnimationFrame(() => {
+        el.dataset.ready = '1';
+        requestDraw();
+      });
     }
     el.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
     el.style.width = `${rect.w}px`;
@@ -453,7 +540,7 @@ function focusTile(tile, { zoom = false } = {}) {
 
 // ----- entering and leaving ---------------------------------------------------------
 
-/** Shift+Esc: step back from the drawing to the whole workspace. */
+/** Shift+Backspace: step back from the drawing to the whole workspace. */
 export async function openCollage() {
   if (state || !rootEl) return;
   const generation = (openCollage.generation = (openCollage.generation || 0) + 1);
@@ -575,7 +662,7 @@ export function onCollageKey(ev) {
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
-  if (key === 'Escape') void closeCollage();
+  if (key === 'Escape' || key === 'Backspace') void closeCollage();
   else if (key === 'Enter' && selected) void openTile(selected);
   else if (arrows[key]) {
     const next = selected ? neighbourTile(state.tiles, selected, arrows[key]) : state.tiles[0];
@@ -608,7 +695,16 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || (ev.button !== 0 && ev.button !== 1)) return;
+  if (!state || ev.target.closest?.('.collage-head')) return;
+  if (ev.button === 2) {
+    ev.preventDefault();
+    stopAnimation();
+    rootEl.setPointerCapture?.(ev.pointerId);
+    const box = rootEl.getBoundingClientRect();
+    state.drag = { zoomBox: { from: { x: ev.clientX - box.left, y: ev.clientY - box.top }, to: null } };
+    return;
+  }
+  if (ev.button !== 0 && ev.button !== 1) return;
   ev.preventDefault();
   stopAnimation();
   rootEl.setPointerCapture?.(ev.pointerId);
@@ -626,6 +722,14 @@ function onPointerMove(ev) {
   if (!state) return;
   state.pointers?.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   const drag = state.drag;
+  if (drag?.zoomBox) {
+    const box = rootEl.getBoundingClientRect();
+    const to = { x: ev.clientX - box.left, y: ev.clientY - box.top };
+    const { from } = drag.zoomBox;
+    drag.zoomBox.to = Math.hypot(to.x - from.x, to.y - from.y) >= 4 ? to : null;
+    requestDraw();
+    return;
+  }
   if (!drag) {
     const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
     const hover = hit?.id || null;
@@ -660,8 +764,25 @@ function onPointerMove(ev) {
 
 function onPointerUp(ev) {
   if (!state) return;
-  state.pointers?.delete(ev.pointerId);
   const drag = state.drag;
+  if (drag?.zoomBox) {
+    state.drag = null;
+    const { from, to } = drag.zoomBox;
+    if (!to) {
+      requestDraw();
+      return;
+    }
+    // Zoom to the box, as the editor does, keeping the pane's shape.
+    const k = scale();
+    const rect = {
+      x: state.view.x + Math.min(from.x, to.x) / k, y: state.view.y + Math.min(from.y, to.y) / k,
+      w: Math.abs(to.x - from.x) / k, h: Math.abs(to.y - from.y) / k,
+    };
+    const pane = paneSize();
+    void animateView(clampView(viewFitting(rect, pane.w, pane.h, 0.02)));
+    return;
+  }
+  state.pointers?.delete(ev.pointerId);
   if (state.pointers?.size) {
     // One finger of a pinch lifted: carry on panning with the other.
     const [rest] = state.pointers.values();
@@ -690,6 +811,7 @@ export function installCollage() {
   rootEl.addEventListener('pointerup', onPointerUp);
   rootEl.addEventListener('pointercancel', onPointerUp);
   rootEl.addEventListener('dblclick', onDoubleClick);
+  rootEl.addEventListener('contextmenu', (ev) => ev.preventDefault());
   rootEl.addEventListener('pointerleave', () => {
     if (state && state.hover) {
       state.hover = null;

@@ -35,7 +35,6 @@
   --align: #c026d3;
   --ink: #111111;
   --paper: #ffffff;
-  --collage-desk: #e3e7ee;
   --svg-ink: #111111;
   --svg-mid: #292929;
   --svg-faint: #666666;
@@ -3083,7 +3082,6 @@ html.dark {
   --ok: #4ade80;
   --align: #e879f9;
   --paper: #15171c;
-  --collage-desk: #0b0c10;
   --svg-ink: #dde1e8;
   --svg-mid: #dde1e8;
   --svg-faint: #9aa3b2;
@@ -4397,7 +4395,7 @@ button.off {
   z-index: 90;
   inset: 0;
   overflow: hidden;
-  background: var(--collage-desk);
+  background: var(--paper);
   outline: none;
   touch-action: none;
   animation: collage-in 180ms ease-out;

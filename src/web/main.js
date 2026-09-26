@@ -7080,8 +7080,11 @@ window.addEventListener('keydown', (ev) => {
     onCollageKey(ev);
     return;
   }
-  // Shift+Esc steps back from the drawing to the whole workspace.
-  if (ev.key === 'Escape' && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !inlineInput) {
+  // Shift+Backspace steps back from the drawing to the whole workspace.
+  // (Shift+Esc too, where the browser lets it through: Chromium keeps it
+  // for its task manager.)
+  if ((ev.key === 'Backspace' || ev.key === 'Escape') && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey &&
+      !inlineInput && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)) {
     ev.preventDefault();
     openCollage();
     return;

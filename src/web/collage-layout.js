@@ -3,68 +3,77 @@
  *
  * Every design keeps its real size: one world unit is one drawing unit, so a
  * small cell sits beside a large system at their true proportions and a zoom
- * level means what it does in the editor. Tiles go in rows by name, left to
- * right, bottom-aligned like books on a shelf so their captions share a line.
- * The row width is fixed by the whole set, so the layout is the same on every
- * visit while the set of designs is.
+ * level means what it does in the editor. The designs are packed into one
+ * loose ball -- the largest in the middle, each next one in the free spot
+ * nearest the centre -- so the desk reads as one crowded sheet rather than a
+ * grid of cards. Slots are whole grid cells, so every design's own grid lines
+ * continue the desk's. The same designs always pack the same way.
  */
 
 import { GRID } from '../core/grid.js';
 
-/** Space between neighbouring tiles, and below a row for its captions. */
-export const COLLAGE_GAP = 6 * GRID;
-export const COLLAGE_CAPTION = 3 * GRID;
+/** Space between neighbouring designs, and below each for its caption. */
+export const COLLAGE_GAP = 2 * GRID;
+export const COLLAGE_CAPTION = 2 * GRID;
 
-const snapUp = (value) => Math.ceil(value / GRID) * GRID;
+const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
- * Lay out `items` ({ id, w, h } in drawing units, in display order). Tiles
- * keep their exact size; their slots are whole grid cells. Of the row widths
- * that could work, the one whose whole layout best fills an `aspect`-shaped
- * screen wins, so one tall design does not leave the rest in a narrow column.
- * Returns { tiles: [{ id, x, y, w, h }], bounds }.
+ * Pack `items` ({ id, w, h } in drawing units, whole grid cells) around the
+ * origin. `aspect` stretches the ball to a screen's shape. Each slot also
+ * holds a caption band below its design. Returns { tiles: [{ id, x, y, w, h }]
+ * (the designs' rectangles, captions excluded), bounds }.
  */
 export function layoutCollage(items, { aspect = 1.6, gap = COLLAGE_GAP, caption = COLLAGE_CAPTION } = {}) {
   if (!items.length) return { tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 } };
-  const widest = Math.max(...items.map((item) => snapUp(item.w)));
-  const total = items.reduce((sum, item) => sum + snapUp(item.w) + gap, 0);
-  let best = null;
-  const steps = 32;
-  for (let step = 0; step <= steps; step++) {
-    const rowWidth = widest * (total / widest) ** (step / steps);
-    const layout = rowsOf(items, rowWidth, gap, caption);
-    const fill = Math.min(aspect / layout.bounds.w, 1 / (layout.bounds.h + caption));
-    if (!best || fill > best.fill * (1 + 1e-9)) best = { fill, layout };
-  }
-  return best.layout;
-}
-
-function rowsOf(items, rowWidth, gap, caption) {
-  const rows = [];
-  let row = null;
-  for (const item of items) {
-    const slot = snapUp(item.w);
-    if (!row || (row.items.length && row.width + gap + slot > rowWidth)) {
-      row = { items: [], width: 0, height: 0 };
-      rows.push(row);
+  const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const stretch = Math.sqrt(aspect);
+  const placed = []; // slots: design plus caption band
+  const cost = (x, y, w, h) => ((x + w / 2) / stretch) ** 2 + ((y + h / 2) * stretch) ** 2;
+  const free = (x, y, w, h) => placed.every((p) =>
+    x >= p.x + p.w + gap || p.x >= x + w + gap || y >= p.y + p.h + gap || p.y >= y + h + gap);
+  for (const item of order) {
+    const w = item.w;
+    const h = item.h + caption;
+    if (!placed.length) {
+      placed.push({ id: item.id, x: snap(-w / 2), y: snap(-h / 2), w, h });
+      continue;
     }
-    row.width += (row.items.length ? gap : 0) + slot;
-    row.height = Math.max(row.height, snapUp(item.h));
-    row.items.push({ ...item, slot });
-  }
-  const tiles = [];
-  let y = 0;
-  let right = 0;
-  for (const { items: rowItems, height, width } of rows) {
-    let x = 0;
-    for (const item of rowItems) {
-      tiles.push({ id: item.id, x, y: y + height - item.h, w: item.w, h: item.h });
-      x += item.slot + gap;
+    // Spots touching a placed slot on one side, lined up with an edge of a
+    // slot nearby (or centred on the one it touches).
+    const candidates = [];
+    for (const p of placed) {
+      const near = placed.filter((q) => q.x < p.x + p.w + 2 * gap + w && p.x < q.x + q.w + 2 * gap + w &&
+        q.y < p.y + p.h + 2 * gap + h && p.y < q.y + q.h + 2 * gap + h);
+      const ys = new Set([snap(p.y + p.h / 2 - h / 2)]);
+      const xs = new Set([snap(p.x + p.w / 2 - w / 2)]);
+      for (const q of near) {
+        for (const y of [q.y, q.y + q.h - h, q.y + q.h + gap, q.y - gap - h]) ys.add(y);
+        for (const x of [q.x, q.x + q.w - w, q.x + q.w + gap, q.x - gap - w]) xs.add(x);
+      }
+      for (const y of ys) {
+        if (y + h + gap < p.y || y > p.y + p.h + gap) continue;
+        for (const x of [p.x + p.w + gap, p.x - gap - w]) candidates.push([cost(x, y, w, h), x, y]);
+      }
+      for (const x of xs) {
+        if (x + w + gap < p.x || x > p.x + p.w + gap) continue;
+        for (const y of [p.y + p.h + gap, p.y - gap - h]) candidates.push([cost(x, y, w, h), x, y]);
+      }
     }
-    right = Math.max(right, width);
-    y += height + caption + gap;
+    candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    const spot = candidates.find(([, x, y]) => free(x, y, w, h));
+    placed.push({ id: item.id, x: spot[1], y: spot[2], w, h });
   }
-  return { tiles, bounds: { x: 0, y: 0, w: right, h: y - gap - caption } };
+  const byId = new Map(placed.map((slot) => [slot.id, slot]));
+  const tiles = items.map(({ id, h }) => {
+    const slot = byId.get(id);
+    return { id, x: slot.x, y: slot.y, w: slot.w, h };
+  });
+  const x0 = Math.min(...placed.map((slot) => slot.x));
+  const y0 = Math.min(...placed.map((slot) => slot.y));
+  const x1 = Math.max(...placed.map((slot) => slot.x + slot.w));
+  const y1 = Math.max(...placed.map((slot) => slot.y + slot.h));
+  return { tiles, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
 }
 
 /** Longest side, in device pixels, of the two baked renderings. */
@@ -72,12 +81,11 @@ export const SMALL_PX = 256;
 export const LARGE_PX = 1280;
 
 /**
- * How to draw a tile whose longest side covers `px` device pixels: a plain
- * sheet while it is a speck, then the small or large rendering, and live
- * vector drawing once even the large one would be blurred.
+ * How to draw a tile whose longest side covers `px` device pixels: the
+ * small or large rendering, and live vector drawing once even the large one
+ * would be blurred.
  */
 export function tileDetail(px) {
-  if (px < 24) return 'sheet';
   if (px <= SMALL_PX * 1.25) return 'small';
   if (px <= LARGE_PX * 1.25) return 'large';
   return 'vector';

@@ -27953,68 +27953,77 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
  *
  * Every design keeps its real size: one world unit is one drawing unit, so a
  * small cell sits beside a large system at their true proportions and a zoom
- * level means what it does in the editor. Tiles go in rows by name, left to
- * right, bottom-aligned like books on a shelf so their captions share a line.
- * The row width is fixed by the whole set, so the layout is the same on every
- * visit while the set of designs is.
+ * level means what it does in the editor. The designs are packed into one
+ * loose ball -- the largest in the middle, each next one in the free spot
+ * nearest the centre -- so the desk reads as one crowded sheet rather than a
+ * grid of cards. Slots are whole grid cells, so every design's own grid lines
+ * continue the desk's. The same designs always pack the same way.
  */
 
 
 
-/** Space between neighbouring tiles, and below a row for its captions. */
-const COLLAGE_GAP = 6 * GRID;
-const COLLAGE_CAPTION = 3 * GRID;
+/** Space between neighbouring designs, and below each for its caption. */
+const COLLAGE_GAP = 2 * GRID;
+const COLLAGE_CAPTION = 2 * GRID;
 
-const snapUp = (value) => Math.ceil(value / GRID) * GRID;
+const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
- * Lay out `items` ({ id, w, h } in drawing units, in display order). Tiles
- * keep their exact size; their slots are whole grid cells. Of the row widths
- * that could work, the one whose whole layout best fills an `aspect`-shaped
- * screen wins, so one tall design does not leave the rest in a narrow column.
- * Returns { tiles: [{ id, x, y, w, h }], bounds }.
+ * Pack `items` ({ id, w, h } in drawing units, whole grid cells) around the
+ * origin. `aspect` stretches the ball to a screen's shape. Each slot also
+ * holds a caption band below its design. Returns { tiles: [{ id, x, y, w, h }]
+ * (the designs' rectangles, captions excluded), bounds }.
  */
 function layoutCollage(items, { aspect = 1.6, gap = COLLAGE_GAP, caption = COLLAGE_CAPTION } = {}) {
   if (!items.length) return { tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 } };
-  const widest = Math.max(...items.map((item) => snapUp(item.w)));
-  const total = items.reduce((sum, item) => sum + snapUp(item.w) + gap, 0);
-  let best = null;
-  const steps = 32;
-  for (let step = 0; step <= steps; step++) {
-    const rowWidth = widest * (total / widest) ** (step / steps);
-    const layout = rowsOf(items, rowWidth, gap, caption);
-    const fill = Math.min(aspect / layout.bounds.w, 1 / (layout.bounds.h + caption));
-    if (!best || fill > best.fill * (1 + 1e-9)) best = { fill, layout };
-  }
-  return best.layout;
-}
-
-function rowsOf(items, rowWidth, gap, caption) {
-  const rows = [];
-  let row = null;
-  for (const item of items) {
-    const slot = snapUp(item.w);
-    if (!row || (row.items.length && row.width + gap + slot > rowWidth)) {
-      row = { items: [], width: 0, height: 0 };
-      rows.push(row);
+  const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const stretch = Math.sqrt(aspect);
+  const placed = []; // slots: design plus caption band
+  const cost = (x, y, w, h) => ((x + w / 2) / stretch) ** 2 + ((y + h / 2) * stretch) ** 2;
+  const free = (x, y, w, h) => placed.every((p) =>
+    x >= p.x + p.w + gap || p.x >= x + w + gap || y >= p.y + p.h + gap || p.y >= y + h + gap);
+  for (const item of order) {
+    const w = item.w;
+    const h = item.h + caption;
+    if (!placed.length) {
+      placed.push({ id: item.id, x: snap(-w / 2), y: snap(-h / 2), w, h });
+      continue;
     }
-    row.width += (row.items.length ? gap : 0) + slot;
-    row.height = Math.max(row.height, snapUp(item.h));
-    row.items.push({ ...item, slot });
-  }
-  const tiles = [];
-  let y = 0;
-  let right = 0;
-  for (const { items: rowItems, height, width } of rows) {
-    let x = 0;
-    for (const item of rowItems) {
-      tiles.push({ id: item.id, x, y: y + height - item.h, w: item.w, h: item.h });
-      x += item.slot + gap;
+    // Spots touching a placed slot on one side, lined up with an edge of a
+    // slot nearby (or centred on the one it touches).
+    const candidates = [];
+    for (const p of placed) {
+      const near = placed.filter((q) => q.x < p.x + p.w + 2 * gap + w && p.x < q.x + q.w + 2 * gap + w &&
+        q.y < p.y + p.h + 2 * gap + h && p.y < q.y + q.h + 2 * gap + h);
+      const ys = new Set([snap(p.y + p.h / 2 - h / 2)]);
+      const xs = new Set([snap(p.x + p.w / 2 - w / 2)]);
+      for (const q of near) {
+        for (const y of [q.y, q.y + q.h - h, q.y + q.h + gap, q.y - gap - h]) ys.add(y);
+        for (const x of [q.x, q.x + q.w - w, q.x + q.w + gap, q.x - gap - w]) xs.add(x);
+      }
+      for (const y of ys) {
+        if (y + h + gap < p.y || y > p.y + p.h + gap) continue;
+        for (const x of [p.x + p.w + gap, p.x - gap - w]) candidates.push([cost(x, y, w, h), x, y]);
+      }
+      for (const x of xs) {
+        if (x + w + gap < p.x || x > p.x + p.w + gap) continue;
+        for (const y of [p.y + p.h + gap, p.y - gap - h]) candidates.push([cost(x, y, w, h), x, y]);
+      }
     }
-    right = Math.max(right, width);
-    y += height + caption + gap;
+    candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    const spot = candidates.find(([, x, y]) => free(x, y, w, h));
+    placed.push({ id: item.id, x: spot[1], y: spot[2], w, h });
   }
-  return { tiles, bounds: { x: 0, y: 0, w: right, h: y - gap - caption } };
+  const byId = new Map(placed.map((slot) => [slot.id, slot]));
+  const tiles = items.map(({ id, h }) => {
+    const slot = byId.get(id);
+    return { id, x: slot.x, y: slot.y, w: slot.w, h };
+  });
+  const x0 = Math.min(...placed.map((slot) => slot.x));
+  const y0 = Math.min(...placed.map((slot) => slot.y));
+  const x1 = Math.max(...placed.map((slot) => slot.x + slot.w));
+  const y1 = Math.max(...placed.map((slot) => slot.y + slot.h));
+  return { tiles, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
 }
 
 /** Longest side, in device pixels, of the two baked renderings. */
@@ -28022,12 +28031,11 @@ const SMALL_PX = 256;
 const LARGE_PX = 1280;
 
 /**
- * How to draw a tile whose longest side covers `px` device pixels: a plain
- * sheet while it is a speck, then the small or large rendering, and live
- * vector drawing once even the large one would be blurred.
+ * How to draw a tile whose longest side covers `px` device pixels: the
+ * small or large rendering, and live vector drawing once even the large one
+ * would be blurred.
  */
 function tileDetail(px) {
-  if (px < 24) return 'sheet';
   if (px <= SMALL_PX * 1.25) return 'small';
   if (px <= LARGE_PX * 1.25) return 'large';
   return 'vector';
@@ -28092,6 +28100,7 @@ __exports.installCollage = installCollage;
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let COLLAGE_CAPTION, COLLAGE_GAP, LARGE_PX, SMALL_PX, layoutCollage, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting; __bind(() => { ({ COLLAGE_CAPTION, COLLAGE_GAP, LARGE_PX, SMALL_PX, layoutCollage, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting } = __require("src/web/collage-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/collage-cache.js")); });
@@ -28113,6 +28122,7 @@ let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); 
  * leaving zoom between the editor's view and the design's tile, which works
  * because a tile is the drawing at its real size.
  */
+
 
 
 
@@ -28201,6 +28211,28 @@ function fitAllView() {
 
 // ----- the drawings -------------------------------------------------------------
 
+const cellFloor = (value) => Math.floor(value / GRID) * GRID;
+const cellCeil = (value) => Math.ceil(value / GRID) * GRID;
+
+/** Pack the designs by the whole grid cells they cover, then shift each
+ *  drawing by whole cells into its slot: its grid lines continue the desk's.
+ *  A tile is the drawing's rectangle on the desk. */
+function placeDrawings(entries) {
+  const cells = new Map(entries.map((entry) => {
+    const x = cellFloor(entry.box.x);
+    const y = cellFloor(entry.box.y);
+    return [entry.id, { x, y, w: cellCeil(entry.box.x + entry.box.w) - x, h: cellCeil(entry.box.y + entry.box.h) - y }];
+  }));
+  const boxes = new Map(entries.map((entry) => [entry.id, entry.box]));
+  const layout = layoutCollage(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })));
+  const tiles = layout.tiles.map((slot) => {
+    const box = boxes.get(slot.id);
+    const cell = cells.get(slot.id);
+    return { id: slot.id, x: box.x + slot.x - cell.x, y: box.y + slot.y - cell.y, w: box.w, h: box.h };
+  });
+  return { tiles, bounds: layout.bounds };
+}
+
 function viewBoxOf(svg) {
   const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
   if (!match) return null;
@@ -28208,15 +28240,17 @@ function viewBoxOf(svg) {
   return { x, y, w, h };
 }
 
+/** The design on transparent ground: the desk is the paper, one sheet for
+ *  the whole workspace. */
 function drawingSvg(circuit) {
-  return svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, emptyHint: false });
+  return svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
 }
 
 /** The design as it stands: the open one from the editor, unsaved edits and
  *  all; the others from their files, through the cache. */
 async function drawingFor(documentInfo, current) {
   if (current) return { svg: drawingSvg(editor.circuit), revision: null };
-  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg');
+  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v2');
   const cached = key && await cacheGet(key);
   if (cached) return { svg: cached, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
@@ -28249,7 +28283,7 @@ async function loadWorkspace(generation) {
       await new Promise((resolve) => setTimeout(resolve));
     }
   }
-  const { tiles, bounds } = layoutCollage(entries.map((entry) => ({ id: entry.id, w: entry.box.w, h: entry.box.h })));
+  const { tiles, bounds } = placeDrawings(entries);
   // The open design stayed on screen while the rest loaded: move the view
   // with it to its place in the layout, so it does not jump.
   const provisional = state.tiles[0];
@@ -28292,7 +28326,7 @@ async function rasterize(entry, level) {
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}`);
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v2`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob);
   const canvas = await rasterize(entry, level);
@@ -28352,9 +28386,9 @@ function colors() {
   const style = getComputedStyle(rootEl);
   const read = (name, fallback) => style.getPropertyValue(name).trim() || fallback;
   return {
-    desk: read('--collage-desk', '#e8ebf0'),
     paper: read('--paper', '#fff'),
-    edge: read('--border', '#d3dae4'),
+    grid: read('--grid', '#e9e9e9'),
+    faint: read('--svg-faint', '#7a7d85'),
     text: read('--text', '#17181c'),
     dim: read('--text-dim', '#5a6372'),
     accent: read('--accent', '#1a56db'),
@@ -28378,45 +28412,102 @@ function draw() {
   }
   const palette = state.colors;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = palette.desk;
+  ctx.fillStyle = palette.paper;
   ctx.fillRect(0, 0, w, h);
+  drawGrid(ctx, palette, w, h);
 
   const screen = { x: state.view.x, y: state.view.y, w: state.view.w, h: state.view.h };
   const visible = state.tiles.filter((tile) => rectsIntersect(screen, { ...tile, h: tile.h + COLLAGE_CAPTION }));
   const wanted = [];
-  const vector = [];
   const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
-  for (const tile of visible) {
-    const entry = state.entries.get(tile.id);
+  const placed = visible.map((tile) => {
     const rect = worldToScreen(tile);
-    const detail = tileDetail(Math.max(rect.w, rect.h) * dpr);
-    ctx.fillStyle = palette.paper;
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    if (detail !== 'sheet') {
-      const level = detail === 'small' ? 'small' : 'large';
-      const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
-        state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
-      if (bitmap) {
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
-      }
-      const distance = Math.hypot(tile.x + tile.w / 2 - centre.x, tile.y + tile.h / 2 - centre.y);
-      for (const need of level === 'large' ? ['small', 'large'] : ['small']) {
-        const key = bitmapKey(entry, need);
-        if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
-      }
-      if (detail === 'vector') vector.push({ tile, rect, area: rect.w * rect.h });
+    return { tile, rect, detail: tileDetail(Math.max(rect.w, rect.h) * dpr) };
+  });
+  // The tiles that fill the screen are drawn live; their images would only
+  // blur the vector lines through the transparent paper.
+  const vector = placed.filter((item) => item.detail === 'vector')
+    .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
+    .slice(0, MAX_VECTOR_TILES);
+  const live = new Set(vector.map((item) => item.tile.id));
+  for (const { tile, rect, detail } of placed) {
+    const entry = state.entries.get(tile.id);
+    const level = detail === 'small' ? 'small' : 'large';
+    const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
+      state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
+    if (bitmap && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
     }
-    ctx.strokeStyle = palette.edge;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+    const distance = Math.hypot(tile.x + tile.w / 2 - centre.x, tile.y + tile.h / 2 - centre.y);
+    for (const need of level === 'large' ? ['small', 'large'] : ['small']) {
+      const key = bitmapKey(entry, need);
+      if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
+    }
     drawCaption(ctx, tile, entry, rect, palette);
   }
+  drawZoomBox(ctx, palette);
   // Every small image first (the whole desk becomes recognizable), then large.
   wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
   state.wanted = wanted;
   void pump();
-  syncVectorOverlays(vector.sort((a, b) => b.area - a.area).slice(0, MAX_VECTOR_TILES));
+  syncVectorOverlays(vector);
+}
+
+/** The editor's grid: one-unit lines every cell, fading out as the cells
+ *  shrink to a few pixels instead of turning into a grey wash. */
+function drawGrid(ctx, palette, w, h) {
+  if (!editor.showGrid) return;
+  const k = scale();
+  const spacing = GRID * k;
+  const alpha = Math.min(1, (spacing - 3) / 6);
+  if (alpha <= 0) return;
+  const { x, y } = state.view;
+  // Whole device pixels: a line straddling two pixels would antialias into
+  // a fainter, wider one, and the grid would shimmer unevenly.
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(k * dpr));
+  const offset = width % 2 ? 0.5 : 0;
+  const crisp = (value) => (Math.round(value * dpr) + offset) / dpr;
+  ctx.save();
+  // A line thinner than a pixel shows as a fainter one-pixel line, as the
+  // editor's one-unit grid does.
+  ctx.globalAlpha = alpha * Math.min(1, (k * dpr) / width);
+  ctx.strokeStyle = palette.grid;
+  ctx.lineWidth = width / dpr;
+  ctx.beginPath();
+  for (let gx = Math.ceil(x / GRID) * GRID; (gx - x) * k <= w; gx += GRID) {
+    const sx = crisp((gx - x) * k);
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx, h);
+  }
+  for (let gy = Math.ceil(y / GRID) * GRID; (gy - y) * k <= h; gy += GRID) {
+    const sy = crisp((gy - y) * k);
+    ctx.moveTo(0, sy);
+    ctx.lineTo(w, sy);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Right-drag: the editor's dashed zoom box. */
+function drawZoomBox(ctx, palette) {
+  const box = state.drag?.zoomBox;
+  if (!box?.to) return;
+  const x = Math.min(box.from.x, box.to.x);
+  const y = Math.min(box.from.y, box.to.y);
+  const w = Math.abs(box.to.x - box.from.x);
+  const h = Math.abs(box.to.y - box.from.y);
+  ctx.save();
+  ctx.fillStyle = palette.faint;
+  ctx.globalAlpha = 0.12;
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = palette.faint;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([5, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
 }
 
 function drawCaption(ctx, tile, entry, rect, palette) {
@@ -28425,7 +28516,7 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   if (selected || hovered) {
     ctx.strokeStyle = palette.accent;
     ctx.lineWidth = selected ? 2 : 1;
-    ctx.strokeRect(rect.x - 3, rect.y - 3, rect.w + 6, rect.h + 6);
+    ctx.strokeRect(rect.x - 6, rect.y - 6, rect.w + 12, rect.h + 12);
   }
   // The caption may run on into the gap after its tile; its size follows
   // the caption band, so zoomed far out it gives way instead of crowding.
@@ -28474,6 +28565,11 @@ function syncVectorOverlays(list) {
       svg?.removeAttribute('height');
       overlayEl.appendChild(el);
       state.overlays.set(tile.id, el);
+      // Until the SVG has painted once, its image stands in for it.
+      requestAnimationFrame(() => {
+        el.dataset.ready = '1';
+        requestDraw();
+      });
     }
     el.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
     el.style.width = `${rect.w}px`;
@@ -28556,7 +28652,7 @@ function focusTile(tile, { zoom = false } = {}) {
 
 // ----- entering and leaving ---------------------------------------------------------
 
-/** Shift+Esc: step back from the drawing to the whole workspace. */
+/** Shift+Backspace: step back from the drawing to the whole workspace. */
 async function openCollage() {
   if (state || !rootEl) return;
   const generation = (openCollage.generation = (openCollage.generation || 0) + 1);
@@ -28678,7 +28774,7 @@ function onCollageKey(ev) {
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
-  if (key === 'Escape') void closeCollage();
+  if (key === 'Escape' || key === 'Backspace') void closeCollage();
   else if (key === 'Enter' && selected) void openTile(selected);
   else if (arrows[key]) {
     const next = selected ? neighbourTile(state.tiles, selected, arrows[key]) : state.tiles[0];
@@ -28711,7 +28807,16 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || (ev.button !== 0 && ev.button !== 1)) return;
+  if (!state || ev.target.closest?.('.collage-head')) return;
+  if (ev.button === 2) {
+    ev.preventDefault();
+    stopAnimation();
+    rootEl.setPointerCapture?.(ev.pointerId);
+    const box = rootEl.getBoundingClientRect();
+    state.drag = { zoomBox: { from: { x: ev.clientX - box.left, y: ev.clientY - box.top }, to: null } };
+    return;
+  }
+  if (ev.button !== 0 && ev.button !== 1) return;
   ev.preventDefault();
   stopAnimation();
   rootEl.setPointerCapture?.(ev.pointerId);
@@ -28729,6 +28834,14 @@ function onPointerMove(ev) {
   if (!state) return;
   state.pointers?.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   const drag = state.drag;
+  if (drag?.zoomBox) {
+    const box = rootEl.getBoundingClientRect();
+    const to = { x: ev.clientX - box.left, y: ev.clientY - box.top };
+    const { from } = drag.zoomBox;
+    drag.zoomBox.to = Math.hypot(to.x - from.x, to.y - from.y) >= 4 ? to : null;
+    requestDraw();
+    return;
+  }
   if (!drag) {
     const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
     const hover = hit?.id || null;
@@ -28763,8 +28876,25 @@ function onPointerMove(ev) {
 
 function onPointerUp(ev) {
   if (!state) return;
-  state.pointers?.delete(ev.pointerId);
   const drag = state.drag;
+  if (drag?.zoomBox) {
+    state.drag = null;
+    const { from, to } = drag.zoomBox;
+    if (!to) {
+      requestDraw();
+      return;
+    }
+    // Zoom to the box, as the editor does, keeping the pane's shape.
+    const k = scale();
+    const rect = {
+      x: state.view.x + Math.min(from.x, to.x) / k, y: state.view.y + Math.min(from.y, to.y) / k,
+      w: Math.abs(to.x - from.x) / k, h: Math.abs(to.y - from.y) / k,
+    };
+    const pane = paneSize();
+    void animateView(clampView(viewFitting(rect, pane.w, pane.h, 0.02)));
+    return;
+  }
+  state.pointers?.delete(ev.pointerId);
   if (state.pointers?.size) {
     // One finger of a pinch lifted: carry on panning with the other.
     const [rest] = state.pointers.values();
@@ -28793,6 +28923,7 @@ function installCollage() {
   rootEl.addEventListener('pointerup', onPointerUp);
   rootEl.addEventListener('pointercancel', onPointerUp);
   rootEl.addEventListener('dblclick', onDoubleClick);
+  rootEl.addEventListener('contextmenu', (ev) => ev.preventDefault());
   rootEl.addEventListener('pointerleave', () => {
     if (state && state.hover) {
       state.hover = null;
@@ -29067,7 +29198,7 @@ const EDITOR_COMMANDS = [
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col'], help: 'frame the drawing for a page: none, ieee-1col, or ieee-2col' },
-  { name: 'collage', aliases: ['overview', 'desk', 'gallery', 'atlas', 'all-designs'], help: 'every design in the workspace at its real size (Shift+Esc)' },
+  { name: 'collage', aliases: ['overview', 'desk', 'gallery', 'atlas', 'all-designs'], help: 'every design in the workspace at its real size (Shift+Backspace)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
   { name: 'shortcuts', aliases: ['keys', 'keybindings', 'hotkeys', 'cheatsheet', 'keymap'], help: 'show every keyboard shortcut (?)' },
   { name: 'check', aliases: ['design-check', 'drc', 'lint', 'verify'], help: 'run Design Check (x)' },
@@ -42884,8 +43015,11 @@ window.addEventListener('keydown', (ev) => {
     onCollageKey(ev);
     return;
   }
-  // Shift+Esc steps back from the drawing to the whole workspace.
-  if (ev.key === 'Escape' && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !inlineInput) {
+  // Shift+Backspace steps back from the drawing to the whole workspace.
+  // (Shift+Esc too, where the browser lets it through: Chromium keeps it
+  // for its task manager.)
+  if ((ev.key === 'Backspace' || ev.key === 'Escape') && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey &&
+      !inlineInput && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)) {
     ev.preventDefault();
     openCollage();
     return;
@@ -47146,7 +47280,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
     ['Shift+S', 'show or hide the small-signal analysis panel'],
-    ['Shift+Esc', 'workspace collage: every design at its real size; Enter or double-click opens one, Esc returns'],
+    ['Shift+Backspace', 'workspace collage: every design at its real size; Enter or double-click opens one, Esc returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],
