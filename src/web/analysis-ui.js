@@ -15,7 +15,7 @@ import { noiseCandidates } from '../core/analysis/noise.js';
 import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
+import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
@@ -66,12 +66,16 @@ function checkedNoiseSources() {
 function setNoiseInputs(options) {
   if (analysisNoiseThermal) analysisNoiseThermal.checked = options.noiseThermal;
   if (analysisNoiseFlicker) analysisNoiseFlicker.checked = options.noiseFlicker;
+  if (analysisNoiseOutput) analysisNoiseOutput.checked = options.noiseOutput;
   for (const input of noiseSourceInputs()) input.checked = !options.noiseSources || options.noiseSources.includes(input.dataset.noiseSource);
   syncNoiseSourcesVisibility();
 }
 
 function syncNoiseSourcesVisibility() {
-  if (analysisNoiseSources) analysisNoiseSources.hidden = !analysisNoiseThermal?.checked && !analysisNoiseFlicker?.checked;
+  const off = !analysisNoiseThermal?.checked && !analysisNoiseFlicker?.checked;
+  if (analysisNoiseSources) analysisNoiseSources.hidden = off;
+  const outputRow = document.getElementById('analysis-noise-output-row');
+  if (outputRow) outputRow.hidden = off;
 }
 
 function portNetIds(nets, type, role) {
@@ -157,6 +161,7 @@ function analysisFormOptions() {
     deviceRegions: analysisDeviceRegions?.value || '',
     noiseThermal: !!analysisNoiseThermal?.checked,
     noiseFlicker: !!analysisNoiseFlicker?.checked,
+    noiseOutput: !!analysisNoiseOutput?.checked,
     noiseSources: checkedNoiseSources(),
   });
 }
@@ -1112,7 +1117,7 @@ export function installAnalysisUi() {
     analysisInputPrevious = analysisInput.value;
   });
 
-  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
+  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, ...analysisTransferInputs]) {
     control?.addEventListener('input', persistAnalysisForm);
     control?.addEventListener('change', persistAnalysisForm);
   }

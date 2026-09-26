@@ -340,6 +340,7 @@
             <legend>Noise</legend>
             <label><input id="analysis-noise-thermal" name="noiseThermal" type="checkbox" /> <span>Thermal noise (<span class="math-inline">4kT</span>)</span></label>
             <label><input id="analysis-noise-flicker" name="noiseFlicker" type="checkbox" /> <span>Flicker noise (<span class="math-inline">1/f</span>)</span></label>
+            <label id="analysis-noise-output-row" hidden><input id="analysis-noise-output" name="noiseOutput" type="checkbox" /> <span>Output noise as well as input-referred</span></label>
             <div id="analysis-noise-sources" class="analysis-noise-sources" role="group" aria-label="Noise sources" hidden></div>
             <p class="field-hint">Low-frequency densities, referred to the input and to the output. Each checked MOS device and resistor adds one generator; uncheck the ones that do not matter.</p>
           </fieldset>

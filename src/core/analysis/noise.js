@@ -26,7 +26,8 @@ const RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
 /**
  * The normalized noise request, or null when noise is not requested. `true`
  * asks for every generator; an object may name `sources` (refdes list, null
- * for all) and turn `thermal` or `flicker` off.
+ * for all), turn `thermal` or `flicker` off, and set `output: false` to
+ * report only the input-referred densities.
  */
 export function noiseRequest(value) {
   if (!value) return null;
@@ -38,7 +39,7 @@ export function noiseRequest(value) {
   const thermal = object.thermal !== false;
   const flicker = object.flicker !== false;
   if (!thermal && !flicker) return null;
-  return { sources, thermal, flicker };
+  return { sources, thermal, flicker, output: object.output !== false };
 }
 
 /** Components that can carry a noise generator, in drawing order. */
@@ -126,6 +127,11 @@ const TITLES = Object.freeze({
   output: { thermal: 'Output thermal noise', flicker: 'Output flicker noise' },
 });
 
+/** The referrals a request reports: input-referred always, output on request. */
+function referralsOf(request) {
+  return request.output === false ? ['input'] : ['input', 'output'];
+}
+
 /**
  * Low-frequency noise rows from the solved noise columns. `transfer` is the
  * exact `A_v(s)`; `helpers` supplies the engine's DC limit, approximation, and
@@ -150,7 +156,7 @@ export function buildNoiseReport(queries, transfer, request, helpers) {
     }
     const referrals = { output: dcLimit(output) };
     referrals.input = gain && !ops.isZero(gain) ? dcLimit(ops.div(output, transfer)) : null;
-    for (const referral of ['input', 'output']) {
+    for (const referral of referralsOf(request)) {
       const exact = referrals[referral];
       if (!exact) {
         unreferred.push({ component: source.component, referral });
@@ -163,7 +169,7 @@ export function buildNoiseReport(queries, transfer, request, helpers) {
     }
   }
   const rows = [];
-  for (const referral of ['input', 'output']) {
+  for (const referral of referralsOf(request)) {
     for (const kind of NOISE_KINDS) {
       if (!request[kind]) continue;
       const terms = perReferral[referral]

@@ -134,7 +134,7 @@ The report order is:
 4. `Z_{out}(0)`
 5. each selected transfer function's `(s)` and `(0)` rows, in the table's order
 6. poles, then zeros, of each selected transfer function
-7. noise densities, when requested (input-referred, then output)
+7. noise densities, when requested (input-referred, then output if asked)
 8. definitions of named sub-expressions ("Where")
 9. assumptions
 
@@ -161,7 +161,10 @@ abbreviated.
 ## Noise
 
 The **Noise** checkboxes add low-frequency noise densities (`noise`:
-`{thermal, flicker, sources}`, implemented in `src/core/analysis/noise.js`).
+`{thermal, flicker, output, sources}`, implemented in
+`src/core/analysis/noise.js`). The input-referred densities are always
+reported; the output ones only with **Output noise** checked (`output`, off by
+default in the panel, on for an engine request that leaves it out).
 Each selected device gets one noise generator, a current source between its
 own terminals, and one more RHS column in the same MNA solve. That column holds
 the input at AC ground and the output open, so its output voltage is the
@@ -195,8 +198,8 @@ terms. The exact equation in the Log tab keeps the unfactored terms.
 
 **Noise by device**, below the density rows, sets the same terms side by
 side: one row per generator, one column per noise kind with its prefix
-divided out (`S_{v,in,th}/4kT`, `f · S_{v,in,1/f}`), and a switch between
-input-referred and output values. It is part of the panel only: the
+divided out (`S_{v,in,th}/4kT`, `f · S_{v,in,1/f}`), and, when output noise
+is on, a switch between input-referred and output values. It is part of the panel only: the
 schematic annotation takes the density rows. The selected equation
 approximations act on each generator's transfer before it is squared. A
 generator outside the coupled network, or one whose gain vanishes at DC, is

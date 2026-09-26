@@ -2,7 +2,7 @@
 
 <h1 align="center">Mosfeteer</h1>
 
-<p align="center">A keyboard-driven editor for textbook-style analog schematics, with assisted wiring, presentation beats, symbolic small-signal analysis, and an atlas of your whole workspace.</p>
+<p align="center">A keyboard-driven editor for textbook-style analog schematics, with assisted wiring, presentation beats, symbolic small-signal and noise analysis, and an atlas of your whole workspace.</p>
 
 ![A folded-cascode OTA with its bias network in the editor, split diagonally between the light and dark themes](docs/images/editor.png)
 
@@ -28,9 +28,9 @@ Label switches with the phase that drives them, and **Beats from switch phases**
 
 ## Symbolic analysis
 
-Pick the input and output nets to derive `Z_in`, `Z_out`, `A_v`, and any poles and zeros, simplified the way a textbook would. Hover or click any term to light up the devices it comes from, then annotate the schematic with the results.
+Pick the input and output nets to derive `Z_in`, `Z_out`, `A_v`, and any poles and zeros, simplified the way a textbook would. Turn on thermal and flicker noise to get the input-referred noise density, term by term, with each device's share in a table. Hover or click any term to light up the devices it comes from, then annotate the schematic with the results.
 
-![Derived OTA equations; the locked g_m9 r_o9 r_o8 term highlights M9 and M8 on the schematic](docs/images/analysis.png)
+![Input-referred thermal and flicker noise of the folded-cascode OTA; clicking the g_m8/g_m3 term lights up M8 and M3 on the schematic](docs/images/analysis.png)
 
 ## Atlas view
 

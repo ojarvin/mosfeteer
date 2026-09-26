@@ -4760,7 +4760,8 @@ const RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
 /**
  * The normalized noise request, or null when noise is not requested. `true`
  * asks for every generator; an object may name `sources` (refdes list, null
- * for all) and turn `thermal` or `flicker` off.
+ * for all), turn `thermal` or `flicker` off, and set `output: false` to
+ * report only the input-referred densities.
  */
 function noiseRequest(value) {
   if (!value) return null;
@@ -4772,7 +4773,7 @@ function noiseRequest(value) {
   const thermal = object.thermal !== false;
   const flicker = object.flicker !== false;
   if (!thermal && !flicker) return null;
-  return { sources, thermal, flicker };
+  return { sources, thermal, flicker, output: object.output !== false };
 }
 
 /** Components that can carry a noise generator, in drawing order. */
@@ -4860,6 +4861,11 @@ const TITLES = Object.freeze({
   output: { thermal: 'Output thermal noise', flicker: 'Output flicker noise' },
 });
 
+/** The referrals a request reports: input-referred always, output on request. */
+function referralsOf(request) {
+  return request.output === false ? ['input'] : ['input', 'output'];
+}
+
 /**
  * Low-frequency noise rows from the solved noise columns. `transfer` is the
  * exact `A_v(s)`; `helpers` supplies the engine's DC limit, approximation, and
@@ -4884,7 +4890,7 @@ function buildNoiseReport(queries, transfer, request, helpers) {
     }
     const referrals = { output: dcLimit(output) };
     referrals.input = gain && !ops.isZero(gain) ? dcLimit(ops.div(output, transfer)) : null;
-    for (const referral of ['input', 'output']) {
+    for (const referral of referralsOf(request)) {
       const exact = referrals[referral];
       if (!exact) {
         unreferred.push({ component: source.component, referral });
@@ -4897,7 +4903,7 @@ function buildNoiseReport(queries, transfer, request, helpers) {
     }
   }
   const rows = [];
-  for (const referral of ['input', 'output']) {
+  for (const referral of referralsOf(request)) {
     for (const kind of NOISE_KINDS) {
       if (!request[kind]) continue;
       const terms = perReferral[referral]
@@ -25084,6 +25090,9 @@ const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // until asked for. `noiseSources` null means every noisy device.
   noiseThermal: false,
   noiseFlicker: false,
+  // The input-referred densities are the ones compared against a signal;
+  // the output-referred ones are extra rows, shown on request.
+  noiseOutput: false,
   noiseSources: null,
 });
 
@@ -25103,6 +25112,7 @@ function analysisNoiseRequest(options = {}) {
   return {
     thermal: Boolean(options.noiseThermal),
     flicker: Boolean(options.noiseFlicker),
+    output: Boolean(options.noiseOutput),
     sources: options.noiseSources ?? null,
   };
 }
@@ -25129,6 +25139,7 @@ const OPTION_ALIASES = Object.freeze({
   parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
   noiseThermal: [],
   noiseFlicker: [],
+  noiseOutput: [],
   nameSubexpressions: [],
 });
 
@@ -25498,7 +25509,7 @@ let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/a
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
-let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
+let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -25571,12 +25582,16 @@ function checkedNoiseSources() {
 function setNoiseInputs(options) {
   if (analysisNoiseThermal) analysisNoiseThermal.checked = options.noiseThermal;
   if (analysisNoiseFlicker) analysisNoiseFlicker.checked = options.noiseFlicker;
+  if (analysisNoiseOutput) analysisNoiseOutput.checked = options.noiseOutput;
   for (const input of noiseSourceInputs()) input.checked = !options.noiseSources || options.noiseSources.includes(input.dataset.noiseSource);
   syncNoiseSourcesVisibility();
 }
 
 function syncNoiseSourcesVisibility() {
-  if (analysisNoiseSources) analysisNoiseSources.hidden = !analysisNoiseThermal?.checked && !analysisNoiseFlicker?.checked;
+  const off = !analysisNoiseThermal?.checked && !analysisNoiseFlicker?.checked;
+  if (analysisNoiseSources) analysisNoiseSources.hidden = off;
+  const outputRow = document.getElementById('analysis-noise-output-row');
+  if (outputRow) outputRow.hidden = off;
 }
 
 function portNetIds(nets, type, role) {
@@ -25662,6 +25677,7 @@ function analysisFormOptions() {
     deviceRegions: analysisDeviceRegions?.value || '',
     noiseThermal: !!analysisNoiseThermal?.checked,
     noiseFlicker: !!analysisNoiseFlicker?.checked,
+    noiseOutput: !!analysisNoiseOutput?.checked,
     noiseSources: checkedNoiseSources(),
   });
 }
@@ -26617,7 +26633,7 @@ function installAnalysisUi() {
     analysisInputPrevious = analysisInput.value;
   });
 
-  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
+  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, ...analysisTransferInputs]) {
     control?.addEventListener('input', persistAnalysisForm);
     control?.addEventListener('change', persistAnalysisForm);
   }
@@ -32578,6 +32594,7 @@ const analysisDeviceRegions = document.getElementById('analysis-device-regions')
 const analysisNameSubexpressions = document.getElementById('analysis-name-subexpressions');
 const analysisNoiseThermal = document.getElementById('analysis-noise-thermal');
 const analysisNoiseFlicker = document.getElementById('analysis-noise-flicker');
+const analysisNoiseOutput = document.getElementById('analysis-noise-output');
 const analysisNoiseSources = document.getElementById('analysis-noise-sources');
 const analysisApproxRo = document.getElementById('analysis-approx-ro');
 const analysisApproxBody = document.getElementById('analysis-approx-body');
@@ -32680,6 +32697,7 @@ __exports.analysisDeviceRegions = analysisDeviceRegions;
 __exports.analysisNameSubexpressions = analysisNameSubexpressions;
 __exports.analysisNoiseThermal = analysisNoiseThermal;
 __exports.analysisNoiseFlicker = analysisNoiseFlicker;
+__exports.analysisNoiseOutput = analysisNoiseOutput;
 __exports.analysisNoiseSources = analysisNoiseSources;
 __exports.analysisApproxRo = analysisApproxRo;
 __exports.analysisApproxBody = analysisApproxBody;

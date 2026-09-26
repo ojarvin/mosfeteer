@@ -52,6 +52,7 @@ export const analysisDeviceRegions = document.getElementById('analysis-device-re
 export const analysisNameSubexpressions = document.getElementById('analysis-name-subexpressions');
 export const analysisNoiseThermal = document.getElementById('analysis-noise-thermal');
 export const analysisNoiseFlicker = document.getElementById('analysis-noise-flicker');
+export const analysisNoiseOutput = document.getElementById('analysis-noise-output');
 export const analysisNoiseSources = document.getElementById('analysis-noise-sources');
 export const analysisApproxRo = document.getElementById('analysis-approx-ro');
 export const analysisApproxBody = document.getElementById('analysis-approx-body');

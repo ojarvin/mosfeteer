@@ -20,6 +20,7 @@ test('defaults select the concise textbook presentation', () => {
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
+    noiseOutput: false,
     noiseSources: null,
   });
   assert.notEqual(analysisOptionDefaults(), ANALYSIS_OPTION_DEFAULTS);
@@ -50,6 +51,7 @@ test('normalization accepts only canonical option names and device regions', () 
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
+    noiseOutput: false,
     noiseSources: null,
     deviceRegions: { M2: { region: 'triode' } },
   });
@@ -70,6 +72,7 @@ test('channel-length omission supersedes high intrinsic gain', () => {
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
+    noiseOutput: false,
     noiseSources: null,
   });
 });
@@ -92,6 +95,7 @@ test('canonical nested form state remains canonical during normalization', () =>
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
+    noiseOutput: false,
     noiseSources: null,
     deviceRegions: { M1: { region: 'triode' } },
   });
@@ -132,6 +136,7 @@ test('persistence migration maps legacy aliases and drops removed fields', () =>
       transferFunctions: ['Av'],
       noiseThermal: false,
       noiseFlicker: false,
+      noiseOutput: false,
       noiseSources: null,
     },
     annotationExcluded: [],
@@ -164,6 +169,7 @@ test('canonical persisted values win over legacy aliases and lists', () => {
     transferFunctions: ['Av'],
     noiseThermal: false,
     noiseFlicker: false,
+    noiseOutput: false,
     noiseSources: null,
   });
   assert.deepEqual(state.deviceRegions, { M1: { region: 'triode' } });
@@ -206,8 +212,11 @@ test('noise options persist their source list and build the engine request', () 
   const options = normalizeAnalysisOptions({ noiseThermal: true, noiseSources: ['M1', ' RD ', 'M1'] });
   assert.equal(options.noiseThermal, true);
   assert.equal(options.noiseFlicker, false);
+  // Only the input-referred densities unless the output ones are asked for.
+  assert.equal(options.noiseOutput, false);
   assert.deepEqual(options.noiseSources, ['M1', 'RD']);
-  assert.deepEqual(analysisNoiseRequest(options), { thermal: true, flicker: false, sources: ['M1', 'RD'] });
+  assert.deepEqual(analysisNoiseRequest(options), { thermal: true, flicker: false, output: false, sources: ['M1', 'RD'] });
+  assert.equal(analysisNoiseRequest({ ...options, noiseOutput: true }).output, true);
   assert.equal(analysisNoiseRequest(analysisOptionDefaults()), undefined);
   const { state } = migrateAnalysisFormState({ options: { noiseFlicker: true, noiseSources: ['M2'] } });
   assert.equal(state.options.noiseFlicker, true);

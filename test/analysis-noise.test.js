@@ -23,9 +23,18 @@ function terms(report, key) {
 test('noise requests normalize to thermal and flicker over all or named sources', () => {
   assert.equal(noiseRequest(undefined), null);
   assert.equal(noiseRequest({ thermal: false, flicker: false }), null);
-  assert.deepEqual(noiseRequest(true), { sources: null, thermal: true, flicker: true });
-  assert.deepEqual(noiseRequest({ sources: ['M1', 'M1', 'RD'], flicker: false }), { sources: ['M1', 'RD'], thermal: true, flicker: false });
+  assert.deepEqual(noiseRequest(true), { sources: null, thermal: true, flicker: true, output: true });
+  assert.deepEqual(noiseRequest({ sources: ['M1', 'M1', 'RD'], flicker: false }), { sources: ['M1', 'RD'], thermal: true, flicker: false, output: true });
+  assert.equal(noiseRequest({ output: false }).output, false);
   assert.deepEqual(noiseCandidates(fixture('nmos-common-source').build()), ['M1', 'RD']);
+});
+
+test('output-referred rows appear only when asked for', () => {
+  const inputOnly = analyze('nmos-common-source', { output: false });
+  assert.ok(inputOnly.ok && inputOnly.noise.ok);
+  assert.deepEqual(inputOnly.noise.rows.map((row) => row.key), ['input-thermal', 'input-flicker']);
+  assert.deepEqual(analyze('nmos-common-source').noise.rows.map((row) => row.key),
+    ['input-thermal', 'input-flicker', 'output-thermal', 'output-flicker']);
 });
 
 test('a common-source stage refers its channel and load noise to the gate', () => {

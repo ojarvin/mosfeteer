@@ -17,6 +17,9 @@ export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // until asked for. `noiseSources` null means every noisy device.
   noiseThermal: false,
   noiseFlicker: false,
+  // The input-referred densities are the ones compared against a signal;
+  // the output-referred ones are extra rows, shown on request.
+  noiseOutput: false,
   noiseSources: null,
 });
 
@@ -36,6 +39,7 @@ export function analysisNoiseRequest(options = {}) {
   return {
     thermal: Boolean(options.noiseThermal),
     flicker: Boolean(options.noiseFlicker),
+    output: Boolean(options.noiseOutput),
     sources: options.noiseSources ?? null,
   };
 }
@@ -62,6 +66,7 @@ const OPTION_ALIASES = Object.freeze({
   parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
   noiseThermal: [],
   noiseFlicker: [],
+  noiseOutput: [],
   nameSubexpressions: [],
 });
 
