@@ -406,8 +406,8 @@ test('an explicit new document is protected from active-document auto-loads', ()
 test('small-signal analysis exposes the canonical v2 controls', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-analysis"/);
-  assert.match(html, /class="toolbar-cluster analysis-cluster"[^>]+data-doc-kind="schematic"/);
-  assert.match(html, /id="btn-analysis"[\s\S]*id="btn-theme"/);
+  // Analyze toggles its docked panel from the canvas corner, beside the side-panel toggle.
+  assert.match(html, /class="canvas-panel-toggles"[^>]*>\s*<button id="btn-analysis"[^>]+data-doc-kind="schematic"[^>]+aria-controls="analysis-dialog"[^>]*>[^<]*<\/button>\s*<button id="btn-side-panel"/);
   assert.match(html, /id="analysis-dialog"/);
   assert.match(html, /id="analysis-input-field"[^>]*>Input node/);
   assert.match(html, /for="analysis-target">Output node/);

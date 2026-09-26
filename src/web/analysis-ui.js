@@ -708,6 +708,17 @@ function renderAnalysisResult(report) {
   setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
+/** Open the analysis dock (targeting the suggested output net) or close it. */
+export function toggleAnalysisDock() {
+  if (isAnalysisDockOpen()) closeAnalysisDock();
+  else openAnalysisDialog(suggestedAnalysisTarget());
+}
+
+function syncAnalysisButton(open) {
+  analysisButton?.setAttribute('aria-pressed', String(open));
+  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis panel (Shift+S)`;
+}
+
 function analysisAnnotationAssumptions(report) {
   const options = report?.analysisOptions || {};
   const lines = [];
@@ -736,7 +747,7 @@ function openAnalysisDialog(targetNetId) {
   if (context && (analysisAcGrounds?.value || analysisDeviceRegions?.value)) context.open = true;
   analysisDockRevision = editor.modelRevision;
   analysisDialog.hidden = false;
-  analysisButton?.setAttribute('aria-pressed', 'true');
+  syncAnalysisButton(true);
   analysisInput?.focus();
 }
 
@@ -778,7 +789,7 @@ function closeAnalysisDock() {
   // over the canvas with nothing to explain it is just a stuck selection.
   clearEquationEmphasis();
   analysisDialog.hidden = true;
-  analysisButton?.setAttribute('aria-pressed', 'false');
+  syncAnalysisButton(false);
   canvasEl.focus();
 }
 
@@ -1110,10 +1121,7 @@ export function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
-  analysisButton?.addEventListener('click', () => {
-    if (isAnalysisDockOpen()) closeAnalysisDock();
-    else openAnalysisDialog(suggestedAnalysisTarget());
-  });
+  analysisButton?.addEventListener('click', toggleAnalysisDock);
 
   analysisCancel?.addEventListener('click', closeAnalysisDock);
 

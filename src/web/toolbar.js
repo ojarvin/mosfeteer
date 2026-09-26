@@ -208,6 +208,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift+G', 'toggle the spacing and alignment guides'],
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
+    ['Shift+S', 'show or hide the small-signal analysis panel'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],

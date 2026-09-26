@@ -59,10 +59,6 @@
 
     <div class="toolbar-spacer" aria-hidden="true"></div>
 
-    <div class="toolbar-cluster analysis-cluster" role="group" aria-label="Analysis" data-doc-kind="schematic">
-      <button id="btn-analysis" data-icon="analysis" aria-pressed="false" title="Open small-signal analysis (persistent context)">Analyze</button>
-    </div>
-
     <div class="toolbar-cluster view-cluster" role="group" aria-label="View">
       <button id="btn-grid" class="icon-button" data-icon="grid" aria-pressed="true" aria-label="Grid" title="Show or hide the placement grid (#)">Grid</button>
       <button id="btn-guides" class="icon-button" data-icon="guides" aria-pressed="true" aria-label="Placement guides" title="Show or hide the spacing and alignment guides (Shift+G)">Guides</button>
@@ -232,7 +228,11 @@
         <button type="button" data-empty-action="help"><kbd>?</kbd><span class="empty-state-text">All shortcuts</span></button>
         <button type="button" data-empty-action="tutorial"><kbd>5 min</kbd><span class="empty-state-text">Learn by drawing a 5T OTA</span></button>
       </div>
-      <button id="btn-side-panel" type="button" class="side-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>
+      <!-- The canvas corner holds the toggles for the panels that dock on the right. -->
+      <div class="canvas-panel-toggles" role="group" aria-label="Panels">
+        <button id="btn-analysis" type="button" class="canvas-panel-toggle glass icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Small-signal analysis" title="Show the small-signal analysis panel (Shift+S)">Analyze</button>
+        <button id="btn-side-panel" type="button" class="canvas-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>
+      </div>
       <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
       <section id="tutorial-card" class="tutorial-card glass" aria-labelledby="tutorial-title" hidden>

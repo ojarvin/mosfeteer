@@ -49,7 +49,7 @@ import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } fr
 import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
 import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } from './design-check-ui.js';
 import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
-import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } from './analysis-ui.js';
+import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { installModelFigure } from './model-figure.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
@@ -6344,6 +6344,7 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
+  else if (key === 'S') toggleAnalysisDock();
   else if (key === '?') showHelp();
   else return false;
   return true;

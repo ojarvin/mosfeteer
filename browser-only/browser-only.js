@@ -25345,6 +25345,7 @@ __modules["src/web/analysis-ui.js"] = function (__require, __exports) {
 __exports.clearLatestAnalysisResult = clearLatestAnalysisResult;
 __exports.migrateAnalysisFormStorage = migrateAnalysisFormStorage;
 __exports.analysisFormScope = analysisFormScope;
+__exports.toggleAnalysisDock = toggleAnalysisDock;
 __exports.syncAnalysisDock = syncAnalysisDock;
 __exports.setAnalysisPick = setAnalysisPick;
 __exports.completeAnalysisPick = completeAnalysisPick;
@@ -26078,6 +26079,17 @@ function renderAnalysisResult(report) {
   setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
+/** Open the analysis dock (targeting the suggested output net) or close it. */
+function toggleAnalysisDock() {
+  if (isAnalysisDockOpen()) closeAnalysisDock();
+  else openAnalysisDialog(suggestedAnalysisTarget());
+}
+
+function syncAnalysisButton(open) {
+  analysisButton?.setAttribute('aria-pressed', String(open));
+  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis panel (Shift+S)`;
+}
+
 function analysisAnnotationAssumptions(report) {
   const options = report?.analysisOptions || {};
   const lines = [];
@@ -26106,7 +26118,7 @@ function openAnalysisDialog(targetNetId) {
   if (context && (analysisAcGrounds?.value || analysisDeviceRegions?.value)) context.open = true;
   analysisDockRevision = editor.modelRevision;
   analysisDialog.hidden = false;
-  analysisButton?.setAttribute('aria-pressed', 'true');
+  syncAnalysisButton(true);
   analysisInput?.focus();
 }
 
@@ -26148,7 +26160,7 @@ function closeAnalysisDock() {
   // over the canvas with nothing to explain it is just a stuck selection.
   clearEquationEmphasis();
   analysisDialog.hidden = true;
-  analysisButton?.setAttribute('aria-pressed', 'false');
+  syncAnalysisButton(false);
   canvasEl.focus();
 }
 
@@ -26480,10 +26492,7 @@ function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
-  analysisButton?.addEventListener('click', () => {
-    if (isAnalysisDockOpen()) closeAnalysisDock();
-    else openAnalysisDialog(suggestedAnalysisTarget());
-  });
+  analysisButton?.addEventListener('click', toggleAnalysisDock);
 
   analysisCancel?.addEventListener('click', closeAnalysisDock);
 
@@ -34336,7 +34345,7 @@ let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind((
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
 let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
-let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi } = __require("src/web/analysis-ui.js")); });
+let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
@@ -40692,6 +40701,7 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
   else if (key === 'D') toggleTheme();
   else if (key === 'P') toggleSidePanel();
+  else if (key === 'S') toggleAnalysisDock();
   else if (key === '?') showHelp();
   else return false;
   return true;
@@ -44723,14 +44733,13 @@ __exports.toolbarFits = toolbarFits;
  * `data-compact` list, and style.css keys its rules on the tokens:
  *
  *   export, new         those file actions become icons
- *   analyze             Analyze becomes an icon
  *   fold                New, Export, and the view toggles move into More
  *   save                Save becomes an icon
  *
  * The editor picks the first stage count at which the row fits and the
  * document title still shows a comfortable amount of its name.
  */
-const TOOLBAR_STAGES = ['export', 'new', 'analyze', 'fold', 'save'];
+const TOOLBAR_STAGES = ['export', 'new', 'fold', 'save'];
 
 /** How much of the title (px) must stay visible before buttons drop text. */
 const TITLE_COMFORT_PX = 224;
@@ -45707,6 +45716,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+G', 'toggle the spacing and alignment guides'],
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
+    ['Shift+S', 'show or hide the small-signal analysis panel'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],

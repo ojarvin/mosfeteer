@@ -271,7 +271,7 @@ test('small windows: rail follows canvas height, one-row toolbar, drawer panel',
   assert.match(html, /id="btn-side-panel"[^>]*aria-controls="side-panel"/);
   assert.match(css, /body\.side-panel-collapsed \.side-panel \{\s*display: none;/);
   assert.match(css, /body\.side-panel-open \.side-panel \{\s*transform: none;/);
-  assert.match(main, /else if \(key === 'P'\) toggleSidePanel\(\);/);
+  assert.match(main, /else if \(key === 'P'\) toggleSidePanel\(\);\s*else if \(key === 'S'\) toggleAnalysisDock\(\);/);
   assert.match(main, /window\.matchMedia\('\(max-width: 600px\)'\)/);
   // Ctrl+F reveals a hidden panel before focusing its filter; inert fields take no focus.
   assert.match(main, /if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);\s*filter\.focus\(\);/);

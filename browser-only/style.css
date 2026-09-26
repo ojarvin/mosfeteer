@@ -223,11 +223,10 @@ button:focus-visible {
 
 /* The toolbar is always one row. As its space runs out, main.js adds stages
    to data-compact (toolbar-fit.js): file actions drop their text one by one,
-   then Analyze, then New, Export, and the view toggles fold into the More menu
+   then New, Export, and the view toggles fold into the More menu
    (as proxies), and last Save becomes an icon. */
 .toolbar[data-compact~="export"] #btn-export,
 .toolbar[data-compact~="new"] #btn-new-document,
-.toolbar[data-compact~="analyze"] #btn-analysis,
 .toolbar[data-compact~="save"] #btn-save {
   width: 30px;
   padding: 0;
@@ -277,13 +276,13 @@ button:focus-visible {
 }
 
 /* One shared "pressed/active toggle" look across every toolbar: the view
-   switches, segmented controls (style panel, text alignment), and Analyze
-   (whose dock-open state is a toggle like the others). A border carries the
+   switches, segmented controls (style panel, text alignment), and the
+   canvas-corner panel toggles. A border carries the
    state as a crisp edge instead of relying on a background tint alone,
    which reads poorly at small sizes in light mode. */
 .view-cluster .icon-button[aria-pressed="true"],
 .segmented .icon-button[aria-pressed="true"],
-.analysis-cluster button[aria-pressed="true"] {
+.canvas-panel-toggle[aria-pressed="true"] {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-dim);
@@ -3337,24 +3336,31 @@ button.off {
   }
 }
 
-/* ----- side panel toggle and drawer ------------------------------ */
+/* ----- panel toggles and drawer --------------------------------- */
 
-.side-panel-toggle {
+/* The canvas corner stacks the toggles of the right-docked panels, so the
+   control for each panel sits next to where it opens. */
+.canvas-panel-toggles {
   position: absolute;
   z-index: 5;
   top: 8px;
   right: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.canvas-panel-toggle {
   width: 36px !important;
   height: 36px;
   border-radius: 9px;
   color: var(--text-dim);
 }
 
-.side-panel-toggle:hover {
+.canvas-panel-toggle:hover {
   color: var(--text);
 }
 
-.side-panel-toggle .button-icon {
+.canvas-panel-toggle .button-icon {
   width: 19px;
   height: 19px;
 }

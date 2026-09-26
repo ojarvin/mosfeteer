@@ -2,9 +2,9 @@
 
 Symbolic analysis derives small-signal transfer functions and impedances
 without evaluating numerical values. Choose the input and output nodes in the
-**Analyze** panel (pick them from the dropdowns or with the crosshair button,
-then click a wire or pin); optionally select a reference, additional AC-ground
-nets, and triode devices. One analysis produces the complete report.
+**Analyze** panel (its toggle sits in the canvas corner; `Shift+S`). Pick them
+from the dropdowns or with the crosshair button, then click a wire or pin;
+optionally select a reference, additional AC-ground nets, and triode devices. One analysis produces the complete report.
 
 ## Analysis model
 
