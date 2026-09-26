@@ -11,7 +11,8 @@ import { logLine } from './status-bar-ui.js';
 import { editor } from './editor-state.js';
 import { animateViewTo, maxViewW, minViewW, paneSize } from './canvas-view.js';
 import { setPanelCollapsed, setSidePanelVisible, sidePanelVisible } from './side-panel.js';
-import { render } from './main.js';
+import { commit, render, setLabelSelection, setSelection } from './main.js';
+import { fixAllIssues, issueFix } from '../core/tidy.js';
 
 export function resetCheckState() {
   editor.lastCheckReport = null;
@@ -147,6 +148,11 @@ function focusCheckIssue(issue) {
     for (const path of net?.paths() || []) points.push(...path);
   }
   editor.diagnosticSelection = { components: new Set(issue.components), nets: new Set(issue.nets), labels: new Set(issue.labels) };
+  // The issue's objects become the selection too, so the keys that fix
+  // things by hand (move, rotate, Space, Shift+T, t) act on them.
+  setSelection([...issue.components]);
+  setLabelSelection([...issue.labels], undefined, true);
+  editor.selectedNets = new Set(issue.nets);
   if (!points.length) { render(); return; }
   const x0 = Math.min(...points.map((p) => p.x));
   const y0 = Math.min(...points.map((p) => p.y));
@@ -193,6 +199,22 @@ export function renderCheckSummary() {
     checkSummaryBodyEl.appendChild(pass);
     return;
   }
+  // Every repair that needs no decision, in one undo entry.
+  const fixable = issues.filter((issue) => issueFix(editor.circuit, issue.detail)).length;
+  if (fixable) {
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'check-fix-all';
+    all.textContent = `Fix ${fixable === 1 ? 'the safe issue' : `${fixable} safe issues`}`;
+    all.title = 'Reroute wires, snap parts to the grid, and move crowded labels; the rest need a decision';
+    all.addEventListener('click', () => {
+      const fixed = commit(() => fixAllIssues(editor.circuit, evaluate));
+      logLine(fixed ? `fixed ${fixed} issue${fixed === 1 ? '' : 's'}` : 'nothing could be fixed safely');
+      runCheck();
+      render();
+    });
+    checkSummaryBodyEl.appendChild(all);
+  }
   for (const [key, label] of CHECK_CATEGORIES) {
     const group = issues.filter((issue) => issue.category === key);
     if (!group.length) continue;
@@ -217,7 +239,26 @@ export function renderCheckSummary() {
       button.title = issue.detail?.hint ? `${spoken}\n${issue.detail.hint}` : spoken;
       button.setAttribute('aria-label', issue.detail?.hint ? `${spoken}. ${issue.detail.hint}` : spoken);
       button.addEventListener('click', () => focusCheckIssue(issue));
-      details.appendChild(button);
+      const fix = issueFix(editor.circuit, issue.detail);
+      if (fix) {
+        const row = document.createElement('div');
+        row.className = 'check-issue-row';
+        const apply = document.createElement('button');
+        apply.type = 'button';
+        apply.className = 'check-fix';
+        apply.textContent = fix.label;
+        apply.setAttribute('aria-label', `${fix.label}: ${spoken}`);
+        apply.addEventListener('click', () => {
+          const changed = commit(() => fix.apply(editor.circuit));
+          if (!changed) logLine(`${fix.label.toLowerCase()} found no better place; this one needs a hand`);
+          runCheck();
+          render();
+        });
+        row.append(button, apply);
+        details.appendChild(row);
+      } else {
+        details.appendChild(button);
+      }
     }
     checkSummaryBodyEl.appendChild(details);
   }

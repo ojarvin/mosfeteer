@@ -12,6 +12,7 @@ import { addTimingDiagram } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
+import { fixAllIssues, tidySelection } from './tidy.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
@@ -503,6 +504,8 @@ export function commandHelp() {
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
+    '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
+    '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  find TEXT [--case]             - list every label (nets, parts, switch phases, rails, annotations) and block caption containing TEXT',
@@ -875,6 +878,17 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const from = circuit.getComponent(pos[0]).type;
     const c = swapComponentType(circuit, pos[0], pos[1]);
     return result(`${pos[0]} (${from}) is now ${c.refdes} (${c.type})`, { refdes: c.refdes, type: c.type }, true);
+  }
+  if (cmd === 'tidy') {
+    if (!pos.length) throw new Error('usage: tidy <refdes> ...');
+    for (const refdes of pos) circuit.getComponent(refdes);
+    const { rerouted, moved } = tidySelection(circuit, { refs: pos });
+    return result(`rerouted ${rerouted.length} net${rerouted.length === 1 ? '' : 's'}, moved ${moved.length} label${moved.length === 1 ? '' : 's'}`, { rerouted, moved }, rerouted.length + moved.length > 0);
+  }
+  if (cmd === 'fix') {
+    const fixed = fixAllIssues(circuit, evaluate);
+    const left = evaluate(circuit).issues.length;
+    return result(`fixed ${fixed} issue${fixed === 1 ? '' : 's'}; ${left} left for a decision`, { fixed, left }, fixed > 0);
   }
   if (cmd === 'rail') {
     const ref = pos[0] && parseTermRef(pos[0]);

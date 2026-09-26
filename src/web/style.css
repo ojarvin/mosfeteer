@@ -2404,6 +2404,44 @@ button:disabled {
   white-space: nowrap;
 }
 
+.check-issue-row {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.check-issue-row .check-issue {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.check-fix,
+.check-fix-all {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  color: var(--accent);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.check-fix-all {
+  display: block;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  font-weight: 600;
+}
+
+.check-fix:hover,
+.check-fix-all:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-hover));
+  border-color: var(--accent);
+}
+
 .check-issue:hover {
   background: color-mix(in srgb, var(--danger) 10%, var(--bg-hover));
   border-color: var(--danger);

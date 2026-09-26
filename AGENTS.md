@@ -234,6 +234,11 @@ The model is topological; geometry is a route, not connectivity.
 `evaluate()` / Design Check reports dangling terminals, body/wire and label
 overlaps, illegal body crossings, diagonal managed wires, off-grid geometry,
 and cross-net collinear overlap. Saving does not require a clean report.
+The safe repairs -- a fresh reroute, snapping an off-grid part, moving a
+crowded label to the nearest clear spot -- are `src/core/tidy.js`; the
+editor offers them per issue and as Fix all, and `Shift+T` applies them to
+a selection. Anything needing intent (a dangling pin, overlapping parts) is
+never guessed.
 
 ## Small-signal analysis contract
 
@@ -295,7 +300,7 @@ Core keyboard vocabulary:
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `Shift+A` align to (selection outline edge/point, then another object's), `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
 | view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis panel, `Shift+Backspace` Atlas view ([`docs/atlas.md`](docs/atlas.md)), `?` help, `:` command line (log drawer), which also searches and runs every editor action by description (`src/web/command-line.js`) |
-| editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `Ctrl/Cmd+F` find / `Ctrl/Cmd+H` replace in label text (`src/core/label-search.js`), `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped), `q` swap the selected or pointed-at parts' type in place (`src/core/swap.js`), `g`/`v` over an unconnected pin wire a ground/supply to it (`src/core/pin-rails.js`; `v` elsewhere is visual mode), `.` repeat the last rotate, mirror, swap, rail, or stubs, `t`/`=`/`F2` edit the selected or pointed-at text (several selected switches or rails take one phase or rail name, `src/core/shared-labels.js`) |
+| editing | `dd`/Delete delete, `p` paste, `y` copy, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `Ctrl/Cmd+F` find / `Ctrl/Cmd+H` replace in label text (`src/core/label-search.js`), `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped), `q` swap the selected or pointed-at parts' type in place (`src/core/swap.js`), `g`/`v` over an unconnected pin wire a ground/supply to it (`src/core/pin-rails.js`; `v` elsewhere is visual mode), `.` repeat the last rotate, mirror, swap, rail, stubs, or tidy, `Shift+T` tidy the selection, `t`/`=`/`F2` edit the selected or pointed-at text (several selected switches or rails take one phase or rail name, `src/core/shared-labels.js`) |
 | beats | `Shift+B` beat strip, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or cursor snapping to the nearest terminal or free wire end while wiring; a click on a free wire end (`Circuit#openWireEnds`) finishes a draft there like a terminal; a placed, moved, or copied part's pin that will join a pin, a free wire end, or (unconnected) a wire's middle on commit is ringed first (`pinJoinPoints`) |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part, label, or annotation, or branches a wire; right-drag/hold a part for the radial menu; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |

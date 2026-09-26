@@ -17,6 +17,7 @@ import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs } from '../core/stubs.js';
 import { addPinRail } from '../core/pin-rails.js';
+import { tidySelection } from '../core/tidy.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { editorOverlay, svgString } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
@@ -6433,7 +6434,7 @@ export function rememberAction(label, run) {
 
 export function repeatLastAction(count = 1) {
   if (!lastAction) {
-    logLine('. repeats the last rotate, mirror, swap, rail, or stubs; nothing to repeat yet');
+    logLine('. repeats the last rotate, mirror, swap, rail, stubs, or tidy; nothing to repeat yet');
     return;
   }
   hintLine(`repeat: ${lastAction.label}${count > 1 ? ` ×${count}` : ''}`);
@@ -6464,6 +6465,26 @@ export function editSelectionText() {
   const hovered = compUnderCursor();
   if (hovered) return editPart(hovered);
   hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
+}
+
+/** Shift+T: re-lay the selection's nets fresh and move its crowded labels
+ *  clear (core/tidy.js), as one undo entry. */
+export function tidyNow() {
+  const refs = selectedComps().map((c) => c.refdes);
+  const netIds = [...selectedNets, ...(selectedWire ? [selectedWire.netId] : []), ...[...selectedWires].map((key) => keyToWire(key).netId)];
+  const labelIds = selectedLabels().map((label) => label.id);
+  rememberAction('tidy', tidyNow);
+  if (!refs.length && !netIds.length && !labelIds.length) {
+    hintLine('Shift+T tidies the selection: select parts, wires, or labels first');
+    return;
+  }
+  const out = commit(() => tidySelection(circuit, { refs, netIds, labelIds }));
+  if (!out) return;
+  const { rerouted, moved } = out;
+  logLine(rerouted.length || moved.length
+    ? `tidied: ${rerouted.length} net${rerouted.length === 1 ? '' : 's'} re-laid, ${moved.length} label${moved.length === 1 ? '' : 's'} moved clear`
+    : 'already tidy');
+  render();
 }
 
 /** Select the whole drawing (Ctrl/Cmd+A). */
@@ -6645,6 +6666,11 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'q') {
     openSwapPicker(swapTargets());
+    return;
+  }
+
+  if (key === 'T') {
+    tidyNow();
     return;
   }
 

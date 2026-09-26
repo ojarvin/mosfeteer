@@ -114,9 +114,9 @@ test('the key strip offers at most three keys for what is selected or pointed at
   assert.deepEqual(keysOf({ selection: { parts: ['switch_open'] } }), ['s', 'q', 'r']);
   assert.deepEqual(keysOf({ selection: { parts: ['nmos'] }, repeat: 'rotate' }), ['.', 'q', 'r']);
   assert.equal(contextKeyHints({ selection: { parts: ['nmos'] }, repeat: 'rotate' })[0][1], 'repeat rotate');
-  assert.deepEqual(keysOf({ selection: { parts: ['nmos', 'pmos'] } }), ['m', 'q', 'Ctrl+Shift+arrows']);
+  assert.deepEqual(keysOf({ selection: { parts: ['nmos', 'pmos'] } }), ['m', 'q', 'Shift+T']);
   assert.deepEqual(keysOf({ selection: { labels: 1 } }), ['t', 'Shift+←/→', 'arrows']);
-  assert.deepEqual(keysOf({ selection: { nets: 1 } }), ['drag', 'Shift+L', 'dd']);
+  assert.deepEqual(keysOf({ selection: { nets: 1 } }), ['Shift+T', 'Shift+L', 'dd']);
   // The repeat key needs something to act on.
   assert.deepEqual(keysOf({ repeat: 'rotate' }), ['i', 'w', '?']);
 });

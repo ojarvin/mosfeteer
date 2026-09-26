@@ -20,7 +20,7 @@ import { openFind, openReplace } from './find-replace-ui.js';
 import { toggleAtlas, toggleSymbolSheet } from './atlas.js';
 import { activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace,
   activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
-  repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, undo } from './main.js';
+  repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
 import { removeAllNetHighlights } from './annotation-tools.js';
 import { copyAsImage } from './export-ui.js';
 import { pasteClipboard } from './copy-paste.js';
@@ -104,6 +104,7 @@ const ACTIONS = {
   stubs: () => stubSelection(),
   swap: () => openSwapPicker(swapTargets()),
   repeat: () => repeatLastAction(),
+  tidy: () => tidyNow(),
   edit: () => editSelectionText(),
   'add-beat': () => addBeatHere(),
   'next-beat': () => stepBeat(1),

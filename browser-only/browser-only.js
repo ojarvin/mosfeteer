@@ -10530,7 +10530,9 @@ let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
+let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -11036,6 +11038,8 @@ function commandHelp() {
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
+    '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
+    '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  find TEXT [--case]             - list every label (nets, parts, switch phases, rails, annotations) and block caption containing TEXT',
@@ -11408,6 +11412,17 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const from = circuit.getComponent(pos[0]).type;
     const c = swapComponentType(circuit, pos[0], pos[1]);
     return result(`${pos[0]} (${from}) is now ${c.refdes} (${c.type})`, { refdes: c.refdes, type: c.type }, true);
+  }
+  if (cmd === 'tidy') {
+    if (!pos.length) throw new Error('usage: tidy <refdes> ...');
+    for (const refdes of pos) circuit.getComponent(refdes);
+    const { rerouted, moved } = tidySelection(circuit, { refs: pos });
+    return result(`rerouted ${rerouted.length} net${rerouted.length === 1 ? '' : 's'}, moved ${moved.length} label${moved.length === 1 ? '' : 's'}`, { rerouted, moved }, rerouted.length + moved.length > 0);
+  }
+  if (cmd === 'fix') {
+    const fixed = fixAllIssues(circuit, evaluate);
+    const left = evaluate(circuit).issues.length;
+    return result(`fixed ${fixed} issue${fixed === 1 ? '' : 's'}; ${left} left for a decision`, { fixed, left }, fixed > 0);
   }
   if (cmd === 'rail') {
     const ref = pos[0] && parseTermRef(pos[0]);
@@ -24313,6 +24328,237 @@ function symbolSheet(categories = symbolCategories()) {
 
 };
 
+__modules["src/core/tidy.js"] = function (__require, __exports) {
+__exports.placeLabelClear = placeLabelClear;
+__exports.rerouteFresh = rerouteFresh;
+__exports.snapComponentToGrid = snapComponentToGrid;
+__exports.issueFix = issueFix;
+__exports.fixAllIssues = fixAllIssues;
+__exports.tidySelection = tidySelection;
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
+let applyTransform, rectsOverlap; __bind(() => { ({ applyTransform, rectsOverlap } = __require("src/core/geometry.js")); });
+let segThroughInterior; __bind(() => { ({ segThroughInterior } = __require("src/core/router.js")); });
+let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
+/**
+ * Tidying: the safe repairs Design Check can offer for an issue, and the same
+ * repairs applied to a selection (tidySelection). A net is re-laid out fresh
+ * from its terminals, an off-grid part snaps back, and a label that sits on a
+ * part's strokes or another label moves to the nearest clear spot -- a net
+ * label along its own wire, a part's label near its part. Nothing here
+ * changes connectivity.
+ */
+
+
+
+
+
+
+const SHAPES = new Set(['arrow', 'box', 'line']);
+
+/** Labels whose text can collide: not shapes, not hidden bar labels. */
+function textLabels(circuit) {
+  const hidden = hiddenSupplyBarLabels(circuit);
+  return [...circuit.labels.values()].filter((label) => !SHAPES.has(label.kind) && !hidden.has(label.id));
+}
+
+/** 0: clear; 1: only crosses a wire; 2: on a part's strokes or another label. */
+function labelCrowding(circuit, label, others) {
+  const rect = label.inkRect();
+  for (const component of circuit.components.values()) {
+    if (component.type !== 'solder' && component.inkTouches(rect)) return 2;
+  }
+  if (others.some((other) => other !== label && rectsOverlap(rect, other.inkRect()))) return 2;
+  for (const net of circuit.nets.values()) {
+    if (net.id === label.netId) continue;
+    for (const path of net.paths()) {
+      for (let i = 1; i < path.length; i++) if (segThroughInterior(path[i - 1], path[i], rect)) return 1;
+    }
+  }
+  return 0;
+}
+
+function labelPlace(label) {
+  return { offset: label.offset && { ...label.offset }, anchor: label.anchor && { ...label.anchor }, netSide: label.netSide };
+}
+
+function restorePlace(circuit, label, place) {
+  label.offset = place.offset && { ...place.offset };
+  label.anchor = place.anchor && { ...place.anchor };
+  label.netSide = place.netSide;
+  circuit.invalidateRoutingCache();
+}
+
+/** Where a label may go, nearest first: along its own wire (both sides) for
+ *  a net label; around its part's own label slot for a part's label, so it
+ *  never wanders off to label a neighbour; around where it is otherwise. */
+function labelCandidates(circuit, label, reach) {
+  const owner = label.owner && circuit.components.get(label.owner);
+  const slot = owner?.def?.labelOffset;
+  const here = slot ? applyTransform(owner.transform, slot.x, slot.y) : label.anchorWorld();
+  const distance = (p) => Math.hypot(p.x - here.x, p.y - here.y);
+  const out = [];
+  if (label.netId) {
+    const net = circuit.nets.get(label.netId);
+    for (const path of net?.paths() || []) {
+      for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1];
+        const b = path[i];
+        const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / GRID;
+        const sides = a.y === b.y ? ['above', 'below'] : a.x === b.x ? ['left', 'right'] : [];
+        for (let k = 0; k <= steps; k++) {
+          const point = { x: snap(a.x + ((b.x - a.x) * k) / steps), y: snap(a.y + ((b.y - a.y) * k) / steps) };
+          if (distance(point) > reach * GRID) continue;
+          for (const side of sides) out.push({ point, side });
+        }
+      }
+    }
+  } else {
+    for (let dx = -reach; dx <= reach; dx++) {
+      for (let dy = -reach; dy <= reach; dy++) out.push({ point: { x: snap(here.x) + dx * GRID, y: snap(here.y) + dy * GRID } });
+    }
+  }
+  return out.sort((p, q) => distance(p.point) - distance(q.point));
+}
+
+/**
+ * Move `label` to the nearest spot where its text touches no part and no
+ * other label, preferring one that crosses no wire either. Returns whether it
+ * moved; a label already clear stays put.
+ */
+function placeLabelClear(circuit, label, { reach = null } = {}) {
+  if (!label || SHAPES.has(label.kind) || label.role || label.parent) return false;
+  const others = textLabels(circuit);
+  const start = labelCrowding(circuit, label, others);
+  if (start === 0) return false;
+  const original = labelPlace(label);
+  const limit = reach ?? (label.netId ? 8 : 4);
+  let best = null;
+  for (const candidate of labelCandidates(circuit, label, limit)) {
+    try {
+      if (candidate.side) label.netSide = candidate.side;
+      label.moveTo(candidate.point.x, candidate.point.y);
+    } catch {
+      restorePlace(circuit, label, original);
+      continue;
+    }
+    const crowding = labelCrowding(circuit, label, others);
+    if (crowding < start && (!best || crowding < best.crowding)) best = { ...candidate, crowding, place: labelPlace(label) };
+    restorePlace(circuit, label, original);
+    if (best?.crowding === 0) break;
+  }
+  if (!best) return false;
+  restorePlace(circuit, label, best.place);
+  return true;
+}
+
+/** Lay managed `nets` out fresh from their terminals; a net that cannot be
+ *  routed keeps its drawing. Protected (fixed) nets are left alone. Returns
+ *  the ids rerouted. */
+function rerouteFresh(circuit, netIds) {
+  const done = [];
+  for (const id of netIds) {
+    const net = circuit.nets.get(id);
+    if (!net || net.routingMode === 'fixed' || net.terminals.length < 2) continue;
+    const before = JSON.stringify(net.paths());
+    if (circuit.rerouteNet(net, 'refresh') !== false && JSON.stringify(net.paths()) !== before) done.push(id);
+  }
+  if (done.length) circuit.syncJunctionSolders();
+  return done;
+}
+
+/** Move a part whose origin is off the grid to the nearest grid point, its
+ *  nets following. Returns whether it moved. */
+function snapComponentToGrid(circuit, refdes) {
+  const component = circuit.components.get(refdes);
+  if (!component) return false;
+  const { x, y } = component.transform;
+  if (snap(x) === x && snap(y) === y) return false;
+  circuit.moveComponent(refdes, snap(x), snap(y));
+  const nets = [...circuit.nets.values()].filter((net) => net.terminals.some((t) => t.comp === refdes)).map((net) => net.id);
+  rerouteFresh(circuit, nets);
+  return true;
+}
+
+function reroutable(circuit, ids) {
+  return ids.filter((id) => {
+    const net = circuit.nets.get(id);
+    return net && net.routingMode !== 'fixed' && net.terminals.length >= 2;
+  });
+}
+
+/**
+ * The safe repair for one Design Check issue (an entry of evaluate().issues),
+ * or null when fixing it needs a decision (a dangling pin, two parts on top
+ * of each other). `{ label, apply(circuit) }`; apply returns whether it changed
+ * anything.
+ */
+function issueFix(circuit, issue) {
+  switch (issue?.kind) {
+    case 'wire-through-body':
+    case 'managed-diagonal': {
+      const ids = reroutable(circuit, [issue.netId]);
+      return ids.length ? { label: 'Reroute', apply: (c) => rerouteFresh(c, ids).length > 0 } : null;
+    }
+    case 'cross-net-overlap': {
+      // Re-lay the second net first: the one that ran onto the other.
+      const ids = reroutable(circuit, [...(issue.netIds || [])].reverse());
+      return ids.length ? { label: 'Reroute', apply: (c) => rerouteFresh(c, ids.slice(0, 1)).length > 0 || rerouteFresh(c, ids.slice(1)).length > 0 } : null;
+    }
+    case 'grid-violation':
+      return issue.location === 'origin' && circuit.components.has(issue.refs?.[0])
+        ? { label: 'Snap to grid', apply: (c) => snapComponentToGrid(c, issue.refs[0]) }
+        : null;
+    case 'label-component-overlap':
+    case 'label-overlap': {
+      const ids = issue.labelId ? [issue.labelId] : [...(issue.labelIds || [])].reverse();
+      return ids.some((id) => circuit.labels.has(id))
+        ? { label: 'Move label', apply: (c) => ids.some((id) => placeLabelClear(c, c.labels.get(id))) }
+        : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Apply every safe repair, re-checking after each (one repair can resolve
+ *  or move others). Returns how many were applied. `evaluate` is passed in
+ *  to keep this module free of the command language. */
+function fixAllIssues(circuit, evaluate) {
+  let fixed = 0;
+  const tried = new Set();
+  for (let guard = 0; guard < 200; guard++) {
+    const next = evaluate(circuit).issues
+      .map((issue) => ({ issue, fix: issueFix(circuit, issue) }))
+      .find(({ issue, fix }) => fix && !tried.has(issue.message));
+    if (!next) break;
+    // A repair that changes nothing is not offered again this round.
+    if (next.fix.apply(circuit)) fixed++;
+    else tried.add(next.issue.message);
+  }
+  return fixed;
+}
+
+/**
+ * Tidy a selection in one go: lay its nets (and the nets its parts touch) out
+ * fresh, then move any of its labels (the parts' own, the nets' labels, and
+ * selected ones) that crowd a part or another label. Returns what changed.
+ */
+function tidySelection(circuit, { refs = [], netIds = [], labelIds = [] } = {}) {
+  const nets = new Set(netIds);
+  for (const net of circuit.nets.values()) {
+    if (net.terminals.some((t) => refs.includes(t.comp))) nets.add(net.id);
+  }
+  const rerouted = rerouteFresh(circuit, [...nets]);
+  const labels = new Set(labelIds);
+  for (const label of circuit.labels.values()) {
+    if ((label.owner && refs.includes(label.owner)) || (label.netId && nets.has(label.netId))) labels.add(label.id);
+  }
+  const moved = [...labels].filter((id) => placeLabelClear(circuit, circuit.labels.get(id)));
+  return { rerouted, moved };
+}
+
+};
+
 __modules["src/core/timing-diagram.js"] = function (__require, __exports) {
 __exports.timingWavePoints = timingWavePoints;
 __exports.addTimingDiagram = addTimingDiagram;
@@ -29686,7 +29932,7 @@ let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
 let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
 let toggleAtlas, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleSymbolSheet } = __require("src/web/atlas.js")); });
-let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, undo } = __require("src/web/main.js")); });
+let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
 let removeAllNetHighlights; __bind(() => { ({ removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy-paste.js")); });
@@ -29795,6 +30041,7 @@ const ACTIONS = {
   stubs: () => stubSelection(),
   swap: () => openSwapPicker(swapTargets()),
   repeat: () => repeatLastAction(),
+  tidy: () => tidyNow(),
   edit: () => editSelectionText(),
   'add-beat': () => addBeatHere(),
   'next-beat': () => stepBeat(1),
@@ -30064,6 +30311,7 @@ const EDITOR_COMMANDS = [
   { name: 'clear-highlights', aliases: ['uncolor', 'remove-highlights'], canvas: true, help: 'remove every net highlight (8)' },
   { name: 'stubs', aliases: ['wire-stubs'], canvas: true, help: 'labelled wire stubs on the selected parts\' unconnected pins (Space)' },
   { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (q)' },
+  { name: 'tidy', aliases: ['clean-up', 'cleanup', 'neaten', 'straighten'], canvas: true, help: 're-lay the selection\'s nets and move its crowded labels clear (Shift+T)' },
   { name: 'repeat', aliases: ['again'], canvas: true, help: 'repeat the last rotate, mirror, swap, rail, or stubs (.)' },
   { name: 'edit', aliases: ['edit-text', 'rename-selection'], canvas: true, help: 'edit the selected label or part name (t, =, F2)' },
   { name: 'add-beat', aliases: ['new-beat'], canvas: true, help: 'add a beat after the one on screen (+)' },
@@ -30089,6 +30337,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
   { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labelled wire stubs)' },
   { name: 'swap', help: 'swap <refdes> [type] (change a part\'s type, keeping its wiring)' },
+  { name: 'fix', aliases: ['autofix', 'repair'], help: 'fix (apply every safe Design Check repair)' },
   { name: 'rail', help: 'rail REF.TERM ground|supply (a rail wired to a pin)' },
   { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },
   { name: 'net', help: 'net <id> add|drop|name|label|rm ...' },
@@ -31970,12 +32219,14 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let animateViewTo, maxViewW, minViewW, paneSize; __bind(() => { ({ animateViewTo, maxViewW, minViewW, paneSize } = __require("src/web/canvas-view.js")); });
 let setPanelCollapsed, setSidePanelVisible, sidePanelVisible; __bind(() => { ({ setPanelCollapsed, setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
-let render; __bind(() => { ({ render } = __require("src/web/main.js")); });
+let commit, render, setLabelSelection, setSelection; __bind(() => { ({ commit, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let fixAllIssues, issueFix; __bind(() => { ({ fixAllIssues, issueFix } = __require("src/core/tidy.js")); });
 /**
  * Design Check in the editor: running it, the side panel's issue list, the
  * status chip, and focusing an issue's parts on the canvas. The checks
  * themselves are evaluate() in core/commands.js.
  */
+
 
 
 
@@ -32120,6 +32371,11 @@ function focusCheckIssue(issue) {
     for (const path of net?.paths() || []) points.push(...path);
   }
   editor.diagnosticSelection = { components: new Set(issue.components), nets: new Set(issue.nets), labels: new Set(issue.labels) };
+  // The issue's objects become the selection too, so the keys that fix
+  // things by hand (move, rotate, Space, Shift+T, t) act on them.
+  setSelection([...issue.components]);
+  setLabelSelection([...issue.labels], undefined, true);
+  editor.selectedNets = new Set(issue.nets);
   if (!points.length) { render(); return; }
   const x0 = Math.min(...points.map((p) => p.x));
   const y0 = Math.min(...points.map((p) => p.y));
@@ -32166,6 +32422,22 @@ function renderCheckSummary() {
     checkSummaryBodyEl.appendChild(pass);
     return;
   }
+  // Every repair that needs no decision, in one undo entry.
+  const fixable = issues.filter((issue) => issueFix(editor.circuit, issue.detail)).length;
+  if (fixable) {
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'check-fix-all';
+    all.textContent = `Fix ${fixable === 1 ? 'the safe issue' : `${fixable} safe issues`}`;
+    all.title = 'Reroute wires, snap parts to the grid, and move crowded labels; the rest need a decision';
+    all.addEventListener('click', () => {
+      const fixed = commit(() => fixAllIssues(editor.circuit, evaluate));
+      logLine(fixed ? `fixed ${fixed} issue${fixed === 1 ? '' : 's'}` : 'nothing could be fixed safely');
+      runCheck();
+      render();
+    });
+    checkSummaryBodyEl.appendChild(all);
+  }
   for (const [key, label] of CHECK_CATEGORIES) {
     const group = issues.filter((issue) => issue.category === key);
     if (!group.length) continue;
@@ -32190,7 +32462,26 @@ function renderCheckSummary() {
       button.title = issue.detail?.hint ? `${spoken}\n${issue.detail.hint}` : spoken;
       button.setAttribute('aria-label', issue.detail?.hint ? `${spoken}. ${issue.detail.hint}` : spoken);
       button.addEventListener('click', () => focusCheckIssue(issue));
-      details.appendChild(button);
+      const fix = issueFix(editor.circuit, issue.detail);
+      if (fix) {
+        const row = document.createElement('div');
+        row.className = 'check-issue-row';
+        const apply = document.createElement('button');
+        apply.type = 'button';
+        apply.className = 'check-fix';
+        apply.textContent = fix.label;
+        apply.setAttribute('aria-label', `${fix.label}: ${spoken}`);
+        apply.addEventListener('click', () => {
+          const changed = commit(() => fix.apply(editor.circuit));
+          if (!changed) logLine(`${fix.label.toLowerCase()} found no better place; this one needs a hand`);
+          runCheck();
+          render();
+        });
+        row.append(button, apply);
+        details.appendChild(row);
+      } else {
+        details.appendChild(button);
+      }
     }
     checkSummaryBodyEl.appendChild(details);
   }
@@ -36938,6 +37229,7 @@ __exports.transformPendingComponent = transformPendingComponent;
 __exports.rememberAction = rememberAction;
 __exports.repeatLastAction = repeatLastAction;
 __exports.editSelectionText = editSelectionText;
+__exports.tidyNow = tidyNow;
 __exports.selectAll = selectAll;
 __exports.swapTargets = swapTargets;
 __exports.keyHintContext = keyHintContext;
@@ -36965,6 +37257,7 @@ let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addPinRail; __bind(() => { ({ addPinRail } = __require("src/core/pin-rails.js")); });
+let tidySelection; __bind(() => { ({ tidySelection } = __require("src/core/tidy.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let editorOverlay, svgString; __bind(() => { ({ editorOverlay, svgString } = __require("src/core/render.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
@@ -37022,6 +37315,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -43438,7 +43732,7 @@ function rememberAction(label, run) {
 
 function repeatLastAction(count = 1) {
   if (!lastAction) {
-    logLine('. repeats the last rotate, mirror, swap, rail, or stubs; nothing to repeat yet');
+    logLine('. repeats the last rotate, mirror, swap, rail, stubs, or tidy; nothing to repeat yet');
     return;
   }
   hintLine(`repeat: ${lastAction.label}${count > 1 ? ` ×${count}` : ''}`);
@@ -43469,6 +43763,26 @@ function editSelectionText() {
   const hovered = compUnderCursor();
   if (hovered) return editPart(hovered);
   hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
+}
+
+/** Shift+T: re-lay the selection's nets fresh and move its crowded labels
+ *  clear (core/tidy.js), as one undo entry. */
+function tidyNow() {
+  const refs = selectedComps().map((c) => c.refdes);
+  const netIds = [...selectedNets, ...(selectedWire ? [selectedWire.netId] : []), ...[...selectedWires].map((key) => keyToWire(key).netId)];
+  const labelIds = selectedLabels().map((label) => label.id);
+  rememberAction('tidy', tidyNow);
+  if (!refs.length && !netIds.length && !labelIds.length) {
+    hintLine('Shift+T tidies the selection: select parts, wires, or labels first');
+    return;
+  }
+  const out = commit(() => tidySelection(circuit, { refs, netIds, labelIds }));
+  if (!out) return;
+  const { rerouted, moved } = out;
+  logLine(rerouted.length || moved.length
+    ? `tidied: ${rerouted.length} net${rerouted.length === 1 ? '' : 's'} re-laid, ${moved.length} label${moved.length === 1 ? '' : 's'} moved clear`
+    : 'already tidy');
+  render();
 }
 
 /** Select the whole drawing (Ctrl/Cmd+A). */
@@ -43650,6 +43964,11 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'q') {
     openSwapPicker(swapTargets());
+    return;
+  }
+
+  if (key === 'T') {
+    tidyNow();
     return;
   }
 
@@ -47111,7 +47430,7 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
   if (parts.length > 1) {
     add('m', 'move');
     add('q', 'change type');
-    add('Ctrl+Shift+arrows', 'align');
+    add('Shift+T', 'tidy');
     return hints;
   }
   if (selection.labels) {
@@ -47121,7 +47440,7 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
     return hints;
   }
   if (selection.nets) {
-    add('drag', 'reroute');
+    add('Shift+T', 'tidy');
     add('Shift+L', 'net label');
     add('dd', 'delete');
     return hints;
@@ -48616,6 +48935,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['q', 'change the type of the selected (or pointed-at) parts: nmos to pmos, R to C, ...; wiring stays where the pins carry over'],
     ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor'],
+    ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],

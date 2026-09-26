@@ -109,7 +109,7 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
   if (parts.length > 1) {
     add('m', 'move');
     add('q', 'change type');
-    add('Ctrl+Shift+arrows', 'align');
+    add('Shift+T', 'tidy');
     return hints;
   }
   if (selection.labels) {
@@ -119,7 +119,7 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
     return hints;
   }
   if (selection.nets) {
-    add('drag', 'reroute');
+    add('Shift+T', 'tidy');
     add('Shift+L', 'net label');
     add('dd', 'delete');
     return hints;
