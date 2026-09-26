@@ -44,10 +44,22 @@ function modInverse(value, prime) {
 function makeContext(vars, work) {
   const n = vars.length;
   const zeroKey = new Array(n).fill(0).join(',');
-  const parse = (key) => key.split(',').map(Number);
+  const limit = work.limit || MAX_WORK;
+  const maxTerms = MAX_TERMS * 4 * Math.max(1, limit / MAX_WORK);
+  // Keys recur throughout the arithmetic: parse each once. Callers that
+  // change an exponent vector copy it first.
+  const parsed = new Map();
+  const parse = (key) => {
+    let exponents = parsed.get(key);
+    if (!exponents) {
+      exponents = key.split(',').map(Number);
+      if (parsed.size < 200000) parsed.set(key, exponents);
+    }
+    return exponents;
+  };
   const tick = (amount = 1) => {
     work.used += amount;
-    if (work.used > MAX_WORK) throw new WorkLimit();
+    if (work.used > limit) throw new WorkLimit();
   };
   const addTerm = (map, key, coefficient) => {
     const next = (map.get(key) || 0n) + coefficient;
@@ -64,7 +76,7 @@ function makeContext(vars, work) {
         addTerm(out, ea.map((e, i) => e + eb[i]).join(','), ca * cb);
       }
     }
-    if (out.size > MAX_TERMS * 4) throw new WorkLimit();
+    if (out.size > maxTerms) throw new WorkLimit();
     return out;
   };
   const sum = (a, b, scale = 1n) => {
@@ -77,7 +89,7 @@ function makeContext(vars, work) {
   const shiftVar = (a, index, amount) => {
     const out = new Map();
     for (const [k, c] of a) {
-      const e = parse(k);
+      const e = [...parse(k)];
       e[index] += amount;
       out.set(e.join(','), c);
     }
@@ -121,7 +133,7 @@ function makeContext(vars, work) {
   const coefficientsIn = (a, index) => {
     const out = new Map();
     for (const [k, c] of a) {
-      const e = parse(k);
+      const e = [...parse(k)];
       const d = e[index];
       e[index] = 0;
       if (!out.has(d)) out.set(d, new Map());
@@ -197,14 +209,15 @@ function makeContext(vars, work) {
     return rest;
   }
 
-  return { gcd, divide, degreeIn, parse, coefficientsIn, zeroKey };
+  return { gcd, divide, degreeIn, parse, coefficientsIn, zeroKey, primitivePart, pseudoRemainder };
 }
 
 /** Expand an expression into sparse rational terms: Map<symbolPowers, [num, den]>. */
 function expand(value, work) {
+  const limit = work.limit || MAX_WORK;
   const tick = () => {
     work.used += 1;
-    if (work.used > MAX_WORK) throw new WorkLimit();
+    if (work.used > limit) throw new WorkLimit();
   };
   const monomialKey = (powers) => [...powers.entries()].filter(([, e]) => e).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([s, e]) => `${s}^${e}`).join('*');
   const one = () => new Map([['', { powers: new Map(), num: 1n, den: 1n }]]);
@@ -330,17 +343,61 @@ function fromInteger(map, vars, scale) {
   return scale === 1n ? polynomial : multiply(polynomial, { kind: 'number', numerator: 1n, denominator: scale });
 }
 
+function mentions(node, name) {
+  if (!node || typeof node !== 'object') return false;
+  if (node.kind === 'symbol') return node.name === name;
+  return [node.base, node.numerator, node.denominator, ...(node.terms || []), ...(node.factors || [])].some((child) => mentions(child, name));
+}
+
+/** A product's factors that do not mention `variable`, and the rest. Only
+ *  the rest can share a factor in `variable`, and only it needs expanding:
+ *  the free factors (symbols, a parallel pair's sum) would otherwise
+ *  multiply every term of the expansion for nothing. */
+function splitFree(node, variable) {
+  const factors = node.kind === 'multiply' ? node.factors : [node];
+  return {
+    free: factors.filter((factor) => !mentions(factor, variable)),
+    bound: factors.filter((factor) => mentions(factor, variable)),
+  };
+}
+
+const productOf = (factors) => (factors.length === 0 ? integer(1) : factors.length === 1 ? factors[0] : multiply(factors));
+
+/**
+ * The common factor of `n` and `d` when the modular screen says it has
+ * degree `k` in the variable: pseudo-remainders only down to degree `k` --
+ * whatever remains there is that factor times something free of the
+ * variable -- then its primitive part, confirmed by exact division. Far
+ * cheaper than running the remainder sequence out, whose coefficients swell.
+ * Null when it does not come out that way (the caller falls back).
+ */
+function targetedGcd(context, n, d, k) {
+  let [a, b] = context.degreeIn(n, 0) >= context.degreeIn(d, 0) ? [n, d] : [d, n];
+  while (b.size && context.degreeIn(b, 0) > k) {
+    const r = context.pseudoRemainder(a, b, 0);
+    [a, b] = [b, r];
+  }
+  if (!b.size) return context.degreeIn(a, 0) === k ? context.primitivePart(a, 0) : null;
+  if (context.degreeIn(b, 0) !== k) return null;
+  return context.primitivePart(b, 0);
+}
+
 /**
  * Return `value` with any common factor that depends on `variable` cancelled,
  * or `value` itself when there is none or a work limit is reached.
+ * `maxWork` raises the work limit for a caller that can afford it (the
+ * engine's one pass over each exact response).
  */
 export function cancelCommonPolynomialFactor(value, options = {}) {
   if (value?.kind !== 'rational' || value.budgetExceeded || value.infinite) return value;
   const variable = options.variable || value.variable || 's';
-  const work = { used: 0 };
+  const work = { used: 0, limit: options.maxWork || MAX_WORK };
   try {
-    const numerator = expand(value.numerator, work);
-    const denominator = expand(value.denominator, work);
+    const top = splitFree(value.numerator, variable);
+    const bottom = splitFree(value.denominator, variable);
+    if (!top.bound.length || !bottom.bound.length) return value;
+    const numerator = expand(productOf(top.bound), work);
+    const denominator = expand(productOf(bottom.bound), work);
     const vars = symbolsOf(numerator, denominator);
     const variableIndex = vars.indexOf(variable);
     if (variableIndex < 0 || !numerator.size || !denominator.size) return value;
@@ -348,17 +405,24 @@ export function cancelCommonPolynomialFactor(value, options = {}) {
     const ordered = [variable, ...vars.filter((name) => name !== variable)];
     const n = toInteger(numerator, ordered);
     const d = toInteger(denominator, ordered);
-    if (modularGcdDegree(n.map, d.map, ordered, 0) === 0) return value;
+    const degree = modularGcdDegree(n.map, d.map, ordered, 0);
+    if (degree === 0) return value;
     const context = makeContext(ordered, work);
-    const common = context.gcd(n.map, d.map, 0);
-    if (context.degreeIn(common, 0) <= 0) return value;
-    const reducedNumerator = context.divide(n.map, common);
-    const reducedDenominator = context.divide(d.map, common);
-    if (!reducedNumerator || !reducedDenominator) return value;
-    // N/D = (N'/n.scale)/(D'/d.scale) = N' d.scale / (D' n.scale).
+    let common = targetedGcd(context, n.map, d.map, degree);
+    let reducedNumerator = common && context.divide(n.map, common);
+    let reducedDenominator = common && context.divide(d.map, common);
+    if (!reducedNumerator || !reducedDenominator) {
+      common = context.gcd(n.map, d.map, 0);
+      if (context.degreeIn(common, 0) <= 0) return value;
+      reducedNumerator = context.divide(n.map, common);
+      reducedDenominator = context.divide(d.map, common);
+      if (!reducedNumerator || !reducedDenominator) return value;
+    }
+    // N/D = (N'/n.scale)/(D'/d.scale) = N' d.scale / (D' n.scale), with the
+    // factors free of the variable put back as they were.
     return rationalFunction(
-      fromInteger(reducedNumerator, ordered, 1n),
-      multiply(fromInteger(reducedDenominator, ordered, 1n), { kind: 'number', numerator: n.scale, denominator: d.scale }),
+      productOf([...top.free, fromInteger(reducedNumerator, ordered, 1n)]),
+      multiply(productOf([...bottom.free, fromInteger(reducedDenominator, ordered, 1n)]), { kind: 'number', numerator: n.scale, denominator: d.scale }),
       { variable: value.variable },
     );
   } catch (error) {

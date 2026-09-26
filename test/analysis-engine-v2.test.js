@@ -332,3 +332,20 @@ test('decomposes a cascoded common-source stage with a cascoded current-mirror l
   const expected = 1 / (1 / nmosCascode + 1 / pmosCascode);
   assert.ok(Math.abs(numeric - expected) < 1e-9 * expected, `${numeric} !== ${expected}`);
 });
+
+test('a five-transistor OTA with one capacitor has one pole: the block solve leaves no common factor', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const circuit = new Circuit();
+  for (const line of [
+    'add nmos M1 --at 0 400', 'add nmos M2 --at 800 400 --mirrorX', 'add pmos M3 --at 0 0', 'add pmos M4 --at 800 0 --mirrorX',
+    'add nmos M5 --at 400 800', 'add capacitor CL --at 1600 800 --rot 90', 'add input VIN --at -400 400', 'add output VOUT --at 1800 200',
+    'add vcm --at 1200 700', 'add input VBN --at 0 1000', 'add supply --at 400 -300', 'add ground --at 400 1100', 'add ground --at 1600 1000',
+    'connect VIN.p M1.g', 'connect M2.g VCM1.vcm', 'connect M1.s M2.s M5.d', 'connect M1.d M3.d M3.g M4.g', 'connect M2.d M4.d CL.a VOUT.p',
+    'connect M3.s M4.s SUPPLY1.p', 'connect M5.s GROUND1.gnd', 'connect M5.g VBN.p', 'connect CL.b GROUND2.gnd',
+  ]) runCommand(circuit, line);
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT', acGrounds: ['VBN'] });
+  assert.equal(report.ok, true, report.error);
+  const exact = report.voltageTransfer?.exact || report.reports?.transfer?.exact || report.transfer?.exact;
+  assert.ok(exact, 'the report carries the exact transfer');
+  assert.deepEqual([exact.numeratorDegree, exact.denominatorDegree], [0, 1]);
+});

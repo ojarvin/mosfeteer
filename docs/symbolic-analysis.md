@@ -64,7 +64,11 @@ control voltage is zero naturally.
 
 The exact solve is canonicalized before presentation:
 
-- proven common factors are canceled;
+- proven common factors are canceled, including a frequency-dependent factor
+  that the block-wise solve leaves on both sides of a response (a two-stage
+  Miller OTA's came out degree 4 over 5 with two capacitors); it is found by a
+  modular screen, remainders down to its degree, and exact division, and a
+  response too large for that within its work limit keeps its factor;
 - repeated factors become powers, such as `g_{m1}^2`;
 - signs and denominator content are normalized;
 - powers of `s` are ordered from highest to lowest;

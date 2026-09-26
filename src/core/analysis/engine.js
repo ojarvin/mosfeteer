@@ -381,6 +381,11 @@ function approximatedRoot(root, approximationOptions) {
   }
 }
 
+/** The exact responses get this much more room to cancel a common factor
+ *  than the cheap checks elsewhere: it runs once per response and saves the
+ *  rest of the analysis from carrying the factor. */
+const EXACT_CANCELLATION_WORK = 8_000_000;
+
 /** Poles, zeros, and degrees from the response with common factors cancelled. */
 function withCancelledRoots(response, value, options, approximationOptions) {
   const cancelled = value?.kind === 'rational'
@@ -747,7 +752,15 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   for (const [name, value] of Object.entries(values)) {
     const cleanupOps = createRationalOps({ variable: analysisOptions.variable || 's', maxOperations: 12000 });
     const compact = compactRational(value, cleanupOps);
-    exact[name] = canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, withEquivalences(responseOptions(analysisOptions)));
+    // A block-wise solve can leave a frequency-dependent factor on both sides
+    // (a two-stage OTA's comes out degree 4 over 5 with two capacitors).
+    // Cancel it once here, so every later step -- approximations, displayed
+    // equations, poles and zeros -- works on the reduced function.
+    const reduced = cancelCommonPolynomialFactor(cleanupOps.budget.exceeded ? value : compact, {
+      variable: analysisOptions.variable || 's',
+      maxWork: EXACT_CANCELLATION_WORK,
+    });
+    exact[name] = canonicalResponseValue(reduced, withEquivalences(responseOptions(analysisOptions)));
     if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
   }
   if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
