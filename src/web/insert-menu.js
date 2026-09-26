@@ -6,6 +6,7 @@
 
 import { Circuit } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
+import { symbolCategories } from '../core/components/categories.js';
 import { svgString } from '../core/render.js';
 import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, placementSearchScore, withRecentType } from './toolbar.js';
 import { arrivalDirection, quickAddPlacement } from './gestures.js';
@@ -47,22 +48,6 @@ const PLACEMENT = {
 // Grouping is derived from the type name, so adding a symbol to symbolTypes
 // automatically adds it to the appropriate menu section.
 const INSERT_COMPONENT_TYPES = [...symbolTypeNames];
-
-// Browse order is analog first, digital second, with the interface ports kept
-// above both macros and the digital cells. A query reorders the groups by their
-// best match instead, so this is the order of the unfiltered list.
-const INSERT_CATEGORY_RULES = [
-  ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|diode)$/],
-  ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
-  ['Switches', /^switch_/],
-  ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
-  ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
-  ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
-  ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
-  ['Sequential', /^(?:dff|latch)(?:_|$)/],
-  ['Blocks / shells', /^block$/],
-  ['Signal flow', /^signal_(sum|multiply)$/],
-];
 
 // Arrow-key highlight in the insert picker. It belongs to one query string, so
 // typing or deleting a character returns the highlight to the best match.
@@ -215,10 +200,7 @@ function insertMenuEntries() {
 
 function insertMenuGroups() {
   const availableTypes = INSERT_COMPONENT_TYPES;
-  const groups = INSERT_CATEGORY_RULES.map(([title, rule]) => ({
-    title,
-    entries: availableTypes.filter((type) => rule.test(type)),
-  }));
+  const groups = symbolCategories(availableTypes).map(({ title, types }) => ({ title, entries: types }));
   groups.push({ title: 'Annotations', entries: ['solder', 'label'] });
   if (!editor.insertQuery) {
     const placeable = new Set(groups.flatMap((group) => group.entries));

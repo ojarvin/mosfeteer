@@ -1,5 +1,5 @@
 /**
- * Where the collage puts each design, and how much detail a tile needs.
+ * Where the Atlas view puts each design, and how much detail a tile needs.
  *
  * Every design keeps its real size: one world unit is one drawing unit, so a
  * small cell sits beside a large system at their true proportions and a zoom
@@ -13,8 +13,8 @@
 import { GRID } from '../core/grid.js';
 
 /** Space between neighbouring designs, and below each for its caption. */
-export const COLLAGE_GAP = 2 * GRID;
-export const COLLAGE_CAPTION = 2 * GRID;
+export const ATLAS_GAP = 2 * GRID;
+export const ATLAS_CAPTION = 2 * GRID;
 
 const snap = (value) => Math.round(value / GRID) * GRID;
 
@@ -24,7 +24,7 @@ const snap = (value) => Math.round(value / GRID) * GRID;
  * holds a caption band below its design. Returns { tiles: [{ id, x, y, w, h }]
  * (the designs' rectangles, captions excluded), bounds }.
  */
-export function layoutCollage(items, { aspect = 1.6, gap = COLLAGE_GAP, caption = COLLAGE_CAPTION } = {}) {
+export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION } = {}) {
   if (!items.length) return { tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 } };
   const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const stretch = Math.sqrt(aspect);
@@ -96,7 +96,7 @@ export function rectsIntersect(a, b) {
 }
 
 /** The tile under a world point, if any (a caption counts as its tile). */
-export function tileAt(tiles, point, caption = COLLAGE_CAPTION) {
+export function tileAt(tiles, point, caption = ATLAS_CAPTION) {
   return tiles.find((tile) => point.x >= tile.x && point.x <= tile.x + tile.w &&
     point.y >= tile.y && point.y <= tile.y + tile.h + caption) || null;
 }

@@ -74,14 +74,18 @@ test('named net edits confirm virtual connections, and port names never repeat',
   assert.doesNotMatch(main, /applySharedInterfaceName|sharedInterfaceNameTarget|setInterfacePinName/);
 });
 
-test('insert categories keep switches and macros separate and include vccs with sources', () => {
-  const main = editorSource();
-  assert.match(main, /\['Switches', \/\^switch_\//);
-  assert.match(main, /\['Sources & power', \/\^\(current_source\|voltage_source\|vccs\|vcvs\|supply\|ground\|vcm\)\$\//);
-  assert.match(main, /\['Macros', \/\^\(opamp\|opamp_diff\|adc\|dac\)\$\//);
-  assert.match(main, /\['Logic', \/\^\(inverter\|buffer\|tristate_\(inverter\|buffer\)\|mux2\|\.\*_gate\)\$\//);
-  assert.match(main, /\['Sequential', \/\^\(\?:dff\|latch\)\(\?:_\|\$\)\//);
-  assert.match(main, /\['Signal flow', \/\^signal_\(sum\|multiply\)\$\//);
+test('insert categories keep switches and macros separate and include vccs with sources', async () => {
+  const { symbolCategories } = await import('../src/core/components/categories.js');
+  const groups = Object.fromEntries(symbolCategories().map(({ title, types }) => [title, types]));
+  assert.deepEqual(groups.Switches, ['switch_open', 'switch_closed']);
+  assert.deepEqual([...groups['Sources & power']].sort(), ['current_source', 'ground', 'supply', 'vccs', 'vcm', 'vcvs', 'voltage_source']);
+  assert.deepEqual([...groups.Macros].sort(), ['adc', 'dac', 'opamp', 'opamp_diff']);
+  assert.ok(groups.Logic.includes('mux2') && groups.Logic.includes('tristate_buffer') && groups.Logic.includes('xnor3_gate'));
+  assert.ok(groups.Sequential.includes('dff') && groups.Sequential.includes('latch_enb_rstb_qb'));
+  assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply']);
+  assert.equal(groups.Other, undefined, 'every registered symbol has a category');
+  // The insert menu uses the same groups.
+  assert.match(readFileSync(new URL('../src/web/insert-menu.js', import.meta.url), 'utf8'), /symbolCategories\(availableTypes\)/);
 });
 
 test('selection style controls keep their text-target result shape', () => {

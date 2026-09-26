@@ -60,7 +60,7 @@ import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } 
 import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
 import { installFindReplace, openFind, openReplace, renderTextMatches } from './find-replace-ui.js';
 import { installCommandLine } from './command-line-ui.js';
-import { collageOpen, installCollage, onCollageKey, openCollage } from './collage.js';
+import { atlasOpen, installAtlas, onAtlasKey, openAtlas } from './atlas.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
@@ -7071,13 +7071,13 @@ document.getElementById('btn-help').addEventListener('click', () => {
 // ----- keyboard -------------------------------------------------------------
 
 window.addEventListener('keydown', (ev) => {
-  // Presenting owns the keyboard until it ends; so does the collage.
+  // Presenting owns the keyboard until it ends; so does the Atlas view.
   if (presenter) {
     onPresenterKey(ev);
     return;
   }
-  if (collageOpen()) {
-    onCollageKey(ev);
+  if (atlasOpen()) {
+    onAtlasKey(ev);
     return;
   }
   // Shift+Backspace steps back from the drawing to the whole workspace.
@@ -7086,7 +7086,7 @@ window.addEventListener('keydown', (ev) => {
   if ((ev.key === 'Backspace' || ev.key === 'Escape') && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey &&
       !inlineInput && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)) {
     ev.preventDefault();
-    openCollage();
+    openAtlas();
     return;
   }
   if (ev.key === 'F5' && ev.shiftKey && !inlineInput) {
@@ -7396,7 +7396,7 @@ window.addEventListener('keydown', (ev) => {
 });
 
 installCommandLine();
-installCollage();
+installAtlas();
 
 // ----- boot ------------------------------------------------------------
 

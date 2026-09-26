@@ -1,6 +1,6 @@
-# Workspace collage
+# Atlas view
 
-`Shift+Backspace` (or `:collage`; `Shift+Esc` where the browser passes it
+`Shift+Backspace` (or `:atlas`; `Shift+Esc` where the browser passes it
 on, which Chromium does not) steps back from the drawing to the whole
 workspace: every design at its real size on one continuous sheet of the
 editor's paper and grid, to look around, compare, and open. It is a viewing mode with no tools; pan and zoom
@@ -19,9 +19,17 @@ design zooms out of, and back into, exactly where the editor shows it.
 | `Shift+D` | theme |
 | Esc / Backspace | back to the editor |
 
+## Symbols
+
+Settings → Symbols (or `:symbols`) opens the same viewer on the symbol
+reference sheet (`src/core/symbol-sheet.js`): every placeable symbol, one
+row per category and family, built from the registry each time it opens, so
+it is never out of date and never a document. `GET /api/symbols.svg` serves
+the same sheet for scripted visual checks.
+
 ## How it stays fast
 
-- **Layout** (`src/web/collage-layout.js`): the designs packed into one
+- **Layout** (`src/web/atlas-layout.js`): the designs packed into one
   loose, screen-shaped ball, largest in the middle, each next in the free
   spot nearest the centre. Real size means one drawing unit is one world
   unit, and every design is shifted by whole grid cells, so its grid lines
@@ -30,7 +38,7 @@ design zooms out of, and back into, exactly where the editor shows it.
 - **Levels of detail**: one canvas paints every design from a baked image, small (256 px longest
   side) or large (1280 px), and once even the large one would blur, the live
   SVG is laid over it (at most six at a time).
-- **Cache** (`src/web/collage-cache.js`): each design's export SVG and its
+- **Cache** (`src/web/atlas-cache.js`): each design's export SVG and its
   baked images are kept in IndexedDB keyed by document path and file
   revision (the workspace listing carries `revision`), so a second visit
   reads nothing but the listing and changed files. The open design is always

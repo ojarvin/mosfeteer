@@ -4,7 +4,9 @@ import { GRID, onGrid } from '../src/core/grid.js';
 import { defineSymbol, validateSymbol } from '../src/core/components/defineSymbol.js';
 import { symbolTypes, symbolTypeNames, getSymbol } from '../src/core/components/index.js';
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
-import { buildCommands } from '../scripts/build_symbols.mjs';
+import { symbolSheet, symbolSheetRows } from '../src/core/symbol-sheet.js';
+import { symbolCategories } from '../src/core/components/categories.js';
+import { evaluate } from '../src/core/commands.js';
 import { Circuit } from '../src/core/model.js';
 
 test('every registered symbol validates clean (grid contract)', () => {
@@ -76,28 +78,34 @@ test('passive, macro, and logic labels default above their bodies', () => {
   }
 });
 
-test('symbols generator covers every reference-sheet component and category', () => {
-  const commands = buildCommands();
-  const adds = commands.filter((command) => command.startsWith('add '));
-  const annotations = commands.filter((command) => command.startsWith('annotation add '));
-  assert.equal(commands[0], 'clear');
-  assert.equal(adds.length, 75);
-  assert.equal(annotations.length, 11);
-  assert.ok(annotations.every((command) => command.includes('--align right --right-edge -320')));
-  assert.ok(adds.filter((command) => command.startsWith('add switch_')).every((command) => !command.includes('--rot')));
-  assert.equal(annotations.filter((command) => command.includes(' Sequential ')).length, 1);
-  assert.deepEqual(annotations.filter((command) => command.includes(' Sequential ')).map((command) => Number(command.match(/ Sequential 0 (-?\d+)/)?.[1])), [2400]);
-  assert.equal(annotations.filter((command) => command.includes(' Logic ')).length, 1);
-  assert.deepEqual(adds.slice(0, 8).map((command) => command.split(' ')[1]), [
-    'resistor', 'variable_resistor', 'capacitor', 'variable_capacitor',
-    'inductor', 'variable_inductor', 'impedance', 'diode',
-  ]);
-  assert.deepEqual(adds.filter((command) => command.split(' ')[2]?.startsWith('U')).map((command) => command.split(' ')[2]),
-    Array.from({ length: 45 }, (_, index) => `U${index + 1}`));
-  for (const type of ['vccs', 'vcvs', 'impedance', 'tristate_inverter', 'tristate_buffer', 'mux2', 'dff', 'dff_qb', 'dff_rst', 'dff_clkb_rstb_qb', 'latch', 'latch_rst', 'latch_enb_rstb_qb', 'and3_gate', 'xnor3_gate', 'block']) {
-    assert.ok(adds.some((command) => command.startsWith(`add ${type} `)), `${type} is present`);
-  }
-  assert.match(commands.at(-1), /^annotation add category_signal_flow Signal flow /);
+test('the symbol sheet draws every placeable symbol once, grouped, and clean', () => {
+  const sheet = symbolSheet();
+  const placed = [...sheet.components.values()].map((comp) => comp.type);
+  const placeable = symbolTypeNames.filter((type) => type !== 'solder');
+  assert.deepEqual([...placed].sort(), [...placeable].sort());
+  // One caption per category, and nothing on the sheet collides.
+  const captions = [...sheet.labels.values()].filter((label) => !label.owner && !label.netId).map((label) => label.text);
+  assert.deepEqual(captions, symbolCategories().map((group) => group.title));
+  const report = evaluate(sheet);
+  assert.deepEqual([report.overlappingBBoxes, report.labelComponentOverlaps, report.labelOverlaps, report.gridViolations], [[], [], [], []]);
+});
+
+test('a new symbol lands on the sheet by its category, or under Other', () => {
+  const groups = symbolCategories([...symbolTypeNames, 'and4_gate', 'mystery_part']);
+  assert.ok(groups.find((group) => group.title === 'Logic').types.includes('and4_gate'));
+  assert.deepEqual(groups.at(-1), { title: 'Other', types: ['mystery_part'] });
+  assert.ok(!groups.some((group) => group.types.includes('solder')));
+});
+
+test('sheet rows keep symbol families together', () => {
+  const rows = symbolSheetRows();
+  const rowOf = (type) => rows.findIndex((row) => row.types.includes(type));
+  assert.ok(rows.every((row) => row.types.length <= 8));
+  assert.equal(rowOf('and2_gate'), rowOf('xnor2_gate'));
+  assert.notEqual(rowOf('and2_gate'), rowOf('and3_gate'));
+  assert.notEqual(rowOf('dff'), rowOf('latch'));
+  assert.notEqual(rowOf('dff'), rowOf('dff_rstb'));
+  assert.equal(rows[rowOf('and3_gate')].title, null, 'only a category\'s first row is captioned');
 });
 
 test('impedance is a centered box between the resistor pins, labelled Z_{1}', () => {

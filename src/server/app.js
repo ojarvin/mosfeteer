@@ -21,7 +21,9 @@ import {
   fileRevision, isJsonFile, listDocuments, readDocumentFile, serializeDocument, validDocumentName, writeFileAtomic,
 } from './documents.js';
 import { findChromium, printSvgToPdf } from './browser.js';
-import { svgPixelSize } from '../core/render.js';
+import { svgPixelSize, svgString } from '../core/render.js';
+import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
+import { symbolSheet } from '../core/symbol-sheet.js';
 import { codeFingerprint } from './fingerprint.js';
 import { pngToPdf } from './pdf-raster.js';
 import { allowedHosts, checkRequest } from './request-guard.js';
@@ -204,6 +206,14 @@ export async function startApp({
   async function handleApi(req, res, url) {
     const { pathname } = url;
     const method = req.method;
+
+    // Every symbol, drawn from the live registry: the reference sheet the
+    // editor shows under Settings, for scripted visual checks.
+    if (pathname === '/api/symbols.svg' && method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store, max-age=0' });
+      res.end(svgString(symbolSheet(), DRAWING_EXPORT_OPTIONS));
+      return;
+    }
 
     if (pathname === '/api/health' && method === 'GET') {
       json(res, 200, { app: 'mosfeteer', root: APP_ROOT, pid: process.pid, version });

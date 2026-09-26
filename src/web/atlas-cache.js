@@ -1,5 +1,5 @@
 /**
- * The collage's rendering cache: each design's drawing (SVG and size) and its
+ * The Atlas view's rendering cache: each design's drawing (SVG and size) and its
  * baked images, kept in IndexedDB so a second visit shows the workspace at
  * once. Entries are keyed by document path and file revision, so an edited
  * design is simply a miss. Without IndexedDB (a private window, blocked
@@ -7,7 +7,7 @@
  * works, only slower to appear.
  */
 
-const DB_NAME = 'mosfeteer-collage';
+const DB_NAME = 'mosfeteer-atlas';
 const STORE = 'renderings';
 const VERSION = 1;
 /** Old revisions of every design pile up otherwise; trim past this many. */

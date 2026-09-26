@@ -332,3 +332,16 @@ serverTest('a server whose code changed on disk refuses to write documents', asy
   assert.equal(cmd.status, 409);
   assert.deepEqual((await readdir(join(root, 'workspace'))).sort(), ['fresh.json']);
 });
+
+serverTest('the symbol sheet is served live from the registry', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const response = await app.request('/api/symbols.svg');
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /^image\/svg\+xml/);
+  const svg = await response.text();
+  assert.match(svg, /^<svg\b/);
+  assert.match(svg, /Sequential/);
+  // Nothing is written: the sheet is never a document.
+  assert.deepEqual((await readdir(app.workspace).catch(() => [])).filter((file) => file.endsWith('.json')), []);
+});

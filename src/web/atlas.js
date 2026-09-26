@@ -1,5 +1,5 @@
 /**
- * The workspace collage: every design in the workspace laid out at its real
+ * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
  * tools, only looking: pan and zoom as in the editor, pick a design, open it.
  *
@@ -14,10 +14,11 @@
 import { loadDocument } from '../core/document.js';
 import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
+import { symbolSheet } from '../core/symbol-sheet.js';
 import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
-import { COLLAGE_CAPTION, COLLAGE_GAP, LARGE_PX, SMALL_PX, layoutCollage, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting } from './collage-layout.js';
-import { cacheGet, cachePut, renderingKey, trimCache } from './collage-cache.js';
+import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting } from './atlas-layout.js';
+import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
 import { persistence, openDocumentPath } from './document-session.js';
@@ -25,11 +26,17 @@ import { toggleTheme } from './toolbar-ui.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
 
-const rootEl = document.getElementById('collage');
-const deskEl = document.getElementById('collage-desk');
-const overlayEl = document.getElementById('collage-overlays');
-const titleEl = document.getElementById('collage-title');
-const statusEl = document.getElementById('collage-status');
+const rootEl = document.getElementById('atlas');
+const deskEl = document.getElementById('atlas-desk');
+const overlayEl = document.getElementById('atlas-overlays');
+const titleEl = document.getElementById('atlas-title');
+const statusEl = document.getElementById('atlas-status');
+const hintEl = document.getElementById('atlas-hint');
+
+const HINTS = {
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · Z zooms to it · F fits all · Esc returns',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
+};
 
 /** Live SVGs at most at once; the rest stay on their large images. */
 const MAX_VECTOR_TILES = 6;
@@ -41,7 +48,7 @@ const OPEN_MS = 450;
 
 let state = null;
 
-export function collageOpen() {
+export function atlasOpen() {
   return !!state;
 }
 
@@ -78,7 +85,7 @@ function clampView(view) {
   return { x: cx - w / 2, y: cy - (view.h * f) / 2, w, h: view.h * f };
 }
 
-/** The collage view that shows a design's tile exactly where the editor
+/** The Atlas view that shows a design's tile exactly where the editor
  *  canvas shows the design, so switching between them does not move it. */
 function editorEquivalentView(tile, entry) {
   const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
@@ -94,7 +101,7 @@ function editorEquivalentView(tile, entry) {
 
 function fitAllView() {
   const { w, h } = paneSize();
-  return viewFitting({ ...state.bounds, h: state.bounds.h + COLLAGE_CAPTION }, w, h, 0.05);
+  return viewFitting({ ...state.bounds, h: state.bounds.h + ATLAS_CAPTION }, w, h, 0.05);
 }
 
 // ----- the drawings -------------------------------------------------------------
@@ -112,7 +119,7 @@ function placeDrawings(entries) {
     return [entry.id, { x, y, w: cellCeil(entry.box.x + entry.box.w) - x, h: cellCeil(entry.box.y + entry.box.h) - y }];
   }));
   const boxes = new Map(entries.map((entry) => [entry.id, entry.box]));
-  const layout = layoutCollage(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })));
+  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })));
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -147,6 +154,21 @@ async function drawingFor(documentInfo, current) {
   return { svg, revision: documentInfo.revision };
 }
 
+/** The symbol reference: one sheet, built from the registry on the spot. */
+function loadSymbols() {
+  titleEl.textContent = 'Symbols';
+  titleEl.title = '';
+  const sheet = symbolSheet();
+  const svg = drawingSvg(sheet);
+  const box = viewBoxOf(svg);
+  const entry = { id: 'symbols', name: 'Symbols', path: null, revision: null, current: false, svg, box };
+  state.entries = new Map([[entry.id, entry]]);
+  state.tiles = [{ id: entry.id, x: box.x, y: box.y, w: box.w, h: box.h }];
+  state.bounds = { ...box };
+  statusEl.textContent = `${sheet.components.size} symbols`;
+  return true;
+}
+
 async function loadWorkspace(generation) {
   statusEl.textContent = 'Reading the workspace…';
   const workspace = await persistence.workspace();
@@ -163,7 +185,7 @@ async function loadWorkspace(generation) {
       const box = viewBoxOf(svg);
       if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, revision, current, svg, box });
     } catch (err) {
-      logLine(`Collage: could not draw ${doc.name}: ${err.message}`, 'error');
+      logLine(`Atlas: could not draw ${doc.name}: ${err.message}`, 'error');
     }
     if (!state || state.generation !== generation) return false;
     if (index % 4 === 3) {
@@ -305,7 +327,7 @@ function draw() {
   drawGrid(ctx, palette, w, h);
 
   const screen = { x: state.view.x, y: state.view.y, w: state.view.w, h: state.view.h };
-  const visible = state.tiles.filter((tile) => rectsIntersect(screen, { ...tile, h: tile.h + COLLAGE_CAPTION }));
+  const visible = state.tiles.filter((tile) => rectsIntersect(screen, { ...tile, h: tile.h + ATLAS_CAPTION }));
   const wanted = [];
   const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
   const placed = visible.map((tile) => {
@@ -399,6 +421,7 @@ function drawZoomBox(ctx, palette) {
 }
 
 function drawCaption(ctx, tile, entry, rect, palette) {
+  if (state.source === 'symbols') return;
   const selected = state.selected === tile.id;
   const hovered = state.hover === tile.id;
   if (selected || hovered) {
@@ -409,9 +432,9 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   // The caption may run on into the gap after its tile; its size follows
   // the caption band, so zoomed far out it gives way instead of crowding.
   const k = scale();
-  const size = Math.min(13, COLLAGE_CAPTION * k * 0.45);
+  const size = Math.min(13, ATLAS_CAPTION * k * 0.45);
   if (size < 7) return;
-  const room = (tile.w + COLLAGE_GAP * 0.8) * k;
+  const room = (tile.w + ATLAS_GAP * 0.8) * k;
   const marker = entry.current ? '● ' : '';
   ctx.font = `${selected ? 600 : 500} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   ctx.fillStyle = selected || hovered ? palette.text : palette.dim;
@@ -445,7 +468,7 @@ function syncVectorOverlays(list) {
     let el = state.overlays.get(tile.id);
     if (!el) {
       el = document.createElement('div');
-      el.className = 'collage-vector';
+      el.className = 'atlas-vector';
       const { svg: drawing } = state.entries.get(tile.id);
       el.innerHTML = theme() === 'dark' ? applyExportDarkTheme(drawing) : drawing;
       const svg = el.querySelector('svg');
@@ -541,33 +564,34 @@ function focusTile(tile, { zoom = false } = {}) {
 // ----- entering and leaving ---------------------------------------------------------
 
 /** Shift+Backspace: step back from the drawing to the whole workspace. */
-export async function openCollage() {
+export async function openAtlas({ source = 'workspace' } = {}) {
   if (state || !rootEl) return;
-  const generation = (openCollage.generation = (openCollage.generation || 0) + 1);
+  const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
   state = {
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: false,
-    selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null,
+    selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
   };
+  if (hintEl) hintEl.textContent = HINTS[source];
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
-  showOpenDesign();
+  if (source === 'workspace') showOpenDesign();
   let ready = false;
   try {
-    ready = await loadWorkspace(generation);
+    ready = source === 'symbols' ? loadSymbols() : await loadWorkspace(generation);
   } catch (err) {
     logLine(`Could not show the workspace: ${err.message}`, 'error');
   }
   if (!ready || !state) {
-    closeCollage({ animate: false });
+    closeAtlas({ animate: false });
     return;
   }
   if (!state.tiles.length) {
     statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
   }
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id).current);
-  state.selected = currentTile?.id || state.tiles[0]?.id || null;
+  state.selected = source === 'symbols' ? null : currentTile?.id || state.tiles[0]?.id || null;
   if (!state.tiles.length) {
     state.view = { x: -500, y: -500, w: 1000, h: 1000 * paneSize().h / paneSize().w };
     requestDraw();
@@ -601,7 +625,7 @@ function showOpenDesign() {
 }
 
 /** Leave for the editor. The open design zooms back into place. */
-export async function closeCollage({ animate = true } = {}) {
+export async function closeAtlas({ animate = true } = {}) {
   if (!state) return;
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
   const back = animate && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
@@ -628,16 +652,26 @@ function finishClose() {
   canvasEl.focus({ preventScroll: true });
 }
 
-export function toggleCollage() {
-  if (state) void closeCollage();
-  else void openCollage();
+export function toggleAtlas() {
+  if (state) void closeAtlas();
+  else void openAtlas();
+}
+
+/** Settings → Symbols (and `:symbols`): every symbol, in the Atlas viewer. */
+export function toggleSymbolSheet() {
+  if (state) void closeAtlas();
+  else void openAtlas({ source: 'symbols' });
 }
 
 async function openTile(tile) {
+  if (state.source === 'symbols') {
+    focusTile(tile, { zoom: true });
+    return;
+  }
   const entry = state.entries.get(tile.id);
   state.selected = tile.id;
   if (entry.current) {
-    await closeCollage();
+    await closeAtlas();
     return;
   }
   const { w, h } = paneSize();
@@ -657,12 +691,12 @@ async function openTile(tile) {
 
 // ----- input --------------------------------------------------------------------------
 
-export function onCollageKey(ev) {
+export function onAtlasKey(ev) {
   if (!state) return;
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
-  if (key === 'Escape' || key === 'Backspace') void closeCollage();
+  if (key === 'Escape' || key === 'Backspace') void closeAtlas();
   else if (key === 'Enter' && selected) void openTile(selected);
   else if (arrows[key]) {
     const next = selected ? neighbourTile(state.tiles, selected, arrows[key]) : state.tiles[0];
@@ -695,7 +729,7 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || ev.target.closest?.('.collage-head')) return;
+  if (!state || ev.target.closest?.('.atlas-head')) return;
   if (ev.button === 2) {
     ev.preventDefault();
     stopAnimation();
@@ -803,7 +837,7 @@ function onDoubleClick(ev) {
   if (hit) void openTile(hit);
 }
 
-export function installCollage() {
+export function installAtlas() {
   if (!rootEl) return;
   rootEl.addEventListener('wheel', onWheel, { passive: false });
   rootEl.addEventListener('pointerdown', onPointerDown);
@@ -823,7 +857,8 @@ export function installCollage() {
     const { w, h } = paneSize();
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
-  document.getElementById('collage-close')?.addEventListener('click', () => void closeCollage());
+  document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  document.getElementById('btn-symbols')?.addEventListener('click', () => void openAtlas({ source: 'symbols' }));
   // The theme flips inside a view transition, a frame after the key.
   new MutationObserver(() => requestDraw()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 }
