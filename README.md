@@ -2,15 +2,9 @@
 
 <h1 align="center">Mosfeteer</h1>
 
-<p align="center">A keyboard-driven editor for textbook-style analog schematics, with assisted wiring, presentation beats, and symbolic small-signal analysis.</p>
+<p align="center">A keyboard-driven editor for textbook-style analog schematics, with assisted wiring, presentation beats, symbolic small-signal analysis, and an atlas of your whole workspace.</p>
 
 ![A folded-cascode OTA with its bias network in the editor, split diagonally between the light and dark themes](docs/images/editor.png)
-
-## Symbolic analysis
-
-Pick the input and output nets to derive `Z_in`, `Z_out`, `A_v`, and any poles and zeros, simplified the way a textbook would. Hover or click any term to light up the devices it comes from, then annotate the schematic with the results.
-
-![Derived OTA equations; the locked g_m9 r_o9 r_o8 term highlights M9 and M8 on the schematic](docs/images/analysis.png)
 
 ## Fast editing
 
@@ -32,9 +26,21 @@ Label switches with the phase that drives them, and **Beats from switch phases**
 
 ![A switched-capacitor integrator in its two phases: C1 samples V_IN in phi 1, and dumps its charge into C2 in phi 2](docs/images/phase-beats.png)
 
+## Symbolic analysis
+
+Pick the input and output nets to derive `Z_in`, `Z_out`, `A_v`, and any poles and zeros, simplified the way a textbook would. Hover or click any term to light up the devices it comes from, then annotate the schematic with the results.
+
+![Derived OTA equations; the locked g_m9 r_o9 r_o8 term highlights M9 and M8 on the schematic](docs/images/analysis.png)
+
+## Atlas view
+
+Press `Shift+Backspace` to step back from the drawing to the whole workspace: every design at its real size on one sheet of paper, packed together so you can look around, compare, and pick up where you left off. Pan and zoom as in the editor, right-drag to zoom into a region, and double-click a design to open it; the view zooms straight into it.
+
+![The Atlas view of a workspace: seventeen schematics, from single-transistor stages to folded-cascode OTAs, packed on one sheet](docs/images/atlas.png)
+
 ## Symbols
 
-Analog, digital, and mixed-signal symbols share one textbook style, plus resizable blocks and signal-flow nodes for block diagrams.
+Analog, digital, and mixed-signal symbols share one textbook style, plus resizable blocks and signal-flow nodes for block diagrams. **Settings → Symbols** shows every one of them.
 
 ![A selection of passive, source, transistor, amplifier, reference, port, logic, flip-flop, and ADC symbols](docs/images/symbols.png)
 
@@ -77,6 +83,7 @@ npm test
 - [`AGENTS.md`](AGENTS.md): editor behavior and the symbol specification
 - [`docs/beats.md`](docs/beats.md): how beats are stored and edited
 - [`docs/topological-small-signal.md`](docs/topological-small-signal.md): how the analysis works
+- [`docs/atlas.md`](docs/atlas.md): the Atlas view and the symbol sheet
 
 ## License
 
