@@ -134,9 +134,43 @@ The report order is:
 4. `Z_{out}(0)`
 5. each selected transfer function's `(s)` and `(0)` rows, in the table's order
 6. poles, then zeros, of each selected transfer function
-7. assumptions
+7. noise densities, when requested (input-referred, then output)
+8. assumptions
 
 Rows that add no information are omitted.
+
+## Noise
+
+The **Noise** checkboxes add low-frequency noise densities (`noise`:
+`{thermal, flicker, sources}`, implemented in `src/core/analysis/noise.js`).
+Each selected device gets one noise generator, a current source between its
+own terminals, and one more RHS column in the same MNA solve. That column holds
+the input at AC ground and the output open, so its output voltage is the
+generator's transimpedance `H_k(s)`. Generators are uncorrelated and add in
+power:
+
+```text
+v²_n,out = Σ |H_k|² S_k        v²_n,in = Σ |H_k / A_v|² S_k
+```
+
+| Generator | Thermal `S_k` | Flicker `S_k` |
+| --- | --- | --- |
+| saturated MOS (drain–source) | `4kT γ g_m` | `g_m² K_{f,n/p} / (C_{ox} W L f)` |
+| triode MOS (`r_{ds}`) | `4kT / r_{ds}` | none |
+| resistor | `4kT / R` | none |
+
+Capacitors, inductors, and ideal and controlled sources are noiseless. Both
+MOS generators flow in the drain, so one column serves thermal and flicker
+noise. `H_k` and `A_v` share the system determinant, so the input-referred
+ratio has the circuit's poles cancelled.
+
+Each row is the DC limit of every transfer, so the result is the density
+below the first pole. The row shows the `4kT` or `1/f` prefix times one term
+per generator, e.g. `4kT(γ/g_{m1} + 1/(g_{m1}^2 R_D))`. The selected equation
+approximations act on each generator's transfer before it is squared. A
+generator outside the coupled network, or one whose gain vanishes at DC, is
+named in the Log tab instead. Unchecking a device drops its column; a device
+whose share is negligible is best left out rather than approximated away.
 
 ## Schematic annotations
 

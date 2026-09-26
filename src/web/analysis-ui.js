@@ -11,10 +11,11 @@ import { adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
+import { noiseCandidates } from '../core/analysis/noise.js';
 import { snap, GRID } from '../core/grid.js';
-import { analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
+import { analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
-import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
+import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
@@ -36,6 +37,41 @@ function setAnalysisResultTab(name = 'equations') {
     button.tabIndex = active ? 0 : -1;
   }
   for (const [key, panel] of analysisTabPanels) panel.hidden = key !== requested;
+}
+
+/** One checkbox per device that can carry a noise generator, all checked. */
+function fillNoiseSources() {
+  if (!analysisNoiseSources) return;
+  analysisNoiseSources.replaceChildren(...noiseCandidates(editor.circuit).map((refdes) => {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = true;
+    input.dataset.noiseSource = refdes;
+    label.append(input, ` ${refdes}`);
+    return label;
+  }));
+}
+
+function noiseSourceInputs() {
+  return analysisNoiseSources ? [...analysisNoiseSources.querySelectorAll('[data-noise-source]')] : [];
+}
+
+/** Null while every device is checked, so devices drawn later join in. */
+function checkedNoiseSources() {
+  const inputs = noiseSourceInputs();
+  return inputs.every((input) => input.checked) ? null : inputs.filter((input) => input.checked).map((input) => input.dataset.noiseSource);
+}
+
+function setNoiseInputs(options) {
+  if (analysisNoiseThermal) analysisNoiseThermal.checked = options.noiseThermal;
+  if (analysisNoiseFlicker) analysisNoiseFlicker.checked = options.noiseFlicker;
+  for (const input of noiseSourceInputs()) input.checked = !options.noiseSources || options.noiseSources.includes(input.dataset.noiseSource);
+  syncNoiseSourcesVisibility();
+}
+
+function syncNoiseSourcesVisibility() {
+  if (analysisNoiseSources) analysisNoiseSources.hidden = !analysisNoiseThermal?.checked && !analysisNoiseFlicker?.checked;
 }
 
 function portNetIds(nets, type, role) {
@@ -86,6 +122,7 @@ function fillAnalysisDialog(targetNetId) {
     }
     if (defaults.input) analysisInput.value = defaults.input;
   }
+  fillNoiseSources();
   return defaults;
 }
 
@@ -117,6 +154,9 @@ function analysisFormOptions() {
     dominantPole: !!analysisApproxDominantPole?.checked,
     transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
+    noiseThermal: !!analysisNoiseThermal?.checked,
+    noiseFlicker: !!analysisNoiseFlicker?.checked,
+    noiseSources: checkedNoiseSources(),
   });
 }
 
@@ -182,6 +222,7 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
     setAnalysisTransferInputs(options.transferFunctions);
+    setNoiseInputs(options);
     return false;
   }
   const { state, diagnostics } = migrateAnalysisFormState(saved);
@@ -208,6 +249,7 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
   setAnalysisTransferInputs(state.options.transferFunctions);
+  setNoiseInputs(state.options);
   return true;
 }
 
@@ -807,8 +849,10 @@ export function installAnalysisUi() {
     persistAnalysisForm();
     const formOptions = analysisFormOptions();
     const devices = analysisDeviceOptions();
+    const noise = analysisNoiseRequest(formOptions);
     const request = {
       ...formOptions,
+      ...(noise ? { noise } : {}),
       ...(Object.keys(devices).length ? { devices } : {}),
       input,
       output,
@@ -846,10 +890,13 @@ export function installAnalysisUi() {
     analysisInputPrevious = analysisInput.value;
   });
 
-  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, ...analysisTransferInputs]) {
+  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
     control?.addEventListener('input', persistAnalysisForm);
     control?.addEventListener('change', persistAnalysisForm);
   }
+  // The source checkboxes are rebuilt per circuit; their changes bubble here.
+  analysisNoiseSources?.addEventListener('change', persistAnalysisForm);
+  for (const control of [analysisNoiseThermal, analysisNoiseFlicker]) control?.addEventListener('change', syncNoiseSourcesVisibility);
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 

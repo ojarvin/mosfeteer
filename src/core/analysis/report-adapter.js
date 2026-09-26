@@ -415,6 +415,45 @@ function rootRow(roots) {
   };
 }
 
+const NOISE_SEPARATOR = ' + ';
+
+/** A term whose own top level is a sum needs parentheses after a prefix. */
+function topLevelSum(value) {
+  if (value?.kind === 'add') return true;
+  return value?.kind === 'rational' && value.denominator?.kind === 'number'
+    && value.denominator.numerator === value.denominator.denominator && value.numerator?.kind === 'add';
+}
+
+/**
+ * One noise density row: the row's prefix (`4kT` or `1/f`) times one term
+ * per generator, kept apart so each device's share stays readable. The
+ * provenance render joins the terms' own renders, so it always describes the
+ * displayed string.
+ */
+function noiseRow(row) {
+  const approximate = row.terms.some(({ expression, exactExpression }) => !sameValue(expression, exactExpression));
+  const relation = approximate ? '\\approx' : '=';
+  const wrap = (body) => (row.terms.length > 1 || topLevelSum(row.terms[0].expression)
+    ? `${row.prefix}\\left(${body}\\right)`
+    : `${row.prefix} ${body}`);
+  const body = row.terms.map(({ expression }) => render(expression)).join(NOISE_SEPARATOR);
+  const exactBody = row.terms.map(({ exactExpression }) => render(exactExpression)).join(NOISE_SEPARATOR);
+  const joined = joinProvenanceRenders(row.terms.map(({ expression }) => renderExpressionWithProvenance(expression)), NOISE_SEPARATOR);
+  return {
+    ok: true,
+    query: `noise-${row.key}`,
+    equation: `${row.label} ${relation} ${wrap(body)}`,
+    exactEquation: `${row.label} = ${wrap(exactBody)}`,
+    equationProvenance: { tex: `${row.label} ${relation} ${wrap(joined.tex)}`, nodes: joined.nodes },
+    terms: row.terms,
+  };
+}
+
+function noiseEntries(report) {
+  const rows = report?.noise?.ok ? report.noise.rows : [];
+  return rows.map((row) => ({ title: row.title, result: noiseRow(row) }));
+}
+
 /** What the quantities are ratios of, named by the nodes they were taken at. */
 function portEntry(report) {
   const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
@@ -455,6 +494,7 @@ function equationEntries(reports, report) {
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles));
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros));
   }
+  for (const { title, result } of noiseEntries(report)) add(title, result);
   return entries;
 }
 

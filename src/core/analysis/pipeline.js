@@ -18,9 +18,11 @@ import { solveMNA } from './solve.js';
 import { createRationalOps } from './algebra-ops.js';
 import { compactRational } from './compact.js';
 import { solveByTopology } from './topological-solve.js';
+import { buildNoiseSources, noiseRequest } from './noise.js';
 
 const INPUT_SOURCE = '@analysis-input';
 const OUTPUT_SOURCE = '@analysis-output';
+const NOISE_SOURCE = '@analysis-noise:';
 
 function lookupValue(values, key) {
   if (!values || key == null) return undefined;
@@ -285,7 +287,11 @@ function uniqueName(base, primitives) {
   }
 }
 
-/** Create the two compatible RHS excitations used by every port query. */
+/**
+ * Create the two compatible RHS excitations used by every port query, plus
+ * one column per noise generator (`noise.js`). A noise column zeroes both
+ * port sources: the input is shorted to AC ground and the output left open.
+ */
 export function createTestExcitations(context, primitives = [], options = {}) {
   if (!context?.input?.node || !context?.output?.node) {
     throw new TypeError('analysis context must contain input and output nodes');
@@ -293,14 +299,17 @@ export function createTestExcitations(context, primitives = [], options = {}) {
   const ops = validateMnaOps(options.ops || numberOps());
   const inputName = uniqueName(INPUT_SOURCE, primitives);
   const outputName = uniqueName(OUTPUT_SOURCE, primitives);
+  const noiseSources = options.noiseSources || [];
+  const rhsCount = 2 + noiseSources.length;
+  const column = (index) => Array.from({ length: rhsCount }, (_, rhs) => (rhs === index ? ops.one : ops.zero));
   return {
-    rhsCount: 2,
+    rhsCount,
     input: {
       kind: 'voltage-source',
       name: inputName,
       id: inputName,
       terminals: { a: context.input.node, b: AC_GROUND },
-      value: [ops.one, ops.zero],
+      value: column(0),
     },
     output: {
       kind: 'current-source',
@@ -308,8 +317,17 @@ export function createTestExcitations(context, primitives = [], options = {}) {
       id: outputName,
       // Positive current is injected into the output node for Zout.
       terminals: { a: AC_GROUND, b: context.output.node },
-      value: [ops.zero, ops.one],
+      value: column(1),
     },
+    noise: noiseSources.map((source, index) => ({
+      kind: 'current-source',
+      name: `${NOISE_SOURCE}${source.id}`,
+      id: `${NOISE_SOURCE}${source.id}`,
+      terminals: source.terminals,
+      value: column(2 + index),
+      source,
+      column: 2 + index,
+    })),
   };
 }
 
@@ -402,6 +420,35 @@ function queryValues(solution, system, context, excitations, ops, requested = ['
     unknowns: new Map(solution.variables.map((name, index) => [name, solution.columns.map((column) => column[index])])),
     systemUnknowns: [...system.unknowns],
   };
+}
+
+/**
+ * The requested noise generators, split by whether they can reach the ports
+ * at all. One outside the coupled subgraph contributes nothing, and adding its
+ * column would only leave its own node floating.
+ */
+function coupledNoiseSources(primitives, coupled, context, options, ops) {
+  const request = noiseRequest(options.noise);
+  const sources = buildNoiseSources(primitives, request, (primitive) => resolveValue(primitive.value, primitive, options, ops), ops);
+  const nodes = new Set(coupled.nodeOrder);
+  const inside = (node) => node === AC_GROUND || context.acGroundIds.has(node) || nodes.has(node);
+  const result = { request, coupled: [], uncoupled: [] };
+  for (const source of sources) {
+    const { a, b } = source.terminals;
+    result[inside(a) && inside(b) && a !== b ? 'coupled' : 'uncoupled'].push(source);
+  }
+  return result;
+}
+
+function noiseQueries(solution, context, excitations, uncoupled) {
+  return [
+    ...excitations.noise.map(({ source, column }) => ({
+      source,
+      column,
+      outputVoltage: solutionValue(solution, `V(${context.output.node})`, column),
+    })),
+    ...uncoupled.map((source) => ({ source, column: null, outputVoltage: null })),
+  ];
 }
 
 /**
@@ -587,8 +634,9 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
   const selected = adaptPrimitiveDescriptors(selectedExactUnreduced, { ...options, ops });
   const descriptorBudget = budgetFailure(ops, 'descriptor adaptation');
   if (descriptorBudget) return failure('budget', descriptorBudget.error, descriptorBudget);
-  const excitations = createTestExcitations(context, selected, { ops });
-  const elements = [...selectedMna, excitations.input, excitations.output];
+  const noise = coupledNoiseSources(exactPrimitives, coupled, context, options, ops);
+  const excitations = createTestExcitations(context, selected, { ops, noiseSources: noise.coupled });
+  const elements = [...selectedMna, excitations.input, excitations.output, ...excitations.noise];
   const nodeOrder = coupled.nodeOrder.filter((node) => elements.some((element) => (
     element.terminals?.a === node || element.terminals?.b === node
     || element.control?.a === node || element.control?.b === node
@@ -647,8 +695,12 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     excitations,
     system,
     solution,
+    noiseSources: [...noise.coupled, ...noise.uncoupled],
     queries: refineSeparableQueries(
-      queryValues(solution, system, context, excitations, ops, transferFunctionList(options.transferFunctions)),
+      {
+        ...queryValues(solution, system, context, excitations, ops, transferFunctionList(options.transferFunctions)),
+        ...(noise.request ? { noise: noiseQueries(solution, context, excitations, noise.uncoupled) } : {}),
+      },
       { selectedMna, context, ops },
     ),
   };

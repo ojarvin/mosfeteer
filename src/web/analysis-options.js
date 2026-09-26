@@ -11,7 +11,32 @@ export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   dominantPole: false,
   // Which transfer functions to derive, in report order; zero or more.
   transferFunctions: Object.freeze(['Av']),
+  // Noise densities: each generator adds one solve column, so both are off
+  // until asked for. `noiseSources` null means every noisy device.
+  noiseThermal: false,
+  noiseFlicker: false,
+  noiseSources: null,
 });
+
+/** A refdes list, null for "all", or undefined when `value` is neither. */
+function noiseSourcesValue(value) {
+  if (value === null) return null;
+  if (!Array.isArray(value)) return undefined;
+  return [...new Set(value.map((name) => String(name).trim()).filter(Boolean))];
+}
+
+/**
+ * The engine's `noise` request for normalized options, or undefined when no
+ * noise kind is selected.
+ */
+export function analysisNoiseRequest(options = {}) {
+  if (!options.noiseThermal && !options.noiseFlicker) return undefined;
+  return {
+    thermal: Boolean(options.noiseThermal),
+    flicker: Boolean(options.noiseFlicker),
+    sources: options.noiseSources ?? null,
+  };
+}
 
 const TRANSFER_FUNCTIONS = Object.freeze(['Av', 'Zm', 'Gm', 'Ai']);
 
@@ -33,6 +58,8 @@ const OPTION_ALIASES = Object.freeze({
   ],
   millerApproximation: ['miller', 'approxMiller', 'millerDecoupling'],
   parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
+  noiseThermal: [],
+  noiseFlicker: [],
 });
 
 const LEGACY_LIST_FIELDS = Object.freeze({
@@ -67,11 +94,14 @@ function canonicalOptions(value) {
   const nested = objectValue(root.options);
   const options = analysisOptionDefaults();
   for (const name of Object.keys(ANALYSIS_OPTION_DEFAULTS)) {
+    if (typeof ANALYSIS_OPTION_DEFAULTS[name] !== 'boolean') continue;
     const selected = firstBoolean(root, name) ?? firstBoolean(nested, name);
     if (selected !== undefined) options[name] = selected;
   }
   const transferFunctions = transferFunctionValue(root.transferFunctions) ?? transferFunctionValue(nested.transferFunctions);
   if (transferFunctions) options.transferFunctions = transferFunctions;
+  const noiseSources = has(root, 'noiseSources') ? noiseSourcesValue(root.noiseSources) : noiseSourcesValue(nested.noiseSources);
+  if (noiseSources !== undefined) options.noiseSources = noiseSources;
   if (options.neglectChannelLengthModulation) options.highIntrinsicGain = false;
   return options;
 }
@@ -209,6 +239,8 @@ export function migrateAnalysisFormState(value = {}) {
   const migratedOptions = legacyOptions(source);
   const transferFunctions = transferFunctionValue(objectValue(source.options).transferFunctions);
   if (transferFunctions) migratedOptions.transferFunctions = transferFunctions;
+  const noiseSources = noiseSourcesValue(objectValue(source.options).noiseSources);
+  if (noiseSources !== undefined) migratedOptions.noiseSources = noiseSources;
   const options = canonicalOptions(migratedOptions);
   const deviceRegions = normalizeDeviceRegions(legacyRegionSource(source));
   const diagnostics = [];

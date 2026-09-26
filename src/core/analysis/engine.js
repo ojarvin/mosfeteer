@@ -9,6 +9,7 @@ import { describeSmallSignalNetlist } from './netlist.js';
 import { analyzeResponse } from './response.js';
 import { approximateTopology, buildTopologyIdentities } from './topology.js';
 import { compactRational } from './compact.js';
+import { buildNoiseReport, noiseProvenancePrimitives, noiseRequest } from './noise.js';
 import {
   infinity,
   integer,
@@ -486,6 +487,74 @@ function carriesSum(value) {
   return false;
 }
 
+/**
+ * Noise rows (`noise.js`) under the report's own presentation rules. They get
+ * a budget of their own: a model too large to refer its noise to the input
+ * still reports every port quantity, with the noise failure in its place.
+ */
+function analyzeNoise(queries, transfer, request, approximationOptions) {
+  if (!queries.noise || !request) return null;
+  const variable = approximationOptions.variable || 's';
+  const ops = createRationalOps({ variable, maxOperations: 60000 });
+  const options = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+  const compact = (value) => compactRational(value, ops);
+  const dcLimit = (value) => {
+    const response = canonicalResponseValue(compact(value), { variable });
+    if (response.dc.kind === 'zero') return ops.zero;
+    return response.dc.kind === 'finite' ? cancelParameterFactors(compact(response.dc.value)) : null;
+  };
+  try {
+    const report = buildNoiseReport(queries.noise, transfer, request, {
+      ops,
+      dcLimit,
+      compact,
+      approximate: (value) => {
+        const { selected, assumptions } = applyApproximations(value, options);
+        return { selected, assumptions };
+      },
+    });
+    if (ops.budget.exceeded) throw new Error('symbolic operation budget exhausted while referring noise');
+    return { ok: true, ...report };
+  } catch (error) {
+    return { ok: false, request, error: error?.message || String(error), rows: [], assumptions: [] };
+  }
+}
+
+function symbolNamesOf(value, names = new Set()) {
+  if (!value || typeof value !== 'object') return names;
+  if (value.kind === 'symbol') names.add(value.name);
+  for (const child of [value.numerator, value.denominator, value.base, ...(value.terms || []), ...(value.factors || [])]) {
+    symbolNamesOf(child, names);
+  }
+  return names;
+}
+
+/**
+ * Cancel common polynomial factors of a frequency-free ratio, such as the
+ * `R_D + r_o` a degenerated stage's load noise and its gain share. The GCD
+ * helper looks only for factors in one named variable, so try each symbol.
+ */
+function cancelParameterFactors(value) {
+  if (value?.kind !== 'rational') return value;
+  let current = value;
+  for (const name of symbolNamesOf(value)) {
+    const next = cancelCommonPolynomialFactor(current, { variable: name });
+    if (next !== current) current = compactRational(next, createRationalOps({ variable: value.variable, maxOperations: 12000 }));
+  }
+  return current;
+}
+
+function noiseLog(noise) {
+  if (!noise) return [];
+  if (!noise.ok) return [`Noise: ${noise.error}`];
+  return [
+    ...noise.silent.map((component) => `Noise: ${component} does not reach the output.`),
+    ...noise.unreferred.map(({ component, referral }) => (referral === 'input'
+      ? `Noise: ${component} has no low-frequency input-referred value (the gain vanishes at DC).`
+      : `Noise: ${component} has no finite low-frequency output value.`)),
+  ];
+}
+
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -747,8 +816,10 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   const bodyEffectAssumptions = omittedBody.length
     ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
     : [];
+  const noise = analyzeNoise(queries, values.Av, noiseRequest(options.noise), approximationOptions);
   const assumptions = unique([
     ...millerAssumptions,
+    ...(noise?.assumptions || []),
     ...bodyEffectAssumptions,
     ...outputResistanceAssumptions,
     ...shown.flatMap((name) => approximations[name].assumptions),
@@ -790,6 +861,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     ...Object.fromEntries(transferFunctions.filter((name) => name !== 'Av')
       .map((name) => [DERIVED_TRANSFERS[name], displayed[DERIVED_TRANSFERS[name]]])),
     transferFunctions,
+    ...(noise ? { noise } : {}),
     exact,
     approximate: approximations,
     dc: {
@@ -829,7 +901,8 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     // in symbols whose own primitive left the model but whose name survived
     // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
     // engine had to keep. See `provenance.js`.
-    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives),
+    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives,
+      noiseProvenancePrimitives(pipeline.noiseSources)),
     diagnostics,
     log: [
       diagnostics.logText,
@@ -837,6 +910,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
         ? ['r_o -> infinity: removing r_o leaves a node with no conducting path (for example an output driven only by current sources), so r_o was kept and only its large-r_o limit applied.']
         : []),
       ...topologyLog,
+      ...noiseLog(noise),
     ].filter(Boolean).join('\n'),
   };
 }

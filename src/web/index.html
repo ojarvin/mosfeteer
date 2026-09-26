@@ -323,6 +323,13 @@
             <label><input id="analysis-approx-dominant-pole" name="approxDominantPole" type="checkbox" /> Use dominant-pole approximation when multiple AC poles are present</label>
             <p class="field-hint">These simplify the displayed equations only. Exact equations remain in the Log tab.</p>
           </fieldset>
+          <fieldset class="analysis-approximations" id="analysis-noise">
+            <legend>Noise</legend>
+            <label><input id="analysis-noise-thermal" name="noiseThermal" type="checkbox" /> <span>Thermal noise (<span class="math-inline">4kT</span>)</span></label>
+            <label><input id="analysis-noise-flicker" name="noiseFlicker" type="checkbox" /> <span>Flicker noise (<span class="math-inline">1/f</span>)</span></label>
+            <div id="analysis-noise-sources" class="analysis-noise-sources" role="group" aria-label="Noise sources" hidden></div>
+            <p class="field-hint">Low-frequency densities, referred to the input and to the output. Each checked MOS device and resistor adds one generator; uncheck the ones that do not matter.</p>
+          </fieldset>
           <details class="analysis-context" id="analysis-bias-context">
             <summary>Small-signal context</summary>
             <label for="analysis-ac-grounds">Additional AC-ground ports/nets</label>

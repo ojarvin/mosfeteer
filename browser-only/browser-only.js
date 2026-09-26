@@ -1891,8 +1891,10 @@ let describeSmallSignalNetlist; __bind(() => { ({ describeSmallSignalNetlist } =
 let analyzeResponse; __bind(() => { ({ analyzeResponse } = __require("src/core/analysis/response.js")); });
 let approximateTopology, buildTopologyIdentities; __bind(() => { ({ approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js")); });
 let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
+let buildNoiseReport, noiseProvenancePrimitives, noiseRequest; __bind(() => { ({ buildNoiseReport, noiseProvenancePrimitives, noiseRequest } = __require("src/core/analysis/noise.js")); });
 let infinity, integer, rational, rationalFunction, substituteRational; __bind(() => { ({ infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js")); });
 let equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation; __bind(() => { ({ equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js")); });
+
 
 
 
@@ -2367,6 +2369,74 @@ function carriesSum(value) {
   return false;
 }
 
+/**
+ * Noise rows (`noise.js`) under the report's own presentation rules. They get
+ * a budget of their own: a model too large to refer its noise to the input
+ * still reports every port quantity, with the noise failure in its place.
+ */
+function analyzeNoise(queries, transfer, request, approximationOptions) {
+  if (!queries.noise || !request) return null;
+  const variable = approximationOptions.variable || 's';
+  const ops = createRationalOps({ variable, maxOperations: 60000 });
+  const options = { ...approximationOptions, budget: ops.budget, rational: { budget: ops.budget } };
+  const compact = (value) => compactRational(value, ops);
+  const dcLimit = (value) => {
+    const response = canonicalResponseValue(compact(value), { variable });
+    if (response.dc.kind === 'zero') return ops.zero;
+    return response.dc.kind === 'finite' ? cancelParameterFactors(compact(response.dc.value)) : null;
+  };
+  try {
+    const report = buildNoiseReport(queries.noise, transfer, request, {
+      ops,
+      dcLimit,
+      compact,
+      approximate: (value) => {
+        const { selected, assumptions } = applyApproximations(value, options);
+        return { selected, assumptions };
+      },
+    });
+    if (ops.budget.exceeded) throw new Error('symbolic operation budget exhausted while referring noise');
+    return { ok: true, ...report };
+  } catch (error) {
+    return { ok: false, request, error: error?.message || String(error), rows: [], assumptions: [] };
+  }
+}
+
+function symbolNamesOf(value, names = new Set()) {
+  if (!value || typeof value !== 'object') return names;
+  if (value.kind === 'symbol') names.add(value.name);
+  for (const child of [value.numerator, value.denominator, value.base, ...(value.terms || []), ...(value.factors || [])]) {
+    symbolNamesOf(child, names);
+  }
+  return names;
+}
+
+/**
+ * Cancel common polynomial factors of a frequency-free ratio, such as the
+ * `R_D + r_o` a degenerated stage's load noise and its gain share. The GCD
+ * helper looks only for factors in one named variable, so try each symbol.
+ */
+function cancelParameterFactors(value) {
+  if (value?.kind !== 'rational') return value;
+  let current = value;
+  for (const name of symbolNamesOf(value)) {
+    const next = cancelCommonPolynomialFactor(current, { variable: name });
+    if (next !== current) current = compactRational(next, createRationalOps({ variable: value.variable, maxOperations: 12000 }));
+  }
+  return current;
+}
+
+function noiseLog(noise) {
+  if (!noise) return [];
+  if (!noise.ok) return [`Noise: ${noise.error}`];
+  return [
+    ...noise.silent.map((component) => `Noise: ${component} does not reach the output.`),
+    ...noise.unreferred.map(({ component, referral }) => (referral === 'input'
+      ? `Noise: ${component} has no low-frequency input-referred value (the gain vanishes at DC).`
+      : `Noise: ${component} has no finite low-frequency output value.`)),
+  ];
+}
+
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -2628,8 +2698,10 @@ function analyzeSmallSignalV2(circuit, options = {}) {
   const bodyEffectAssumptions = omittedBody.length
     ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
     : [];
+  const noise = analyzeNoise(queries, values.Av, noiseRequest(options.noise), approximationOptions);
   const assumptions = unique([
     ...millerAssumptions,
+    ...(noise?.assumptions || []),
     ...bodyEffectAssumptions,
     ...outputResistanceAssumptions,
     ...shown.flatMap((name) => approximations[name].assumptions),
@@ -2671,6 +2743,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     ...Object.fromEntries(transferFunctions.filter((name) => name !== 'Av')
       .map((name) => [DERIVED_TRANSFERS[name], displayed[DERIVED_TRANSFERS[name]]])),
     transferFunctions,
+    ...(noise ? { noise } : {}),
     exact,
     approximate: approximations,
     dc: {
@@ -2710,7 +2783,8 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     // in symbols whose own primitive left the model but whose name survived
     // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
     // engine had to keep. See `provenance.js`.
-    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives),
+    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives,
+      noiseProvenancePrimitives(pipeline.noiseSources)),
     diagnostics,
     log: [
       diagnostics.logText,
@@ -2718,6 +2792,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
         ? ['r_o -> infinity: removing r_o leaves a node with no conducting path (for example an output driven only by current sources), so r_o was kept and only its large-r_o limit applied.']
         : []),
       ...topologyLog,
+      ...noiseLog(noise),
     ].filter(Boolean).join('\n'),
   };
 }
@@ -4367,6 +4442,214 @@ function describeSmallSignalNetlist(primitives, options = {}) {
 
 };
 
+__modules["src/core/analysis/noise.js"] = function (__require, __exports) {
+__exports.noiseRequest = noiseRequest;
+__exports.noiseCandidates = noiseCandidates;
+__exports.buildNoiseSources = buildNoiseSources;
+__exports.noiseProvenancePrimitives = noiseProvenancePrimitives;
+__exports.buildNoiseReport = buildNoiseReport;
+let MOS_TYPES; __bind(() => { ({ MOS_TYPES } = __require("src/core/analysis/shared.js")); });
+/**
+ * Small-signal noise: thermal and flicker spectral densities referred to the
+ * output and to the input.
+ *
+ * Every selected noise generator is an independent current source between the
+ * terminals of its own element, and gets its own RHS column in the one MNA
+ * solve (`pipeline.js`). A column has the input test source at 0 V and the
+ * output open, so its output voltage is the generator's transimpedance
+ * `H_k(s)` to the output. Uncorrelated generators add in power:
+ *
+ *   v_{n,out}^2 = sum_k |H_k|^2 S_k,   v_{n,in}^2 = sum_k |H_k / A_v|^2 S_k
+ *
+ * `H_k` and `A_v` share the system determinant, so the input-referred ratio
+ * has the circuit's poles cancelled -- which is why it reads like a textbook.
+ * Thermal and flicker noise of one MOS device are both drain currents, so one
+ * column serves both; only the weight `S_k` differs. The densities are written
+ * as a common prefix (`4kT` or `1/f`) times a sum of one term per generator,
+ * and are taken at low frequency: the DC limit of each transfer.
+ */
+
+
+const NOISE_KINDS = Object.freeze(['thermal', 'flicker']);
+
+const RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
+
+/**
+ * The normalized noise request, or null when noise is not requested. `true`
+ * asks for every generator; an object may name `sources` (refdes list, null
+ * for all) and turn `thermal` or `flicker` off.
+ */
+function noiseRequest(value) {
+  if (!value) return null;
+  const object = value === true ? {} : value;
+  if (typeof object !== 'object') return null;
+  const sources = Array.isArray(object.sources) || object.sources instanceof Set
+    ? [...new Set([...object.sources].map(String))]
+    : null;
+  const thermal = object.thermal !== false;
+  const flicker = object.flicker !== false;
+  if (!thermal && !flicker) return null;
+  return { sources, thermal, flicker };
+}
+
+/** Components that can carry a noise generator, in drawing order. */
+function noiseCandidates(circuit) {
+  return [...circuit.components.values()]
+    .filter((component) => MOS_TYPES.has(component.type) || RESISTOR_TYPES.has(component.type))
+    .map((component) => component.refdes);
+}
+
+function deviceSuffix(refdes) {
+  return String(refdes).replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
+}
+
+/**
+ * One generator per noisy primitive of a selected component: a saturated
+ * MOS device's channel (beside its `g_m` source), a triode channel `r_{ds}`,
+ * or a resistor. Weights leave out the `4kT` and `1/f` prefixes. The extra
+ * symbols a weight introduces are listed as provenance primitives so the
+ * GUI can trace `W_{1}` back to `M1` like any other parameter.
+ */
+function buildNoiseSources(primitives, request, resolve, ops) {
+  if (!request || typeof ops.symbol !== 'function') return [];
+  const wanted = request.sources ? new Set(request.sources) : null;
+  const sources = [];
+  for (const primitive of primitives) {
+    const component = primitive.metadata?.component;
+    if (!component || (wanted && !wanted.has(component))) continue;
+    const role = String(primitive.id).slice(String(primitive.id).lastIndexOf('.') + 1);
+    const mosChannel = primitive.kind === 'vccs' && role === 'gm' && primitive.metadata?.device === 'mos';
+    const conductor = primitive.kind === 'resistor' && (role === 'resistor' || role === 'rds');
+    if (!mosChannel && !conductor) continue;
+    const value = resolve(primitive);
+    const symbols = [];
+    let thermal = null;
+    let flicker = null;
+    if (mosChannel) {
+      const suffix = deviceSuffix(component);
+      const channel = primitive.metadata.channel === 'p' ? 'p' : 'n';
+      const names = { gamma: '\\gamma', k: `K_{f,${channel}}`, cox: 'C_{ox}', w: `W_{${suffix}}`, l: `L_{${suffix}}` };
+      symbols.push(names.w, names.l);
+      if (request.thermal) thermal = ops.mul(ops.symbol(names.gamma), value);
+      if (request.flicker) {
+        flicker = ops.div(
+          ops.mul(ops.mul(value, value), ops.symbol(names.k)),
+          ops.mul(ops.symbol(names.cox), ops.mul(ops.symbol(names.w), ops.symbol(names.l))),
+        );
+      }
+    } else if (request.thermal) {
+      thermal = ops.div(ops.one, value);
+    }
+    if (!thermal && !flicker) continue;
+    sources.push({
+      id: `${component}.noise`,
+      component,
+      primitive: primitive.id,
+      terminals: { a: primitive.terminals.a, b: primitive.terminals.b },
+      thermal,
+      flicker,
+      symbols,
+    });
+  }
+  return sources;
+}
+
+/** Symbol-to-component primitives for the names a noise weight adds. */
+function noiseProvenancePrimitives(sources = []) {
+  return sources.flatMap((source) => source.symbols.map((name) => ({
+    id: `${source.component}.noise`,
+    kind: 'noise',
+    value: name,
+    metadata: { component: source.component },
+  })));
+}
+
+const LABELS = Object.freeze({
+  input: { thermal: '\\overline{v_{n,in,th}^2}', flicker: '\\overline{v_{n,in,1/f}^2}' },
+  output: { thermal: '\\overline{v_{n,out,th}^2}', flicker: '\\overline{v_{n,out,1/f}^2}' },
+});
+
+const NOISE_PREFIXES = Object.freeze({ thermal: '4kT', flicker: '\\frac{1}{f}' });
+
+const TITLES = Object.freeze({
+  input: { thermal: 'Input-referred thermal noise', flicker: 'Input-referred flicker noise' },
+  output: { thermal: 'Output thermal noise', flicker: 'Output flicker noise' },
+});
+
+/**
+ * Low-frequency noise rows from the solved noise columns. `transfer` is the
+ * exact `A_v(s)`; `helpers` supplies the engine's DC limit, approximation, and
+ * compaction so the terms follow the same presentation rules as every other
+ * row. A generator whose transfer has no finite DC limit (an AC-coupled
+ * path) is listed in `unreferred` rather than guessed.
+ */
+function buildNoiseReport(queries, transfer, request, helpers) {
+  const { ops, dcLimit, approximate, compact } = helpers;
+  const columns = queries || [];
+  const gain = dcLimit(transfer);
+  const assumptions = [];
+  const unreferred = [];
+  const silent = [];
+  const perReferral = { input: [], output: [] };
+  for (const column of columns) {
+    const { source } = column;
+    const output = column.outputVoltage;
+    if (!output || ops.isZero(output)) {
+      silent.push(source.component);
+      continue;
+    }
+    const referrals = { output: dcLimit(output) };
+    referrals.input = gain && !ops.isZero(gain) ? dcLimit(ops.div(output, transfer)) : null;
+    for (const referral of ['input', 'output']) {
+      const exact = referrals[referral];
+      if (!exact) {
+        unreferred.push({ component: source.component, referral });
+        continue;
+      }
+      const approximation = approximate(exact);
+      assumptions.push(...approximation.assumptions);
+      const squared = (value) => compact(ops.mul(value, value));
+      perReferral[referral].push({ source, exact: squared(exact), selected: squared(approximation.selected) });
+    }
+  }
+  const rows = [];
+  for (const referral of ['input', 'output']) {
+    for (const kind of NOISE_KINDS) {
+      if (!request[kind]) continue;
+      const terms = perReferral[referral]
+        .filter(({ source }) => source[kind])
+        .map(({ source, exact, selected }) => ({
+          component: source.component,
+          exactExpression: compact(ops.mul(exact, source[kind])),
+          expression: compact(ops.mul(selected, source[kind])),
+        }))
+        .filter(({ expression }) => !ops.isZero(expression));
+      if (!terms.length) continue;
+      rows.push({
+        key: `${referral}-${kind}`,
+        referral,
+        kind,
+        title: TITLES[referral][kind],
+        label: LABELS[referral][kind],
+        prefix: NOISE_PREFIXES[kind],
+        terms,
+      });
+    }
+  }
+  return {
+    request,
+    sources: columns.map(({ source }) => source.component),
+    silent: [...new Set(silent)],
+    unreferred,
+    assumptions: [...new Set(assumptions)],
+    rows,
+  };
+}
+
+__exports.NOISE_KINDS = NOISE_KINDS;
+__exports.NOISE_PREFIXES = NOISE_PREFIXES;
+};
+
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
 __exports.resolveValue = resolveValue;
 __exports.adaptPrimitiveDescriptor = adaptPrimitiveDescriptor;
@@ -4387,6 +4670,8 @@ let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
 let solveByTopology; __bind(() => { ({ solveByTopology } = __require("src/core/analysis/topological-solve.js")); });
+let buildNoiseSources, noiseRequest; __bind(() => { ({ buildNoiseSources, noiseRequest } = __require("src/core/analysis/noise.js")); });
+
 
 
 
@@ -4403,6 +4688,7 @@ let solveByTopology; __bind(() => { ({ solveByTopology } = __require("src/core/a
 
 const INPUT_SOURCE = '@analysis-input';
 const OUTPUT_SOURCE = '@analysis-output';
+const NOISE_SOURCE = '@analysis-noise:';
 
 function lookupValue(values, key) {
   if (!values || key == null) return undefined;
@@ -4667,7 +4953,11 @@ function uniqueName(base, primitives) {
   }
 }
 
-/** Create the two compatible RHS excitations used by every port query. */
+/**
+ * Create the two compatible RHS excitations used by every port query, plus
+ * one column per noise generator (`noise.js`). A noise column zeroes both
+ * port sources: the input is shorted to AC ground and the output left open.
+ */
 function createTestExcitations(context, primitives = [], options = {}) {
   if (!context?.input?.node || !context?.output?.node) {
     throw new TypeError('analysis context must contain input and output nodes');
@@ -4675,14 +4965,17 @@ function createTestExcitations(context, primitives = [], options = {}) {
   const ops = validateMnaOps(options.ops || numberOps());
   const inputName = uniqueName(INPUT_SOURCE, primitives);
   const outputName = uniqueName(OUTPUT_SOURCE, primitives);
+  const noiseSources = options.noiseSources || [];
+  const rhsCount = 2 + noiseSources.length;
+  const column = (index) => Array.from({ length: rhsCount }, (_, rhs) => (rhs === index ? ops.one : ops.zero));
   return {
-    rhsCount: 2,
+    rhsCount,
     input: {
       kind: 'voltage-source',
       name: inputName,
       id: inputName,
       terminals: { a: context.input.node, b: AC_GROUND },
-      value: [ops.one, ops.zero],
+      value: column(0),
     },
     output: {
       kind: 'current-source',
@@ -4690,8 +4983,17 @@ function createTestExcitations(context, primitives = [], options = {}) {
       id: outputName,
       // Positive current is injected into the output node for Zout.
       terminals: { a: AC_GROUND, b: context.output.node },
-      value: [ops.zero, ops.one],
+      value: column(1),
     },
+    noise: noiseSources.map((source, index) => ({
+      kind: 'current-source',
+      name: `${NOISE_SOURCE}${source.id}`,
+      id: `${NOISE_SOURCE}${source.id}`,
+      terminals: source.terminals,
+      value: column(2 + index),
+      source,
+      column: 2 + index,
+    })),
   };
 }
 
@@ -4784,6 +5086,35 @@ function queryValues(solution, system, context, excitations, ops, requested = ['
     unknowns: new Map(solution.variables.map((name, index) => [name, solution.columns.map((column) => column[index])])),
     systemUnknowns: [...system.unknowns],
   };
+}
+
+/**
+ * The requested noise generators, split by whether they can reach the ports
+ * at all. One outside the coupled subgraph contributes nothing, and adding its
+ * column would only leave its own node floating.
+ */
+function coupledNoiseSources(primitives, coupled, context, options, ops) {
+  const request = noiseRequest(options.noise);
+  const sources = buildNoiseSources(primitives, request, (primitive) => resolveValue(primitive.value, primitive, options, ops), ops);
+  const nodes = new Set(coupled.nodeOrder);
+  const inside = (node) => node === AC_GROUND || context.acGroundIds.has(node) || nodes.has(node);
+  const result = { request, coupled: [], uncoupled: [] };
+  for (const source of sources) {
+    const { a, b } = source.terminals;
+    result[inside(a) && inside(b) && a !== b ? 'coupled' : 'uncoupled'].push(source);
+  }
+  return result;
+}
+
+function noiseQueries(solution, context, excitations, uncoupled) {
+  return [
+    ...excitations.noise.map(({ source, column }) => ({
+      source,
+      column,
+      outputVoltage: solutionValue(solution, `V(${context.output.node})`, column),
+    })),
+    ...uncoupled.map((source) => ({ source, column: null, outputVoltage: null })),
+  ];
 }
 
 /**
@@ -4969,8 +5300,9 @@ function buildExactAnalysisPipeline(circuit, options = {}) {
   const selected = adaptPrimitiveDescriptors(selectedExactUnreduced, { ...options, ops });
   const descriptorBudget = budgetFailure(ops, 'descriptor adaptation');
   if (descriptorBudget) return failure('budget', descriptorBudget.error, descriptorBudget);
-  const excitations = createTestExcitations(context, selected, { ops });
-  const elements = [...selectedMna, excitations.input, excitations.output];
+  const noise = coupledNoiseSources(exactPrimitives, coupled, context, options, ops);
+  const excitations = createTestExcitations(context, selected, { ops, noiseSources: noise.coupled });
+  const elements = [...selectedMna, excitations.input, excitations.output, ...excitations.noise];
   const nodeOrder = coupled.nodeOrder.filter((node) => elements.some((element) => (
     element.terminals?.a === node || element.terminals?.b === node
     || element.control?.a === node || element.control?.b === node
@@ -5029,8 +5361,12 @@ function buildExactAnalysisPipeline(circuit, options = {}) {
     excitations,
     system,
     solution,
+    noiseSources: [...noise.coupled, ...noise.uncoupled],
     queries: refineSeparableQueries(
-      queryValues(solution, system, context, excitations, ops, transferFunctionList(options.transferFunctions)),
+      {
+        ...queryValues(solution, system, context, excitations, ops, transferFunctionList(options.transferFunctions)),
+        ...(noise.request ? { noise: noiseQueries(solution, context, excitations, noise.uncoupled) } : {}),
+      },
       { selectedMna, context, ops },
     ),
   };
@@ -7631,6 +7967,45 @@ function rootRow(roots) {
   };
 }
 
+const NOISE_SEPARATOR = ' + ';
+
+/** A term whose own top level is a sum needs parentheses after a prefix. */
+function topLevelSum(value) {
+  if (value?.kind === 'add') return true;
+  return value?.kind === 'rational' && value.denominator?.kind === 'number'
+    && value.denominator.numerator === value.denominator.denominator && value.numerator?.kind === 'add';
+}
+
+/**
+ * One noise density row: the row's prefix (`4kT` or `1/f`) times one term
+ * per generator, kept apart so each device's share stays readable. The
+ * provenance render joins the terms' own renders, so it always describes the
+ * displayed string.
+ */
+function noiseRow(row) {
+  const approximate = row.terms.some(({ expression, exactExpression }) => !sameValue(expression, exactExpression));
+  const relation = approximate ? '\\approx' : '=';
+  const wrap = (body) => (row.terms.length > 1 || topLevelSum(row.terms[0].expression)
+    ? `${row.prefix}\\left(${body}\\right)`
+    : `${row.prefix} ${body}`);
+  const body = row.terms.map(({ expression }) => render(expression)).join(NOISE_SEPARATOR);
+  const exactBody = row.terms.map(({ exactExpression }) => render(exactExpression)).join(NOISE_SEPARATOR);
+  const joined = joinProvenanceRenders(row.terms.map(({ expression }) => renderExpressionWithProvenance(expression)), NOISE_SEPARATOR);
+  return {
+    ok: true,
+    query: `noise-${row.key}`,
+    equation: `${row.label} ${relation} ${wrap(body)}`,
+    exactEquation: `${row.label} = ${wrap(exactBody)}`,
+    equationProvenance: { tex: `${row.label} ${relation} ${wrap(joined.tex)}`, nodes: joined.nodes },
+    terms: row.terms,
+  };
+}
+
+function noiseEntries(report) {
+  const rows = report?.noise?.ok ? report.noise.rows : [];
+  return rows.map((row) => ({ title: row.title, result: noiseRow(row) }));
+}
+
 /** What the quantities are ratios of, named by the nodes they were taken at. */
 function portEntry(report) {
   const definitions = Array.isArray(report?.portDefinitions) ? report.portDefinitions : [];
@@ -7671,6 +8046,7 @@ function equationEntries(reports, report) {
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles));
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros));
   }
+  for (const { title, result } of noiseEntries(report)) add(title, result);
   return entries;
 }
 
@@ -19864,6 +20240,9 @@ function texToMathML(source) {
       return `<mfrac>${numerator}${denominator}</mfrac>`;
     }
     if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
+    // A mean-square bar, as in the noise density `\overline{v_n^2}`. Browsers
+    // do not stretch an accent glyph across a group, so the bar is a border.
+    if (name === 'overline') return `<mrow style="border-top:0.05em solid currentColor;padding-top:0.15em">${parseArgument()}</mrow>`;
     if (name === 'pv') {
       // Provenance marker from `present.js`: the first group is the AST node
       // id, the second is the sub-expression rendered from it. The wrapper is
@@ -19944,6 +20323,8 @@ function texToMathML(source) {
     if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
     if ('()[]|'.includes(char)) return mathMlDelimiter(char);
     if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
+    // TeX sets `/` as an ordinary symbol, without operator spacing: `1/f`.
+    if (char === '/') return mathMlAtom(char, 'mo', 'lspace="0em" rspace="0em"');
     if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
     return mathMlAtom(char, 'mo');
   };
@@ -23980,6 +24361,7 @@ __exports.ALIGN_SOURCE_HINT = ALIGN_SOURCE_HINT;
 };
 
 __modules["src/web/analysis-options.js"] = function (__require, __exports) {
+__exports.analysisNoiseRequest = analysisNoiseRequest;
 __exports.analysisOptionDefaults = analysisOptionDefaults;
 __exports.normalizeAnalysisOptions = normalizeAnalysisOptions;
 __exports.migrateAnalysisFormState = migrateAnalysisFormState;
@@ -23996,7 +24378,32 @@ const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   dominantPole: false,
   // Which transfer functions to derive, in report order; zero or more.
   transferFunctions: Object.freeze(['Av']),
+  // Noise densities: each generator adds one solve column, so both are off
+  // until asked for. `noiseSources` null means every noisy device.
+  noiseThermal: false,
+  noiseFlicker: false,
+  noiseSources: null,
 });
+
+/** A refdes list, null for "all", or undefined when `value` is neither. */
+function noiseSourcesValue(value) {
+  if (value === null) return null;
+  if (!Array.isArray(value)) return undefined;
+  return [...new Set(value.map((name) => String(name).trim()).filter(Boolean))];
+}
+
+/**
+ * The engine's `noise` request for normalized options, or undefined when no
+ * noise kind is selected.
+ */
+function analysisNoiseRequest(options = {}) {
+  if (!options.noiseThermal && !options.noiseFlicker) return undefined;
+  return {
+    thermal: Boolean(options.noiseThermal),
+    flicker: Boolean(options.noiseFlicker),
+    sources: options.noiseSources ?? null,
+  };
+}
 
 const TRANSFER_FUNCTIONS = Object.freeze(['Av', 'Zm', 'Gm', 'Ai']);
 
@@ -24018,6 +24425,8 @@ const OPTION_ALIASES = Object.freeze({
   ],
   millerApproximation: ['miller', 'approxMiller', 'millerDecoupling'],
   parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
+  noiseThermal: [],
+  noiseFlicker: [],
 });
 
 const LEGACY_LIST_FIELDS = Object.freeze({
@@ -24052,11 +24461,14 @@ function canonicalOptions(value) {
   const nested = objectValue(root.options);
   const options = analysisOptionDefaults();
   for (const name of Object.keys(ANALYSIS_OPTION_DEFAULTS)) {
+    if (typeof ANALYSIS_OPTION_DEFAULTS[name] !== 'boolean') continue;
     const selected = firstBoolean(root, name) ?? firstBoolean(nested, name);
     if (selected !== undefined) options[name] = selected;
   }
   const transferFunctions = transferFunctionValue(root.transferFunctions) ?? transferFunctionValue(nested.transferFunctions);
   if (transferFunctions) options.transferFunctions = transferFunctions;
+  const noiseSources = has(root, 'noiseSources') ? noiseSourcesValue(root.noiseSources) : noiseSourcesValue(nested.noiseSources);
+  if (noiseSources !== undefined) options.noiseSources = noiseSources;
   if (options.neglectChannelLengthModulation) options.highIntrinsicGain = false;
   return options;
 }
@@ -24194,6 +24606,8 @@ function migrateAnalysisFormState(value = {}) {
   const migratedOptions = legacyOptions(source);
   const transferFunctions = transferFunctionValue(objectValue(source.options).transferFunctions);
   if (transferFunctions) migratedOptions.transferFunctions = transferFunctions;
+  const noiseSources = noiseSourcesValue(objectValue(source.options).noiseSources);
+  if (noiseSources !== undefined) migratedOptions.noiseSources = noiseSources;
   const options = canonicalOptions(migratedOptions);
   const deviceRegions = normalizeDeviceRegions(legacyRegionSource(source));
   const diagnostics = [];
@@ -24369,10 +24783,11 @@ let adaptCombinedReport; __bind(() => { ({ adaptCombinedReport } = __require("sr
 let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
 let svgString, texToMathML; __bind(() => { ({ svgString, texToMathML } = __require("src/core/render.js")); });
 let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("src/core/analysis/provenance.js")); });
+let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/analysis/noise.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
-let analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
+let analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
-let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
+let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -24383,6 +24798,7 @@ let commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, se
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -24415,6 +24831,41 @@ function setAnalysisResultTab(name = 'equations') {
     button.tabIndex = active ? 0 : -1;
   }
   for (const [key, panel] of analysisTabPanels) panel.hidden = key !== requested;
+}
+
+/** One checkbox per device that can carry a noise generator, all checked. */
+function fillNoiseSources() {
+  if (!analysisNoiseSources) return;
+  analysisNoiseSources.replaceChildren(...noiseCandidates(editor.circuit).map((refdes) => {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = true;
+    input.dataset.noiseSource = refdes;
+    label.append(input, ` ${refdes}`);
+    return label;
+  }));
+}
+
+function noiseSourceInputs() {
+  return analysisNoiseSources ? [...analysisNoiseSources.querySelectorAll('[data-noise-source]')] : [];
+}
+
+/** Null while every device is checked, so devices drawn later join in. */
+function checkedNoiseSources() {
+  const inputs = noiseSourceInputs();
+  return inputs.every((input) => input.checked) ? null : inputs.filter((input) => input.checked).map((input) => input.dataset.noiseSource);
+}
+
+function setNoiseInputs(options) {
+  if (analysisNoiseThermal) analysisNoiseThermal.checked = options.noiseThermal;
+  if (analysisNoiseFlicker) analysisNoiseFlicker.checked = options.noiseFlicker;
+  for (const input of noiseSourceInputs()) input.checked = !options.noiseSources || options.noiseSources.includes(input.dataset.noiseSource);
+  syncNoiseSourcesVisibility();
+}
+
+function syncNoiseSourcesVisibility() {
+  if (analysisNoiseSources) analysisNoiseSources.hidden = !analysisNoiseThermal?.checked && !analysisNoiseFlicker?.checked;
 }
 
 function portNetIds(nets, type, role) {
@@ -24465,6 +24916,7 @@ function fillAnalysisDialog(targetNetId) {
     }
     if (defaults.input) analysisInput.value = defaults.input;
   }
+  fillNoiseSources();
   return defaults;
 }
 
@@ -24496,6 +24948,9 @@ function analysisFormOptions() {
     dominantPole: !!analysisApproxDominantPole?.checked,
     transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
+    noiseThermal: !!analysisNoiseThermal?.checked,
+    noiseFlicker: !!analysisNoiseFlicker?.checked,
+    noiseSources: checkedNoiseSources(),
   });
 }
 
@@ -24561,6 +25016,7 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
     setAnalysisTransferInputs(options.transferFunctions);
+    setNoiseInputs(options);
     return false;
   }
   const { state, diagnostics } = migrateAnalysisFormState(saved);
@@ -24587,6 +25043,7 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
   setAnalysisTransferInputs(state.options.transferFunctions);
+  setNoiseInputs(state.options);
   return true;
 }
 
@@ -25186,8 +25643,10 @@ function installAnalysisUi() {
     persistAnalysisForm();
     const formOptions = analysisFormOptions();
     const devices = analysisDeviceOptions();
+    const noise = analysisNoiseRequest(formOptions);
     const request = {
       ...formOptions,
+      ...(noise ? { noise } : {}),
       ...(Object.keys(devices).length ? { devices } : {}),
       input,
       output,
@@ -25225,10 +25684,13 @@ function installAnalysisUi() {
     analysisInputPrevious = analysisInput.value;
   });
 
-  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, ...analysisTransferInputs]) {
+  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNoiseThermal, analysisNoiseFlicker, ...analysisTransferInputs]) {
     control?.addEventListener('input', persistAnalysisForm);
     control?.addEventListener('change', persistAnalysisForm);
   }
+  // The source checkboxes are rebuilt per circuit; their changes bubble here.
+  analysisNoiseSources?.addEventListener('change', persistAnalysisForm);
+  for (const control of [analysisNoiseThermal, analysisNoiseFlicker]) control?.addEventListener('change', syncNoiseSourcesVisibility);
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
@@ -29479,6 +29941,9 @@ const analysisReference = document.getElementById('analysis-reference');
 const analysisInput = document.getElementById('analysis-input');
 const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
 const analysisDeviceRegions = document.getElementById('analysis-device-regions');
+const analysisNoiseThermal = document.getElementById('analysis-noise-thermal');
+const analysisNoiseFlicker = document.getElementById('analysis-noise-flicker');
+const analysisNoiseSources = document.getElementById('analysis-noise-sources');
 const analysisApproxRo = document.getElementById('analysis-approx-ro');
 const analysisApproxBody = document.getElementById('analysis-approx-body');
 const analysisApproxMiller = document.getElementById('analysis-approx-miller');
@@ -29576,6 +30041,9 @@ __exports.analysisReference = analysisReference;
 __exports.analysisInput = analysisInput;
 __exports.analysisAcGrounds = analysisAcGrounds;
 __exports.analysisDeviceRegions = analysisDeviceRegions;
+__exports.analysisNoiseThermal = analysisNoiseThermal;
+__exports.analysisNoiseFlicker = analysisNoiseFlicker;
+__exports.analysisNoiseSources = analysisNoiseSources;
 __exports.analysisApproxRo = analysisApproxRo;
 __exports.analysisApproxBody = analysisApproxBody;
 __exports.analysisApproxMiller = analysisApproxMiller;

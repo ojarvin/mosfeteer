@@ -412,6 +412,9 @@ export function texToMathML(source) {
       return `<mfrac>${numerator}${denominator}</mfrac>`;
     }
     if (name === 'sqrt') return `<msqrt>${parseArgument()}</msqrt>`;
+    // A mean-square bar, as in the noise density `\overline{v_n^2}`. Browsers
+    // do not stretch an accent glyph across a group, so the bar is a border.
+    if (name === 'overline') return `<mrow style="border-top:0.05em solid currentColor;padding-top:0.15em">${parseArgument()}</mrow>`;
     if (name === 'pv') {
       // Provenance marker from `present.js`: the first group is the AST node
       // id, the second is the sub-expression rendered from it. The wrapper is
@@ -492,6 +495,8 @@ export function texToMathML(source) {
     if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
     if ('()[]|'.includes(char)) return mathMlDelimiter(char);
     if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
+    // TeX sets `/` as an ordinary symbol, without operator spacing: `1/f`.
+    if (char === '/') return mathMlAtom(char, 'mo', 'lspace="0em" rspace="0em"');
     if (char === ' ' && text[index] === ' ') return '<mspace width="0.25em"/>';
     return mathMlAtom(char, 'mo');
   };

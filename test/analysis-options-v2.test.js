@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ANALYSIS_OPTION_DEFAULTS,
+  analysisNoiseRequest,
   analysisOptionDefaults,
   migrateAnalysisFormState,
   normalizeAnalysisOptions,
@@ -16,6 +17,9 @@ test('defaults select the concise textbook presentation', () => {
     highIntrinsicGain: true,
     dominantPole: false,
     transferFunctions: ['Av'],
+    noiseThermal: false,
+    noiseFlicker: false,
+    noiseSources: null,
   });
   assert.notEqual(analysisOptionDefaults(), ANALYSIS_OPTION_DEFAULTS);
 });
@@ -42,6 +46,9 @@ test('normalization accepts only canonical option names and device regions', () 
     parasitics: false,
     dominantPole: true,
     transferFunctions: ['Av'],
+    noiseThermal: false,
+    noiseFlicker: false,
+    noiseSources: null,
     deviceRegions: { M2: { region: 'triode' } },
   });
 });
@@ -58,6 +65,9 @@ test('channel-length omission supersedes high intrinsic gain', () => {
     parasitics: false,
     dominantPole: false,
     transferFunctions: ['Av'],
+    noiseThermal: false,
+    noiseFlicker: false,
+    noiseSources: null,
   });
 });
 
@@ -76,6 +86,9 @@ test('canonical nested form state remains canonical during normalization', () =>
     parasitics: false,
     dominantPole: false,
     transferFunctions: ['Av'],
+    noiseThermal: false,
+    noiseFlicker: false,
+    noiseSources: null,
     deviceRegions: { M1: { region: 'triode' } },
   });
 });
@@ -112,6 +125,9 @@ test('persistence migration maps legacy aliases and drops removed fields', () =>
       parasitics: false,
       dominantPole: true,
       transferFunctions: ['Av'],
+      noiseThermal: false,
+      noiseFlicker: false,
+      noiseSources: null,
     },
   });
   assert.equal(diagnostics.length, 1);
@@ -138,6 +154,9 @@ test('canonical persisted values win over legacy aliases and lists', () => {
     parasitics: false,
     dominantPole: false,
     transferFunctions: ['Av'],
+    noiseThermal: false,
+    noiseFlicker: false,
+    noiseSources: null,
   });
   assert.deepEqual(state.deviceRegions, { M1: { region: 'triode' } });
 });
@@ -173,4 +192,17 @@ test('migration does not mutate persisted input', () => {
   const before = structuredClone(saved);
   migrateAnalysisFormState(saved);
   assert.deepEqual(saved, before);
+});
+
+test('noise options persist their source list and build the engine request', () => {
+  const options = normalizeAnalysisOptions({ noiseThermal: true, noiseSources: ['M1', ' RD ', 'M1'] });
+  assert.equal(options.noiseThermal, true);
+  assert.equal(options.noiseFlicker, false);
+  assert.deepEqual(options.noiseSources, ['M1', 'RD']);
+  assert.deepEqual(analysisNoiseRequest(options), { thermal: true, flicker: false, sources: ['M1', 'RD'] });
+  assert.equal(analysisNoiseRequest(analysisOptionDefaults()), undefined);
+  const { state } = migrateAnalysisFormState({ options: { noiseFlicker: true, noiseSources: ['M2'] } });
+  assert.equal(state.options.noiseFlicker, true);
+  assert.deepEqual(state.options.noiseSources, ['M2']);
+  assert.equal(migrateAnalysisFormState({ options: { noiseSources: null } }).state.options.noiseSources, null);
 });

@@ -1302,6 +1302,16 @@ button:disabled {
   min-height: 0;
 }
 
+.analysis-dock .analysis-noise-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.analysis-dock .analysis-noise-sources[hidden] {
+  display: none;
+}
+
 .analysis-dock .math-inline {
   color: var(--text);
   font-family: "Latin Modern Math", "Computer Modern", "CMU Serif", "STIX Two Math", "Cambria Math", "DejaVu Serif", serif;

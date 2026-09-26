@@ -28,6 +28,13 @@ test('an evaluation bar stays in the row so it stretches, with its condition at 
   assert.match(markup, /<msub><mpadded depth="0"><mi>Z<\/mi><\/mpadded>/);
 });
 
+test('an overline bars its whole argument, as in a noise density, and a slash stays tight', () => {
+  const markup = texToMathML('\\overline{v_{n}^2} = 4kT');
+  assert.match(markup, /<mrow style="border-top:[^"]*"><mrow><msup>.*<\/msup><\/mrow><\/mrow><mo>=<\/mo>/);
+  assert.doesNotMatch(markup, /overline/);
+  assert.match(texToMathML('v_{1/f}'), /<mo lspace="0em" rspace="0em">\/<\/mo>/);
+});
+
 test('an export frames what is visible, not the grid-rounded label boxes', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
