@@ -15,6 +15,7 @@ import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs } from '../core/stubs.js';
+import { addPinRail } from '../core/pin-rails.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { editorOverlay, svgString } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
@@ -62,7 +63,7 @@ import { installFindReplace, openFind, openReplace, renderTextMatches } from './
 import { installCommandLine } from './command-line-ui.js';
 import { atlasOpen, installAtlas, onAtlasKey, openAtlas } from './atlas.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
-import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd } from './insert-menu.js';
+import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview } from './annotation-tools.js';
@@ -1757,6 +1758,7 @@ export function stubSelection() {
   }
   const out = commit(() => addTerminalStubs(circuit, refs));
   if (!out) return;
+  rememberAction('wire stubs', stubSelection);
   const added = out.stubs.length ? `added ${out.stubs.length} wire stub${out.stubs.length === 1 ? '' : 's'}` : 'no unconnected terminals to stub';
   logLine(`${added}${out.skipped.length ? `; skipped ${out.skipped.join(', ')} (would short)` : ''}`);
   render();
@@ -6379,6 +6381,64 @@ function onVisualKey(key) {
   }
 }
 
+// The last repeatable edit, for `.`: how to do it again to whatever is
+// selected (or pointed at) now. Session state; never part of a document.
+let lastAction = null; // { label, run }
+
+export function rememberAction(label, run) {
+  lastAction = { label, run };
+}
+
+function repeatLastAction(count = 1) {
+  if (!lastAction) {
+    logLine('. repeats the last rotate, mirror, swap, rail, or stubs; nothing to repeat yet');
+    return;
+  }
+  hintLine(`repeat: ${lastAction.label}${count > 1 ? ` ×${count}` : ''}`);
+  for (let i = 0; i < count; i++) lastAction.run();
+}
+
+/** The parts q swaps: the selected ones, else the one under the cursor. */
+export function swapTargets() {
+  const comps = selectedComps();
+  if (comps.length) return comps;
+  const hovered = compUnderCursor();
+  return hovered ? [hovered] : [];
+}
+
+function pinUnderCursor() {
+  const hit = matchAt(cursor.x, cursor.y);
+  return hit?.term ? hit : null;
+}
+
+/** g / v: a ground or supply wired one cell out from the pin under the
+ *  cursor (core/pin-rails.js). */
+function railAtPointedPin(type) {
+  const key = type === 'ground' ? 'g' : 'v';
+  rememberAction(`${type} on a pin`, () => railAtPointedPin(type));
+  const hit = pinUnderCursor();
+  if (!hit) {
+    hintLine(`${key}: point at an unconnected pin to wire a ${type} to it`);
+    return;
+  }
+  const ref = { comp: hit.refdes, term: hit.term };
+  if (circuit.netOfTerminal(ref)) {
+    logLine(`${hit.refdes}.${hit.term} is already wired; ${key} adds a ${type} to an unconnected pin`);
+    return;
+  }
+  const before = snapshot();
+  try {
+    const marker = addPinRail(circuit, ref, type);
+    recordHistoryEntry(before, true);
+    markModelChanged();
+    logLine(`${marker.refdes} (${type}) on ${hit.refdes}.${hit.term}`);
+  } catch (err) {
+    applyJson(before);
+    logLine(`Could not wire a ${type} to ${hit.refdes}.${hit.term}: ${err.message || err}`, 'error');
+  }
+  render();
+}
+
 function onNormalKey(key, shiftKey = false) {
   if (key === 'Enter' && drag?.mode === 'copyghost') {
     if (shiftKey) {
@@ -6481,6 +6541,23 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  if (key === '.') {
+    repeatLastAction(count);
+    return;
+  }
+
+  if (key === 'q') {
+    openSwapPicker(swapTargets());
+    return;
+  }
+
+  // g and v over an unconnected pin wire a ground or supply to it; elsewhere
+  // v is visual mode.
+  if (key === 'g' || (key === 'v' && pinUnderCursor())) {
+    railAtPointedPin(key === 'g' ? 'ground' : 'supply');
+    return;
+  }
+
   // Normal-mode t edits only the primary selected label. Insert-mode t keeps
   // its separate label-placement behavior in onInsertKey.
   if (key === 't') {
@@ -6525,6 +6602,10 @@ function onNormalKey(key, shiftKey = false) {
     } else {
       const total = ((90 * count) % 360 + 360) % 360;
       if (total) rotateSelectionAbout(total);
+      rememberAction(count > 1 ? `rotate ${count}×` : 'rotate', () => {
+        counts = count;
+        onNormalKey('r');
+      });
       const primary = selectedComp() || selectedComps()[0];
       if (drag?.mode !== 'copyghost' && primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
@@ -7018,6 +7099,7 @@ export function selectedTransform(action) {
   }
   if (action === 'rotate') rotateSelectionAbout(90);
   else mirrorSelectionAbout(action === 'mirror-x' ? 'x' : 'y');
+  rememberAction(action === 'rotate' ? 'rotate' : `mirror ${action === 'mirror-x' ? 'horizontally' : 'vertically'}`, () => selectedTransform(action));
   render();
 }
 

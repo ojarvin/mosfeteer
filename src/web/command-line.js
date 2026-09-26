@@ -65,6 +65,8 @@ export const DOCUMENT_COMMANDS = [
   { name: 'rm', aliases: ['remove', 'delete'], help: 'rm <refdes>' },
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
   { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labelled wire stubs)' },
+  { name: 'swap', help: 'swap <refdes> [type] (change a part\'s type, keeping its wiring)' },
+  { name: 'rail', help: 'rail REF.TERM ground|supply (a rail wired to a pin)' },
   { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },
   { name: 'net', help: 'net <id> add|drop|name|label|rm ...' },
   { name: 'nets', help: 'list nets' },

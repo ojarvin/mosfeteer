@@ -15,6 +15,8 @@ import { editor } from './editor-state.js';
 import { inlineEditLabel } from './label-editor.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
 import { copyAsImage } from './export-ui.js';
+import { openSwapPicker } from './insert-menu.js';
+import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
 import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
 import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
@@ -571,6 +573,9 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Rotate', () => selectedTransform('rotate'), { shortcut: 'r' });
     appendContextItem(group, 'Mirror horizontally', () => selectedTransform('mirror-x'), { shortcut: 'Shift+R' });
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl/Cmd+R' });
+    if (swapCandidates(comp.type).length) {
+      appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'q' });
+    }
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {

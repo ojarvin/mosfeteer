@@ -8,6 +8,7 @@ import { Circuit } from '../core/model.js';
 import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { symbolCategories } from '../core/components/categories.js';
 import { svgString } from '../core/render.js';
+import { swapCandidates, swapComponentType, swapTerminalMap } from '../core/swap.js';
 import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, placementSearchScore, withRecentType } from './toolbar.js';
 import { arrivalDirection, quickAddPlacement } from './gestures.js';
 import { canvasEl } from './elements.js';
@@ -16,7 +17,7 @@ import { logLine } from './status-bar-ui.js';
 import { worldToClient } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { placeNetLabelAt } from './annotation-tools.js';
-import { applyJson, clearSymmetry, commit, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, undo } from './main.js';
+import { applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, undo } from './main.js';
 
 const PLACEMENT = {
   r: 'resistor',
@@ -345,6 +346,15 @@ const QUICK_ADD_SPECIAL = {
 };
 
 function quickAddEntries(query) {
+  const swap = editor.quickAdd?.swap;
+  if (swap) {
+    if (!query) return swap.candidates;
+    return swap.candidates
+      .map((type, order) => [type, placementSearchScore(query, type), order])
+      .filter(([, score]) => score >= 0)
+      .sort((a, b) => b[1] - a[1] || a[2] - b[2])
+      .map(([type]) => type);
+  }
   const specials = editor.quickAdd?.fromWire ? Object.keys(QUICK_ADD_SPECIAL) : [];
   if (!query) return [...QUICK_ADD_DEFAULTS.filter((type) => symbolTypeNames.includes(type)), ...specials];
   const scored = INSERT_COMPONENT_TYPES
@@ -358,16 +368,16 @@ function quickAddEntries(query) {
   return scored.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 10).map(([type]) => type);
 }
 
-export function openQuickAdd({ clientX, clientY, point, fromWire = false }) {
+export function openQuickAdd({ clientX, clientY, point, fromWire = false, swap = null }) {
   closeQuickAdd({ cancel: false });
   const el = document.createElement('div');
   el.className = 'quick-add glass';
   el.setAttribute('role', 'dialog');
-  el.setAttribute('aria-label', 'Add a part at the wire end');
+  el.setAttribute('aria-label', swap ? 'Change the part type' : 'Add a part at the wire end');
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'quick-add-input';
-  input.placeholder = 'Add part…';
+  input.placeholder = swap ? `${swap.refs.length > 1 ? `${swap.refs.length} parts` : swap.refs[0]} becomes…` : 'Add part…';
   input.setAttribute('aria-label', 'Filter parts');
   input.autocomplete = 'off';
   input.spellcheck = false;
@@ -376,7 +386,7 @@ export function openQuickAdd({ clientX, clientY, point, fromWire = false }) {
   list.setAttribute('role', 'listbox');
   el.append(input, list);
   document.body.appendChild(el);
-  editor.quickAdd = { point, fromWire, query: '', index: 0, el, input, list };
+  editor.quickAdd = { point, fromWire, swap, query: '', index: 0, el, input, list };
   renderQuickAdd();
   const rect = el.getBoundingClientRect();
   const left = Math.max(8, Math.min(clientX + 12, window.innerWidth - rect.width - 8));
@@ -459,8 +469,12 @@ export function closeQuickAdd({ cancel = true } = {}) {
 
 function pickQuickAdd(type) {
   if (!editor.quickAdd) return;
-  const { point, fromWire } = editor.quickAdd;
+  const { point, fromWire, swap } = editor.quickAdd;
   closeQuickAdd({ cancel: false });
+  if (swap) {
+    swapParts(swap.refs, type);
+    return;
+  }
   editor.cursor = { ...point };
   if (type === '@open' || type === '@netlabel') {
     if (editor.wire?.source) commitWireAtCursor();
@@ -495,4 +509,62 @@ function pickQuickAdd(type) {
   }
   endGestureWire();
   render();
+}
+
+/**
+ * Change the type of parts in place (q): a picker of the types each can
+ * become, the complementary part first. Every listed part that shares a
+ * terminal with the chosen type swaps, as one undo entry.
+ */
+export function openSwapPicker(components) {
+  const primary = components[0];
+  const candidates = primary ? swapCandidates(primary.type) : [];
+  if (!candidates.length) {
+    logLine(primary ? `${primary.refdes} (${PLACEMENT_LABELS[primary.type] || primary.type}) has no other type to swap to` : 'q swaps a part: select one or point at it', 'error');
+    return false;
+  }
+  const origin = { x: primary.transform.x, y: primary.transform.y };
+  const p = worldToClient(origin.x, origin.y);
+  openQuickAdd({ clientX: p.x, clientY: p.y, point: origin, swap: { refs: components.map((c) => c.refdes), candidates } });
+  return true;
+}
+
+/** Swap every part in `refs` that can become `type`; returns the new refs. */
+export function swapParts(refs, type) {
+  const before = snapshot();
+  const swapped = [];
+  const skipped = [];
+  try {
+    for (const refdes of refs) {
+      const component = editor.circuit.components.get(refdes);
+      if (!component || component.type === type || !swapTerminalMap(component.type, type).size || !swapCandidates(component.type).includes(type)) {
+        skipped.push(refdes);
+        continue;
+      }
+      swapped.push([refdes, swapComponentType(editor.circuit, refdes, type).refdes]);
+    }
+  } catch (err) {
+    applyJson(before);
+    logLine(`Could not swap to ${PLACEMENT_LABELS[type] || type}: ${err.message || err}`, 'error');
+    render();
+    return null;
+  }
+  if (!swapped.length) {
+    logLine(`nothing selected can become ${PLACEMENT_LABELS[type] || type}`, 'error');
+    return null;
+  }
+  recordHistoryEntry(before, true);
+  markModelChanged();
+  rememberAction(`swap to ${PLACEMENT_LABELS[type] || type}`, () => {
+    const targets = swapTargets();
+    if (targets.length) swapParts(targets.map((c) => c.refdes), type);
+    else logLine('select a part (or point at one) to swap it');
+  });
+  const renamed = new Map(swapped);
+  const selection = refs.map((refdes) => renamed.get(refdes) || refdes).filter((refdes) => editor.circuit.components.has(refdes));
+  setSelection(selection);
+  const names = swapped.map(([from, to]) => (from === to ? from : `${from} → ${to}`)).join(', ');
+  logLine(`${names}: now ${PLACEMENT_LABELS[type] || type}${skipped.length ? ` (skipped ${skipped.join(', ')})` : ''}`);
+  render();
+  return swapped.map(([, to]) => to);
 }

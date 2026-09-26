@@ -1,4 +1,4 @@
-import { Circuit, canonicalNetName, netTerminalPositionKey, transformComponentWorld } from './model.js';
+import { Circuit, canonicalNetName, netTerminalPositionKey, parseTermRef, transformComponentWorld } from './model.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
@@ -10,6 +10,8 @@ import { analyzeSmallSignal } from './analysis/index.js';
 import { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
+import { swapCandidates, swapComponentType } from './swap.js';
+import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
@@ -500,6 +502,8 @@ export function commandHelp() {
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
+    '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
+    '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  find TEXT [--case]             - list every label (nets, parts, switch phases, rails, annotations) and block caption containing TEXT',
     '  replace FIND WITH [--case]     - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes)',
@@ -862,6 +866,23 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return annotationCommand(circuit, pos, result, flags);
   }
   if (cmd === 'net') return netCommand(circuit, pos, result);
+  if (cmd === 'swap') {
+    if (pos.length !== 2) {
+      const c = pos[0] && circuit.components.get(pos[0]);
+      if (c) return result(`${c.refdes} (${c.type}) can become: ${swapCandidates(c.type).join(' ') || 'nothing'}`, swapCandidates(c.type));
+      throw new Error('usage: swap <refdes> <type>');
+    }
+    const from = circuit.getComponent(pos[0]).type;
+    const c = swapComponentType(circuit, pos[0], pos[1]);
+    return result(`${pos[0]} (${from}) is now ${c.refdes} (${c.type})`, { refdes: c.refdes, type: c.type }, true);
+  }
+  if (cmd === 'rail') {
+    const ref = pos[0] && parseTermRef(pos[0]);
+    const type = { gnd: 'ground', vss: 'ground', vdd: 'supply' }[String(pos[1]).toLowerCase()] || pos[1];
+    if (!ref || !PIN_RAIL_TYPES.includes(type)) throw new Error('usage: rail REF.TERM ground|supply');
+    const marker = addPinRail(circuit, { comp: ref.comp, term: ref.term }, type);
+    return result(`${marker.refdes} (${type}) on ${ref.comp}.${ref.term}`, { refdes: marker.refdes }, true);
+  }
   if (cmd === 'stubs' || cmd === 'stub') {
     if (!pos.length) throw new Error('usage: stubs <refdes> ...');
     const { stubs, skipped } = addTerminalStubs(circuit, pos);
