@@ -94,3 +94,21 @@ test('the figure lays the sketch out in its box, with or without numbers', async
   assert.equal(bare.panes.phase, null);
   assert.ok(bare.items.some((item) => item.text === 'ω_{p1}'));
 });
+
+test('the sketch keeps every word off the plot, names crowding each other in two rows', async () => {
+  const { bodeFigure } = await import('../src/core/bode-figure.js');
+  // Two poles a factor 1.5 apart, and ω_u: three names close together.
+  const sketch = bodeSketch([1000], [1, 1 / 0.01 + 1 / 0.015, 1 / (0.01 * 0.015)]);
+  const corners = [{ w: 0.01, text: 'ω_{p1}' }, { w: 0.015, text: 'ω_{p2}' }];
+  for (const phase of [false, true]) {
+    const figure = bodeFigure(sketch, { width: 640, height: 400, numbers: false, phase, corners, fontSize: 36 });
+    const panes = [figure.panes.magnitude, figure.panes.phase].filter(Boolean);
+    const texts = figure.items.filter((item) => item.type === 'text');
+    for (const text of texts) {
+      assert.ok(panes.every((pane) => !(text.x > pane.x + 1 && text.x < pane.x + pane.w - 1 && text.y > pane.y + 1 && text.y < pane.y + pane.h - 1)), `${text.text} is on the plot`);
+      assert.ok(text.x >= 0 && text.x <= 640 && text.y <= 400, `${text.text} leaves the box`);
+    }
+    const rows = new Set(texts.filter((text) => /ω_\{p/.test(text.text)).map((text) => text.y));
+    assert.equal(rows.size, 2, 'the two close poles sit in two rows');
+  }
+});

@@ -36,19 +36,37 @@ export function bodeFigure(sketch, {
   // Every margin and offset is in text heights, so the figure reads the
   // same in the panel (11 px text) and on the drawing (label-sized text).
   const em = fontSize;
+  const { low, high } = sketch.range;
+  // The sketch (no numbers) keeps every word off the plot: the quantity above
+  // each axis, ω after the frequency axis, and the marked frequencies under
+  // it -- in a second row where two would crowd each other.
+  const marks = [];
+  for (const corner of corners) if (corner.w > 0) marks.push({ w: corner.w, text: corner.text });
+  const unity = unityGain && sketch.unityGain ? { w: sketch.unityGain.w, text: 'ω_{u}', unity: true } : null;
+  if (unity) marks.push(unity);
   const left = numbers ? 4.2 * em : 0.8 * em;
-  const right = 0.9 * em;
-  const top = 1.1 * em;
-  const bottom = numbers ? 2 * em : 0.6 * em;
-  const gap = phase ? 1.3 * em : 0;
+  const right = numbers ? 0.9 * em : 1.4 * em;
+  const top = numbers ? 1.1 * em : 1.6 * em;
+  const gap = phase ? (numbers ? 1.3 * em : 1.9 * em) : 0;
   const plotW = Math.max(10, width - left - right);
+  const x = (w) => left + ((Math.log10(w) - low) / (high - low)) * plotW;
+  const rows = [];
+  for (const mark of [...marks].sort((a, b) => a.w - b.w)) {
+    const at = x(mark.w);
+    if (at < left - 1 || at > left + plotW + 1) { mark.hidden = true; continue; }
+    let row = rows.findIndex((last) => at - last >= 2.8 * em);
+    if (row < 0) row = rows.length < 2 ? rows.length : rows.indexOf(Math.min(...rows));
+    rows[row] = at;
+    mark.row = row;
+    mark.at = at;
+  }
+  const markRows = numbers ? 0 : Math.max(1, rows.length);
+  const bottom = numbers ? 2 * em : 0.5 * em + markRows * 1.15 * em;
   const available = height - top - bottom - gap;
   const magH = phase ? available * 0.62 : available;
   const phaseH = phase ? available - magH : 0;
   const mag = { x: left, y: top, w: plotW, h: magH };
   const ph = { x: left, y: top + magH + gap, w: plotW, h: phaseH };
-  const { low, high } = sketch.range;
-  const x = (w) => mag.x + ((Math.log10(w) - low) / (high - low)) * plotW;
 
   let [dbLow, dbHigh] = niceRange([...sketch.points.map((p) => p.db), ...sketch.asymptote.map((p) => p.db)], 20, 3);
   if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
@@ -94,28 +112,36 @@ export function bodeFigure(sketch, {
   if (phase) items.push({ type: 'path', points: sketch.points.map((p) => ({ x: x(p.w), y: yPh(p.phase) })), role: 'curve' });
 
   // Marked frequencies: a dotted drop line and the name at the axis.
-  for (const corner of corners) {
-    if (!(corner.w > 0)) continue;
-    const at = x(corner.w);
-    if (at < mag.x || at > mag.x + mag.w) continue;
-    const bottomY = (phase ? ph : mag).y + (phase ? ph : mag).h;
-    items.push({ type: 'line', x1: at, y1: mag.y, x2: at, y2: bottomY, role: 'corner' });
-    // Near the right edge the name goes on the corner's left.
-    const nearEdge = at > mag.x + mag.w - 3.3 * em;
-    items.push({ type: 'text', x: nearEdge ? at - 0.3 * em : at + 0.3 * em, y: mag.y + mag.h - 0.45 * em, text: corner.text, anchor: nearEdge ? 'end' : 'start', role: 'label' });
-  }
-  if (unityGain && sketch.unityGain && dbLow < 0 && dbHigh > 0) {
-    const at = x(sketch.unityGain.w);
-    items.push({ type: 'dot', x: at, y: yDb(0), r: 0.23 * em, role: 'corner' });
-    const nearEdge = at > mag.x + mag.w - 2.7 * em;
-    items.push({ type: 'text', x: nearEdge ? at - 0.4 * em : at + 0.4 * em, y: yDb(0) - 0.45 * em, text: 'ω_{u}', anchor: nearEdge ? 'end' : 'start', role: 'label' });
+  const axisPane = phase ? ph : mag;
+  const axisY = axisPane.y + axisPane.h;
+  const unityShown = unity && dbLow < 0 && dbHigh > 0;
+  for (const mark of marks) {
+    if (mark.hidden || (mark.unity && !unityShown)) continue;
+    const at = x(mark.w);
+    const from = mark.unity ? yDb(0) : mag.y;
+    if (mark.unity) items.push({ type: 'dot', x: at, y: yDb(0), r: 0.23 * em, role: 'corner' });
+    items.push({ type: 'line', x1: at, y1: from, x2: at, y2: axisY, role: 'corner' });
+    if (numbers) {
+      // The panel's decades are under the axis: names go inside, beside the line.
+      const nearEdge = at > mag.x + mag.w - 3.3 * em;
+      const y = mark.unity ? yDb(0) - 0.45 * em : mag.y + mag.h - 0.45 * em;
+      items.push({ type: 'text', x: nearEdge ? at - 0.35 * em : at + 0.35 * em, y, text: mark.text, anchor: nearEdge ? 'end' : 'start', role: 'label' });
+    } else {
+      items.push({ type: 'line', x1: at, y1: axisY, x2: at, y2: axisY + 0.3 * em, role: 'tick' });
+      items.push({ type: 'text', x: at, y: axisY + (1.15 + mark.row * 1.15) * em, text: mark.text, anchor: 'middle', role: 'label' });
+    }
   }
 
   // What the axes are.
-  items.push({ type: 'text', x: mag.x + 0.4 * em, y: mag.y + 0.9 * em, text: `|${quantity}|${numbers ? ' (dB)' : ''}`, anchor: 'start', role: 'label' });
-  if (phase) items.push({ type: 'text', x: ph.x + 0.4 * em, y: ph.y + 0.9 * em, text: `∠${quantity}`, anchor: 'start', role: 'label' });
-  const axisPane = phase ? ph : mag;
-  items.push({ type: 'text', x: axisPane.x + axisPane.w, y: axisPane.y + axisPane.h - 0.45 * em, text: numbers ? 'ω (g/C)' : 'ω', anchor: 'end', role: 'label' });
+  if (numbers) {
+    items.push({ type: 'text', x: mag.x + 0.4 * em, y: mag.y + 0.9 * em, text: `|${quantity}| (dB)`, anchor: 'start', role: 'label' });
+    if (phase) items.push({ type: 'text', x: ph.x + 0.4 * em, y: ph.y + 0.9 * em, text: `∠${quantity}`, anchor: 'start', role: 'label' });
+    items.push({ type: 'text', x: axisPane.x + axisPane.w, y: axisY - 0.45 * em, text: 'ω (g/C)', anchor: 'end', role: 'label' });
+  } else {
+    items.push({ type: 'text', x: Math.max(0, mag.x - 0.4 * em), y: mag.y - 0.45 * em, text: `|${quantity}|`, anchor: 'start', role: 'label' });
+    if (phase) items.push({ type: 'text', x: Math.max(0, ph.x - 0.4 * em), y: ph.y - 0.45 * em, text: `∠${quantity}`, anchor: 'start', role: 'label' });
+    items.push({ type: 'text', x: axisPane.x + axisPane.w + 0.3 * em, y: axisY + 0.35 * em, text: 'ω', anchor: 'start', role: 'label' });
+  }
   return { width, height, items, panes: { magnitude: mag, phase: phase ? ph : null }, ranges: { db: [dbLow, dbHigh], phase: [phLow, phHigh] } };
 }
 

@@ -4831,3 +4831,17 @@ circle.bode-corner {
 .analysis-bode .bode-slider-name {
   color: var(--text);
 }
+
+/* The dock sizes its fields full width and stacks its labels; the phase
+   switch is an ordinary inline checkbox. */
+.analysis-bode .bode-phase-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.analysis-bode .bode-phase-toggle input {
+  width: auto;
+  margin: 0;
+}
