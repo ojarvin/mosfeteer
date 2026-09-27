@@ -285,7 +285,7 @@ test('the panel filter finds label text and Ctrl+H opens replace beside it', asy
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const main = editorSource();
   const filter = html.slice(html.indexOf('class="panel-filter"'), html.indexOf('data-panel="components"'));
-  for (const id of ['panel-replace-toggle', 'panel-replace-input', 'panel-replace-case', 'panel-replace-all', 'text-matches-list']) {
+  for (const id of ['panel-replace-toggle', 'panel-replace-input', 'panel-replace-case', 'panel-replace-regex', 'panel-replace-all', 'text-matches-list']) {
     assert.match(filter, new RegExp(`id="${id}"`));
   }
   assert.match(filter, /id="panel-replace"[^>]*hidden/);
@@ -294,6 +294,12 @@ test('the panel filter finds label text and Ctrl+H opens replace beside it', asy
   // A replace goes through the core, previewed first, as one undo step.
   assert.match(main, /replaceInLabels\(circuit, find, replacement, \{ \.\.\.options, dryRun: true \}\)/);
   assert.match(main, /commit\(\(\) => \{ result = replaceInLabels\(circuit, find, replacement, options\); \}\);/);
+  // The case and regex toggles both steer the search; a half-typed pattern
+  // lists its error instead of throwing, and a net no label shows is selected.
+  assert.match(main, /const searchOptions = \(\) => \(\{ matchCase: matchCase\(\), regex: useRegex\(\) \}\);/);
+  assert.match(main, /for \(const toggle of \[caseEl, regexEl\]\)/);
+  assert.match(main, /catch \(err\) \{\s*\/\/ A regular expression half typed[\s\S]{0,300}note\.textContent = err\.message;/);
+  assert.match(main, /else if \(entry\.netId\) \{\s*setSelection\(\[\]\);\s*selectedNets = new Set\(\[entry\.netId\]\);/);
   // One Escape anywhere in the find area ends a replace: both fields clear.
   assert.match(main, /if \(ev\.key !== 'Escape' \|\| !replaceOpen\(\)\) return;[\s\S]{0,80}endFindReplace\(\);\s*\}, \{ capture: true \}\);/);
   assert.match(main, /function endFindReplace\(\) \{\s*replaceEl\.value = '';[\s\S]{0,200}filterEl\.value = '';/);

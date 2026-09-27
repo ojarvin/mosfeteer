@@ -11290,6 +11290,7 @@ const FLAG_ARITY = {
   after: 1,
   beat: 1,
   case: 0,
+  regex: 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -11662,8 +11663,9 @@ function commandHelp() {
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
-    '  find TEXT [--case]             - list every label (nets, parts, switch phases, rails, annotations) and block caption containing TEXT',
-    '  replace FIND WITH [--case]     - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes)',
+    '  find TEXT [--case] [--regex]   - list every label (nets, parts, switch phases, rails, annotations), block caption, and unlabelled net name containing TEXT;',
+    '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
+    '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
@@ -12071,14 +12073,14 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(message, { stubs, skipped }, stubs.length > 0);
   }
   if (cmd === 'find') {
-    if (pos.length !== 1) throw new Error('usage: find TEXT [--case]  (quote TEXT with spaces)');
-    const found = findInLabels(circuit, pos[0], { matchCase: !!flags.case });
+    if (pos.length !== 1) throw new Error('usage: find TEXT [--case] [--regex]  (quote TEXT with spaces)');
+    const found = findInLabels(circuit, pos[0], { matchCase: !!flags.case, regex: !!flags.regex });
     const rows = found.map((entry) => `${entry.key} ${entry.role} "${entry.text}"`);
     return result(rows.join('\n') || `no text contains "${pos[0]}"`, found.map(({ key, role, text, count }) => ({ key, role, text, count })));
   }
   if (cmd === 'replace') {
-    if (pos.length !== 2) throw new Error('usage: replace FIND WITH [--case]  (quote text with spaces)');
-    const { changed, joins } = replaceInLabels(circuit, pos[0], pos[1], { matchCase: !!flags.case });
+    if (pos.length !== 2) throw new Error('usage: replace FIND WITH [--case] [--regex]  (quote text with spaces)');
+    const { changed, joins } = replaceInLabels(circuit, pos[0], pos[1], { matchCase: !!flags.case, regex: !!flags.regex });
     const rows = changed.map((entry) => `${entry.role} "${entry.from}" -> "${entry.to}"`);
     const joined = joins.length ? `\nnets now joined by name: ${joins.join(', ')}` : '';
     return result(`replaced ${changed.length} text${changed.length === 1 ? '' : 's'}${rows.length ? `:\n${rows.join('\n')}` : ''}${joined}`, { changed, joins }, changed.length > 0);
@@ -14305,19 +14307,20 @@ __modules["src/core/label-search.js"] = function (__require, __exports) {
 __exports.searchableTexts = searchableTexts;
 __exports.findInLabels = findInLabels;
 __exports.replaceInLabels = replaceInLabels;
-let Circuit, INTERFACE_PIN_TYPES, isReferenceMarker; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, isReferenceMarker } = __require("src/core/model.js")); });
+let Circuit, INTERFACE_PIN_TYPES, canonicalNetName, isReferenceMarker; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, canonicalNetName, isReferenceMarker } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 
 
 
 // Search and replace over the drawing's text: every label role (net names,
-// part names, switch phases, rail names, annotations, equations, captions) and
-// block captions. Matching is literal on the authored text, so markup such as
-// `M_{1}` is searched as written. A replacement goes through the same model
-// path as editing that text by hand -- a net label renames its net, a part
-// label renames the part, a switch label sets its phase -- and is all or
-// nothing: one rejected change (an invalid or duplicate part name) leaves the
-// drawing untouched.
+// part names, switch phases, rail names, annotations, equations, captions),
+// block captions, and net names no label shows. A search without markup
+// looks through it (`M1` finds `M_{1}`, `phi1` finds `$\phi_1$`); one with
+// markup matches as written; a regular expression matches the authored text.
+// A replacement goes through the same model path as editing that text by
+// hand -- a net label renames its net, a part label renames the part, a
+// switch label sets its phase -- and is all or nothing: one rejected change
+// (an invalid or duplicate part name) leaves the drawing untouched.
 
 /** What a searchable text is, for display: net, part, switch, rail, port,
  * text, equation, caption, or block. */
@@ -14334,8 +14337,21 @@ function roleOf(circuit, label) {
   return label.math ? 'equation' : 'text';
 }
 
-/** Every searchable text in the drawing, as { key, role, text, label?, refdes? }.
- * A label's key is `label:<id>`; a block caption's is `block:<refdes>`. */
+/** Whether the drawing already carries the net's name: a net label, the
+ * owned label of a port or rail marker on it, or an unnamed ground, supply,
+ * or VCM symbol whose global rail name it is. */
+function netNameShown(circuit, net) {
+  if (circuit.netLabels(net).length || circuit.unnamedReferenceInfo(net)) return true;
+  for (const { comp } of net.terminals) {
+    const label = circuit.labelOf(comp);
+    if (label?.text && canonicalNetName(label.text) === net.name) return true;
+  }
+  return false;
+}
+
+/** Every searchable text in the drawing, as { key, role, text, label?,
+ * refdes?, netId? }. A label's key is `label:<id>`, a block caption's
+ * `block:<refdes>`, and a net name no label shows `net:<id>`. */
 function searchableTexts(circuit) {
   const texts = [];
   for (const label of circuit.labels.values()) {
@@ -14347,38 +14363,161 @@ function searchableTexts(circuit) {
       texts.push({ key: `block:${component.refdes}`, role: 'block', text: String(component.value), refdes: component.refdes });
     }
   }
+  for (const net of circuit.nets.values()) {
+    if (net.name && !netNameShown(circuit, net)) texts.push({ key: `net:${net.id}`, role: 'net', text: net.name, netId: net.id });
+  }
   return texts;
 }
 
-function pattern(find, matchCase) {
+const MARKUP = /[$\\_^{}]/;
+
+/**
+ * How `find` is matched: `regex` compiles it as a regular expression over
+ * the authored text; otherwise it is literal, and looks through markup
+ * unless it carries markup itself. A pattern that matches empty text would
+ * match everywhere and is refused.
+ */
+function matcher(find, { matchCase = false, regex = false } = {}) {
   if (typeof find !== 'string' || !find) throw new Error('search text is empty');
-  return new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), matchCase ? 'g' : 'gi');
+  const flags = matchCase ? 'g' : 'gi';
+  if (regex) {
+    let re;
+    try { re = new RegExp(find, flags); } catch (err) { throw new Error(`invalid pattern: ${err.message.replace(/^Invalid regular expression: (\/.*\/[a-z]*: )?/, '')}`); }
+    if (re.test('')) throw new Error('pattern matches empty text');
+    return { re, regex: true, throughMarkup: false };
+  }
+  return { re: new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags), regex: false, throughMarkup: !MARKUP.test(find) };
+}
+
+/**
+ * `text` as read without markup, and how its markup nests: `plain` keeps
+ * every character but `$ \ _ ^ { }`, `at[i]` is where plain character i
+ * stands in `text`, `pairs` are the `{...}` groups (taking in a `_` or `^`
+ * before one) and the `$...$` spans, each as { start, end, inner: [from,
+ * to) }, and `commands` the `\name` runs as { start, end }.
+ */
+function readThroughMarkup(text) {
+  let plain = '';
+  const at = [];
+  const pairs = [];
+  const commands = [];
+  const braces = [];
+  let dollar = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\' && /[A-Za-z]/.test(text[i + 1] || '')) {
+      let end = i + 1;
+      while (/[A-Za-z]/.test(text[end] || '')) end++;
+      commands.push({ start: i, end });
+      for (let j = i + 1; j < end; j++) { plain += text[j]; at.push(j); }
+      i = end - 1;
+    } else if (ch === '{') {
+      braces.push(i);
+    } else if (ch === '}') {
+      if (!braces.length) continue;
+      const brace = braces.pop();
+      const marked = brace > 0 && (text[brace - 1] === '_' || text[brace - 1] === '^');
+      pairs.push({ start: marked ? brace - 1 : brace, end: i + 1, inner: [brace + 1, i] });
+    } else if (ch === '$') {
+      if (dollar < 0) dollar = i;
+      else { pairs.push({ start: dollar, end: i + 1, inner: [dollar + 1, i] }); dollar = -1; }
+    } else if (ch !== '_' && ch !== '^' && ch !== '\\') {
+      plain += ch;
+      at.push(i);
+    }
+  }
+  // Inner pairs first, so an outer one sees a match they widened.
+  pairs.sort((p, q) => (p.end - p.start) - (q.end - q.start));
+  return { plain, at, pairs, commands };
+}
+
+/**
+ * The stretches of `text` that `find` matches, as [start, end, match].
+ * Through markup, a match takes in the markup it covers whole -- a group or
+ * `$...$` whose every character it spans, a command whose whole name it
+ * spans -- and one that would cut markup in two is no match: its
+ * replacement could not be placed without breaking the text.
+ */
+function matchSpans(text, { re, throughMarkup }) {
+  if (!throughMarkup) return [...text.matchAll(re)].filter((m) => m[0]).map((m) => [m.index, m.index + m[0].length, m]);
+  const { plain, at, pairs, commands } = readThroughMarkup(text);
+  const spans = [];
+  for (const m of plain.matchAll(re)) {
+    if (!m[0]) continue;
+    let a = at[m.index];
+    let b = at[m.index + m[0].length - 1] + 1;
+    let whole = true;
+    for (const { start, end } of commands) {
+      if (b <= start + 1 || a >= end) continue; // clear of its name
+      if (a <= start + 1 && b >= end) a = Math.min(a, start);
+      else whole = false;
+    }
+    for (const { start, end, inner: [from, to] } of pairs) {
+      if (b <= start || a >= end) continue; // clear of it
+      if (a >= from && b <= to) continue; // inside it
+      const inside = at.filter((i) => i >= from && i < to);
+      if (inside.length && a <= inside[0] && b > inside[inside.length - 1]) {
+        a = Math.min(a, start);
+        b = Math.max(b, end);
+      } else whole = false;
+    }
+    if (whole) spans.push([a, b, m]);
+  }
+  return spans;
+}
+
+/** `text` with each span replaced; a regular expression's replacement may
+ * use its groups (`$1`, `$&`). */
+function replaceSpans(text, spans, replacement, { regex }) {
+  let out = '';
+  let last = 0;
+  for (const [a, b, m] of spans) {
+    out += text.slice(last, a) + (regex ? expandReplacement(replacement, m) : replacement);
+    last = b;
+  }
+  return out + text.slice(last);
+}
+
+/** A regular expression replacement, with `$&`, `$1`..`$99`, and `$$`. */
+function expandReplacement(replacement, m) {
+  return replacement.replace(/\$(\$|&|\d{1,2})/g, (token, what) => {
+    if (what === '$') return '$';
+    if (what === '&') return m[0];
+    const group = m[Number(what)];
+    return group === undefined && Number(what) >= m.length ? token : (group ?? '');
+  });
 }
 
 /** The texts containing `find`, each with its match count and, when
  * `replacement` is given, the text it would become. */
-function findInLabels(circuit, find, { matchCase = false, replacement = null } = {}) {
-  const re = pattern(find, matchCase);
+function findInLabels(circuit, find, { matchCase = false, regex = false, replacement = null } = {}) {
+  const match = matcher(find, { matchCase, regex });
   const found = [];
   for (const entry of searchableTexts(circuit)) {
-    const count = entry.text.match(re)?.length || 0;
-    if (!count) continue;
-    found.push({ ...entry, count, ...(replacement === null ? {} : { next: entry.text.replace(re, () => replacement) }) });
+    const spans = matchSpans(entry.text, match);
+    if (!spans.length) continue;
+    found.push({ ...entry, count: spans.length, ...(replacement === null ? {} : { next: replaceSpans(entry.text, spans, replacement, match) }) });
   }
   return found;
 }
 
-function applyReplacements(circuit, find, replacement, { matchCase, keys }) {
-  const re = pattern(find, matchCase);
+function applyReplacements(circuit, find, replacement, { matchCase, regex, keys }) {
   // Every target is fixed before any change. Renaming one net label renames
   // its net, so its other labels then already read the new name; a text that
   // no longer reads as found is skipped, never searched again.
-  for (const { key, text } of findInLabels(circuit, find, { matchCase })) {
+  for (const { key, text, next: replaced } of findInLabels(circuit, find, { matchCase, regex, replacement })) {
     if (keys && !keys.has(key)) continue;
     const [kind, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
-    const next = text.replace(re, () => replacement).trim();
+    const next = replaced.trim();
     if (kind === 'block') {
       if (circuit.components.get(id)?.value === text) circuit.setValue(id, next);
+      continue;
+    }
+    if (kind === 'net') {
+      const net = circuit.nets.get(id);
+      if (!net || net.name !== text) continue;
+      if (!next) throw new Error(`net name "${text}" would become empty`);
+      circuit.renameNet(net, next);
       continue;
     }
     const label = circuit.labels.get(id);
@@ -14396,10 +14535,10 @@ function applyReplacements(circuit, find, replacement, { matchCase, keys }) {
  * Throws, changing nothing, when any single change is rejected. `dryRun`
  * reports the same result without changing the drawing.
  */
-function replaceInLabels(circuit, find, replacement, { matchCase = false, keys = null, dryRun = false } = {}) {
+function replaceInLabels(circuit, find, replacement, { matchCase = false, regex = false, keys = null, dryRun = false } = {}) {
   replacement = String(replacement ?? '');
-  const options = { matchCase, keys: keys && new Set(keys) };
-  const before = findInLabels(circuit, find, { matchCase }).filter((entry) => !options.keys || options.keys.has(entry.key));
+  const options = { matchCase, regex, keys: keys && new Set(keys) };
+  const before = findInLabels(circuit, find, { matchCase, regex }).filter((entry) => !options.keys || options.keys.has(entry.key));
   // Rehearse on a copy first, so a rejected rename leaves no half-done edit.
   const rehearsal = Circuit.fromJSON(circuit.toJSON());
   try {
@@ -36299,7 +36438,8 @@ let commit, render, setLabelSelection, setSelection; __bind(() => { ({ commit, r
 /**
  * Find and replace in the side panel. The Ctrl+F filter also lists every
  * label and block caption containing its text under "Text"; the replace row
- * (Ctrl+H) rewrites all of them at once. What counts as a match and how each
+ * (Ctrl+H) rewrites all of them at once; its toggles match case and take
+ * the text as a regular expression. What counts as a match and how each
  * text is renamed is core/label-search.js.
  */
 
@@ -36316,6 +36456,7 @@ const toggleEl = document.getElementById('panel-replace-toggle');
 const rowEl = document.getElementById('panel-replace');
 const replaceEl = document.getElementById('panel-replace-input');
 const caseEl = document.getElementById('panel-replace-case');
+const regexEl = document.getElementById('panel-replace-regex');
 const replaceAllEl = document.getElementById('panel-replace-all');
 const sectionEl = document.getElementById('text-matches');
 const listEl = document.getElementById('text-matches-list');
@@ -36333,6 +36474,8 @@ function findText() {
 }
 
 const matchCase = () => caseEl?.getAttribute('aria-pressed') === 'true';
+const useRegex = () => regexEl?.getAttribute('aria-pressed') === 'true';
+const searchOptions = () => ({ matchCase: matchCase(), regex: useRegex() });
 const replaceOpen = () => !!rowEl && !rowEl.hidden;
 
 function refresh() {
@@ -36342,7 +36485,10 @@ function refresh() {
 
 function selectMatch(entry) {
   if (entry.refdes) setSelection([entry.refdes]);
-  else setLabelSelection([entry.label.id]);
+  else if (entry.netId) {
+    setSelection([]);
+    editor.selectedNets = new Set([entry.netId]);
+  } else setLabelSelection([entry.label.id]);
   render();
 }
 
@@ -36354,7 +36500,19 @@ function renderTextMatches() {
   listEl.innerHTML = '';
   if (!find) return;
   const replacement = replaceOpen() ? replaceEl.value : null;
-  const found = findInLabels(editor.circuit, find, { matchCase: matchCase(), replacement });
+  let found;
+  try {
+    found = findInLabels(editor.circuit, find, { ...searchOptions(), replacement });
+  } catch (err) {
+    // A regular expression half typed: say what is wrong, change nothing.
+    if (countEl) countEl.textContent = '0';
+    if (replaceAllEl) replaceAllEl.disabled = true;
+    const note = document.createElement('div');
+    note.className = 'no-items';
+    note.textContent = err.message;
+    listEl.appendChild(note);
+    return;
+  }
   if (countEl) countEl.textContent = String(found.length);
   if (replaceAllEl) replaceAllEl.disabled = !found.length;
   if (!found.length) {
@@ -36380,7 +36538,7 @@ function renderTextMatches() {
     }
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = ROLE_NAMES[entry.role] || entry.role;
+    meta.textContent = entry.netId ? 'net, no label' : ROLE_NAMES[entry.role] || entry.role;
     row.title = `${ROLE_NAMES[entry.role] || entry.role}: ${entry.text}${entry.next !== undefined ? ` → ${entry.next}` : ''}`;
     row.append(text, meta);
     row.addEventListener('click', () => selectMatch(entry));
@@ -36428,7 +36586,7 @@ async function replaceAll() {
   const find = findText();
   if (!find) return;
   const replacement = replaceEl.value;
-  const options = { matchCase: matchCase() };
+  const options = searchOptions();
   let preview;
   try {
     preview = replaceInLabels(editor.circuit, find, replacement, { ...options, dryRun: true });
@@ -36455,10 +36613,12 @@ async function replaceAll() {
 function installFindReplace() {
   if (!filterEl || !rowEl) return;
   toggleEl.addEventListener('click', () => (replaceOpen() ? closeReplace() : openReplace()));
-  caseEl.addEventListener('click', () => {
-    caseEl.setAttribute('aria-pressed', String(!matchCase()));
-    refresh();
-  });
+  for (const toggle of [caseEl, regexEl]) {
+    toggle?.addEventListener('click', () => {
+      toggle.setAttribute('aria-pressed', String(toggle.getAttribute('aria-pressed') !== 'true'));
+      refresh();
+    });
+  }
   replaceEl.addEventListener('input', refresh);
   replaceAllEl.addEventListener('click', replaceAll);
   replaceEl.addEventListener('keydown', (ev) => {
@@ -51143,7 +51303,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
     ['/ / Ctrl/Cmd+F', 'find parts, nets, and any label text (in the Atlas: search every design); Esc clears, then returns to the canvas'],
-    ['Ctrl/Cmd+H', 'replace text in every matching label: net names, part names, switch phases, annotations; Enter replaces all; Esc clears both fields and returns to the canvas'],
+    ['Ctrl/Cmd+H', 'replace text in every matching label: net names (labelled or not), part names, switch phases, annotations; M1 finds M_{1}; Aa matches case, .* takes a regular expression ($1 in the replacement); Enter replaces all; Esc clears both fields and returns to the canvas'],
     [':', 'find and run anything: type words to search every action, toggle, and menu item, Up/Down pick, Enter runs; or type a command (:connect R1.a R2.a); Up/Down on an empty line recall history'],
     [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],

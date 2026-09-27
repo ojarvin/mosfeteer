@@ -1,7 +1,8 @@
 /**
  * Find and replace in the side panel. The Ctrl+F filter also lists every
  * label and block caption containing its text under "Text"; the replace row
- * (Ctrl+H) rewrites all of them at once. What counts as a match and how each
+ * (Ctrl+H) rewrites all of them at once; its toggles match case and take
+ * the text as a regular expression. What counts as a match and how each
  * text is renamed is core/label-search.js.
  */
 
@@ -18,6 +19,7 @@ const toggleEl = document.getElementById('panel-replace-toggle');
 const rowEl = document.getElementById('panel-replace');
 const replaceEl = document.getElementById('panel-replace-input');
 const caseEl = document.getElementById('panel-replace-case');
+const regexEl = document.getElementById('panel-replace-regex');
 const replaceAllEl = document.getElementById('panel-replace-all');
 const sectionEl = document.getElementById('text-matches');
 const listEl = document.getElementById('text-matches-list');
@@ -35,6 +37,8 @@ function findText() {
 }
 
 const matchCase = () => caseEl?.getAttribute('aria-pressed') === 'true';
+const useRegex = () => regexEl?.getAttribute('aria-pressed') === 'true';
+const searchOptions = () => ({ matchCase: matchCase(), regex: useRegex() });
 const replaceOpen = () => !!rowEl && !rowEl.hidden;
 
 function refresh() {
@@ -44,7 +48,10 @@ function refresh() {
 
 function selectMatch(entry) {
   if (entry.refdes) setSelection([entry.refdes]);
-  else setLabelSelection([entry.label.id]);
+  else if (entry.netId) {
+    setSelection([]);
+    editor.selectedNets = new Set([entry.netId]);
+  } else setLabelSelection([entry.label.id]);
   render();
 }
 
@@ -56,7 +63,19 @@ export function renderTextMatches() {
   listEl.innerHTML = '';
   if (!find) return;
   const replacement = replaceOpen() ? replaceEl.value : null;
-  const found = findInLabels(editor.circuit, find, { matchCase: matchCase(), replacement });
+  let found;
+  try {
+    found = findInLabels(editor.circuit, find, { ...searchOptions(), replacement });
+  } catch (err) {
+    // A regular expression half typed: say what is wrong, change nothing.
+    if (countEl) countEl.textContent = '0';
+    if (replaceAllEl) replaceAllEl.disabled = true;
+    const note = document.createElement('div');
+    note.className = 'no-items';
+    note.textContent = err.message;
+    listEl.appendChild(note);
+    return;
+  }
   if (countEl) countEl.textContent = String(found.length);
   if (replaceAllEl) replaceAllEl.disabled = !found.length;
   if (!found.length) {
@@ -82,7 +101,7 @@ export function renderTextMatches() {
     }
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = ROLE_NAMES[entry.role] || entry.role;
+    meta.textContent = entry.netId ? 'net, no label' : ROLE_NAMES[entry.role] || entry.role;
     row.title = `${ROLE_NAMES[entry.role] || entry.role}: ${entry.text}${entry.next !== undefined ? ` → ${entry.next}` : ''}`;
     row.append(text, meta);
     row.addEventListener('click', () => selectMatch(entry));
@@ -130,7 +149,7 @@ async function replaceAll() {
   const find = findText();
   if (!find) return;
   const replacement = replaceEl.value;
-  const options = { matchCase: matchCase() };
+  const options = searchOptions();
   let preview;
   try {
     preview = replaceInLabels(editor.circuit, find, replacement, { ...options, dryRun: true });
@@ -157,10 +176,12 @@ async function replaceAll() {
 export function installFindReplace() {
   if (!filterEl || !rowEl) return;
   toggleEl.addEventListener('click', () => (replaceOpen() ? closeReplace() : openReplace()));
-  caseEl.addEventListener('click', () => {
-    caseEl.setAttribute('aria-pressed', String(!matchCase()));
-    refresh();
-  });
+  for (const toggle of [caseEl, regexEl]) {
+    toggle?.addEventListener('click', () => {
+      toggle.setAttribute('aria-pressed', String(toggle.getAttribute('aria-pressed') !== 'true'));
+      refresh();
+    });
+  }
   replaceEl.addEventListener('input', refresh);
   replaceAllEl.addEventListener('click', replaceAll);
   replaceEl.addEventListener('keydown', (ev) => {

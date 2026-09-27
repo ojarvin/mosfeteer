@@ -22,9 +22,10 @@ test('search finds every label role and block captions, literally and case-insen
   const roles = findInLabels(circuit, 'bias').map((entry) => entry.role).sort();
   assert.deepEqual(roles, ['block', 'net', 'switch', 'text']);
   assert.deepEqual(findInLabels(circuit, 'bias', { matchCase: true }).map((entry) => entry.role).sort(), ['block', 'switch']);
-  // Markup is searched as written.
+  // Markup in the search matches as written; without it, through markup.
   assert.deepEqual(findInLabels(circuit, 'R_{2}').map((entry) => entry.role), ['part']);
-  assert.equal(findInLabels(circuit, 'R2').length, 0);
+  assert.deepEqual(findInLabels(circuit, 'R2').map((entry) => entry.text), ['R_{2}']);
+  assert.equal(findInLabels(circuit, 'R_2').length, 0);
   const [preview] = findInLabels(circuit, 'network', { replacement: 'stage' });
   assert.equal(preview.next, 'Bias stage');
   assert.throws(() => findInLabels(circuit, ''), /empty/);
@@ -99,4 +100,70 @@ test('a dry run reports the change and nets it would join by name, without chang
   const { changed } = replaceInLabels(circuit, '1', '2', { keys: [preview.changed[0].key] });
   assert.deepEqual(changed.map((entry) => entry.to), ['X2']);
   assert.equal(findInLabels(circuit, 'Y1').length, 1);
+});
+
+test('a search without markup looks through it, taking in the markup it covers whole', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 0, y: 0 });
+  circuit.addComponent('switch_open', { refdes: 'S1', x: 400, y: 0 });
+  circuit.setValue('S1', '$\\phi_1$');
+  const note = circuit.addLabel({ text: 'V_{out} over V_{in,12}', x: 0, y: 400 });
+  const next = (find, replacement) => findInLabels(circuit, find, { replacement }).map((entry) => [entry.text, entry.next]);
+  // A whole group spanned: the replacement takes its place, markup and all.
+  assert.deepEqual(next('M1', 'M2'), [['M_{1}', 'M2']]);
+  // Inside a group: only the characters found change, the markup stays.
+  assert.deepEqual(next('out', 'o'), [['V_{out} over V_{in,12}', 'V_{o} over V_{in,12}']]);
+  assert.deepEqual(next('Vout', 'A'), [['V_{out} over V_{in,12}', 'A over V_{in,12}']]);
+  // A TeX command is found by its name, and a whole `$...$` taken in.
+  assert.deepEqual(next('phi', 'theta'), [['$\\phi_1$', '$theta_1$']]);
+  assert.deepEqual(next('phi1', 'ck'), [['$\\phi_1$', '$ck$']]);
+  // A match that would cut a group or command in two is no match.
+  assert.equal(findInLabels(circuit, 'Vin,1').length, 0);
+  assert.equal(findInLabels(circuit, 'hi').length, 0);
+  // Replacing through markup renames a part through its own path.
+  replaceInLabels(circuit, 'M1', 'M_{9}');
+  assert.ok(circuit.components.has('M9'));
+  assert.equal(note.text, 'V_{out} over V_{in,12}');
+});
+
+test('a regular expression matches the authored text, and its replacement may use its groups', () => {
+  const circuit = new Circuit();
+  const a = circuit.addLabel({ text: 'I_{bias} = 10 uA', x: 0, y: 0 });
+  const b = circuit.addLabel({ text: 'I_{ref} = 2 uA', x: 0, y: 400 });
+  const found = findInLabels(circuit, '(\\d+) uA', { regex: true, replacement: '$1 µA' });
+  assert.deepEqual(found.map((entry) => entry.next), ['I_{bias} = 10 µA', 'I_{ref} = 2 µA']);
+  assert.deepEqual(findInLabels(circuit, 'I_\\{\\w+\\}', { regex: true }).map((entry) => entry.count), [1, 1]);
+  // Case follows the case option; $& and $$ expand, an absent group is kept.
+  assert.equal(findInLabels(circuit, 'UA', { regex: true, matchCase: true }).length, 0);
+  assert.deepEqual(findInLabels(circuit, 'uA', { regex: true, replacement: '[$&] $$ $9' }).map((entry) => entry.next)[0], 'I_{bias} = 10 [uA] $ $9');
+  replaceInLabels(circuit, '= (\\d+)', '≈ $1', { regex: true });
+  assert.deepEqual([a.text, b.text], ['I_{bias} ≈ 10 uA', 'I_{ref} ≈ 2 uA']);
+  assert.throws(() => findInLabels(circuit, '(', { regex: true }), /^Error: invalid pattern: [A-Z][^/]*$/);
+  assert.throws(() => findInLabels(circuit, 'x*', { regex: true }), /matches empty text/);
+});
+
+test('net names no label shows are found and renamed through the net', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: 480, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R3', x: 80, y: 400 });
+  circuit.addComponent('resistor', { refdes: 'R4', x: 480, y: 400 });
+  const hidden = namedNet(circuit, 'R1.b', 'R2.a', 'V_{mid}');
+  const labelled = namedNet(circuit, 'R3.b', 'R4.a', 'V_{top}', { x: 280, y: 400 });
+  const found = findInLabels(circuit, 'V');
+  assert.deepEqual(found.map((entry) => [entry.key, entry.role, entry.text]).sort(), [
+    [`label:${circuit.netLabels(labelled)[0].id}`, 'net', 'V_{top}'],
+    [`net:${hidden.id}`, 'net', 'V_{mid}'],
+  ]);
+  assert.deepEqual(findInLabels(circuit, 'Vmid', { replacement: 'V_{half}' }).map((entry) => entry.next), ['V_{half}']);
+  const { changed } = replaceInLabels(circuit, 'mid', 'half');
+  assert.deepEqual(changed.map((entry) => [entry.role, entry.from, entry.to]), [['net', 'V_{mid}', 'V_{half}']]);
+  assert.equal(hidden.name, 'V_{half}');
+  assert.throws(() => replaceInLabels(circuit, 'V_{half}', ''), /changed nothing.*empty/);
+  // A rail an unnamed ground symbol names is the symbol's, not text.
+  circuit.addComponent('ground', { refdes: 'G1', x: 80, y: 800 });
+  circuit.addComponent('resistor', { refdes: 'R5', x: 80, y: 720, r: 90 });
+  circuit.connect('G1.gnd', 'R5.b');
+  assert.ok([...circuit.nets.values()].some((net) => net.name === 'VSS'));
+  assert.equal(findInLabels(circuit, 'VSS').length, 0);
 });

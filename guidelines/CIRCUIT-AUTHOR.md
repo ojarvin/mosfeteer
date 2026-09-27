@@ -194,11 +194,16 @@ mirror <refdes> <x|y>          flip along an axis
 value <refdes> <V>             set value text
 rename <refdes> <new>          rename a component (updates its instance label)
 rm <refdes>                    remove a component
-find TEXT [--case]             list labels (net names, part names, switch phases,
-                               rails, annotations, equations) and block captions containing TEXT
-replace FIND WITH [--case]     replace FIND in all of them, each through its own rename
+find TEXT [--case] [--regex]   list labels (net names, part names, switch phases,
+                               rails, annotations, equations), block captions, and net
+                               names no label shows, containing TEXT; without markup
+                               TEXT looks through it (M1 finds M_{1}); --regex matches
+                               the text as written
+replace FIND WITH [--case] [--regex]
+                               replace FIND in all of them, each through its own rename
                                (a net label renames its net, a switch label its phase);
-                               all or nothing, and a duplicate part name changes nothing
+                               all or nothing, and a duplicate part name changes nothing;
+                               with --regex, $1 in WITH is the first group
 connect REF.TERM REF.TERM ... [--name N] [--explain]
                                join terminals into one net (alias wire)
 cross A1 A2 B1 B2                      add two matched protected cross-coupled routes

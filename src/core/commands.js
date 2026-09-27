@@ -137,6 +137,7 @@ const FLAG_ARITY = {
   after: 1,
   beat: 1,
   case: 0,
+  regex: 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -509,8 +510,9 @@ export function commandHelp() {
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
-    '  find TEXT [--case]             - list every label (nets, parts, switch phases, rails, annotations) and block caption containing TEXT',
-    '  replace FIND WITH [--case]     - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes)',
+    '  find TEXT [--case] [--regex]   - list every label (nets, parts, switch phases, rails, annotations), block caption, and unlabelled net name containing TEXT;',
+    '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
+    '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
@@ -918,14 +920,14 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(message, { stubs, skipped }, stubs.length > 0);
   }
   if (cmd === 'find') {
-    if (pos.length !== 1) throw new Error('usage: find TEXT [--case]  (quote TEXT with spaces)');
-    const found = findInLabels(circuit, pos[0], { matchCase: !!flags.case });
+    if (pos.length !== 1) throw new Error('usage: find TEXT [--case] [--regex]  (quote TEXT with spaces)');
+    const found = findInLabels(circuit, pos[0], { matchCase: !!flags.case, regex: !!flags.regex });
     const rows = found.map((entry) => `${entry.key} ${entry.role} "${entry.text}"`);
     return result(rows.join('\n') || `no text contains "${pos[0]}"`, found.map(({ key, role, text, count }) => ({ key, role, text, count })));
   }
   if (cmd === 'replace') {
-    if (pos.length !== 2) throw new Error('usage: replace FIND WITH [--case]  (quote text with spaces)');
-    const { changed, joins } = replaceInLabels(circuit, pos[0], pos[1], { matchCase: !!flags.case });
+    if (pos.length !== 2) throw new Error('usage: replace FIND WITH [--case] [--regex]  (quote text with spaces)');
+    const { changed, joins } = replaceInLabels(circuit, pos[0], pos[1], { matchCase: !!flags.case, regex: !!flags.regex });
     const rows = changed.map((entry) => `${entry.role} "${entry.from}" -> "${entry.to}"`);
     const joined = joins.length ? `\nnets now joined by name: ${joins.join(', ')}` : '';
     return result(`replaced ${changed.length} text${changed.length === 1 ? '' : 's'}${rows.length ? `:\n${rows.join('\n')}` : ''}${joined}`, { changed, joins }, changed.length > 0);

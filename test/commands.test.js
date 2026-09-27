@@ -939,6 +939,18 @@ test('find lists matching texts and replace renames them through their roles', (
   assert.match(commandHelp(), /replace FIND WITH/);
 });
 
+test('find and replace take --regex, and look through markup without it', () => {
+  const c = fresh();
+  runCommand(c, 'add resistor R1 --at 0 0');
+  runCommand(c, 'label add "R_{1} = 10 k" 0 400');
+  assert.deepEqual(runCommand(c, 'find R1').json.map((entry) => entry.text).sort(), ['R_{1}', 'R_{1} = 10 k']);
+  assert.deepEqual(runCommand(c, 'find "\\d+ k" --regex').json.map((entry) => entry.role), ['text']);
+  const replaced = runCommand(c, 'replace "(\\d+) k" "$1 kΩ" --regex');
+  assert.match(replaced.text, /text "R_\{1\} = 10 k" -> "R_\{1\} = 10 kΩ"/);
+  assert.throws(() => runCommand(c, 'find "(" --regex'), /invalid pattern/);
+  assert.match(commandHelp(), /find TEXT \[--case\] \[--regex\]/);
+});
+
 test('replace refuses a duplicate part name without changing anything', () => {
   const c = fresh();
   runCommand(c, 'add resistor R1 --at 0 0');
