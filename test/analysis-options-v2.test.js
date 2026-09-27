@@ -122,8 +122,7 @@ test('persistence migration maps legacy aliases and drops removed fields', () =>
   assert.deepEqual(state, {
     input: 'N1',
     output: 'N2',
-    reference: 'VSS',
-    acGrounds: 'VBN, VCASCN',
+    acGrounds: 'VBN, VCASCN, VSS',
     deviceRegions: { M2: { region: 'triode' } },
     options: {
       neglectBodyEffect: false,

@@ -276,8 +276,12 @@ export function migrateAnalysisFormState(value = {}) {
     state: {
       input: String(source.input || '').trim(),
       output: String(source.output ?? source.target ?? '').trim(),
-      reference: String(source.reference || '').trim(),
-      acGrounds: normalizedList(firstField(source, LEGACY_LIST_FIELDS.acGrounds)),
+      // A reference was only ever one more AC ground (all of them are the
+      // same 0 V node); it joins the list.
+      acGrounds: normalizedList([
+        ...normalizedList(firstField(source, LEGACY_LIST_FIELDS.acGrounds)).split(', ').filter(Boolean),
+        ...(String(source.reference || '').trim() ? [String(source.reference).trim()] : []),
+      ]),
       deviceRegions,
       options,
       annotationExcluded: stringList(source.annotationExcluded),

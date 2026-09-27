@@ -310,12 +310,13 @@
                 <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-target" aria-pressed="false" aria-label="Pick output node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
               </div>
             </div>
-            <div class="analysis-node" id="analysis-reference-row">
-              <label id="analysis-reference-field" for="analysis-reference">Reference (optional)</label>
+            <div class="analysis-node" id="analysis-ac-grounds-row">
+              <label id="analysis-ac-grounds-field" for="analysis-ac-grounds">More AC grounds (0&nbsp;V)</label>
               <div class="analysis-node-control">
-                <select id="analysis-reference" name="reference"></select>
-                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-reference" aria-pressed="false" aria-label="Pick reference node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
+                <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" aria-describedby="analysis-ac-grounds-hint" />
+                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-ac-grounds" aria-pressed="false" aria-label="Pick an AC-ground net on the canvas" title="Pick on the canvas: click a wire or pin to add its net (Esc cancels)">Pick</button>
               </div>
+              <p class="field-hint" id="analysis-ac-grounds-hint">Supplies, grounds, and other DC rails already are. Add bias nets (named, by net ID, or as a pin like M5.g); every AC ground is the same 0&nbsp;V reference.</p>
             </div>
           </div>
           <fieldset class="analysis-approximations" id="analysis-transfer-functions">
@@ -351,9 +352,6 @@
           </fieldset>
           <details class="analysis-context" id="analysis-bias-context">
             <summary>Small-signal context</summary>
-            <label for="analysis-ac-grounds">Additional AC-ground ports/nets</label>
-            <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" />
-            <p class="field-hint">Use named nets, physical net IDs, or terminal references. These DC bias ports are treated as AC ground.</p>
             <label for="analysis-device-regions">Triode-region devices</label>
             <input id="analysis-device-regions" name="deviceRegions" type="text" placeholder="M2=triode" autocomplete="off" spellcheck="false" />
             <p class="field-hint">Use <code>REF=triode</code> to replace a MOS device with its symbolic <span class="math-inline">r<sub>ds</sub></span>.</p>

@@ -424,7 +424,10 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
   assert.match(html, /id="analysis-dialog"/);
   assert.match(html, /id="analysis-input-field"[^>]*>Input node/);
   assert.match(html, /for="analysis-target">Output node/);
-  assert.match(html, /for="analysis-reference">Reference \(optional\)/);
+  // Every AC ground is the one 0 V reference: there is no separate Reference.
+  assert.doesNotMatch(html, /id="analysis-reference"/);
+  assert.match(html, /for="analysis-ac-grounds">More AC grounds/);
+  assert.match(html, /data-analysis-pick="analysis-ac-grounds"/);
   assert.match(html, /id="analysis-submit"[^>]*>Derive all equations/);
   assert.match(html, /id="analysis-ac-grounds"/);
   assert.match(html, /id="analysis-device-regions"/);

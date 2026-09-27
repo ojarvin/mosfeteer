@@ -46,7 +46,6 @@ export const helpSearch = document.getElementById('help-search');
 export const analysisDialog = document.getElementById('analysis-dialog');
 export const analysisForm = document.getElementById('analysis-form');
 export const analysisTarget = document.getElementById('analysis-target');
-export const analysisReference = document.getElementById('analysis-reference');
 export const analysisInput = document.getElementById('analysis-input');
 export const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
 export const analysisDeviceRegions = document.getElementById('analysis-device-regions');

@@ -26881,8 +26881,12 @@ function migrateAnalysisFormState(value = {}) {
     state: {
       input: String(source.input || '').trim(),
       output: String(source.output ?? source.target ?? '').trim(),
-      reference: String(source.reference || '').trim(),
-      acGrounds: normalizedList(firstField(source, LEGACY_LIST_FIELDS.acGrounds)),
+      // A reference was only ever one more AC ground (all of them are the
+      // same 0 V node); it joins the list.
+      acGrounds: normalizedList([
+        ...normalizedList(firstField(source, LEGACY_LIST_FIELDS.acGrounds)).split(', ').filter(Boolean),
+        ...(String(source.reference || '').trim() ? [String(source.reference).trim()] : []),
+      ]),
       deviceRegions,
       options,
       annotationExcluded: stringList(source.annotationExcluded),
@@ -27042,7 +27046,7 @@ let renderBode; __bind(() => { ({ renderBode } = __require("src/web/bode-ui.js")
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
-let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
+let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -27138,7 +27142,7 @@ function portNetIds(nets, type, role) {
 }
 
 function fillAnalysisDialog(targetNetId) {
-  if (!analysisTarget || !analysisReference) return;
+  if (!analysisTarget) return;
   const nets = visibleNets();
   const defaults = analysisFormDefaults(nets, {
     targetNetId,
@@ -27153,18 +27157,6 @@ function fillAnalysisDialog(targetNetId) {
     analysisTarget.appendChild(option);
   }
   if (defaults.target) analysisTarget.value = defaults.target;
-
-  analysisReference.replaceChildren();
-  const automatic = document.createElement('option');
-  automatic.value = '';
-  automatic.textContent = 'Automatic AC reference (marker group)';
-  analysisReference.appendChild(automatic);
-  for (const net of nets) {
-    const option = document.createElement('option');
-    option.value = net.id;
-    option.textContent = analysisNetOptionText(net);
-    analysisReference.appendChild(option);
-  }
 
   if (analysisInput) {
     analysisInput.replaceChildren();
@@ -27221,7 +27213,6 @@ function analysisFormValues() {
   return {
     input: analysisInput?.value || '',
     output: analysisTarget?.value || '',
-    reference: analysisReference?.value || '',
     acGrounds: analysisAcGrounds?.value || '',
     deviceRegions,
     options,
@@ -27275,7 +27266,6 @@ function restoreAnalysisForm(defaults = {}) {
   try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(analysisFormScope())) || 'null'); } catch { /* storage unavailable */ }
   if (!saved) {
     const options = analysisOptionDefaults();
-    if (analysisReference) analysisReference.value = '';
     if (analysisAcGrounds) analysisAcGrounds.value = '';
     if (analysisDeviceRegions) analysisDeviceRegions.value = '';
     if (analysisApproxRo) analysisApproxRo.checked = options.neglectChannelLengthModulation;
@@ -27299,7 +27289,6 @@ function restoreAnalysisForm(defaults = {}) {
     el.value = value;
   };
   setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
-  setSelect(analysisReference, state.reference);
   setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
   if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
   if (analysisDeviceRegions) {
@@ -27859,9 +27848,9 @@ let analysisReportRevision = null;
 function syncAnalysisDock() {
   if (!isAnalysisDockOpen() || analysisDockRevision === editor.modelRevision) return;
   analysisDockRevision = editor.modelRevision;
-  const kept = [analysisInput, analysisTarget, analysisReference].map((el) => el?.value);
+  const kept = [analysisInput, analysisTarget].map((el) => el?.value);
   fillAnalysisDialog();
-  [analysisInput, analysisTarget, analysisReference].forEach((el, index) => {
+  [analysisInput, analysisTarget].forEach((el, index) => {
     if (el && [...el.options].some((option) => option.value === kept[index])) el.value = kept[index];
   });
   const stale = document.getElementById('analysis-stale');
@@ -27885,14 +27874,22 @@ function completeAnalysisPick(world) {
   const net = terminal
     ? editor.circuit.netOfTerminal(`${terminal.refdes}.${terminal.term}`)
     : pickWire(world)?.net;
-  const optionNet = net && [...select.options].find((option) => option.value === net.id)
+  const listed = select.options ? [...select.options].some((option) => option.value === net?.id) : true;
+  const optionNet = net && listed
     ? net
     : net && visibleNets().find((candidate) => namedGroupNets(candidate).some((member) => member.id === net.id));
   if (!optionNet) {
     logLine('Click a wire or a connected pin to choose a net.', 'error');
     return;
   }
-  select.value = optionNet.id;
+  if (select.tagName === 'SELECT') {
+    select.value = optionNet.id;
+  } else {
+    // A list field (the AC grounds) gains the net, once, by name if it has one.
+    const token = optionNet.name || optionNet.id;
+    const tokens = parseAnalysisList(select.value);
+    if (!tokens.includes(token)) select.value = [...tokens, token].join(', ');
+  }
   select.dispatchEvent(new Event('change', { bubbles: true }));
   logLine(`${select.labels?.[0]?.textContent || 'Analysis node'}: ${optionNet.name || optionNet.id}`, 'status');
   setAnalysisPick(null);
@@ -28135,7 +28132,6 @@ function installAnalysisUi() {
       ...(Object.keys(devices).length ? { devices } : {}),
       input,
       output,
-      reference: analysisReference?.value || undefined,
       acGrounds: parseAnalysisList(analysisAcGrounds?.value),
     };
     let report;
@@ -28169,7 +28165,7 @@ function installAnalysisUi() {
     analysisInputPrevious = analysisInput.value;
   });
 
-  for (const control of [analysisTarget, analysisReference, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, ...analysisTransferInputs]) {
+  for (const control of [analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, ...analysisTransferInputs]) {
     control?.addEventListener('input', persistAnalysisForm);
     control?.addEventListener('change', persistAnalysisForm);
   }
@@ -35079,7 +35075,6 @@ const helpSearch = document.getElementById('help-search');
 const analysisDialog = document.getElementById('analysis-dialog');
 const analysisForm = document.getElementById('analysis-form');
 const analysisTarget = document.getElementById('analysis-target');
-const analysisReference = document.getElementById('analysis-reference');
 const analysisInput = document.getElementById('analysis-input');
 const analysisAcGrounds = document.getElementById('analysis-ac-grounds');
 const analysisDeviceRegions = document.getElementById('analysis-device-regions');
@@ -35183,7 +35178,6 @@ __exports.helpSearch = helpSearch;
 __exports.analysisDialog = analysisDialog;
 __exports.analysisForm = analysisForm;
 __exports.analysisTarget = analysisTarget;
-__exports.analysisReference = analysisReference;
 __exports.analysisInput = analysisInput;
 __exports.analysisAcGrounds = analysisAcGrounds;
 __exports.analysisDeviceRegions = analysisDeviceRegions;
