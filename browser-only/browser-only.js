@@ -10947,7 +10947,7 @@ __exports.cornerNames = cornerNames;
  * Items: `{ type: 'line', x1, y1, x2, y2, role }`, `{ type: 'path', points,
  * role }`, `{ type: 'text', x, y, text, anchor, role }`, `{ type: 'dot', x, y,
  * role }`. Roles: axis, zero (the 0 dB line), tick, grid, curve, asymptote,
- * corner, label, number.
+ * corner, label, number. `zero` also marks the phase's multiples of 180°.
  */
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
@@ -11042,7 +11042,10 @@ function bodeFigure(sketch, {
   let [dbLow, dbHigh] = niceRange([...sketch.points.map((p) => p.db), ...sketch.asymptote.map((p) => p.db)], 20, 3);
   if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
   const yDb = (db) => mag.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * mag.h;
-  const [phLow, phHigh] = niceRange(sketch.points.map((p) => p.phase), 90, 5);
+  let [phLow, phHigh] = niceRange(sketch.points.map((p) => p.phase), 90, 5);
+  // A reference level (a multiple of 180°) on the frequency axis would hide
+  // under it: give it room.
+  if (phLow % 180 === 0) phLow -= 90;
   const yPh = (deg) => ph.y + ((phHigh - clamp(deg, phLow, phHigh)) / (phHigh - phLow)) * ph.h;
 
   // Axes: the frequency axis runs along the bottom of each pane.
@@ -11051,6 +11054,12 @@ function bodeFigure(sketch, {
     items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
   }
   if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: mag.x, y1: yDb(0), x2: mag.x + mag.w, y2: yDb(0), role: 'zero' });
+  // The phase's reference levels (0°, ±180°, ...), dotted like 0 dB.
+  if (phase) {
+    for (let deg = Math.ceil(phLow / 180) * 180; deg <= phHigh; deg += 180) {
+      items.push({ type: 'line', x1: ph.x, y1: yPh(deg), x2: ph.x + ph.w, y2: yPh(deg), role: 'zero' });
+    }
+  }
 
   // Decades along the bottom; dB and degrees up the side.
   for (let decade = Math.ceil(low); decade <= high; decade++) {
@@ -27200,7 +27209,7 @@ let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("
 let svgString, texToMathML; __bind(() => { ({ svgString, texToMathML } = __require("src/core/render.js")); });
 let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("src/core/analysis/provenance.js")); });
 let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/analysis/noise.js")); });
-let renderBode; __bind(() => { ({ renderBode } = __require("src/web/bode-ui.js")); });
+let renderBode, syncBodePlace; __bind(() => { ({ renderBode, syncBodePlace } = __require("src/web/bode-ui.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
@@ -28055,6 +28064,7 @@ let analysisReportRevision = null;
 
 /** Keep dock selects in step with model edits while it stays open. */
 function syncAnalysisDock() {
+  syncBodePlace();
   if (!isAnalysisDockOpen() || analysisDockRevision === editor.modelRevision) return;
   analysisDockRevision = editor.modelRevision;
   const kept = [analysisInput, analysisTarget].map((el) => el?.value);
@@ -31242,6 +31252,7 @@ __modules["src/web/bode-ui.js"] = function (__require, __exports) {
 __exports.formatNumber = formatNumber;
 __exports.bodeAvailable = bodeAvailable;
 __exports.figureElement = figureElement;
+__exports.syncBodePlace = syncBodePlace;
 __exports.renderBode = renderBode;
 __exports.currentPlotData = currentPlotData;
 let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
@@ -31513,6 +31524,16 @@ function drawSketch() {
   }
 }
 
+const selectedPlot = () => (selectedLabel()?.plot ? selectedLabel() : null);
+
+/** Name the place button for what a press does now: update the selected
+ *  sketch, or place a new one. The selection changes without a new report. */
+function syncBodePlace(place = panelEl()?.querySelector('.bode-place')) {
+  if (!place) return;
+  const text = selectedPlot() ? 'Update sketch' : 'Place on drawing';
+  if (place.textContent !== text) place.textContent = text;
+}
+
 /** Rebuild the tab for a new report (or a new quantity). */
 function renderBode(report) {
   state.report = report || null;
@@ -31554,9 +31575,8 @@ function renderBode(report) {
   const place = document.createElement('button');
   place.type = 'button';
   place.className = 'bode-place';
-  const selectedPlot = () => (selectedLabel()?.plot ? selectedLabel() : null);
-  place.textContent = selectedPlot() ? 'Update sketch' : 'Place on drawing';
   place.title = 'A textbook sketch of this plot on the drawing: no numbers, the corners named. With a sketch selected, this updates it.';
+  syncBodePlace(place);
   place.addEventListener('click', () => placeSketch(selectedPlot()));
   const phaseToggle = document.createElement('label');
   phaseToggle.className = 'bode-phase-toggle';

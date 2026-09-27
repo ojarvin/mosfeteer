@@ -259,6 +259,16 @@ function drawSketch() {
   }
 }
 
+const selectedPlot = () => (selectedLabel()?.plot ? selectedLabel() : null);
+
+/** Name the place button for what a press does now: update the selected
+ *  sketch, or place a new one. The selection changes without a new report. */
+export function syncBodePlace(place = panelEl()?.querySelector('.bode-place')) {
+  if (!place) return;
+  const text = selectedPlot() ? 'Update sketch' : 'Place on drawing';
+  if (place.textContent !== text) place.textContent = text;
+}
+
 /** Rebuild the tab for a new report (or a new quantity). */
 export function renderBode(report) {
   state.report = report || null;
@@ -300,9 +310,8 @@ export function renderBode(report) {
   const place = document.createElement('button');
   place.type = 'button';
   place.className = 'bode-place';
-  const selectedPlot = () => (selectedLabel()?.plot ? selectedLabel() : null);
-  place.textContent = selectedPlot() ? 'Update sketch' : 'Place on drawing';
   place.title = 'A textbook sketch of this plot on the drawing: no numbers, the corners named. With a sketch selected, this updates it.';
+  syncBodePlace(place);
   place.addEventListener('click', () => placeSketch(selectedPlot()));
   const phaseToggle = document.createElement('label');
   phaseToggle.className = 'bode-phase-toggle';

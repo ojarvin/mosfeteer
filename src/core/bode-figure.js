@@ -8,7 +8,7 @@
  * Items: `{ type: 'line', x1, y1, x2, y2, role }`, `{ type: 'path', points,
  * role }`, `{ type: 'text', x, y, text, anchor, role }`, `{ type: 'dot', x, y,
  * role }`. Roles: axis, zero (the 0 dB line), tick, grid, curve, asymptote,
- * corner, label, number.
+ * corner, label, number. `zero` also marks the phase's multiples of 180°.
  */
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
@@ -103,7 +103,10 @@ export function bodeFigure(sketch, {
   let [dbLow, dbHigh] = niceRange([...sketch.points.map((p) => p.db), ...sketch.asymptote.map((p) => p.db)], 20, 3);
   if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
   const yDb = (db) => mag.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * mag.h;
-  const [phLow, phHigh] = niceRange(sketch.points.map((p) => p.phase), 90, 5);
+  let [phLow, phHigh] = niceRange(sketch.points.map((p) => p.phase), 90, 5);
+  // A reference level (a multiple of 180°) on the frequency axis would hide
+  // under it: give it room.
+  if (phLow % 180 === 0) phLow -= 90;
   const yPh = (deg) => ph.y + ((phHigh - clamp(deg, phLow, phHigh)) / (phHigh - phLow)) * ph.h;
 
   // Axes: the frequency axis runs along the bottom of each pane.
@@ -112,6 +115,12 @@ export function bodeFigure(sketch, {
     items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
   }
   if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: mag.x, y1: yDb(0), x2: mag.x + mag.w, y2: yDb(0), role: 'zero' });
+  // The phase's reference levels (0°, ±180°, ...), dotted like 0 dB.
+  if (phase) {
+    for (let deg = Math.ceil(phLow / 180) * 180; deg <= phHigh; deg += 180) {
+      items.push({ type: 'line', x1: ph.x, y1: yPh(deg), x2: ph.x + ph.w, y2: yPh(deg), role: 'zero' });
+    }
+  }
 
   // Decades along the bottom; dB and degrees up the side.
   for (let decade = Math.ceil(low); decade <= high; decade++) {

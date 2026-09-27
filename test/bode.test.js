@@ -95,6 +95,25 @@ test('the figure lays the sketch out in its box, with or without numbers', async
   assert.ok(bare.items.some((item) => item.text === 'ω_{p1}'));
 });
 
+test('the phase pane marks its multiples of 180° with dotted lines', async () => {
+  const { bodeFigure } = await import('../src/core/bode-figure.js');
+  // Two poles: the phase falls from 0° to -180°.
+  const sketch = bodeSketch([1000], [1, 1 / 0.01 + 1 / 10, 1 / (0.01 * 10)]);
+  const figure = bodeFigure(sketch, { width: 480, height: 300, numbers: false });
+  const pane = figure.panes.phase;
+  const [low, high] = figure.ranges.phase;
+  const levels = figure.items
+    .filter((item) => item.role === 'zero' && item.y1 >= pane.y && item.y1 <= pane.y + pane.h)
+    .map((item) => Math.round(high - ((item.y1 - pane.y) / pane.h) * (high - low)));
+  const expected = [];
+  for (let deg = Math.ceil(low / 180) * 180; deg <= high; deg += 180) expected.push(deg);
+  assert.notEqual(low % 180, 0, 'no reference level on the frequency axis');
+  assert.ok(expected.includes(0) && expected.includes(-180), `range ${low}..${high}`);
+  assert.deepEqual(levels.sort((a, b) => a - b), expected);
+  // Without a phase pane there are none.
+  assert.ok(!bodeFigure(sketch, { phase: false }).items.some((item) => item.role === 'zero' && item.y1 > figure.panes.magnitude.y + figure.panes.magnitude.h));
+});
+
 test('the sketch keeps every word off the plot, names crowding each other in two rows', async () => {
   const { bodeFigure } = await import('../src/core/bode-figure.js');
   // Two poles a factor 1.5 apart, and ω_u: three names close together.

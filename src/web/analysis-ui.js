@@ -12,7 +12,7 @@ import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
-import { renderBode } from './bode-ui.js';
+import { renderBode, syncBodePlace } from './bode-ui.js';
 import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
@@ -844,6 +844,7 @@ let analysisReportRevision = null;
 
 /** Keep dock selects in step with model edits while it stays open. */
 export function syncAnalysisDock() {
+  syncBodePlace();
   if (!isAnalysisDockOpen() || analysisDockRevision === editor.modelRevision) return;
   analysisDockRevision = editor.modelRevision;
   const kept = [analysisInput, analysisTarget].map((el) => el?.value);
