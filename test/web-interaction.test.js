@@ -428,6 +428,11 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
   assert.doesNotMatch(html, /id="analysis-reference"/);
   assert.match(html, /for="analysis-ac-grounds">More AC grounds/);
   assert.match(html, /data-analysis-pick="analysis-ac-grounds"/);
+  // The field is the one AC-ground list: Derive clears the marks of nets it
+  // no longer lists, and the open panel follows marks set on the drawing.
+  const ui = readFileSync(new URL('../src/web/analysis-ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /releaseUnlistedGroundMarks\(parseAnalysisList\(analysisAcGrounds\?\.value\)\);\s*persistAnalysisForm\(\);/);
+  assert.match(ui, /export function syncAnalysisDock\(\) \{[\s\S]*?followGroundMarks\(\);/);
   assert.match(html, /id="analysis-submit"[^>]*>Derive all equations/);
   assert.match(html, /id="analysis-ac-grounds"/);
   assert.match(html, /id="analysis-device-regions"/);

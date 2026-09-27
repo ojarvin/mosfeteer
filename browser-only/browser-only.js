@@ -27035,7 +27035,7 @@ __exports.analysisNetTargets = analysisNetTargets;
 __exports.applyComponentAnalysis = applyComponentAnalysis;
 __exports.applyNetAnalysis = applyNetAnalysis;
 __exports.installAnalysisUi = installAnalysisUi;
-let INTERFACE_PIN_TYPES, parseLabelRuns; __bind(() => { ({ INTERFACE_PIN_TYPES, parseLabelRuns } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns; __bind(() => { ({ INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } = __require("src/core/model.js")); });
 let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
 let EQUATION_GROUPS, adaptCombinedReport; __bind(() => { ({ EQUATION_GROUPS, adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
@@ -27315,10 +27315,61 @@ function setAnalysisTransferInputs(names) {
   for (const input of analysisTransferInputs) input.checked = names.includes(input.dataset.transferFunction);
 }
 
+// A net can be marked AC ground on the drawing (its context menu), and the
+// AC-ground field lists what the analysis grounds. The field is the one list:
+// it shows the marked nets, and taking one out of it clears its mark on the
+// next derivation, so nothing is grounded that the field does not show.
+const isMarkedGround = (net) => !!(net.analysis?.acGround || net.analysis?.role === 'dc-bias');
+
+/** The field's names for the nets marked AC ground on the drawing. */
+function markedGroundNames() {
+  return new Set(visibleNets().filter((net) => namedGroupNets(net).some(isMarkedGround)).map((net) => net.name || net.id));
+}
+
+/** The marks the field last reflected, to follow a mark set or cleared on
+ *  the drawing while the panel is open. */
+let reflectedMarks = new Set();
+
+/** Whether a field entry (a name, a net id, or a pin) names `net`'s group. */
+function fieldNamesNet(token, net) {
+  const members = namedGroupNets(net);
+  if (members.some((member) => member.id === token || member.name === token || canonicalNetName(member.name) === token)) return true;
+  if (!token.includes('.')) return false;
+  try {
+    const found = editor.circuit.netOfTerminal(editor.circuit.resolveTerm(token));
+    return !!found && members.some((member) => member.id === found.id);
+  } catch {
+    return false;
+  }
+}
+
+/** Clear the AC-ground mark of every net the field no longer lists. */
+function releaseUnlistedGroundMarks(tokens) {
+  const released = [...editor.circuit.nets.values()]
+    .filter((net) => isMarkedGround(net) && !tokens.some((token) => fieldNamesNet(token, net)));
+  if (!released.length) return;
+  commit(() => {
+    for (const net of released) editor.circuit.setNetAnalysis(net, { role: net.analysis.role === 'dc-bias' ? null : net.analysis.role, acGround: false });
+  });
+  const names = [...new Set(released.map((net) => net.name || net.id))];
+  logLine(`${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} no longer marked AC ground (not in the AC-ground list)`, 'status');
+  reflectedMarks = markedGroundNames();
+}
+
+/** Follow marks set or cleared on the drawing since the field last looked. */
+function followGroundMarks() {
+  if (!analysisAcGrounds) return;
+  const current = markedGroundNames();
+  let tokens = parseAnalysisList(analysisAcGrounds.value);
+  for (const name of current) if (!reflectedMarks.has(name) && !tokens.includes(name)) tokens.push(name);
+  tokens = tokens.filter((token) => !(reflectedMarks.has(token) && !current.has(token)));
+  analysisAcGrounds.value = tokens.join(', ');
+  reflectedMarks = current;
+}
+
 function prefillAnalysisAttributes() {
-  const markedGrounds = visibleNets()
-    .filter((net) => net.analysis?.acGround || net.analysis?.role === 'dc-bias')
-    .map((net) => net.name || net.id);
+  const markedGrounds = [...markedGroundNames()];
+  reflectedMarks = new Set(markedGrounds);
   const groundValues = parseAnalysisList(analysisAcGrounds?.value);
   for (const value of markedGrounds) if (!groundValues.includes(value)) groundValues.push(value);
   if (analysisAcGrounds && groundValues.length) analysisAcGrounds.value = groundValues.join(', ');
@@ -27853,6 +27904,7 @@ function syncAnalysisDock() {
   [analysisInput, analysisTarget].forEach((el, index) => {
     if (el && [...el.options].some((option) => option.value === kept[index])) el.value = kept[index];
   });
+  followGroundMarks();
   const stale = document.getElementById('analysis-stale');
   if (stale) stale.hidden = !latestAnalysisReport || analysisReportRevision === editor.modelRevision;
 }
@@ -28056,6 +28108,8 @@ function applyNetAnalysis(target, attrs) {
     for (const net of nets) editor.circuit.setNetAnalysis(net, attrs);
   });
   logLine(`applied analysis attributes to ${nets.length} net${nets.length === 1 ? '' : 's'}`, 'status');
+  // An open analysis panel follows the mark into its AC-ground list.
+  render();
 }
 
 function installAnalysisUi() {
@@ -28122,6 +28176,7 @@ function installAnalysisUi() {
       logLine(error, 'error');
       return;
     }
+    releaseUnlistedGroundMarks(parseAnalysisList(analysisAcGrounds?.value));
     persistAnalysisForm();
     const formOptions = analysisFormOptions();
     const devices = analysisDeviceOptions();

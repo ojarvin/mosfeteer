@@ -9,6 +9,9 @@ devices. One analysis produces the complete report. There is no separate
 reference: every AC ground is the same 0 V node, and supplies, grounds, and
 other DC rails already are AC ground, so a schematic with a rail needs
 nothing added. A drawing with no rail at all needs one AC ground named.
+Nets marked AC ground from their context menu (DC bias) are listed in the
+field; the field is the one list, so taking a net out clears its mark when
+the equations are next derived.
 
 ## Analysis model
 
