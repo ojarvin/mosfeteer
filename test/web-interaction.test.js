@@ -413,6 +413,25 @@ test('the Atlas header carries the editor toolbar\'s mark and theme toggle', () 
   assert.match(elements, /themeButtons = \[themeBtn, document.getElementById\('atlas-theme'\)\]/);
 });
 
+test('an Atlas search packs the found designs together once typing pauses', () => {
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  // Each keystroke marks and fades; the desk is packed again after a pause.
+  assert.match(atlas, /const ARRANGE_DELAY_MS = 400;/);
+  assert.match(atlas, /searchEl\?\.addEventListener\('input', \(\) => applySearch\(searchEl.value\)\);/);
+  assert.match(atlas, /function applySearch\(query, \{ arrange = 'soon' \} = \{\}\)/);
+  assert.match(atlas, /if \(arrange === 'soon'\) \{[\s\S]*?setTimeout\(\(\) => \{\s*if \(state\?\.generation === generation\) arrangeDesk\(\);\s*\}, ARRANGE_DELAY_MS\);/);
+  // Only what the search found is laid out; nothing found keeps the desk, faded.
+  assert.match(atlas, /const ids = state.matches \? \[\.\.\.state.matches.keys\(\)\] : \[\.\.\.state.entries.keys\(\)\];\s*if \(!ids.length && state.arranged !== null\) return;/);
+  assert.match(atlas, /if \(key === state.arranged\) return;/);
+  // Acting on the results packs first; opening or leaving drops a pending pack.
+  assert.match(atlas, /function leaveSearch\(\) \{\s*arrangePending\(\);/);
+  assert.match(atlas, /function stepMatch\(step\) \{\s*arrangePending\(\);/);
+  assert.match(atlas, /function clearSearch\(\) \{[\s\S]*?applySearch\('', \{ arrange: 'now' \}\);/);
+  assert.match(atlas, /async function openTile\(tile\) \{\s*clearTimeout\(state.arrangeTimer\);/);
+  // A reopened Atlas lays out an on-going search at once.
+  assert.match(atlas, /applySearch\(lastQuery, \{ arrange: 'instant' \}\);/);
+});
+
 test('an explicit new document is protected from active-document auto-loads', () => {
   const main = editorSource();
   const start = main.indexOf('function startNewDocument(');

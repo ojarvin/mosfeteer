@@ -58,6 +58,10 @@ const REVEAL_MS = 350;
 /** A wheel zoom counts as motion until the wheel has been still this long. */
 const WHEEL_SETTLE_MS = 150;
 const OPEN_MS = 450;
+/** A search packs the designs it found together once typing pauses this
+ *  long; each keystroke only marks and fades. */
+const ARRANGE_DELAY_MS = 400;
+const ARRANGE_MS = 380;
 
 let state = null;
 
@@ -219,12 +223,15 @@ async function loadWorkspace(generation) {
       await new Promise((resolve) => setTimeout(resolve));
     }
   }
-  const { tiles, bounds } = placeDrawings(entries);
+  // An on-going search shows only what it finds from the start.
+  const provisional = state.tiles[0];
+  state.entries = new Map(entries.map((entry) => [entry.id, entry]));
+  applySearch(lastQuery, { arrange: 'instant' });
+  const { tiles, bounds } = state;
   // The open design stayed on screen while the rest loaded: move the view
   // with it to its place in the layout, so it does not jump. Without one
   // (an unsaved or empty design) the view is bare paper and grid, so it can
   // move by whole cells to the middle of the desk unseen.
-  const provisional = state.tiles[0];
   const placed = provisional && tiles.find((tile) => tile.id === provisional.id);
   if (placed) state.view = { ...state.view, x: state.view.x + placed.x - provisional.x, y: state.view.y + placed.y - provisional.y };
   else if (tiles.length) {
@@ -235,12 +242,7 @@ async function loadWorkspace(generation) {
       y: state.view.y + cell(bounds.y + bounds.h / 2 - (state.view.y + state.view.h / 2)),
     };
   }
-  state.entries = new Map(entries.map((entry) => [entry.id, entry]));
-  state.tiles = tiles;
-  state.bounds = bounds;
   state.revealAt = performance.now();
-  statusEl.textContent = `${entries.length} design${entries.length === 1 ? '' : 's'}`;
-  applySearch(lastQuery);
   void trimCache();
   return true;
 }
@@ -409,29 +411,38 @@ function draw() {
   drawGrid(ctx, palette, w, h);
 
   const screen = { x: state.view.x, y: state.view.y, w: state.view.w, h: state.view.h };
-  const visible = state.tiles.filter((tile) => rectsIntersect(screen, { ...tile, h: tile.h + ATLAS_CAPTION }));
+  // Mid-rearrangement, designs glide; those joining fade in, those leaving out.
+  const progress = motionProgress();
+  if (state.motion && progress >= 1) state.motion = null;
+  const shown = state.tiles.map((tile) => ({ tile: shownTile(tile), alpha: state.motion && !state.motion.from.has(tile.id) ? progress : 1 }));
+  if (state.motion) {
+    for (const tile of state.motion.leaving) shown.push({ tile, alpha: 1 - progress });
+    requestDraw();
+  }
+  const visible = shown.filter(({ tile }) => rectsIntersect(screen, { ...tile, h: tile.h + ATLAS_CAPTION }));
   const wanted = [];
   const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
-  const placed = visible.map((tile) => {
+  const placed = visible.map(({ tile, alpha }) => {
     const rect = worldToScreen(tile);
-    return { tile, rect, detail: tileDetail(Math.max(rect.w, rect.h) * dpr) };
+    return { tile, alpha, rect, detail: tileDetail(Math.max(rect.w, rect.h) * dpr) };
   });
   // The tiles that fill the screen are drawn live; their images would only
   // blur the vector lines through the transparent paper. Not while the view
   // animates, though: a live SVG changing size is redrawn whole every frame.
-  const moving = !!state.animation || performance.now() - (state.wheelAt || 0) < WHEEL_SETTLE_MS;
+  const moving = !!state.animation || !!state.motion || performance.now() - (state.wheelAt || 0) < WHEEL_SETTLE_MS;
   const vector = moving ? [] : placed.filter((item) => item.detail === 'vector')
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
   const reveal = state.revealAt ? Math.min(1, (performance.now() - state.revealAt) / REVEAL_MS) : 1;
   if (reveal < 1) requestDraw();
-  for (const { tile, rect, detail } of placed) {
+  for (const { tile, alpha, rect, detail } of placed) {
     const entry = state.entries.get(tile.id);
     const found = state.matches?.get(tile.id);
     // A search fades every design it does not find; what it finds in one is
     // marked under the drawing, like a highlighter.
-    const fade = state.matches && !found ? 0.18 : 1;
+    const fade = (state.matches && !found ? 0.18 : 1) * alpha;
+    ctx.globalAlpha = alpha;
     if (found?.hits.length) drawHits(ctx, tile, entry, found.hits, palette);
     ctx.globalAlpha = (entry.current ? 1 : reveal) * fade;
     const level = detail === 'small' ? 'small' : 'large';
@@ -449,6 +460,7 @@ function draw() {
       const key = bitmapKey(entry, need);
       if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
+    ctx.globalAlpha = alpha;
     drawCaption(ctx, tile, entry, rect, palette);
   }
   ctx.globalAlpha = 1;
@@ -465,7 +477,7 @@ function drawHits(ctx, tile, entry, hits, palette) {
   const dx = tile.x - entry.box.x;
   const dy = tile.y - entry.box.y;
   ctx.save();
-  ctx.globalAlpha = 0.28;
+  ctx.globalAlpha *= 0.28;
   ctx.fillStyle = palette.accent;
   for (const hit of hits) {
     for (const b of hit.boxes) {
@@ -479,36 +491,98 @@ function drawHits(ctx, tile, entry, hits, palette) {
 // ----- search ---------------------------------------------------------------
 
 /** Search the designs for `query` (core/design-index.js); an empty query
- *  shows every design again. */
-function applySearch(query) {
+ *  shows every design again. What it finds is marked at once and the rest
+ *  fade; `arrange` says when the desk is packed again with only the designs
+ *  found: 'soon' (once typing pauses), 'now' (animated), or 'instant'. */
+function applySearch(query, { arrange = 'soon' } = {}) {
   if (!state || state.source !== 'workspace') return;
   lastQuery = query;
   const text = query.trim();
+  const total = state.entries.size;
+  const designs = `${total} design${total === 1 ? '' : 's'}`;
   if (!text) {
     state.matches = null;
-    statusEl.textContent = `${state.tiles.length} design${state.tiles.length === 1 ? '' : 's'}`;
-    for (const el of state.overlays.values()) el.style.opacity = '';
+    statusEl.textContent = designs;
+  } else {
+    state.matches = new Map();
+    for (const entry of state.entries.values()) {
+      const found = searchDesign(entry.index, entry.name, text);
+      if (found) state.matches.set(entry.id, found);
+    }
+    const count = state.matches.size;
+    statusEl.textContent = count ? `${count} of ${designs} · Enter steps through them` : 'No design matches';
+  }
+  for (const [id, el] of state.overlays) el.style.opacity = !state.matches || state.matches.has(id) ? '' : '0.18';
+  // One design left is the one being looked for: pick it, so Esc and Enter
+  // open it. Packing the desk around it brings it into view.
+  if (state.matches?.size === 1) state.selected = [...state.matches.keys()][0];
+  clearTimeout(state.arrangeTimer);
+  state.arrangeTimer = null;
+  if (arrange === 'soon') {
+    const generation = state.generation;
+    state.arrangeTimer = setTimeout(() => {
+      if (state?.generation === generation) arrangeDesk();
+    }, ARRANGE_DELAY_MS);
+  } else arrangeDesk({ animate: arrange === 'now' });
+  requestDraw();
+}
+
+/** Pack the desk with the designs the search found (all, with no search).
+ *  A search that finds nothing leaves the desk as it was, faded. The
+ *  designs glide to their new places while the view fits them. */
+function arrangeDesk({ animate = true } = {}) {
+  if (!state) return;
+  clearTimeout(state.arrangeTimer);
+  state.arrangeTimer = null;
+  const ids = state.matches ? [...state.matches.keys()] : [...state.entries.keys()];
+  if (!ids.length && state.arranged !== null) return;
+  const shown = ids.length ? ids : [...state.entries.keys()];
+  const key = [...shown].sort().join('\n');
+  if (key === state.arranged) return;
+  state.arranged = key;
+  // The same designs always pack the same way: keep recent packings, so
+  // stepping back (clearing the search) is immediate.
+  let layout = state.layouts.get(key);
+  if (!layout) {
+    layout = placeDrawings(shown.map((id) => state.entries.get(id)));
+    if (state.layouts.size >= 16) state.layouts.delete(state.layouts.keys().next().value);
+  }
+  state.layouts.delete(key);
+  state.layouts.set(key, layout);
+  const from = new Map(state.tiles.map((tile) => [tile.id, shownTile(tile)]));
+  state.tiles = layout.tiles;
+  state.bounds = layout.bounds;
+  const kept = new Set(layout.tiles.map((tile) => tile.id));
+  if (state.selected && !kept.has(state.selected)) state.selected = null;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!animate || reduced) {
+    state.motion = null;
+    if (animate) setView(fitAllView());
     requestDraw();
     return;
   }
-  state.matches = new Map();
-  for (const tile of state.tiles) {
-    const entry = state.entries.get(tile.id);
-    const found = searchDesign(entry.index, entry.name, text);
-    if (found) state.matches.set(tile.id, found);
-  }
-  const count = state.matches.size;
-  statusEl.textContent = count
-    ? `${count} of ${state.tiles.length} design${state.tiles.length === 1 ? '' : 's'} · Enter steps through them`
-    : 'No design matches';
-  for (const [id, el] of state.overlays) el.style.opacity = state.matches.has(id) ? '' : '0.18';
-  // One design left is the one being looked for: pick it, so Esc and Enter
-  // open it.
-  if (count === 1) {
-    const only = tileById([...state.matches.keys()][0]);
-    if (only && state.selected !== only.id) focusTile(only);
-  }
-  requestDraw();
+  state.motion = { from, leaving: [...from.values()].filter((tile) => !kept.has(tile.id)), start: performance.now() };
+  void animateView(clampView(fitAllView()), ARRANGE_MS);
+}
+
+/** Search keys that act on what was found pack the desk first. */
+function arrangePending() {
+  if (state?.arrangeTimer) arrangeDesk();
+}
+
+/** How far the desk's current rearrangement has come, eased; 1 at rest. */
+function motionProgress() {
+  if (!state.motion) return 1;
+  const t = Math.min(1, (performance.now() - state.motion.start) / ARRANGE_MS);
+  return t * t * (3 - 2 * t);
+}
+
+/** Where a tile is drawn now: on its way from its old place mid-rearrangement. */
+function shownTile(tile) {
+  const from = state.motion?.from.get(tile.id);
+  if (!from) return tile;
+  const t = motionProgress();
+  return { ...tile, x: from.x + (tile.x - from.x) * t, y: from.y + (tile.y - from.y) * t };
 }
 
 // ----- tags ---------------------------------------------------------------------
@@ -600,6 +674,7 @@ async function saveTags(entry, text) {
 /** Esc in the search: back to the desk with the search still on and a found
  *  design picked, so Enter opens it. */
 function leaveSearch() {
+  arrangePending();
   const tiles = navigableTiles();
   if (state.matches && tiles.length && !state.matches.has(state.selected)) focusTile(tiles[0]);
   rootEl.focus({ preventScroll: true });
@@ -609,7 +684,7 @@ function leaveSearch() {
 /** Esc on the desk drops a search before it leaves the Atlas. */
 function clearSearch() {
   if (searchEl) searchEl.value = '';
-  applySearch('');
+  applySearch('', { arrange: 'now' });
 }
 
 /** The designs a search found, in desk order (or all, with no search). */
@@ -620,6 +695,7 @@ function navigableTiles() {
 /** Enter in the search: the next (Shift: previous) design it found, zoomed
  *  to so its marks are readable. */
 function stepMatch(step) {
+  arrangePending();
   const tiles = navigableTiles();
   if (!tiles.length) return;
   const index = tiles.findIndex((tile) => tile.id === state.selected);
@@ -700,7 +776,7 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   const inset = ATLAS_GAP * 0.35 * k;
   if (hovered && !selected) {
     ctx.save();
-    ctx.globalAlpha = 0.3;
+    ctx.globalAlpha *= 0.3;
     ctx.strokeStyle = palette.accent;
     ctx.lineWidth = 1;
     ctx.strokeRect(rect.x - inset, rect.y - inset, rect.w + 2 * inset, rect.h + 2 * inset);
@@ -876,6 +952,7 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
+    arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
   };
   if (hintEl) hintEl.textContent = HINTS[source];
   if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
@@ -959,6 +1036,7 @@ function showOpenDesign() {
 /** Leave for the editor. The open design zooms back into place. */
 export async function closeAtlas({ animate = true } = {}) {
   if (!state) return;
+  clearTimeout(state.arrangeTimer);
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
   const back = animate && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
   if (back) await animateView(back, OPEN_MS);
@@ -968,6 +1046,7 @@ export async function closeAtlas({ animate = true } = {}) {
 function finishClose() {
   if (!state) return;
   stopAnimation();
+  clearTimeout(state.arrangeTimer);
   for (const bitmap of state.bitmaps.values()) bitmap.close?.();
   state = null;
   overlayEl.replaceChildren();
@@ -996,6 +1075,7 @@ export function toggleSymbolSheet() {
 }
 
 async function openTile(tile) {
+  clearTimeout(state.arrangeTimer);
   if (state.source === 'symbols') {
     focusTile(tile, { zoom: true });
     return;

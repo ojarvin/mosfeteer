@@ -43,13 +43,16 @@ The search field finds designs by what is in them: part names, part types
 (`pmos`, `current source`), net names, and any text, looking through markup
 (`vcm`, `V_CM`, and `V_{CM}` are the same word). Every word must be found;
 `#word` looks only at the document's tags. Designs it does not find fade,
-and what it finds is marked in each design. Enter (Shift+Enter) steps
-through the designs found, and when one is left it is picked. Esc leaves
-the field with the search still on and a found design picked, so Enter opens
-it; the arrows and Tab move among the found designs, and Esc on the desk
-clears the search (the next one returns to the editor). Opening a design
-selects what was found in it. The search stays for the session, so the
-next match is one Shift+Backspace away.
+and what it finds is marked in each design. When typing pauses (400 ms), the
+desk packs the designs found together on their own and fits them; a search
+that finds nothing leaves the desk as it was, faded. Enter, Esc, and
+clearing the search pack at once. Enter (Shift+Enter) steps through the
+designs found, and when one is left it is picked. Esc leaves the field with
+the search still on and a found design picked, so Enter opens it; the arrows
+and Tab move among the found designs, and Esc on the desk clears the search
+(the next one returns to the editor). Opening a design selects what was
+found in it. The search stays for the session, so the next match is one
+Shift+Backspace away.
 
 Tags are the document's own (`tags` in its JSON) and show after the
 design's name. Set them in the side panel's Tags field for the open design,
