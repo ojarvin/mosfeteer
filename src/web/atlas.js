@@ -22,7 +22,9 @@ import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTil
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
-import { persistence, openDocumentPath, requestDocumentAction, startNewDocument } from './document-session.js';
+import {
+  addDocumentFiles, chooseWorkspaceFolder, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument,
+} from './document-session.js';
 import { toggleTheme } from './toolbar-ui.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
@@ -40,6 +42,8 @@ const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
 const newCircuitEl = document.getElementById('atlas-new-circuit');
+const openFolderEl = document.getElementById('atlas-open-folder');
+const openFilesEl = document.getElementById('atlas-open-files');
 const exportEl = document.getElementById('atlas-export');
 
 /** The workspace search outlives one visit, so a design found, opened, and
@@ -209,7 +213,8 @@ async function loadWorkspace(generation) {
   const folder = workspace.workspace || '';
   titleEl.textContent = folder.split(/[\\/]/).filter(Boolean).pop() || 'Workspace';
   titleEl.title = folder;
-  const documents = (workspace.documents || []).filter((doc) => doc.kind === 'circuit');
+  // A browser-only file waiting for permission again cannot be read yet.
+  const documents = (workspace.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked && !doc.missing);
   const entries = [];
   for (const [index, doc] of documents.entries()) {
     const current = doc.path === editor.currentDocumentPath;
@@ -982,18 +987,67 @@ function focusTile(tile, { zoom = false } = {}) {
 
 // ----- entering and leaving ---------------------------------------------------------
 
-/** Shift+Backspace: step back from the drawing to the whole workspace. */
-export async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
-  if (state || !rootEl) return;
-  const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
-  state = {
+function deskState(generation, source, startup = false) {
+  return {
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
     arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
   };
+}
+
+/** Lay the desk out again from the document list, after another folder or
+ *  more files were opened over it. Resolves false when the Atlas is closed. */
+async function reloadDesk() {
+  if (!state || state.source !== 'workspace') return false;
+  stopAnimation();
+  clearTimeout(state.arrangeTimer);
+  for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+  overlayEl.replaceChildren();
+  const generation = (openAtlas.generation += 1);
+  state = { ...deskState(generation, 'workspace'), view: state.view };
+  let ready = false;
+  try {
+    ready = await loadWorkspace(generation);
+  } catch (err) {
+    logLine(`Could not show the workspace: ${err.message}`, 'error');
+  }
+  if (!ready || !state || state.generation !== generation) return true;
+  state.selected = state.tiles.find((tile) => state.entries.get(tile.id).current)?.id || null;
+  if (!state.tiles.length) {
+    statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
+    requestDraw();
+  } else {
+    void animateView(clampView(fitAllView()));
+  }
+  return true;
+}
+
+/** The header's Folder and Open buttons (and Ctrl/Cmd+O): another
+ *  workspace, or browser-only files from anywhere, onto the desk. */
+async function openOntoDesk(kind) {
+  if (state?.source !== 'workspace') return;
+  if (kind === 'files' && persistence.browserOnly) await addDocumentFiles();
+  else await chooseWorkspaceFolder();
+  rootEl.focus({ preventScroll: true });
+}
+
+/** Shift+Backspace: step back from the drawing to the whole workspace. */
+export async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
+  if (state || !rootEl) return;
+  const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
+  state = deskState(generation, source, startup);
   if (hintEl) hintEl.textContent = HINTS[source];
   if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
+  if (openFolderEl) {
+    openFolderEl.hidden = source !== 'workspace';
+    openFolderEl.title = persistence.browserOnly
+      ? 'Open another folder of designs as the workspace'
+      : 'Show another folder of designs as the workspace (Ctrl/Cmd+O)';
+  }
+  // Node mode opens single files in the editor; browser-only mode can add
+  // files from anywhere to the desk.
+  if (openFilesEl) openFilesEl.hidden = source !== 'workspace' || !persistence.browserOnly;
   if (searchEl) {
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
@@ -1170,6 +1224,7 @@ export function onAtlasKey(ev) {
   const selected = state.selected && tileById(state.selected);
   if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
+  else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
   else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
   else if (key === 'Enter' && selected) void openTile(selected);
@@ -1348,6 +1403,9 @@ export function installAtlas() {
   rootEl.querySelector('.atlas-head')?.addEventListener('mousedown', (ev) => {
     if (ev.target.closest('button')) ev.preventDefault();
   });
+  openFolderEl?.addEventListener('click', () => void openOntoDesk('folder'));
+  openFilesEl?.addEventListener('click', () => void openOntoDesk('files'));
+  onDocumentListChange(reloadDesk);
   newCircuitEl?.addEventListener('click', () => {
     if (state?.source !== 'workspace') return;
     requestDocumentAction('Starting a new circuit', () => {

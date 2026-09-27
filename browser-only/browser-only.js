@@ -29217,7 +29217,7 @@ let ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, re
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
+let addDocumentFiles, chooseWorkspaceFolder, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ addDocumentFiles, chooseWorkspaceFolder, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
 let toggleTheme; __bind(() => { ({ toggleTheme } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
@@ -29268,6 +29268,8 @@ const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
 const newCircuitEl = document.getElementById('atlas-new-circuit');
+const openFolderEl = document.getElementById('atlas-open-folder');
+const openFilesEl = document.getElementById('atlas-open-files');
 const exportEl = document.getElementById('atlas-export');
 
 /** The workspace search outlives one visit, so a design found, opened, and
@@ -29437,7 +29439,8 @@ async function loadWorkspace(generation) {
   const folder = workspace.workspace || '';
   titleEl.textContent = folder.split(/[\\/]/).filter(Boolean).pop() || 'Workspace';
   titleEl.title = folder;
-  const documents = (workspace.documents || []).filter((doc) => doc.kind === 'circuit');
+  // A browser-only file waiting for permission again cannot be read yet.
+  const documents = (workspace.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked && !doc.missing);
   const entries = [];
   for (const [index, doc] of documents.entries()) {
     const current = doc.path === editor.currentDocumentPath;
@@ -30210,18 +30213,67 @@ function focusTile(tile, { zoom = false } = {}) {
 
 // ----- entering and leaving ---------------------------------------------------------
 
-/** Shift+Backspace: step back from the drawing to the whole workspace. */
-async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
-  if (state || !rootEl) return;
-  const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
-  state = {
+function deskState(generation, source, startup = false) {
+  return {
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
     arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
   };
+}
+
+/** Lay the desk out again from the document list, after another folder or
+ *  more files were opened over it. Resolves false when the Atlas is closed. */
+async function reloadDesk() {
+  if (!state || state.source !== 'workspace') return false;
+  stopAnimation();
+  clearTimeout(state.arrangeTimer);
+  for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+  overlayEl.replaceChildren();
+  const generation = (openAtlas.generation += 1);
+  state = { ...deskState(generation, 'workspace'), view: state.view };
+  let ready = false;
+  try {
+    ready = await loadWorkspace(generation);
+  } catch (err) {
+    logLine(`Could not show the workspace: ${err.message}`, 'error');
+  }
+  if (!ready || !state || state.generation !== generation) return true;
+  state.selected = state.tiles.find((tile) => state.entries.get(tile.id).current)?.id || null;
+  if (!state.tiles.length) {
+    statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
+    requestDraw();
+  } else {
+    void animateView(clampView(fitAllView()));
+  }
+  return true;
+}
+
+/** The header's Folder and Open buttons (and Ctrl/Cmd+O): another
+ *  workspace, or browser-only files from anywhere, onto the desk. */
+async function openOntoDesk(kind) {
+  if (state?.source !== 'workspace') return;
+  if (kind === 'files' && persistence.browserOnly) await addDocumentFiles();
+  else await chooseWorkspaceFolder();
+  rootEl.focus({ preventScroll: true });
+}
+
+/** Shift+Backspace: step back from the drawing to the whole workspace. */
+async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
+  if (state || !rootEl) return;
+  const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
+  state = deskState(generation, source, startup);
   if (hintEl) hintEl.textContent = HINTS[source];
   if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
+  if (openFolderEl) {
+    openFolderEl.hidden = source !== 'workspace';
+    openFolderEl.title = persistence.browserOnly
+      ? 'Open another folder of designs as the workspace'
+      : 'Show another folder of designs as the workspace (Ctrl/Cmd+O)';
+  }
+  // Node mode opens single files in the editor; browser-only mode can add
+  // files from anywhere to the desk.
+  if (openFilesEl) openFilesEl.hidden = source !== 'workspace' || !persistence.browserOnly;
   if (searchEl) {
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
@@ -30398,6 +30450,7 @@ function onAtlasKey(ev) {
   const selected = state.selected && tileById(state.selected);
   if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
+  else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
   else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
   else if (key === 'Enter' && selected) void openTile(selected);
@@ -30576,6 +30629,9 @@ function installAtlas() {
   rootEl.querySelector('.atlas-head')?.addEventListener('mousedown', (ev) => {
     if (ev.target.closest('button')) ev.preventDefault();
   });
+  openFolderEl?.addEventListener('click', () => void openOntoDesk('folder'));
+  openFilesEl?.addEventListener('click', () => void openOntoDesk('files'));
+  onDocumentListChange(reloadDesk);
   newCircuitEl?.addEventListener('click', () => {
     if (state?.source !== 'workspace') return;
     requestDocumentAction('Starting a new circuit', () => {
@@ -34615,11 +34671,14 @@ __exports.persistDraft = persistDraft;
 __exports.flushDraft = flushDraft;
 __exports.restoreDraft = restoreDraft;
 __exports.displayPath = displayPath;
+__exports.onDocumentListChange = onDocumentListChange;
 __exports.restoreStartup = restoreStartup;
 __exports.saveCircuit = saveCircuit;
 __exports.requestDocumentAction = requestDocumentAction;
 __exports.openDocumentPath = openDocumentPath;
 __exports.openDocumentDialog = openDocumentDialog;
+__exports.chooseWorkspaceFolder = chooseWorkspaceFolder;
+__exports.addDocumentFiles = addDocumentFiles;
 __exports.renderSaveState = renderSaveState;
 __exports.syncActiveCircuit = syncActiveCircuit;
 __exports.startNewDocument = startNewDocument;
@@ -34665,21 +34724,42 @@ let applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render
 
 const persistence = createPersistenceAdapter();
 
-function configureBrowserOnlyUi() {
-  if (!persistence.browserOnly) return;
-  // These actions depend on the local server's filesystem. Browser mode uses
-  // native file pickers and downloads instead of pretending that a browser can
-  // browse or reveal arbitrary folders.
-  for (const id of ['btn-workspace', 'btn-reveal-document']) document.getElementById(id)?.setAttribute('hidden', '');
-  const forget = document.getElementById('btn-delete-circuit');
-  if (forget) {
-    forget.textContent = 'Forget from browser…';
-    forget.title = 'Remove the current document from this browser\'s cached document list';
+/** Replace a button's label, keeping its icon. */
+function setButtonText(button, text) {
+  for (const node of [...button.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
+  button.append(text);
+}
+
+let deleteWording = null;
+
+/** Browser-only mode deletes a workspace-folder document's file, but only
+ *  takes a file opened from elsewhere off the list. */
+function renderDeleteWording() {
+  const forget = persistence.browserOnly && !persistence.deletesFile(editor.currentDocumentPath);
+  if (forget === deleteWording) return;
+  deleteWording = forget;
+  if (deleteCircuitBtn) {
+    setButtonText(deleteCircuitBtn, forget ? 'Remove from list…' : 'Delete document…');
+    deleteCircuitBtn.title = forget
+      ? 'Take the current document off the document list; its file stays on disk'
+      : 'Permanently delete the current document file';
   }
   const deleteTitle = document.getElementById('delete-dialog-title');
-  if (deleteTitle) deleteTitle.textContent = 'Forget browser document?';
+  if (deleteTitle) deleteTitle.textContent = forget ? 'Remove document from the list?' : 'Delete document file?';
   const confirmDelete = document.getElementById('confirm-delete');
-  if (confirmDelete) confirmDelete.textContent = 'Forget document';
+  if (confirmDelete) setButtonText(confirmDelete, forget ? 'Remove from list' : 'Delete file');
+}
+
+function configureBrowserOnlyUi() {
+  if (!persistence.browserOnly) return;
+  // A browser cannot reveal a file in the file manager. The workspace
+  // folder comes from the browser's own folder picker.
+  document.getElementById('btn-reveal-document')?.setAttribute('hidden', '');
+  const workspaceButton = document.getElementById('btn-workspace');
+  if (workspaceButton) {
+    setButtonText(workspaceButton, 'Open folder…');
+    workspaceButton.title = 'Open a folder of documents as the workspace: the document list and the Atlas show its designs';
+  }
   const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
   if (pdf) {
     pdf.checked = false;
@@ -34761,9 +34841,32 @@ function documentNameForPath(path) {
   return String(path).split(/[\\/]/).pop().replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
 }
 
+let documentListHandler = null;
+
+/** Let the Atlas follow a changed document list. The handler resolves true
+ *  when it shows the new list itself, so a drop need not open a design. */
+function onDocumentListChange(handler) {
+  documentListHandler = handler;
+}
+
+async function documentListChanged() {
+  return documentListHandler ? !!await documentListHandler() : false;
+}
+
 const PICKER_OPEN_FILE = '__open-file__';
 
 const PICKER_WORKSPACE = '__workspace__';
+
+const PICKER_ACCESS = '__access__';
+
+const PICKER_CLEAR = '__clear__';
+
+/** Browser-only group names: a folder workspace, and files opened on their own. */
+function documentGroupNames() {
+  if (!persistence.browserOnly) return [`Workspace · ${displayPath(editor.workspaceState.workspace)}`, 'Recent elsewhere'];
+  const folder = editor.workspaceState?.folder;
+  return folder ? [`Folder · ${folder.name}`, 'Other opened files'] : ['Opened files', 'Other opened files'];
+}
 
 async function refreshCircuitList() {
   try {
@@ -34772,17 +34875,21 @@ async function refreshCircuitList() {
     logLine(`Could not list documents: ${err.message}`, 'error');
     return;
   }
-  const { documents = [], recent = [] } = editor.workspaceState;
-  const label = (document) => document.name;
+  const { documents = [], recent = [], folder = null } = editor.workspaceState;
+  // A file the browser needs permission for again is still listed; opening
+  // it asks for that permission.
+  const label = (document) => (document.locked ? `${document.name} (allow access)` : document.name);
   const known = new Set([...documents, ...recent].map((document) => document.path));
   const recentEntries = editor.currentDocumentPath && !known.has(editor.currentDocumentPath)
     ? [{ name: editor.currentCircuitName || documentNameForPath(editor.currentDocumentPath), path: editor.currentDocumentPath, kind: 'circuit' }, ...recent]
     : recent;
-  const groups = [
-    [persistence.browserOnly ? 'Documents available in this browser' : `Workspace · ${displayPath(editor.workspaceState.workspace)}`, documents],
-    ['Recent elsewhere', recentEntries],
-  ];
-  const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])])]);
+  const [workspaceGroup, elsewhereGroup] = documentGroupNames();
+  const groups = [[workspaceGroup, documents], [elsewhereGroup, recentEntries]];
+  const lockedFolder = folder?.locked ? folder.name : '';
+  // Browser-only: files opened on their own (not the open one) can all be
+  // taken off the list at once.
+  const clearable = persistence.browserOnly ? (folder ? recent : documents).filter((doc) => doc.path !== editor.currentDocumentPath).length : 0;
+  const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])]), lockedFolder, clearable]);
   if (circuitSelectEl.dataset.signature !== signature) {
     const children = [new Option(documents.length || recentEntries.length ? 'Open document…' : 'No documents yet', '')];
     for (const [name, items] of groups) {
@@ -34798,8 +34905,10 @@ async function refreshCircuitList() {
     }
     const actions = document.createElement('optgroup');
     actions.label = 'More';
+    if (lockedFolder) actions.append(new Option(`Allow access to folder “${lockedFolder}”…`, PICKER_ACCESS));
     actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE));
-    if (!persistence.browserOnly) actions.append(new Option('Change workspace folder…', PICKER_WORKSPACE));
+    actions.append(new Option(persistence.browserOnly ? 'Open folder…' : 'Change workspace folder…', PICKER_WORKSPACE));
+    if (clearable) actions.append(new Option(`Clear ${folder ? 'other ' : ''}opened files from the list…`, PICKER_CLEAR));
     children.push(actions);
     circuitSelectEl.replaceChildren(...children);
     circuitSelectEl.dataset.signature = signature;
@@ -34807,7 +34916,71 @@ async function refreshCircuitList() {
   circuitSelectEl.value = editor.currentDocumentPath || '';
   circuitSelectEl.title = editor.currentDocumentPath
     ? editor.currentDocumentPath
-    : persistence.browserOnly ? 'Open a document file' : `Open a document from ${editor.workspaceState.workspace}`;
+    : persistence.browserOnly ? 'Open a document file or a folder of documents' : `Open a document from ${editor.workspaceState.workspace}`;
+}
+
+/**
+ * Run a browser-only file operation, and when the browser needs permission
+ * for the file or folder again (after a reload), explain and ask for it once.
+ * The explanation's button click is what lets the browser show its prompt.
+ */
+async function withFileAccess(action) {
+  try {
+    return await action();
+  } catch (err) {
+    if (err.code !== 'needs-access') throw err;
+    const allow = await confirmChoice({
+      title: 'Allow file access?',
+      message: `The browser needs your permission again to ${err.mode === 'read' ? 'open' : 'save to'} “${err.target}”. Choose Allow in the browser's prompt that follows; “Allow on every visit” skips this next time.`,
+      confirmLabel: 'Continue',
+    });
+    if (!allow || !await persistence.requestAccess(err.path, err.mode)) {
+      throw Object.assign(new Error(`the browser did not allow access to “${err.target}”`), { code: 'canceled' });
+    }
+    return action();
+  }
+}
+
+/** Take every file opened on its own off the document list, but the open one. */
+async function clearOpenedFiles() {
+  const { documents = [], recent = [], folder = null } = editor.workspaceState || {};
+  const count = (folder ? recent : documents).filter((doc) => doc.path !== editor.currentDocumentPath).length;
+  if (!count) return;
+  const keepsOpen = (folder ? recent : documents).some((doc) => doc.path === editor.currentDocumentPath);
+  const clear = await confirmChoice({
+    title: 'Clear opened files from the list?',
+    message: `This takes ${count} opened file${count === 1 ? '' : 's'} off the document list${keepsOpen ? ', keeping the one you are editing' : ''}. The files stay on disk${folder ? `, and folder “${folder.name}” stays open` : ''}.`,
+    confirmLabel: 'Clear list',
+  });
+  if (!clear) return;
+  try {
+    const removed = await persistence.forgetOpened({ keep: editor.currentDocumentPath });
+    circuitSelectEl.dataset.signature = '';
+    await refreshCircuitList();
+    await documentListChanged();
+    logLine(`Took ${removed} file${removed === 1 ? '' : 's'} off the document list; the files stay on disk.`);
+  } catch (err) {
+    logLine(`Could not clear the document list: ${err.message}`, 'error');
+  }
+}
+
+async function allowFolderAccess() {
+  const name = editor.workspaceState?.folder?.name || 'the folder';
+  if (!await persistence.requestAccess('')) {
+    const allow = await confirmChoice({
+      title: 'Allow folder access?',
+      message: `The browser needs your permission again to use “${name}”. Choose Allow in the browser's prompt that follows; “Allow on every visit” skips this next time.`,
+      confirmLabel: 'Continue',
+    });
+    if (!allow || !await persistence.requestAccess('')) {
+      logLine(`The browser did not allow access to “${name}”.`, 'error');
+      return;
+    }
+  }
+  circuitSelectEl.dataset.signature = '';
+  await refreshCircuitList();
+  await documentListChanged();
+  logLine(`Opened folder “${name}”.`);
 }
 
 async function restoreStartup() {
@@ -34816,8 +34989,11 @@ async function restoreStartup() {
   const openPath = params.get('open');
   if (openPath) window.history.replaceState(null, '', window.location.pathname);
   await listPromise;
+  const folder = editor.workspaceState?.folder;
+  if (folder?.locked) logLine(`The browser needs permission to open folder “${folder.name}” again: choose “Allow access to folder” in the document list.`);
   if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
-  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit').length > 1;
+  // A browser-only file waiting for permission again cannot be drawn yet.
+  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length > 1;
 }
 
 async function saveCircuit({ saveAs = false } = {}) {
@@ -34854,22 +35030,28 @@ async function saveCircuit({ saveAs = false } = {}) {
   const previousScope = analysisFormScope();
   try {
     const state = editor.circuit.toJSON();
+    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, options));
     let data;
     try {
-      data = await persistence.save(target, state, { overwrite: !!target.path });
+      data = await saveWith({ overwrite: !!target.path });
     } catch (err) {
-      if (err.code !== 'exists') throw err;
-      const replace = await confirmChoice({
+      if (err.code !== 'exists' && err.code !== 'changed') throw err;
+      const replace = await confirmChoice(err.code === 'exists' ? {
         title: 'Replace existing document?',
         message: `A document named "${name}" already exists in ${displayPath(target.dir || editor.currentDocumentDir || editor.workspaceState?.workspace)}. Replacing it overwrites its contents.`,
         confirmLabel: 'Replace',
+        danger: true,
+      } : {
+        title: 'Overwrite the newer file?',
+        message: `"${name}" was changed on disk after this window opened it, by another window or program. Saving replaces that version with this one.`,
+        confirmLabel: 'Overwrite',
         danger: true,
       });
       if (!replace) {
         logLine('Save canceled.');
         return;
       }
-      data = await persistence.save(target, state, { overwrite: true });
+      data = await saveWith({ overwrite: true, force: true });
     }
     editor.currentCircuitName = data.name;
     editor.currentDocumentPath = data.path;
@@ -34882,9 +35064,12 @@ async function saveCircuit({ saveAs = false } = {}) {
     editor.lastSavedSnapshot = snapshot();
     persistDraft();
     await refreshCircuitList();
-    logLine(`Saved ${displayPath(data.path)}.`);
+    logLine(data.downloaded
+      ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
+      : `Saved ${displayPath(data.path)}.`);
   } catch (err) {
-    logLine(`Could not save document: ${err.message}`, 'error');
+    if (err.code === 'canceled') logLine(`Save canceled${err.message === 'save canceled' ? '' : `: ${err.message}`}.`);
+    else logLine(`Could not save document: ${err.message}`, 'error');
   } finally {
     editor.saveInFlight -= 1;
     editor.syncGeneration += 1;
@@ -34896,7 +35081,8 @@ async function loadCircuit(path, quiet = false, options = {}) {
   if (!path) return false;
   const { syncGeneration: expectedGeneration, ...loadOptions } = options;
   try {
-    const data = await persistence.load(path, loadOptions);
+    // Only an interactive open may ask the browser for file access again.
+    const data = await (loadOptions.open ? withFileAccess(() => persistence.load(path, loadOptions)) : persistence.load(path, loadOptions));
     if (expectedGeneration !== undefined && (editor.saveInFlight || expectedGeneration !== editor.syncGeneration)) return false;
     if (data.notModified) {
       if (data.revision) editor.lastSeenRevision = data.revision;
@@ -34931,7 +35117,8 @@ async function loadCircuit(path, quiet = false, options = {}) {
   } catch (err) {
     // A transient load failure (active circuit whose file does not exist yet)
     // is retried by syncActiveCircuit on the next poll — log only the first.
-    if (!quiet) logLine(`Could not open document: ${err.message}`, 'error');
+    if (err.code === 'canceled') logLine(`Open canceled: ${err.message}.`);
+    else if (!quiet) logLine(`Could not open document: ${err.message}`, 'error');
     return false;
   }
 }
@@ -35001,27 +35188,68 @@ function openDocumentPath(path) {
 async function openDocumentDialog() {
   try {
     const choice = await showFileDialog(persistence, { mode: 'open', dir: editor.currentDocumentDir || editor.workspaceState?.workspace || '' });
-    if (choice) requestCircuitLoad(choice.path);
+    if (!choice) return;
+    if (choice.paths?.length > 1) {
+      circuitSelectEl.dataset.signature = '';
+      await refreshCircuitList();
+      logLine(`Added ${choice.paths.length} documents to the document list; Shift+Backspace shows them all in the Atlas.`);
+    }
+    requestCircuitLoad(choice.path);
   } catch (err) {
     logLine(`Could not choose an open file: ${err.message}`, 'error');
   }
 }
 
+/** Pick another workspace folder; resolves true once it is the workspace. */
 async function chooseWorkspaceFolder() {
-  if (persistence.browserOnly) {
-    logLine('Browser-only mode uses the browser download location instead of a workspace folder.');
-    return;
+  let choice;
+  try {
+    choice = await showFileDialog(persistence, { mode: 'folder', dir: editor.workspaceState?.workspace || '' });
+  } catch (err) {
+    logLine(`Could not choose a folder: ${err.message}`, 'error');
+    return false;
   }
-  const choice = await showFileDialog(persistence, { mode: 'folder', dir: editor.workspaceState?.workspace || '' });
-  if (!choice) return;
+  if (!choice) return false;
   try {
     editor.workspaceState = await persistence.setWorkspace(choice.path);
     circuitSelectEl.dataset.signature = '';
     await refreshCircuitList();
-    logLine(`Workspace folder is now ${displayPath(editor.workspaceState.workspace)}. New documents are saved there.`);
+    logLine(workspaceFolderMessage());
   } catch (err) {
     logLine(`Could not change the workspace folder: ${err.message}`, 'error');
+    return false;
   }
+  await documentListChanged();
+  return true;
+}
+
+/** Browser-only: add picked files to the document list without opening
+ *  one; resolves true when any were added. */
+async function addDocumentFiles() {
+  let choice;
+  try {
+    choice = await showFileDialog(persistence, { mode: 'open' });
+  } catch (err) {
+    logLine(`Could not choose files: ${err.message}`, 'error');
+    return false;
+  }
+  if (!choice) return false;
+  circuitSelectEl.dataset.signature = '';
+  await refreshCircuitList();
+  const count = choice.paths?.length || 1;
+  logLine(`Added ${count} document${count === 1 ? '' : 's'} to the document list.`);
+  await documentListChanged();
+  return true;
+}
+
+function workspaceFolderMessage() {
+  const workspace = editor.workspaceState;
+  if (!persistence.browserOnly) return `Workspace folder is now ${displayPath(workspace.workspace)}. New documents are saved there.`;
+  const count = (workspace.documents || []).length;
+  const found = `${count} document${count === 1 ? '' : 's'}`;
+  return workspace.folder?.writable
+    ? `Opened folder “${workspace.folder.name}” (${found}). Saving writes its files in place, and new documents are saved there.`
+    : `Read folder “${workspace.folder?.name}” (${found}). This browser cannot write to the folder, so saving downloads a copy.`;
 }
 
 async function revealCurrentDocument() {
@@ -35035,6 +35263,14 @@ async function revealCurrentDocument() {
   } catch (err) {
     logLine(`Could not show the document folder: ${err.message}`, 'error');
   }
+}
+
+/** Where Save puts a document that has no file yet. */
+function newDocumentDestination() {
+  if (!persistence.browserOnly) return 'to the workspace folder';
+  const folder = editor.workspaceState?.folder;
+  if (folder?.writable) return `to folder “${folder.name}”`;
+  return typeof window.showSaveFilePicker === 'function' ? 'to a file you choose' : 'as a browser download';
 }
 
 function renderSaveState() {
@@ -35053,7 +35289,8 @@ function renderSaveState() {
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   circuitNameEl.title = editor.currentDocumentPath
     ? `${editor.currentDocumentPath}\nRename and save to create a copy next to it.`
-    : persistence.browserOnly ? 'Name used when saving this document as a browser download' : 'Name used when saving this document to the workspace folder';
+    : `Name used when saving this document ${newDocumentDestination()}`;
+  renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
     saveButton.disabled = !dirty || editor.saveInFlight > 0;
@@ -35069,7 +35306,8 @@ async function deleteSavedCircuit() {
   editor.deleteInFlight = true;
   renderSaveState();
   try {
-    await persistence.delete(path);
+    const removesFile = !persistence.browserOnly || persistence.deletesFile(path);
+    await withFileAccess(() => persistence.delete(path));
     const name = editor.currentCircuitName;
 
     editor.history = [];
@@ -35116,7 +35354,9 @@ async function deleteSavedCircuit() {
     windowSession.clearDraft();
     render();
     await refreshCircuitList();
-    logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
+    logLine(removesFile
+      ? `Deleted "${name}" (${displayPath(path)}).`
+      : `Removed "${name}" from the document list; its file stays on disk.`);
   } catch (err) {
     logLine(`Could not delete document: ${err.message}`, 'error');
   } finally {
@@ -35128,10 +35368,10 @@ async function deleteSavedCircuit() {
 function askDeleteCircuit() {
   const path = editor.currentDocumentPath;
   if (!path || !deleteDialog) return;
-  if (persistence.browserOnly) {
+  if (persistence.browserOnly && !persistence.deletesFile(path)) {
     deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This removes ${displayPath(path)} from this browser's cached document list and discards its unsaved editor changes. It does not delete a file already downloaded to disk.`
-      : `This removes ${displayPath(path)} from this browser's cached document list. It does not delete a file already downloaded to disk.`;
+      ? `This takes ${displayPath(path)} off the document list and discards its unsaved editor changes. The file itself stays on disk.`
+      : `This takes ${displayPath(path)} off the document list. The file itself stays on disk.`;
   } else {
     deleteDialogMessage.textContent = hasUnsavedChanges()
       ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
@@ -35294,8 +35534,67 @@ function startNewDocument() {
   circuitNameEl.focus();
   renderSaveState();
   logLine(persistence.browserOnly
-    ? 'Started a new schematic. Enter a name and save it as a browser download, or use Save as to choose a file name.'
+    ? `Started a new schematic. Enter a name and save it ${newDocumentDestination()}, or use Save as to choose a file.`
     : 'Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
+}
+
+/**
+ * Browser-only drop: a dropped folder becomes the workspace, and dropped
+ * files join the document list linked to their files where the browser
+ * allows it, just as if they were opened with Open file.
+ */
+async function openDroppedDocuments(dropped) {
+  let result;
+  try {
+    result = await dropped;
+  } catch (err) {
+    logLine(`Could not open the dropped files: ${err.message}`, 'error');
+    return;
+  }
+  circuitSelectEl.dataset.signature = '';
+  await refreshCircuitList();
+  if (result.folder) {
+    logLine(workspaceFolderMessage());
+    await documentListChanged();
+    return;
+  }
+  if (!result.paths.length) {
+    logLine('Drop .json document files or a folder of them to open them.', 'error');
+    return;
+  }
+  // Over the Atlas, dropped designs join the desk instead of opening.
+  if (await documentListChanged()) return;
+  if (result.paths.length > 1) logLine(`Added ${result.paths.length} documents to the document list; Shift+Backspace shows them all in the Atlas.`);
+  requestCircuitLoad(result.paths[0]);
+}
+
+/**
+ * Browser-only mode has no server to watch files, so check the open
+ * document's file whenever the window comes back into view: a clean
+ * document follows a newer file, an edited one is warned about.
+ */
+async function checkOpenFileChanged() {
+  const path = editor.currentDocumentPath;
+  if (!persistence.browserOnly || !path || editor.saveInFlight || !editor.lastSeenRevision) return;
+  const revision = await persistence.revision(path);
+  if (!revision || revision === editor.lastSeenRevision || path !== editor.currentDocumentPath || editor.saveInFlight) return;
+  if (snapshot() !== editor.lastSavedSnapshot) {
+    if (!editor.remoteConflictLogged) {
+      logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will ask before overwriting the other version.`, 'error');
+      editor.remoteConflictLogged = true;
+    }
+    return;
+  }
+  let data;
+  try { data = await persistence.load(path); } catch { return; }
+  if (path !== editor.currentDocumentPath || snapshot() !== editor.lastSavedSnapshot) return;
+  applyJson(JSON.stringify(loadDocument(data.state).toJSON()));
+  editor.lastSavedSnapshot = snapshot();
+  editor.lastSeenRevision = data.revision || null;
+  editor.remoteConflictLogged = false;
+  render();
+  renderSaveState();
+  logLine(`Reloaded ${editor.currentCircuitName}: the file changed on disk.`);
 }
 
 // Dropping a document file (for example, one received by email) opens a copy.
@@ -35318,8 +35617,14 @@ function startSessionHeartbeat() {
     windowSession.reopen();
     beat();
   });
-  window.addEventListener('focus', () => windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden, focused: true }));
-  document.addEventListener('visibilitychange', () => windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden }));
+  window.addEventListener('focus', () => {
+    windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden, focused: true });
+    void checkOpenFileChanged();
+  });
+  document.addEventListener('visibilitychange', () => {
+    windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden });
+    if (!document.hidden) void checkOpenFileChanged();
+  });
   window.addEventListener('pagehide', () => {
     windowSession.close();
     if (persistence.liveSync) {
@@ -35371,6 +35676,8 @@ function installDocumentSession() {
     circuitSelectEl.value = editor.currentDocumentPath || '';
     if (value === PICKER_OPEN_FILE) openDocumentDialog();
     else if (value === PICKER_WORKSPACE) chooseWorkspaceFolder();
+    else if (value === PICKER_ACCESS) void allowFolderAccess();
+    else if (value === PICKER_CLEAR) void clearOpenedFiles();
     else requestCircuitLoad(value);
   });
 
@@ -35383,6 +35690,10 @@ function installDocumentSession() {
   window.addEventListener('drop', async (ev) => {
     if (!droppedFiles(ev)) return;
     ev.preventDefault();
+    if (persistence.browserOnly) {
+      openDroppedDocuments(persistence.openDropped(ev.dataTransfer));
+      return;
+    }
     const file = [...ev.dataTransfer.files].find((candidate) => /\.json$/i.test(candidate.name));
     if (!file) {
       logLine('Drop a .json document file to open it.', 'error');
@@ -47980,16 +48291,17 @@ function installOnboarding() {
 
 __modules["src/web/persistence.js"] = function (__require, __exports) {
 __exports.defaultExportDirectory = defaultExportDirectory;
+__exports.indexedDbHandleStore = indexedDbHandleStore;
 __exports.createBrowserPersistenceAdapter = createBrowserPersistenceAdapter;
 __exports.createPersistenceAdapter = createPersistenceAdapter;
-let validDocumentName; __bind(() => { ({ validDocumentName } = __require("src/core/document.js")); });
+let loadDocument, validDocumentName; __bind(() => { ({ loadDocument, validDocumentName } = __require("src/core/document.js")); });
 /**
  * Persistence boundary for the editor.
  *
  * The normal adapter talks to the local Node server. Browser-only mode keeps
- * the same document-shaped contract but uses browser file pickers, downloads,
- * and a small localStorage cache instead. Keeping the boundary here means the
- * editor and circuit core do not need to know where a document is stored.
+ * the same document-shaped contract but uses the browser's file handles,
+ * pickers, and downloads instead. Keeping the boundary here means the editor
+ * and circuit core do not need to know where a document is stored.
  */
 
 
@@ -47997,10 +48309,17 @@ let validDocumentName; __bind(() => { ({ validDocumentName } = __require("src/co
 
 const BROWSER_DOCUMENTS_KEY = 'mosfeteer:browser-documents';
 const BROWSER_DOWNLOADS = 'Browser downloads';
+const OPENED_FILES = 'Opened files';
+const HANDLE_DB = 'mosfeteer-browser-files';
+const HANDLE_STORE = 'handles';
+const FOLDER_KEY = 'folder';
+const LOCATION_KEY = 'location';
+const DOCUMENT_TYPES = [{ description: 'Mosfeteer schematic', accept: { 'application/json': ['.json'] } }];
 
 /** Return the initial export destination for the active persistence mode. */
 function defaultExportDirectory(workspaceState = {}, { browserOnly = false } = {}) {
-  if (browserOnly) return workspaceState.workspace || BROWSER_DOWNLOADS;
+  // Browser-only exports are always downloads, even from a folder workspace.
+  if (browserOnly) return BROWSER_DOWNLOADS;
   const home = String(workspaceState.home || '').trim();
   if (!home) return workspaceState.workspace || '';
   const separator = workspaceState.sep || '/';
@@ -48031,6 +48350,14 @@ function documentNameFromFile(file) {
     .replace(/\.json$/i, '') || 'circuit';
 }
 
+function isDocumentFileName(name) {
+  return !String(name).startsWith('.') && /\.json$/i.test(name);
+}
+
+function fileRevision(file) {
+  return `${Number(file.lastModified || 0).toString(36)}-${Number(file.size || 0).toString(36)}`;
+}
+
 function readBrowserDocuments(storage) {
   if (!storage) return {};
   try {
@@ -48043,7 +48370,10 @@ function readBrowserDocuments(storage) {
 
 function writeBrowserDocuments(storage, documents) {
   if (!storage) return;
-  try { storage.setItem(BROWSER_DOCUMENTS_KEY, JSON.stringify(documents)); } catch { /* quota/private mode */ }
+  try {
+    if (Object.keys(documents).length) storage.setItem(BROWSER_DOCUMENTS_KEY, JSON.stringify(documents));
+    else storage.removeItem?.(BROWSER_DOCUMENTS_KEY);
+  } catch { /* quota/private mode */ }
 }
 
 function makeDownload(download, contents, name, type) {
@@ -48076,73 +48406,359 @@ function dataUrlBlob(dataUrl) {
   return new Blob([bytes], { type: match[1] || 'application/octet-stream' });
 }
 
-function fileInput({ documentImpl = globalThis.document, accept = '.json,application/json' } = {}) {
+/** Ask for files with a plain file input: every chosen file, or [] when canceled. */
+function fileInput({ documentImpl = globalThis.document, accept = '.json,application/json', multiple = false, folder = false } = {}) {
   if (!documentImpl) throw new Error('browser file input is unavailable');
   return new Promise((resolve) => {
     const input = documentImpl.createElement('input');
     input.type = 'file';
     input.accept = accept;
-    input.addEventListener('change', () => resolve(input.files?.[0] || null), { once: true });
+    input.multiple = multiple;
+    if (folder) input.webkitdirectory = true;
+    input.addEventListener('change', () => resolve([...(input.files || [])]), { once: true });
+    input.addEventListener('cancel', () => resolve([]), { once: true });
     input.click();
   });
 }
 
 /**
- * Browser-only persistence. Documents loaded from disk are cached locally so
- * the document picker remains useful after a reload; the cache is not a
- * replacement for the downloaded JSON file and does not provide live sync.
+ * Remembered file and folder handles, kept in IndexedDB so a reload can reach
+ * the same files again (after the browser's permission prompt). Each value is
+ * `{ key, kind: 'file'|'folder', path?, name, handle }`.
+ */
+function indexedDbHandleStore(indexedDBImpl = globalThis.indexedDB) {
+  if (!indexedDBImpl) return null;
+  let database = null;
+  const open = () => (database ||= new Promise((resolve, reject) => {
+    const request = indexedDBImpl.open(HANDLE_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(HANDLE_STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  }));
+  const run = async (mode, action) => {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(HANDLE_STORE, mode);
+      const request = action(transaction.objectStore(HANDLE_STORE));
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  };
+  return {
+    all: () => run('readonly', (store) => store.getAll()),
+    put: (value) => run('readwrite', (store) => store.put(value, value.key)),
+    delete: (key) => run('readwrite', (store) => store.delete(key)),
+  };
+}
+
+function needsAccess(path, name, mode) {
+  return Object.assign(new Error(`the browser needs permission to ${mode === 'read' ? 'open' : 'change'} "${name}"`), {
+    code: 'needs-access', path, target: name, mode,
+  });
+}
+
+/**
+ * Whether the page may use a handle. Without `prompt` this only asks the
+ * browser what is already granted; with it, it also shows the browser's
+ * permission prompt, which needs a recent click or key press.
+ */
+async function permitted(handle, mode, prompt = false) {
+  if (typeof handle?.queryPermission !== 'function') return true;
+  const options = { mode };
+  if (await handle.queryPermission(options) === 'granted') return true;
+  if (!prompt || typeof handle.requestPermission !== 'function') return false;
+  try {
+    return await handle.requestPermission(options) === 'granted';
+  } catch (error) {
+    if (error?.name === 'SecurityError' || error?.name === 'NotAllowedError') return false;
+    throw error;
+  }
+}
+
+function missingFile(error, name) {
+  if (error?.name === 'NotFoundError') return Object.assign(new Error(`"${name}" was not found`), { status: 404 });
+  return error;
+}
+
+/**
+ * Browser-only persistence. Where the browser has the File System Access API
+ * (Chromium), every document stays linked to its file on disk: Save writes
+ * that file in place, and the links survive a reload. One folder can be the
+ * workspace, as in Node mode; single files opened from elsewhere are listed
+ * beside it. Nothing is copied into browser storage, so no second version of
+ * a document can drift away from its file.
  *
- * `pickOpenFile`, `pickSaveFile`, and `download` are injectable for tests and
- * for embedders that want to provide their own browser integration.
+ * Without file handles (Firefox, Safari), opened files and an imported folder
+ * are read once for this page only, and Save downloads the document.
+ *
+ * `pickOpenFile`, `pickSaveFile`, `pickFolder`, `download`, and
+ * `handleStore` are injectable for tests and for embedders that want to
+ * provide their own browser integration.
  */
 function createBrowserPersistenceAdapter({
   storage = globalThis.localStorage,
   documentImpl = globalThis.document,
   windowImpl = globalThis.window,
+  handleStore = indexedDbHandleStore(windowImpl?.indexedDB),
   pickOpenFile = null,
   pickSaveFile = null,
+  pickFolder = null,
   download = null,
 } = {}) {
-  const records = new Map();
-  const cached = readBrowserDocuments(storage);
-  for (const [name, state] of Object.entries(cached)) {
-    if (state && typeof state === 'object') records.set(browserPath(name), { name, state });
-  }
+  // The workspace folder: { name, handle, locked } with a directory handle,
+  // or { name, handle: null } for a folder read once through a file input.
+  let folder = null;
+  const folderDocs = new Map(); // path -> record, for files in the folder
+  const opened = new Map(); // path -> record, for files opened from elsewhere
+  const kinds = new Map(); // path -> { revision, valid }, so a listing parses each file once
+  // The file last opened or saved: file pickers start in its folder.
+  let location = null;
+  // A record is { path, name, handle, state?, lastModified?, revision?, legacy? }:
+  // with a handle the file is read and written in place; without one, `state`
+  // holds the contents read this session.
 
-  function remember(name, state, handle = null) {
-    const cleanName = validDocumentName(name) || 'circuit';
-    const path = browserPath(cleanName);
-    records.set(path, { name: cleanName, state, handle });
+  // Earlier releases cached every document in localStorage. Those copies stay
+  // listed (and savable to a real file) until forgotten, but nothing new is
+  // cached there.
+  const legacy = readBrowserDocuments(storage);
+  for (const [name, state] of Object.entries(legacy)) {
+    if (state && typeof state === 'object') opened.set(browserPath(name), { path: browserPath(name), name, handle: null, state, legacy: true });
+  }
+  const writeLegacy = () => {
     const next = {};
-    for (const record of records.values()) next[record.name] = record.state;
+    for (const record of opened.values()) if (record.legacy) next[record.name] = record.state;
     writeBrowserDocuments(storage, next);
+  };
+
+  const remember = async (value) => { try { await handleStore?.put(value); } catch { /* storage unavailable */ } };
+  const forget = async (key) => { try { await handleStore?.delete(key); } catch { /* storage unavailable */ } };
+
+  const ready = (async () => {
+    let stored = [];
+    try { stored = (await handleStore?.all()) || []; } catch { /* storage unavailable */ }
+    for (const value of stored) {
+      if (value?.kind === 'location' && value.handle) location = value.handle;
+      else if (value?.kind === 'folder' && value.handle) folder = { name: value.name || value.handle.name, handle: value.handle, locked: false };
+      else if (value?.kind === 'file' && value.handle && value.path && !opened.has(value.path)) {
+        opened.set(value.path, { path: value.path, name: value.name, handle: value.handle });
+      }
+    }
+  })();
+
+  const pickerStart = () => {
+    const start = location || folder?.handle;
+    return start ? { startIn: start } : {};
+  };
+  const setLocation = (handle) => {
+    if (!handle || handle === location) return;
+    location = handle;
+    void remember({ key: LOCATION_KEY, kind: 'location', handle });
+  };
+
+  const folderPath = (fileName) => browserPath(`${folder.name}/${fileName}`);
+  const folderDir = () => folder?.name || '';
+  const recordFor = (path) => folderDocs.get(path) || opened.get(path) || null;
+  const dirOf = (record) => (folderDocs.has(record.path) ? folderDir() : OPENED_FILES);
+  const writable = () => !!folder?.handle && typeof folder.handle.getFileHandle === 'function';
+
+  function uniqueOpenedPath(fileName) {
+    let path = browserPath(fileName);
+    for (let n = 2; opened.has(path); n += 1) path = browserPath(`${fileName}#${n}`);
     return path;
   }
 
-  async function openFile() {
-    let file = null;
-    let handle = null;
+  /** Whether a document file holds a drawing, parsed once per revision. */
+  async function validDocument(path, file) {
+    const revision = fileRevision(file);
+    const known = kinds.get(path);
+    if (known?.revision === revision) return known.valid;
+    let valid = false;
+    try {
+      loadDocument(JSON.parse(await file.text()));
+      valid = true;
+    } catch { /* not a drawing */ }
+    kinds.set(path, { revision, valid });
+    return valid;
+  }
+
+  /** Re-read the folder's document files; a folder without permission lists nothing. */
+  async function listFolder() {
+    if (!folder?.handle) return;
+    folder.locked = !await permitted(folder.handle, 'read');
+    if (folder.locked) {
+      folderDocs.clear();
+      return;
+    }
+    const seen = new Set();
+    for await (const entry of folder.handle.values()) {
+      if (entry.kind !== 'file' || !isDocumentFileName(entry.name)) continue;
+      const path = folderPath(entry.name);
+      let file;
+      try { file = await entry.getFile(); } catch { continue; }
+      if (!await validDocument(path, file)) continue;
+      seen.add(path);
+      const record = folderDocs.get(path) || { path, name: documentNameFromFile(entry), handle: entry };
+      record.handle = entry;
+      record.revision = fileRevision(file);
+      folderDocs.set(path, record);
+    }
+    for (const path of folderDocs.keys()) if (!seen.has(path)) folderDocs.delete(path);
+  }
+
+  async function describe(record) {
+    const entry = { name: record.name, path: record.path, kind: 'circuit' };
+    if (!record.handle) return entry;
+    if (!await permitted(record.handle, 'read')) return { ...entry, locked: true };
+    try {
+      entry.revision = fileRevision(await record.handle.getFile());
+    } catch {
+      entry.missing = true;
+    }
+    return entry;
+  }
+
+  const sortByName = (items) => items.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  async function workspace() {
+    await ready;
+    await listFolder();
+    const files = sortByName(await Promise.all([...opened.values()].map(describe)));
+    const folderState = folder && { name: folder.name, locked: !!folder.locked, writable: writable() };
+    if (!folder) return { workspace: OPENED_FILES, home: '', sep: '/', documents: files, recent: [], folder: null };
+    const documents = sortByName(await Promise.all([...folderDocs.values()].map(describe)));
+    return { workspace: folder.name, home: '', sep: '/', documents, recent: files, folder: folderState };
+  }
+
+  /** Use a directory handle (or a folder read once) as the workspace. */
+  async function useFolder(handle, docs = null) {
+    await ready;
+    folderDocs.clear();
+    kinds.clear();
+    if (handle) {
+      folder = { name: handle.name, handle, locked: false };
+      await remember({ key: FOLDER_KEY, kind: 'folder', name: handle.name, handle });
+      setLocation(handle);
+      return;
+    }
+    await forget(FOLDER_KEY);
+    folder = { name: docs.name, handle: null, locked: false };
+    for (const doc of docs.files) {
+      const path = folderPath(doc.fileName);
+      folderDocs.set(path, { path, name: documentNameFromFile({ name: doc.fileName }), handle: null, state: doc.state });
+    }
+  }
+
+  /** Where a picked file handle lives: its folder-workspace path, or null. */
+  async function pathInFolder(handle) {
+    if (!folder?.handle || typeof folder.handle.resolve !== 'function') return null;
+    try {
+      const parts = await folder.handle.resolve(handle);
+      if (parts?.length === 1) {
+        const path = folderPath(parts[0]);
+        if (!folderDocs.has(path)) folderDocs.set(path, { path, name: documentNameFromFile(handle), handle });
+        return path;
+      }
+    } catch { /* not comparable */ }
+    return null;
+  }
+
+  /** Add one picked or dropped file to the document list; resolves its path. */
+  async function addFile({ handle = null, file = null }) {
+    if (handle) {
+      const inFolder = await pathInFolder(handle);
+      if (inFolder) return inFolder;
+      for (const record of opened.values()) {
+        try {
+          if (record.handle && await record.handle.isSameEntry(handle)) return record.path;
+        } catch { /* keep looking */ }
+      }
+      const path = uniqueOpenedPath(handle.name);
+      const record = { path, name: documentNameFromFile(handle), handle };
+      opened.set(path, record);
+      await remember({ key: `file:${path}`, kind: 'file', path, name: record.name, handle });
+      return path;
+    }
+    const state = JSON.parse(await file.text());
+    const path = uniqueOpenedPath(file.name || 'circuit.json');
+    opened.set(path, { path, name: documentNameFromFile(file), handle: null, state });
+    return path;
+  }
+
+  async function addFiles(picked) {
+    const paths = [];
+    for (const item of picked) paths.push(await addFile(item));
+    return [...new Set(paths)];
+  }
+
+  async function openFiles() {
+    await ready;
+    let picked = [];
     if (!pickOpenFile && typeof windowImpl?.showOpenFilePicker === 'function') {
       try {
-        [handle] = await windowImpl.showOpenFilePicker({
-          multiple: false,
-          types: [{ description: 'Mosfeteer schematic', accept: { 'application/json': ['.json'] } }],
+        const handles = await windowImpl.showOpenFilePicker({
+          multiple: true,
+          types: DOCUMENT_TYPES,
+          ...pickerStart(),
         });
-        file = await handle.getFile();
+        picked = handles.map((handle) => ({ handle }));
       } catch (error) {
         if (error?.name === 'AbortError') return null;
         if (error?.name !== 'NotSupportedError' && error?.name !== 'SecurityError') throw error;
       }
     }
-    if (!file) file = pickOpenFile ? await pickOpenFile() : await fileInput({ documentImpl });
-    if (!file) return null;
-    const text = await file.text();
-    const state = JSON.parse(text);
-    const name = documentNameFromFile(file);
-    const path = remember(name, state, handle);
-    return { path, name, dir: BROWSER_DOWNLOADS };
+    if (!picked.length) {
+      const files = pickOpenFile ? await pickOpenFile() : await fileInput({ documentImpl, multiple: true });
+      picked = [files].flat().filter(Boolean).map((file) => ({ file }));
+    }
+    if (!picked.length) return null;
+    const paths = await addFiles(picked);
+    const first = recordFor(paths[0]);
+    return { path: paths[0], paths, name: first.name, dir: dirOf(first) };
   }
 
+  async function chooseFolder() {
+    await ready;
+    if (pickFolder) {
+      const chosen = await pickFolder();
+      if (!chosen) return null;
+      await useFolder(chosen.handle || null, chosen.handle ? null : chosen);
+      return { path: folder.name };
+    }
+    if (typeof windowImpl?.showDirectoryPicker === 'function') {
+      try {
+        const handle = await windowImpl.showDirectoryPicker({
+          id: 'mosfeteer-workspace',
+          mode: 'readwrite',
+          ...(folder?.handle ? { startIn: folder.handle } : pickerStart()),
+        });
+        await useFolder(handle);
+        return { path: folder.name };
+      } catch (error) {
+        if (error?.name === 'AbortError') return null;
+        if (error?.name !== 'NotSupportedError' && error?.name !== 'SecurityError') throw error;
+      }
+    }
+    // A folder input yields every file below the folder; like Node mode,
+    // the workspace is the folder's own documents only.
+    const files = await fileInput({ documentImpl, accept: '', folder: true });
+    if (!files.length) return null;
+    const name = String(files[0].webkitRelativePath || '').split('/')[0] || 'Folder';
+    const docs = [];
+    for (const file of files) {
+      const parts = String(file.webkitRelativePath || file.name).split('/');
+      if (parts.length > 2 || !isDocumentFileName(file.name)) continue;
+      try {
+        const state = JSON.parse(await file.text());
+        loadDocument(state);
+        docs.push({ fileName: file.name, state });
+      } catch { /* not a drawing */ }
+    }
+    await useFolder(null, { name, files: docs });
+    return { path: name };
+  }
+
+  /** Ask where to save; resolves { handle|null, name } or null when canceled. */
   async function saveFile(name) {
     if (pickSaveFile) {
       const selected = await pickSaveFile(name);
@@ -48153,7 +48769,8 @@ function createBrowserPersistenceAdapter({
     try {
       const handle = await windowImpl.showSaveFilePicker({
         suggestedName: `${name}.json`,
-        types: [{ description: 'Mosfeteer schematic', accept: { 'application/json': ['.json'] } }],
+        types: DOCUMENT_TYPES,
+        ...pickerStart(),
       });
       return { handle, name: documentNameFromFile(handle) };
     } catch (error) {
@@ -48163,37 +48780,148 @@ function createBrowserPersistenceAdapter({
     }
   }
 
-  async function save(target = {}, state) {
-    let path = target.path || '';
-    let record = path ? records.get(path) : null;
-    let name = validDocumentName(target.name || record?.name) || 'circuit';
-    if (!record) {
-      const selected = await saveFile(name);
-      if (!selected) throw Object.assign(new Error('save canceled'), { code: 'canceled' });
-      name = validDocumentName(selected.name) || name;
-      path = browserPath(name);
-      record = { name, handle: selected.handle || null };
-      records.set(path, record);
+  /** Turn a save-picker choice into a listed record, reusing a known path for the same file. */
+  async function recordForChoice(selected, fallbackName) {
+    const name = validDocumentName(selected.name) || fallbackName;
+    if (selected.handle) {
+      const path = await addFile({ handle: selected.handle });
+      return recordFor(path);
     }
-    const content = `${JSON.stringify(state, null, 2)}\n`;
-    if (record.handle) {
-      const writable = await record.handle.createWritable();
-      await writable.write(content);
-      await writable.close();
-    } else {
-      makeDownload(download, content, `${name}.json`, 'application/json');
-    }
-    remember(name, state, record.handle || null);
-    return { name, path, dir: BROWSER_DOWNLOADS, state };
+    const path = uniqueOpenedPath(`${name}.json`);
+    const record = { path, name, handle: null, state: null };
+    opened.set(path, record);
+    return record;
   }
 
-  const workspace = async () => ({
-    workspace: BROWSER_DOWNLOADS,
-    home: '',
-    sep: '/',
-    documents: [...records.values()].map(({ name }) => ({ name, path: browserPath(name), kind: 'circuit' })),
-    recent: [],
-  });
+  async function requireAccess(record, mode, prompt) {
+    const handle = record?.handle || folder?.handle;
+    if (!await permitted(handle, mode, prompt)) {
+      throw needsAccess(record?.path || '', record?.handle ? `${record.name}.json` : folder?.name || '', mode);
+    }
+  }
+
+  async function writeRecord(record, content, { force = false } = {}) {
+    await requireAccess(record, 'readwrite', true);
+    // Another window or program may have saved the file since this window
+    // read it; overwriting it then needs the user's say-so.
+    if (!force && record.lastModified !== undefined) {
+      let current = null;
+      try { current = await record.handle.getFile(); } catch { /* removed: write it again */ }
+      if (current && current.lastModified !== record.lastModified) {
+        throw Object.assign(new Error(`"${record.name}" changed on disk since this window opened it`), { code: 'changed' });
+      }
+    }
+    await writeFileHandle(record.handle, content);
+    const file = await record.handle.getFile();
+    record.lastModified = file.lastModified;
+    record.revision = fileRevision(file);
+    setLocation(record.handle);
+  }
+
+  async function save(target = {}, state, { overwrite = false, force = false } = {}) {
+    await ready;
+    const content = `${JSON.stringify(state, null, 2)}\n`;
+    let record = target.path ? recordFor(target.path) : null;
+    const name = validDocumentName(target.name || record?.name || documentNameFromFile({ name: browserName(target.path) })) || 'circuit';
+    if (!record && writable() && (!target.dir || target.dir === folder.name)) {
+      // A new document goes into the workspace folder, as in Node mode.
+      await requireAccess(null, 'readwrite', true);
+      const fileName = `${name}.json`;
+      const path = folderPath(fileName);
+      if (!overwrite) {
+        let exists = false;
+        try { await folder.handle.getFileHandle(fileName); exists = true; } catch { /* free */ }
+        if (exists) throw Object.assign(new Error(`"${fileName}" already exists`), { status: 409, code: 'exists' });
+      }
+      const handle = await folder.handle.getFileHandle(fileName, { create: true });
+      record = { path, name, handle };
+      folderDocs.set(path, record);
+    }
+    const canPick = !!pickSaveFile || typeof windowImpl?.showSaveFilePicker === 'function';
+    if (!record || (!record.handle && canPick)) {
+      // No file to write yet: ask for one. This also gives a document read
+      // from an older browser cache a real file of its own.
+      const selected = await saveFile(name);
+      if (!selected) throw Object.assign(new Error('save canceled'), { code: 'canceled' });
+      if (selected.handle) {
+        const previous = record;
+        record = recordFor(await addFile({ handle: selected.handle }));
+        if (previous?.legacy) {
+          opened.delete(previous.path);
+          writeLegacy();
+        }
+      } else if (!record) {
+        record = await recordForChoice(selected, name);
+      }
+    }
+    if (record.handle) {
+      await writeRecord(record, content, { force: force || !target.path || target.path !== record.path });
+      return { name: record.name, path: record.path, dir: dirOf(record), state, revision: record.revision };
+    }
+    // Without file handles the browser can only download the document.
+    makeDownload(download, content, `${record.name}.json`, 'application/json');
+    record.state = state;
+    if (record.legacy) writeLegacy();
+    return { name: record.name, path: record.path, dir: dirOf(record), state, downloaded: true };
+  }
+
+  async function load(path, { open = false } = {}) {
+    await ready;
+    const record = recordFor(path);
+    if (!record) throw new Error(`"${browserName(path)}" is not open in this browser; open the file or its folder again`);
+    if (!record.handle) {
+      if (!record.state) throw new Error(`"${record.name}" has not been saved yet`);
+      return { name: record.name, path, dir: dirOf(record), state: record.state };
+    }
+    await requireAccess(record, 'read', open);
+    let file;
+    try { file = await record.handle.getFile(); } catch (error) { throw missingFile(error, `${record.name}.json`); }
+    const state = JSON.parse(await file.text());
+    record.lastModified = file.lastModified;
+    record.revision = fileRevision(file);
+    if (open) setLocation(record.handle);
+    return { name: record.name, path, dir: dirOf(record), state, revision: record.revision };
+  }
+
+  /** The file's current revision, without prompting; null when unknown. */
+  async function revision(path) {
+    await ready;
+    const record = recordFor(path);
+    if (!record?.handle || !await permitted(record.handle, 'read')) return null;
+    try { return fileRevision(await record.handle.getFile()); } catch { return null; }
+  }
+
+  /** Show the browser's permission prompt for a document, or the folder when no path is given. */
+  async function requestAccess(path = '', mode = 'readwrite') {
+    await ready;
+    const record = path ? recordFor(path) : null;
+    const handle = record?.handle || folder?.handle;
+    if (!handle) return true;
+    const granted = await permitted(handle, handle === folder?.handle ? 'readwrite' : mode, true);
+    if (granted && handle === folder?.handle) folder.locked = false;
+    return granted;
+  }
+
+  /** Documents dropped on the window. Call it from the drop event itself:
+   *  the browser hands out file handles only while the event runs. */
+  function openDropped(dataTransfer) {
+    const items = [...(dataTransfer?.items || [])].filter((item) => item.kind === 'file');
+    const pending = items.map((item) => (typeof item.getAsFileSystemHandle === 'function' ? item.getAsFileSystemHandle() : null));
+    const files = [...(dataTransfer?.files || [])];
+    return (async () => {
+      await ready;
+      const handles = (await Promise.all(pending.map((promise) => promise?.catch(() => null)))).filter(Boolean);
+      const directory = handles.find((handle) => handle.kind === 'directory');
+      if (directory) {
+        await useFolder(directory);
+        return { folder: directory.name, paths: [] };
+      }
+      const picked = handles.length
+        ? handles.filter((handle) => handle.kind === 'file' && isDocumentFileName(handle.name)).map((handle) => ({ handle }))
+        : files.filter((file) => isDocumentFileName(file.name)).map((file) => ({ file }));
+      return { folder: null, paths: await addFiles(picked) };
+    })();
+  }
 
   return {
     browserOnly: true,
@@ -48217,33 +48945,57 @@ function createBrowserPersistenceAdapter({
     workspace,
     setWorkspace: workspace,
     browse: async () => ({ dir: BROWSER_DOWNLOADS, entries: [], parent: null, home: '', workspace: BROWSER_DOWNLOADS }),
-    createFolder: async () => { throw new Error('folders are managed by the browser download location'); },
+    createFolder: async () => { throw new Error('create folders with the browser\'s folder picker'); },
     pickFile: async ({ mode = 'open', name = '' } = {}) => {
-      if (mode === 'open') return openFile();
-      if (mode === 'folder') return { path: BROWSER_DOWNLOADS };
-      const selected = await saveFile(validDocumentName(name) || 'circuit');
+      if (mode === 'open') return openFiles();
+      if (mode === 'folder') return chooseFolder();
+      await ready;
+      const fallbackName = validDocumentName(name) || 'circuit';
+      const selected = await saveFile(fallbackName);
       if (!selected) return null;
-      const cleanName = validDocumentName(documentNameFromFile({ name: selected.name })) || validDocumentName(name) || 'circuit';
-      const path = browserPath(cleanName);
-      records.set(path, { name: cleanName, handle: selected.handle || null });
-      return { path, dir: BROWSER_DOWNLOADS, name: cleanName };
+      const record = await recordForChoice(selected, fallbackName);
+      return { path: record.path, dir: dirOf(record), name: record.name };
     },
-    load: async (path) => {
-      const record = records.get(path);
-      if (!record?.state) throw new Error(`document is not available in this browser session: ${browserName(path)}`);
-      return { name: record.name, path, dir: BROWSER_DOWNLOADS, state: record.state };
-    },
+    openDropped,
+    load,
+    revision,
+    requestAccess,
     save,
+    /** Take every file opened on its own off the list, except `keep` (the
+     *  open document); the files stay on disk. Resolves how many went. */
+    forgetOpened: async ({ keep = null } = {}) => {
+      await ready;
+      let count = 0;
+      for (const record of [...opened.values()]) {
+        if (record.path === keep) continue;
+        opened.delete(record.path);
+        if (record.handle) await forget(`file:${record.path}`);
+        count += 1;
+      }
+      writeLegacy();
+      return count;
+    },
+    /** Whether deleting this document removes its file (a folder document)
+     *  rather than only taking it off the list. */
+    deletesFile: (path) => folderDocs.has(path) && writable(),
     delete: async (path) => {
-      // Browser-only cleanup forgets the cached entry; it never deletes a
-      // disk file, including one represented by a native file handle.
-      records.delete(path);
-      const next = {};
-      for (const value of records.values()) next[value.name] = value.state;
-      writeBrowserDocuments(storage, next);
+      await ready;
+      const record = folderDocs.get(path);
+      if (record && writable()) {
+        await requireAccess(null, 'readwrite', true);
+        await folder.handle.removeEntry(browserName(path).slice(folder.name.length + 1));
+        folderDocs.delete(path);
+        return { path, deleted: true };
+      }
+      // Anything else is only taken off the list; its file stays on disk.
+      const forgotten = opened.get(path);
+      opened.delete(path);
+      folderDocs.delete(path);
+      if (forgotten?.legacy) writeLegacy();
+      if (forgotten?.handle) await forget(`file:${path}`);
       return { path, deleted: true };
     },
-    reveal: async () => { throw new Error('the browser controls the download location'); },
+    reveal: async () => { throw new Error('the browser cannot show files in the file manager'); },
     active: async () => ({ active: '', path: '' }),
     heartbeat: async () => {},
     exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }, { prepared = null } = {}) => {

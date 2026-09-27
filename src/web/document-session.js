@@ -23,21 +23,42 @@ import { applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, r
 
 export const persistence = createPersistenceAdapter();
 
-function configureBrowserOnlyUi() {
-  if (!persistence.browserOnly) return;
-  // These actions depend on the local server's filesystem. Browser mode uses
-  // native file pickers and downloads instead of pretending that a browser can
-  // browse or reveal arbitrary folders.
-  for (const id of ['btn-workspace', 'btn-reveal-document']) document.getElementById(id)?.setAttribute('hidden', '');
-  const forget = document.getElementById('btn-delete-circuit');
-  if (forget) {
-    forget.textContent = 'Forget from browser…';
-    forget.title = 'Remove the current document from this browser\'s cached document list';
+/** Replace a button's label, keeping its icon. */
+function setButtonText(button, text) {
+  for (const node of [...button.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
+  button.append(text);
+}
+
+let deleteWording = null;
+
+/** Browser-only mode deletes a workspace-folder document's file, but only
+ *  takes a file opened from elsewhere off the list. */
+function renderDeleteWording() {
+  const forget = persistence.browserOnly && !persistence.deletesFile(editor.currentDocumentPath);
+  if (forget === deleteWording) return;
+  deleteWording = forget;
+  if (deleteCircuitBtn) {
+    setButtonText(deleteCircuitBtn, forget ? 'Remove from list…' : 'Delete document…');
+    deleteCircuitBtn.title = forget
+      ? 'Take the current document off the document list; its file stays on disk'
+      : 'Permanently delete the current document file';
   }
   const deleteTitle = document.getElementById('delete-dialog-title');
-  if (deleteTitle) deleteTitle.textContent = 'Forget browser document?';
+  if (deleteTitle) deleteTitle.textContent = forget ? 'Remove document from the list?' : 'Delete document file?';
   const confirmDelete = document.getElementById('confirm-delete');
-  if (confirmDelete) confirmDelete.textContent = 'Forget document';
+  if (confirmDelete) setButtonText(confirmDelete, forget ? 'Remove from list' : 'Delete file');
+}
+
+function configureBrowserOnlyUi() {
+  if (!persistence.browserOnly) return;
+  // A browser cannot reveal a file in the file manager. The workspace
+  // folder comes from the browser's own folder picker.
+  document.getElementById('btn-reveal-document')?.setAttribute('hidden', '');
+  const workspaceButton = document.getElementById('btn-workspace');
+  if (workspaceButton) {
+    setButtonText(workspaceButton, 'Open folder…');
+    workspaceButton.title = 'Open a folder of documents as the workspace: the document list and the Atlas show its designs';
+  }
   const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
   if (pdf) {
     pdf.checked = false;
@@ -119,9 +140,32 @@ function documentNameForPath(path) {
   return String(path).split(/[\\/]/).pop().replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
 }
 
+let documentListHandler = null;
+
+/** Let the Atlas follow a changed document list. The handler resolves true
+ *  when it shows the new list itself, so a drop need not open a design. */
+export function onDocumentListChange(handler) {
+  documentListHandler = handler;
+}
+
+async function documentListChanged() {
+  return documentListHandler ? !!await documentListHandler() : false;
+}
+
 const PICKER_OPEN_FILE = '__open-file__';
 
 const PICKER_WORKSPACE = '__workspace__';
+
+const PICKER_ACCESS = '__access__';
+
+const PICKER_CLEAR = '__clear__';
+
+/** Browser-only group names: a folder workspace, and files opened on their own. */
+function documentGroupNames() {
+  if (!persistence.browserOnly) return [`Workspace · ${displayPath(editor.workspaceState.workspace)}`, 'Recent elsewhere'];
+  const folder = editor.workspaceState?.folder;
+  return folder ? [`Folder · ${folder.name}`, 'Other opened files'] : ['Opened files', 'Other opened files'];
+}
 
 async function refreshCircuitList() {
   try {
@@ -130,17 +174,21 @@ async function refreshCircuitList() {
     logLine(`Could not list documents: ${err.message}`, 'error');
     return;
   }
-  const { documents = [], recent = [] } = editor.workspaceState;
-  const label = (document) => document.name;
+  const { documents = [], recent = [], folder = null } = editor.workspaceState;
+  // A file the browser needs permission for again is still listed; opening
+  // it asks for that permission.
+  const label = (document) => (document.locked ? `${document.name} (allow access)` : document.name);
   const known = new Set([...documents, ...recent].map((document) => document.path));
   const recentEntries = editor.currentDocumentPath && !known.has(editor.currentDocumentPath)
     ? [{ name: editor.currentCircuitName || documentNameForPath(editor.currentDocumentPath), path: editor.currentDocumentPath, kind: 'circuit' }, ...recent]
     : recent;
-  const groups = [
-    [persistence.browserOnly ? 'Documents available in this browser' : `Workspace · ${displayPath(editor.workspaceState.workspace)}`, documents],
-    ['Recent elsewhere', recentEntries],
-  ];
-  const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])])]);
+  const [workspaceGroup, elsewhereGroup] = documentGroupNames();
+  const groups = [[workspaceGroup, documents], [elsewhereGroup, recentEntries]];
+  const lockedFolder = folder?.locked ? folder.name : '';
+  // Browser-only: files opened on their own (not the open one) can all be
+  // taken off the list at once.
+  const clearable = persistence.browserOnly ? (folder ? recent : documents).filter((doc) => doc.path !== editor.currentDocumentPath).length : 0;
+  const signature = JSON.stringify([groups.map(([name, items]) => [name, items.map((item) => [label(item), item.path])]), lockedFolder, clearable]);
   if (circuitSelectEl.dataset.signature !== signature) {
     const children = [new Option(documents.length || recentEntries.length ? 'Open document…' : 'No documents yet', '')];
     for (const [name, items] of groups) {
@@ -156,8 +204,10 @@ async function refreshCircuitList() {
     }
     const actions = document.createElement('optgroup');
     actions.label = 'More';
+    if (lockedFolder) actions.append(new Option(`Allow access to folder “${lockedFolder}”…`, PICKER_ACCESS));
     actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE));
-    if (!persistence.browserOnly) actions.append(new Option('Change workspace folder…', PICKER_WORKSPACE));
+    actions.append(new Option(persistence.browserOnly ? 'Open folder…' : 'Change workspace folder…', PICKER_WORKSPACE));
+    if (clearable) actions.append(new Option(`Clear ${folder ? 'other ' : ''}opened files from the list…`, PICKER_CLEAR));
     children.push(actions);
     circuitSelectEl.replaceChildren(...children);
     circuitSelectEl.dataset.signature = signature;
@@ -165,7 +215,71 @@ async function refreshCircuitList() {
   circuitSelectEl.value = editor.currentDocumentPath || '';
   circuitSelectEl.title = editor.currentDocumentPath
     ? editor.currentDocumentPath
-    : persistence.browserOnly ? 'Open a document file' : `Open a document from ${editor.workspaceState.workspace}`;
+    : persistence.browserOnly ? 'Open a document file or a folder of documents' : `Open a document from ${editor.workspaceState.workspace}`;
+}
+
+/**
+ * Run a browser-only file operation, and when the browser needs permission
+ * for the file or folder again (after a reload), explain and ask for it once.
+ * The explanation's button click is what lets the browser show its prompt.
+ */
+async function withFileAccess(action) {
+  try {
+    return await action();
+  } catch (err) {
+    if (err.code !== 'needs-access') throw err;
+    const allow = await confirmChoice({
+      title: 'Allow file access?',
+      message: `The browser needs your permission again to ${err.mode === 'read' ? 'open' : 'save to'} “${err.target}”. Choose Allow in the browser's prompt that follows; “Allow on every visit” skips this next time.`,
+      confirmLabel: 'Continue',
+    });
+    if (!allow || !await persistence.requestAccess(err.path, err.mode)) {
+      throw Object.assign(new Error(`the browser did not allow access to “${err.target}”`), { code: 'canceled' });
+    }
+    return action();
+  }
+}
+
+/** Take every file opened on its own off the document list, but the open one. */
+async function clearOpenedFiles() {
+  const { documents = [], recent = [], folder = null } = editor.workspaceState || {};
+  const count = (folder ? recent : documents).filter((doc) => doc.path !== editor.currentDocumentPath).length;
+  if (!count) return;
+  const keepsOpen = (folder ? recent : documents).some((doc) => doc.path === editor.currentDocumentPath);
+  const clear = await confirmChoice({
+    title: 'Clear opened files from the list?',
+    message: `This takes ${count} opened file${count === 1 ? '' : 's'} off the document list${keepsOpen ? ', keeping the one you are editing' : ''}. The files stay on disk${folder ? `, and folder “${folder.name}” stays open` : ''}.`,
+    confirmLabel: 'Clear list',
+  });
+  if (!clear) return;
+  try {
+    const removed = await persistence.forgetOpened({ keep: editor.currentDocumentPath });
+    circuitSelectEl.dataset.signature = '';
+    await refreshCircuitList();
+    await documentListChanged();
+    logLine(`Took ${removed} file${removed === 1 ? '' : 's'} off the document list; the files stay on disk.`);
+  } catch (err) {
+    logLine(`Could not clear the document list: ${err.message}`, 'error');
+  }
+}
+
+async function allowFolderAccess() {
+  const name = editor.workspaceState?.folder?.name || 'the folder';
+  if (!await persistence.requestAccess('')) {
+    const allow = await confirmChoice({
+      title: 'Allow folder access?',
+      message: `The browser needs your permission again to use “${name}”. Choose Allow in the browser's prompt that follows; “Allow on every visit” skips this next time.`,
+      confirmLabel: 'Continue',
+    });
+    if (!allow || !await persistence.requestAccess('')) {
+      logLine(`The browser did not allow access to “${name}”.`, 'error');
+      return;
+    }
+  }
+  circuitSelectEl.dataset.signature = '';
+  await refreshCircuitList();
+  await documentListChanged();
+  logLine(`Opened folder “${name}”.`);
 }
 
 export async function restoreStartup() {
@@ -174,8 +288,11 @@ export async function restoreStartup() {
   const openPath = params.get('open');
   if (openPath) window.history.replaceState(null, '', window.location.pathname);
   await listPromise;
+  const folder = editor.workspaceState?.folder;
+  if (folder?.locked) logLine(`The browser needs permission to open folder “${folder.name}” again: choose “Allow access to folder” in the document list.`);
   if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
-  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit').length > 1;
+  // A browser-only file waiting for permission again cannot be drawn yet.
+  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length > 1;
 }
 
 export async function saveCircuit({ saveAs = false } = {}) {
@@ -212,22 +329,28 @@ export async function saveCircuit({ saveAs = false } = {}) {
   const previousScope = analysisFormScope();
   try {
     const state = editor.circuit.toJSON();
+    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, options));
     let data;
     try {
-      data = await persistence.save(target, state, { overwrite: !!target.path });
+      data = await saveWith({ overwrite: !!target.path });
     } catch (err) {
-      if (err.code !== 'exists') throw err;
-      const replace = await confirmChoice({
+      if (err.code !== 'exists' && err.code !== 'changed') throw err;
+      const replace = await confirmChoice(err.code === 'exists' ? {
         title: 'Replace existing document?',
         message: `A document named "${name}" already exists in ${displayPath(target.dir || editor.currentDocumentDir || editor.workspaceState?.workspace)}. Replacing it overwrites its contents.`,
         confirmLabel: 'Replace',
+        danger: true,
+      } : {
+        title: 'Overwrite the newer file?',
+        message: `"${name}" was changed on disk after this window opened it, by another window or program. Saving replaces that version with this one.`,
+        confirmLabel: 'Overwrite',
         danger: true,
       });
       if (!replace) {
         logLine('Save canceled.');
         return;
       }
-      data = await persistence.save(target, state, { overwrite: true });
+      data = await saveWith({ overwrite: true, force: true });
     }
     editor.currentCircuitName = data.name;
     editor.currentDocumentPath = data.path;
@@ -240,9 +363,12 @@ export async function saveCircuit({ saveAs = false } = {}) {
     editor.lastSavedSnapshot = snapshot();
     persistDraft();
     await refreshCircuitList();
-    logLine(`Saved ${displayPath(data.path)}.`);
+    logLine(data.downloaded
+      ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
+      : `Saved ${displayPath(data.path)}.`);
   } catch (err) {
-    logLine(`Could not save document: ${err.message}`, 'error');
+    if (err.code === 'canceled') logLine(`Save canceled${err.message === 'save canceled' ? '' : `: ${err.message}`}.`);
+    else logLine(`Could not save document: ${err.message}`, 'error');
   } finally {
     editor.saveInFlight -= 1;
     editor.syncGeneration += 1;
@@ -254,7 +380,8 @@ async function loadCircuit(path, quiet = false, options = {}) {
   if (!path) return false;
   const { syncGeneration: expectedGeneration, ...loadOptions } = options;
   try {
-    const data = await persistence.load(path, loadOptions);
+    // Only an interactive open may ask the browser for file access again.
+    const data = await (loadOptions.open ? withFileAccess(() => persistence.load(path, loadOptions)) : persistence.load(path, loadOptions));
     if (expectedGeneration !== undefined && (editor.saveInFlight || expectedGeneration !== editor.syncGeneration)) return false;
     if (data.notModified) {
       if (data.revision) editor.lastSeenRevision = data.revision;
@@ -289,7 +416,8 @@ async function loadCircuit(path, quiet = false, options = {}) {
   } catch (err) {
     // A transient load failure (active circuit whose file does not exist yet)
     // is retried by syncActiveCircuit on the next poll — log only the first.
-    if (!quiet) logLine(`Could not open document: ${err.message}`, 'error');
+    if (err.code === 'canceled') logLine(`Open canceled: ${err.message}.`);
+    else if (!quiet) logLine(`Could not open document: ${err.message}`, 'error');
     return false;
   }
 }
@@ -359,27 +487,68 @@ export function openDocumentPath(path) {
 export async function openDocumentDialog() {
   try {
     const choice = await showFileDialog(persistence, { mode: 'open', dir: editor.currentDocumentDir || editor.workspaceState?.workspace || '' });
-    if (choice) requestCircuitLoad(choice.path);
+    if (!choice) return;
+    if (choice.paths?.length > 1) {
+      circuitSelectEl.dataset.signature = '';
+      await refreshCircuitList();
+      logLine(`Added ${choice.paths.length} documents to the document list; Shift+Backspace shows them all in the Atlas.`);
+    }
+    requestCircuitLoad(choice.path);
   } catch (err) {
     logLine(`Could not choose an open file: ${err.message}`, 'error');
   }
 }
 
-async function chooseWorkspaceFolder() {
-  if (persistence.browserOnly) {
-    logLine('Browser-only mode uses the browser download location instead of a workspace folder.');
-    return;
+/** Pick another workspace folder; resolves true once it is the workspace. */
+export async function chooseWorkspaceFolder() {
+  let choice;
+  try {
+    choice = await showFileDialog(persistence, { mode: 'folder', dir: editor.workspaceState?.workspace || '' });
+  } catch (err) {
+    logLine(`Could not choose a folder: ${err.message}`, 'error');
+    return false;
   }
-  const choice = await showFileDialog(persistence, { mode: 'folder', dir: editor.workspaceState?.workspace || '' });
-  if (!choice) return;
+  if (!choice) return false;
   try {
     editor.workspaceState = await persistence.setWorkspace(choice.path);
     circuitSelectEl.dataset.signature = '';
     await refreshCircuitList();
-    logLine(`Workspace folder is now ${displayPath(editor.workspaceState.workspace)}. New documents are saved there.`);
+    logLine(workspaceFolderMessage());
   } catch (err) {
     logLine(`Could not change the workspace folder: ${err.message}`, 'error');
+    return false;
   }
+  await documentListChanged();
+  return true;
+}
+
+/** Browser-only: add picked files to the document list without opening
+ *  one; resolves true when any were added. */
+export async function addDocumentFiles() {
+  let choice;
+  try {
+    choice = await showFileDialog(persistence, { mode: 'open' });
+  } catch (err) {
+    logLine(`Could not choose files: ${err.message}`, 'error');
+    return false;
+  }
+  if (!choice) return false;
+  circuitSelectEl.dataset.signature = '';
+  await refreshCircuitList();
+  const count = choice.paths?.length || 1;
+  logLine(`Added ${count} document${count === 1 ? '' : 's'} to the document list.`);
+  await documentListChanged();
+  return true;
+}
+
+function workspaceFolderMessage() {
+  const workspace = editor.workspaceState;
+  if (!persistence.browserOnly) return `Workspace folder is now ${displayPath(workspace.workspace)}. New documents are saved there.`;
+  const count = (workspace.documents || []).length;
+  const found = `${count} document${count === 1 ? '' : 's'}`;
+  return workspace.folder?.writable
+    ? `Opened folder “${workspace.folder.name}” (${found}). Saving writes its files in place, and new documents are saved there.`
+    : `Read folder “${workspace.folder?.name}” (${found}). This browser cannot write to the folder, so saving downloads a copy.`;
 }
 
 async function revealCurrentDocument() {
@@ -393,6 +562,14 @@ async function revealCurrentDocument() {
   } catch (err) {
     logLine(`Could not show the document folder: ${err.message}`, 'error');
   }
+}
+
+/** Where Save puts a document that has no file yet. */
+function newDocumentDestination() {
+  if (!persistence.browserOnly) return 'to the workspace folder';
+  const folder = editor.workspaceState?.folder;
+  if (folder?.writable) return `to folder “${folder.name}”`;
+  return typeof window.showSaveFilePicker === 'function' ? 'to a file you choose' : 'as a browser download';
 }
 
 export function renderSaveState() {
@@ -411,7 +588,8 @@ export function renderSaveState() {
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   circuitNameEl.title = editor.currentDocumentPath
     ? `${editor.currentDocumentPath}\nRename and save to create a copy next to it.`
-    : persistence.browserOnly ? 'Name used when saving this document as a browser download' : 'Name used when saving this document to the workspace folder';
+    : `Name used when saving this document ${newDocumentDestination()}`;
+  renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
     saveButton.disabled = !dirty || editor.saveInFlight > 0;
@@ -427,7 +605,8 @@ async function deleteSavedCircuit() {
   editor.deleteInFlight = true;
   renderSaveState();
   try {
-    await persistence.delete(path);
+    const removesFile = !persistence.browserOnly || persistence.deletesFile(path);
+    await withFileAccess(() => persistence.delete(path));
     const name = editor.currentCircuitName;
 
     editor.history = [];
@@ -474,7 +653,9 @@ async function deleteSavedCircuit() {
     windowSession.clearDraft();
     render();
     await refreshCircuitList();
-    logLine(`${persistence.browserOnly ? 'Forgot' : 'Deleted'} "${name}" (${displayPath(path)}).`);
+    logLine(removesFile
+      ? `Deleted "${name}" (${displayPath(path)}).`
+      : `Removed "${name}" from the document list; its file stays on disk.`);
   } catch (err) {
     logLine(`Could not delete document: ${err.message}`, 'error');
   } finally {
@@ -486,10 +667,10 @@ async function deleteSavedCircuit() {
 function askDeleteCircuit() {
   const path = editor.currentDocumentPath;
   if (!path || !deleteDialog) return;
-  if (persistence.browserOnly) {
+  if (persistence.browserOnly && !persistence.deletesFile(path)) {
     deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This removes ${displayPath(path)} from this browser's cached document list and discards its unsaved editor changes. It does not delete a file already downloaded to disk.`
-      : `This removes ${displayPath(path)} from this browser's cached document list. It does not delete a file already downloaded to disk.`;
+      ? `This takes ${displayPath(path)} off the document list and discards its unsaved editor changes. The file itself stays on disk.`
+      : `This takes ${displayPath(path)} off the document list. The file itself stays on disk.`;
   } else {
     deleteDialogMessage.textContent = hasUnsavedChanges()
       ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
@@ -652,8 +833,67 @@ export function startNewDocument() {
   circuitNameEl.focus();
   renderSaveState();
   logLine(persistence.browserOnly
-    ? 'Started a new schematic. Enter a name and save it as a browser download, or use Save as to choose a file name.'
+    ? `Started a new schematic. Enter a name and save it ${newDocumentDestination()}, or use Save as to choose a file.`
     : 'Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
+}
+
+/**
+ * Browser-only drop: a dropped folder becomes the workspace, and dropped
+ * files join the document list linked to their files where the browser
+ * allows it, just as if they were opened with Open file.
+ */
+async function openDroppedDocuments(dropped) {
+  let result;
+  try {
+    result = await dropped;
+  } catch (err) {
+    logLine(`Could not open the dropped files: ${err.message}`, 'error');
+    return;
+  }
+  circuitSelectEl.dataset.signature = '';
+  await refreshCircuitList();
+  if (result.folder) {
+    logLine(workspaceFolderMessage());
+    await documentListChanged();
+    return;
+  }
+  if (!result.paths.length) {
+    logLine('Drop .json document files or a folder of them to open them.', 'error');
+    return;
+  }
+  // Over the Atlas, dropped designs join the desk instead of opening.
+  if (await documentListChanged()) return;
+  if (result.paths.length > 1) logLine(`Added ${result.paths.length} documents to the document list; Shift+Backspace shows them all in the Atlas.`);
+  requestCircuitLoad(result.paths[0]);
+}
+
+/**
+ * Browser-only mode has no server to watch files, so check the open
+ * document's file whenever the window comes back into view: a clean
+ * document follows a newer file, an edited one is warned about.
+ */
+async function checkOpenFileChanged() {
+  const path = editor.currentDocumentPath;
+  if (!persistence.browserOnly || !path || editor.saveInFlight || !editor.lastSeenRevision) return;
+  const revision = await persistence.revision(path);
+  if (!revision || revision === editor.lastSeenRevision || path !== editor.currentDocumentPath || editor.saveInFlight) return;
+  if (snapshot() !== editor.lastSavedSnapshot) {
+    if (!editor.remoteConflictLogged) {
+      logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will ask before overwriting the other version.`, 'error');
+      editor.remoteConflictLogged = true;
+    }
+    return;
+  }
+  let data;
+  try { data = await persistence.load(path); } catch { return; }
+  if (path !== editor.currentDocumentPath || snapshot() !== editor.lastSavedSnapshot) return;
+  applyJson(JSON.stringify(loadDocument(data.state).toJSON()));
+  editor.lastSavedSnapshot = snapshot();
+  editor.lastSeenRevision = data.revision || null;
+  editor.remoteConflictLogged = false;
+  render();
+  renderSaveState();
+  logLine(`Reloaded ${editor.currentCircuitName}: the file changed on disk.`);
 }
 
 // Dropping a document file (for example, one received by email) opens a copy.
@@ -676,8 +916,14 @@ export function startSessionHeartbeat() {
     windowSession.reopen();
     beat();
   });
-  window.addEventListener('focus', () => windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden, focused: true }));
-  document.addEventListener('visibilitychange', () => windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden }));
+  window.addEventListener('focus', () => {
+    windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden, focused: true });
+    void checkOpenFileChanged();
+  });
+  document.addEventListener('visibilitychange', () => {
+    windowSession.touch({ path: editor.currentDocumentPath, hidden: document.hidden });
+    if (!document.hidden) void checkOpenFileChanged();
+  });
   window.addEventListener('pagehide', () => {
     windowSession.close();
     if (persistence.liveSync) {
@@ -729,6 +975,8 @@ export function installDocumentSession() {
     circuitSelectEl.value = editor.currentDocumentPath || '';
     if (value === PICKER_OPEN_FILE) openDocumentDialog();
     else if (value === PICKER_WORKSPACE) chooseWorkspaceFolder();
+    else if (value === PICKER_ACCESS) void allowFolderAccess();
+    else if (value === PICKER_CLEAR) void clearOpenedFiles();
     else requestCircuitLoad(value);
   });
 
@@ -741,6 +989,10 @@ export function installDocumentSession() {
   window.addEventListener('drop', async (ev) => {
     if (!droppedFiles(ev)) return;
     ev.preventDefault();
+    if (persistence.browserOnly) {
+      openDroppedDocuments(persistence.openDropped(ev.dataTransfer));
+      return;
+    }
     const file = [...ev.dataTransfer.files].find((candidate) => /\.json$/i.test(candidate.name));
     if (!file) {
       logLine('Drop a .json document file to open it.', 'error');

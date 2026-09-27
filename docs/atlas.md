@@ -1,7 +1,7 @@
 # Atlas view
 
-The app starts in the Atlas when the workspace (or browser-only document
-cache) contains more than one circuit. With zero or one circuit it starts in
+The app starts in the Atlas when the workspace (in browser-only mode, the
+open folder, or else the opened files) contains more than one circuit. With zero or one circuit it starts in
 the editor. Launching a specific file opens that file in the editor instead.
 The restored drawing and any unsaved draft remain available behind the Atlas.
 At startup, a dark cover stays up while the drawings load, then fades as the
@@ -22,6 +22,11 @@ current drawing trigger the usual discard prompt; canceling keeps the Atlas
 open. Name and save the new circuit to add it to the workspace. This button
 is hidden in the Symbols view.
 
+**Folder…** switches the workspace to another folder, and the desk lays out
+its designs in place. In browser-only mode, **Open…** also adds document
+files from any folder to the desk without opening one. Dropping files or a
+folder on the Atlas does the same. Symbols view hides both buttons.
+
 | Keys | |
 | --- | --- |
 | drag, wheel, pinch | pan and zoom |
@@ -31,6 +36,7 @@ is hidden in the Symbols view.
 | `/` or Ctrl/Cmd+F | search the designs |
 | `#` | edit the picked design's tags |
 | Ctrl/Cmd+E | export the desk as one sheet |
+| Ctrl/Cmd+O | another workspace folder (browser-only: add files) |
 | `z` or Space | zoom to the picked design |
 | `f` | fit the whole workspace |
 | `+` / `-` | zoom about the middle |

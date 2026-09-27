@@ -56,7 +56,7 @@ node launch.mjs
 
 The editor opens in an app-style Chromium window, or your default browser. It stops by itself shortly after the last editor window closes. To add Mosfeteer to your application menu, run `node launch.mjs --install` once on Linux or macOS (run it again after a Node upgrade moves Node); on Windows, double-click `Mosfeteer.cmd`.
 
-**No Node?** Open [`browser-only/index.html`](browser-only/index.html) directly. It is the same editor, using the browser's file pickers and downloads, without the CLI or PDF export.
+**No Node?** Open [`browser-only/index.html`](browser-only/index.html) directly. It is the same editor without the CLI or PDF export. In Chrome or Edge, *Open folder…* (or dropping a folder on the window) makes a folder of designs the workspace, and Open file takes several files at once. Save writes each file in place, and the links survive a reload after one permission prompt. Firefox and Safari can only read files, so there Save downloads a copy. Browser-only mode never keeps its own copy of a document in browser storage.
 
 ## Documents
 
