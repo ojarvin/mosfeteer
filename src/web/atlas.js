@@ -29,6 +29,8 @@ import { canvasEl } from './elements.js';
 import { render, setLabelSelection, setSelection } from './main.js';
 import { setDocumentTags } from './tags-ui.js';
 import { revealStartup } from './startup.js';
+import { exportAtlasSheet } from './export-ui.js';
+import { atlasSheetSvg, sheetCaption } from './atlas-sheet.js';
 
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
@@ -38,6 +40,7 @@ const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
 const newCircuitEl = document.getElementById('atlas-new-circuit');
+const exportEl = document.getElementById('atlas-export');
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
@@ -585,6 +588,43 @@ function shownTile(tile) {
   return { ...tile, x: from.x + (tile.x - from.x) * t, y: from.y + (tile.y - from.y) * t };
 }
 
+// ----- export ---------------------------------------------------------------------
+
+/** Export: the designs on the desk -- what a search found, or all of them --
+ *  as one sheet at their real sizes and places (atlas-sheet.js). */
+function exportDesk() {
+  if (!state) return;
+  arrangePending();
+  if (state.matches && !state.matches.size) {
+    statusEl.textContent = 'No design matches the search: nothing to export';
+    return;
+  }
+  const symbols = state.source === 'symbols';
+  const items = state.tiles.map((tile) => {
+    const entry = state.entries.get(tile.id);
+    return { ...tile, svg: entry.svg, box: entry.box, caption: symbols ? '' : sheetCaption(entry.name, entry.index?.tags || []) };
+  });
+  if (!items.length) {
+    statusEl.textContent = 'No designs to export';
+    return;
+  }
+  const count = items.length;
+  const query = lastQuery.trim();
+  const summary = symbols
+    ? 'The symbol reference sheet, on one page.'
+    : `${state.matches ? `The ${count} design${count === 1 ? '' : 's'} found by “${query}”` : `All ${count} design${count === 1 ? '' : 's'}`}, at real size on one page.`;
+  const generation = state.generation;
+  exportAtlasSheet({
+    name: symbols ? 'symbols' : `${titleEl.textContent}-atlas`,
+    key: symbols ? 'atlas:symbols' : `atlas:${titleEl.title}`,
+    summary,
+    build: ({ grid }) => ({ ...atlasSheetSvg(items, { grid }), count }),
+    onStatus: (text) => {
+      if (state?.generation === generation) statusEl.textContent = text;
+    },
+  });
+}
+
 // ----- tags ---------------------------------------------------------------------
 
 /** `#` on a picked design: its tags in a field at its caption. Enter saves
@@ -1122,11 +1162,16 @@ function selectHits(hits) {
 
 export function onAtlasKey(ev) {
   if (!state) return;
-  if (ev.target.closest?.('.atlas-head button')) return;
+  // The export dialog (and its folder picker) over the desk types its own keys.
+  if (ev.target.closest?.('dialog')) return;
+  // A header button keeps focus after a click (or a dialog it opened hands
+  // it back): it takes the keys that press or leave it, the desk the rest.
+  if (ev.target.closest?.('.atlas-head button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
   if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
+  else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if (key === 'Escape' && state.matches) clearSearch();
   else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
   else if (key === 'Enter' && selected) void openTile(selected);
@@ -1299,6 +1344,12 @@ export function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  exportEl?.addEventListener('click', exportDesk);
+  // A click on a header button leaves the keys with the desk (and a dialog
+  // it opens hands them back there); Tab still reaches the buttons.
+  rootEl.querySelector('.atlas-head')?.addEventListener('mousedown', (ev) => {
+    if (ev.target.closest('button')) ev.preventDefault();
+  });
   newCircuitEl?.addEventListener('click', () => {
     if (state?.source !== 'workspace') return;
     requestDocumentAction('Starting a new circuit', () => {
@@ -1310,7 +1361,10 @@ export function installAtlas() {
   searchEl?.addEventListener('keydown', (ev) => {
     // The desk's own keys (z, f, arrows) are text here.
     ev.stopPropagation();
-    if (ev.key === 'Enter') {
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'e') {
+      ev.preventDefault();
+      exportDesk();
+    } else if (ev.key === 'Enter') {
       ev.preventDefault();
       stepMatch(ev.shiftKey ? -1 : 1);
     } else if (ev.key === 'Escape') {

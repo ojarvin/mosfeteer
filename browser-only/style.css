@@ -720,6 +720,19 @@ button:disabled {
   margin-left: -10px;
 }
 
+/* The Atlas sheet exports as vectors only (one image of a whole workspace
+   would outgrow a canvas) and always holds the designs on the desk. */
+.export-dialog[data-target="atlas"] .export-png,
+.export-dialog[data-target="atlas"] .export-dpi,
+.export-dialog[data-target="atlas"] .export-selection-row,
+.export-dialog[data-target="atlas"] .export-beat-row {
+  display: none;
+}
+
+.export-dialog .export-atlas-content {
+  margin: 0;
+}
+
 .export-folder-row,
 .export-name-row {
   display: flex;

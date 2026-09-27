@@ -136,7 +136,7 @@
         <legend>Formats</legend>
         <label><input type="checkbox" name="format" value="svg" checked /> SVG</label>
         <label><input type="checkbox" name="format" value="pdf" checked /> PDF</label>
-        <label><input type="checkbox" name="format" value="png" checked /> PNG</label>
+        <label class="export-png"><input type="checkbox" name="format" value="png" checked /> PNG</label>
         <label class="export-dpi" title="PNG resolution, for label text at the page guide's size (10 pt without a guide); copied images use it too">at
           <select name="pngDpi">
             <option value="150">150 dpi</option>
@@ -152,7 +152,8 @@
       </fieldset>
       <fieldset>
         <legend>Content</legend>
-        <label title="Export just the selected parts, wires, and labels, framed on their own"><input type="checkbox" name="selection" /> Only the selection <span id="export-selection-count" class="export-extensions"></span></label>
+        <p id="export-atlas-content" class="export-atlas-content" hidden></p>
+        <label class="export-selection-row" title="Export just the selected parts, wires, and labels, framed on their own"><input type="checkbox" name="selection" /> Only the selection <span id="export-selection-count" class="export-extensions"></span></label>
         <label id="export-beat-row" class="export-beat-row" hidden>Beats
           <select id="export-beat" name="beat" title="Export one beat, or every beat as numbered files that line up"></select>
         </label>
@@ -200,6 +201,7 @@
       <input id="atlas-search" class="atlas-search" type="search" placeholder="Find parts, nets, text, #tags  (/ or Ctrl+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
       <span id="atlas-status" class="atlas-status" aria-live="polite"></span>
       <button id="atlas-new-circuit" type="button" data-icon="file-plus" title="Start a new schematic">New</button>
+      <button id="atlas-export" type="button" data-icon="download" title="Export the designs on the desk as one zoomable SVG or vector PDF sheet (Ctrl/Cmd+E)">Export</button>
       <button id="atlas-theme" type="button" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (Shift+D)">Dark</button>
       <button id="atlas-close" type="button" class="atlas-close" title="Back to the editor (Esc)">Back to editor</button>
     </header>

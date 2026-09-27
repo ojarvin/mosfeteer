@@ -398,7 +398,11 @@ test('Atlas creates a circuit through the unsaved-changes guard and preserves na
   assert.match(html, /id="atlas-new-circuit"[^>]+type="button"[^>]+data-icon="file-plus"[^>]*>New<\/button>/);
   assert.match(atlas, /newCircuitEl.hidden = source !== 'workspace'/);
   assert.match(atlas, /newCircuitEl\?\.addEventListener\('click', \(\) => \{\s*if \(state\?\.source !== 'workspace'\) return;\s*requestDocumentAction\('Starting a new circuit', \(\) => \{\s*finishClose\(\);\s*startNewDocument\(\);/);
-  assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\)\) return;/);
+  assert.match(atlas, /if \(ev.target.closest\?\.\('dialog'\)\) return;/);
+  // A focused header button (a click, or a closed dialog handing focus back)
+  // keeps only the keys that press or leave it; every other key is the desk's.
+  assert.match(atlas, /querySelector\('\.atlas-head'\)\?\.addEventListener\('mousedown', \(ev\) => \{\s*if \(ev.target.closest\('button'\)\) ev.preventDefault\(\);/);
+  assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\) && \(ev.key === 'Enter' \|\| ev.key === ' ' \|\| ev.key === 'Tab'\)\) return;/);
 });
 
 test('the Atlas header carries the editor toolbar\'s mark and theme toggle', () => {
@@ -430,6 +434,25 @@ test('an Atlas search packs the found designs together once typing pauses', () =
   assert.match(atlas, /async function openTile\(tile\) \{\s*clearTimeout\(state.arrangeTimer\);/);
   // A reopened Atlas lays out an on-going search at once.
   assert.match(atlas, /applySearch\(lastQuery, \{ arrange: 'instant' \}\);/);
+});
+
+test('the Atlas exports the designs on the desk as one vector sheet through the export dialog', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  const ui = readFileSync(new URL('../src/web/export-ui.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
+  assert.match(html, /id="atlas-export" type="button" data-icon="download"[^>]*>Export<\/button>/);
+  // What a search found, packed first; nothing found exports nothing.
+  assert.match(atlas, /function exportDesk\(\) \{\s*if \(!state\) return;\s*arrangePending\(\);\s*if \(state.matches && !state.matches.size\)/);
+  assert.match(atlas, /const items = state.tiles.map\(/);
+  assert.match(atlas, /else if \(\(ev.ctrlKey \|\| ev.metaKey\) && !ev.shiftKey && !ev.altKey && key.toLowerCase\(\) === 'e'\) exportDesk\(\);/);
+  // The dialog, dressed for the sheet: vectors only, the grid and theme shared.
+  assert.match(ui, /export function exportAtlasSheet\(target\)/);
+  assert.match(ui, /input.checked = input.value !== 'png' && supported && formats.includes\(input.value\);/);
+  assert.match(css, /\.export-dialog\[data-target="atlas"\] \.export-png,/);
+  assert.match(ui, /const svg = await withEmbeddedMathFont\(dark \? applyExportDarkTheme\(sheet\) : sheet\);/);
+  // A document export keeps the Atlas's remembered formats.
+  assert.match(ui, /JSON.stringify\(\{ \.\.\.saved, \.\.\.settings, formats, folders \}\)/);
 });
 
 test('an explicit new document is protected from active-document auto-loads', () => {

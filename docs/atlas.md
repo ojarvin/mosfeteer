@@ -30,6 +30,7 @@ is hidden in the Symbols view.
 | double-click / Enter | open it (after the unsaved-changes check) |
 | `/` or Ctrl/Cmd+F | search the designs |
 | `#` | edit the picked design's tags |
+| Ctrl/Cmd+E | export the desk as one sheet |
 | `z` or Space | zoom to the picked design |
 | `f` | fit the whole workspace |
 | `+` / `-` | zoom about the middle |
@@ -61,6 +62,20 @@ is rewritten with only its tags changed), or with `:tag add NAME`, `tag rm`,
 and `tag set`. The index behind
 the search (`src/core/design-index.js`) is cached beside each design's
 drawing, by file revision.
+
+## Export
+
+**Export** (Ctrl/Cmd+E, also from the search field) writes the designs on
+the desk as one sheet: each at its real size and place, under its name and
+tags, as an SVG or a vector PDF that zooms like the Atlas. A search exports
+only what it found; one that finds nothing exports nothing. It is the
+document export dialog without PNG (one image of a workspace would outgrow a
+canvas) and without the selection and beat choices; the grid and dark-mode
+choices are shared, the formats and folder remembered on their own. Each
+design is its own export SVG nested whole (`src/web/atlas-sheet.js`), so the
+sheet draws exactly what the designs' own exports do. A sheet longer than
+200 inches (the PDF page limit) shrinks its page to fit. The Symbols view
+exports the symbol sheet the same way.
 
 ## Symbols
 

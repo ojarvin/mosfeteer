@@ -28940,6 +28940,104 @@ __exports.SMALL_PX = SMALL_PX;
 __exports.LARGE_PX = LARGE_PX;
 };
 
+__modules["src/web/atlas-sheet.js"] = function (__require, __exports) {
+__exports.atlasSheetSvg = atlasSheetSvg;
+__exports.sheetCaption = sheetCaption;
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let escapeSvg; __bind(() => { ({ escapeSvg } = __require("src/core/style.js")); });
+let ATLAS_CAPTION, ATLAS_GAP; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP } = __require("src/web/atlas-layout.js")); });
+/**
+ * The Atlas as one exported sheet: every design shown on the desk, at its
+ * real size and place, each under its name, on one page of vector drawing.
+ * A PDF of it zooms like the Atlas itself.
+ *
+ * Each design's own export SVG is nested whole at its tile, so what it draws
+ * is exactly what its own export draws. The renderer gives its drawings no
+ * ids, so nesting any number of them cannot tangle references. Pure: string
+ * in, string out.
+ */
+
+
+
+
+
+/** PDF viewers stop at 200 inches a side (14400 pt); one unit prints as
+ *  0.75 pt, so a larger sheet is shrunk to fit. */
+const MAX_SHEET_PX = 19200;
+
+const CAPTION_SIZE = ATLAS_CAPTION * 0.45;
+// Average advance of the caption face, as a share of its size.
+const CAPTION_ADVANCE = 0.56;
+
+const fmt = (value) => String(Math.round(value * 100) / 100);
+
+/** `text` cut with an ellipsis to fit about `width` units of caption. */
+function fitCaption(text, width) {
+  const room = Math.max(1, Math.floor(width / (CAPTION_SIZE * CAPTION_ADVANCE)));
+  return text.length <= room ? text : `${text.slice(0, Math.max(0, room - 1))}…`;
+}
+
+/** A design's export SVG, placed at `tile` and drawn from its own `box`. */
+function nestedDrawing(svg, tile, box) {
+  const open = svg.match(/<svg\b[^>]*>/i);
+  if (!open) return '';
+  const body = svg.slice(open.index + open[0].length).replace(/<\/svg>\s*$/i, '');
+  return `<svg x="${fmt(tile.x)}" y="${fmt(tile.y)}" width="${fmt(tile.w)}" height="${fmt(tile.h)}" viewBox="${fmt(box.x)} ${fmt(box.y)} ${fmt(box.w)} ${fmt(box.h)}" overflow="visible">${body}</svg>`;
+}
+
+/**
+ * The sheet for `items` ({ x, y, w, h, svg, box, caption }: the tile on the
+ * desk, the design's export SVG and its viewBox, and the caption text or
+ * '' for none). `grid` draws the editor's grid under the designs and frames
+ * the sheet on whole cells. Returns { svg, scale }: `scale` < 1 when the
+ * sheet had to shrink to fit a PDF page.
+ */
+function atlasSheetSvg(items, { grid = false } = {}) {
+  if (!items.length) throw new Error('there are no designs to export');
+  const pad = ATLAS_GAP;
+  let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+  for (const item of items) {
+    x0 = Math.min(x0, item.x);
+    y0 = Math.min(y0, item.y);
+    x1 = Math.max(x1, item.x + item.w);
+    y1 = Math.max(y1, item.y + item.h + (item.caption ? ATLAS_CAPTION : 0));
+  }
+  x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+  if (grid) {
+    x0 = Math.floor(x0 / GRID) * GRID;
+    y0 = Math.floor(y0 / GRID) * GRID;
+    x1 = Math.ceil(x1 / GRID) * GRID;
+    y1 = Math.ceil(y1 / GRID) * GRID;
+  }
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const scale = Math.min(1, MAX_SHEET_PX / Math.max(w, h));
+  const parts = [`<rect x="${fmt(x0)}" y="${fmt(y0)}" width="${fmt(w)}" height="${fmt(h)}" fill="#fff"/>`];
+  if (grid) {
+    const lines = [];
+    for (let x = x0; x <= x1; x += GRID) lines.push(`M ${x} ${y0} V ${y1}`);
+    for (let y = y0; y <= y1; y += GRID) lines.push(`M ${x0} ${y} H ${x1}`);
+    parts.push(`<path class="grid-line" d="${lines.join(' ')}" fill="none" stroke="#e9e9e9" stroke-width="1"/>`);
+  }
+  for (const item of items) {
+    parts.push(nestedDrawing(item.svg, item, item.box));
+    if (item.caption) {
+      const text = fitCaption(item.caption, item.w + ATLAS_GAP * 0.8);
+      parts.push(`<text x="${fmt(item.x)}" y="${fmt(item.y + item.h + CAPTION_SIZE * 0.6)}" dominant-baseline="hanging" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="${fmt(CAPTION_SIZE)}" font-weight="500" fill="var(--text, #111)" fill-opacity="0.6">${escapeSvg(text)}</text>`);
+    }
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(w * scale)}" height="${fmt(h * scale)}" viewBox="${fmt(x0)} ${fmt(y0)} ${fmt(w)} ${fmt(h)}">\n${parts.join('\n')}\n</svg>`;
+  return { svg, scale };
+}
+
+/** A design's caption on the sheet: its name, then its tags. */
+function sheetCaption(name, tags = []) {
+  return `${name}${tags.length ? `   ${tags.map((tag) => `#${tag}`).join(' ')}` : ''}`;
+}
+
+__exports.MAX_SHEET_PX = MAX_SHEET_PX;
+};
+
 __modules["src/web/atlas.js"] = function (__require, __exports) {
 __exports.atlasOpen = atlasOpen;
 __exports.openAtlas = openAtlas;
@@ -28966,6 +29064,8 @@ let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); 
 let render, setLabelSelection, setSelection; __bind(() => { ({ render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let setDocumentTags; __bind(() => { ({ setDocumentTags } = __require("src/web/tags-ui.js")); });
 let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
+let exportAtlasSheet; __bind(() => { ({ exportAtlasSheet } = __require("src/web/export-ui.js")); });
+let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption } = __require("src/web/atlas-sheet.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -28998,6 +29098,8 @@ let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startu
 
 
 
+
+
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
@@ -29006,6 +29108,7 @@ const statusEl = document.getElementById('atlas-status');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
 const newCircuitEl = document.getElementById('atlas-new-circuit');
+const exportEl = document.getElementById('atlas-export');
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
@@ -29553,6 +29656,43 @@ function shownTile(tile) {
   return { ...tile, x: from.x + (tile.x - from.x) * t, y: from.y + (tile.y - from.y) * t };
 }
 
+// ----- export ---------------------------------------------------------------------
+
+/** Export: the designs on the desk -- what a search found, or all of them --
+ *  as one sheet at their real sizes and places (atlas-sheet.js). */
+function exportDesk() {
+  if (!state) return;
+  arrangePending();
+  if (state.matches && !state.matches.size) {
+    statusEl.textContent = 'No design matches the search: nothing to export';
+    return;
+  }
+  const symbols = state.source === 'symbols';
+  const items = state.tiles.map((tile) => {
+    const entry = state.entries.get(tile.id);
+    return { ...tile, svg: entry.svg, box: entry.box, caption: symbols ? '' : sheetCaption(entry.name, entry.index?.tags || []) };
+  });
+  if (!items.length) {
+    statusEl.textContent = 'No designs to export';
+    return;
+  }
+  const count = items.length;
+  const query = lastQuery.trim();
+  const summary = symbols
+    ? 'The symbol reference sheet, on one page.'
+    : `${state.matches ? `The ${count} design${count === 1 ? '' : 's'} found by “${query}”` : `All ${count} design${count === 1 ? '' : 's'}`}, at real size on one page.`;
+  const generation = state.generation;
+  exportAtlasSheet({
+    name: symbols ? 'symbols' : `${titleEl.textContent}-atlas`,
+    key: symbols ? 'atlas:symbols' : `atlas:${titleEl.title}`,
+    summary,
+    build: ({ grid }) => ({ ...atlasSheetSvg(items, { grid }), count }),
+    onStatus: (text) => {
+      if (state?.generation === generation) statusEl.textContent = text;
+    },
+  });
+}
+
 // ----- tags ---------------------------------------------------------------------
 
 /** `#` on a picked design: its tags in a field at its caption. Enter saves
@@ -30090,11 +30230,16 @@ function selectHits(hits) {
 
 function onAtlasKey(ev) {
   if (!state) return;
-  if (ev.target.closest?.('.atlas-head button')) return;
+  // The export dialog (and its folder picker) over the desk types its own keys.
+  if (ev.target.closest?.('dialog')) return;
+  // A header button keeps focus after a click (or a dialog it opened hands
+  // it back): it takes the keys that press or leave it, the desk the rest.
+  if (ev.target.closest?.('.atlas-head button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
   if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
+  else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if (key === 'Escape' && state.matches) clearSearch();
   else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
   else if (key === 'Enter' && selected) void openTile(selected);
@@ -30267,6 +30412,12 @@ function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  exportEl?.addEventListener('click', exportDesk);
+  // A click on a header button leaves the keys with the desk (and a dialog
+  // it opens hands them back there); Tab still reaches the buttons.
+  rootEl.querySelector('.atlas-head')?.addEventListener('mousedown', (ev) => {
+    if (ev.target.closest('button')) ev.preventDefault();
+  });
   newCircuitEl?.addEventListener('click', () => {
     if (state?.source !== 'workspace') return;
     requestDocumentAction('Starting a new circuit', () => {
@@ -30278,7 +30429,10 @@ function installAtlas() {
   searchEl?.addEventListener('keydown', (ev) => {
     // The desk's own keys (z, f, arrows) are text here.
     ev.stopPropagation();
-    if (ev.key === 'Enter') {
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === 'e') {
+      ev.preventDefault();
+      exportDesk();
+    } else if (ev.key === 'Enter') {
       ev.preventDefault();
       stepMatch(ev.shiftKey ? -1 : 1);
     } else if (ev.key === 'Escape') {
@@ -35425,12 +35579,14 @@ __exports.paneEl = paneEl;
 __modules["src/web/export-ui.js"] = function (__require, __exports) {
 __exports.copyAsImage = copyAsImage;
 __exports.exportCircuit = exportCircuit;
+__exports.exportAtlasSheet = exportAtlasSheet;
 __exports.installExportUi = installExportUi;
 let resolveBeat; __bind(() => { ({ resolveBeat } = __require("src/core/beats.js")); });
 let circuitPageGuideFrame, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } = __require("src/core/png-export.js")); });
 let renderDocument; __bind(() => { ({ renderDocument } = __require("src/core/document.js")); });
 let DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset; __bind(() => { ({ DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } = __require("src/core/selection-drawing.js")); });
+let svgPixelSize; __bind(() => { ({ svgPixelSize } = __require("src/core/render.js")); });
 let svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 let defaultExportDirectory, validDocumentName; __bind(() => { ({ defaultExportDirectory, validDocumentName } = __require("src/web/persistence.js")); });
@@ -35465,6 +35621,7 @@ let render, syncRenderedLabelMetrics; __bind(() => { ({ render, syncRenderedLabe
 
 
 
+
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
 
 const exportDarkInput = exportForm?.querySelector('input[name="dark"]');
@@ -35480,6 +35637,12 @@ let imageCopyInFlight = false;
 
 // A PDF that falls back to an image keeps this fine raster whatever the PNG DPI.
 const PDF_FALLBACK_PNG_SCALE = 3;
+// ...but no side longer than this, which a whole Atlas sheet would pass.
+const PDF_FALLBACK_MAX_PX = 4096;
+
+// What the open dialog exports: null for the document, or the Atlas sheet
+// ({ name, key, summary, build({ grid }) -> { svg, scale, count } }).
+let exportTarget = null;
 
 /** The remembered PNG resolution (export dialog), also used by copied images. */
 function exportPngDpi() {
@@ -35572,26 +35735,13 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
       const request = { dir, name: job.name, formats, svg };
       if (formats.includes('png')) request.png = await svgToPngDataUrl(svg, exportPngScale(pngDpi), { dpi: pngDpi });
       if (formats.includes('pdf')) request.pdfPng = await svgToPngDataUrl(svg, PDF_FALLBACK_PNG_SCALE);
-      let result;
-      try {
-        result = await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared });
-      } catch (err) {
-        if (err.code !== 'exists') throw err;
-        const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
-        const others = jobs.length > 1 ? ' Replacing overwrites them, and any other beat files with this name.' : '';
-        const replace = await confirmChoice({
-          title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
-          message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(dir)}.${others || ` Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`}`,
-          confirmLabel: 'Replace',
-          danger: true,
-        });
-        if (!replace) {
-          logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
-          return;
-        }
-        overwrite = true;
-        result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
+      const others = jobs.length > 1 ? ' Replacing overwrites them, and any other beat files with this name.' : '';
+      const result = await writeExportFiles(request, { prepared, overwrite, others });
+      if (!result) {
+        logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
+        return;
       }
+      overwrite = result.overwrite;
       paths.push(...result.paths);
       folder = result.dir;
       for (const note of result.notes || []) notes.add(note);
@@ -35600,6 +35750,61 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
     for (const note of notes) logLine(note);
   } catch (err) {
     logLine(`Could not export: ${err.message}`, 'error');
+  }
+}
+
+/** Write one export's files, asking before replacing any. Resolves to the
+ *  server's result plus whether replacing was agreed to, or null when the
+ *  user keeps the existing files. */
+async function writeExportFiles(request, { prepared = null, overwrite = false, others = '' } = {}) {
+  try {
+    return { ...await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared }), overwrite };
+  } catch (err) {
+    if (err.code !== 'exists') throw err;
+    const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
+    const replace = await confirmChoice({
+      title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
+      message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(request.dir)}.${others || ` Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`}`,
+      confirmLabel: 'Replace',
+      danger: true,
+    });
+    if (!replace) return null;
+    return { ...await persistence.exportFiles({ ...request, overwrite: true }, { prepared }), overwrite: true };
+  }
+}
+
+/** The Atlas sheet: every design on the desk on one vector page. */
+async function runAtlasExport({ dir, name, formats, grid = false, dark = false, target }) {
+  const supportedFormats = persistence.supportedExportFormats || new Set(formats);
+  const unsupported = formats.filter((format) => !supportedFormats.has(format));
+  if (unsupported.length) {
+    logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
+    return;
+  }
+  const report = (text, kind) => {
+    logLine(text, kind);
+    target.onStatus?.(text);
+  };
+  try {
+    report(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
+    const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats }) : null;
+    const { svg: sheet, scale, count } = target.build({ grid });
+    const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(sheet) : sheet);
+    const request = { dir, name, formats, svg };
+    if (formats.includes('pdf')) {
+      const { width, height } = svgPixelSize(svg);
+      request.pdfPng = await svgToPngDataUrl(svg, Math.min(PDF_FALLBACK_PNG_SCALE, PDF_FALLBACK_MAX_PX / Math.max(width, height)));
+    }
+    const result = await writeExportFiles(request, { prepared });
+    if (!result) {
+      report('Export canceled.');
+      return;
+    }
+    report(`Exported ${count} design${count === 1 ? '' : 's'} to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+    if (scale < 1) report(`The sheet is larger than a PDF page can be, so its page is ${Math.round(scale * 100)}% of real size.`);
+    for (const note of result.notes || []) logLine(note);
+  } catch (err) {
+    report(`Could not export: ${err.message}`, 'error');
   }
 }
 
@@ -35665,6 +35870,8 @@ function renderExportLocation() {
  * Formats, appearance, and a folder chosen for this document are remembered.
  */
 function exportCircuit() {
+  exportTarget = null;
+  setExportDialogTarget();
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
@@ -35687,11 +35894,10 @@ function exportCircuit() {
     const count = exportSelection ? exportSelection.refs.size + exportSelection.labels.length + exportSelection.netIds.size + exportSelection.wireKeys.size : 0;
     selectionCount.textContent = exportSelection ? `(${count} selected)` : '(nothing selected)';
   }
-  if (Array.isArray(saved?.formats)) {
-    for (const input of exportForm.querySelectorAll('input[name="format"]')) {
-      const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
-      input.checked = supported && saved.formats.includes(input.value);
-    }
+  // The Atlas's export shares these boxes: set every one.
+  for (const input of exportForm.querySelectorAll('input[name="format"]')) {
+    const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
+    input.checked = supported && (Array.isArray(saved?.formats) ? saved.formats.includes(input.value) : input.defaultChecked);
   }
   syncExportBeatChoice();
   const documentKey = editor.currentDocumentPath || '';
@@ -35699,6 +35905,48 @@ function exportCircuit() {
   exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
   const nameInput = document.getElementById('export-name');
   if (nameInput) nameInput.value = validDocumentName(circuitNameEl.value) || editor.currentCircuitName || 'circuit';
+  renderExportLocation();
+  exportDialog?.showModal();
+}
+
+/** Dress the dialog for what it exports: the document, or the Atlas sheet. */
+function setExportDialogTarget() {
+  if (!exportDialog) return;
+  exportDialog.dataset.target = exportTarget ? 'atlas' : 'document';
+  const title = document.getElementById('export-dialog-title');
+  if (title) title.textContent = exportTarget ? 'Export atlas' : 'Export document';
+  const content = document.getElementById('export-atlas-content');
+  if (content) {
+    content.hidden = !exportTarget;
+    content.textContent = exportTarget?.summary || '';
+  }
+}
+
+/**
+ * The Atlas's Export: the same dialog, for one sheet of every design on the
+ * desk. SVG and PDF only; the grid and dark choices are the document
+ * export's, the formats and folder its own.
+ */
+function exportAtlasSheet(target) {
+  exportTarget = target;
+  setExportDialogTarget();
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
+  if (exportGridInput) exportGridInput.checked = saved?.grid === true;
+  if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  const formats = Array.isArray(saved?.atlasFormats) ? saved.atlasFormats : ['pdf'];
+  for (const input of exportForm.querySelectorAll('input[name="format"]')) {
+    const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
+    input.checked = input.value !== 'png' && supported && formats.includes(input.value);
+  }
+  // Without PDF (browser-only), the sheet is an SVG.
+  if (![...exportForm.querySelectorAll('input[name="format"]:checked')].length) {
+    const svgInput = exportForm.querySelector('input[name="format"][value="svg"]');
+    if (svgInput) svgInput.checked = true;
+  }
+  exportFolder = (saved?.folders && saved.folders[target.key]) || defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
+  const nameInput = document.getElementById('export-name');
+  if (nameInput) nameInput.value = validDocumentName(target.name) || 'atlas';
   renderExportLocation();
   exportDialog?.showModal();
 }
@@ -35727,6 +35975,20 @@ function installExportUi() {
     const name = validDocumentName(document.getElementById('export-name')?.value);
     if (!formats.length || !name || !exportFolder) return;
     exportDialog.close();
+    if (exportTarget) {
+      const target = exportTarget;
+      const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };
+      const vectorFormats = formats.filter((format) => format !== 'png');
+      try {
+        const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
+        const folders = { ...(saved.folders || {}) };
+        if (exportFolder === defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly })) delete folders[target.key];
+        else folders[target.key] = exportFolder;
+        localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, ...settings, atlasFormats: vectorFormats, folders }));
+      } catch { /* storage unavailable */ }
+      runAtlasExport({ dir: exportFolder, name, formats: vectorFormats, ...settings, target });
+      return;
+    }
     const settings = {
       grid: exportGridInput?.checked === true,
       dark: exportDarkInput?.checked === true,
@@ -35740,7 +36002,7 @@ function installExportUi() {
       const defaultFolder = defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
       if (exportFolder === defaultFolder || exportFolder === editor.currentDocumentDir) delete folders[documentKey];
       else folders[documentKey] = exportFolder;
-      localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
+      localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, ...settings, formats, folders }));
     } catch { /* storage unavailable */ }
     const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
     runExport({ dir: exportFolder, name, formats, ...settings, selection, beat: chosenExportBeat() });

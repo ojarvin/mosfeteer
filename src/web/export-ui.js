@@ -9,6 +9,7 @@ import { circuitPageGuideFrame, pageGuideCaption } from '../core/page-guide.js';
 import { DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } from '../core/png-export.js';
 import { renderDocument } from '../core/document.js';
 import { DRAWING_EXPORT_OPTIONS, hasDrawableSelection, selectionDrawing, selectionSubset } from '../core/selection-drawing.js';
+import { svgPixelSize } from '../core/render.js';
 import { svgToPngDataUrl, applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { defaultExportDirectory, validDocumentName } from './persistence.js';
@@ -36,6 +37,12 @@ let imageCopyInFlight = false;
 
 // A PDF that falls back to an image keeps this fine raster whatever the PNG DPI.
 const PDF_FALLBACK_PNG_SCALE = 3;
+// ...but no side longer than this, which a whole Atlas sheet would pass.
+const PDF_FALLBACK_MAX_PX = 4096;
+
+// What the open dialog exports: null for the document, or the Atlas sheet
+// ({ name, key, summary, build({ grid }) -> { svg, scale, count } }).
+let exportTarget = null;
 
 /** The remembered PNG resolution (export dialog), also used by copied images. */
 function exportPngDpi() {
@@ -128,26 +135,13 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
       const request = { dir, name: job.name, formats, svg };
       if (formats.includes('png')) request.png = await svgToPngDataUrl(svg, exportPngScale(pngDpi), { dpi: pngDpi });
       if (formats.includes('pdf')) request.pdfPng = await svgToPngDataUrl(svg, PDF_FALLBACK_PNG_SCALE);
-      let result;
-      try {
-        result = await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared });
-      } catch (err) {
-        if (err.code !== 'exists') throw err;
-        const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
-        const others = jobs.length > 1 ? ' Replacing overwrites them, and any other beat files with this name.' : '';
-        const replace = await confirmChoice({
-          title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
-          message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(dir)}.${others || ` Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`}`,
-          confirmLabel: 'Replace',
-          danger: true,
-        });
-        if (!replace) {
-          logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
-          return;
-        }
-        overwrite = true;
-        result = await persistence.exportFiles({ ...request, overwrite: true }, { prepared });
+      const others = jobs.length > 1 ? ' Replacing overwrites them, and any other beat files with this name.' : '';
+      const result = await writeExportFiles(request, { prepared, overwrite, others });
+      if (!result) {
+        logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
+        return;
       }
+      overwrite = result.overwrite;
       paths.push(...result.paths);
       folder = result.dir;
       for (const note of result.notes || []) notes.add(note);
@@ -156,6 +150,61 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
     for (const note of notes) logLine(note);
   } catch (err) {
     logLine(`Could not export: ${err.message}`, 'error');
+  }
+}
+
+/** Write one export's files, asking before replacing any. Resolves to the
+ *  server's result plus whether replacing was agreed to, or null when the
+ *  user keeps the existing files. */
+async function writeExportFiles(request, { prepared = null, overwrite = false, others = '' } = {}) {
+  try {
+    return { ...await persistence.exportFiles({ ...request, ...(overwrite ? { overwrite: true } : {}) }, { prepared }), overwrite };
+  } catch (err) {
+    if (err.code !== 'exists') throw err;
+    const files = (err.existing || []).map((path) => path.split(/[\\/]/).pop());
+    const replace = await confirmChoice({
+      title: files.length === 1 ? 'Replace existing file?' : 'Replace existing files?',
+      message: `${files.join(', ')} already ${files.length === 1 ? 'exists' : 'exist'} in ${displayPath(request.dir)}.${others || ` Replacing overwrites ${files.length === 1 ? 'it' : 'them'}.`}`,
+      confirmLabel: 'Replace',
+      danger: true,
+    });
+    if (!replace) return null;
+    return { ...await persistence.exportFiles({ ...request, overwrite: true }, { prepared }), overwrite: true };
+  }
+}
+
+/** The Atlas sheet: every design on the desk on one vector page. */
+async function runAtlasExport({ dir, name, formats, grid = false, dark = false, target }) {
+  const supportedFormats = persistence.supportedExportFormats || new Set(formats);
+  const unsupported = formats.filter((format) => !supportedFormats.has(format));
+  if (unsupported.length) {
+    logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
+    return;
+  }
+  const report = (text, kind) => {
+    logLine(text, kind);
+    target.onStatus?.(text);
+  };
+  try {
+    report(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
+    const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats }) : null;
+    const { svg: sheet, scale, count } = target.build({ grid });
+    const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(sheet) : sheet);
+    const request = { dir, name, formats, svg };
+    if (formats.includes('pdf')) {
+      const { width, height } = svgPixelSize(svg);
+      request.pdfPng = await svgToPngDataUrl(svg, Math.min(PDF_FALLBACK_PNG_SCALE, PDF_FALLBACK_MAX_PX / Math.max(width, height)));
+    }
+    const result = await writeExportFiles(request, { prepared });
+    if (!result) {
+      report('Export canceled.');
+      return;
+    }
+    report(`Exported ${count} design${count === 1 ? '' : 's'} to ${result.paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} in ${displayPath(result.dir)}.`);
+    if (scale < 1) report(`The sheet is larger than a PDF page can be, so its page is ${Math.round(scale * 100)}% of real size.`);
+    for (const note of result.notes || []) logLine(note);
+  } catch (err) {
+    report(`Could not export: ${err.message}`, 'error');
   }
 }
 
@@ -221,6 +270,8 @@ function renderExportLocation() {
  * Formats, appearance, and a folder chosen for this document are remembered.
  */
 export function exportCircuit() {
+  exportTarget = null;
+  setExportDialogTarget();
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
   if (exportGridInput) exportGridInput.checked = saved?.grid === true;
@@ -243,11 +294,10 @@ export function exportCircuit() {
     const count = exportSelection ? exportSelection.refs.size + exportSelection.labels.length + exportSelection.netIds.size + exportSelection.wireKeys.size : 0;
     selectionCount.textContent = exportSelection ? `(${count} selected)` : '(nothing selected)';
   }
-  if (Array.isArray(saved?.formats)) {
-    for (const input of exportForm.querySelectorAll('input[name="format"]')) {
-      const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
-      input.checked = supported && saved.formats.includes(input.value);
-    }
+  // The Atlas's export shares these boxes: set every one.
+  for (const input of exportForm.querySelectorAll('input[name="format"]')) {
+    const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
+    input.checked = supported && (Array.isArray(saved?.formats) ? saved.formats.includes(input.value) : input.defaultChecked);
   }
   syncExportBeatChoice();
   const documentKey = editor.currentDocumentPath || '';
@@ -255,6 +305,48 @@ export function exportCircuit() {
   exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
   const nameInput = document.getElementById('export-name');
   if (nameInput) nameInput.value = validDocumentName(circuitNameEl.value) || editor.currentCircuitName || 'circuit';
+  renderExportLocation();
+  exportDialog?.showModal();
+}
+
+/** Dress the dialog for what it exports: the document, or the Atlas sheet. */
+function setExportDialogTarget() {
+  if (!exportDialog) return;
+  exportDialog.dataset.target = exportTarget ? 'atlas' : 'document';
+  const title = document.getElementById('export-dialog-title');
+  if (title) title.textContent = exportTarget ? 'Export atlas' : 'Export document';
+  const content = document.getElementById('export-atlas-content');
+  if (content) {
+    content.hidden = !exportTarget;
+    content.textContent = exportTarget?.summary || '';
+  }
+}
+
+/**
+ * The Atlas's Export: the same dialog, for one sheet of every design on the
+ * desk. SVG and PDF only; the grid and dark choices are the document
+ * export's, the formats and folder its own.
+ */
+export function exportAtlasSheet(target) {
+  exportTarget = target;
+  setExportDialogTarget();
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null'); } catch { /* storage unavailable */ }
+  if (exportGridInput) exportGridInput.checked = saved?.grid === true;
+  if (exportDarkInput) exportDarkInput.checked = saved?.dark === true;
+  const formats = Array.isArray(saved?.atlasFormats) ? saved.atlasFormats : ['pdf'];
+  for (const input of exportForm.querySelectorAll('input[name="format"]')) {
+    const supported = persistence.supportedExportFormats?.has(input.value) ?? true;
+    input.checked = input.value !== 'png' && supported && formats.includes(input.value);
+  }
+  // Without PDF (browser-only), the sheet is an SVG.
+  if (![...exportForm.querySelectorAll('input[name="format"]:checked')].length) {
+    const svgInput = exportForm.querySelector('input[name="format"][value="svg"]');
+    if (svgInput) svgInput.checked = true;
+  }
+  exportFolder = (saved?.folders && saved.folders[target.key]) || defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
+  const nameInput = document.getElementById('export-name');
+  if (nameInput) nameInput.value = validDocumentName(target.name) || 'atlas';
   renderExportLocation();
   exportDialog?.showModal();
 }
@@ -283,6 +375,20 @@ export function installExportUi() {
     const name = validDocumentName(document.getElementById('export-name')?.value);
     if (!formats.length || !name || !exportFolder) return;
     exportDialog.close();
+    if (exportTarget) {
+      const target = exportTarget;
+      const settings = { grid: exportGridInput?.checked === true, dark: exportDarkInput?.checked === true };
+      const vectorFormats = formats.filter((format) => format !== 'png');
+      try {
+        const saved = JSON.parse(localStorage.getItem(EXPORT_SETTINGS_KEY) || 'null') || {};
+        const folders = { ...(saved.folders || {}) };
+        if (exportFolder === defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly })) delete folders[target.key];
+        else folders[target.key] = exportFolder;
+        localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, ...settings, atlasFormats: vectorFormats, folders }));
+      } catch { /* storage unavailable */ }
+      runAtlasExport({ dir: exportFolder, name, formats: vectorFormats, ...settings, target });
+      return;
+    }
     const settings = {
       grid: exportGridInput?.checked === true,
       dark: exportDarkInput?.checked === true,
@@ -296,7 +402,7 @@ export function installExportUi() {
       const defaultFolder = defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
       if (exportFolder === defaultFolder || exportFolder === editor.currentDocumentDir) delete folders[documentKey];
       else folders[documentKey] = exportFolder;
-      localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...settings, formats, folders }));
+      localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify({ ...saved, ...settings, formats, folders }));
     } catch { /* storage unavailable */ }
     const selection = exportSelectionInput?.checked && exportSelection ? exportSelection : null;
     runExport({ dir: exportFolder, name, formats, ...settings, selection, beat: chosenExportBeat() });
