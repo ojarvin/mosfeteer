@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
 
 const items = [
   { id: 'a', w: 1200, h: 1800 },
@@ -76,4 +76,17 @@ test('a fitted view contains the rectangle at the pane aspect', () => {
   const view = viewFitting(rect, 1600, 900);
   assert.ok(Math.abs(view.w / view.h - 1600 / 900) < 1e-9);
   assert.ok(view.x <= rect.x && view.y <= rect.y && view.x + view.w >= rect.x + rect.w && view.y + view.h >= rect.y + rect.h);
+});
+
+test('keeping a pick in sight moves the view only as far as it must', () => {
+  const view = { x: 0, y: 0, w: 1000, h: 600 };
+  // Whole in view, even hard against the edge of a fitted desk: no pan.
+  assert.equal(viewShowing(view, { x: 0, y: 0, w: 200, h: 100 }), view);
+  assert.equal(viewShowing(view, { x: 800, y: 500, w: 200, h: 100 }), view);
+  // Partly off to the right and below: just far enough in, with the margin.
+  assert.deepEqual(viewShowing(view, { x: 900, y: 560, w: 200, h: 100 }), { x: 150, y: 90, w: 1000, h: 600 });
+  // Off to the left: the same, the other way; the other axis stays.
+  assert.deepEqual(viewShowing(view, { x: -300, y: 100, w: 200, h: 100 }), { x: -350, y: 0, w: 1000, h: 600 });
+  // Larger than the view: centred on that axis.
+  assert.deepEqual(viewShowing(view, { x: 2000, y: 100, w: 1500, h: 100 }), { x: 2250, y: 0, w: 1000, h: 600 });
 });

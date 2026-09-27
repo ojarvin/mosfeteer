@@ -18,7 +18,7 @@ import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
 import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
-import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -973,13 +973,11 @@ function focusTile(tile, { zoom = false } = {}) {
     void animateView(viewFitting(tile, w, h, 0.1));
     return;
   }
-  // Keep the pick in sight without changing the zoom.
-  const view = state.view;
-  const margin = 0.1;
-  const inside = tile.x >= view.x + view.w * margin && tile.x + tile.w <= view.x + view.w * (1 - margin) &&
-    tile.y >= view.y + view.h * margin && tile.y + tile.h <= view.y + view.h * (1 - margin);
-  if (inside) requestDraw();
-  else void animateView({ ...view, x: tile.x + tile.w / 2 - view.w / 2, y: tile.y + tile.h / 2 - view.h / 2 });
+  // Keep the pick and its caption in sight without changing the zoom,
+  // moving only as far as that takes.
+  const next = viewShowing(state.view, { ...tile, h: tile.h + ATLAS_CAPTION });
+  if (next === state.view) requestDraw();
+  else void animateView(next);
 }
 
 // ----- entering and leaving ---------------------------------------------------------

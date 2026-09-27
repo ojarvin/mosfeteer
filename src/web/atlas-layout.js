@@ -133,3 +133,23 @@ export function viewFitting(rect, paneW, paneH, margin = 0.08) {
   const h = paneH * scale;
   return { x: rect.x + rect.w / 2 - w / 2, y: rect.y + rect.h / 2 - h / 2, w, h };
 }
+
+/**
+ * The view, moved as little as it takes to show `rect` whole with `margin`
+ * (a share of the view) to spare, at the same zoom. A rect already in full
+ * view leaves it as it is, so picking a design near the edge of a fitted
+ * desk does not pan; one larger than the view is centred on that axis.
+ */
+export function viewShowing(view, rect, margin = 0.05) {
+  const axis = (start, size, lo, len) => {
+    const pad = size * margin;
+    if (lo >= start && lo + len <= start + size) return start; // already whole in view
+    if (len > size - 2 * pad) return lo + len / 2 - size / 2;
+    if (lo < start + pad) return lo - pad;
+    if (lo + len > start + size - pad) return lo + len - size + pad;
+    return start;
+  };
+  const x = axis(view.x, view.w, rect.x, rect.w);
+  const y = axis(view.y, view.h, rect.y, rect.h);
+  return x === view.x && y === view.y ? view : { ...view, x, y };
+}

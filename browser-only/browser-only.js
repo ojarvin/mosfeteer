@@ -28797,6 +28797,7 @@ __exports.rectsIntersect = rectsIntersect;
 __exports.tileAt = tileAt;
 __exports.neighbourTile = neighbourTile;
 __exports.viewFitting = viewFitting;
+__exports.viewShowing = viewShowing;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 /**
  * Where the Atlas view puts each design, and how much detail a tile needs.
@@ -28934,6 +28935,26 @@ function viewFitting(rect, paneW, paneH, margin = 0.08) {
   return { x: rect.x + rect.w / 2 - w / 2, y: rect.y + rect.h / 2 - h / 2, w, h };
 }
 
+/**
+ * The view, moved as little as it takes to show `rect` whole with `margin`
+ * (a share of the view) to spare, at the same zoom. A rect already in full
+ * view leaves it as it is, so picking a design near the edge of a fitted
+ * desk does not pan; one larger than the view is centred on that axis.
+ */
+function viewShowing(view, rect, margin = 0.05) {
+  const axis = (start, size, lo, len) => {
+    const pad = size * margin;
+    if (lo >= start && lo + len <= start + size) return start; // already whole in view
+    if (len > size - 2 * pad) return lo + len / 2 - size / 2;
+    if (lo < start + pad) return lo - pad;
+    if (lo + len > start + size - pad) return lo + len - size + pad;
+    return start;
+  };
+  const x = axis(view.x, view.w, rect.x, rect.w);
+  const y = axis(view.y, view.h, rect.y, rect.h);
+  return x === view.x && y === view.y ? view : { ...view, x, y };
+}
+
 __exports.ATLAS_GAP = ATLAS_GAP;
 __exports.ATLAS_CAPTION = ATLAS_CAPTION;
 __exports.SMALL_PX = SMALL_PX;
@@ -29053,7 +29074,7 @@ let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __requi
 let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sheet.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -30041,13 +30062,11 @@ function focusTile(tile, { zoom = false } = {}) {
     void animateView(viewFitting(tile, w, h, 0.1));
     return;
   }
-  // Keep the pick in sight without changing the zoom.
-  const view = state.view;
-  const margin = 0.1;
-  const inside = tile.x >= view.x + view.w * margin && tile.x + tile.w <= view.x + view.w * (1 - margin) &&
-    tile.y >= view.y + view.h * margin && tile.y + tile.h <= view.y + view.h * (1 - margin);
-  if (inside) requestDraw();
-  else void animateView({ ...view, x: tile.x + tile.w / 2 - view.w / 2, y: tile.y + tile.h / 2 - view.h / 2 });
+  // Keep the pick and its caption in sight without changing the zoom,
+  // moving only as far as that takes.
+  const next = viewShowing(state.view, { ...tile, h: tile.h + ATLAS_CAPTION });
+  if (next === state.view) requestDraw();
+  else void animateView(next);
 }
 
 // ----- entering and leaving ---------------------------------------------------------
