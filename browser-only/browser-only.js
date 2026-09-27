@@ -35230,6 +35230,8 @@ const sidePanelEl = document.getElementById('side-panel');
 const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 const themeBtn = document.getElementById('btn-theme');
+/** The theme toggles: the editor toolbar's and the Atlas header's. */
+const themeButtons = [themeBtn, document.getElementById('atlas-theme')].filter(Boolean);
 const gridBtn = document.getElementById('btn-grid');
 const crosshairBtn = document.getElementById('btn-crosshair');
 const guidesBtn = document.getElementById('btn-guides');
@@ -35333,6 +35335,7 @@ __exports.sidePanelEl = sidePanelEl;
 __exports.sidePanelToggleEl = sidePanelToggleEl;
 __exports.scrollSchemeButton = scrollSchemeButton;
 __exports.themeBtn = themeBtn;
+__exports.themeButtons = themeButtons;
 __exports.gridBtn = gridBtn;
 __exports.crosshairBtn = crosshairBtn;
 __exports.guidesBtn = guidesBtn;
@@ -49816,7 +49819,7 @@ __exports.installToolbarUi = installToolbarUi;
 let normalizePageGuide, pageGuideCaption; __bind(() => { ({ normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let minimalRevealScroll; __bind(() => { ({ minimalRevealScroll } = __require("src/web/toolbar.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
-let canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
+let canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor; __bind(() => { ({ ICON_PATHS, syncToolCursor } = __require("src/web/icons.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
@@ -50303,10 +50306,10 @@ const THEME_KEY = 'mosfeteer:theme';
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   syncToolCursor();
-  if (themeBtn) {
-    themeBtn.setAttribute('aria-pressed', String(dark));
-    themeBtn.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
-    const icon = themeBtn.querySelector('.button-icon');
+  for (const button of themeButtons) {
+    button.setAttribute('aria-pressed', String(dark));
+    button.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
+    const icon = button.querySelector('.button-icon');
     if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
   }
   try {
@@ -50483,7 +50486,7 @@ function installToolbarUi() {
     else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) applyTheme(true);
   } catch { /* storage unavailable */ }
 
-  if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+  for (const button of themeButtons) button.addEventListener('click', toggleTheme);
 
   if (gridBtn) {
     gridBtn.addEventListener('click', () => setGrid(!editor.showGrid));

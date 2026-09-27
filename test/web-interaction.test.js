@@ -395,10 +395,22 @@ test('new document control starts a schematic directly', () => {
 test('Atlas creates a circuit through the unsaved-changes guard and preserves name focus', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
-  assert.match(html, /id="atlas-new-circuit"[^>]+type="button"[^>]*>New circuit<\/button>/);
+  assert.match(html, /id="atlas-new-circuit"[^>]+type="button"[^>]+data-icon="file-plus"[^>]*>New<\/button>/);
   assert.match(atlas, /newCircuitEl.hidden = source !== 'workspace'/);
   assert.match(atlas, /newCircuitEl\?\.addEventListener\('click', \(\) => \{\s*if \(state\?\.source !== 'workspace'\) return;\s*requestDocumentAction\('Starting a new circuit', \(\) => \{\s*finishClose\(\);\s*startNewDocument\(\);/);
   assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\)\) return;/);
+});
+
+test('the Atlas header carries the editor toolbar\'s mark and theme toggle', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const head = html.slice(html.indexOf('<header class="atlas-head'), html.indexOf('</header>', html.indexOf('<header class="atlas-head')));
+  assert.match(head, /^<header[^>]*>\s*<span class="app-mark atlas-mark"/);
+  assert.match(head, /id="atlas-theme"[^>]+class="icon-button"[^>]+data-icon="moon"[^>]+aria-pressed="false"/);
+  const toolbar = readFileSync(new URL('../src/web/toolbar-ui.js', import.meta.url), 'utf8');
+  assert.match(toolbar, /for \(const button of themeButtons\) \{\s*button.setAttribute\('aria-pressed', String\(dark\)\);/);
+  assert.match(toolbar, /for \(const button of themeButtons\) button.addEventListener\('click', toggleTheme\);/);
+  const elements = readFileSync(new URL('../src/web/elements.js', import.meta.url), 'utf8');
+  assert.match(elements, /themeButtons = \[themeBtn, document.getElementById\('atlas-theme'\)\]/);
 });
 
 test('an explicit new document is protected from active-document auto-loads', () => {

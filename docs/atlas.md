@@ -15,10 +15,12 @@ editor's paper and grid, to look around, compare, and open. It is a viewing mode
 work as in the editor (wheel or trackpad scheme, drag, pinch), and the open
 design zooms out of, and back into, exactly where the editor shows it.
 
-**New circuit** in the top bar opens a blank schematic in the editor, with
-the name field focused. Unsaved changes in the current drawing trigger the
-usual discard prompt; canceling keeps the Atlas open. Name and save the new
-circuit to add it to the workspace. This button is hidden in the Symbols view.
+The top bar mirrors the editor's: the Mosfeteer mark, the workspace name,
+the search, **New**, and the light/dark theme toggle. **New** opens a blank
+schematic in the editor, with the name field focused. Unsaved changes in the
+current drawing trigger the usual discard prompt; canceling keeps the Atlas
+open. Name and save the new circuit to add it to the workspace. This button
+is hidden in the Symbols view.
 
 | Keys | |
 | --- | --- |

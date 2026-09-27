@@ -281,6 +281,7 @@ button:focus-visible {
 
 .view-cluster .icon-button,
 .settings-cluster .icon-button,
+.atlas-head .icon-button,
 .segmented .icon-button {
   color: var(--text-dim);
   background: transparent;
@@ -288,6 +289,7 @@ button:focus-visible {
 }
 
 .view-cluster .icon-button:hover,
+.atlas-head .icon-button:hover,
 .settings-cluster .icon-button:hover,
 .settings-cluster .icon-button[aria-expanded="true"],
 .segmented .icon-button:hover {
@@ -301,6 +303,7 @@ button:focus-visible {
    state as a crisp edge instead of relying on a background tint alone,
    which reads poorly at small sizes in light mode. */
 .view-cluster .icon-button[aria-pressed="true"],
+.atlas-head .icon-button[aria-pressed="true"],
 .segmented .icon-button[aria-pressed="true"],
 .canvas-panel-toggle[aria-pressed="true"] {
   color: var(--accent);
@@ -4550,8 +4553,19 @@ button.off {
   align-items: center;
   gap: 12px;
   max-width: calc(100% - 24px);
-  padding: 6px 6px 6px 14px;
+  padding: 6px 6px 6px 10px;
   border-radius: 10px;
+}
+
+/* The header's buttons match the editor toolbar's. */
+.atlas-head button {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.8125rem;
+}
+
+.atlas-head .atlas-mark {
+  margin-right: -6px;
 }
 
 .atlas-title {
@@ -4562,9 +4576,11 @@ button.off {
 }
 
 .atlas-search {
+  box-sizing: border-box;
   width: 18em;
   max-width: 40vw;
-  padding: 3px 8px;
+  height: 30px;
+  padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-elevated);

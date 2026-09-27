@@ -8,7 +8,7 @@
 import { normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { minimalRevealScroll } from './toolbar.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
-import { canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeBtn, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
+import { canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
 import { ICON_PATHS, syncToolCursor } from './icons.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { runCheck } from './design-check-ui.js';
@@ -475,10 +475,10 @@ const THEME_KEY = 'mosfeteer:theme';
 function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   syncToolCursor();
-  if (themeBtn) {
-    themeBtn.setAttribute('aria-pressed', String(dark));
-    themeBtn.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
-    const icon = themeBtn.querySelector('.button-icon');
+  for (const button of themeButtons) {
+    button.setAttribute('aria-pressed', String(dark));
+    button.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
+    const icon = button.querySelector('.button-icon');
     if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
   }
   try {
@@ -655,7 +655,7 @@ export function installToolbarUi() {
     else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) applyTheme(true);
   } catch { /* storage unavailable */ }
 
-  if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+  for (const button of themeButtons) button.addEventListener('click', toggleTheme);
 
   if (gridBtn) {
     gridBtn.addEventListener('click', () => setGrid(!editor.showGrid));
