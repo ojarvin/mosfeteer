@@ -2478,9 +2478,31 @@ function keepAlignedEdge(label, before) {
   label.moveTo(anchor.x + shift, anchor.y);
 }
 
+// Math labels are MathML in foreignObjects: slow to create and lay out. They
+// live in their own SVG over the drawing, rebuilt only when their markup
+// changes -- dragging a part redraws the drawing on every move, and without
+// this every equation on the sheet was laid out again with it.
+let mathLayerEl = null;
+let mathLayerMarkup = null;
+
+function syncMathLayer(parts) {
+  const markup = themeInkSvg(parts.join('\n'));
+  if (!mathLayerEl || mathLayerEl.parentNode !== canvasEl) {
+    mathLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    mathLayerEl.setAttribute('class', 'math-layer');
+    mathLayerEl.setAttribute('aria-hidden', 'false');
+    canvasEl.appendChild(mathLayerEl);
+    mathLayerMarkup = null;
+  }
+  for (const name of ['width', 'height', 'viewBox']) mathLayerEl.setAttribute(name, canvasSvgEl.getAttribute(name));
+  if (markup === mathLayerMarkup) return;
+  mathLayerMarkup = markup;
+  mathLayerEl.innerHTML = markup;
+}
+
 export function syncRenderedLabelMetrics() {
   if (!canvasSvgEl) return false;
-  const groups = new Map([...canvasSvgEl.querySelectorAll('[data-label-id]')]
+  const groups = new Map([...canvasEl.querySelectorAll('[data-label-id]')]
     .map((group) => [group.getAttribute('data-label-id'), group]));
   let changed = false;
   for (const label of circuit.labels.values()) {
@@ -2563,7 +2585,9 @@ export function renderCanvas(modelKey) {
   if (canvasRebuilt) {
     committedCanvasKey = canvasKey;
     committedViewKey = viewKey;
-    canvasEl.innerHTML = svgString(circuit, {
+    const mathParts = [];
+    const markup = svgString(circuit, {
+      mathSink: mathParts,
       themeInk: true,
       underlay: true,
       grid: showGrid,
@@ -2578,7 +2602,15 @@ export function renderCanvas(modelKey) {
       editingLabel: editingLabelId,
       ...(beatView ? { beat: { view: beatView, fade: true } } : {}),
     });
-    canvasSvgEl = canvasEl.querySelector('svg');
+    // Swap the drawing alone: the math layer beside it stays in the page.
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    const nextSvg = template.content.querySelector('svg');
+    const previousSvg = canvasSvgEl?.parentNode === canvasEl ? canvasSvgEl : null;
+    if (previousSvg) canvasEl.replaceChild(nextSvg, previousSvg);
+    else canvasEl.replaceChildren(nextSvg);
+    canvasSvgEl = nextSvg;
+    syncMathLayer(mathParts);
     if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');

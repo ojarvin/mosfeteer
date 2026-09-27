@@ -954,3 +954,21 @@ test('a selected part is outlined by its own grid box, unpadded', () => {
   assert.ok(outline, 'selection outline drawn');
   assert.deepEqual(outline.slice(1).map(Number), [r.x, r.y, r.w, r.h]);
 });
+
+test('math labels can be drawn apart from the drawing, and are not drawn twice', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { x: 0, y: 0 });
+  circuit.addLabel({ text: '$A_{v} = g_{m} R$', math: true, x: 0, y: 200 });
+  circuit.addLabel({ text: 'plain', x: 0, y: 400 });
+  const whole = svgString(circuit);
+  assert.match(whole, /<foreignObject/);
+  const sink = [];
+  const apart = svgString(circuit, { mathSink: sink });
+  assert.doesNotMatch(apart, /<foreignObject/);
+  assert.match(apart, />plain</);
+  assert.equal(sink.length, 1);
+  assert.match(sink[0], /^<g[^>]*data-label-id="[^"]+"[^>]*>\s*<foreignObject/);
+  // Together the parts are the whole drawing (math last: the layer is on top).
+  const lines = (svg) => svg.split('\n').sort();
+  assert.deepEqual(lines(apart.replace('</svg>', `${sink[0]}\n</svg>`)), lines(whole));
+});

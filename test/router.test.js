@@ -740,3 +740,25 @@ test('every smartRoute result runs orthogonally from source to destination', () 
     }
   }
 });
+
+test('cross-net overlaps are found line by line, in the all-pairs order', async () => {
+  const { crossNetOverlaps } = await import('../src/core/wiring.js');
+  const nets = [
+    // A horizontal run shared by N1 and N2, and a vertical one by N1 and N3.
+    { id: 'N1', paths: [[{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 200 }]] },
+    { id: 'N2', paths: [[{ x: 120, y: 0 }, { x: 320, y: 0 }]] },
+    { id: 'N3', paths: [[{ x: 200, y: 80 }, { x: 200, y: 120 }]] },
+    // Same line as N1's run but not overlapping; a parallel line; a diagonal pair.
+    { id: 'N4', paths: [[{ x: 400, y: 0 }, { x: 480, y: 0 }], [{ x: 0, y: 40 }, { x: 200, y: 40 }]] },
+    { id: 'N5', paths: [[{ x: 0, y: 400 }, { x: 80, y: 480 }]] },
+    { id: 'N6', paths: [[{ x: 40, y: 440 }, { x: 120, y: 520 }]] },
+    // A net's own segments never count.
+    { id: 'N7', paths: [[{ x: 600, y: 0 }, { x: 700, y: 0 }], [{ x: 650, y: 0 }, { x: 750, y: 0 }]] },
+  ];
+  const found = crossNetOverlaps(nets).map(({ key, otherKey, x0, y0, x1, y1 }) => `${key}/${otherKey} ${x0},${y0}-${x1},${y1}`);
+  assert.deepEqual(found, [
+    'N1:0:1/N2:0:1 120,0-200,0',
+    'N1:0:2/N3:0:1 200,80-200,120',
+    'N5:0:1/N6:0:1 40,440-80,480',
+  ]);
+});

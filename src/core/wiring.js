@@ -258,17 +258,30 @@ export function crossNetOverlaps(nets) {
       }
     }
   }
-  const out = [];
-  for (let i = 0; i < segs.length; i++) {
-    for (let j = i + 1; j < segs.length; j++) {
-      const sa = segs[i];
-      const sb = segs[j];
-      if (sa.netId === sb.netId) continue;
-      const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
-      if (overlap) out.push({ key: sa.key, otherKey: sb.key, ...overlap });
+  // Only segments on one line can overlap along it: group horizontal ones by
+  // their y, vertical ones by their x, and compare within a group. Diagonals
+  // (rare, possibly off-grid) are compared with each other. Pairs come out in
+  // the order the all-pairs loop gave them.
+  const lines = new Map();
+  segs.forEach((seg, index) => {
+    const line = seg.a.y === seg.b.y ? `h${seg.a.y}` : seg.a.x === seg.b.x ? `v${seg.a.x}` : 'd';
+    if (!lines.has(line)) lines.set(line, []);
+    lines.get(line).push(index);
+  });
+  const pairs = [];
+  for (const members of lines.values()) {
+    for (let m = 0; m < members.length; m++) {
+      for (let n = m + 1; n < members.length; n++) {
+        const i = members[m];
+        const j = members[n];
+        if (segs[i].netId === segs[j].netId) continue;
+        const overlap = collinearOverlap(segs[i].a, segs[i].b, segs[j].a, segs[j].b);
+        if (overlap) pairs.push([i, j, overlap]);
+      }
     }
   }
-  return out;
+  pairs.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  return pairs.map(([i, j, overlap]) => ({ key: segs[i].key, otherKey: segs[j].key, ...overlap }));
 }
 
 /** True when two branch lists are point-identical (same order, same points). */

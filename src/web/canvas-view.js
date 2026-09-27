@@ -11,12 +11,31 @@ import { lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
 import { render, selectedComps } from './main.js';
 
+// The pane's size, measured once and kept until the pane resizes. Reading
+// layout after the render has written the canvas forces the browser to lay
+// the page out again on the spot, every frame of a drag; a ResizeObserver says
+// when the measurement is stale instead. (It is created on the first
+// measurement, before main.js's own observer, so it always runs first.)
+let paneMeasured = null;
+let paneWatched = false;
+
+function watchPane(pane) {
+  if (paneWatched || typeof ResizeObserver === 'undefined') return paneWatched;
+  new ResizeObserver(() => { paneMeasured = null; }).observe(pane);
+  window.addEventListener('resize', () => { paneMeasured = null; });
+  paneWatched = true;
+  return true;
+}
+
 export function paneSize() {
+  if (paneMeasured) return paneMeasured;
   const pane = document.querySelector('.canvas-pane');
   if (!pane) return null;
   const r = pane.getBoundingClientRect();
   if (r.width < 10 || r.height < 10) return null;
-  return { w: r.width, h: r.height };
+  const size = { w: r.width, h: r.height };
+  if (watchPane(pane)) paneMeasured = size;
+  return size;
 }
 
 /** Build a view of the current pane size (grid-aligned) centered on (cx,cy). */
@@ -217,6 +236,13 @@ export function applyCanvasViewport() {
   editor.canvasSvgEl.setAttribute('width', frame.width);
   editor.canvasSvgEl.setAttribute('height', frame.height);
   editor.canvasSvgEl.setAttribute('viewBox', frame.viewBox);
+  // The math labels' own layer (main.js) follows the drawing's frame.
+  const mathLayer = editor.canvasSvgEl.parentNode?.querySelector(':scope > .math-layer');
+  if (mathLayer) {
+    mathLayer.setAttribute('width', frame.width);
+    mathLayer.setAttribute('height', frame.height);
+    mathLayer.setAttribute('viewBox', frame.viewBox);
+  }
   const background = editor.canvasSvgEl.firstElementChild;
   if (background?.tagName !== 'rect') return;
   for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);

@@ -1721,9 +1721,20 @@ button:disabled {
 }
 
 .canvas {
+  position: relative;
   width: 100%;
   height: 100%;
   padding: 0;
+}
+
+/* Math labels, drawn over the drawing in the same frame (main.js). */
+.canvas svg.math-layer {
+  position: absolute;
+  inset: 0;
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  pointer-events: none;
 }
 
 .canvas svg {

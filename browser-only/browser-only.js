@@ -16268,6 +16268,10 @@ class Net {
     if (this.branches && this.branches.length) return this.branches[0].slice();
     const anchors = this.anchorWorlds();
     if (anchors.length === 0) return [];
+    // A marker standing on its pin: the anchors coincide and there is no wire
+    // to draw. Say so before building a routing environment (rebuilt after
+    // every edit, and paths() is asked for many times a frame).
+    if (anchors.every((point) => point.x === anchors[0].x && point.y === anchors[0].y)) return [];
     const env = this.circuit._netEnv(this.id);
     if (anchors.length === 2) {
       // Match the editor preview: two-terminal nets escape each pin one cell
@@ -22439,11 +22443,13 @@ function svgString(circuit, opts = {}) {
     const labelVisual = label.math
       ? mathLabelSvg(label, '', labelInk(label.id))
       : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(labelHighlight(label) || label.style?.color || '#111'), label.style?.width, label.style);
-    if (label.selectable === false) {
-      parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
-    } else {
-      parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
-    }
+    const group = label.selectable === false
+      ? `<g${opacity} pointer-events="none">${labelVisual}</g>`
+      : `<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`;
+    // The editor keeps math labels in a layer of their own (o.mathSink), so a
+    // redraw of everything else does not lay their MathML out again.
+    if (label.math && Array.isArray(o.mathSink)) o.mathSink.push(group);
+    else parts.push(group);
   }
 
   parts.push('</svg>');
@@ -26059,17 +26065,30 @@ function crossNetOverlaps(nets) {
       }
     }
   }
-  const out = [];
-  for (let i = 0; i < segs.length; i++) {
-    for (let j = i + 1; j < segs.length; j++) {
-      const sa = segs[i];
-      const sb = segs[j];
-      if (sa.netId === sb.netId) continue;
-      const overlap = collinearOverlap(sa.a, sa.b, sb.a, sb.b);
-      if (overlap) out.push({ key: sa.key, otherKey: sb.key, ...overlap });
+  // Only segments on one line can overlap along it: group horizontal ones by
+  // their y, vertical ones by their x, and compare within a group. Diagonals
+  // (rare, possibly off-grid) are compared with each other. Pairs come out in
+  // the order the all-pairs loop gave them.
+  const lines = new Map();
+  segs.forEach((seg, index) => {
+    const line = seg.a.y === seg.b.y ? `h${seg.a.y}` : seg.a.x === seg.b.x ? `v${seg.a.x}` : 'd';
+    if (!lines.has(line)) lines.set(line, []);
+    lines.get(line).push(index);
+  });
+  const pairs = [];
+  for (const members of lines.values()) {
+    for (let m = 0; m < members.length; m++) {
+      for (let n = m + 1; n < members.length; n++) {
+        const i = members[m];
+        const j = members[n];
+        if (segs[i].netId === segs[j].netId) continue;
+        const overlap = collinearOverlap(segs[i].a, segs[i].b, segs[j].a, segs[j].b);
+        if (overlap) pairs.push([i, j, overlap]);
+      }
     }
   }
-  return out;
+  pairs.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  return pairs.map(([i, j, overlap]) => ({ key: segs[i].key, otherKey: segs[j].key, ...overlap }));
 }
 
 /** True when two branch lists are point-identical (same order, same points). */
@@ -31235,12 +31254,31 @@ let render, selectedComps; __bind(() => { ({ render, selectedComps } = __require
 
 
 
+// The pane's size, measured once and kept until the pane resizes. Reading
+// layout after the render has written the canvas forces the browser to lay
+// the page out again on the spot, every frame of a drag; a ResizeObserver says
+// when the measurement is stale instead. (It is created on the first
+// measurement, before main.js's own observer, so it always runs first.)
+let paneMeasured = null;
+let paneWatched = false;
+
+function watchPane(pane) {
+  if (paneWatched || typeof ResizeObserver === 'undefined') return paneWatched;
+  new ResizeObserver(() => { paneMeasured = null; }).observe(pane);
+  window.addEventListener('resize', () => { paneMeasured = null; });
+  paneWatched = true;
+  return true;
+}
+
 function paneSize() {
+  if (paneMeasured) return paneMeasured;
   const pane = document.querySelector('.canvas-pane');
   if (!pane) return null;
   const r = pane.getBoundingClientRect();
   if (r.width < 10 || r.height < 10) return null;
-  return { w: r.width, h: r.height };
+  const size = { w: r.width, h: r.height };
+  if (watchPane(pane)) paneMeasured = size;
+  return size;
 }
 
 /** Build a view of the current pane size (grid-aligned) centered on (cx,cy). */
@@ -31441,6 +31479,13 @@ function applyCanvasViewport() {
   editor.canvasSvgEl.setAttribute('width', frame.width);
   editor.canvasSvgEl.setAttribute('height', frame.height);
   editor.canvasSvgEl.setAttribute('viewBox', frame.viewBox);
+  // The math labels' own layer (main.js) follows the drawing's frame.
+  const mathLayer = editor.canvasSvgEl.parentNode?.querySelector(':scope > .math-layer');
+  if (mathLayer) {
+    mathLayer.setAttribute('width', frame.width);
+    mathLayer.setAttribute('height', frame.height);
+    mathLayer.setAttribute('viewBox', frame.viewBox);
+  }
   const background = editor.canvasSvgEl.firstElementChild;
   if (background?.tagName !== 'rect') return;
   for (const [name, value] of Object.entries(frame.background)) background.setAttribute(name, value);
@@ -41393,9 +41438,31 @@ function keepAlignedEdge(label, before) {
   label.moveTo(anchor.x + shift, anchor.y);
 }
 
+// Math labels are MathML in foreignObjects: slow to create and lay out. They
+// live in their own SVG over the drawing, rebuilt only when their markup
+// changes -- dragging a part redraws the drawing on every move, and without
+// this every equation on the sheet was laid out again with it.
+let mathLayerEl = null;
+let mathLayerMarkup = null;
+
+function syncMathLayer(parts) {
+  const markup = themeInkSvg(parts.join('\n'));
+  if (!mathLayerEl || mathLayerEl.parentNode !== canvasEl) {
+    mathLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    mathLayerEl.setAttribute('class', 'math-layer');
+    mathLayerEl.setAttribute('aria-hidden', 'false');
+    canvasEl.appendChild(mathLayerEl);
+    mathLayerMarkup = null;
+  }
+  for (const name of ['width', 'height', 'viewBox']) mathLayerEl.setAttribute(name, canvasSvgEl.getAttribute(name));
+  if (markup === mathLayerMarkup) return;
+  mathLayerMarkup = markup;
+  mathLayerEl.innerHTML = markup;
+}
+
 function syncRenderedLabelMetrics() {
   if (!canvasSvgEl) return false;
-  const groups = new Map([...canvasSvgEl.querySelectorAll('[data-label-id]')]
+  const groups = new Map([...canvasEl.querySelectorAll('[data-label-id]')]
     .map((group) => [group.getAttribute('data-label-id'), group]));
   let changed = false;
   for (const label of circuit.labels.values()) {
@@ -41478,7 +41545,9 @@ function renderCanvas(modelKey) {
   if (canvasRebuilt) {
     committedCanvasKey = canvasKey;
     committedViewKey = viewKey;
-    canvasEl.innerHTML = svgString(circuit, {
+    const mathParts = [];
+    const markup = svgString(circuit, {
+      mathSink: mathParts,
       themeInk: true,
       underlay: true,
       grid: showGrid,
@@ -41493,7 +41562,15 @@ function renderCanvas(modelKey) {
       editingLabel: editingLabelId,
       ...(beatView ? { beat: { view: beatView, fade: true } } : {}),
     });
-    canvasSvgEl = canvasEl.querySelector('svg');
+    // Swap the drawing alone: the math layer beside it stays in the page.
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    const nextSvg = template.content.querySelector('svg');
+    const previousSvg = canvasSvgEl?.parentNode === canvasEl ? canvasSvgEl : null;
+    if (previousSvg) canvasEl.replaceChild(nextSvg, previousSvg);
+    else canvasEl.replaceChildren(nextSvg);
+    canvasSvgEl = nextSvg;
+    syncMathLayer(mathParts);
     if (syncRenderedLabelMetrics()) scheduleMeasuredLabelRender();
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');

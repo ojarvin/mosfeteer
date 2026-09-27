@@ -1041,11 +1041,13 @@ export function svgString(circuit, opts = {}) {
     const labelVisual = label.math
       ? mathLabelSvg(label, '', labelInk(label.id))
       : labelTextEl(t.x, t.y, label.runs(), t.anchor, label.owner ? 'instance' : 'label', resolveColor(labelHighlight(label) || label.style?.color || '#111'), label.style?.width, label.style);
-    if (label.selectable === false) {
-      parts.push(`<g${opacity} pointer-events="none">${labelVisual}</g>`);
-    } else {
-      parts.push(`<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`);
-    }
+    const group = label.selectable === false
+      ? `<g${opacity} pointer-events="none">${labelVisual}</g>`
+      : `<g${opacity} data-label-id="${escapeSvg(label.id)}" role="button" tabindex="0" aria-label="${escapeSvg(roleName)}">${labelVisual}</g>`;
+    // The editor keeps math labels in a layer of their own (o.mathSink), so a
+    // redraw of everything else does not lay their MathML out again.
+    if (label.math && Array.isArray(o.mathSink)) o.mathSink.push(group);
+    else parts.push(group);
   }
 
   parts.push('</svg>');

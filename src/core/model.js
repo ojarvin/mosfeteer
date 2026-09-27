@@ -1641,6 +1641,10 @@ export class Net {
     if (this.branches && this.branches.length) return this.branches[0].slice();
     const anchors = this.anchorWorlds();
     if (anchors.length === 0) return [];
+    // A marker standing on its pin: the anchors coincide and there is no wire
+    // to draw. Say so before building a routing environment (rebuilt after
+    // every edit, and paths() is asked for many times a frame).
+    if (anchors.every((point) => point.x === anchors[0].x && point.y === anchors[0].y)) return [];
     const env = this.circuit._netEnv(this.id);
     if (anchors.length === 2) {
       // Match the editor preview: two-terminal nets escape each pin one cell

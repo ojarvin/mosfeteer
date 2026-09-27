@@ -3893,3 +3893,14 @@ test('net highlights color whole electrical groups with unique cycling colors', 
   assert.equal(c.netHighlight(out1), null);
   assert.equal(c.toJSON().netHighlights, undefined);
 });
+
+test('a rail marker standing on its pin has no path, and asking costs no routing', () => {
+  const circuit = new Circuit();
+  const mos = circuit.addComponent('nmos', { x: 0, y: 0 });
+  const ground = circuit.addComponent('ground', { x: 0, y: 80 });
+  const net = circuit.netOfTerminal({ comp: ground.refdes, term: 'gnd' });
+  assert.ok(net && net.terminals.some((t) => t.comp === mos.refdes));
+  circuit.invalidateRoutingCache();
+  assert.deepEqual(net.paths(), []);
+  assert.equal(circuit._routingEnvCache.size, 0);
+});
