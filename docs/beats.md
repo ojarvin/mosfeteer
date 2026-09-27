@@ -114,6 +114,9 @@ renaming a part renames its references.
   in the editor's light or dark theme. Every beat keeps the whole drawing's
   frame, so only what changes moves.
 - **Export.** The export dialog exports the whole drawing, one beat, or every
-  beat as numbered files (`name-1.svg`, `name-2.svg`, ...) that line up.
+  beat: one PDF with a page per beat (`name.pdf`, vector where Chromium can
+  print it, else a page of image each), and numbered SVG and PNG files
+  (`name-1.svg`, `name-2.svg`, ...). All share the drawing's frame, so the
+  pages and files line up.
 - **Commands.** `beat list|add|rm|rename|move|show|dim|hide|switch` and
   `svg --beat N`; see `help`.

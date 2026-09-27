@@ -25,7 +25,7 @@ import { svgPixelSize, svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
 import { codeFingerprint } from './fingerprint.js';
-import { pngToPdf } from './pdf-raster.js';
+import { pngsToPdf } from './pdf-raster.js';
 import { allowedHosts, checkRequest } from './request-guard.js';
 import { createSettingsStore, defaultWorkspace } from './settings.js';
 
@@ -400,6 +400,12 @@ export async function startApp({
     const png = pngData(body.png);
     // The PDF fallback raster may be finer than the PNG export's resolution.
     const pdfPng = pngData(body.pdfPng) || png;
+    // A drawing's beats may go into one PDF, a page each (their SVGs, and a
+    // raster of each for the fallback); the single SVG is then the first.
+    const pdfPages = Array.isArray(body.pdfPages) ? body.pdfPages : null;
+    if (pdfPages && (!pdfPages.length || !pdfPages.every((page) => typeof page === 'string' && /^\s*<svg\b/i.test(page)))) throw httpError('every PDF page must be an SVG rendering');
+    const pdfPngPages = Array.isArray(body.pdfPngPages) ? body.pdfPngPages.map(pngData) : null;
+    if (pdfPngPages && (pdfPngPages.length !== pdfPages?.length || pdfPngPages.some((page) => !page))) throw httpError('every PDF page needs its PNG rendering');
     if (formats.includes('png') && !png) throw httpError('export is missing its PNG rendering');
 
     const paths = Object.fromEntries(formats.map((format) => [format, join(dir, `${name}.${format}`)]));
@@ -420,11 +426,12 @@ export async function startApp({
     if (paths.png) contents.png = png;
     if (paths.pdf) {
       try {
-        contents.pdf = await printSvgToPdf(svg, { browser: pdfBrowser });
+        contents.pdf = await printSvgToPdf(pdfPages || svg, { browser: pdfBrowser });
       } catch (error) {
-        if (!pdfPng) throw httpError(`could not create PDF: ${error.message}`, 500);
-        const { width, height } = svgPixelSize(svg);
-        contents.pdf = pngToPdf(pdfPng, { widthPt: width * 0.75, heightPt: height * 0.75 });
+        const rasters = pdfPages ? pdfPngPages : pdfPng && [pdfPng];
+        if (!rasters) throw httpError(`could not create PDF: ${error.message}`, 500);
+        const { width, height } = svgPixelSize(pdfPages ? pdfPages[0] : svg);
+        contents.pdf = pngsToPdf(rasters, { widthPt: width * 0.75, heightPt: height * 0.75 });
         notes.push(error.code === 'no-browser'
           ? 'PDF contains a high-resolution image because no Chrome, Chromium, Edge, or Brave browser was found for vector output.'
           : `PDF contains a high-resolution image because vector printing failed: ${error.message}`);

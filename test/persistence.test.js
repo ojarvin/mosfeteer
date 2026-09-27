@@ -8,7 +8,7 @@ import { Circuit } from '../src/core/model.js';
 import {
   browseFolder, documentNameFromPath, fileRevision, documentPathFor, listDocuments, readDocumentFile, validDocumentName, writeFileAtomic,
 } from '../src/server/documents.js';
-import { decodePngToRgb, pngToPdf } from '../src/server/pdf-raster.js';
+import { decodePngToRgb, pngToPdf, pngsToPdf } from '../src/server/pdf-raster.js';
 import { findChromium } from '../src/server/browser.js';
 import { allowedHosts, checkRequest } from '../src/server/request-guard.js';
 import { createSettingsStore, defaultWorkspace } from '../src/server/settings.js';
@@ -293,4 +293,20 @@ test('raster PDF fallback decodes every PNG filter and writes a valid one-page P
     assert.equal(pdf.slice(Number(match[1]), Number(match[1]) + header.length), header);
   });
   assert.throws(() => decodePngToRgb(Buffer.from('nope')), /not a PNG/);
+});
+
+test('raster PDF fallback writes one page per image for a set of beats', () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==', 'base64');
+  const pdf = pngsToPdf([png, png, png], { widthPt: 300, heightPt: 150 }).toString('latin1');
+  assert.match(pdf, /\/Type \/Pages \/Kids \[3 0 R 6 0 R 9 0 R\] \/Count 3/);
+  assert.equal(pdf.match(/\/Type \/Page \//g).length, 3);
+  assert.equal(pdf.match(/\/MediaBox \[0 0 300 150\]/g).length, 3);
+  // Each page draws its own image, and the cross-reference table points at every object.
+  for (const id of [3, 6, 9]) assert.match(pdf, new RegExp(`${id} 0 obj\\n<< /Type /Page [^>]*/Im0 ${id + 2} 0 R >> >> /Contents ${id + 1} 0 R`));
+  const startxref = Number(pdf.match(/startxref\n(\d+)/)[1]);
+  Array.from(pdf.slice(startxref).matchAll(/(\d{10}) 00000 n /g)).forEach((match, index) => {
+    const header = `${index + 1} 0 obj`;
+    assert.equal(pdf.slice(Number(match[1]), Number(match[1]) + header.length), header);
+  });
+  assert.throws(() => pngsToPdf([], { widthPt: 1, heightPt: 1 }), /at least one page/);
 });

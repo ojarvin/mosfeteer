@@ -35841,8 +35841,9 @@ async function copyAsImage() {
 
 /**
  * `beat` is null for the whole drawing, a beat index for that beat, or 'all'
- * for every beat as numbered files (`name-1`, `name-2`, ...). Beats share the
- * whole drawing's frame, so the files line up when stepped through.
+ * for every beat: numbered SVG and PNG files (`name-1`, `name-2`, ...) and
+ * one PDF (`name.pdf`) with a page per beat. Beats share the whole drawing's
+ * frame, so the files and pages line up when stepped through.
  */
 async function runExport({ dir, name, formats, grid = false, dark = false, pngDpi = normalizePngDpi(null), selection = null, beat = null }) {
   const supportedFormats = persistence.supportedExportFormats || new Set(formats);
@@ -35851,11 +35852,14 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
     logLine(`Could not export: ${unsupported.join(', ')} export is unavailable in this mode.`, 'error');
     return;
   }
-  const jobs = beat === 'all'
-    ? editor.circuit.beats.map((_, index) => ({ name: `${name}-${index + 1}`, beat: index }))
-    : [{ name, beat }];
+  const allBeats = beat === 'all';
+  const onePdf = allBeats && formats.includes('pdf');
+  const jobs = allBeats
+    ? editor.circuit.beats.map((_, index) => ({ name: `${name}-${index + 1}`, beat: index, formats: formats.filter((format) => format !== 'pdf') }))
+    : [{ name, beat, formats }];
   try {
-    logLine(`Exporting ${jobs.flatMap((job) => formats.map((format) => `${job.name}.${format}`)).join(', ')}…`);
+    const files = [...jobs.flatMap((job) => job.formats.map((format) => `${job.name}.${format}`)), ...(onePdf ? [`${name}.pdf`] : [])];
+    logLine(`Exporting ${files.join(', ')}…`);
     // Reserve a native PNG save target while the submit event still carries
     // user activation. Rasterization below is asynchronous and may otherwise
     // make a later download click get blocked by the browser. A set of beat
@@ -35881,6 +35885,21 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
     const paths = [];
     const notes = new Set();
     let folder = dir;
+    const others = allBeats ? ' Replacing overwrites them, and any other beat files with this name.' : '';
+    // Write one request's files; false when the user keeps existing ones.
+    const write = async (request) => {
+      const result = await writeExportFiles(request, { prepared, overwrite, others });
+      if (!result) {
+        logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
+        return false;
+      }
+      overwrite = result.overwrite;
+      paths.push(...result.paths);
+      folder = result.dir;
+      for (const note of result.notes || []) notes.add(note);
+      return true;
+    };
+    const pages = [];
     for (const job of jobs) {
       const view = job.beat === null ? null : resolveBeat(editor.circuit, job.beat);
       const renderedSvg = renderDocument(drawing, {
@@ -35890,19 +35909,18 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
         ...(view ? { beat: { view } } : {}),
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
-      const request = { dir, name: job.name, formats, svg };
-      if (formats.includes('png')) request.png = await svgToPngDataUrl(svg, exportPngScale(pngDpi), { dpi: pngDpi });
-      if (formats.includes('pdf')) request.pdfPng = await svgToPngDataUrl(svg, PDF_FALLBACK_PNG_SCALE);
-      const others = jobs.length > 1 ? ' Replacing overwrites them, and any other beat files with this name.' : '';
-      const result = await writeExportFiles(request, { prepared, overwrite, others });
-      if (!result) {
-        logLine(paths.length ? `Export stopped after ${paths.length} file${paths.length === 1 ? '' : 's'}.` : 'Export canceled.');
-        return;
-      }
-      overwrite = result.overwrite;
-      paths.push(...result.paths);
-      folder = result.dir;
-      for (const note of result.notes || []) notes.add(note);
+      if (onePdf) pages.push(svg);
+      if (!job.formats.length) continue;
+      const request = { dir, name: job.name, formats: job.formats, svg };
+      if (job.formats.includes('png')) request.png = await svgToPngDataUrl(svg, exportPngScale(pngDpi), { dpi: pngDpi });
+      if (job.formats.includes('pdf')) request.pdfPng = await svgToPngDataUrl(svg, PDF_FALLBACK_PNG_SCALE);
+      if (!await write(request)) return;
+    }
+    // Every beat: one PDF, a page per beat, for presenting or handing out.
+    if (onePdf) {
+      const pdfPngPages = [];
+      for (const page of pages) pdfPngPages.push(await svgToPngDataUrl(page, PDF_FALLBACK_PNG_SCALE));
+      if (!await write({ dir, name, formats: ['pdf'], svg: pages[0], pdfPages: pages, pdfPngPages })) return;
     }
     logLine(`Exported ${paths.map((path) => path.split(/[\\/]/).pop()).join(', ')} to ${displayPath(folder)}.`);
     for (const note of notes) logLine(note);
@@ -35982,7 +36000,7 @@ function syncExportBeatChoice() {
   };
   option('', 'Whole drawing');
   editor.circuit.beats.forEach((_, index) => option(String(index), beatLabel(index)));
-  if (editor.circuit.beats.length) option('all', `Every beat (${editor.circuit.beats.length} numbered files)`);
+  if (editor.circuit.beats.length) option('all', `Every beat (a ${editor.circuit.beats.length}-page PDF; numbered SVG and PNG files)`);
   const active = activeBeatIndex();
   select.value = active === null ? '' : String(active);
   syncExportSelectionForBeat();

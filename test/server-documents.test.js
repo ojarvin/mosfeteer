@@ -272,7 +272,17 @@ serverTest('export writes the chosen formats into a folder and asks before repla
   assert.equal(fallback.status, 200);
   assert.match((await readFile(join(dir, 'fallback.pdf'))).toString('latin1'), /\/Subtype\s*\/Image/);
 
-  for (const invalid of [{ ...body, name: '../x' }, { ...body, formats: [] }, { ...body, dir: 'relative' }, { ...body, formats: ['png'], png: 'data:text/plain;base64,AA==' }]) {
+  // A set of beats: one PDF, a page per beat; without a browser, a page per raster.
+  const pages = [EXPORT_SVG, EXPORT_SVG.replace('R1', 'R2'), EXPORT_SVG.replace('R1', 'R3')];
+  const beats = await app.request('/api/export', { method: 'POST', body: { dir, name: 'beats', formats: ['pdf'], svg: pages[0], pdfPages: pages, pdfPngPages: pages.map(() => TINY_PNG) } });
+  assert.equal(beats.status, 200);
+  const beatsPdf = (await readFile(join(dir, 'beats.pdf'))).toString('latin1');
+  assert.match(beatsPdf, /\/Count 3/);
+  assert.equal(beatsPdf.match(/\/MediaBox \[0 0 150 75\]/g).length, 3);
+
+  for (const invalid of [{ ...body, name: '../x' }, { ...body, formats: [] }, { ...body, dir: 'relative' }, { ...body, formats: ['png'], png: 'data:text/plain;base64,AA==' },
+    { ...body, name: 'bad', formats: ['pdf'], pdfPages: [] }, { ...body, name: 'bad', formats: ['pdf'], pdfPages: ['<p>'] },
+    { ...body, name: 'bad', formats: ['pdf'], pdfPages: pages, pdfPngPages: [TINY_PNG] }]) {
     assert.equal((await app.request('/api/export', { method: 'POST', body: invalid })).status, 400);
   }
 });
@@ -293,6 +303,17 @@ serverTest('PDF export is vector output when a Chromium-family browser is instal
   const pdf = (await readFile(join(app.root, 'exports', 'vector.pdf'))).toString('latin1');
   assert.match(pdf, /^%PDF-/);
   assert.doesNotMatch(pdf, /\/Subtype\s*\/Image/, 'vector PDF does not embed the PNG');
+
+  // Every beat: one vector PDF with a page each.
+  const pages = [EXPORT_SVG, EXPORT_SVG.replace('R1', 'R2'), EXPORT_SVG.replace('R1', 'R3')];
+  const beats = await app.request('/api/export', {
+    method: 'POST',
+    body: { dir: join(app.root, 'exports'), name: 'beats', formats: ['pdf'], svg: pages[0], pdfPages: pages, pdfPngPages: pages.map(() => TINY_PNG) },
+  });
+  assert.equal(beats.status, 200, await beats.clone().text());
+  const beatsPdf = (await readFile(join(app.root, 'exports', 'beats.pdf'))).toString('latin1');
+  assert.match(beatsPdf, /\/Count 3\b/);
+  assert.doesNotMatch(beatsPdf, /\/Subtype\s*\/Image/);
 });
 
 serverTest('the server listens on loopback only, whatever HOST says', async (t) => {

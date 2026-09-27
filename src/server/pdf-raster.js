@@ -72,24 +72,39 @@ export function decodePngToRgb(png) {
   return { width, height, rgb };
 }
 
-/** Build a one-page PDF whose page is `widthPt` × `heightPt` and shows the PNG. */
-export function pngToPdf(png, { widthPt, heightPt }) {
-  const { width, height, rgb } = decodePngToRgb(png);
-  const image = deflateSync(rgb);
+/** One page, `widthPt` x `heightPt`, holding the PNG. */
+export function pngToPdf(png, size) {
+  return pngsToPdf([png], size);
+}
+
+/** One page per PNG, each `widthPt` x `heightPt`: a set of beats as one
+ *  document when no browser can print them as vectors. */
+export function pngsToPdf(pngs, { widthPt, heightPt }) {
+  if (!pngs.length) throw new Error('a PDF needs at least one page');
   const w = Number(widthPt.toFixed(3));
   const h = Number(heightPt.toFixed(3));
   const content = Buffer.from(`q ${w} 0 0 ${h} 0 0 cm /Im0 Do Q\n`, 'latin1');
+  // Objects 1 and 2 are the catalog and the page tree; each page then takes
+  // three: the page, its content stream, and its image.
+  const pageIds = pngs.map((_, index) => 3 + index * 3);
   const objects = [
     Buffer.from('<< /Type /Catalog /Pages 2 0 R >>', 'latin1'),
-    Buffer.from('<< /Type /Pages /Kids [3 0 R] /Count 1 >>', 'latin1'),
-    Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>`, 'latin1'),
-    Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`, 'latin1'), content, Buffer.from('\nendstream', 'latin1')]),
-    Buffer.concat([
-      Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${image.length} >>\nstream\n`, 'latin1'),
-      image,
-      Buffer.from('\nendstream', 'latin1'),
-    ]),
+    Buffer.from(`<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pngs.length} >>`, 'latin1'),
   ];
+  pngs.forEach((png, index) => {
+    const { width, height, rgb } = decodePngToRgb(png);
+    const image = deflateSync(rgb);
+    const id = pageIds[index];
+    objects.push(
+      Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /XObject << /Im0 ${id + 2} 0 R >> >> /Contents ${id + 1} 0 R >>`, 'latin1'),
+      Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`, 'latin1'), content, Buffer.from('\nendstream', 'latin1')]),
+      Buffer.concat([
+        Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${image.length} >>\nstream\n`, 'latin1'),
+        image,
+        Buffer.from('\nendstream', 'latin1'),
+      ]),
+    );
+  });
   const parts = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1')];
   let length = parts[0].length;
   const offsets = [];

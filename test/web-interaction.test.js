@@ -455,6 +455,15 @@ test('the Atlas exports the designs on the desk as one vector sheet through the 
   assert.match(ui, /JSON.stringify\(\{ \.\.\.saved, \.\.\.settings, formats, folders \}\)/);
 });
 
+test('exporting every beat writes one PDF with a page per beat beside numbered SVG and PNG files', () => {
+  const ui = readFileSync(new URL('../src/web/export-ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /const onePdf = allBeats && formats.includes\('pdf'\);/);
+  assert.match(ui, /formats: formats.filter\(\(format\) => format !== 'pdf'\)/);
+  assert.match(ui, /if \(onePdf\) pages.push\(svg\);\s*if \(!job.formats.length\) continue;/);
+  assert.match(ui, /write\(\{ dir, name, formats: \['pdf'\], svg: pages\[0\], pdfPages: pages, pdfPngPages \}\)/);
+  assert.match(ui, /option\('all', `Every beat \(a \$\{editor.circuit.beats.length\}-page PDF; numbered SVG and PNG files\)`\)/);
+});
+
 test('an explicit new document is protected from active-document auto-loads', () => {
   const main = editorSource();
   const start = main.indexOf('function startNewDocument(');
