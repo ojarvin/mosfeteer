@@ -405,6 +405,25 @@ test('Atlas creates a circuit through the unsaved-changes guard and preserves na
   assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\) && \(ev.key === 'Enter' \|\| ev.key === ' ' \|\| ev.key === 'Tab'\)\) return;/);
 });
 
+test('opening a design from the Atlas flies once and loads without costing the flight a frame', () => {
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  const open = atlas.slice(atlas.indexOf('async function openTile'), atlas.indexOf('/** What the search found'));
+  // The file is read at once but let in only when the flight lands, aimed at
+  // where the editor will fit it; the header keeps its name until then.
+  assert.match(open, /const loading = openDocumentPath\(entry\.path, \{ gate \}\);/);
+  assert.match(open, /fittedView\(\{\s*x: entry\.box\.x \+ pad/);
+  assert.match(open, /await animateView\(predicted, flightMs\(state\.view, predicted\), \{ camera: true \}\);\s*land\(\);/);
+  assert.match(atlas, /if \(!backEl \|\| state\.opening\) return;/);
+  // Reduced motion flies nowhere: the desk fades, both ways, laid out unseen first.
+  assert.match(open, /if \(reduced\) \{\s*\/\/ No flight/);
+  assert.match(atlas, /if \(reduced && !startup\) rootEl\.classList\.add\('preparing'\);\s*rootEl\.hidden = false;/);
+  const session = readFileSync(new URL('../src/web/document-session.js', import.meta.url), 'utf8');
+  assert.match(session, /if \(gate\) await gate;/);
+  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.atlas\.preparing \{\s*opacity: 0;/);
+  assert.match(css, /\.atlas \{ animation: none; transition: opacity 180ms ease-out; \}/);
+});
+
 test('the Atlas marks the open design apart from the pick and the hover', () => {
   const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
   const caption = atlas.slice(atlas.indexOf('function drawCaption'), atlas.indexOf('function fitText'));
@@ -656,7 +675,9 @@ test('startup chooses Atlas only for multiple circuits without an explicit file'
 
 test('fit reserves the axis the mode rail is thin along', () => {
   const main = editorSource();
-  const fit = functionSource('fitView', main);
+  // fitView fits through fittedView, the pure fit the Atlas aims its flights with.
+  assert.match(functionSource('fitView', main), /Object\.assign\(target, fittedView\(\{ x: x0, y: y0, w: x1 - x0, h: y1 - y0 \}\)\)/);
+  const fit = functionSource('fittedView', main);
   // On a narrow window the rail is a horizontal strip across the top. Reserving
   // its width there leaves a 1 px usable pane, so the fit clamps to the widest
   // allowed view and the drawing disappears -- F looks like it stopped working.
@@ -665,7 +686,7 @@ test('fit reserves the axis the mode rail is thin along', () => {
   assert.match(fit, /topPx = railRect && !railIsColumn/);
   // Whichever axis is reserved, the drawing centres in what is left of it.
   assert.match(fit, /fitH = Math\.max\(1, usableH - marginPx \* 2\)/);
-  assert.match(fit, /target\.y = \(y0 \+ y1\) \/ 2 - th \* usableCenterPy \/ paneH/);
+  assert.match(fit, /y: \(y0 \+ y1\) \/ 2 - th \* usableCenterPy \/ paneH/);
 });
 
 test('empty canvas fit starts at a 30-cell planning view', () => {

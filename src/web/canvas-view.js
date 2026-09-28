@@ -175,6 +175,21 @@ export function fitView({ animate = false } = {}) {
     x1 = 600;
     y1 = 600;
   }
+  Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
+  editor.viewPane = paneSize();
+  if (animate) {
+    animateViewTo(target);
+    return;
+  }
+  Object.assign(editor.view, target);
+  render();
+}
+
+/** The editor view that fits world rectangle `bounds` beside the tool rail,
+ *  as F does. Pure: the Atlas uses it to aim at where a design will land. */
+export function fittedView({ x: x0, y: y0, w: bw, h: bh }) {
+  const x1 = x0 + bw;
+  const y1 = y0 + bh;
   const pane = document.querySelector('.canvas-pane');
   const rail = document.querySelector('.mode-toolbar');
   const paneRect = pane?.getBoundingClientRect();
@@ -215,17 +230,12 @@ export function fitView({ animate = false } = {}) {
     tw = maxW;
     th = tw / aspect;
   }
-  target.w = tw;
-  target.h = th;
-  target.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
-  target.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
-  editor.viewPane = paneSize();
-  if (animate) {
-    animateViewTo(target);
-    return;
-  }
-  Object.assign(editor.view, target);
-  render();
+  return {
+    x: (x0 + x1) / 2 - tw * usableCenterPx / paneW,
+    y: (y0 + y1) / 2 - th * usableCenterPy / paneH,
+    w: tw,
+    h: th,
+  };
 }
 
 /** Re-frame the committed drawing for the current view: root size, background,

@@ -223,6 +223,30 @@ export function easeOutCubic(t) {
 }
 
 /** Interpolate two view rectangles. */
+/** Ease in and out: a camera move that starts and lands gently. */
+export function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
+/**
+ * A view between `from` and `to` at `t` (0..1) as one camera move: the
+ * scale changes geometrically (each moment zooms by the same factor) about
+ * the world point both views show at the same place on screen, so a zoom into
+ * a design heads straight for it instead of drifting. Views of one size pan.
+ */
+export function zoomView(from, to, t) {
+  const k = easeInOutCubic(t);
+  const ratio = to.w / from.w;
+  if (Math.abs(ratio - 1) < 1e-6) {
+    return { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k, w: to.w, h: to.h };
+  }
+  const f = ratio ** k;
+  // The fixed point: from and to put it at the same fraction of the pane.
+  const fx = (to.x * from.w - from.x * to.w) / (from.w - to.w);
+  const fy = (to.y * from.h - from.y * to.h) / (from.h - to.h);
+  return { x: fx + (from.x - fx) * f, y: fy + (from.y - fy) * f, w: from.w * f, h: from.h * f };
+}
+
 export function lerpView(from, to, t) {
   const k = easeOutCubic(t);
   return {

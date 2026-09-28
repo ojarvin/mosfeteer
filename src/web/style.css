@@ -4554,8 +4554,13 @@ button.off {
 
 .atlas.leaving {
   opacity: 0;
-  transition: opacity 160ms ease-in;
+  transition: opacity 180ms ease-in;
   pointer-events: none;
+}
+
+/* Laid out unseen before a reduced-motion fade in (atlas.js openAtlas). */
+.atlas.preparing {
+  opacity: 0;
 }
 
 .atlas.panning {
@@ -4681,8 +4686,9 @@ button.off {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .atlas { animation: none; }
-  .atlas.leaving { transition: none; }
+  /* No zooms: the Atlas and the editor cross-fade, which is not motion. */
+  .atlas { animation: none; transition: opacity 180ms ease-out; }
+  .atlas.leaving { transition: opacity 180ms ease-in; }
 }
 
 .presenter {

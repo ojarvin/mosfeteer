@@ -28,6 +28,13 @@ button names it ("Back to amp", or "(not in this workspace)" for a new or
 unsaved drawing). The picked design, which Enter opens, has a bracket at each
 corner; a hover draws a faint frame. Both take in the caption.
 
+Opening a design flies the camera straight into it -- one zoom about the
+point that stays put, timed by how far it zooms -- to exactly where the
+editor will fit it. The file is read during the flight and let in when it
+lands, so loading never costs the zoom a frame; then the desk fades into the
+editor. With reduced motion nothing zooms: the Atlas and the editor
+cross-fade, and the desk is laid out unseen before it fades in.
+
 **Folder…** switches the workspace to another folder, and the desk lays out
 its designs in place. In browser-only mode, **Open…** also adds document
 files from any folder to the desk without opening one. Dropping files or a

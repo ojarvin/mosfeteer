@@ -29886,9 +29886,10 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
-let wheelIntent, lerpView; __bind(() => { ({ wheelIntent, lerpView } = __require("src/web/gestures.js")); });
+let wheelIntent, lerpView, zoomView; __bind(() => { ({ wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let addDocumentFiles, chooseWorkspaceFolder, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ addDocumentFiles, chooseWorkspaceFolder, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
+let addDocumentFiles, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ addDocumentFiles, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
+let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
 let toggleTheme; __bind(() => { ({ toggleTheme } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
@@ -29909,6 +29910,7 @@ let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption }
  * leaving zoom between the editor's view and the design's tile, which works
  * because a tile is the drawing at its real size.
  */
+
 
 
 
@@ -29963,6 +29965,8 @@ const REVEAL_MS = 350;
 /** A wheel zoom counts as motion until the wheel has been still this long. */
 const WHEEL_SETTLE_MS = 150;
 const OPEN_MS = 450;
+/** The desk's fade into the editor (style.css .atlas.leaving). */
+const LEAVE_MS = 180;
 /** A search packs the designs it found together once typing pauses this
  *  long; each keystroke only marks and fades. */
 const ARRANGE_DELAY_MS = 400;
@@ -30014,9 +30018,8 @@ function clampView(view) {
 
 /** The Atlas view that shows a design's tile exactly where the editor
  *  canvas shows the design, so switching between them does not move it. */
-function editorEquivalentView(tile, entry) {
+function editorEquivalentView(tile, entry, view = editor.view) {
   const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
-  const view = editor.view;
   if (!pane || !view?.w) return null;
   const k = pane.width / view.w;
   const root = rootEl.getBoundingClientRect();
@@ -30298,7 +30301,7 @@ function colors() {
 /** The header's way back names the design Esc returns to, and says so when
  *  that design is not on the desk (a new drawing, or one from elsewhere). */
 function syncBackButton() {
-  if (!backEl) return;
+  if (!backEl || state.opening) return;
   const name = editor.currentCircuitName || 'Untitled';
   const onDesk = state.tiles.some((tile) => state.entries.get(tile.id)?.current);
   const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
@@ -30859,7 +30862,10 @@ function setView(view) {
   requestDraw();
 }
 
-function animateView(target, duration = 320) {
+/** Animate the view to `target`. `camera` flies there as one zoom
+ *  (gestures.js zoomView) rather than easing each edge; `retargetView`
+ *  can move the destination while it flies. */
+function animateView(target, duration = 320, { camera = false } = {}) {
   if (state.animation) cancelAnimationFrame(state.animation.frame);
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced || duration <= 0) {
@@ -30868,21 +30874,36 @@ function animateView(target, duration = 320) {
   }
   const from = { ...state.view };
   const start = performance.now();
+  const blend = camera ? zoomView : lerpView;
+  const animation = { target, frame: 0 };
   return new Promise((resolve) => {
     const step = (now) => {
       if (!state) { resolve(); return; }
       const t = Math.min(1, (now - start) / duration);
-      state.view = lerpView(from, target, t);
+      state.view = blend(from, animation.target, t);
       draw();
-      if (t < 1) state.animation = { frame: requestAnimationFrame(step) };
+      if (t < 1) animation.frame = requestAnimationFrame(step);
       else {
         state.animation = null;
         draw(); // settled: the live drawings return
         resolve();
       }
     };
-    state.animation = { frame: requestAnimationFrame(step) };
+    animation.frame = requestAnimationFrame(step);
+    state.animation = animation;
   });
+}
+
+/** How long a flight between two views takes: longer the more it zooms,
+ *  so a far zoom does not rush and a short hop does not dawdle. */
+function flightMs(from, to) {
+  const octaves = Math.abs(Math.log2(to.w / from.w));
+  return Math.round(Math.min(720, Math.max(380, 380 + 85 * octaves)));
+}
+
+/** Move a running animation's destination, keeping its pace. */
+function retargetView(target) {
+  if (state?.animation?.target) state.animation.target = target;
 }
 
 function stopAnimation() {
@@ -30991,9 +31012,33 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
   }
+  // With reduced motion there is no zoom out of the design: the desk is laid
+  // out unseen, then fades in over the editor (style.css .atlas.preparing).
+  // Startup keeps its own cover and reveal. The class goes on before the
+  // desk shows: focusing it restyles at once, and a visible first style
+  // would fade out and back in.
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced && !startup) rootEl.classList.add('preparing');
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
+  if (reduced && !startup) {
+    try {
+      await openDesk(generation, source, false, false);
+      // The designs appear together, not one by one as they decode, and the
+      // desk's own fade stands in for the others' reveal around the open one.
+      if (state?.generation === generation && state.tiles.length) await warmSmallImages(generation, 400);
+      if (state?.generation === generation) state.revealAt = 0;
+    } finally {
+      requestAnimationFrame(() => rootEl.classList.remove('preparing'));
+    }
+    return;
+  }
+  await openDesk(generation, source, animate, startup);
+}
+
+/** Lay out the desk just opened and bring it into view. */
+async function openDesk(generation, source, animate, startup) {
   if (source === 'workspace' && animate && !startup) showOpenDesign();
   let ready = false;
   try {
@@ -31069,8 +31114,10 @@ async function closeAtlas({ animate = true } = {}) {
   if (!state) return;
   clearTimeout(state.arrangeTimer);
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
-  const back = animate && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
-  if (back) await animateView(back, OPEN_MS);
+  // With reduced motion the desk just fades from where it is.
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const back = animate && !reduced && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
+  if (back) await animateView(back, flightMs(state.view, back), { camera: true });
   finishClose();
 }
 
@@ -31083,14 +31130,13 @@ function finishClose() {
   overlayEl.replaceChildren();
   rootEl.classList.add('leaving');
   // A short fade covers what differs between a tile and the live canvas
-  // (the grid, pin dots): the drawing itself stays where it is.
-  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // (the grid, pin dots): the drawing itself stays where it is. With
+  // reduced motion it is the whole transition, so it runs there too.
   const hide = () => {
     rootEl.hidden = true;
     rootEl.classList.remove('leaving');
   };
-  if (still) hide();
-  else setTimeout(hide, 160);
+  setTimeout(hide, LEAVE_MS);
   canvasEl.focus({ preventScroll: true });
 }
 
@@ -31119,18 +31165,52 @@ async function openTile(tile) {
     selectHits(hits);
     return;
   }
-  const { w, h } = paneSize();
-  await animateView(viewFitting(tile, w, h, 0.1), OPEN_MS);
-  const generation = state?.generation;
-  const opened = await openDocumentPath(entry.path);
-  if (!state || state.generation !== generation) return;
+  if (state.opening) return;
+  const generation = state.generation;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // The header keeps naming the design it came from until the Atlas is gone.
+  state.opening = true;
+  const landed = () => state?.generation === generation;
+  let opened;
+  if (reduced) {
+    // No flight: the design opens behind the desk, and the desk fades away.
+    opened = await openDocumentPath(entry.path);
+  } else if (hasUnsavedChanges()) {
+    // The discard prompt comes first; the flight follows the answer.
+    opened = await openDocumentPath(entry.path);
+    if (opened && landed()) {
+      const exact = editorEquivalentView(tile, entry);
+      if (exact) await animateView(exact, flightMs(state.view, exact), { camera: true });
+    }
+  } else {
+    // Read the file while flying straight to where the editor will fit the
+    // design -- the tile is that drawing with one cell of export padding --
+    // and let it in only once the flight lands, so loading never costs the
+    // zoom a frame. A page guide can widen the fit: then the last stretch
+    // glides to the real place.
+    let land;
+    const gate = new Promise((resolve) => { land = resolve; });
+    const loading = openDocumentPath(entry.path, { gate });
+    const pad = DRAWING_EXPORT_OPTIONS.padding;
+    const predicted = editorEquivalentView(tile, entry, fittedView({
+      x: entry.box.x + pad, y: entry.box.y + pad, w: entry.box.w - 2 * pad, h: entry.box.h - 2 * pad,
+    }));
+    if (predicted) await animateView(predicted, flightMs(state.view, predicted), { camera: true });
+    land();
+    opened = await loading;
+    if (opened && landed()) {
+      const exact = editorEquivalentView(tile, entry);
+      if (exact && predicted && Math.abs(exact.w - predicted.w) + Math.abs(exact.x - predicted.x) + Math.abs(exact.y - predicted.y) > 0.5) {
+        await animateView(exact, 200, { camera: true });
+      }
+    }
+  }
+  if (!landed()) return;
+  state.opening = false;
   if (!opened) {
     requestDraw();
     return;
   }
-  // The editor fitted the design; settle the tile exactly there, then go.
-  const exact = editorEquivalentView(tile, entry);
-  if (exact) await animateView(exact, 220);
   finishClose();
   selectHits(hits);
 }
@@ -32401,6 +32481,7 @@ __exports.prefersReducedMotion = prefersReducedMotion;
 __exports.cancelViewAnimation = cancelViewAnimation;
 __exports.animateViewTo = animateViewTo;
 __exports.fitView = fitView;
+__exports.fittedView = fittedView;
 __exports.applyCanvasViewport = applyCanvasViewport;
 __exports.clientToWorld = clientToWorld;
 __exports.worldToClient = worldToClient;
@@ -32591,6 +32672,21 @@ function fitView({ animate = false } = {}) {
     x1 = 600;
     y1 = 600;
   }
+  Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
+  editor.viewPane = paneSize();
+  if (animate) {
+    animateViewTo(target);
+    return;
+  }
+  Object.assign(editor.view, target);
+  render();
+}
+
+/** The editor view that fits world rectangle `bounds` beside the tool rail,
+ *  as F does. Pure: the Atlas uses it to aim at where a design will land. */
+function fittedView({ x: x0, y: y0, w: bw, h: bh }) {
+  const x1 = x0 + bw;
+  const y1 = y0 + bh;
   const pane = document.querySelector('.canvas-pane');
   const rail = document.querySelector('.mode-toolbar');
   const paneRect = pane?.getBoundingClientRect();
@@ -32631,17 +32727,12 @@ function fitView({ animate = false } = {}) {
     tw = maxW;
     th = tw / aspect;
   }
-  target.w = tw;
-  target.h = th;
-  target.x = (x0 + x1) / 2 - tw * usableCenterPx / paneW;
-  target.y = (y0 + y1) / 2 - th * usableCenterPy / paneH;
-  editor.viewPane = paneSize();
-  if (animate) {
-    animateViewTo(target);
-    return;
-  }
-  Object.assign(editor.view, target);
-  render();
+  return {
+    x: (x0 + x1) / 2 - tw * usableCenterPx / paneW,
+    y: (y0 + y1) / 2 - th * usableCenterPy / paneH,
+    w: tw,
+    h: th,
+  };
 }
 
 /** Re-frame the committed drawing for the current view: root size, background,
@@ -35411,6 +35502,7 @@ __exports.displayPath = displayPath;
 __exports.onDocumentListChange = onDocumentListChange;
 __exports.restoreStartup = restoreStartup;
 __exports.saveCircuit = saveCircuit;
+__exports.hasUnsavedChanges = hasUnsavedChanges;
 __exports.requestDocumentAction = requestDocumentAction;
 __exports.openDocumentPath = openDocumentPath;
 __exports.openDocumentDialog = openDocumentDialog;
@@ -35816,10 +35908,12 @@ async function saveCircuit({ saveAs = false } = {}) {
 
 async function loadCircuit(path, quiet = false, options = {}) {
   if (!path) return false;
-  const { syncGeneration: expectedGeneration, ...loadOptions } = options;
+  const { syncGeneration: expectedGeneration, gate, ...loadOptions } = options;
   try {
     // Only an interactive open may ask the browser for file access again.
     const data = await (loadOptions.open ? withFileAccess(() => persistence.load(path, loadOptions)) : persistence.load(path, loadOptions));
+    // The Atlas fetches while it zooms, and lets the document in once it lands.
+    if (gate) await gate;
     if (expectedGeneration !== undefined && (editor.saveInFlight || expectedGeneration !== editor.syncGeneration)) return false;
     if (data.notModified) {
       if (data.revision) editor.lastSeenRevision = data.revision;
@@ -35913,11 +36007,12 @@ function requestCircuitLoad(path) {
 }
 
 /** Open a document by path, after the unsaved-changes check. Resolves true
- *  once it is open, false when the load fails or the user keeps editing. */
-function openDocumentPath(path) {
+ *  once it is open, false when the load fails or the user keeps editing.
+ *  With `gate`, the file is read at once but applied only once it settles. */
+function openDocumentPath(path, { gate = null } = {}) {
   return new Promise((resolve) => {
     requestDocumentAction(`Opening "${documentNameForPath(path)}"`,
-      async () => resolve(await loadCircuit(path, false, { open: true })),
+      async () => resolve(await loadCircuit(path, false, { open: true, gate })),
       () => resolve(false));
   });
 }
@@ -37906,6 +38001,8 @@ __exports.spliceCandidate = spliceCandidate;
 __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
 __exports.easeOutCubic = easeOutCubic;
+__exports.easeInOutCubic = easeInOutCubic;
+__exports.zoomView = zoomView;
 __exports.lerpView = lerpView;
 __exports.pinJoinPoints = pinJoinPoints;
 let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
@@ -38135,6 +38232,30 @@ function easeOutCubic(t) {
 }
 
 /** Interpolate two view rectangles. */
+/** Ease in and out: a camera move that starts and lands gently. */
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
+/**
+ * A view between `from` and `to` at `t` (0..1) as one camera move: the
+ * scale changes geometrically (each moment zooms by the same factor) about
+ * the world point both views show at the same place on screen, so a zoom into
+ * a design heads straight for it instead of drifting. Views of one size pan.
+ */
+function zoomView(from, to, t) {
+  const k = easeInOutCubic(t);
+  const ratio = to.w / from.w;
+  if (Math.abs(ratio - 1) < 1e-6) {
+    return { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k, w: to.w, h: to.h };
+  }
+  const f = ratio ** k;
+  // The fixed point: from and to put it at the same fraction of the pane.
+  const fx = (to.x * from.w - from.x * to.w) / (from.w - to.w);
+  const fy = (to.y * from.h - from.y * to.h) / (from.h - to.h);
+  return { x: fx + (from.x - fx) * f, y: fy + (from.y - fy) * f, w: from.w * f, h: from.h * f };
+}
+
 function lerpView(from, to, t) {
   const k = easeOutCubic(t);
   return {

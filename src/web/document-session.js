@@ -378,10 +378,12 @@ export async function saveCircuit({ saveAs = false } = {}) {
 
 async function loadCircuit(path, quiet = false, options = {}) {
   if (!path) return false;
-  const { syncGeneration: expectedGeneration, ...loadOptions } = options;
+  const { syncGeneration: expectedGeneration, gate, ...loadOptions } = options;
   try {
     // Only an interactive open may ask the browser for file access again.
     const data = await (loadOptions.open ? withFileAccess(() => persistence.load(path, loadOptions)) : persistence.load(path, loadOptions));
+    // The Atlas fetches while it zooms, and lets the document in once it lands.
+    if (gate) await gate;
     if (expectedGeneration !== undefined && (editor.saveInFlight || expectedGeneration !== editor.syncGeneration)) return false;
     if (data.notModified) {
       if (data.revision) editor.lastSeenRevision = data.revision;
@@ -448,7 +450,7 @@ function openUnsavedDocument(state, name) {
   logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
 }
 
-function hasUnsavedChanges() {
+export function hasUnsavedChanges() {
   return snapshot() !== editor.lastSavedSnapshot ||
     (!editor.currentDocumentPath && !!validDocumentName(circuitNameEl.value));
 }
@@ -475,11 +477,12 @@ function requestCircuitLoad(path) {
 }
 
 /** Open a document by path, after the unsaved-changes check. Resolves true
- *  once it is open, false when the load fails or the user keeps editing. */
-export function openDocumentPath(path) {
+ *  once it is open, false when the load fails or the user keeps editing.
+ *  With `gate`, the file is read at once but applied only once it settles. */
+export function openDocumentPath(path, { gate = null } = {}) {
   return new Promise((resolve) => {
     requestDocumentAction(`Opening "${documentNameForPath(path)}"`,
-      async () => resolve(await loadCircuit(path, false, { open: true })),
+      async () => resolve(await loadCircuit(path, false, { open: true, gate })),
       () => resolve(false));
   });
 }

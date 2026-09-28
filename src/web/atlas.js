@@ -20,11 +20,12 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
-import { wheelIntent, lerpView } from './gestures.js';
+import { wheelIntent, lerpView, zoomView } from './gestures.js';
 import { editor } from './editor-state.js';
 import {
-  addDocumentFiles, chooseWorkspaceFolder, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument,
+  addDocumentFiles, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument,
 } from './document-session.js';
+import { fittedView } from './canvas-view.js';
 import { toggleTheme } from './toolbar-ui.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
@@ -66,6 +67,8 @@ const REVEAL_MS = 350;
 /** A wheel zoom counts as motion until the wheel has been still this long. */
 const WHEEL_SETTLE_MS = 150;
 const OPEN_MS = 450;
+/** The desk's fade into the editor (style.css .atlas.leaving). */
+const LEAVE_MS = 180;
 /** A search packs the designs it found together once typing pauses this
  *  long; each keystroke only marks and fades. */
 const ARRANGE_DELAY_MS = 400;
@@ -117,9 +120,8 @@ function clampView(view) {
 
 /** The Atlas view that shows a design's tile exactly where the editor
  *  canvas shows the design, so switching between them does not move it. */
-function editorEquivalentView(tile, entry) {
+function editorEquivalentView(tile, entry, view = editor.view) {
   const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
-  const view = editor.view;
   if (!pane || !view?.w) return null;
   const k = pane.width / view.w;
   const root = rootEl.getBoundingClientRect();
@@ -401,7 +403,7 @@ function colors() {
 /** The header's way back names the design Esc returns to, and says so when
  *  that design is not on the desk (a new drawing, or one from elsewhere). */
 function syncBackButton() {
-  if (!backEl) return;
+  if (!backEl || state.opening) return;
   const name = editor.currentCircuitName || 'Untitled';
   const onDesk = state.tiles.some((tile) => state.entries.get(tile.id)?.current);
   const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
@@ -962,7 +964,10 @@ function setView(view) {
   requestDraw();
 }
 
-function animateView(target, duration = 320) {
+/** Animate the view to `target`. `camera` flies there as one zoom
+ *  (gestures.js zoomView) rather than easing each edge; `retargetView`
+ *  can move the destination while it flies. */
+function animateView(target, duration = 320, { camera = false } = {}) {
   if (state.animation) cancelAnimationFrame(state.animation.frame);
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced || duration <= 0) {
@@ -971,21 +976,36 @@ function animateView(target, duration = 320) {
   }
   const from = { ...state.view };
   const start = performance.now();
+  const blend = camera ? zoomView : lerpView;
+  const animation = { target, frame: 0 };
   return new Promise((resolve) => {
     const step = (now) => {
       if (!state) { resolve(); return; }
       const t = Math.min(1, (now - start) / duration);
-      state.view = lerpView(from, target, t);
+      state.view = blend(from, animation.target, t);
       draw();
-      if (t < 1) state.animation = { frame: requestAnimationFrame(step) };
+      if (t < 1) animation.frame = requestAnimationFrame(step);
       else {
         state.animation = null;
         draw(); // settled: the live drawings return
         resolve();
       }
     };
-    state.animation = { frame: requestAnimationFrame(step) };
+    animation.frame = requestAnimationFrame(step);
+    state.animation = animation;
   });
+}
+
+/** How long a flight between two views takes: longer the more it zooms,
+ *  so a far zoom does not rush and a short hop does not dawdle. */
+function flightMs(from, to) {
+  const octaves = Math.abs(Math.log2(to.w / from.w));
+  return Math.round(Math.min(720, Math.max(380, 380 + 85 * octaves)));
+}
+
+/** Move a running animation's destination, keeping its pace. */
+function retargetView(target) {
+  if (state?.animation?.target) state.animation.target = target;
 }
 
 function stopAnimation() {
@@ -1094,9 +1114,33 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
   }
+  // With reduced motion there is no zoom out of the design: the desk is laid
+  // out unseen, then fades in over the editor (style.css .atlas.preparing).
+  // Startup keeps its own cover and reveal. The class goes on before the
+  // desk shows: focusing it restyles at once, and a visible first style
+  // would fade out and back in.
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced && !startup) rootEl.classList.add('preparing');
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
+  if (reduced && !startup) {
+    try {
+      await openDesk(generation, source, false, false);
+      // The designs appear together, not one by one as they decode, and the
+      // desk's own fade stands in for the others' reveal around the open one.
+      if (state?.generation === generation && state.tiles.length) await warmSmallImages(generation, 400);
+      if (state?.generation === generation) state.revealAt = 0;
+    } finally {
+      requestAnimationFrame(() => rootEl.classList.remove('preparing'));
+    }
+    return;
+  }
+  await openDesk(generation, source, animate, startup);
+}
+
+/** Lay out the desk just opened and bring it into view. */
+async function openDesk(generation, source, animate, startup) {
   if (source === 'workspace' && animate && !startup) showOpenDesign();
   let ready = false;
   try {
@@ -1172,8 +1216,10 @@ export async function closeAtlas({ animate = true } = {}) {
   if (!state) return;
   clearTimeout(state.arrangeTimer);
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
-  const back = animate && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
-  if (back) await animateView(back, OPEN_MS);
+  // With reduced motion the desk just fades from where it is.
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const back = animate && !reduced && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
+  if (back) await animateView(back, flightMs(state.view, back), { camera: true });
   finishClose();
 }
 
@@ -1186,14 +1232,13 @@ function finishClose() {
   overlayEl.replaceChildren();
   rootEl.classList.add('leaving');
   // A short fade covers what differs between a tile and the live canvas
-  // (the grid, pin dots): the drawing itself stays where it is.
-  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // (the grid, pin dots): the drawing itself stays where it is. With
+  // reduced motion it is the whole transition, so it runs there too.
   const hide = () => {
     rootEl.hidden = true;
     rootEl.classList.remove('leaving');
   };
-  if (still) hide();
-  else setTimeout(hide, 160);
+  setTimeout(hide, LEAVE_MS);
   canvasEl.focus({ preventScroll: true });
 }
 
@@ -1222,18 +1267,52 @@ async function openTile(tile) {
     selectHits(hits);
     return;
   }
-  const { w, h } = paneSize();
-  await animateView(viewFitting(tile, w, h, 0.1), OPEN_MS);
-  const generation = state?.generation;
-  const opened = await openDocumentPath(entry.path);
-  if (!state || state.generation !== generation) return;
+  if (state.opening) return;
+  const generation = state.generation;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // The header keeps naming the design it came from until the Atlas is gone.
+  state.opening = true;
+  const landed = () => state?.generation === generation;
+  let opened;
+  if (reduced) {
+    // No flight: the design opens behind the desk, and the desk fades away.
+    opened = await openDocumentPath(entry.path);
+  } else if (hasUnsavedChanges()) {
+    // The discard prompt comes first; the flight follows the answer.
+    opened = await openDocumentPath(entry.path);
+    if (opened && landed()) {
+      const exact = editorEquivalentView(tile, entry);
+      if (exact) await animateView(exact, flightMs(state.view, exact), { camera: true });
+    }
+  } else {
+    // Read the file while flying straight to where the editor will fit the
+    // design -- the tile is that drawing with one cell of export padding --
+    // and let it in only once the flight lands, so loading never costs the
+    // zoom a frame. A page guide can widen the fit: then the last stretch
+    // glides to the real place.
+    let land;
+    const gate = new Promise((resolve) => { land = resolve; });
+    const loading = openDocumentPath(entry.path, { gate });
+    const pad = DRAWING_EXPORT_OPTIONS.padding;
+    const predicted = editorEquivalentView(tile, entry, fittedView({
+      x: entry.box.x + pad, y: entry.box.y + pad, w: entry.box.w - 2 * pad, h: entry.box.h - 2 * pad,
+    }));
+    if (predicted) await animateView(predicted, flightMs(state.view, predicted), { camera: true });
+    land();
+    opened = await loading;
+    if (opened && landed()) {
+      const exact = editorEquivalentView(tile, entry);
+      if (exact && predicted && Math.abs(exact.w - predicted.w) + Math.abs(exact.x - predicted.x) + Math.abs(exact.y - predicted.y) > 0.5) {
+        await animateView(exact, 200, { camera: true });
+      }
+    }
+  }
+  if (!landed()) return;
+  state.opening = false;
   if (!opened) {
     requestDraw();
     return;
   }
-  // The editor fitted the design; settle the tile exactly there, then go.
-  const exact = editorEquivalentView(tile, entry);
-  if (exact) await animateView(exact, 220);
   finishClose();
   selectHits(hits);
 }
