@@ -195,7 +195,7 @@ mirror flag to override that default.
 | vcm | `vcm` (top edge) | x:-40..40, y:0..80 |
 | supply | `p` (bottom edge) | x:-40..40, y:-80..0 |
 | input / output / inputoutput | `p` (circuit side) | boxed port, id label on circuit-outer side |
-| adc / dac | ADC: `ain` in, `d` out; DAC: `d` in, `aout` out | ADC point-to-flat left-to-right; DAC flat-to-point left-to-right; one diagonal slash marks the digital bus; centered `ADC` / `DAC` label |
+| adc / dac | ADC: `ain` in, `d` out; DAC: `d` in, `aout` out | ADC point-to-flat left-to-right; DAC flat-to-point left-to-right; no bus slash of its own (a bus-named net on the digital pin draws it); centered `ADC` / `DAC` label |
 | `*2_gate` / `*3_gate` logic families | two-input gates use `a`, `b`, `y`; three-input variants use `a`, `b`, `c`, `y` in top-to-bottom order | `*3_gate` keeps the corresponding `*2_gate` body and adds the centered input lead |
 | `tristate_inverter` / `tristate_buffer` | `a` / `y` plus bottom `en` input | Exact inverter/buffer body copy with a vertical enable lead at x=0 |
 | `mux2` | `a`, `b` inputs, `y` output, bottom `s` select | 80-unit tapered body, six grid squares tall on the input side and four on the output side; upright `0`/`1` row labels |

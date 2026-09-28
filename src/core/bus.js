@@ -1,8 +1,9 @@
 /**
  * Multi-bit nets: a net named with a bit range, `D[7:0]` or `D<7:0>`, is a
  * bus. It connects like any net (by its whole name); the drawing marks it
- * with the short slash across the wire that the ADC and DAC draw on their
- * digital leads.
+ * with a short slash across the wire. The mark belongs to the net, not to the
+ * parts on it (the ADC and DAC draw none of their own), and it is drawn in
+ * world space: a `/` whichever way the wire runs or the parts are turned.
  *
  * First iteration of the mark's placement: one slash per drawn branch, at
  * the middle of its longest straight segment, moved a cell along when a net
@@ -19,8 +20,8 @@ export function busWidth(name) {
   return match && match[1] ? Math.abs(Number(match[2]) - Number(match[3])) + 1 : 0;
 }
 
-/** Half extents of the slash: one grid cell tall across the wire, with the
- *  converters' slant (3 along the wire for every 4 across). */
+/** Half extents of the slash: one grid cell across the wire, leaning 3
+ *  along it for every 4 across. */
 const SLASH = { along: 15, across: 20 };
 
 /**

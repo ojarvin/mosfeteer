@@ -299,14 +299,15 @@ test('ADC and DAC symbols expose single-bit-bus terminals and centered labels', 
     { name: 'd', x: -200, y: 0 },
     { name: 'aout', x: 200, y: 0 },
   ]);
-  for (const [type, text, body, mark] of [
-    ['adc', 'ADC', 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z', 'M 154 -8 L 166 8'],
-    ['dac', 'DAC', 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z', 'M -166 8 L -154 -8'],
+  for (const [type, text, body] of [
+    ['adc', 'ADC', 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z'],
+    ['dac', 'DAC', 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z'],
   ]) {
     const def = getSymbol(type);
     assert.deepEqual(def.bbox, { x: -200, y: -120, w: 400, h: 240 });
-    assert.equal(def.graphics.at(-3).d, body);
-    assert.equal(def.graphics.at(-2).d, mark);
+    assert.equal(def.graphics.at(-2).d, body);
+    // No bus slash of its own: a bus-named net on the digital pin draws it.
+    assert.equal(def.graphics.length, 4);
     assert.deepEqual(def.graphics.at(-1), { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true });
   }
 });

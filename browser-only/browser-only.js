@@ -11200,8 +11200,9 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 /**
  * Multi-bit nets: a net named with a bit range, `D[7:0]` or `D<7:0>`, is a
  * bus. It connects like any net (by its whole name); the drawing marks it
- * with the short slash across the wire that the ADC and DAC draw on their
- * digital leads.
+ * with a short slash across the wire. The mark belongs to the net, not to the
+ * parts on it (the ADC and DAC draw none of their own), and it is drawn in
+ * world space: a `/` whichever way the wire runs or the parts are turned.
  *
  * First iteration of the mark's placement: one slash per drawn branch, at
  * the middle of its longest straight segment, moved a cell along when a net
@@ -11218,8 +11219,8 @@ function busWidth(name) {
   return match && match[1] ? Math.abs(Number(match[2]) - Number(match[3])) + 1 : 0;
 }
 
-/** Half extents of the slash: one grid cell tall across the wire, with the
- *  converters' slant (3 along the wire for every 4 across). */
+/** Half extents of the slash: one grid cell across the wire, leaning 3
+ *  along it for every 4 across. */
 const SLASH = { along: 15, across: 20 };
 
 /**
@@ -12699,7 +12700,7 @@ let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/compone
 const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
 const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
 
-function converter(type, description, text, terminals, body, signalMark) {
+function converter(type, description, text, terminals, body) {
   return defineSymbol({
     type,
     description,
@@ -12713,7 +12714,6 @@ function converter(type, description, text, terminals, body, signalMark) {
         style: 'symbol',
       })),
       { kind: 'path', d: body, style: 'emph' },
-      { kind: 'path', d: signalMark, style: 'symbol' },
       { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
     ],
     textPos: null,
@@ -12730,7 +12730,6 @@ const adc = converter(
   [{ name: 'ain', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
     { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
   ADC_BODY,
-  'M 154 -8 L 166 8',
 );
 
 const dac = converter(
@@ -12740,7 +12739,6 @@ const dac = converter(
   [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
     { name: 'aout', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
   DAC_BODY,
-  'M -166 8 L -154 -8',
 );
 
 __exports.adc = adc;

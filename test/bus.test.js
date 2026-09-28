@@ -21,6 +21,8 @@ test('a bus slash sits mid-way along each branch\'s longest straight run, clear 
   // A diagonal keeps its own look; a slash is one cell tall.
   assert.deepEqual(busMarkPoints([[{ x: 0, y: 0 }, { x: 80, y: 80 }]]), []);
   assert.equal(busMarkD({ x: 100, y: 0, horizontal: true }), 'M 85 20 L 115 -20');
+  // Always a `/`, whichever way the wire runs.
+  assert.equal(busMarkD({ x: 0, y: 100, horizontal: false }), 'M -20 115 L 20 85');
 });
 
 test('a net named as a bus draws its slash; renaming it plain removes it', () => {
@@ -29,6 +31,9 @@ test('a net named as a bus draws its slash; renaming it plain removes it', () =>
   runCommand(circuit, 'add output D --at 600 0');
   runCommand(circuit, 'connect U1.d D.p --name D[7:0]');
   const marks = (svg) => (svg.match(/class="bus-mark"/g) || []).length;
+  assert.equal(marks(svgString(circuit)), 1);
+  // The converter draws no slash of its own, turned or not.
+  runCommand(circuit, 'rotate U1 90');
   assert.equal(marks(svgString(circuit)), 1);
   circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 'd' }), 'D');
   assert.equal(marks(svgString(circuit)), 0);
