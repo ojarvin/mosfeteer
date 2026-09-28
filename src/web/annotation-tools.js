@@ -328,7 +328,9 @@ async function pasteNetLabelAt(world, name) {
   return true;
 }
 
-export function placeNetLabelAt(world) {
+/** Place a net label on the wire at `world`. `placement` ({ anchor, netSide,
+ *  align }), when given and on that same net's wire, sets where it goes. */
+export function placeNetLabelAt(world, placement = null) {
   const name = pastingNetName();
   if (name) {
     // A dragged label places once, hit or miss, then hands back to Select.
@@ -350,8 +352,10 @@ export function placeNetLabelAt(world) {
     logLine('NET LABEL: wire crossing is ambiguous — select/highlight one net first');
     return false;
   }
-  const point = target.point;
   const net = target.net;
+  const placed = placement && editor.circuit._netLabelAnchorOnPath(net.id, placement.anchor) ? placement : null;
+  const point = placed?.anchor || target.point;
+  const look = placed ? { netSide: placed.netSide, align: placed.align } : {};
   let label;
   const provisional = !net.name;
   try {
@@ -360,12 +364,12 @@ export function placeNetLabelAt(world) {
       // snapshot is recorded here and becomes the one atomic history entry if
       // the user eventually supplies a name.
       const initialSnapshot = snapshot();
-      label = editor.circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y });
+      label = editor.circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y, ...look });
       label._provisionalInitialName = net.name || '';
       label._provisionalInitialSnapshot = initialSnapshot;
       markModelChanged(false);
     } else {
-      commit(() => { label = editor.circuit.addNetLabel(net.id, { anchor: point }); });
+      commit(() => { label = editor.circuit.addNetLabel(net.id, { anchor: point, ...look }); });
     }
   } catch (err) {
     logLine(`NET LABEL: ${err.message}`, 'error');

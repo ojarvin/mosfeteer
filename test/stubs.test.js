@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { evaluate, runCommand } from '../src/core/commands.js';
-import { addTerminalStubs } from '../src/core/stubs.js';
+import { addTerminalStubs, stubLabelPlacement } from '../src/core/stubs.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 const stubOf = (circuit, ref) => {
@@ -114,4 +114,20 @@ test('the stubs command adds stubs and rejects an unknown part without changing 
   const before = JSON.stringify(untouched.toJSON());
   assert.throws(() => runCommand(untouched, 'stubs R1 NOPE'), /unknown component "NOPE"/);
   assert.equal(JSON.stringify(untouched.toJSON()), before);
+});
+
+test('a straight stub of any length labels beside its pin; a bent one has no such spot', () => {
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('nmos', { refdes: 'M1', x: 800, y: 0 });
+  // Out of the left pin, six cells long: the box's right edge stays on the pin.
+  assert.deepEqual(stubLabelPlacement(circuit, { comp: 'R1', term: 'a' }, { x: -320, y: 0 }),
+    { anchor: { x: -120, y: 0 }, netSide: 'above', align: 'right' });
+  assert.deepEqual(stubLabelPlacement(circuit, { comp: 'R1', term: 'b' }, { x: 240, y: 0 }),
+    { anchor: { x: 120, y: 0 }, netSide: 'above', align: 'left' });
+  // A drain stub goes on the gate side, aligned toward its wire.
+  assert.deepEqual(stubLabelPlacement(circuit, { comp: 'M1', term: 'd' }, { x: 800, y: -240 }),
+    { anchor: { x: 800, y: -120 }, netSide: 'left', align: 'parent' });
+  assert.equal(stubLabelPlacement(circuit, { comp: 'R1', term: 'a' }, { x: -320, y: 80 }), null);
+  assert.equal(stubLabelPlacement(circuit, { comp: 'R1', term: 'a' }, { x: 0, y: 0 }), null);
 });

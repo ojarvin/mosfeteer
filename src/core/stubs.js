@@ -84,12 +84,36 @@ function verticalStubSide(circuit, component, x) {
 }
 
 /**
+ * Where a stub's net label goes: one cell out from terminal `ref` ({comp,
+ * term}) along its outward direction, so a two-cell box reaches back exactly
+ * to the terminal. Above a horizontal stub, its text is aligned toward the
+ * terminal and a longer name grows away from the part; beside a vertical one,
+ * it sits on the part's side (verticalStubSide), aligned toward the wire.
+ * With `end`, the stub's far end, a stub that does not leave the terminal
+ * straight for at least a cell has no such spot: null.
+ */
+export function stubLabelPlacement(circuit, ref, end = null) {
+  const component = circuit.getComponent(ref.comp);
+  const def = component.terminalDefs.find((terminal) => terminal.name === ref.term);
+  if (!def) return null;
+  const from = component.terminalWorld(def.name);
+  const dir = circuit._pinDir(component, def, from.x, from.y);
+  if (end) {
+    const along = (end.x - from.x) * dir.x + (end.y - from.y) * dir.y;
+    const across = (end.x - from.x) * dir.y - (end.y - from.y) * dir.x;
+    if (across !== 0 || along < GRID) return null;
+  }
+  const anchor = { x: from.x + dir.x * GRID, y: from.y + dir.y * GRID };
+  return dir.y === 0
+    ? { anchor, netSide: 'above', align: dir.x < 0 ? 'right' : 'left' }
+    : { anchor, netSide: verticalStubSide(circuit, component, from.x), align: 'parent' };
+}
+
+/**
  * Add a stub and a named net label to every unconnected terminal of the parts
  * `refdes`. A stub leaves its terminal along the terminal's outward direction,
- * STUB_CELLS long; its label sits at the middle of the stub, above a
- * horizontal stub with its text aligned toward the terminal, and beside a
- * vertical one, on its part's side (verticalStubSide), aligned toward the wire. A stub that would join anything else
- * is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
+ * STUB_CELLS long, with its label at stubLabelPlacement. A stub that would
+ * join anything else is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
  */
 export function addTerminalStubs(circuit, refdes) {
   const stubs = [];
@@ -116,11 +140,7 @@ export function addTerminalStubs(circuit, refdes) {
       const net = circuit.createWireNet({ branches: [path], route: path });
       circuit.connectTo(net.id, termRef);
       circuit.renameNet(net, name);
-      const middle = points[Math.floor(points.length / 2)];
-      const labelOpts = dir.y === 0
-        ? { netSide: 'above', align: dir.x < 0 ? 'right' : 'left' }
-        : { netSide: verticalStubSide(circuit, component, from.x), align: 'parent' };
-      const label = circuit.addNetLabel(net, { anchor: middle, ...labelOpts });
+      const label = circuit.addNetLabel(net, stubLabelPlacement(circuit, { comp: component.refdes, term: def.name }));
       stubs.push({ ref: termRef, netId: net.id, name, labelId: label.id });
     }
   }

@@ -9,6 +9,7 @@ import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { symbolCategories } from '../core/components/categories.js';
 import { svgString } from '../core/render.js';
 import { swapCandidates, swapComponentType, swapTerminalMap } from '../core/swap.js';
+import { stubLabelPlacement } from '../core/stubs.js';
 import { INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, placementSearchScore, withRecentType } from './toolbar.js';
 import { arrivalDirection, quickAddPlacement } from './gestures.js';
 import { canvasEl } from './elements.js';
@@ -477,9 +478,11 @@ function pickQuickAdd(type) {
   }
   editor.cursor = { ...point };
   if (type === '@open' || type === '@netlabel') {
+    const pin = editor.wire?.source?.refdes ? { comp: editor.wire.source.refdes, term: editor.wire.source.term } : null;
     if (editor.wire?.source) commitWireAtCursor();
     endGestureWire();
-    if (type === '@netlabel') placeNetLabelAt(point);
+    // A label on a pin's straight stub sits like a Space stub's, beside the pin.
+    if (type === '@netlabel') placeNetLabelAt(point, pin ? stubLabelPlacement(editor.circuit, pin, point) : null);
     render();
     return;
   }

@@ -24642,6 +24642,7 @@ function setSharedLabel(circuit, refdes, text) {
 };
 
 __modules["src/core/stubs.js"] = function (__require, __exports) {
+__exports.stubLabelPlacement = stubLabelPlacement;
 __exports.addTerminalStubs = addTerminalStubs;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, canonicalNetName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, canonicalNetName } = __require("src/core/model.js")); });
@@ -24732,12 +24733,36 @@ function verticalStubSide(circuit, component, x) {
 }
 
 /**
+ * Where a stub's net label goes: one cell out from terminal `ref` ({comp,
+ * term}) along its outward direction, so a two-cell box reaches back exactly
+ * to the terminal. Above a horizontal stub, its text is aligned toward the
+ * terminal and a longer name grows away from the part; beside a vertical one,
+ * it sits on the part's side (verticalStubSide), aligned toward the wire.
+ * With `end`, the stub's far end, a stub that does not leave the terminal
+ * straight for at least a cell has no such spot: null.
+ */
+function stubLabelPlacement(circuit, ref, end = null) {
+  const component = circuit.getComponent(ref.comp);
+  const def = component.terminalDefs.find((terminal) => terminal.name === ref.term);
+  if (!def) return null;
+  const from = component.terminalWorld(def.name);
+  const dir = circuit._pinDir(component, def, from.x, from.y);
+  if (end) {
+    const along = (end.x - from.x) * dir.x + (end.y - from.y) * dir.y;
+    const across = (end.x - from.x) * dir.y - (end.y - from.y) * dir.x;
+    if (across !== 0 || along < GRID) return null;
+  }
+  const anchor = { x: from.x + dir.x * GRID, y: from.y + dir.y * GRID };
+  return dir.y === 0
+    ? { anchor, netSide: 'above', align: dir.x < 0 ? 'right' : 'left' }
+    : { anchor, netSide: verticalStubSide(circuit, component, from.x), align: 'parent' };
+}
+
+/**
  * Add a stub and a named net label to every unconnected terminal of the parts
  * `refdes`. A stub leaves its terminal along the terminal's outward direction,
- * STUB_CELLS long; its label sits at the middle of the stub, above a
- * horizontal stub with its text aligned toward the terminal, and beside a
- * vertical one, on its part's side (verticalStubSide), aligned toward the wire. A stub that would join anything else
- * is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
+ * STUB_CELLS long, with its label at stubLabelPlacement. A stub that would
+ * join anything else is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
  */
 function addTerminalStubs(circuit, refdes) {
   const stubs = [];
@@ -24764,11 +24789,7 @@ function addTerminalStubs(circuit, refdes) {
       const net = circuit.createWireNet({ branches: [path], route: path });
       circuit.connectTo(net.id, termRef);
       circuit.renameNet(net, name);
-      const middle = points[Math.floor(points.length / 2)];
-      const labelOpts = dir.y === 0
-        ? { netSide: 'above', align: dir.x < 0 ? 'right' : 'left' }
-        : { netSide: verticalStubSide(circuit, component, from.x), align: 'parent' };
-      const label = circuit.addNetLabel(net, { anchor: middle, ...labelOpts });
+      const label = circuit.addNetLabel(net, stubLabelPlacement(circuit, { comp: component.refdes, term: def.name }));
       stubs.push({ ref: termRef, netId: net.id, name, labelId: label.id });
     }
   }
@@ -28881,7 +28902,9 @@ async function pasteNetLabelAt(world, name) {
   return true;
 }
 
-function placeNetLabelAt(world) {
+/** Place a net label on the wire at `world`. `placement` ({ anchor, netSide,
+ *  align }), when given and on that same net's wire, sets where it goes. */
+function placeNetLabelAt(world, placement = null) {
   const name = pastingNetName();
   if (name) {
     // A dragged label places once, hit or miss, then hands back to Select.
@@ -28903,8 +28926,10 @@ function placeNetLabelAt(world) {
     logLine('NET LABEL: wire crossing is ambiguous — select/highlight one net first');
     return false;
   }
-  const point = target.point;
   const net = target.net;
+  const placed = placement && editor.circuit._netLabelAnchorOnPath(net.id, placement.anchor) ? placement : null;
+  const point = placed?.anchor || target.point;
+  const look = placed ? { netSide: placed.netSide, align: placed.align } : {};
   let label;
   const provisional = !net.name;
   try {
@@ -28913,12 +28938,12 @@ function placeNetLabelAt(world) {
       // snapshot is recorded here and becomes the one atomic history entry if
       // the user eventually supplies a name.
       const initialSnapshot = snapshot();
-      label = editor.circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y });
+      label = editor.circuit.addLabel({ text: '', netId: net.id, x: point.x, y: point.y, ...look });
       label._provisionalInitialName = net.name || '';
       label._provisionalInitialSnapshot = initialSnapshot;
       markModelChanged(false);
     } else {
-      commit(() => { label = editor.circuit.addNetLabel(net.id, { anchor: point }); });
+      commit(() => { label = editor.circuit.addNetLabel(net.id, { anchor: point, ...look }); });
     }
   } catch (err) {
     logLine(`NET LABEL: ${err.message}`, 'error');
@@ -38021,6 +38046,7 @@ let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } =
 let symbolCategories; __bind(() => { ({ symbolCategories } = __require("src/core/components/categories.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 let swapCandidates, swapComponentType, swapTerminalMap; __bind(() => { ({ swapCandidates, swapComponentType, swapTerminalMap } = __require("src/core/swap.js")); });
+let stubLabelPlacement; __bind(() => { ({ stubLabelPlacement } = __require("src/core/stubs.js")); });
 let INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, placementSearchScore, withRecentType; __bind(() => { ({ INSERT_RECENT_LIMIT, PLACEMENT_LABELS, fuzzyScore, placementSearchScore, withRecentType } = __require("src/web/toolbar.js")); });
 let arrivalDirection, quickAddPlacement; __bind(() => { ({ arrivalDirection, quickAddPlacement } = __require("src/web/gestures.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
@@ -38035,6 +38061,7 @@ let applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets,
  * categories, and recent placements, and the quick-add menu a pin drag or a
  * double-click opens in empty space.
  */
+
 
 
 
@@ -38509,9 +38536,11 @@ function pickQuickAdd(type) {
   }
   editor.cursor = { ...point };
   if (type === '@open' || type === '@netlabel') {
+    const pin = editor.wire?.source?.refdes ? { comp: editor.wire.source.refdes, term: editor.wire.source.term } : null;
     if (editor.wire?.source) commitWireAtCursor();
     endGestureWire();
-    if (type === '@netlabel') placeNetLabelAt(point);
+    // A label on a pin's straight stub sits like a Space stub's, beside the pin.
+    if (type === '@netlabel') placeNetLabelAt(point, pin ? stubLabelPlacement(editor.circuit, pin, point) : null);
     render();
     return;
   }
