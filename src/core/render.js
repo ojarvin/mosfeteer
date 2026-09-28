@@ -6,6 +6,7 @@ import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance,
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
+import { busMarkD, busMarkPoints, busWidth } from './bus.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure } from './bode-figure.js';
 
@@ -923,6 +924,15 @@ export function svgString(circuit, opts = {}) {
         if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
+      }
+    }
+    // A bus (D[7:0], D<7:0>) carries a slash across each branch, solid and in
+    // the wire's own color.
+    if (busWidth(net.name)) {
+      const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
+      const slash = { ...(netStyle || {}), lineStyle: 'solid' };
+      for (const mark of busMarkPoints(paths, anchors)) {
+        parts.push(`<path class="bus-mark" d="${busMarkD(mark)}" fill="none"${opacity} ${styleAttrs(slash, 'symbol')} pointer-events="none"/>`);
       }
     }
   }

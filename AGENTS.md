@@ -159,6 +159,10 @@ edit. Scripted commands never prompt: the model keeps one name and records a
 short: the editor asks, in the same picker, to rename the net to the rail
 (`VSS`/`VDD`/`VCM`), and a cancel reverts the whole edit.
 
+A net named with a bit range, `D[7:0]` or `D<7:0>`, is a bus
+(`src/core/bus.js`): it connects by its whole name like any net, and the
+renderer draws a one-cell slash across each of its branches.
+
 Persistent net highlights (`circuit.netHighlights`) are document data keyed
 by `netGroupKey`, so one color covers a whole electrical group: equally named
 nets and every net on one unnamed rail. Colors are unique palette tokens that

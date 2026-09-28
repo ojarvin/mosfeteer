@@ -11192,6 +11192,77 @@ function cornerNames(poles, zeros) {
 
 };
 
+__modules["src/core/bus.js"] = function (__require, __exports) {
+__exports.busWidth = busWidth;
+__exports.busMarkPoints = busMarkPoints;
+__exports.busMarkD = busMarkD;
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+/**
+ * Multi-bit nets: a net named with a bit range, `D[7:0]` or `D<7:0>`, is a
+ * bus. It connects like any net (by its whole name); the drawing marks it
+ * with the short slash across the wire that the ADC and DAC draw on their
+ * digital leads.
+ *
+ * First iteration of the mark's placement: one slash per drawn branch, at
+ * the middle of its longest straight segment, moved a cell along when a net
+ * label sits there.
+ */
+
+
+
+const BUS_NAME = /^(.*?)[[<]\s*(\d+)\s*:\s*(\d+)\s*[\]>]$/;
+
+/** Bits in a bus name (`D[7:0]` -> 8), or 0 for any other name. */
+function busWidth(name) {
+  const match = BUS_NAME.exec(String(name ?? '').trim());
+  return match && match[1] ? Math.abs(Number(match[2]) - Number(match[3])) + 1 : 0;
+}
+
+/** Half extents of the slash: one grid cell tall across the wire, with the
+ *  converters' slant (3 along the wire for every 4 across). */
+const SLASH = { along: 15, across: 20 };
+
+/**
+ * Where a bus's slashes go on its drawn `paths`, keeping clear of the net
+ * label anchors `avoid`: [{ x, y, horizontal }].
+ */
+function busMarkPoints(paths, avoid = []) {
+  const marks = [];
+  for (const path of paths) {
+    if (!path || path.length < 2) continue;
+    let best = null;
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      if (a.x !== b.x && a.y !== b.y) continue; // a diagonal keeps its own look
+      const length = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+      if (length > 0 && (!best || length > best.length)) best = { a, b, length };
+    }
+    if (!best) continue;
+    const { a, b, length } = best;
+    const ux = Math.sign(b.x - a.x);
+    const uy = Math.sign(b.y - a.y);
+    const at = (t) => ({ x: a.x + ux * t, y: a.y + uy * t });
+    let t = length / 2;
+    const near = (p) => avoid.some((q) => Math.abs(q.x - p.x) + Math.abs(q.y - p.y) < GRID);
+    if (near(at(t))) {
+      const moved = [t - GRID, t + GRID].find((s) => s >= GRID / 2 && s <= length - GRID / 2 && !near(at(s)));
+      if (moved !== undefined) t = moved;
+    }
+    marks.push({ ...at(t), horizontal: uy === 0 });
+  }
+  return marks;
+}
+
+/** SVG path data for a slash at `mark`: a `/` across the wire. */
+function busMarkD({ x, y, horizontal }) {
+  const dx = horizontal ? SLASH.along : SLASH.across;
+  const dy = horizontal ? SLASH.across : SLASH.along;
+  return `M ${x - dx} ${y + dy} L ${x + dx} ${y - dy}`;
+}
+
+};
+
 __modules["src/core/commands.js"] = function (__require, __exports) {
 __exports.splitArgs = splitArgs;
 __exports.parseArgs = parseArgs;
@@ -21680,8 +21751,10 @@ let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH
 let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
+let busMarkD, busMarkPoints, busWidth; __bind(() => { ({ busMarkD, busMarkPoints, busWidth } = __require("src/core/bus.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure.js")); });
+
 
 
 
@@ -22607,6 +22680,15 @@ function svgString(circuit, opts = {}) {
         if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
+      }
+    }
+    // A bus (D[7:0], D<7:0>) carries a slash across each branch, solid and in
+    // the wire's own color.
+    if (busWidth(net.name)) {
+      const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
+      const slash = { ...(netStyle || {}), lineStyle: 'solid' };
+      for (const mark of busMarkPoints(paths, anchors)) {
+        parts.push(`<path class="bus-mark" d="${busMarkD(mark)}" fill="none"${opacity} ${styleAttrs(slash, 'symbol')} pointer-events="none"/>`);
       }
     }
   }
