@@ -10,6 +10,7 @@ import { analyzeSmallSignal } from './analysis/index.js';
 import { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
+import { addBoxAround } from './wrap-box.js';
 import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
@@ -138,6 +139,7 @@ const FLAG_ARITY = {
   beat: 1,
   case: 0,
   regex: 0,
+  text: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -509,6 +511,7 @@ export function commandHelp() {
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
+    '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  find TEXT [--case] [--regex]   - list every label (nets, parts, switch phases, rails, annotations), block caption, and unlabelled net name containing TEXT;',
     '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
@@ -918,6 +921,18 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const added = stubs.map((stub) => `${stub.ref} ${stub.name}`).join(', ');
     const message = `${stubs.length} stub${stubs.length === 1 ? '' : 's'}${added ? `: ${added}` : ''}${skipped.length ? `; skipped (would short) ${skipped.join(', ')}` : ''}`;
     return result(message, { stubs, skipped }, stubs.length > 0);
+  }
+  if (cmd === 'box') {
+    if (!pos.length) throw new Error('usage: box ID... [--text TEXT]');
+    const selection = { refs: [], labelIds: [], netIds: [] };
+    for (const id of pos) {
+      if (circuit.components.has(id)) selection.refs.push(id);
+      else if (circuit.nets.has(id)) selection.netIds.push(id);
+      else if (circuit.labels.has(id)) selection.labelIds.push(id);
+      else throw new Error(`"${id}" is not a part, net, or label`);
+    }
+    const box = addBoxAround(circuit, selection, { text: flags.text?.[0] || '' });
+    return result(`box ${box.id} from ${pp(box.anchor.x, box.anchor.y)} to ${pp(box.end.x, box.end.y)}`, { id: box.id }, true);
   }
   if (cmd === 'find') {
     if (pos.length !== 1) throw new Error('usage: find TEXT [--case] [--regex]  (quote TEXT with spaces)');

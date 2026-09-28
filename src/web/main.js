@@ -18,6 +18,7 @@ import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs } from '../core/stubs.js';
 import { addPinRail } from '../core/pin-rails.js';
 import { tidySelection } from '../core/tidy.js';
+import { addBoxAround } from '../core/wrap-box.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { editorOverlay, svgString } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
@@ -6112,7 +6113,15 @@ function finishCanvasMouseUp(ev) {
   } else if (drag.mode === 'directpick') {
     if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
   } else if (drag.mode === 'annotationplace') {
-    if (drag.moved) {
+    // Box tool: a click on an object picks it to be boxed; paper starts a box.
+    const pick = labelMode === 'box' && !drag.moved && !annotationStart ? stackedSelectionCandidates(w)[0] : null;
+    if (pick) {
+      const [kind, ...rest] = pick.split(':');
+      applyEditorSelection({ kind, id: rest.join(':') }, true);
+      if (kind === 'wire') syncSelectedNetSolders();
+      hintLine('BOX: click more objects to add them; Enter or b boxes them; click paper for a free box');
+      render();
+    } else if (drag.moved) {
       if (!annotationStart) annotationStart = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
       placeShapeAnnotation(movedWorld, labelMode === 'box' ? snappedWorld(movedWorld) : draftPointAt(w, ev.shiftKey));
     } else {
@@ -6652,6 +6661,7 @@ function onNormalKey(key, shiftKey = false) {
     commitArrowAnnotation();
     return;
   }
+  if (key === 'Enter' && labelMode === 'box' && wrapSelectionInBox()) return;
   if (key === 'm' || key === 'M') {
     activateMove(shiftKey ? 'detached' : 'connected');
     return;
@@ -7116,7 +7126,41 @@ export function activateEquation() {
 }
 
 export function activateShapeAnnotation(kind) {
+  if (kind === 'box' && wrapSelectionInBox()) return;
   activateLabelPlacement(kind);
+}
+
+/** The selection as parts, labels, and nets (a selected wire stands for its net). */
+function boxableSelection() {
+  const netIds = new Set([...selectedNets].filter((id) => circuit.nets.has(id)));
+  for (const key of selectedWires) {
+    const { netId } = keyToWire(key);
+    if (circuit.nets.has(netId)) netIds.add(netId);
+  }
+  return {
+    refs: [...multi].filter((ref) => circuit.components.has(ref)),
+    labelIds: [...selLabels].filter((id) => circuit.labels.has(id)),
+    netIds: [...netIds],
+  };
+}
+
+/** Put a box annotation around the selection and edit its caption, as a
+ *  drawn box does. Returns false when nothing is selected. */
+function wrapSelectionInBox() {
+  if (mode !== 'normal' || drag || annotationStart) return false;
+  const selection = boxableSelection();
+  if (!selection.refs.length && !selection.labelIds.length && !selection.netIds.length) return false;
+  let box = null;
+  commit(() => { box = addBoxAround(circuit, selection, { text: 'label' }); });
+  if (!box) return false;
+  const caption = [...circuit.labels.values()].find((label) => label.parent === box.id);
+  labelMode = null;
+  setSelection([]);
+  setLabelSelection([box.id]);
+  logLine(`placed box around the selection from (${box.anchor.x},${box.anchor.y}) to (${box.end.x},${box.end.y})`);
+  render();
+  if (caption) inlineEditLabel(caption, { removeOnEmpty: true });
+  return true;
 }
 
 export function activatePlace() {

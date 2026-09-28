@@ -93,6 +93,8 @@ and its name intact. Net labels are placed on drawable wire paths; the editor's
 `Shift+L` tool requires an unambiguous physical wire, using one selected/highlighted
 net to resolve a crossing. `Shift+N` places one free annotation and then
 returns to selection; `a` and `b` likewise place one arrow or box annotation.
+`b` with a selection instead boxes it one cell out (`src/core/wrap-box.js`, the
+`box` command); in the box tool, clicking objects picks them and Enter boxes them.
 
 Selection, movement, deletion, routing, and Check must preserve the role: owned
 labels follow components, net labels remain on their paths, and annotations are

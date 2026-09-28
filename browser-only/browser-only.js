@@ -11200,10 +11200,12 @@ let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/
 let addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
+let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
 let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -11344,6 +11346,7 @@ const FLAG_ARITY = {
   beat: 1,
   case: 0,
   regex: 0,
+  text: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -11715,6 +11718,7 @@ function commandHelp() {
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
+    '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  find TEXT [--case] [--regex]   - list every label (nets, parts, switch phases, rails, annotations), block caption, and unlabelled net name containing TEXT;',
     '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
@@ -12124,6 +12128,18 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const added = stubs.map((stub) => `${stub.ref} ${stub.name}`).join(', ');
     const message = `${stubs.length} stub${stubs.length === 1 ? '' : 's'}${added ? `: ${added}` : ''}${skipped.length ? `; skipped (would short) ${skipped.join(', ')}` : ''}`;
     return result(message, { stubs, skipped }, stubs.length > 0);
+  }
+  if (cmd === 'box') {
+    if (!pos.length) throw new Error('usage: box ID... [--text TEXT]');
+    const selection = { refs: [], labelIds: [], netIds: [] };
+    for (const id of pos) {
+      if (circuit.components.has(id)) selection.refs.push(id);
+      else if (circuit.nets.has(id)) selection.netIds.push(id);
+      else if (circuit.labels.has(id)) selection.labelIds.push(id);
+      else throw new Error(`"${id}" is not a part, net, or label`);
+    }
+    const box = addBoxAround(circuit, selection, { text: flags.text?.[0] || '' });
+    return result(`box ${box.id} from ${pp(box.anchor.x, box.anchor.y)} to ${pp(box.end.x, box.end.y)}`, { id: box.id }, true);
   }
   if (cmd === 'find') {
     if (pos.length !== 1) throw new Error('usage: find TEXT [--case] [--regex]  (quote TEXT with spaces)');
@@ -26711,6 +26727,63 @@ function validateWiring(net) {
 __exports.pointKey = pointKey;
 };
 
+__modules["src/core/wrap-box.js"] = function (__require, __exports) {
+__exports.boxAroundRect = boxAroundRect;
+__exports.addBoxAround = addBoxAround;
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+/**
+ * A box annotation drawn around a set of objects: the parts (with their own
+ * labels), labels and annotations, and nets (their wires and net labels).
+ * It frames what is drawn -- symbol strokes, wires, and label text, as an
+ * export does -- not the grid-rounded boxes, and stays on the grid at least
+ * half a cell clear of it on every side.
+ */
+
+
+
+/** The grid rectangle around what everything in `selection` draws
+ *  ({ refs, labelIds, netIds }), or null when it names nothing drawn. */
+function boxAroundRect(circuit, { refs = [], labelIds = [], netIds = [] } = {}) {
+  const rects = [];
+  const labels = new Set(labelIds);
+  for (const ref of refs) {
+    const component = circuit.components.get(ref);
+    if (!component) continue;
+    rects.push(component.inkRectWorld());
+    for (const label of circuit.labels.values()) if (label.owner === ref) labels.add(label.id);
+  }
+  for (const id of netIds) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    for (const path of net.paths()) for (const p of path) rects.push({ x: p.x, y: p.y, w: 0, h: 0 });
+    for (const label of circuit.labels.values()) if (label.netId === id) labels.add(label.id);
+  }
+  for (const id of labels) {
+    const label = circuit.labels.get(id);
+    if (!label || label.selectable === false) continue;
+    rects.push(label.inkRect());
+  }
+  if (!rects.length) return null;
+  const x0 = Math.min(...rects.map((r) => r.x));
+  const y0 = Math.min(...rects.map((r) => r.y));
+  const x1 = Math.max(...rects.map((r) => r.x + r.w));
+  const y1 = Math.max(...rects.map((r) => r.y + r.h));
+  const clear = GRID / 2;
+  const x = Math.floor((x0 - clear) / GRID) * GRID;
+  const y = Math.floor((y0 - clear) / GRID) * GRID;
+  return { x, y, w: Math.ceil((x1 + clear) / GRID) * GRID - x, h: Math.ceil((y1 + clear) / GRID) * GRID - y };
+}
+
+/** Add a box annotation around `selection` (see boxAroundRect), captioned
+ *  `text` when given. Returns the box; throws when the selection is empty. */
+function addBoxAround(circuit, selection, { text = '' } = {}) {
+  const rect = boxAroundRect(circuit, selection);
+  if (!rect) throw new Error('nothing to put a box around');
+  return circuit.addAnnotation('box', { x: rect.x, y: rect.y, end: { x: rect.x + rect.w, y: rect.y + rect.h }, text });
+}
+
+};
+
 __modules["src/web/align-tool.js"] = function (__require, __exports) {
 __exports.worldPerPixel = worldPerPixel;
 __exports.updateAlignHover = updateAlignHover;
@@ -32603,7 +32676,7 @@ const EDITOR_COMMANDS = [
   { name: 'free-text', aliases: ['annotation-tool', 'comment'], canvas: true, help: 'place a free annotation (Shift+N)' },
   { name: 'equation', aliases: ['latex', 'math', 'formula'], canvas: true, help: 'place a LaTeX equation (e)' },
   { name: 'arrow', canvas: true, help: 'draw an annotation arrow (a)' },
-  { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box (b)' },
+  { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box, or box the selection (b)' },
   { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
   { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
   { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },
@@ -39978,6 +40051,7 @@ let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, 
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addPinRail; __bind(() => { ({ addPinRail } = __require("src/core/pin-rails.js")); });
 let tidySelection; __bind(() => { ({ tidySelection } = __require("src/core/tidy.js")); });
+let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let editorOverlay, svgString; __bind(() => { ({ editorOverlay, svgString } = __require("src/core/render.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
@@ -40037,6 +40111,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -46132,7 +46207,15 @@ function finishCanvasMouseUp(ev) {
   } else if (drag.mode === 'directpick') {
     if (!movedOut) doDirectWireClick(snap(w.x), snap(w.y), drag.fixedEndpoint);
   } else if (drag.mode === 'annotationplace') {
-    if (drag.moved) {
+    // Box tool: a click on an object picks it to be boxed; paper starts a box.
+    const pick = labelMode === 'box' && !drag.moved && !annotationStart ? stackedSelectionCandidates(w)[0] : null;
+    if (pick) {
+      const [kind, ...rest] = pick.split(':');
+      applyEditorSelection({ kind, id: rest.join(':') }, true);
+      if (kind === 'wire') syncSelectedNetSolders();
+      hintLine('BOX: click more objects to add them; Enter or b boxes them; click paper for a free box');
+      render();
+    } else if (drag.moved) {
       if (!annotationStart) annotationStart = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
       placeShapeAnnotation(movedWorld, labelMode === 'box' ? snappedWorld(movedWorld) : draftPointAt(w, ev.shiftKey));
     } else {
@@ -46672,6 +46755,7 @@ function onNormalKey(key, shiftKey = false) {
     commitArrowAnnotation();
     return;
   }
+  if (key === 'Enter' && labelMode === 'box' && wrapSelectionInBox()) return;
   if (key === 'm' || key === 'M') {
     activateMove(shiftKey ? 'detached' : 'connected');
     return;
@@ -47136,7 +47220,41 @@ function activateEquation() {
 }
 
 function activateShapeAnnotation(kind) {
+  if (kind === 'box' && wrapSelectionInBox()) return;
   activateLabelPlacement(kind);
+}
+
+/** The selection as parts, labels, and nets (a selected wire stands for its net). */
+function boxableSelection() {
+  const netIds = new Set([...selectedNets].filter((id) => circuit.nets.has(id)));
+  for (const key of selectedWires) {
+    const { netId } = keyToWire(key);
+    if (circuit.nets.has(netId)) netIds.add(netId);
+  }
+  return {
+    refs: [...multi].filter((ref) => circuit.components.has(ref)),
+    labelIds: [...selLabels].filter((id) => circuit.labels.has(id)),
+    netIds: [...netIds],
+  };
+}
+
+/** Put a box annotation around the selection and edit its caption, as a
+ *  drawn box does. Returns false when nothing is selected. */
+function wrapSelectionInBox() {
+  if (mode !== 'normal' || drag || annotationStart) return false;
+  const selection = boxableSelection();
+  if (!selection.refs.length && !selection.labelIds.length && !selection.netIds.length) return false;
+  let box = null;
+  commit(() => { box = addBoxAround(circuit, selection, { text: 'label' }); });
+  if (!box) return false;
+  const caption = [...circuit.labels.values()].find((label) => label.parent === box.id);
+  labelMode = null;
+  setSelection([]);
+  setLabelSelection([box.id]);
+  logLine(`placed box around the selection from (${box.anchor.x},${box.anchor.y}) to (${box.end.x},${box.end.y})`);
+  render();
+  if (caption) inlineEditLabel(caption, { removeOnEmpty: true });
+  return true;
 }
 
 function activatePlace() {
@@ -52208,7 +52326,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+N', 'place one free annotation, then return to selection'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
-    ['b', 'place one two-point box, then return to selection'],
+    ['b', 'place one two-point box, then return to selection; with a selection, box it (in the box tool, click objects to pick them, Enter boxes them)'],
     ['l', 'persistent multi-point line annotation placement'],
   ]],
   ['edit', [
