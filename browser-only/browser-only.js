@@ -11199,8 +11199,11 @@ __exports.latestBusColor = latestBusColor;
 __exports.busGroupsWithin = busGroupsWithin;
 __exports.netNamesConnect = netNamesConnect;
 __exports.busMarkPoints = busMarkPoints;
+__exports.straightLeadLength = straightLeadLength;
+__exports.busTerminalMarks = busTerminalMarks;
 __exports.busMarkD = busMarkD;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
 /**
  * Multi-bit nets, by the Virtuoso convention: a net named with a bit range,
  * `D[7:0]` or `D<7:0>`, stands for the parallel nets `D[7]` ... `D[0]`, and a
@@ -11211,10 +11214,14 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
  * their own), and it is drawn in world space: a `/` whichever way the wire
  * runs or the parts are turned.
  *
- * First iteration of the mark's placement: one slash per drawn branch, at
- * the middle of its longest straight segment, moved a cell along when a net
- * label sits there.
+ * The slash sits at each part pin on the bus (busTerminalMarks): on the
+ * pin's own outward line, at least one grid cell from where the conductor
+ * meets the drawn part, in whole cells -- at the terminal when the symbol's
+ * lead is that long already (an ADC's), one cell out along the wire when the
+ * pin sits on or near the body's edge (a port, a block). A bus net with no pins marks each branch
+ * mid-way instead (busMarkPoints).
  */
+
 
 
 
@@ -11317,6 +11324,48 @@ function busMarkPoints(paths, avoid = []) {
     marks.push({ ...at(t), horizontal: uy === 0 });
   }
   return marks;
+}
+
+/** How far a symbol's conductor runs straight in from terminal `t` (local
+ *  coordinates) before it meets the drawn part: the first segment of the
+ *  terminal's lead, or 0 for a pin on the body's edge. */
+function straightLeadLength(graphics, t) {
+  let longest = 0;
+  for (const g of graphics || []) {
+    if (!g.terminalLead) continue;
+    const numbers = String(g.d).match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+    const points = [];
+    for (let i = 0; i + 1 < numbers.length; i += 2) points.push({ x: numbers[i], y: numbers[i + 1] });
+    for (const [end, next] of [[points[0], points[1]], [points.at(-1), points.at(-2)]]) {
+      if (!end || !next || end.x !== t.x || end.y !== t.y) continue;
+      if (next.x !== end.x && next.y !== end.y) continue; // a slanted lead is part of the drawing
+      longest = Math.max(longest, Math.abs(next.x - end.x) + Math.abs(next.y - end.y));
+    }
+  }
+  return longest;
+}
+
+/**
+ * Where a bus net's slashes go: at each part pin on it, one grid cell clear of
+ * the drawn part along the pin's outward line (at the terminal itself when
+ * the lead is that long), or at the terminal when the wire turns before that.
+ * A net with no pins marks each drawn branch mid-way (busMarkPoints).
+ */
+function busTerminalMarks(circuit, net, paths, avoid = []) {
+  const marks = [];
+  for (const { comp, term } of net.terminals) {
+    const component = circuit.components.get(comp);
+    const def = component?.terminalDefs.find((terminal) => terminal.name === term);
+    if (!def) continue;
+    const at = component.terminalWorld(term);
+    const dir = circuit._pinDir(component, def, at.x, at.y);
+    // Whole cells out, so the slash stays on a grid point.
+    const out = Math.max(0, Math.ceil((GRID - straightLeadLength(component.def.graphics, def)) / GRID) * GRID);
+    const point = { x: at.x + dir.x * out, y: at.y + dir.y * out };
+    const onWire = paths.some((path) => pointOnPath(point, path) && pointOnPath(at, path));
+    marks.push({ ...(onWire ? point : at), horizontal: dir.y === 0 });
+  }
+  return marks.length ? marks : busMarkPoints(paths, avoid);
 }
 
 /** SVG path data for a slash at `mark`: a `/` across the wire. */
@@ -21844,7 +21893,7 @@ let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH
 let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
-let busMarkD, busMarkPoints, busWidth; __bind(() => { ({ busMarkD, busMarkPoints, busWidth } = __require("src/core/bus.js")); });
+let busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure.js")); });
 
@@ -22775,12 +22824,12 @@ function svgString(circuit, opts = {}) {
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
       }
     }
-    // A bus (D[7:0], D<7:0>) carries a slash across each branch, solid and in
-    // the wire's own color.
+    // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
+    // and in the wire's own color.
     if (busWidth(net.name)) {
       const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
       const slash = { ...(netStyle || {}), lineStyle: 'solid' };
-      for (const mark of busMarkPoints(paths, anchors)) {
+      for (const mark of busTerminalMarks(circuit, net, paths, anchors)) {
         parts.push(`<path class="bus-mark" d="${busMarkD(mark)}" fill="none"${opacity} ${styleAttrs(slash, 'symbol')} pointer-events="none"/>`);
       }
     }

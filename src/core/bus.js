@@ -8,12 +8,16 @@
  * their own), and it is drawn in world space: a `/` whichever way the wire
  * runs or the parts are turned.
  *
- * First iteration of the mark's placement: one slash per drawn branch, at
- * the middle of its longest straight segment, moved a cell along when a net
- * label sits there.
+ * The slash sits at each part pin on the bus (busTerminalMarks): on the
+ * pin's own outward line, at least one grid cell from where the conductor
+ * meets the drawn part, in whole cells -- at the terminal when the symbol's
+ * lead is that long already (an ADC's), one cell out along the wire when the
+ * pin sits on or near the body's edge (a port, a block). A bus net with no pins marks each branch
+ * mid-way instead (busMarkPoints).
  */
 
 import { GRID } from './grid.js';
+import { pointOnPath } from './wiring.js';
 
 const BUS_NAME = /^(.*?)[[<]\s*(\d+)\s*(?::\s*(\d+)\s*)?[\]>]$/;
 
@@ -114,6 +118,48 @@ export function busMarkPoints(paths, avoid = []) {
     marks.push({ ...at(t), horizontal: uy === 0 });
   }
   return marks;
+}
+
+/** How far a symbol's conductor runs straight in from terminal `t` (local
+ *  coordinates) before it meets the drawn part: the first segment of the
+ *  terminal's lead, or 0 for a pin on the body's edge. */
+export function straightLeadLength(graphics, t) {
+  let longest = 0;
+  for (const g of graphics || []) {
+    if (!g.terminalLead) continue;
+    const numbers = String(g.d).match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) || [];
+    const points = [];
+    for (let i = 0; i + 1 < numbers.length; i += 2) points.push({ x: numbers[i], y: numbers[i + 1] });
+    for (const [end, next] of [[points[0], points[1]], [points.at(-1), points.at(-2)]]) {
+      if (!end || !next || end.x !== t.x || end.y !== t.y) continue;
+      if (next.x !== end.x && next.y !== end.y) continue; // a slanted lead is part of the drawing
+      longest = Math.max(longest, Math.abs(next.x - end.x) + Math.abs(next.y - end.y));
+    }
+  }
+  return longest;
+}
+
+/**
+ * Where a bus net's slashes go: at each part pin on it, one grid cell clear of
+ * the drawn part along the pin's outward line (at the terminal itself when
+ * the lead is that long), or at the terminal when the wire turns before that.
+ * A net with no pins marks each drawn branch mid-way (busMarkPoints).
+ */
+export function busTerminalMarks(circuit, net, paths, avoid = []) {
+  const marks = [];
+  for (const { comp, term } of net.terminals) {
+    const component = circuit.components.get(comp);
+    const def = component?.terminalDefs.find((terminal) => terminal.name === term);
+    if (!def) continue;
+    const at = component.terminalWorld(term);
+    const dir = circuit._pinDir(component, def, at.x, at.y);
+    // Whole cells out, so the slash stays on a grid point.
+    const out = Math.max(0, Math.ceil((GRID - straightLeadLength(component.def.graphics, def)) / GRID) * GRID);
+    const point = { x: at.x + dir.x * out, y: at.y + dir.y * out };
+    const onWire = paths.some((path) => pointOnPath(point, path) && pointOnPath(at, path));
+    marks.push({ ...(onWire ? point : at), horizontal: dir.y === 0 });
+  }
+  return marks.length ? marks : busMarkPoints(paths, avoid);
 }
 
 /** SVG path data for a slash at `mark`: a `/` across the wire. */

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
-import { busBits, busMarkD, busMarkPoints, busWidth, netNamesConnect } from '../src/core/bus.js';
+import { busBits, busMarkD, busMarkPoints, busTerminalMarks, busWidth, netNamesConnect, straightLeadLength } from '../src/core/bus.js';
+import { getSymbol } from '../src/core/components/index.js';
 
 test('bus names carry a bit range in brackets or angle brackets', () => {
   assert.equal(busWidth('D[7:0]'), 8);
@@ -72,8 +73,8 @@ test('the latest probe wins across a bus and its bits', () => {
   // The order survives a save and a load.
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.equal(loaded.netHighlight(loaded.netOfTerminal({ comp: 'U1', term: 'd' })), again);
-  // Only the multi-bit net draws the slash.
-  assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 1);
+  // Only the multi-bit net draws slashes: one at each of its two pins.
+  assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 2);
 });
 
 test('a bus slash sits mid-way along each branch\'s longest straight run, clear of its labels', () => {
@@ -94,10 +95,10 @@ test('a net named as a bus draws its slash; renaming it plain removes it', () =>
   runCommand(circuit, 'add output D --at 600 0');
   runCommand(circuit, 'connect U1.d D.p --name D[7:0]');
   const marks = (svg) => (svg.match(/class="bus-mark"/g) || []).length;
-  assert.equal(marks(svgString(circuit)), 1);
+  assert.equal(marks(svgString(circuit)), 2);
   // The converter draws no slash of its own, turned or not.
   runCommand(circuit, 'rotate U1 90');
-  assert.equal(marks(svgString(circuit)), 1);
+  assert.equal(marks(svgString(circuit)), 2);
   circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 'd' }), 'D');
   assert.equal(marks(svgString(circuit)), 0);
 });
@@ -112,8 +113,29 @@ test('a pin can be named as a bus: its identity folds the range, its label and n
   assert.ok(circuit.components.has('DOUT_3_0'));
   assert.equal(circuit.labelOf('DOUT_3_0').text, 'D_{OUT}[3:0]');
   assert.equal(circuit.netOfTerminal({ comp: 'DOUT_3_0', term: 'p' }).name, 'D_{OUT}[3:0]');
-  assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 1);
+  assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 2);
   // The identity stays unique: the other spelling of the same range is taken.
   runCommand(circuit, 'add output P2 --at 600 400');
   assert.throws(() => circuit.renameComponent('P2', 'D_{OUT}<3:0>', { displayLabel: 'D_{OUT}<3:0>' }));
+});
+
+test('a bus slash sits a cell clear of the drawn part at each pin', () => {
+  // The converters' digital leads run two cells straight in; a port's pin is
+  // less than a cell from its body, and a block's is on its edge.
+  assert.equal(straightLeadLength(getSymbol('adc').graphics, { x: 200, y: 0 }), 80);
+  assert.ok(straightLeadLength(getSymbol('output').graphics, { x: 0, y: 0 }) < 40);
+  const circuit = new Circuit();
+  for (const line of ['add adc U1 --at 0 0', 'add output P1 --at 640 0', 'connect U1.d P1.p --name D[3:0]',
+    'add block B1 --at 0 800', 'add output P2 --at 480 800', 'connect B1.T10 P2.p --name Q<7:0>']) runCommand(circuit, line);
+  const marksOf = (comp, term) => {
+    const net = circuit.netOfTerminal({ comp, term });
+    return busTerminalMarks(circuit, net, net.paths());
+  };
+  // At the ADC's terminal; one cell out from the port, along the wire.
+  const d = circuit.components.get('U1').terminalWorld('d');
+  const p = circuit.components.get('D_3_0').terminalWorld('p');
+  assert.deepEqual(marksOf('U1', 'd'), [{ ...d, horizontal: true }, { x: p.x - 40, y: p.y, horizontal: true }]);
+  // A block pin is on the body's edge too: one cell out.
+  const t = circuit.components.get('B1').terminalWorld('T10');
+  assert.deepEqual(marksOf('B1', 'T10')[0], { x: t.x + 40, y: t.y, horizontal: true });
 });

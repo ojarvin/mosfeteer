@@ -6,7 +6,7 @@ import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance,
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
-import { busMarkD, busMarkPoints, busWidth } from './bus.js';
+import { busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure } from './bode-figure.js';
 
@@ -926,12 +926,12 @@ export function svgString(circuit, opts = {}) {
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
       }
     }
-    // A bus (D[7:0], D<7:0>) carries a slash across each branch, solid and in
-    // the wire's own color.
+    // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
+    // and in the wire's own color.
     if (busWidth(net.name)) {
       const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
       const slash = { ...(netStyle || {}), lineStyle: 'solid' };
-      for (const mark of busMarkPoints(paths, anchors)) {
+      for (const mark of busTerminalMarks(circuit, net, paths, anchors)) {
         parts.push(`<path class="bus-mark" d="${busMarkD(mark)}" fill="none"${opacity} ${styleAttrs(slash, 'symbol')} pointer-events="none"/>`);
       }
     }

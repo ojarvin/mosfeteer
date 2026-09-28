@@ -169,7 +169,9 @@ shows the latest probe on any name it connects to (`busNetHighlight`), so a
 bit's probe colors that bit and the bus, and a bus probe clears its bits' own
 colors so they all show the bus color (`applyNetProbe`). The net list lists
 bits under their bus, and hovering a bus glows all its bits (a bit, the bus).
-The renderer draws a one-cell slash across each branch of a multi-bit net. A port named that way folds the range into its
+The renderer draws a one-cell slash on a multi-bit net at each pin, at least
+a whole cell clear of the drawn part along the pin (`busTerminalMarks`: at an
+ADC's terminal, a cell out from a port or block pin). A port named that way folds the range into its
 identity (`D_{OUT}[3:0]` is `DOUT_3_0`) and keeps it in its label and net
 name. Buses are for digital nets: small-signal analysis joins nets by exact
 name only.
