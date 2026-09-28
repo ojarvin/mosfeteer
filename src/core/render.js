@@ -5,7 +5,7 @@ import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeW
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
-import { drawnNetPaths, switchState } from './beats.js';
+import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure } from './bode-figure.js';
 
@@ -690,7 +690,9 @@ export function svgString(circuit, opts = {}) {
   const beatHiddenRef = (ref) => !!beat?.hiddenRefs.has(ref);
   const beatHiddenLabel = (id) => !!beat?.hiddenLabels.has(id);
   const defOf = (c) => (beat ? beat.defOf(c) : c.def);
-  const netHighlightOf = (net) => (beat ? beat.netHighlight(net) : circuit.netHighlight?.(net) || null);
+  // A closed switch shorts its nets, so a highlight carries across it.
+  const netHighlightOf = beat ? beat.netHighlight
+    : closedSwitchHighlight(circuit, (net) => circuit.netHighlight?.(net) || null);
   const GHOST = ' opacity="0.34"';
   const DIMMED = ' opacity="0.3"';
   const FADED = ' opacity="0.12"';

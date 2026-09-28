@@ -5,7 +5,7 @@ import { loadDocument } from '../src/core/document.js';
 import { runCommand } from '../src/core/commands.js';
 import { BEAT_DIM_INK, BEAT_FADE_INK, svgString } from '../src/core/render.js';
 import {
-  addBeat, cycleBeatHighlight, introduceAt, phaseBeats, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
+  addBeat, closedSwitchHighlight, cycleBeatHighlight, introduceAt, phaseBeats, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
   setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
 } from '../src/core/beats.js';
 
@@ -412,4 +412,30 @@ test('a phase beat dims a closed switch that leads nowhere, but not one joining 
   circuit.beats = [];
   phaseBeats(circuit);
   assert.deepEqual(dim(0), ['S2']);
+});
+
+test('a closed switch carries a net highlight across to the net it shorts', async () => {
+  const { COLOR_PALETTE } = await import('../src/core/style.js');
+  const circuit = new Circuit();
+  run(circuit, 'add resistor R1 --at -400 0', 'add switch_open S1 --at 0 0', 'add resistor R2 --at 400 0',
+    'add resistor R3 --at 400 400', 'connect R1.b S1.a', 'connect S1.b R2.a', 'value S1 φ_{1}');
+  const left = circuit.netOfTerminal({ comp: 'S1', term: 'a' });
+  const right = circuit.netOfTerminal({ comp: 'S1', term: 'b' });
+  circuit.netHighlights.set(circuit.netGroupKey(left), 'blue');
+  const blueWires = (svg) => (svg.toLowerCase().match(new RegExp(COLOR_PALETTE.blue, 'g')) || []).length;
+  // Open, the switch keeps the color on its own side.
+  assert.equal(closedSwitchHighlight(circuit, (net) => circuit.netHighlight(net))(right), null);
+  const open = blueWires(svgString(circuit));
+  // A beat that closes it shorts the nets: the right side takes the color.
+  addBeat(circuit);
+  addBeat(circuit);
+  setSwitchFrom(circuit, 1, 'S1', 'closed');
+  assert.equal(resolveBeat(circuit, 0).netHighlight(right), null);
+  assert.equal(resolveBeat(circuit, 1).netHighlight(right), 'blue');
+  // So does closing it in the drawing; a net with its own color keeps it.
+  circuit.beats = [];
+  circuit.setSwitchState('S1', 'closed');
+  assert.ok(blueWires(svgString(circuit)) > open);
+  circuit.netHighlights.set(circuit.netGroupKey(circuit.netOfTerminal({ comp: 'S1', term: 'b' })), 'red');
+  assert.equal(closedSwitchHighlight(circuit, (net) => circuit.netHighlight(net))(circuit.netOfTerminal({ comp: 'S1', term: 'b' })), 'red');
 });
