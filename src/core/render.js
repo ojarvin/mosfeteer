@@ -805,7 +805,9 @@ export function svgString(circuit, opts = {}) {
       if (solder) markerHighlights.set(solder, color);
     }
   }
-  const compStyle = (c) => withHighlight(c.style, refInk(c.refdes) || markerHighlights.get(c.refdes));
+  // A closed switch conducts its net's color; its phase label keeps its own ink.
+  const compStyle = (c) => withHighlight(c.style, refInk(c.refdes) || markerHighlights.get(c.refdes)
+    || netHighlightOf.switchColor?.(c));
   const labelHighlight = (label) => labelInk(label.id)
     || (label.netId && circuit.nets.has(label.netId) ? netHighlightOf(circuit.nets.get(label.netId)) : null)
     || (label.owner ? markerHighlights.get(label.owner) : null) || null;

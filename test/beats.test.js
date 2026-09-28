@@ -432,10 +432,19 @@ test('a closed switch carries a net highlight across to the net it shorts', asyn
   setSwitchFrom(circuit, 1, 'S1', 'closed');
   assert.equal(resolveBeat(circuit, 0).netHighlight(right), null);
   assert.equal(resolveBeat(circuit, 1).netHighlight(right), 'blue');
+  // The closed switch conducts, so it takes the color too; open, it does not.
+  const s1 = circuit.components.get('S1');
+  assert.equal(resolveBeat(circuit, 1).netHighlight.switchColor(s1), 'blue');
+  assert.equal(resolveBeat(circuit, 0).netHighlight.switchColor(s1), null);
   // So does closing it in the drawing; a net with its own color keeps it.
   circuit.beats = [];
   circuit.setSwitchState('S1', 'closed');
   assert.ok(blueWires(svgString(circuit)) > open);
+  const switchSvg = () => svgString(circuit).match(/data-ref="S1"[^]*?<\/g><\/g>/)[0].toLowerCase();
+  assert.ok(switchSvg().includes(COLOR_PALETTE.blue));
+  // Two colors: each net keeps its own, and the switch takes one of them.
   circuit.netHighlights.set(circuit.netGroupKey(circuit.netOfTerminal({ comp: 'S1', term: 'b' })), 'red');
-  assert.equal(closedSwitchHighlight(circuit, (net) => circuit.netHighlight(net))(circuit.netOfTerminal({ comp: 'S1', term: 'b' })), 'red');
+  const both = closedSwitchHighlight(circuit, (net) => circuit.netHighlight(net));
+  assert.equal(both(circuit.netOfTerminal({ comp: 'S1', term: 'b' })), 'red');
+  assert.ok(['blue', 'red'].includes(both.switchColor(circuit.components.get('S1'))));
 });

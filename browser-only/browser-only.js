@@ -10204,7 +10204,9 @@ function phaseKey(text) {
  * own takes the color of a highlighted net that closed switches join it to
  * (the first such net, in drawing order, when several are). `highlightOf(net)`
  * is the net's own color; `typeOf(component)` the switch type drawn for it
- * (a beat can draw a switch in another position). Returns net -> color | null.
+ * (a beat can draw a switch in another position). Returns net -> color | null,
+ * whose `switchColor(component)` is the color a closed switch conducts --
+ * part of the net now -- or null; between two colors it takes one of them.
  */
 function closedSwitchHighlight(circuit, highlightOf, typeOf = (component) => component.type) {
   const parent = new Map();
@@ -10216,22 +10218,30 @@ function closedSwitchHighlight(circuit, highlightOf, typeOf = (component) => com
   for (const net of circuit.nets.values()) {
     for (const { comp, term } of net.terminals) netOf.set(`${comp}.${term}`, net);
   }
-  let joined = false;
+  // A closed switch on one net (both ends tied) conducts it too.
+  const closedOn = new Map();
   for (const component of circuit.components.values()) {
     if (!switchState(component) || typeOf(component) !== SWITCH_TYPES.closed) continue;
     const ends = component.terminalDefs.map((def) => netOf.get(`${component.refdes}.${def.name}`)).filter(Boolean);
-    if (ends.length < 2) continue;
+    if (!ends.length) continue;
     const [a, b] = ends.map((net) => find(circuit.netGroupKey(net)));
-    if (a !== b) { parent.set(b, a); joined = true; }
+    if (b !== undefined && a !== b) parent.set(b, a);
+    closedOn.set(component.refdes, circuit.netGroupKey(ends[0]));
   }
-  if (!joined) return (net) => highlightOf(net) || null;
   const shared = new Map();
-  for (const net of circuit.nets.values()) {
-    const color = highlightOf(net);
-    const root = find(circuit.netGroupKey(net));
-    if (color && !shared.has(root)) shared.set(root, color);
+  if (closedOn.size) {
+    for (const net of circuit.nets.values()) {
+      const color = highlightOf(net);
+      const root = find(circuit.netGroupKey(net));
+      if (color && !shared.has(root)) shared.set(root, color);
+    }
   }
-  return (net) => highlightOf(net) || shared.get(find(circuit.netGroupKey(net))) || null;
+  const highlight = (net) => highlightOf(net) || shared.get(find(circuit.netGroupKey(net))) || null;
+  highlight.switchColor = (component) => {
+    const key = closedOn.get(component?.refdes);
+    return key === undefined ? null : shared.get(find(key)) || null;
+  };
+  return highlight;
 }
 
 /** What beats and groups know a switch by: its phase, or its own refdes. */
@@ -22479,7 +22489,9 @@ function svgString(circuit, opts = {}) {
       if (solder) markerHighlights.set(solder, color);
     }
   }
-  const compStyle = (c) => withHighlight(c.style, refInk(c.refdes) || markerHighlights.get(c.refdes));
+  // A closed switch conducts its net's color; its phase label keeps its own ink.
+  const compStyle = (c) => withHighlight(c.style, refInk(c.refdes) || markerHighlights.get(c.refdes)
+    || netHighlightOf.switchColor?.(c));
   const labelHighlight = (label) => labelInk(label.id)
     || (label.netId && circuit.nets.has(label.netId) ? netHighlightOf(circuit.nets.get(label.netId)) : null)
     || (label.owner ? markerHighlights.get(label.owner) : null) || null;
