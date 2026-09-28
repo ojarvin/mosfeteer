@@ -22,6 +22,12 @@ current drawing trigger the usual discard prompt; canceling keeps the Atlas
 open. Name and save the new circuit to add it to the workspace. This button
 is hidden in the Symbols view.
 
+The design open in the editor -- where Esc and the header's **Back to …**
+button return -- carries an **OPEN** badge before its caption, and the
+button names it ("Back to amp", or "(not in this workspace)" for a new or
+unsaved drawing). The picked design, which Enter opens, has a bracket at each
+corner; a hover draws a faint frame. Both take in the caption.
+
 **Folder…** switches the workspace to another folder, and the desk lays out
 its designs in place. In browser-only mode, **Open…** also adds document
 files from any folder to the desk without opening one. Dropping files or a

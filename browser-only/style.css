@@ -4610,6 +4610,13 @@ button.off {
   font-size: 0.8125rem;
 }
 
+/* Names the design Esc returns to; a long name gives way to an ellipsis. */
+.atlas-head .atlas-close {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .atlas-head .atlas-mark {
   margin-right: -6px;
 }

@@ -405,12 +405,17 @@ test('Atlas creates a circuit through the unsaved-changes guard and preserves na
   assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\) && \(ev.key === 'Enter' \|\| ev.key === ' ' \|\| ev.key === 'Tab'\)\) return;/);
 });
 
-test('an Atlas hover frames the picked design too, bracket and all', () => {
+test('the Atlas marks the open design apart from the pick and the hover', () => {
   const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
   const caption = atlas.slice(atlas.indexOf('function drawCaption'), atlas.indexOf('function fitText'));
   assert.match(caption, /if \(hovered\) \{\s*ctx\.save\(\);\s*ctx\.globalAlpha \*= 0\.3;/);
   assert.doesNotMatch(caption, /hovered && !selected/);
   assert.match(caption, /if \(selected\) \{/);
+  // The pick is bracketed at all four corners.
+  assert.match(caption, /\[\[x0, y0, 1, 1\], \[x1, y0, -1, 1\], \[x1, y1, -1, -1\], \[x0, y1, 1, -1\]\]/);
+  // The open design, where Esc returns, carries an OPEN badge, and the way back names it.
+  assert.match(caption, /if \(entry\.current\) \{[^]*ctx\.fillText\('OPEN'/);
+  assert.match(atlas, /const label = `Back to \$\{name\}\$\{onDesk \|\| state\.source === 'symbols' \? '' : ' \(not in this workspace\)'\}`;/);
 });
 
 test('the Atlas header carries the editor toolbar\'s mark and theme toggle', () => {

@@ -39,6 +39,7 @@ const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
 const titleEl = document.getElementById('atlas-title');
 const statusEl = document.getElementById('atlas-status');
+const backEl = document.getElementById('atlas-close');
 const hintEl = document.getElementById('atlas-hint');
 const searchEl = document.getElementById('atlas-search');
 const newCircuitEl = document.getElementById('atlas-new-circuit');
@@ -397,7 +398,21 @@ function colors() {
   };
 }
 
+/** The header's way back names the design Esc returns to, and says so when
+ *  that design is not on the desk (a new drawing, or one from elsewhere). */
+function syncBackButton() {
+  if (!backEl) return;
+  const name = editor.currentCircuitName || 'Untitled';
+  const onDesk = state.tiles.some((tile) => state.entries.get(tile.id)?.current);
+  const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
+  if (backEl.textContent !== label) {
+    backEl.textContent = label;
+    backEl.title = `Esc returns to ${name}, the design open in the editor`;
+  }
+}
+
 function draw() {
+  syncBackButton();
   const { w, h } = paneSize();
   const dpr = window.devicePixelRatio || 1;
   if (deskEl.width !== Math.round(w * dpr) || deskEl.height !== Math.round(h * dpr)) {
@@ -814,18 +829,24 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   if (state.source === 'symbols') return;
   const selected = state.selected === tile.id;
   const hovered = state.hover === tile.id;
-  // The pick is a corner bracket hugging the design's top-left corner, the
+  // The pick is a bracket at each of the design's corners, the
   // hover a faint frame -- the picked design (the open one, at first) takes
   // it too, bracket and all. Both sit in the gap around the design, measured
   // in drawing units, so they scale with the zoom and never reach a neighbour.
   const k = scale();
   const inset = ATLAS_GAP * 0.35 * k;
+  // The caption may run on into the gap after its tile; its size follows
+  // the caption band, so zoomed far out it gives way instead of crowding.
+  const size = Math.min(13, ATLAS_CAPTION * k * 0.45);
+  const captioned = size >= 7;
+  // Frame and bracket take in the caption, so no line runs through it.
+  const bottom = captioned ? rect.y + rect.h + size * 1.9 + inset * 0.6 : rect.y + rect.h + inset;
   if (hovered) {
     ctx.save();
     ctx.globalAlpha *= 0.3;
     ctx.strokeStyle = palette.accent;
     ctx.lineWidth = 1;
-    ctx.strokeRect(rect.x - inset, rect.y - inset, rect.w + 2 * inset, rect.h + 2 * inset);
+    ctx.strokeRect(rect.x - inset, rect.y - inset, rect.w + 2 * inset, bottom - rect.y + inset);
     ctx.restore();
   }
   if (selected) {
@@ -834,24 +855,44 @@ function drawCaption(ctx, tile, entry, rect, palette) {
     ctx.strokeStyle = palette.accent;
     ctx.lineWidth = Math.max(1, Math.min(2.5, inset * 0.6));
     ctx.lineCap = 'square';
+    const x0 = rect.x - inset;
+    const y0 = rect.y - inset;
+    const x1 = rect.x + rect.w + inset;
+    const y1 = bottom;
     ctx.beginPath();
-    ctx.moveTo(rect.x - inset, rect.y - inset + arm);
-    ctx.lineTo(rect.x - inset, rect.y - inset);
-    ctx.lineTo(rect.x - inset + arm, rect.y - inset);
+    for (const [x, y, dx, dy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x1, y1, -1, -1], [x0, y1, 1, -1]]) {
+      ctx.moveTo(x, y + dy * arm);
+      ctx.lineTo(x, y);
+      ctx.lineTo(x + dx * arm, y);
+    }
     ctx.stroke();
     ctx.restore();
   }
-  // The caption may run on into the gap after its tile; its size follows
-  // the caption band, so zoomed far out it gives way instead of crowding.
-  const size = Math.min(13, ATLAS_CAPTION * k * 0.45);
-  if (size < 7) return;
-  const room = (tile.w + ATLAS_GAP * 0.8) * k;
-  const marker = entry.current ? '● ' : '';
-  ctx.font = `${selected ? 600 : 500} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
-  ctx.fillStyle = selected || hovered ? palette.text : palette.dim;
+  if (!captioned) return;
+  let room = (tile.w + ATLAS_GAP * 0.8) * k;
+  let x = rect.x;
+  const y = rect.y + rect.h + size * 0.6;
+  // The open design -- where Esc returns -- carries an Open badge before its
+  // name, whichever design is picked or hovered.
+  if (entry.current) {
+    ctx.font = `700 ${size * 0.8}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    const pad = size * 0.4;
+    const w = ctx.measureText('OPEN').width + 2 * pad;
+    ctx.fillStyle = palette.accent;
+    ctx.beginPath();
+    ctx.roundRect(x, y - size * 0.1, w, size * 1.2, size * 0.3);
+    ctx.fill();
+    ctx.fillStyle = palette.paper;
+    ctx.textBaseline = 'middle';
+    ctx.fillText('OPEN', x + pad, y + size * 0.5);
+    x += w + size * 0.45;
+    room -= w + size * 0.45;
+  }
+  ctx.font = `${selected || entry.current ? 600 : 500} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  ctx.fillStyle = selected || hovered || entry.current ? palette.text : palette.dim;
   ctx.textBaseline = 'top';
   const tags = entry.index?.tags?.length ? `   ${entry.index.tags.map((tag) => `#${tag}`).join(' ')}` : '';
-  ctx.fillText(fitText(ctx, `${marker}${entry.name}${tags}`, room), rect.x, rect.y + rect.h + size * 0.6);
+  ctx.fillText(fitText(ctx, `${entry.name}${tags}`, room), x, y);
 }
 
 /** `text`, cut with an ellipsis to fit `width` pixels. */
@@ -1397,7 +1438,7 @@ export function installAtlas() {
     const { w, h } = paneSize();
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
-  document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  backEl?.addEventListener('click', () => void closeAtlas());
   document.getElementById('atlas-mark')?.addEventListener('click', () => void closeAtlas());
   document.getElementById('app-mark')?.addEventListener('click', () => void openAtlas());
   exportEl?.addEventListener('click', exportDesk);
