@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { runCommand } from '../core/commands.js';
 import { createDocument, documentKind, loadDocument } from '../core/document.js';
 import {
-  absolutePath, browseFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
+  absolutePath, browseFolder, browseNearestFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
   fileRevision, isJsonFile, listDocuments, readDocumentFile, serializeDocument, validDocumentName, writeFileAtomic,
 } from './documents.js';
 import { findChromium, printSvgToPdf } from './browser.js';
@@ -248,7 +248,9 @@ export async function startApp({
 
     if (pathname === '/api/browse' && method === 'GET') {
       const dir = absolutePath(url.searchParams.get('dir') || workspace());
-      json(res, 200, { ...(await browseFolder(dir)), home: homedir(), workspace: workspace(), sep });
+      // Opening the browser on a folder that has since gone shows its nearest parent.
+      const listing = url.searchParams.get('nearest') === '1' ? await browseNearestFolder(dir) : await browseFolder(dir);
+      json(res, 200, { ...listing, home: homedir(), workspace: workspace(), sep });
       return;
     }
 

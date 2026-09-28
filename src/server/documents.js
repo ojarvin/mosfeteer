@@ -150,6 +150,22 @@ export async function listDocuments(dir) {
   return documents.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
+/** Browse `dir`, or when it is gone (a renamed or deleted workspace), the
+ *  nearest folder above it that still exists, naming the missing one. */
+export async function browseNearestFolder(dir) {
+  let target = dir;
+  for (;;) {
+    try {
+      const listing = await browseFolder(target);
+      return target === dir ? listing : { ...listing, missing: dir };
+    } catch (error) {
+      const parent = dirname(target);
+      if (error.status !== 404 || parent === target) throw error;
+      target = parent;
+    }
+  }
+}
+
 /** One folder level for the in-app file browser. Hidden entries are omitted. */
 export async function browseFolder(dir) {
   let entries;

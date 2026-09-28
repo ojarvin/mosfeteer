@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import {
-  browseFolder, documentNameFromPath, fileRevision, documentPathFor, listDocuments, readDocumentFile, validDocumentName, writeFileAtomic,
+  browseFolder, browseNearestFolder, documentNameFromPath, fileRevision, documentPathFor, listDocuments, readDocumentFile, validDocumentName, writeFileAtomic,
 } from '../src/server/documents.js';
 import { decodePngToRgb, pngToPdf, pngsToPdf } from '../src/server/pdf-raster.js';
 import { findChromium } from '../src/server/browser.js';
@@ -82,6 +82,13 @@ test('workspace listing and folder browsing show documents, folders, and other J
   ]);
   assert.equal(listing.parent, join(dir, '..'));
   await assert.rejects(browseFolder(join(dir, 'missing')), (error) => error.status === 404);
+  // A folder renamed away opens the browser on the nearest one still there.
+  const gone = join(dir, 'renamed-away', 'deeper');
+  const nearest = await browseNearestFolder(gone);
+  assert.equal(nearest.dir, dir);
+  assert.equal(nearest.missing, gone);
+  assert.ok(nearest.entries.some(({ name }) => name === 'project'));
+  assert.equal((await browseNearestFolder(dir)).missing, undefined);
   await assert.rejects(readDocumentFile(join(dir, 'notes.json')), (error) => error.status === 422);
   assert.deepEqual(await readDocumentFile(join(dir, 'b.json')), JSON.parse(state));
   await assert.rejects(readDocumentFile(join(dir, 'a10.json')), (error) => error.status === 422);

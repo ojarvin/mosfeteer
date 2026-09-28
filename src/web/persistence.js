@@ -764,7 +764,7 @@ export function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) 
     liveSync: true,
     workspace: () => httpJson(fetchImpl, '/api/workspace'),
     setWorkspace: (path) => httpJson(fetchImpl, '/api/workspace', jsonBody('PUT', { path })),
-    browse: (dir) => httpJson(fetchImpl, `/api/browse${dir ? `?${query({ dir })}` : ''}`),
+    browse: (dir, { nearest = false } = {}) => httpJson(fetchImpl, `/api/browse${dir || nearest ? `?${query({ ...(dir ? { dir } : {}), ...(nearest ? { nearest: '1' } : {}) })}` : ''}`),
     createFolder: (dir, name) => httpJson(fetchImpl, '/api/folders', jsonBody('POST', { dir, name })),
     reveal: (path) => httpJson(fetchImpl, '/api/reveal', jsonBody('POST', { path })),
     /** `open` records the file in the recent-documents list. */

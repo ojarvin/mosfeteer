@@ -113,10 +113,10 @@ export function showFileDialog(persistence, { mode = 'open', dir = '', name = ''
     else if (mode === 'save') { select(entry.path); form.requestSubmit(); }
   }
 
-  async function navigate(target) {
+  async function navigate(target, { nearest = false } = {}) {
     setStatus('Loading…');
     try {
-      listing = await persistence.browse(target);
+      listing = await persistence.browse(target, { nearest });
     } catch (error) {
       setStatus(error.message, true);
       if (listing) pathInput.value = listing.dir;
@@ -137,9 +137,11 @@ export function showFileDialog(persistence, { mode = 'open', dir = '', name = ''
     })));
     visible.forEach((entry, index) => { list.children[index].querySelector('.file-dialog-entry-name').textContent = entry.name; });
     const documents = visible.filter((entry) => entry.type !== 'folder').length;
-    setStatus(mode === 'folder'
-      ? `${visible.length} folder${visible.length === 1 ? '' : 's'}`
-      : visible.length ? `${documents} document file${documents === 1 ? '' : 's'}` : 'This folder is empty.');
+    setStatus(listing.missing
+      ? `"${listing.missing}" no longer exists (renamed or moved?); showing the nearest folder above it.`
+      : mode === 'folder'
+        ? `${visible.length} folder${visible.length === 1 ? '' : 's'}`
+        : visible.length ? `${documents} document file${documents === 1 ? '' : 's'}` : 'This folder is empty.');
     updateAction();
   }
 
@@ -215,7 +217,9 @@ export function showFileDialog(persistence, { mode = 'open', dir = '', name = ''
   document.body.append(dialog);
   updateAction();
   dialog.showModal();
-  navigate(dir).then(() => (mode === 'save' ? nameInput : list).focus());
+  // The folder it starts in may have been renamed or moved since: start in
+  // the nearest one above it that still exists, so there is somewhere to go.
+  navigate(dir, { nearest: true }).then(() => (mode === 'save' ? nameInput : list).focus());
   return new Promise((resolve) => {
     dialog.addEventListener('close', () => {
       dialog.remove();
