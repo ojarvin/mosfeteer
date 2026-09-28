@@ -11,8 +11,9 @@
  * The slash sits at each part pin on the bus (busTerminalMarks): on the
  * pin's own outward line, at least one grid cell from where the conductor
  * meets the drawn part, in whole cells -- at the terminal when the symbol's
- * lead is that long already (an ADC's), one cell out along the wire when the
- * pin sits on or near the body's edge (a port, a block). A bus net with no pins marks each branch
+ * lead is that long already (an ADC's), one cell out along the wire from a
+ * port's short lead, and two from a pin right on the body's edge (a sum, a
+ * block), leaving room for an arrowhead. A bus net with no pins marks each branch
  * mid-way instead (busMarkPoints).
  */
 
@@ -84,9 +85,9 @@ export function netNamesConnect(a, b) {
   return !!x && !!y && x.base === y.base && x.bits.some((bit) => y.bits.includes(bit));
 }
 
-/** Half extents of the slash: one grid cell across the wire, leaning 3
- *  along it for every 4 across. */
-const SLASH = { along: 15, across: 20 };
+/** Half extent of the slash: a 45-degree `/` one grid cell tall and wide,
+ *  the same on a horizontal and a vertical wire. */
+const SLASH = GRID / 2;
 
 /**
  * Where a bus's slashes go on its drawn `paths`, keeping clear of the net
@@ -140,9 +141,9 @@ export function straightLeadLength(graphics, t) {
 }
 
 /**
- * Where a bus net's slashes go: at each part pin on it, one grid cell clear of
- * the drawn part along the pin's outward line (at the terminal itself when
- * the lead is that long), or at the terminal when the wire turns before that.
+ * Where a bus net's slashes go: at each part pin on it, along the pin's
+ * outward line (see the module note), stepping back toward the terminal a
+ * cell at a time where the wire turns sooner.
  * A net with no pins marks each drawn branch mid-way (busMarkPoints).
  */
 export function busTerminalMarks(circuit, net, paths, avoid = []) {
@@ -153,18 +154,20 @@ export function busTerminalMarks(circuit, net, paths, avoid = []) {
     if (!def) continue;
     const at = component.terminalWorld(term);
     const dir = circuit._pinDir(component, def, at.x, at.y);
-    // Whole cells out, so the slash stays on a grid point.
-    const out = Math.max(0, Math.ceil((GRID - straightLeadLength(component.def.graphics, def)) / GRID) * GRID);
-    const point = { x: at.x + dir.x * out, y: at.y + dir.y * out };
-    const onWire = paths.some((path) => pointOnPath(point, path) && pointOnPath(at, path));
-    marks.push({ ...(onWire ? point : at), horizontal: dir.y === 0 });
+    // Whole cells out, so the slash stays on a grid point; a pin right on the
+    // body's edge (a sum, a block) leaves a second cell for an arrowhead.
+    const lead = straightLeadLength(component.def.graphics, def);
+    const cells = lead === 0 ? 2 : Math.max(0, Math.ceil((GRID - lead) / GRID));
+    // Nearer, a cell at a time, where the wire turns sooner.
+    const point = [...Array(cells + 1).keys()].reverse()
+      .map((k) => ({ x: at.x + dir.x * k * GRID, y: at.y + dir.y * k * GRID }))
+      .find((p) => paths.some((path) => pointOnPath(p, path) && pointOnPath(at, path))) || at;
+    marks.push({ ...point, horizontal: dir.y === 0 });
   }
   return marks.length ? marks : busMarkPoints(paths, avoid);
 }
 
 /** SVG path data for a slash at `mark`: a `/` across the wire. */
-export function busMarkD({ x, y, horizontal }) {
-  const dx = horizontal ? SLASH.along : SLASH.across;
-  const dy = horizontal ? SLASH.across : SLASH.along;
-  return `M ${x - dx} ${y + dy} L ${x + dx} ${y - dy}`;
+export function busMarkD({ x, y }) {
+  return `M ${x - SLASH} ${y + SLASH} L ${x + SLASH} ${y - SLASH}`;
 }

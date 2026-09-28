@@ -84,9 +84,9 @@ test('a bus slash sits mid-way along each branch\'s longest straight run, clear 
   assert.deepEqual(busMarkPoints([[{ x: 0, y: 0 }, { x: 200, y: 0 }]]), [{ x: 100, y: 0, horizontal: true }]);
   // A diagonal keeps its own look; a slash is one cell tall.
   assert.deepEqual(busMarkPoints([[{ x: 0, y: 0 }, { x: 80, y: 80 }]]), []);
-  assert.equal(busMarkD({ x: 100, y: 0, horizontal: true }), 'M 85 20 L 115 -20');
-  // Always a `/`, whichever way the wire runs.
-  assert.equal(busMarkD({ x: 0, y: 100, horizontal: false }), 'M -20 115 L 20 85');
+  // A 45-degree `/`, the same whichever way the wire runs.
+  assert.equal(busMarkD({ x: 100, y: 0, horizontal: true }), 'M 80 20 L 120 -20');
+  assert.equal(busMarkD({ x: 0, y: 100, horizontal: false }), 'M -20 120 L 20 80');
 });
 
 test('a net named as a bus draws its slash; renaming it plain removes it', () => {
@@ -135,7 +135,15 @@ test('a bus slash sits a cell clear of the drawn part at each pin', () => {
   const d = circuit.components.get('U1').terminalWorld('d');
   const p = circuit.components.get('D_3_0').terminalWorld('p');
   assert.deepEqual(marksOf('U1', 'd'), [{ ...d, horizontal: true }, { x: p.x - 40, y: p.y, horizontal: true }]);
-  // A block pin is on the body's edge too: one cell out.
+  // A block pin is right on the body's edge: two cells out, room for an arrowhead.
   const t = circuit.components.get('B1').terminalWorld('T10');
-  assert.deepEqual(marksOf('B1', 'T10')[0], { x: t.x + 40, y: t.y, horizontal: true });
+  assert.deepEqual(marksOf('B1', 'T10')[0], { x: t.x + 80, y: t.y, horizontal: true });
+  // So is a sum's; where the wire turns sooner the slash steps back.
+  runCommand(circuit, 'add signal_sum S1 --at 0 1600');
+  runCommand(circuit, 'add output P3 --at 400 1600');
+  runCommand(circuit, 'connect S1.e P3.p --name Y[1:0]');
+  const e = circuit.components.get('S1').terminalWorld('e');
+  assert.deepEqual(marksOf('S1', 'e')[0], { x: e.x + 80, y: e.y, horizontal: true });
+  const short = circuit.netOfTerminal({ comp: 'S1', term: 'e' });
+  assert.deepEqual(busTerminalMarks(circuit, short, [[e, { x: e.x + 40, y: e.y }, { x: e.x + 40, y: e.y + 200 }]])[0], { x: e.x + 40, y: e.y, horizontal: true });
 });
