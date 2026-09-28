@@ -29886,7 +29886,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
-let wheelIntent, lerpView, zoomView; __bind(() => { ({ wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
+let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let addDocumentFiles, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ addDocumentFiles, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
@@ -29965,6 +29965,8 @@ const REVEAL_MS = 350;
 /** A wheel zoom counts as motion until the wheel has been still this long. */
 const WHEEL_SETTLE_MS = 150;
 const OPEN_MS = 450;
+/** A design's image arriving after the desk shows fades in this long. */
+const ARRIVE_MS = 220;
 /** The desk's fade into the editor (style.css .atlas.leaving). */
 const LEAVE_MS = 180;
 /** A search packs the designs it found together once typing pauses this
@@ -30207,13 +30209,15 @@ async function warmSmallImages(generation, budget) {
     const key = bitmapKey(current, level);
     if (!state.bitmaps.has(key)) state.bitmaps.set(key, await bake(current, level));
   }) : [];
+  // Every design's small image, from the cache or drawn now: the desk is
+  // still, so drawing costs no frames, and the flight shows them all.
   const loads = state.tiles.map(async (tile) => {
     const entry = state.entries.get(tile.id);
     const key = bitmapKey(entry, 'small');
     if (!entry.revision || state.bitmaps.has(key)) return;
-    const blob = await cacheGet(renderingKey(entry.path, entry.revision, `${theme()}-small-v3`));
-    if (!blob || !state || state.generation !== generation) return;
-    state.bitmaps.set(key, await createImageBitmap(blob));
+    const bitmap = await bake(entry, 'small').catch(() => null);
+    if (!bitmap || !state || state.generation !== generation || state.bitmaps.has(key)) return;
+    state.bitmaps.set(key, bitmap);
   });
   await Promise.race([Promise.allSettled([...baking, ...loads]), new Promise((resolve) => setTimeout(resolve, budget))]);
 }
@@ -30252,6 +30256,9 @@ async function pump() {
         const bitmap = await bake(entry, level);
         if (!state || state.generation !== generation) return;
         state.bitmaps.set(key, bitmap);
+        // An image that arrives once the desk shows fades in (see draw); the
+        // open design is on it from the start, as the editor showed it.
+        if (!entry.current && !rootEl.classList.contains('preparing')) state.arrived.set(key, performance.now());
         if (level === 'large') evictLargeBitmaps(key);
         requestDraw();
       } catch {
@@ -30374,6 +30381,11 @@ function draw() {
     if (bitmap && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
       // Best filtering at rest; in motion the cheap one, which no one sees.
       ctx.imageSmoothingQuality = moving ? 'low' : 'high';
+      // A design whose image has only just arrived fades in; it does not pop.
+      const since = state.arrived.get(bitmapKey(entry, 'small'));
+      const arriving = since === undefined ? 1 : Math.min(1, (performance.now() - since) / ARRIVE_MS);
+      if (arriving < 1) requestDraw();
+      ctx.globalAlpha *= arriving;
       ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
     }
     const distance = Math.hypot(tile.x + tile.w / 2 - centre.x, tile.y + tile.h / 2 - centre.y);
@@ -30503,9 +30515,28 @@ function motionProgress() {
 /** Where a tile is drawn now: on its way from its old place mid-rearrangement. */
 function shownTile(tile) {
   const from = state.motion?.from.get(tile.id);
-  if (!from) return tile;
-  const t = motionProgress();
-  return { ...tile, x: from.x + (tile.x - from.x) * t, y: from.y + (tile.y - from.y) * t };
+  const t = from ? motionProgress() : 1;
+  const placed = from ? { ...tile, x: from.x + (tile.x - from.x) * t, y: from.y + (tile.y - from.y) * t } : tile;
+  return scattered(placed);
+}
+
+/**
+ * A flight into (or out of) one design parts the desk around it: every other
+ * design moves straight away from it, in step with the camera, far enough to
+ * clear the editor's view -- so no neighbour lingers at the edges while the
+ * editor takes over, and on the way out they gather back in from beyond the
+ * edges (state.scatter, set by animateView).
+ */
+function scattered(tile) {
+  const scatter = state.scatter;
+  if (!scatter || tile.id === scatter.focus.id) return tile;
+  const t = scatter.animation ? scatter.animation.t : 1;
+  const k = easeInOutCubic(scatter.outward ? t : 1 - t);
+  if (k <= 0) return tile;
+  const dx = tile.x + tile.w / 2 - scatter.centre.x;
+  const dy = tile.y + tile.h / 2 - scatter.centre.y;
+  const length = Math.hypot(dx, dy) || 1;
+  return { ...tile, x: tile.x + (dx / length) * scatter.reach * k, y: tile.y + (dy / length) * scatter.reach * k };
 }
 
 // ----- export ---------------------------------------------------------------------
@@ -30865,7 +30896,7 @@ function setView(view) {
 /** Animate the view to `target`. `camera` flies there as one zoom
  *  (gestures.js zoomView) rather than easing each edge; `retargetView`
  *  can move the destination while it flies. */
-function animateView(target, duration = 320, { camera = false } = {}) {
+function animateView(target, duration = 320, { camera = false, scatter = null } = {}) {
   if (state.animation) cancelAnimationFrame(state.animation.frame);
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced || duration <= 0) {
@@ -30875,16 +30906,23 @@ function animateView(target, duration = 320, { camera = false } = {}) {
   const from = { ...state.view };
   const start = performance.now();
   const blend = camera ? zoomView : lerpView;
-  const animation = { target, frame: 0 };
+  const animation = { target, frame: 0, t: 0 };
+  // The desk parts around (or gathers back to) `scatter.tile` as the camera
+  // flies, reaching as far as the view at the close end of the flight.
+  if (scatter) partDesk(scatter.tile, scatter.outward, scatter.outward ? target : from, animation);
   return new Promise((resolve) => {
     const step = (now) => {
       if (!state) { resolve(); return; }
       const t = Math.min(1, (now - start) / duration);
+      animation.t = t;
       state.view = blend(from, animation.target, t);
       draw();
       if (t < 1) animation.frame = requestAnimationFrame(step);
       else {
         state.animation = null;
+        // Gathered back in, the desk is at rest; parted, it stays parted
+        // until the Atlas is gone.
+        if (state.scatter?.animation === animation && !state.scatter.outward) state.scatter = null;
         draw(); // settled: the live drawings return
         resolve();
       }
@@ -30907,6 +30945,16 @@ function nextFrames(count) {
 function flightMs(from, to) {
   const octaves = Math.abs(Math.log2(to.w / from.w));
   return Math.round(Math.min(720, Math.max(380, 380 + 85 * octaves)));
+}
+
+/** Part the desk around `tile` for a flight (see scattered): as far as
+ *  `near`, the view at the close end, clears; `animation.t` drives it. */
+function partDesk(tile, outward, near, animation) {
+  state.scatter = {
+    focus: tile, outward, animation,
+    centre: { x: tile.x + tile.w / 2, y: tile.y + tile.h / 2 },
+    reach: Math.hypot(near.w, near.h) * 0.75,
+  };
 }
 
 /** Move a running animation's destination, keeping its pace. */
@@ -30961,6 +31009,7 @@ function deskState(generation, source, startup = false) {
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
     arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
+    arrived: new Map(), scatter: null, opening: false,
   };
 }
 
@@ -31027,6 +31076,14 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   // would fade out and back in.
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced && !startup) rootEl.classList.add('preparing');
+  // Zooming out of the open design, the desk shows only once it has drawn
+  // that design: fading in over the editor without it, the design would
+  // blink out for a moment (see openDesk).
+  const bridging = !reduced && !startup && animate && source === 'workspace';
+  if (bridging) {
+    rootEl.style.animation = 'none';
+    rootEl.classList.add('preparing');
+  }
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
@@ -31047,7 +31104,15 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
 
 /** Lay out the desk just opened and bring it into view. */
 async function openDesk(generation, source, animate, startup) {
-  if (source === 'workspace' && animate && !startup) showOpenDesign();
+  if (source === 'workspace' && animate && !startup) {
+    showOpenDesign();
+    await bakeOpenDesign(250);
+    if (!state || state.generation !== generation) return;
+    // Now the desk can fade in over the editor: the same design, in place.
+    rootEl.classList.remove('preparing');
+    rootEl.style.animation = '';
+    draw();
+  }
   let ready = false;
   try {
     ready = source === 'symbols' ? loadSymbols() : await loadWorkspace(generation);
@@ -31085,15 +31150,33 @@ async function openDesk(generation, source, animate, startup) {
     draw();
     await Promise.all([revealStartup(), animateView(target, 1100)]);
   } else if (state.fromEditor) {
+    // The others wait parted beyond the edges until the camera pulls back.
+    const openTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
+    if (openTile) partDesk(openTile, false, state.view, { t: 0 });
     draw();
     // Decode the small images first, while the view still matches the
     // editor: decoding in the middle of the zoom would stall its frames.
     await warmSmallImages(generation, 400);
     if (!state || state.generation !== generation) return;
-    await animateView(clampView(fitAllView()), ENTER_MS);
+    // The other designs gather in from beyond the edges as the camera pulls back.
+    await animateView(clampView(fitAllView()), ENTER_MS, { camera: true, scatter: openTile ? { tile: openTile, outward: false } : null });
   } else {
     setView(fitAllView());
   }
+}
+
+/** Draw the open design's images (it is drawn live, never cached), for at
+ *  most `budget` ms: the desk fades in with the design already on it. */
+async function bakeOpenDesign(budget) {
+  const entry = state.tiles.map((tile) => state.entries.get(tile.id)).find((candidate) => candidate?.current);
+  if (!entry) return;
+  const jobs = ['small', 'large'].map(async (level) => {
+    const key = bitmapKey(entry, level);
+    if (state.bitmaps.has(key)) return;
+    const bitmap = await bake(entry, level).catch(() => null);
+    if (bitmap && state && !state.bitmaps.has(key)) state.bitmaps.set(key, bitmap);
+  });
+  await Promise.race([Promise.allSettled(jobs), new Promise((resolve) => setTimeout(resolve, budget))]);
 }
 
 /** Put the open design on the desk at once, exactly where the editor shows
@@ -31125,7 +31208,7 @@ async function closeAtlas({ animate = true } = {}) {
   // With reduced motion the desk just fades from where it is.
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const back = animate && !reduced && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
-  if (back) await animateView(back, flightMs(state.view, back), { camera: true });
+  if (back) await animateView(back, flightMs(state.view, back), { camera: true, scatter: { tile: currentTile, outward: true } });
   finishClose();
 }
 
@@ -31189,7 +31272,7 @@ async function openTile(tile) {
     if (opened) await nextFrames(2);
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
-      if (exact) await animateView(exact, flightMs(state.view, exact), { camera: true });
+      if (exact) await animateView(exact, flightMs(state.view, exact), { camera: true, scatter: { tile, outward: true } });
     }
   } else {
     // Read the file while flying straight to where the editor will fit the
@@ -31204,7 +31287,7 @@ async function openTile(tile) {
     const predicted = editorEquivalentView(tile, entry, fittedView({
       x: entry.box.x + pad, y: entry.box.y + pad, w: entry.box.w - 2 * pad, h: entry.box.h - 2 * pad,
     }));
-    if (predicted) await animateView(predicted, flightMs(state.view, predicted), { camera: true });
+    if (predicted) await animateView(predicted, flightMs(state.view, predicted), { camera: true, scatter: { tile, outward: true } });
     land();
     opened = await loading;
     // Let the editor measure its labels and fit to them before the last look.

@@ -412,11 +412,16 @@ test('opening a design from the Atlas flies once and loads without costing the f
   // where the editor will fit it; the header keeps its name until then.
   assert.match(open, /const loading = openDocumentPath\(entry\.path, \{ gate \}\);/);
   assert.match(open, /fittedView\(\{\s*x: entry\.box\.x \+ pad/);
-  assert.match(open, /await animateView\(predicted, flightMs\(state\.view, predicted\), \{ camera: true \}\);\s*land\(\);/);
+  assert.match(open, /await animateView\(predicted, flightMs\(state\.view, predicted\), \{ camera: true, scatter: \{ tile, outward: true \} \}\);\s*land\(\);/);
+  // The other designs part around it as it flies, and gather back on the way out.
+  assert.match(atlas, /function scattered\(tile\) \{/);
+  assert.match(atlas, /if \(openTile\) partDesk\(openTile, false, state\.view, \{ t: 0 \}\);/);
   assert.match(atlas, /if \(!backEl \|\| state\.opening\) return;/);
   // Reduced motion flies nowhere: the desk fades, both ways, laid out unseen first.
   assert.match(open, /if \(reduced\) \{\s*\/\/ No flight/);
-  assert.match(atlas, /if \(reduced && !startup\) rootEl\.classList\.add\('preparing'\);\s*rootEl\.hidden = false;/);
+  assert.match(atlas, /if \(reduced && !startup\) rootEl\.classList\.add\('preparing'\);/);
+  // Zooming out, the desk shows only once the open design is drawn on it.
+  assert.match(atlas, /showOpenDesign\(\);\s*await bakeOpenDesign\(250\);/);
   const session = readFileSync(new URL('../src/web/document-session.js', import.meta.url), 'utf8');
   assert.match(session, /if \(gate\) await gate;/);
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
