@@ -3,7 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { busGroupName, netNamesConnect } from './bus.js';
+import { busGroupName, coveringBusColor, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
@@ -132,6 +132,16 @@ export function referenceMarkerName(component) {
   if (!isReferenceMarker(component)) return '';
   const label = component.circuit?.labelOf?.(component.refdes);
   return canonicalNetName(label?._text || '');
+}
+
+/** A net's color in `colors` (netGroupKey -> color): its group's own, else
+ * that of a highlighted bus range covering its bits (bus.js). */
+export function busNetHighlight(circuit, colors, net) {
+  const key = circuit.netGroupKey(net);
+  const own = colors.get(key);
+  if (own || !net?.name) return own || null;
+  const names = new Map([...colors].map(([group, color]) => [group.replace(/^name:/, ''), color]));
+  return coveringBusColor(net.name, names);
 }
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
@@ -2772,18 +2782,19 @@ export class Circuit {
 
   /** The electrical group a physical net belongs to: nets on one unnamed
    * rail share the rail name, equally named nets are virtually connected,
-   * and any other net stands alone under its id. Every net of one bus -- its
-   * range, part ranges, and single bits (bus.js) -- is one group, so a probe
-   * on any bit colors the whole bus. */
+   * and any other net stands alone under its id. A bus or bit name is one
+   * group whichever brackets spell it (bus.js). */
   netGroupKey(net) {
     if (!net?.id) return '';
     const rail = this.unnamedReferenceInfo(net)?.globalName;
     return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
   }
 
-  /** Highlight color token of a net's electrical group, or null. */
+  /** Highlight color token of a net's electrical group, or null. A net of a
+   * bus without a color of its own takes that of a highlighted bus range
+   * covering its bits. */
   netHighlight(net) {
-    return this.netHighlights.get(this.netGroupKey(net)) || null;
+    return busNetHighlight(this, this.netHighlights, net);
   }
 
   /** Advance a group's highlight to the next color no other highlighted

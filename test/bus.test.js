@@ -31,27 +31,42 @@ test('a bus stands for its parallel bits, and a bit named anywhere joins it', ()
   assert.ok(!netNamesConnect('', ''));
 });
 
-test('probing any bit colors the whole bus wherever it is drawn', () => {
+test('probing a bus colors all its bits; probing a bit colors only that bit', () => {
   const circuit = new Circuit();
   for (const line of [
     'add adc U1 --at 0 0', 'add output P1 --at 600 0', 'connect U1.d P1.p --name D[3:0]',
     'add resistor R1 --at 0 400', 'add resistor R2 --at 400 400', 'connect R1.b R2.a --name D<1>',
     'add resistor R3 --at 0 800', 'add resistor R4 --at 400 800', 'connect R3.b R4.a --name D[2]',
     'add resistor R5 --at 0 1200', 'add resistor R6 --at 400 1200', 'connect R5.b R6.a --name E[1]',
+    'add resistor R7 --at 0 1600', 'add resistor R8 --at 400 1600', 'connect R7.b R8.a --name D[1]',
   ]) runCommand(circuit, line);
   const net = (comp, term) => circuit.netOfTerminal({ comp, term });
   const bus = net('U1', 'd');
   const bit1 = net('R1', 'b');
+  const bit1again = net('R7', 'b');
   const bit2 = net('R3', 'b');
+  const other = net('R5', 'b');
   // The bus reaches each of its bits; one bit does not reach another.
   assert.ok(circuit.logicallyConnected(bus, bit1));
   assert.ok(circuit.logicallyConnected(bus, bit2));
   assert.ok(!circuit.logicallyConnected(bit1, bit2));
-  assert.ok(!circuit.logicallyConnected(bit1, net('R5', 'b')));
-  // One probe on bit 1 colors the bus and every bit of it, not bus E.
-  const color = circuit.cycleNetHighlight(bit1);
-  for (const member of [bus, bit1, bit2]) assert.equal(circuit.netHighlight(member), color);
-  assert.equal(circuit.netHighlight(net('R5', 'b')), null);
+  assert.ok(!circuit.logicallyConnected(bit1, other));
+  // D<1> and D[1] are one name.
+  assert.equal(circuit.netGroupKey(bit1), circuit.netGroupKey(bit1again));
+  // A probe on bit 1 stays on bit 1 (either spelling), not the bus or bit 2.
+  const one = circuit.cycleNetHighlight(bit1);
+  assert.equal(circuit.netHighlight(bit1again), one);
+  assert.equal(circuit.netHighlight(bus), null);
+  assert.equal(circuit.netHighlight(bit2), null);
+  // A probe on the bus colors every bit it covers that has no color of its own.
+  const all = circuit.cycleNetHighlight(bus);
+  assert.notEqual(all, one);
+  assert.equal(circuit.netHighlight(bit2), all);
+  assert.equal(circuit.netHighlight(bit1), one);
+  assert.equal(circuit.netHighlight(other), null);
+  // Its own color cleared, bit 1 shows the bus color too.
+  circuit.netHighlights.delete(circuit.netGroupKey(bit1));
+  assert.equal(circuit.netHighlight(bit1), all);
   // Only the multi-bit net draws the slash.
   assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 1);
 });

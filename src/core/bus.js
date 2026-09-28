@@ -36,11 +36,25 @@ export function busWidth(name) {
   return bus?.range ? bus.bits.length : 0;
 }
 
-/** The group every net of one bus shares (its range, part ranges, and single
- *  bits), so a probe colors the whole bus; null for a plain name. */
+/** One spelling for a bus or bit name, so square and angle brackets name
+ *  the same group (`D[3:0]` and `D<3:0>` -> `D<3:0>`); null for a plain name. */
 export function busGroupName(name) {
   const bus = busBits(name);
-  return bus ? `${bus.base}[]` : null;
+  if (!bus) return null;
+  return bus.range ? `${bus.base}<${bus.bits[0]}:${bus.bits.at(-1)}>` : `${bus.base}<${bus.bits[0]}>`;
+}
+
+/** The highlight a bus-named net inherits from `colors` (group name ->
+ *  color): a highlighted bus range covering all of its bits colors it, so a
+ *  probe on `D[3:0]` reaches `D[1]`, while a probe on one bit stays on it. */
+export function coveringBusColor(name, colors) {
+  const bus = busBits(name);
+  if (!bus) return null;
+  for (const [group, color] of colors) {
+    const other = busBits(group);
+    if (color && other?.range && other.base === bus.base && bus.bits.every((bit) => other.bits.includes(bit))) return color;
+  }
+  return null;
 }
 
 /** Whether two net names are virtually connected: the same name, or two

@@ -23,7 +23,7 @@
  */
 
 import { getSymbol } from './components/index.js';
-import { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarkerGlobalName } from './model.js';
+import { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, busNetHighlight, isReferenceMarkerGlobalName } from './model.js';
 import { steinerBranches } from './router.js';
 
 export const SWITCH_TYPES = Object.freeze({ open: 'switch_open', closed: 'switch_closed' });
@@ -839,7 +839,7 @@ export function resolveBeat(circuit, index) {
     switchTypes,
     highlights,
     wires,
-    netHighlight: closedSwitchHighlight(circuit, (net) => highlights.get(circuit.netGroupKey(net)) || null,
+    netHighlight: closedSwitchHighlight(circuit, (net) => busNetHighlight(circuit, highlights, net),
       (component) => switchTypes.get(component.refdes) || component.type),
     /** Symbol definition drawn for a component in this beat. */
     defOf: (component) => (switchTypes.has(component.refdes) ? getSymbol(switchTypes.get(component.refdes)) : component.def),
