@@ -30712,11 +30712,12 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   const selected = state.selected === tile.id;
   const hovered = state.hover === tile.id;
   // The pick is a corner bracket hugging the design's top-left corner, the
-  // hover a faint frame. Both sit in the gap around the design, measured in
-  // drawing units, so they scale with the zoom and never reach a neighbour.
+  // hover a faint frame -- the picked design (the open one, at first) takes
+  // it too, bracket and all. Both sit in the gap around the design, measured
+  // in drawing units, so they scale with the zoom and never reach a neighbour.
   const k = scale();
   const inset = ATLAS_GAP * 0.35 * k;
-  if (hovered && !selected) {
+  if (hovered) {
     ctx.save();
     ctx.globalAlpha *= 0.3;
     ctx.strokeStyle = palette.accent;

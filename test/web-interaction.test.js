@@ -405,6 +405,14 @@ test('Atlas creates a circuit through the unsaved-changes guard and preserves na
   assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\) && \(ev.key === 'Enter' \|\| ev.key === ' ' \|\| ev.key === 'Tab'\)\) return;/);
 });
 
+test('an Atlas hover frames the picked design too, bracket and all', () => {
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  const caption = atlas.slice(atlas.indexOf('function drawCaption'), atlas.indexOf('function fitText'));
+  assert.match(caption, /if \(hovered\) \{\s*ctx\.save\(\);\s*ctx\.globalAlpha \*= 0\.3;/);
+  assert.doesNotMatch(caption, /hovered && !selected/);
+  assert.match(caption, /if \(selected\) \{/);
+});
+
 test('the Atlas header carries the editor toolbar\'s mark and theme toggle', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const head = html.slice(html.indexOf('<header class="atlas-head'), html.indexOf('</header>', html.indexOf('<header class="atlas-head')));
