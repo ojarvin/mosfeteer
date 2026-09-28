@@ -3,6 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
+import { busGroupName, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
@@ -2771,10 +2772,13 @@ export class Circuit {
 
   /** The electrical group a physical net belongs to: nets on one unnamed
    * rail share the rail name, equally named nets are virtually connected,
-   * and any other net stands alone under its id. */
+   * and any other net stands alone under its id. Every net of one bus -- its
+   * range, part ranges, and single bits (bus.js) -- is one group, so a probe
+   * on any bit colors the whole bus. */
   netGroupKey(net) {
     if (!net?.id) return '';
-    return `name:${this.unnamedReferenceInfo(net)?.globalName || net.name || net.id}`;
+    const rail = this.unnamedReferenceInfo(net)?.globalName;
+    return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
   }
 
   /** Highlight color token of a net's electrical group, or null. */
@@ -3122,7 +3126,7 @@ export class Circuit {
     const left = resolve(a);
     const right = resolve(b);
     if (!left || !right) return false;
-    return left === right || (!!left.name && canonicalNetName(left.name) === canonicalNetName(right.name));
+    return left === right || netNamesConnect(canonicalNetName(left.name), canonicalNetName(right.name));
   }
 
   areLogicallyConnected(a, b) {

@@ -160,10 +160,15 @@ short: the editor asks, in the same picker, to rename the net to the rail
 (`VSS`/`VDD`/`VCM`), and a cancel reverts the whole edit.
 
 A net named with a bit range, `D[7:0]` or `D<7:0>`, is a bus
-(`src/core/bus.js`): it connects by its whole name like any net, and the
-renderer draws a one-cell slash across each of its branches. A port named
-that way folds the range into its identity (`D_{OUT}[3:0]` is `DOUT_3_0`) and
-keeps it in its label and net name.
+(`src/core/bus.js`): by the Virtuoso convention it stands for the parallel
+nets `D[7]` ... `D[0]`, so a net named for one bit (`D[1]` or `D<1>`; the
+brackets are one notation) is virtually connected to that bit
+(`netNamesConnect`), while two different bits are not. Every net of one bus
+shares one `netGroupKey`, so a probe on any bit colors the whole bus, and the
+editor lists it as one net. The renderer draws a one-cell slash across each
+branch of a multi-bit net. A port named that way folds the range into its
+identity (`D_{OUT}[3:0]` is `DOUT_3_0`) and keeps it in its label and net
+name. Small-signal analysis still joins nets by exact name only.
 
 Persistent net highlights (`circuit.netHighlights`) are document data keyed
 by `netGroupKey`, so one color covers a whole electrical group: equally named

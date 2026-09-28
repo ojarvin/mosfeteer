@@ -18,6 +18,7 @@ import { copyAsImage } from './export-ui.js';
 import { openSwapPicker } from './insert-menu.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
+import { netNamesConnect } from '../core/bus.js';
 import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
 import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
 
@@ -137,7 +138,7 @@ function selectContextNet(target, { namedGroup = false, segment = false } = {}) 
   const net = contextNet(target);
   if (!net) return;
   const candidates = namedGroup && net.name
-    ? [...editor.circuit.nets.values()].filter((candidate) => candidate.name === net.name)
+    ? [...editor.circuit.nets.values()].filter((candidate) => netNamesConnect(candidate.name, net.name))
     : namedGroupNets(net);
   setSelection([], null, true);
   setLabelSelection([], null, true);

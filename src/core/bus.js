@@ -1,9 +1,12 @@
 /**
- * Multi-bit nets: a net named with a bit range, `D[7:0]` or `D<7:0>`, is a
- * bus. It connects like any net (by its whole name); the drawing marks it
- * with a short slash across the wire. The mark belongs to the net, not to the
- * parts on it (the ADC and DAC draw none of their own), and it is drawn in
- * world space: a `/` whichever way the wire runs or the parts are turned.
+ * Multi-bit nets, by the Virtuoso convention: a net named with a bit range,
+ * `D[7:0]` or `D<7:0>`, stands for the parallel nets `D[7]` ... `D[0]`, and a
+ * net named for one bit (`D[3]`, `D<3>`) anywhere else is virtually connected
+ * to that bit. Square and angle brackets mean the same. The bus is still
+ * drawn and listed as one net, marked with a short slash across its wire; it
+ * belongs to the net, not to the parts on it (the ADC and DAC draw none of
+ * their own), and it is drawn in world space: a `/` whichever way the wire
+ * runs or the parts are turned.
  *
  * First iteration of the mark's placement: one slash per drawn branch, at
  * the middle of its longest straight segment, moved a cell along when a net
@@ -12,12 +15,44 @@
 
 import { GRID } from './grid.js';
 
-const BUS_NAME = /^(.*?)[[<]\s*(\d+)\s*:\s*(\d+)\s*[\]>]$/;
+const BUS_NAME = /^(.*?)[[<]\s*(\d+)\s*(?::\s*(\d+)\s*)?[\]>]$/;
 
-/** Bits in a bus name (`D[7:0]` -> 8), or 0 for any other name. */
-export function busWidth(name) {
+/** A bus or bus-bit name as { base, bits: [indices, first to last], range }
+ *  (`D[3:0]` -> D, [3, 2, 1, 0], range), or null for any other name. */
+export function busBits(name) {
   const match = BUS_NAME.exec(String(name ?? '').trim());
-  return match && match[1] ? Math.abs(Number(match[2]) - Number(match[3])) + 1 : 0;
+  if (!match || !match[1].trim()) return null;
+  const from = Number(match[2]);
+  const to = match[3] === undefined ? from : Number(match[3]);
+  const step = from <= to ? 1 : -1;
+  const bits = [];
+  for (let bit = from; bit !== to + step; bit += step) bits.push(bit);
+  return { base: match[1].trim(), bits, range: match[3] !== undefined };
+}
+
+/** Bits in a bus name (`D[7:0]` -> 8), or 0 for a single bit or any other name. */
+export function busWidth(name) {
+  const bus = busBits(name);
+  return bus?.range ? bus.bits.length : 0;
+}
+
+/** The group every net of one bus shares (its range, part ranges, and single
+ *  bits), so a probe colors the whole bus; null for a plain name. */
+export function busGroupName(name) {
+  const bus = busBits(name);
+  return bus ? `${bus.base}[]` : null;
+}
+
+/** Whether two net names are virtually connected: the same name, or two
+ *  names of one bus that share a bit (`D[3:0]` and `D<1>`). */
+export function netNamesConnect(a, b) {
+  const left = String(a ?? '').trim();
+  const right = String(b ?? '').trim();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const x = busBits(left);
+  const y = busBits(right);
+  return !!x && !!y && x.base === y.base && x.bits.some((bit) => y.bits.includes(bit));
 }
 
 /** Half extents of the slash: one grid cell across the wire, leaning 3

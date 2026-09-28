@@ -6,6 +6,7 @@
  */
 
 import { Circuit, INTERFACE_PIN_TYPES, normalizeComponentRefdes, referenceMarkerNameConflicts } from '../core/model.js';
+import { netNamesConnect } from '../core/bus.js';
 import { loadDocument } from '../core/document.js';
 import { confirmChoice } from './file-dialog.js';
 import { componentContextMenuEl } from './elements.js';
@@ -28,10 +29,12 @@ export function interfacePortNet(component) {
   catch { return null; }
 }
 
+/** Whether two names join: the same name, one bus sharing a bit (`D[3:0]`
+ *  and `D<1>`), or two spellings of one part identity. */
 function sameNamedConnection(left, right) {
   const a = String(left ?? '').trim();
   const b = String(right ?? '').trim();
-  return !!a && !!b && (a === b || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
+  return !!a && !!b && (netNamesConnect(a, b) || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
 }
 
 /** Find named nets or interface ports that a new name would virtually join. */

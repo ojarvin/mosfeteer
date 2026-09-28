@@ -11193,16 +11193,22 @@ function cornerNames(poles, zeros) {
 };
 
 __modules["src/core/bus.js"] = function (__require, __exports) {
+__exports.busBits = busBits;
 __exports.busWidth = busWidth;
+__exports.busGroupName = busGroupName;
+__exports.netNamesConnect = netNamesConnect;
 __exports.busMarkPoints = busMarkPoints;
 __exports.busMarkD = busMarkD;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 /**
- * Multi-bit nets: a net named with a bit range, `D[7:0]` or `D<7:0>`, is a
- * bus. It connects like any net (by its whole name); the drawing marks it
- * with a short slash across the wire. The mark belongs to the net, not to the
- * parts on it (the ADC and DAC draw none of their own), and it is drawn in
- * world space: a `/` whichever way the wire runs or the parts are turned.
+ * Multi-bit nets, by the Virtuoso convention: a net named with a bit range,
+ * `D[7:0]` or `D<7:0>`, stands for the parallel nets `D[7]` ... `D[0]`, and a
+ * net named for one bit (`D[3]`, `D<3>`) anywhere else is virtually connected
+ * to that bit. Square and angle brackets mean the same. The bus is still
+ * drawn and listed as one net, marked with a short slash across its wire; it
+ * belongs to the net, not to the parts on it (the ADC and DAC draw none of
+ * their own), and it is drawn in world space: a `/` whichever way the wire
+ * runs or the parts are turned.
  *
  * First iteration of the mark's placement: one slash per drawn branch, at
  * the middle of its longest straight segment, moved a cell along when a net
@@ -11211,12 +11217,44 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
 
 
-const BUS_NAME = /^(.*?)[[<]\s*(\d+)\s*:\s*(\d+)\s*[\]>]$/;
+const BUS_NAME = /^(.*?)[[<]\s*(\d+)\s*(?::\s*(\d+)\s*)?[\]>]$/;
 
-/** Bits in a bus name (`D[7:0]` -> 8), or 0 for any other name. */
-function busWidth(name) {
+/** A bus or bus-bit name as { base, bits: [indices, first to last], range }
+ *  (`D[3:0]` -> D, [3, 2, 1, 0], range), or null for any other name. */
+function busBits(name) {
   const match = BUS_NAME.exec(String(name ?? '').trim());
-  return match && match[1] ? Math.abs(Number(match[2]) - Number(match[3])) + 1 : 0;
+  if (!match || !match[1].trim()) return null;
+  const from = Number(match[2]);
+  const to = match[3] === undefined ? from : Number(match[3]);
+  const step = from <= to ? 1 : -1;
+  const bits = [];
+  for (let bit = from; bit !== to + step; bit += step) bits.push(bit);
+  return { base: match[1].trim(), bits, range: match[3] !== undefined };
+}
+
+/** Bits in a bus name (`D[7:0]` -> 8), or 0 for a single bit or any other name. */
+function busWidth(name) {
+  const bus = busBits(name);
+  return bus?.range ? bus.bits.length : 0;
+}
+
+/** The group every net of one bus shares (its range, part ranges, and single
+ *  bits), so a probe colors the whole bus; null for a plain name. */
+function busGroupName(name) {
+  const bus = busBits(name);
+  return bus ? `${bus.base}[]` : null;
+}
+
+/** Whether two net names are virtually connected: the same name, or two
+ *  names of one bus that share a bit (`D[3:0]` and `D<1>`). */
+function netNamesConnect(a, b) {
+  const left = String(a ?? '').trim();
+  const right = String(b ?? '').trim();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const x = busBits(left);
+  const y = busBits(right);
+  return !!x && !!y && x.base === y.base && x.bits.some((bit) => y.bits.includes(bit));
 }
 
 /** Half extents of the slash: one grid cell across the wire, leaning 3
@@ -14908,10 +14946,12 @@ let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute; __bind(() => { ({ balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js")); });
 let collapseCollinear; __bind(() => { ({ collapseCollinear } = __require("src/core/wireedit.js")); });
+let busGroupName, netNamesConnect; __bind(() => { ({ busGroupName, netNamesConnect } = __require("src/core/bus.js")); });
 let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_SIZES, labelFontSize, strokeWidth } = __require("src/core/style.js")); });
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js")); });
+
 
 
 
@@ -17685,10 +17725,13 @@ class Circuit {
 
   /** The electrical group a physical net belongs to: nets on one unnamed
    * rail share the rail name, equally named nets are virtually connected,
-   * and any other net stands alone under its id. */
+   * and any other net stands alone under its id. Every net of one bus -- its
+   * range, part ranges, and single bits (bus.js) -- is one group, so a probe
+   * on any bit colors the whole bus. */
   netGroupKey(net) {
     if (!net?.id) return '';
-    return `name:${this.unnamedReferenceInfo(net)?.globalName || net.name || net.id}`;
+    const rail = this.unnamedReferenceInfo(net)?.globalName;
+    return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
   }
 
   /** Highlight color token of a net's electrical group, or null. */
@@ -18036,7 +18079,7 @@ class Circuit {
     const left = resolve(a);
     const right = resolve(b);
     if (!left || !right) return false;
-    return left === right || (!!left.name && canonicalNetName(left.name) === canonicalNetName(right.name));
+    return left === right || netNamesConnect(canonicalNetName(left.name), canonicalNetName(right.name));
   }
 
   areLogicallyConnected(a, b) {
@@ -33354,6 +33397,7 @@ let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
+let netNamesConnect; __bind(() => { ({ netNamesConnect } = __require("src/core/bus.js")); });
 let handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue; __bind(() => { ({ handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } = __require("src/web/style-controls.js")); });
 let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } = __require("src/web/main.js")); });
 /**
@@ -33361,6 +33405,7 @@ let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, n
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -33495,7 +33540,7 @@ function selectContextNet(target, { namedGroup = false, segment = false } = {}) 
   const net = contextNet(target);
   if (!net) return;
   const candidates = namedGroup && net.name
-    ? [...editor.circuit.nets.values()].filter((candidate) => candidate.name === net.name)
+    ? [...editor.circuit.nets.values()].filter((candidate) => netNamesConnect(candidate.name, net.name))
     : namedGroupNets(net);
   setSelection([], null, true);
   setLabelSelection([], null, true);
@@ -48193,6 +48238,7 @@ __exports.restoreProvisionalLabel = restoreProvisionalLabel;
 __exports.shortNetsAtPlacedSolder = shortNetsAtPlacedSolder;
 __exports.askNameForNewNetNameConflict = askNameForNewNetNameConflict;
 let Circuit, INTERFACE_PIN_TYPES, normalizeComponentRefdes, referenceMarkerNameConflicts; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, normalizeComponentRefdes, referenceMarkerNameConflicts } = __require("src/core/model.js")); });
+let netNamesConnect; __bind(() => { ({ netNamesConnect } = __require("src/core/bus.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
 let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
@@ -48222,6 +48268,7 @@ let applyJson, markModelChanged, render, snapshot; __bind(() => { ({ applyJson, 
 
 
 
+
 function renameLabelThroughModel(label, text) {
   if (label?.isNetLabel?.()) return editor.circuit.renameNetLabel(label, text);
   return label.setText(text);
@@ -48233,10 +48280,12 @@ function interfacePortNet(component) {
   catch { return null; }
 }
 
+/** Whether two names join: the same name, one bus sharing a bit (`D[3:0]`
+ *  and `D<1>`), or two spellings of one part identity. */
 function sameNamedConnection(left, right) {
   const a = String(left ?? '').trim();
   const b = String(right ?? '').trim();
-  return !!a && !!b && (a === b || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
+  return !!a && !!b && (netNamesConnect(a, b) || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
 }
 
 /** Find named nets or interface ports that a new name would virtually join. */
