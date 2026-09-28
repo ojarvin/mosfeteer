@@ -2373,9 +2373,23 @@ export class Circuit {
       component.transform.x = x + w / 2;
       component.transform.y = y + h / 2;
       this.invalidateRoutingCache();
+      // Each pin on a moved edge slides on its own, so only the legs at those
+      // pins change; a net whose pins stay put keeps its drawing unless the
+      // grown body now covers it.
+      const terminals = new Map([...beforePoints].map(([name, before]) => [name, { before, after: component.terminalWorld(name) }]));
+      const moved = new Map([[refdes, { dx: 0, dy: 0, slide: true, terminals }]]);
+      const body = component.bboxWorld();
       for (const id of touched) {
         const net = this.nets.get(id);
-        if (net && !this.rerouteNet(net, 'refresh')) throw new Error(`unable to route net ${id} after block resize`);
+        if (!net) continue;
+        const slid = net.terminals.some((t) => {
+          const move = t.comp === refdes && terminals.get(t.term);
+          return move && (move.before.x !== move.after.x || move.before.y !== move.after.y);
+        });
+        const covered = () => net.paths().some((path) => path.some((p, i) => i > 0 && segThroughInterior(path[i - 1], p, body)));
+        if (slid ? this.rerouteNet(net, moved) && !covered() : !covered()) continue;
+        if (this.rerouteNet(net, 'refresh')) continue;
+        throw new Error(`unable to route net ${id} after block resize`);
       }
       this.connectCoincident(refdes);
       return component;
@@ -3604,6 +3618,12 @@ export class Circuit {
             y: current.y - delta.dy,
           };
           if (Math.abs(p.x - old.x) <= 1 && Math.abs(p.y - old.y) <= 1) {
+            // A sliding pin (a resized block's edge) moves on its own; its leg
+            // stretches after it like any moved pin's.
+            if (delta.slide) {
+              if (current.x === old.x && current.y === old.y) return null;
+              return { refdes, cur: current, delta: { dx: current.x - old.x, dy: current.y - old.y }, freshLeg: false };
+            }
             const translated = !terminalMove ||
               (old.x === current.x - delta.dx && old.y === current.y - delta.dy);
             return { refdes, cur: current, delta, freshLeg: !translated };
@@ -3800,6 +3820,13 @@ export class Circuit {
       const delta = moved.get(terminal.comp) || null;
       const terminalMove = delta?.terminals?.get(terminal.term);
       const before = terminalMove?.before || (delta ? { x: now.x - delta.dx, y: now.y - delta.dy } : now);
+      if (delta?.slide) {
+        const after = terminalMove?.after || now;
+        if (after.x !== before.x || after.y !== before.y) {
+          moveAt.set(`${before.x},${before.y}`, { delta: { dx: after.x - before.x, dy: after.y - before.y }, fresh: false });
+        }
+        continue;
+      }
       const fresh = !!terminalMove && (terminalMove.after.x - before.x !== delta.dx || terminalMove.after.y - before.y !== delta.dy);
       moveAt.set(`${before.x},${before.y}`, delta && { delta, fresh });
     }

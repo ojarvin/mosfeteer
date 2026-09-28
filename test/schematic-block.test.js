@@ -110,6 +110,25 @@ test('schematic block resize preserves occupied perimeter positions and clamps s
   assert.deepEqual(net.paths()[0][0], { x: 0, y: -80 });
 });
 
+test('resizing a block moves only the legs at pins on a moved edge', () => {
+  const circuit = new Circuit();
+  const block = circuit.addComponent('block', { refdes: 'B1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R1', x: 480, y: 320, rotation: 90 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: -480, y: -320, rotation: 90 });
+  const right = circuit.connect('B1.T4', 'R1.a');
+  const left = circuit.connect('B1.T12', 'R2.b');
+  // An authored detour on the right, which a fresh layout would straighten.
+  right.branches = [[{ x: 80, y: 40 }, { x: 240, y: 40 }, { x: 240, y: -160 }, { x: 480, y: -160 }, { x: 480, y: 240 }]];
+  right.route = right.branches[0].map((p) => ({ ...p }));
+  const leftBefore = JSON.stringify(left.paths());
+
+  circuit.resizeBlock('B1', { x: -80, y: -80, w: 240, h: 160 });
+  assert.deepEqual(block.terminalWorld('T4'), { x: 160, y: 40 });
+  assert.deepEqual(right.paths(), [[{ x: 160, y: 40 }, { x: 240, y: 40 }, { x: 240, y: -160 }, { x: 480, y: -160 }, { x: 480, y: 240 }]]);
+  assert.equal(JSON.stringify(left.paths()), leftBefore);
+  assert.deepEqual(evaluate(circuit).wireThroughBBoxes, []);
+});
+
 test('arrow annotations preserve authored intermediate vertices and render the head on the final leg', () => {
   const circuit = new Circuit();
   const arrow = circuit.addAnnotation('arrow', {
