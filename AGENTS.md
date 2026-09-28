@@ -161,7 +161,9 @@ short: the editor asks, in the same picker, to rename the net to the rail
 
 A net named with a bit range, `D[7:0]` or `D<7:0>`, is a bus
 (`src/core/bus.js`): it connects by its whole name like any net, and the
-renderer draws a one-cell slash across each of its branches.
+renderer draws a one-cell slash across each of its branches. A port named
+that way folds the range into its identity (`D_{OUT}[3:0]` is `DOUT_3_0`) and
+keeps it in its label and net name.
 
 Persistent net highlights (`circuit.netHighlights`) are document data keyed
 by `netGroupKey`, so one color covers a whole electrical group: equally named

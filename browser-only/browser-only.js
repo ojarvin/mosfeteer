@@ -15605,8 +15605,12 @@ function normalizeComponentRefdes(value) {
   // component identity. Explicit subscript markup is the supported textbook
   // spelling for names.
   if (runs.some((run) => run.super)) return raw;
-  return runs.map((run) => run.text).join('');
+  // A bus pin's bit range (`D[3:0]`, `D<3:0>`) folds into the identity as
+  // `D_3_0`; the label and the net it names keep the range as written.
+  return runs.map((run) => run.text).join('').replace(BUS_RANGE_SUFFIX, '_$1_$2');
 }
+
+const BUS_RANGE_SUFFIX = /\s*[[<]\s*(\d+)\s*:\s*(\d+)\s*[\]>]$/;
 
 /** Return the persisted display source for a component name. Numeric default
  * names use textbook subscript notation (`M_{1}`), while an explicitly
@@ -15615,7 +15619,7 @@ function normalizeComponentRefdes(value) {
 function componentLabelText(refdes, source = null) {
   const canonical = normalizeComponentRefdes(refdes);
   const supplied = source === null || source === undefined ? '' : String(source).trim();
-  if (supplied && normalizeComponentRefdes(supplied) === canonical && /[_^]\{/.test(supplied)) return supplied;
+  if (supplied && normalizeComponentRefdes(supplied) === canonical && (/[_^]\{/.test(supplied) || BUS_RANGE_SUFFIX.test(supplied))) return supplied;
   // Interface voltage ports use a two-part textbook name: the voltage
   // marker stays on the baseline while the direction/index is subscripted
   // (VI1 -> V_{I1}, VO2 -> V_{O2}, VIO3 -> V_{IO3}).

@@ -38,3 +38,19 @@ test('a net named as a bus draws its slash; renaming it plain removes it', () =>
   circuit.renameNet(circuit.netOfTerminal({ comp: 'U1', term: 'd' }), 'D');
   assert.equal(marks(svgString(circuit)), 0);
 });
+
+test('a pin can be named as a bus: its identity folds the range, its label and net keep it', async () => {
+  const { normalizeComponentRefdes } = await import('../src/core/model.js');
+  assert.equal(normalizeComponentRefdes('D_{OUT}[3:0]'), 'DOUT_3_0');
+  assert.equal(normalizeComponentRefdes('D<7:0>'), 'D_7_0');
+  const circuit = new Circuit();
+  for (const line of ['add adc U1 --at 0 0', 'add output P1 --at 600 0', 'connect U1.d P1.p']) runCommand(circuit, line);
+  circuit.renameComponent('P1', 'D_{OUT}[3:0]', { displayLabel: 'D_{OUT}[3:0]' });
+  assert.ok(circuit.components.has('DOUT_3_0'));
+  assert.equal(circuit.labelOf('DOUT_3_0').text, 'D_{OUT}[3:0]');
+  assert.equal(circuit.netOfTerminal({ comp: 'DOUT_3_0', term: 'p' }).name, 'D_{OUT}[3:0]');
+  assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 1);
+  // The identity stays unique: the other spelling of the same range is taken.
+  runCommand(circuit, 'add output P2 --at 600 400');
+  assert.throws(() => circuit.renameComponent('P2', 'D_{OUT}<3:0>', { displayLabel: 'D_{OUT}<3:0>' }));
+});
