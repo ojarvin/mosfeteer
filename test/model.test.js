@@ -2658,6 +2658,12 @@ test('net-label boxes attach by an edge and preserve orientation on reload', () 
   assert.equal(c._nearestNetPathAttachment(horizontal, { x: 80, y: 40 }).side, 'below');
   assert.equal(c._nearestNetPathAttachment(vertical, { x: 360, y: 80 }).side, 'left');
   assert.equal(c._nearestNetPathAttachment(vertical, { x: 440, y: 80 }).side, 'right');
+  // On the wire itself a label keeps its side (a set move carries it along),
+  // unless that side does not fit the segment it lands on.
+  assert.equal(c._nearestNetPathAttachment(horizontal, { x: 120, y: 0 }, 'below').side, 'below');
+  assert.equal(c._nearestNetPathAttachment(vertical, { x: 400, y: 40 }, 'right').side, 'right');
+  assert.equal(c._nearestNetPathAttachment(vertical, { x: 400, y: 40 }, 'below').side, 'left');
+  assert.equal(c._nearestNetPathAttachment(horizontal, { x: 80, y: -40 }, 'below').side, 'above');
   assert.equal(h.netSide, 'above');
   assert.equal(h.bbox().y + h.bbox().h, h.anchorWorld().y);
   assert.equal(v.netSide, 'left');

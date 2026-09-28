@@ -5844,7 +5844,11 @@ export class Circuit {
     }
   }
 
-  _nearestNetPathAttachment(net, point) {
+  /** The nearest point on `net`'s wire to `point` and the side of it the
+   *  point is on. A point on the wire itself has no side of its own: it keeps
+   *  `keepSide` (a label's current side) while that fits the segment, so a
+   *  label carried along with its wire stays on the side it was put. */
+  _nearestNetPathAttachment(net, point, keepSide = null) {
     let best = null;
     let bestDistance = Infinity;
     for (const path of net.paths()) {
@@ -5861,8 +5865,10 @@ export class Circuit {
           (Math.abs(point.x - a.x) + Math.abs(point.y - a.y) <= Math.abs(point.x - b.x) + Math.abs(point.y - b.y) ? a : b);
         const distance = Math.abs(point.x - candidate.x) + Math.abs(point.y - candidate.y);
         if (distance >= bestDistance) continue;
-        const side = Math.abs(dx) >= Math.abs(dy)
-          ? (point.y <= candidate.y ? 'above' : 'below')
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
+        const fits = horizontal ? keepSide === 'above' || keepSide === 'below' : keepSide === 'left' || keepSide === 'right';
+        const side = distance === 0 && fits ? keepSide
+          : horizontal ? (point.y <= candidate.y ? 'above' : 'below')
           : (point.x <= candidate.x ? 'left' : 'right');
         bestDistance = distance;
         best = { point: { ...candidate }, side };
