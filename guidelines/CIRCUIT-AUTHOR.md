@@ -211,6 +211,7 @@ disconnect REF.TERM            detach one terminal from its net
 nets                           list nets with terminals and lengths
 net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ...
                                manage a net or edit fixed-path geometry
+net <id> bitcount on|off       show a bus net's bit count (D[3:0] -> 4) beside its slashes
 list                           list components with world terminals
 state                          full JSON state
 bounds                         drawing extents

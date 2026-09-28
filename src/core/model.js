@@ -3,7 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { busBits, busGroupName, busGroupsWithin, latestBusColor, netNamesConnect } from './bus.js';
+import { busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
@@ -153,6 +153,17 @@ export function applyNetProbe(colors, key, color) {
   colors.set(key, color);
   const name = key.replace(/^name:/, '');
   for (const inner of busGroupsWithin(name, [...colors.keys()].map((group) => group.replace(/^name:/, '')))) colors.delete(`name:${inner}`);
+}
+
+/** A saved bus-count option, or null: offsets are grid-snapped to half cells
+ * and keyed by slash (bus.js busTerminalMarks). */
+function normalizeBusCount(value) {
+  if (!value || typeof value !== 'object') return null;
+  const offsets = {};
+  for (const [key, offset] of Object.entries(value.offsets || {})) {
+    if (Number.isFinite(offset?.x) && Number.isFinite(offset?.y)) offsets[key] = { x: offset.x, y: offset.y };
+  }
+  return { offsets };
 }
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
@@ -1595,6 +1606,9 @@ export class Net {
       role: opts.analysis?.role || null,
       acGround: !!opts.analysis?.acGround,
     };
+    /** A bus net's bit-count labels: { offsets: { slashKey: {x,y} } } beside
+     *  its slashes (bus.js), or null when they are not shown. */
+    this.busCount = normalizeBusCount(opts.busCount);
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
     /** Managed nets autoroute; fixed nets preserve fixedPaths. */
@@ -1733,6 +1747,7 @@ export class Net {
       wireStyles: Object.fromEntries(Object.entries(this.wireStyles).map(([key, style]) => [key, { ...style }])),
       preserveEmpty: this.preserveEmpty,
       ...(this.analysis.role || this.analysis.acGround ? { analysis: { ...this.analysis } } : {}),
+      ...(this.busCount ? { busCount: normalizeBusCount(this.busCount) } : {}),
       terminals: this.terminals.map((t) => ({ ...t })),
       routingMode: this.routingMode,
       allowDiagonal: this.allowDiagonal,
@@ -2799,6 +2814,22 @@ export class Circuit {
     if (!net?.id) return '';
     const rail = this.unnamedReferenceInfo(net)?.globalName;
     return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
+  }
+
+  /** Show or hide a bus net's bit counts beside its slashes. Returns
+   *  whether they are shown; a net that is not a multi-bit bus shows none. */
+  setBusCountShown(netOrId, show) {
+    const net = this._resolveNet(netOrId);
+    if (!busWidth(net.name) && show) throw new Error(`net ${net.name || net.id} is not a multi-bit bus`);
+    net.busCount = show ? (net.busCount || { offsets: {} }) : null;
+    return !!net.busCount;
+  }
+
+  /** Place one bit-count label at `offset` from its slash (`key`). */
+  moveBusCountLabel(netOrId, key, offset) {
+    const net = this._resolveNet(netOrId);
+    if (!net.busCount) throw new Error(`net ${net.name || net.id} shows no bit count`);
+    net.busCount.offsets[key] = { x: Math.round(offset.x / (GRID / 2)) * (GRID / 2), y: Math.round(offset.y / (GRID / 2)) * (GRID / 2) };
   }
 
   /** Highlight color token of a net's electrical group, or null. A bus or
@@ -6343,6 +6374,7 @@ export class Circuit {
         analysis: n.analysis,
         drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
+        busCount: n.busCount,
         routingMode: fixed ? 'fixed' : 'managed',
         allowDiagonal: !fixed && n.allowDiagonal === true,
         fixedPaths: fixed ? n.fixedPaths : null,

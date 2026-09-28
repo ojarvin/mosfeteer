@@ -129,7 +129,7 @@ test('a bus slash sits a cell clear of the drawn part at each pin', () => {
     'add block B1 --at 0 800', 'add output P2 --at 480 800', 'connect B1.T10 P2.p --name Q<7:0>']) runCommand(circuit, line);
   const marksOf = (comp, term) => {
     const net = circuit.netOfTerminal({ comp, term });
-    return busTerminalMarks(circuit, net, net.paths());
+    return busTerminalMarks(circuit, net, net.paths()).map(({ key, ...mark }) => mark);
   };
   // At the ADC's terminal; one cell out from the port, along the wire.
   const d = circuit.components.get('U1').terminalWorld('d');
@@ -145,5 +145,37 @@ test('a bus slash sits a cell clear of the drawn part at each pin', () => {
   const e = circuit.components.get('S1').terminalWorld('e');
   assert.deepEqual(marksOf('S1', 'e')[0], { x: e.x + 80, y: e.y, horizontal: true });
   const short = circuit.netOfTerminal({ comp: 'S1', term: 'e' });
-  assert.deepEqual(busTerminalMarks(circuit, short, [[e, { x: e.x + 40, y: e.y }, { x: e.x + 40, y: e.y + 200 }]])[0], { x: e.x + 40, y: e.y, horizontal: true });
+  assert.deepEqual(busTerminalMarks(circuit, short, [[e, { x: e.x + 40, y: e.y }, { x: e.x + 40, y: e.y + 200 }]])[0], { x: e.x + 40, y: e.y, horizontal: true, key: 'S1.e' });
+});
+
+test('a bus net can show its bit count beside each slash, and each count moves with its slash', async () => {
+  const { drawnBusCounts } = await import('../src/core/render.js');
+  const circuit = new Circuit();
+  for (const line of ['add adc U1 --at 0 0', 'add output P1 --at 640 0', 'connect U1.d P1.p --name D[3:0]']) runCommand(circuit, line);
+  const net = circuit.netOfTerminal({ comp: 'U1', term: 'd' });
+  assert.deepEqual(drawnBusCounts(circuit), []);
+  const [on] = [runCommand(circuit, `net ${net.id} bitcount on`)];
+  assert.equal(on.mutated, true);
+  const counts = drawnBusCounts(circuit);
+  assert.deepEqual(counts.map(({ key, text }) => [key, text]), [['U1.d', '4'], ['D_3_0.p', '4']]);
+  // Above the slash on a horizontal wire.
+  const [adc] = counts;
+  assert.deepEqual({ x: adc.x - adc.slash.x, y: adc.y - adc.slash.y }, { x: 0, y: -40 });
+  assert.equal((svgString(circuit).match(/class="bus-count"/g) || []).length, 2);
+  // Moved, a count keeps its place from its slash (snapped to half cells), and follows it.
+  circuit.moveBusCountLabel(net, 'U1.d', { x: 27, y: -61 });
+  runCommand(circuit, 'move U1 0 40');
+  const moved = drawnBusCounts(circuit).find(({ key }) => key === 'U1.d');
+  assert.deepEqual({ x: moved.x - moved.slash.x, y: moved.y - moved.slash.y }, { x: 20, y: -60 });
+  // Saved and loaded; then hidden again.
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(drawnBusCounts(loaded).map(({ key, x, y }) => [key, x, y]), drawnBusCounts(circuit).map(({ key, x, y }) => [key, x, y]));
+  runCommand(circuit, `net ${net.id} bitcount off`);
+  assert.deepEqual(drawnBusCounts(circuit), []);
+  // Only a multi-bit bus has a count; the command says how to use it.
+  runCommand(circuit, 'add resistor R1 --at 0 400');
+  runCommand(circuit, 'add resistor R2 --at 400 400');
+  runCommand(circuit, 'connect R1.b R2.a --name D[1]');
+  assert.throws(() => runCommand(circuit, `net ${circuit.netOfTerminal({ comp: 'R1', term: 'b' }).id} bitcount on`), /not a multi-bit bus/);
+  assert.throws(() => runCommand(circuit, `net ${net.id} bitcount maybe`), /usage: net <id> bitcount on\|off/);
 });

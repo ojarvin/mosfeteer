@@ -11201,6 +11201,8 @@ __exports.netNamesConnect = netNamesConnect;
 __exports.busMarkPoints = busMarkPoints;
 __exports.straightLeadLength = straightLeadLength;
 __exports.busTerminalMarks = busTerminalMarks;
+__exports.defaultBusCountOffset = defaultBusCountOffset;
+__exports.busCountLabels = busCountLabels;
 __exports.busMarkD = busMarkD;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
@@ -11368,9 +11370,34 @@ function busTerminalMarks(circuit, net, paths, avoid = []) {
     const point = [...Array(cells + 1).keys()].reverse()
       .map((k) => ({ x: at.x + dir.x * k * GRID, y: at.y + dir.y * k * GRID }))
       .find((p) => paths.some((path) => pointOnPath(p, path) && pointOnPath(at, path))) || at;
-    marks.push({ ...point, horizontal: dir.y === 0 });
+    marks.push({ ...point, horizontal: dir.y === 0, key: `${comp}.${term}` });
   }
-  return marks.length ? marks : busMarkPoints(paths, avoid);
+  return marks.length ? marks : busMarkPoints(paths, avoid).map((mark, i) => ({ ...mark, key: `branch:${i}` }));
+}
+
+/** Text size of a bit count: smaller than a label, like a pin annotation. */
+const BUS_COUNT_SIZE = 30;
+
+/** Where a slash's bit count sits by default, from the slash: above the
+ *  slash on a horizontal wire, beside it on a vertical one. */
+function defaultBusCountOffset(mark) {
+  return mark.horizontal ? { x: 0, y: -2 * SLASH } : { x: 2 * SLASH, y: 0 };
+}
+
+/** The bit-count labels a bus net shows (net.busCount): one per slash, its
+ *  text the bus's width, at the slash plus the saved or default offset, with
+ *  the text box the editor picks it by. */
+function busCountLabels(net, marks) {
+  const width = busWidth(net?.name);
+  if (!width || !net.busCount) return [];
+  const text = String(width);
+  const w = text.length * BUS_COUNT_SIZE * 0.62;
+  return marks.map((mark) => {
+    const offset = net.busCount.offsets?.[mark.key] || defaultBusCountOffset(mark);
+    const x = mark.x + offset.x;
+    const y = mark.y + offset.y;
+    return { key: mark.key, text, x, y, slash: { x: mark.x, y: mark.y }, box: { x: x - w / 2, y: y - BUS_COUNT_SIZE / 2, w, h: BUS_COUNT_SIZE } };
+  });
 }
 
 /** SVG path data for a slash at `mark`: a `/` across the wire. */
@@ -11378,6 +11405,7 @@ function busMarkD({ x, y }) {
   return `M ${x - SLASH} ${y + SLASH} L ${x + SLASH} ${y - SLASH}`;
 }
 
+__exports.BUS_COUNT_SIZE = BUS_COUNT_SIZE;
 };
 
 __modules["src/core/commands.js"] = function (__require, __exports) {
@@ -11923,6 +11951,7 @@ function commandHelp() {
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
+    '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
     '  netlabel add NET [ID] NAME X Y  - place a label on a physical net',
@@ -12633,6 +12662,11 @@ function netCommand(circuit, pos, result) {
   if (op === 'name') {
     circuit.renameNet(net, pos.slice(2).join(' '));
     return result(`net ${net.id} name = "${net.name}"`, net.toJSON(), true);
+  }
+  if (op === 'bitcount') {
+    if (!['on', 'off'].includes(pos[2])) throw new Error('usage: net <id> bitcount on|off');
+    const shown = circuit.setBusCountShown(net, pos[2] === 'on');
+    return result(`net ${net.id} bit count ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
   }
   if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result);
   if (op === 'segment-rm') {
@@ -15026,7 +15060,7 @@ let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute; __bind(() => { ({ balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js")); });
 let collapseCollinear; __bind(() => { ({ collapseCollinear } = __require("src/core/wireedit.js")); });
-let busBits, busGroupName, busGroupsWithin, latestBusColor, netNamesConnect; __bind(() => { ({ busBits, busGroupName, busGroupsWithin, latestBusColor, netNamesConnect } = __require("src/core/bus.js")); });
+let busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesConnect; __bind(() => { ({ busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesConnect } = __require("src/core/bus.js")); });
 let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_SIZES, labelFontSize, strokeWidth } = __require("src/core/style.js")); });
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
@@ -15186,6 +15220,17 @@ function applyNetProbe(colors, key, color) {
   colors.set(key, color);
   const name = key.replace(/^name:/, '');
   for (const inner of busGroupsWithin(name, [...colors.keys()].map((group) => group.replace(/^name:/, '')))) colors.delete(`name:${inner}`);
+}
+
+/** A saved bus-count option, or null: offsets are grid-snapped to half cells
+ * and keyed by slash (bus.js busTerminalMarks). */
+function normalizeBusCount(value) {
+  if (!value || typeof value !== 'object') return null;
+  const offsets = {};
+  for (const [key, offset] of Object.entries(value.offsets || {})) {
+    if (Number.isFinite(offset?.x) && Number.isFinite(offset?.y)) offsets[key] = { x: offset.x, y: offset.y };
+  }
+  return { offsets };
 }
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
@@ -16628,6 +16673,9 @@ class Net {
       role: opts.analysis?.role || null,
       acGround: !!opts.analysis?.acGround,
     };
+    /** A bus net's bit-count labels: { offsets: { slashKey: {x,y} } } beside
+     *  its slashes (bus.js), or null when they are not shown. */
+    this.busCount = normalizeBusCount(opts.busCount);
     /** Ordered list of {comp, term} terminal references. */
     this.terminals = [];
     /** Managed nets autoroute; fixed nets preserve fixedPaths. */
@@ -16766,6 +16814,7 @@ class Net {
       wireStyles: Object.fromEntries(Object.entries(this.wireStyles).map(([key, style]) => [key, { ...style }])),
       preserveEmpty: this.preserveEmpty,
       ...(this.analysis.role || this.analysis.acGround ? { analysis: { ...this.analysis } } : {}),
+      ...(this.busCount ? { busCount: normalizeBusCount(this.busCount) } : {}),
       terminals: this.terminals.map((t) => ({ ...t })),
       routingMode: this.routingMode,
       allowDiagonal: this.allowDiagonal,
@@ -17832,6 +17881,22 @@ class Circuit {
     if (!net?.id) return '';
     const rail = this.unnamedReferenceInfo(net)?.globalName;
     return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
+  }
+
+  /** Show or hide a bus net's bit counts beside its slashes. Returns
+   *  whether they are shown; a net that is not a multi-bit bus shows none. */
+  setBusCountShown(netOrId, show) {
+    const net = this._resolveNet(netOrId);
+    if (!busWidth(net.name) && show) throw new Error(`net ${net.name || net.id} is not a multi-bit bus`);
+    net.busCount = show ? (net.busCount || { offsets: {} }) : null;
+    return !!net.busCount;
+  }
+
+  /** Place one bit-count label at `offset` from its slash (`key`). */
+  moveBusCountLabel(netOrId, key, offset) {
+    const net = this._resolveNet(netOrId);
+    if (!net.busCount) throw new Error(`net ${net.name || net.id} shows no bit count`);
+    net.busCount.offsets[key] = { x: Math.round(offset.x / (GRID / 2)) * (GRID / 2), y: Math.round(offset.y / (GRID / 2)) * (GRID / 2) };
   }
 
   /** Highlight color token of a net's electrical group, or null. A bus or
@@ -21376,6 +21441,7 @@ class Circuit {
         analysis: n.analysis,
         drawOrder: n.drawOrder,
         wireStyles: n.wireStyles,
+        busCount: n.busCount,
         routingMode: fixed ? 'fixed' : 'managed',
         allowDiagonal: !fixed && n.allowDiagonal === true,
         fixedPaths: fixed ? n.fixedPaths : null,
@@ -21877,6 +21943,7 @@ __exports.DEFAULT_EXPORT_TEXT_PT = DEFAULT_EXPORT_TEXT_PT;
 };
 
 __modules["src/core/render.js"] = function (__require, __exports) {
+__exports.drawnBusCounts = drawnBusCounts;
 __exports.texToLabelMarkup = texToLabelMarkup;
 __exports.plainTexText = plainTexText;
 __exports.svgPixelSize = svgPixelSize;
@@ -21896,7 +21963,7 @@ let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH
 let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
-let busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
+let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure.js")); });
 
@@ -22018,6 +22085,23 @@ function graphicsToSvg(g, textTransform = '', objectStyle = null) {
     default:
       return '';
   }
+}
+
+/** A bus net's slashes (bus.js busTerminalMarks), clear of its net labels. */
+function netBusMarks(circuit, net, paths = drawnNetPaths(net)) {
+  const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
+  return busTerminalMarks(circuit, net, paths, anchors);
+}
+
+/** Every bit count the drawing shows, as the editor picks and drags them:
+ *  [{ netId, key, text, x, y, slash, box }]. */
+function drawnBusCounts(circuit) {
+  const out = [];
+  for (const net of circuit.nets.values()) {
+    if (!net.busCount || !busWidth(net.name)) continue;
+    for (const count of busCountLabels(net, netBusMarks(circuit, net))) out.push({ netId: net.id, ...count });
+  }
+  return out;
 }
 
 function symbolTextSvg(g, t, color = '#111') {
@@ -22830,10 +22914,17 @@ function svgString(circuit, opts = {}) {
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
     // and in the wire's own color.
     if (busWidth(net.name)) {
-      const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
+      const marks = netBusMarks(circuit, net, paths);
       const slash = { ...(netStyle || {}), lineStyle: 'solid' };
-      for (const mark of busTerminalMarks(circuit, net, paths, anchors)) {
+      for (const mark of marks) {
         parts.push(`<path class="bus-mark" d="${busMarkD(mark)}" fill="none"${opacity} ${styleAttrs(slash, 'symbol')} pointer-events="none"/>`);
+      }
+      // Its bit count beside each slash, when shown, as small label text.
+      const font = fontAttrs('label')
+        .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(netStyle?.color || '#111'))}"`)
+        .replace(/font-size="[^"]+"/, `font-size="${BUS_COUNT_SIZE}"`);
+      for (const count of busCountLabels(net, marks)) {
+        parts.push(`<text class="bus-count" x="${fmt(count.x)}" y="${fmt(count.y)}" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" ${font} stroke="none"${opacity} data-bus-count="${escapeSvg(`${net.id}|${count.key}`)}">${escapeSvg(count.text)}</text>`);
       }
     }
   }
@@ -33497,7 +33588,7 @@ let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
-let netNamesConnect; __bind(() => { ({ netNamesConnect } = __require("src/core/bus.js")); });
+let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue; __bind(() => { ({ handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } = __require("src/web/style-controls.js")); });
 let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } = __require("src/web/main.js")); });
 /**
@@ -34087,6 +34178,13 @@ function appendContextActions(menu, target) {
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
+    if (busWidth(net.name)) {
+      const shown = !!net.busCount;
+      appendContextItem(group, `Show bit count (${busWidth(net.name)})`, () => {
+        commit(() => editor.circuit.setBusCountShown(net, !shown));
+        logLine(`${shown ? 'hid' : 'showing'} the bit count of ${net.name}`, 'status');
+      }, { active: shown });
+    }
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'm' });
@@ -40295,7 +40393,7 @@ let tidySelection; __bind(() => { ({ tidySelection } = __require("src/core/tidy.
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
 let busBits, busWidth, netNamesConnect; __bind(() => { ({ busBits, busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
-let editorOverlay, svgString; __bind(() => { ({ editorOverlay, svgString } = __require("src/core/render.js")); });
+let drawnBusCounts, editorOverlay, svgString; __bind(() => { ({ drawnBusCounts, editorOverlay, svgString } = __require("src/core/render.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
@@ -41400,6 +41498,13 @@ function syncSelectedNetSolders() {
   }
   for (const ref of selectedNetSolders) multi.add(ref);
   if (selectedNetSolders.size && !selected) selected = [...selectedNetSolders][0];
+}
+
+/** The bus bit count under a world point, if any (core/bus.js). */
+function busCountAt(w) {
+  const pad = 6;
+  return drawnBusCounts(circuit).find(({ box }) => w.x >= box.x - pad && w.x <= box.x + box.w + pad
+    && w.y >= box.y - pad && w.y <= box.y + box.h + pad) || null;
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -44775,6 +44880,15 @@ function canvasMouseDown(ev) {
     hintLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component, label, or wire`);
     return;
   }
+  // A bus's bit count drags on its own, and follows its slash from there on.
+  const countHit = !isSelectionModifier(ev) && mode === 'normal' ? busCountAt(startWorld) : null;
+  if (countHit) {
+    drag = {
+      mode: 'buscountmove', count: countHit, startClient, startWorld, moved: false, startSnapshot: snapshot(),
+      startOffset: { x: countHit.x - countHit.slash.x, y: countHit.y - countHit.slash.y },
+    };
+    return;
+  }
   const endpointHit = annotationEndpointAt(startWorld);
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
@@ -45744,6 +45858,19 @@ function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'buscountmove') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      const { netId, key } = drag.count;
+      circuit.moveBusCountLabel(netId, key, {
+        x: drag.startOffset.x + movedWorld.x - drag.startWorld.x,
+        y: drag.startOffset.y + movedWorld.y - drag.startWorld.y,
+      });
+      markModelChanged(false);
+      scheduleInteractionRender();
+    }
+    return;
+  }
   if (drag.mode === 'annotationtextmove') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
@@ -46433,7 +46560,7 @@ function finishCanvasMouseUp(ev) {
       lastLineClick = { x: point.x, y: point.y, at: now };
       if (doubleClick) commitLineAnnotation(false);
     }
-  } else if (drag.mode === 'annotationtextmove') {
+  } else if (drag.mode === 'annotationtextmove' || drag.mode === 'buscountmove') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
     }

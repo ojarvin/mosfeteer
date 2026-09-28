@@ -518,6 +518,7 @@ export function commandHelp() {
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
     '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
+    '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
     '  netlabel add NET [ID] NAME X Y  - place a label on a physical net',
@@ -1228,6 +1229,11 @@ function netCommand(circuit, pos, result) {
   if (op === 'name') {
     circuit.renameNet(net, pos.slice(2).join(' '));
     return result(`net ${net.id} name = "${net.name}"`, net.toJSON(), true);
+  }
+  if (op === 'bitcount') {
+    if (!['on', 'off'].includes(pos[2])) throw new Error('usage: net <id> bitcount on|off');
+    const shown = circuit.setBusCountShown(net, pos[2] === 'on');
+    return result(`net ${net.id} bit count ${shown ? 'shown' : 'hidden'}`, net.toJSON(), true);
   }
   if (op === 'label') return netLabelCommand(circuit, [pos[2], net.id, ...pos.slice(3)], result);
   if (op === 'segment-rm') {

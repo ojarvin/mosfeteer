@@ -18,7 +18,7 @@ import { copyAsImage } from './export-ui.js';
 import { openSwapPicker } from './insert-menu.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
-import { netNamesConnect } from '../core/bus.js';
+import { busWidth, netNamesConnect } from '../core/bus.js';
 import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
 import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
 
@@ -585,6 +585,13 @@ function appendContextActions(menu, target) {
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     appendContextItem(group, 'Rename net…', later(() => renameFromPanel(netsListEl, `#net-option-${CSS.escape(net.id)}`, (ref) => startNetRename(net, ref))));
+    if (busWidth(net.name)) {
+      const shown = !!net.busCount;
+      appendContextItem(group, `Show bit count (${busWidth(net.name)})`, () => {
+        commit(() => editor.circuit.setBusCountShown(net, !shown));
+        logLine(`${shown ? 'hid' : 'showing'} the bit count of ${net.name}`, 'status');
+      }, { active: shown });
+    }
   }
   if (target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(group, 'Move', () => activateMove('connected'), { shortcut: 'm' });

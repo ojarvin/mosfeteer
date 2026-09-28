@@ -6,7 +6,7 @@ import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance,
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
-import { busMarkD, busTerminalMarks, busWidth } from './bus.js';
+import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure } from './bode-figure.js';
 
@@ -117,6 +117,23 @@ function graphicsToSvg(g, textTransform = '', objectStyle = null) {
     default:
       return '';
   }
+}
+
+/** A bus net's slashes (bus.js busTerminalMarks), clear of its net labels. */
+function netBusMarks(circuit, net, paths = drawnNetPaths(net)) {
+  const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
+  return busTerminalMarks(circuit, net, paths, anchors);
+}
+
+/** Every bit count the drawing shows, as the editor picks and drags them:
+ *  [{ netId, key, text, x, y, slash, box }]. */
+export function drawnBusCounts(circuit) {
+  const out = [];
+  for (const net of circuit.nets.values()) {
+    if (!net.busCount || !busWidth(net.name)) continue;
+    for (const count of busCountLabels(net, netBusMarks(circuit, net))) out.push({ netId: net.id, ...count });
+  }
+  return out;
 }
 
 function symbolTextSvg(g, t, color = '#111') {
@@ -929,10 +946,17 @@ export function svgString(circuit, opts = {}) {
     // A bus (D[7:0], D<7:0>) carries a slash at each pin on it (bus.js), solid
     // and in the wire's own color.
     if (busWidth(net.name)) {
-      const anchors = [...circuit.labels.values()].filter((label) => label.netId === net.id).map((label) => label.anchorWorld());
+      const marks = netBusMarks(circuit, net, paths);
       const slash = { ...(netStyle || {}), lineStyle: 'solid' };
-      for (const mark of busTerminalMarks(circuit, net, paths, anchors)) {
+      for (const mark of marks) {
         parts.push(`<path class="bus-mark" d="${busMarkD(mark)}" fill="none"${opacity} ${styleAttrs(slash, 'symbol')} pointer-events="none"/>`);
+      }
+      // Its bit count beside each slash, when shown, as small label text.
+      const font = fontAttrs('label')
+        .replace(/fill="[^"]+"/, `fill="${escapeSvg(resolveColor(netStyle?.color || '#111'))}"`)
+        .replace(/font-size="[^"]+"/, `font-size="${BUS_COUNT_SIZE}"`);
+      for (const count of busCountLabels(net, marks)) {
+        parts.push(`<text class="bus-count" x="${fmt(count.x)}" y="${fmt(count.y)}" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" ${font} stroke="none"${opacity} data-bus-count="${escapeSvg(`${net.id}|${count.key}`)}">${escapeSvg(count.text)}</text>`);
       }
     }
   }

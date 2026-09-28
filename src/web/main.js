@@ -21,7 +21,7 @@ import { tidySelection } from '../core/tidy.js';
 import { addBoxAround } from '../core/wrap-box.js';
 import { busBits, busWidth, netNamesConnect } from '../core/bus.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
-import { editorOverlay, svgString } from '../core/render.js';
+import { drawnBusCounts, editorOverlay, svgString } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
 import { loadDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -1064,6 +1064,13 @@ function syncSelectedNetSolders() {
   }
   for (const ref of selectedNetSolders) multi.add(ref);
   if (selectedNetSolders.size && !selected) selected = [...selectedNetSolders][0];
+}
+
+/** The bus bit count under a world point, if any (core/bus.js). */
+function busCountAt(w) {
+  const pad = 6;
+  return drawnBusCounts(circuit).find(({ box }) => w.x >= box.x - pad && w.x <= box.x + box.w + pad
+    && w.y >= box.y - pad && w.y <= box.y + box.h + pad) || null;
 }
 
 /** Match a world point against label bboxes (labels draw on top of everything). */
@@ -4439,6 +4446,15 @@ function canvasMouseDown(ev) {
     hintLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a component, label, or wire`);
     return;
   }
+  // A bus's bit count drags on its own, and follows its slash from there on.
+  const countHit = !isSelectionModifier(ev) && mode === 'normal' ? busCountAt(startWorld) : null;
+  if (countHit) {
+    drag = {
+      mode: 'buscountmove', count: countHit, startClient, startWorld, moved: false, startSnapshot: snapshot(),
+      startOffset: { x: countHit.x - countHit.slash.x, y: countHit.y - countHit.slash.y },
+    };
+    return;
+  }
   const endpointHit = annotationEndpointAt(startWorld);
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
@@ -5408,6 +5424,19 @@ export function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'buscountmove') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      const { netId, key } = drag.count;
+      circuit.moveBusCountLabel(netId, key, {
+        x: drag.startOffset.x + movedWorld.x - drag.startWorld.x,
+        y: drag.startOffset.y + movedWorld.y - drag.startWorld.y,
+      });
+      markModelChanged(false);
+      scheduleInteractionRender();
+    }
+    return;
+  }
   if (drag.mode === 'annotationtextmove') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
@@ -6097,7 +6126,7 @@ function finishCanvasMouseUp(ev) {
       lastLineClick = { x: point.x, y: point.y, at: now };
       if (doubleClick) commitLineAnnotation(false);
     }
-  } else if (drag.mode === 'annotationtextmove') {
+  } else if (drag.mode === 'annotationtextmove' || drag.mode === 'buscountmove') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
     }

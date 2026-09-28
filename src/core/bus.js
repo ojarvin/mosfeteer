@@ -162,9 +162,34 @@ export function busTerminalMarks(circuit, net, paths, avoid = []) {
     const point = [...Array(cells + 1).keys()].reverse()
       .map((k) => ({ x: at.x + dir.x * k * GRID, y: at.y + dir.y * k * GRID }))
       .find((p) => paths.some((path) => pointOnPath(p, path) && pointOnPath(at, path))) || at;
-    marks.push({ ...point, horizontal: dir.y === 0 });
+    marks.push({ ...point, horizontal: dir.y === 0, key: `${comp}.${term}` });
   }
-  return marks.length ? marks : busMarkPoints(paths, avoid);
+  return marks.length ? marks : busMarkPoints(paths, avoid).map((mark, i) => ({ ...mark, key: `branch:${i}` }));
+}
+
+/** Text size of a bit count: smaller than a label, like a pin annotation. */
+export const BUS_COUNT_SIZE = 30;
+
+/** Where a slash's bit count sits by default, from the slash: above the
+ *  slash on a horizontal wire, beside it on a vertical one. */
+export function defaultBusCountOffset(mark) {
+  return mark.horizontal ? { x: 0, y: -2 * SLASH } : { x: 2 * SLASH, y: 0 };
+}
+
+/** The bit-count labels a bus net shows (net.busCount): one per slash, its
+ *  text the bus's width, at the slash plus the saved or default offset, with
+ *  the text box the editor picks it by. */
+export function busCountLabels(net, marks) {
+  const width = busWidth(net?.name);
+  if (!width || !net.busCount) return [];
+  const text = String(width);
+  const w = text.length * BUS_COUNT_SIZE * 0.62;
+  return marks.map((mark) => {
+    const offset = net.busCount.offsets?.[mark.key] || defaultBusCountOffset(mark);
+    const x = mark.x + offset.x;
+    const y = mark.y + offset.y;
+    return { key: mark.key, text, x, y, slash: { x: mark.x, y: mark.y }, box: { x: x - w / 2, y: y - BUS_COUNT_SIZE / 2, w, h: BUS_COUNT_SIZE } };
+  });
 }
 
 /** SVG path data for a slash at `mark`: a `/` across the wire. */
