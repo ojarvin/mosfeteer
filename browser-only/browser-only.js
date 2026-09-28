@@ -14909,10 +14909,12 @@ function referenceMarkerName(component) {
 }
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
- * highlight follows the theme like any other colored object. */
+ * highlight follows the palette like any other colored object. The order
+ * alternates warm and cool hues, each far round the color wheel from the one
+ * before, so neighbouring nets highlighted in turn are easy to tell apart. */
 const NET_HIGHLIGHT_COLORS = Object.freeze([
-  'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink',
-  'cyan', 'lime', 'magenta', 'emerald', 'crimson', 'cobalt', 'brown',
+  'red', 'teal', 'yellow', 'indigo', 'orange', 'green', 'magenta', 'blue',
+  'lime', 'purple', 'brown', 'emerald', 'pink', 'cyan', 'crimson', 'cobalt',
 ]);
 
 /** Unnamed (global) reference markers attached to a net that carries a
@@ -24715,6 +24717,7 @@ __exports.STUB_CELLS = STUB_CELLS;
 };
 
 __modules["src/core/style.js"] = function (__require, __exports) {
+__exports.colorToken = colorToken;
 __exports.resolveColor = resolveColor;
 __exports.themeInkSvg = themeInkSvg;
 __exports.setColorToken = setColorToken;
@@ -24755,34 +24758,66 @@ const DEFAULT_INK = '#111';
 /** Named semantic colors. Values are intentionally mutable so a theme can
  * update a token and already-loaded drawings immediately pick it up. */
 const COLOR_PALETTE = {
-  red: '#d96c75',
-  orange: '#e59f71',
-  yellow: '#e4c16f',
-  green: '#9acb8a',
-  teal: '#62b5a7',
-  blue: '#6fa8dc',
-  indigo: '#8f8bd1',
-  purple: '#b08ac6',
-  pink: '#d889b5',
-  // Later highlight colors: a little more saturated, in the hue gaps above.
-  cyan: '#4cb8d8',
-  lime: '#b3cf52',
-  magenta: '#c475cf',
-  emerald: '#4fbd82',
-  crimson: '#c9485e',
-  cobalt: '#5580d0',
-  brown: '#b98052',
+  red: '#df4d59',
+  orange: '#e98f54',
+  yellow: '#e8bb52',
+  green: '#83d269',
+  teal: '#3dc1aa',
+  blue: '#509ce1',
+  indigo: '#726bd7',
+  purple: '#a969ce',
+  pink: '#dd6baa',
+  cyan: '#2cb6de',
+  lime: '#b2d731',
+  magenta: '#c654d6',
+  emerald: '#32c174',
+  crimson: '#cd2a46',
+  cobalt: '#346dd8',
+  brown: '#bd7134',
   slate: '#9aa7b8',
   gray: '#7a7d85',
 };
 
-const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
+/** Earlier values of the palette tokens. A document stores a picked color as
+ * its literal value when it predates tokens, so the old values still resolve to
+ * their token and pick up its current value. */
+const PREVIOUS_PALETTE_VALUES = {
+  '#d96c75': 'red',
+  '#e59f71': 'orange',
+  '#e4c16f': 'yellow',
+  '#9acb8a': 'green',
+  '#62b5a7': 'teal',
+  '#6fa8dc': 'blue',
+  '#8f8bd1': 'indigo',
+  '#b08ac6': 'purple',
+  '#d889b5': 'pink',
+  '#4cb8d8': 'cyan',
+  '#b3cf52': 'lime',
+  '#c475cf': 'magenta',
+  '#4fbd82': 'emerald',
+  '#c9485e': 'crimson',
+  '#5580d0': 'cobalt',
+  '#b98052': 'brown',
+};
+
+const VALUE_TOKENS = new Map([
+  ...Object.entries(PREVIOUS_PALETTE_VALUES),
+  ...Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]),
+]);
+
+/** The palette token a stored color names -- a token, `$token`, or a current
+ * or earlier palette value -- or null for any other color. */
+function colorToken(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const token = value.startsWith('$') ? value.slice(1) : value;
+  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return token;
+  return VALUE_TOKENS.get(value.toLowerCase()) || null;
+}
+
 function resolveColor(value) {
   if (typeof value !== 'string' || !value) return DEFAULT_INK;
-  const token = value.startsWith('$') ? value.slice(1) : value;
-  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
-  const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
-  return legacyToken ? COLOR_PALETTE[legacyToken] : value;
+  const token = colorToken(value);
+  return token ? COLOR_PALETTE[token] : value;
 }
 
 /** Editor rendering: default ink follows the page theme through CSS `color`.
@@ -35797,11 +35832,11 @@ function applyExportDarkTheme(svg) {
   // without touching the live document or its theme state.
   return String(svg)
     .replace(/var\(--paper,\s*#fff\)/gi, '#15171c')
-    .replace(/var\(--grid,\s*#ddd\)/gi, '#22262e')
+    .replace(/var\(--grid,\s*#ddd\)/gi, '#2c313b')
     .replace(/var\(--text,\s*#111\)/gi, '#dde1e8')
     .replace(/var\(--svg-ink,\s*#111\)/gi, '#dde1e8')
-    .replace(/#e9e9e9\b/gi, '#22262e')
-    .replace(/#eee\b/gi, '#22262e')
+    .replace(/#e9e9e9\b/gi, '#2c313b')
+    .replace(/#eee\b/gi, '#2c313b')
     .replace(/#fff\b/gi, '#15171c')
     .replace(/#111\b/gi, '#dde1e8')
     // A beat's dimmed grey, re-mixed over the dark paper.
@@ -50527,6 +50562,7 @@ __exports.handleStyleControlClick = handleStyleControlClick;
 __exports.updateStyleControls = updateStyleControls;
 __exports.installStyleControls = installStyleControls;
 let defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds; __bind(() => { ({ defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } = __require("src/core/line-style.js")); });
+let colorToken; __bind(() => { ({ colorToken } = __require("src/core/style.js")); });
 let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
 let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -50537,6 +50573,7 @@ let commit, keyToWire, render, selectedComps, selectedLabels; __bind(() => { ({ 
  * width, text alignment, bold and italic. The side panel and the context
  * menu's style strip share them; Ctrl+Shift+V pastes a copied style.
  */
+
 
 
 
@@ -50817,6 +50854,8 @@ function selectionStyleState() {
 
 /** Reflect a selection style in one set of style controls: the side panel's
  * or the context menu's strip, which share their data attributes. */
+const sameColor = (a, b) => a === b || (!!colorToken(a) && colorToken(a) === colorToken(b));
+
 function syncStyleControls(root, state) {
   const pressed = (button, on) => button.setAttribute('aria-pressed', String(on));
   const lineRow = root.querySelector('[data-style-row="line"]');
@@ -50830,7 +50869,7 @@ function syncStyleControls(root, state) {
   }
   for (const button of root.querySelectorAll('[data-line-style]')) pressed(button, button.dataset.lineStyle === state.lineStyle);
   for (const button of root.querySelectorAll('[data-width]')) pressed(button, button.dataset.width === state.width);
-  for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(swatch.dataset.value === state.color));
+  for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(sameColor(swatch.dataset.value, state.color)));
   for (const button of root.querySelectorAll('[data-style-align]')) {
     if (button.dataset.styleAlign === 'parent') button.hidden = button.disabled = !state.text?.towardPart;
     pressed(button, button.dataset.styleAlign === state.text?.align);

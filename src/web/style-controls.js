@@ -5,6 +5,7 @@
  */
 
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
+import { colorToken } from '../core/style.js';
 import { componentContextMenuEl } from './elements.js';
 import { ICON_PATHS } from './icons.js';
 import { logLine } from './status-bar-ui.js';
@@ -283,6 +284,8 @@ export function selectionStyleState() {
 
 /** Reflect a selection style in one set of style controls: the side panel's
  * or the context menu's strip, which share their data attributes. */
+const sameColor = (a, b) => a === b || (!!colorToken(a) && colorToken(a) === colorToken(b));
+
 export function syncStyleControls(root, state) {
   const pressed = (button, on) => button.setAttribute('aria-pressed', String(on));
   const lineRow = root.querySelector('[data-style-row="line"]');
@@ -296,7 +299,7 @@ export function syncStyleControls(root, state) {
   }
   for (const button of root.querySelectorAll('[data-line-style]')) pressed(button, button.dataset.lineStyle === state.lineStyle);
   for (const button of root.querySelectorAll('[data-width]')) pressed(button, button.dataset.width === state.width);
-  for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(swatch.dataset.value === state.color));
+  for (const swatch of root.querySelectorAll('.swatch')) swatch.setAttribute('aria-checked', String(sameColor(swatch.dataset.value, state.color)));
   for (const button of root.querySelectorAll('[data-style-align]')) {
     if (button.dataset.styleAlign === 'parent') button.hidden = button.disabled = !state.text?.towardPart;
     pressed(button, button.dataset.styleAlign === state.text?.align);

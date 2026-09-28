@@ -3834,19 +3834,32 @@ test('an unnamed reference marker on a differently named net is a rail conflict'
   assert.deepEqual(referenceMarkerNameConflicts(c), []);
 });
 
-test('net highlights offer sixteen distinct palette colors, the first nine unchanged', async () => {
+test('net highlights offer sixteen distinct palette colors, far apart in turn', async () => {
   const { COLOR_PALETTE } = await import('../src/core/style.js');
   assert.ok(NET_HIGHLIGHT_COLORS.length >= 16);
-  // Saved documents store tokens; the original cycle keeps its order.
-  assert.deepEqual(NET_HIGHLIGHT_COLORS.slice(0, 9), ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink']);
   const values = NET_HIGHLIGHT_COLORS.map((token) => COLOR_PALETTE[token]);
+  // Each color in the cycle is well round the hue wheel from the one before.
+  const hue = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b); const d = max - Math.min(r, g, b);
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return (h * 60 + 360) % 360;
+  };
+  for (let i = 1; i < values.length; i++) {
+    const apart = Math.abs(hue(values[i]) - hue(values[i - 1]));
+    assert.ok(Math.min(apart, 360 - apart) >= 75, `${NET_HIGHLIGHT_COLORS[i - 1]} -> ${NET_HIGHLIGHT_COLORS[i]}`);
+  }
   assert.ok(values.every(Boolean));
   assert.equal(new Set(values).size, values.length);
   // The style swatches offer every palette color too.
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const swatches = [...html.matchAll(/class="swatch[^"]*"[^>]*data-value="([^"]+)"/g)].map((match) => match[1]);
-  for (const value of Object.values(COLOR_PALETTE)) assert.ok(swatches.includes(value), `swatch for ${value}`);
+  // Swatches store the token, so a later palette change reaches old picks.
+  for (const [token, value] of Object.entries(COLOR_PALETTE)) {
+    assert.ok(swatches.includes(token), `swatch for ${token}`);
+    assert.ok(html.includes(`data-value="${token}" aria-label="${token === 'gray' ? 'Grey' : token[0].toUpperCase() + token.slice(1)}" style="--swatch:${value}"`), `swatch color for ${token}`);
+  }
 });
 
 test('net highlights color whole electrical groups with unique cycling colors', async () => {
@@ -3870,9 +3883,9 @@ test('net highlights color whole electrical groups with unique cycling colors', 
   assert.equal(c.netHighlight(out2), 'red');
   // Another group skips the color in use; cycling it moves past red too.
   const vss = net({ comp: 'G2', term: 'gnd' });
-  assert.equal(c.cycleNetHighlight(vss), 'orange');
+  assert.equal(c.cycleNetHighlight(vss), 'teal');
   assert.equal(c.cycleNetHighlight(out1), 'yellow');
-  assert.equal(c.cycleNetHighlight(vss), 'green');
+  assert.equal(c.cycleNetHighlight(vss), 'indigo');
   // Past the last free color the highlight clears.
   const lone = net({ comp: 'R1', term: 'a' });
   for (let i = 0; i < NET_HIGHLIGHT_COLORS.length - 2; i++) assert.ok(c.cycleNetHighlight(lone));

@@ -226,14 +226,18 @@ test('annotations and wires share start/end/both arrowhead styling', () => {
 test('default wire stroke keeps semantic colors resolving dynamically', () => {
   assert.match(strokeAttrs('unknown'), /stroke-linecap="flat"/);
   assert.match(strokeAttrs('unknown'), /stroke-linejoin="miter"/);
-  const original = '#d96c75';
+  const original = resolveColor('red');
   assert.equal(resolveColor(original), original);
   setColorToken('red', '#ff4477');
   try {
     assert.equal(resolveColor(original), '#ff4477');
+    // A value red had before the palette changed still means red.
+    assert.equal(resolveColor('#d96c75'), '#ff4477');
+    assert.equal(resolveColor('#D96C75'), '#ff4477');
   } finally {
     setColorToken('red', original);
   }
+  assert.equal(resolveColor('#123456'), '#123456');
 });
 test('svgString of an empty circuit renders without throwing', () => {
   const c = new Circuit();
@@ -767,13 +771,13 @@ test('renderer draws every fixed path after managed promotion', () => {
 test('themeInk renders default ink as currentColor while exports keep literal colors', () => {
   const circuit = new Circuit();
   circuit.addComponent('resistor', { x: 0, y: 0 });
-  circuit.addComponent('capacitor', { x: 400, y: 0, style: { color: '#d96c75' } });
+  circuit.addComponent('capacitor', { x: 400, y: 0, style: { color: 'red' } });
   const exported = svgString(circuit, { terminals: false, junctions: false });
   const themed = svgString(circuit, { terminals: false, junctions: false, themeInk: true });
   assert.match(exported, /(stroke|fill)="#111"/);
   assert.doesNotMatch(themed, /(stroke|fill)="#111"/);
   assert.match(themed, /stroke="currentColor"/);
-  assert.match(themed, /#d96c75/);
+  assert.ok(themed.includes(resolveColor('red')));
 });
 
 test('connected pins get no seam patches; wires end in square caps', () => {

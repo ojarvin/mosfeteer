@@ -31,34 +31,66 @@ const DEFAULT_INK = '#111';
 /** Named semantic colors. Values are intentionally mutable so a theme can
  * update a token and already-loaded drawings immediately pick it up. */
 export const COLOR_PALETTE = {
-  red: '#d96c75',
-  orange: '#e59f71',
-  yellow: '#e4c16f',
-  green: '#9acb8a',
-  teal: '#62b5a7',
-  blue: '#6fa8dc',
-  indigo: '#8f8bd1',
-  purple: '#b08ac6',
-  pink: '#d889b5',
-  // Later highlight colors: a little more saturated, in the hue gaps above.
-  cyan: '#4cb8d8',
-  lime: '#b3cf52',
-  magenta: '#c475cf',
-  emerald: '#4fbd82',
-  crimson: '#c9485e',
-  cobalt: '#5580d0',
-  brown: '#b98052',
+  red: '#df4d59',
+  orange: '#e98f54',
+  yellow: '#e8bb52',
+  green: '#83d269',
+  teal: '#3dc1aa',
+  blue: '#509ce1',
+  indigo: '#726bd7',
+  purple: '#a969ce',
+  pink: '#dd6baa',
+  cyan: '#2cb6de',
+  lime: '#b2d731',
+  magenta: '#c654d6',
+  emerald: '#32c174',
+  crimson: '#cd2a46',
+  cobalt: '#346dd8',
+  brown: '#bd7134',
   slate: '#9aa7b8',
   gray: '#7a7d85',
 };
 
-const LEGACY_COLORS = new Map(Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]));
+/** Earlier values of the palette tokens. A document stores a picked color as
+ * its literal value when it predates tokens, so the old values still resolve to
+ * their token and pick up its current value. */
+const PREVIOUS_PALETTE_VALUES = {
+  '#d96c75': 'red',
+  '#e59f71': 'orange',
+  '#e4c16f': 'yellow',
+  '#9acb8a': 'green',
+  '#62b5a7': 'teal',
+  '#6fa8dc': 'blue',
+  '#8f8bd1': 'indigo',
+  '#b08ac6': 'purple',
+  '#d889b5': 'pink',
+  '#4cb8d8': 'cyan',
+  '#b3cf52': 'lime',
+  '#c475cf': 'magenta',
+  '#4fbd82': 'emerald',
+  '#c9485e': 'crimson',
+  '#5580d0': 'cobalt',
+  '#b98052': 'brown',
+};
+
+const VALUE_TOKENS = new Map([
+  ...Object.entries(PREVIOUS_PALETTE_VALUES),
+  ...Object.entries(COLOR_PALETTE).map(([name, value]) => [value, name]),
+]);
+
+/** The palette token a stored color names -- a token, `$token`, or a current
+ * or earlier palette value -- or null for any other color. */
+export function colorToken(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const token = value.startsWith('$') ? value.slice(1) : value;
+  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return token;
+  return VALUE_TOKENS.get(value.toLowerCase()) || null;
+}
+
 export function resolveColor(value) {
   if (typeof value !== 'string' || !value) return DEFAULT_INK;
-  const token = value.startsWith('$') ? value.slice(1) : value;
-  if (Object.prototype.hasOwnProperty.call(COLOR_PALETTE, token)) return COLOR_PALETTE[token];
-  const legacyToken = LEGACY_COLORS.get(value.toLowerCase());
-  return legacyToken ? COLOR_PALETTE[legacyToken] : value;
+  const token = colorToken(value);
+  return token ? COLOR_PALETTE[token] : value;
 }
 
 /** Editor rendering: default ink follows the page theme through CSS `color`.

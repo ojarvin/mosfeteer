@@ -134,10 +134,12 @@ export function referenceMarkerName(component) {
 }
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
- * highlight follows the theme like any other colored object. */
+ * highlight follows the palette like any other colored object. The order
+ * alternates warm and cool hues, each far round the color wheel from the one
+ * before, so neighbouring nets highlighted in turn are easy to tell apart. */
 export const NET_HIGHLIGHT_COLORS = Object.freeze([
-  'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'indigo', 'purple', 'pink',
-  'cyan', 'lime', 'magenta', 'emerald', 'crimson', 'cobalt', 'brown',
+  'red', 'teal', 'yellow', 'indigo', 'orange', 'green', 'magenta', 'blue',
+  'lime', 'purple', 'brown', 'emerald', 'pink', 'cyan', 'crimson', 'cobalt',
 ]);
 
 /** Unnamed (global) reference markers attached to a net that carries a
