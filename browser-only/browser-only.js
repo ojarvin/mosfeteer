@@ -10583,11 +10583,14 @@ function railGroups(circuit) {
 /**
  * What still works in one phase: the phase's equivalent circuit. With its
  * switches closed and every other phase's open, the open switches drop out
- * and the rest splits into islands joined through anything but a rail. An
- * island keeps working when it has a device in it -- anything but switches,
- * pins, and rail markers (an integrator holding its charge, say) -- or when
- * its closed switches join two ends, pins or rails (an output reset to VCM).
- * Anything else is cut off. Returns a Set of the refdes
+ * and the rest splits into islands joined through anything but a rail. The
+ * ends of an island are the rails, pins, and named nets (a virtual
+ * connection) it touches. An island keeps working when it has a device in it
+ * -- anything but switches, pins, and rail markers -- and at least one end
+ * (an integrator holding its charge, a capacitor holding its sample against
+ * ground), or when its closed switches join two ends (an output reset to
+ * VCM). Anything else is cut off: a capacitor floating between open switches
+ * holds nothing that the phase uses. Returns a Set of the refdes
  * that stay shown, pins and rail markers included with the parts on their
  * wire; the open switches are never in it.
  */
@@ -10607,7 +10610,11 @@ function phaseLive(circuit, key) {
     for (const { comp } of net.terminals) {
       if (!netsOf.has(comp)) { netsOf.set(comp, new Set()); endsOf.set(comp, new Set()); }
       if (rails.has(group)) endsOf.get(comp).add(`rail:${group}`);
-      else netsOf.get(comp).add(group);
+      else {
+        netsOf.get(comp).add(group);
+        // A port names its own net; that is the one end, the pin.
+        if (net.name && !pins.length) endsOf.get(comp).add(group);
+      }
       for (const pin of pins) endsOf.get(comp).add(`pin:${pin}`);
     }
   }
@@ -10633,7 +10640,7 @@ function phaseLive(circuit, key) {
       }
     }
     const ends = new Set(island.flatMap((c) => [...(endsOf.get(c.refdes) || [])]));
-    if (island.some((c) => !switchState(c)) || ends.size >= 2) for (const c of island) live.add(c.refdes);
+    if ((ends.size && island.some((c) => !switchState(c))) || ends.size >= 2) for (const c of island) live.add(c.refdes);
   }
   // A pin or rail marker goes with the parts on its own wire.
   for (const component of circuit.components.values()) {

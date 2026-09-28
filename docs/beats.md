@@ -57,11 +57,13 @@ existing phase, on none, or on a new one, and **Select → Same switch phase**.
 phase, in the order the phases were first drawn, named after the phase. Each
 closes that phase's switches and opens every other phase's, and shows the
 phase's equivalent circuit: the open switches are dimmed, and the rest splits
-into islands joined through anything but a rail. An island keeps working and
-stays shown, with the pins and rail markers on its wires, when it has a device
-in it (anything but switches, pins, and rail markers) -- an integrator holding
-its charge, say -- or when its closed switches join two ends, pins or rails,
-such as an output reset to VCM. Anything else is cut off and dimmed, so the
+into islands joined through anything but a rail. An island's ends are the
+rails, pins, and named nets (a virtual connection) it touches. An island keeps
+working and stays shown, with the pins and rail markers on its wires, when it
+has a device in it (anything but switches, pins, and rail markers) and at
+least one end -- an integrator holding its charge, say -- or when its closed
+switches join two ends, such as an output reset to VCM. Anything else is cut
+off and dimmed, a capacitor floating between open switches included, so the
 whole circuit stays readable. Switches without a phase keep their
 drawn position. The beats are ordinary beats, inserted after the one on
 screen as one undoable edit.

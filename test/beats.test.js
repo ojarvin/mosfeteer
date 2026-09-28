@@ -375,6 +375,25 @@ test('phase beats close one phase each, show what still works, and dim what is c
   assert.throws(() => phaseBeats(tee(0)), /no switch has a phase/);
 });
 
+test('a phase beat dims a capacitor floating between open switches', () => {
+  const circuit = new Circuit();
+  run(circuit,
+    'add input VA --at -560 0', 'add switch_open S1 --at -320 0', 'add capacitor C1 --at 0 0',
+    'add switch_open S2 --at 320 0', 'add output VB --at 560 0',
+    'connect VA.p S1.a', 'connect S1.b C1.a', 'connect C1.b S2.a', 'connect S2.b VB.p',
+    'value S1 φ_{1}', 'value S2 φ_{1}', 'add switch_open S3 --at 0 400', 'value S3 φ_{2}');
+  phaseBeats(circuit);
+  const dim = (index) => [...resolveBeat(circuit, index).dimRefs].filter((ref) => !ref.startsWith('J')).sort();
+  assert.deepEqual(dim(0), ['S3']);
+  // ϕ2 opens both of C1's switches: nothing reaches it, so it is dimmed too.
+  assert.deepEqual(dim(1), ['C1', 'S1', 'S2', 'S3', 'VA', 'VB']);
+  // A named plate is a virtual connection: C1 is no longer floating.
+  circuit.renameNet(circuit.netOfTerminal({ comp: 'C1', term: 'a' }), 'TOP');
+  circuit.beats = [];
+  phaseBeats(circuit);
+  assert.deepEqual(dim(1), ['S1', 'S2', 'S3', 'VA', 'VB']);
+});
+
 test('a phase beat dims a closed switch that leads nowhere, but not one joining two ends', () => {
   const circuit = new Circuit();
   run(circuit,
