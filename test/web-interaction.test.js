@@ -676,7 +676,7 @@ test('startup chooses Atlas only for multiple circuits without an explicit file'
 test('fit reserves the axis the mode rail is thin along', () => {
   const main = editorSource();
   // fitView fits through fittedView, the pure fit the Atlas aims its flights with.
-  assert.match(functionSource('fitView', main), /Object\.assign\(target, fittedView\(\{ x: x0, y: y0, w: x1 - x0, h: y1 - y0 \}\)\)/);
+  assert.match(functionSource('fitTarget', main), /return Object\.assign\(target, fittedView\(\{ x: x0, y: y0, w: x1 - x0, h: y1 - y0 \}\)\)/);
   const fit = functionSource('fittedView', main);
   // On a narrow window the rail is a horizontal strip across the top. Reserving
   // its width there leaves a 1 px usable pane, so the fit clamps to the widest
@@ -689,9 +689,20 @@ test('fit reserves the axis the mode rail is thin along', () => {
   assert.match(fit, /y: \(y0 \+ y1\) \/ 2 - th \* usableCenterPy \/ paneH/);
 });
 
+test('a fitted view stays fitted when the pane resizes or labels are measured', () => {
+  const main = editorSource();
+  const view = readFileSync(new URL('../src/web/canvas-view.js', import.meta.url), 'utf8');
+  // Until something else moves the view, a pane resize and the label
+  // measurement fit the drawing again instead of keeping the old corner.
+  assert.match(functionSource('fitView', view), /fittedSnapshot = \{ \.\.\.editor\.view \};\s*render\(\);/);
+  assert.match(functionSource('refitIfFitted', main), /if \(!fittedSnapshot \|\| \['x', 'y', 'w', 'h'\]\.some/);
+  assert.match(functionSource('resizeView', main), /if \(refitIfFitted\(\)\) return;/);
+  assert.match(functionSource('scheduleMeasuredLabelRender', main), /refitIfFitted\(\);\s*render\(\);/);
+});
+
 test('empty canvas fit starts at a 30-cell planning view', () => {
   const main = editorSource();
-  const fit = functionSource('fitView', main);
+  const fit = functionSource('fitTarget', main);
   assert.match(fit, /x0 = -600;\s*y0 = -600;\s*x1 = 600;\s*y1 = 600;/);
 });
 

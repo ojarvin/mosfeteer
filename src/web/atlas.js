@@ -996,6 +996,14 @@ function animateView(target, duration = 320, { camera = false } = {}) {
   });
 }
 
+/** Resolve after `count` frames: time for the editor behind to settle. */
+function nextFrames(count) {
+  return new Promise((resolve) => {
+    const step = (left) => (left ? requestAnimationFrame(() => step(left - 1)) : resolve());
+    step(count);
+  });
+}
+
 /** How long a flight between two views takes: longer the more it zooms,
  *  so a far zoom does not rush and a short hop does not dawdle. */
 function flightMs(from, to) {
@@ -1280,6 +1288,7 @@ async function openTile(tile) {
   } else if (hasUnsavedChanges()) {
     // The discard prompt comes first; the flight follows the answer.
     opened = await openDocumentPath(entry.path);
+    if (opened) await nextFrames(2);
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
       if (exact) await animateView(exact, flightMs(state.view, exact), { camera: true });
@@ -1300,6 +1309,8 @@ async function openTile(tile) {
     if (predicted) await animateView(predicted, flightMs(state.view, predicted), { camera: true });
     land();
     opened = await loading;
+    // Let the editor measure its labels and fit to them before the last look.
+    if (opened) await nextFrames(2);
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
       if (exact && predicted && Math.abs(exact.w - predicted.w) + Math.abs(exact.x - predicted.x) + Math.abs(exact.y - predicted.y) > 0.5) {

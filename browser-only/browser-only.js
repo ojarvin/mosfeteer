@@ -30894,6 +30894,14 @@ function animateView(target, duration = 320, { camera = false } = {}) {
   });
 }
 
+/** Resolve after `count` frames: time for the editor behind to settle. */
+function nextFrames(count) {
+  return new Promise((resolve) => {
+    const step = (left) => (left ? requestAnimationFrame(() => step(left - 1)) : resolve());
+    step(count);
+  });
+}
+
 /** How long a flight between two views takes: longer the more it zooms,
  *  so a far zoom does not rush and a short hop does not dawdle. */
 function flightMs(from, to) {
@@ -31178,6 +31186,7 @@ async function openTile(tile) {
   } else if (hasUnsavedChanges()) {
     // The discard prompt comes first; the flight follows the answer.
     opened = await openDocumentPath(entry.path);
+    if (opened) await nextFrames(2);
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
       if (exact) await animateView(exact, flightMs(state.view, exact), { camera: true });
@@ -31198,6 +31207,8 @@ async function openTile(tile) {
     if (predicted) await animateView(predicted, flightMs(state.view, predicted), { camera: true });
     land();
     opened = await loading;
+    // Let the editor measure its labels and fit to them before the last look.
+    if (opened) await nextFrames(2);
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
       if (exact && predicted && Math.abs(exact.w - predicted.w) + Math.abs(exact.x - predicted.x) + Math.abs(exact.y - predicted.y) > 0.5) {
@@ -32480,6 +32491,7 @@ __exports.followCursor = followCursor;
 __exports.prefersReducedMotion = prefersReducedMotion;
 __exports.cancelViewAnimation = cancelViewAnimation;
 __exports.animateViewTo = animateViewTo;
+__exports.refitIfFitted = refitIfFitted;
 __exports.fitView = fitView;
 __exports.fittedView = fittedView;
 __exports.applyCanvasViewport = applyCanvasViewport;
@@ -32547,6 +32559,7 @@ function viewFromCenter(cx, cy) {
 function resizeView() {
   const p = paneSize();
   if (!p) return;
+  if (refitIfFitted()) return;
   const pxPerUnit = (editor.viewPane?.w || p.w) / editor.view.w;
   editor.view.w = p.w / pxPerUnit;
   editor.view.h = p.h / pxPerUnit;
@@ -32635,8 +32648,41 @@ function animateViewTo(target, ms = 200) {
   viewAnimation = requestAnimationFrame(step);
 }
 
+// The view fitView last left, while nothing else has moved it. A drawing
+// that is fitted stays fitted: when the pane resizes (the side panel shown or
+// hidden, the beat strip coming up) or labels are measured and change the
+// drawing's extent, it fits again instead of keeping its old corner.
+let fittedSnapshot = null;
+
+/** Fit again if the view is still the one fitView left; true if it did. */
+function refitIfFitted() {
+  const v = editor.view;
+  if (!fittedSnapshot || ['x', 'y', 'w', 'h'].some((key) => Math.abs(v[key] - fittedSnapshot[key]) > 1e-6)) {
+    fittedSnapshot = null;
+    return false;
+  }
+  Object.assign(editor.view, fitTarget());
+  editor.viewPane = paneSize();
+  fittedSnapshot = { ...editor.view };
+  return true;
+}
+
 function fitView({ animate = false } = {}) {
   cancelViewAnimation();
+  const target = fitTarget();
+  editor.viewPane = paneSize();
+  if (animate) {
+    fittedSnapshot = null;
+    animateViewTo(target);
+    return;
+  }
+  Object.assign(editor.view, target);
+  fittedSnapshot = { ...editor.view };
+  render();
+}
+
+/** The view that fits the drawing (its ink, a page guide, the selection). */
+function fitTarget() {
   const target = { ...editor.view };
   let x0 = Infinity;
   let y0 = Infinity;
@@ -32672,14 +32718,7 @@ function fitView({ animate = false } = {}) {
     x1 = 600;
     y1 = 600;
   }
-  Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
-  editor.viewPane = paneSize();
-  if (animate) {
-    animateViewTo(target);
-    return;
-  }
-  Object.assign(editor.view, target);
-  render();
+  return Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
 }
 
 /** The editor view that fits world rectangle `bounds` beside the tool rail,
@@ -40668,7 +40707,7 @@ let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch,
 let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
-let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
+let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
@@ -43244,6 +43283,8 @@ function scheduleMeasuredLabelRender() {
   requestAnimationFrame(() => {
     labelMetricsRenderPending = false;
     committedCanvasKey = '';
+    // Measured labels can change the drawing's extent: a fitted view fits it again.
+    refitIfFitted();
     render();
   });
 }

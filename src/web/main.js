@@ -53,7 +53,7 @@ import { renderHelpSearch, showHelp, installHelp } from './help.js';
 import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } from './radial-menu.js';
 import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
 import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } from './design-check-ui.js';
-import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
+import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { installModelFigure } from './model-figure.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
@@ -2559,6 +2559,8 @@ function scheduleMeasuredLabelRender() {
   requestAnimationFrame(() => {
     labelMetricsRenderPending = false;
     committedCanvasKey = '';
+    // Measured labels can change the drawing's extent: a fitted view fits it again.
+    refitIfFitted();
     render();
   });
 }

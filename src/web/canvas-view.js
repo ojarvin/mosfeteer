@@ -50,6 +50,7 @@ export function viewFromCenter(cx, cy) {
 export function resizeView() {
   const p = paneSize();
   if (!p) return;
+  if (refitIfFitted()) return;
   const pxPerUnit = (editor.viewPane?.w || p.w) / editor.view.w;
   editor.view.w = p.w / pxPerUnit;
   editor.view.h = p.h / pxPerUnit;
@@ -138,8 +139,41 @@ export function animateViewTo(target, ms = 200) {
   viewAnimation = requestAnimationFrame(step);
 }
 
+// The view fitView last left, while nothing else has moved it. A drawing
+// that is fitted stays fitted: when the pane resizes (the side panel shown or
+// hidden, the beat strip coming up) or labels are measured and change the
+// drawing's extent, it fits again instead of keeping its old corner.
+let fittedSnapshot = null;
+
+/** Fit again if the view is still the one fitView left; true if it did. */
+export function refitIfFitted() {
+  const v = editor.view;
+  if (!fittedSnapshot || ['x', 'y', 'w', 'h'].some((key) => Math.abs(v[key] - fittedSnapshot[key]) > 1e-6)) {
+    fittedSnapshot = null;
+    return false;
+  }
+  Object.assign(editor.view, fitTarget());
+  editor.viewPane = paneSize();
+  fittedSnapshot = { ...editor.view };
+  return true;
+}
+
 export function fitView({ animate = false } = {}) {
   cancelViewAnimation();
+  const target = fitTarget();
+  editor.viewPane = paneSize();
+  if (animate) {
+    fittedSnapshot = null;
+    animateViewTo(target);
+    return;
+  }
+  Object.assign(editor.view, target);
+  fittedSnapshot = { ...editor.view };
+  render();
+}
+
+/** The view that fits the drawing (its ink, a page guide, the selection). */
+function fitTarget() {
   const target = { ...editor.view };
   let x0 = Infinity;
   let y0 = Infinity;
@@ -175,14 +209,7 @@ export function fitView({ animate = false } = {}) {
     x1 = 600;
     y1 = 600;
   }
-  Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
-  editor.viewPane = paneSize();
-  if (animate) {
-    animateViewTo(target);
-    return;
-  }
-  Object.assign(editor.view, target);
-  render();
+  return Object.assign(target, fittedView({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }));
 }
 
 /** The editor view that fits world rectangle `bounds` beside the tool rail,
