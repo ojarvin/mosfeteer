@@ -111,13 +111,19 @@ export function placeLabelClear(circuit, label, { reach = null } = {}) {
 }
 
 /** Lay managed `nets` out fresh from their terminals; a net that cannot be
- *  routed keeps its drawing. Protected (fixed) nets are left alone. Returns
- *  the ids rerouted. */
+ *  routed keeps its drawing. Protected (fixed) nets are left alone, and so is
+ *  authored diagonal wire: in a net that has some, only the orthogonal
+ *  branches are re-laid. Returns the ids rerouted. */
 export function rerouteFresh(circuit, netIds) {
   const done = [];
   for (const id of netIds) {
     const net = circuit.nets.get(id);
     if (!net || net.routingMode === 'fixed' || net.terminals.length < 2) continue;
+    const orthogonal = circuit.rerouteOrthogonalBranches(net);
+    if (orthogonal !== null) {
+      if (orthogonal) done.push(id);
+      continue;
+    }
     const before = JSON.stringify(net.paths());
     if (circuit.rerouteNet(net, 'refresh') !== false && JSON.stringify(net.paths()) !== before) done.push(id);
   }

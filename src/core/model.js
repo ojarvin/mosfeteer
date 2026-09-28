@@ -3544,6 +3544,35 @@ export class Circuit {
     this.invalidateRoutingCache();
   }
 
+  /** Tidy a managed net that carries authored diagonal wire: every branch
+   *  with a diagonal segment keeps its drawing, and each purely orthogonal
+   *  branch is laid out fresh between its own ends, so the topology and the
+   *  diagonals stay as drawn. Returns null for a net with no diagonal (lay it
+   *  out fresh instead), else whether any branch changed. */
+  rerouteOrthogonalBranches(net) {
+    if (net.routingMode === 'fixed') return false;
+    const paths = this._explicitBranches(net);
+    if (!net.allowDiagonal || !paths.some(pathHasDiagonal)) return null;
+    this.invalidateRoutingCache();
+    const env = { ...this._netEnv(net.id), allowDiagonal: false };
+    const same = (a, b) => a.length === b.length && a.every((p, i) => p.x === b[i].x && p.y === b[i].y);
+    let changed = false;
+    const next = paths.map((path) => {
+      if (path.length < 2 || pathHasDiagonal(path)) return path;
+      const route = smartRoute(path[0], path[path.length - 1], env);
+      if (!route || route.length < 2 || same(route, path)) return path;
+      changed = true;
+      return route.map((p) => ({ ...p }));
+    });
+    if (!changed) return false;
+    const previousPaths = net.paths();
+    this._installRestyledBranches(net, next, this._styledSegments(net, paths));
+    net.junctions = this._netJunctions(net, net.branches);
+    this._reanchorWireArrowheads(net, previousPaths, net.paths());
+    this._repairNetLabels(net);
+    return true;
+  }
+
   _rerouteFailure(net, moved) {
     if (this._componentEdit?.pending.has(net.id)) this._rollbackComponentEdit();
     else this._rollbackMovedComponents(moved);

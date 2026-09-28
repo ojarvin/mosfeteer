@@ -83,3 +83,25 @@ test('the tidy and fix commands', () => {
   assert.deepEqual(kinds(again), []);
   assert.throws(() => runCommand(again, 'tidy'), /usage: tidy/);
 });
+
+test('tidy keeps authored diagonal wire and re-lays only the orthogonal branches', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add resistor R1 --at 0 0', 'add resistor R2 --at 800 400', 'add resistor R3 --at 800 800');
+  const diagonal = [{ x: 80, y: 0 }, { x: 400, y: 320 }];
+  const wiggle = [{ x: 400, y: 320 }, { x: 400, y: 400 }, { x: 560, y: 400 }, { x: 560, y: 480 }, { x: 640, y: 480 }, { x: 640, y: 400 }, { x: 720, y: 400 }];
+  const net = circuit.createWireNet({ allowDiagonal: true, branches: [diagonal, wiggle, [{ x: 400, y: 320 }, { x: 400, y: 800 }, { x: 720, y: 800 }]] });
+  net.terminals.push({ comp: 'R1', term: 'b' }, { comp: 'R2', term: 'a' }, { comp: 'R3', term: 'a' });
+  const { rerouted } = tidySelection(circuit, { netIds: [net.id] });
+  assert.deepEqual(rerouted, [net.id]);
+  const paths = net.paths();
+  assert.ok(paths.some((path) => JSON.stringify(path) === JSON.stringify(diagonal)), 'the diagonal branch is untouched');
+  const toR2 = paths.find((path) => path.some((p) => p.x === 720 && p.y === 400));
+  assert.ok(toR2.length < wiggle.length, 'the wiggle is re-laid');
+  // An accidental diagonal in a net that does not allow them is still re-laid.
+  const plain = new Circuit();
+  run(plain, 'add resistor R1 --at 0 0', 'add resistor R2 --at 800 400');
+  const straight = plain.createWireNet({ branches: [[{ x: 80, y: 0 }, { x: 400, y: 320 }, { x: 720, y: 400 }]] });
+  straight.terminals.push({ comp: 'R1', term: 'b' }, { comp: 'R2', term: 'a' });
+  tidySelection(plain, { netIds: [straight.id] });
+  assert.ok(straight.paths().every((path) => path.every((p, i) => i === 0 || p.x === path[i - 1].x || p.y === path[i - 1].y)));
+});
