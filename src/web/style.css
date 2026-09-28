@@ -4719,6 +4719,11 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 
 .panel-filter-row[hidden] { display: none; }
 
+/* Tags describe the document, not the search: set apart below find/replace. */
+.panel-tags {
+  margin-top: 4px;
+}
+
 .panel-tags-label {
   flex: none;
   color: var(--text-dim);
