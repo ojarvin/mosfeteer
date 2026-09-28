@@ -23,7 +23,7 @@
  */
 
 import { getSymbol } from './components/index.js';
-import { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, busNetHighlight, isReferenceMarkerGlobalName } from './model.js';
+import { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, applyNetProbe, busNetHighlight, isReferenceMarkerGlobalName } from './model.js';
 import { steinerBranches } from './router.js';
 
 export const SWITCH_TYPES = Object.freeze({ open: 'switch_open', closed: 'switch_closed' });
@@ -427,12 +427,11 @@ export function setSwitchFrom(circuit, index, refOrPhase, state) {
 
 /** Highlight colors in beat `index`, keyed by net group. */
 export function highlightsAt(circuit, index) {
+  // Each beat's changes are probes made after the ones before it: the latest
+  // counts for a bus and its bits (model.js applyNetProbe).
   const colors = new Map(circuit.netHighlights);
   for (const beat of circuit.beats.slice(0, index + 1)) {
-    for (const [key, color] of Object.entries(beat.highlights)) {
-      if (color) colors.set(key, color);
-      else colors.delete(key);
-    }
+    for (const [key, color] of Object.entries(beat.highlights)) applyNetProbe(colors, key, color);
   }
   return colors;
 }

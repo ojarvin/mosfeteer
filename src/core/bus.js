@@ -44,17 +44,28 @@ export function busGroupName(name) {
   return bus.range ? `${bus.base}<${bus.bits[0]}:${bus.bits.at(-1)}>` : `${bus.base}<${bus.bits[0]}>`;
 }
 
-/** The highlight a bus-named net inherits from `colors` (group name ->
- *  color): a highlighted bus range covering all of its bits colors it, so a
- *  probe on `D[3:0]` reaches `D[1]`, while a probe on one bit stays on it. */
-export function coveringBusColor(name, colors) {
+/** The highlight a bus-named net shows from `colors` (group name -> color,
+ *  in the order the probes were made): the latest probe on any name it
+ *  connects to (netNamesConnect). A bus shows the bit probed last, a bit
+ *  shows a bus probed after it, and a probe on one bit never reaches
+ *  another. */
+export function latestBusColor(name, colors) {
+  if (!busBits(name)) return null;
+  let latest = null;
+  for (const [group, color] of colors) if (color && netNamesConnect(name, group)) latest = color;
+  return latest;
+}
+
+/** The groups among `names` that a probe on bus range `name` recolors: its
+ *  bits and part ranges, all inside it (not itself). */
+export function busGroupsWithin(name, names) {
   const bus = busBits(name);
-  if (!bus) return null;
-  for (const [group, color] of colors) {
-    const other = busBits(group);
-    if (color && other?.range && other.base === bus.base && bus.bits.every((bit) => other.bits.includes(bit))) return color;
-  }
-  return null;
+  if (!bus?.range) return [];
+  const own = busGroupName(name);
+  return names.filter((other) => {
+    const inner = busBits(other);
+    return inner && busGroupName(other) !== own && inner.base === bus.base && inner.bits.every((bit) => bus.bits.includes(bit));
+  });
 }
 
 /** Whether two net names are virtually connected: the same name, or two

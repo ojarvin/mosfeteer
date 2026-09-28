@@ -164,10 +164,12 @@ A net named with a bit range, `D[7:0]` or `D<7:0>`, is a bus
 nets `D[7]` ... `D[0]`, so a net named for one bit (`D[1]` or `D<1>`; the
 brackets are one notation) is virtually connected to that bit
 (`netNamesConnect`), while two different bits are not. Each bus or bit name
-is its own `netGroupKey`; a probe on a bus range colors every net of that bus
-whose bits it covers and that has no color of its own (`busNetHighlight`),
-while a probe on one bit stays on that bit. The renderer draws a one-cell
-slash across each branch of a multi-bit net. A port named that way folds the range into its
+is its own `netGroupKey`, and highlights keep probe order: a bus or bit net
+shows the latest probe on any name it connects to (`busNetHighlight`), so a
+bit's probe colors that bit and the bus, and a bus probe clears its bits' own
+colors so they all show the bus color (`applyNetProbe`). The net list lists
+bits under their bus, and hovering a bus glows all its bits (a bit, the bus).
+The renderer draws a one-cell slash across each branch of a multi-bit net. A port named that way folds the range into its
 identity (`D_{OUT}[3:0]` is `DOUT_3_0`) and keeps it in its label and net
 name. Buses are for digital nets: small-signal analysis joins nets by exact
 name only.

@@ -19,6 +19,7 @@ import { addTerminalStubs } from '../core/stubs.js';
 import { addPinRail } from '../core/pin-rails.js';
 import { tidySelection } from '../core/tidy.js';
 import { addBoxAround } from '../core/wrap-box.js';
+import { busBits, busWidth, netNamesConnect } from '../core/bus.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { editorOverlay, svgString } from '../core/render.js';
 import { themeInkSvg } from '../core/style.js';
@@ -703,14 +704,23 @@ function referenceGroupNets(netOrInfo) {
   return [...circuit.nets.values()].filter((candidate) => unnamedReferenceInfoForNet(candidate)?.globalName === info.globalName);
 }
 
+/** The net list's row for a net: its electrical group, except that the bits
+ *  of a bus (bus.js) that a bus range reaches are listed under that bus. */
 function namedNetGroupKey(net) {
+  const bus = busBits(net?.name);
+  if (bus && [...circuit.nets.values()].some((other) => busWidth(other.name) && netNamesConnect(other.name, net.name))) return `bus:${bus.base}`;
   return circuit.netGroupKey(net);
 }
 
+/** The nets that go with `net` when it is hovered or picked: its group, and
+ *  for a bus or bit every net it reaches by name -- a bus all its bits, a
+ *  bit the bus (not the other bits). */
 export function namedGroupNets(net) {
   if (!net?.id) return referenceGroupNets(net);
-  const key = namedNetGroupKey(net);
-  return [...circuit.nets.values()].filter((candidate) => namedNetGroupKey(candidate) === key);
+  const key = circuit.netGroupKey(net);
+  const bus = !!busBits(net.name);
+  return [...circuit.nets.values()].filter((candidate) => circuit.netGroupKey(candidate) === key
+    || (bus && netNamesConnect(candidate.name, net.name)));
 }
 
 export function visibleNets() {
@@ -721,7 +731,8 @@ export function visibleNets() {
       .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2));
     for (const net of nets) {
       const key = namedNetGroupKey(net);
-      if (!grouped.has(key)) grouped.set(key, net);
+      // A bus's row is its widest range, whose name and reach it shows.
+      if (!grouped.has(key) || busWidth(net.name) > busWidth(grouped.get(key).name)) grouped.set(key, net);
     }
     visibleNetsCache = {
       revision: modelRevision,

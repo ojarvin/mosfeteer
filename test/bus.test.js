@@ -31,42 +31,47 @@ test('a bus stands for its parallel bits, and a bit named anywhere joins it', ()
   assert.ok(!netNamesConnect('', ''));
 });
 
-test('probing a bus colors all its bits; probing a bit colors only that bit', () => {
+test('the latest probe wins across a bus and its bits', () => {
   const circuit = new Circuit();
   for (const line of [
     'add adc U1 --at 0 0', 'add output P1 --at 600 0', 'connect U1.d P1.p --name D[3:0]',
-    'add resistor R1 --at 0 400', 'add resistor R2 --at 400 400', 'connect R1.b R2.a --name D<1>',
-    'add resistor R3 --at 0 800', 'add resistor R4 --at 400 800', 'connect R3.b R4.a --name D[2]',
+    'add resistor R1 --at 0 400', 'add resistor R2 --at 400 400', 'connect R1.b R2.a --name D<0>',
+    'add resistor R3 --at 0 800', 'add resistor R4 --at 400 800', 'connect R3.b R4.a --name D[1]',
     'add resistor R5 --at 0 1200', 'add resistor R6 --at 400 1200', 'connect R5.b R6.a --name E[1]',
-    'add resistor R7 --at 0 1600', 'add resistor R8 --at 400 1600', 'connect R7.b R8.a --name D[1]',
+    'add resistor R7 --at 0 1600', 'add resistor R8 --at 400 1600', 'connect R7.b R8.a --name D[0]',
+    'add resistor R9 --at 0 2000', 'add resistor R10 --at 400 2000', 'connect R9.b R10.a --name D[2]',
   ]) runCommand(circuit, line);
-  const net = (comp, term) => circuit.netOfTerminal({ comp, term });
-  const bus = net('U1', 'd');
-  const bit1 = net('R1', 'b');
-  const bit1again = net('R7', 'b');
-  const bit2 = net('R3', 'b');
-  const other = net('R5', 'b');
+  const net = (comp) => circuit.netOfTerminal({ comp, term: 'b' });
+  const bus = circuit.netOfTerminal({ comp: 'U1', term: 'd' });
+  const [bit0, bit1, other, bit0again, bit2] = ['R1', 'R3', 'R5', 'R7', 'R9'].map(net);
+  const color = (n) => circuit.netHighlight(n);
   // The bus reaches each of its bits; one bit does not reach another.
   assert.ok(circuit.logicallyConnected(bus, bit1));
-  assert.ok(circuit.logicallyConnected(bus, bit2));
-  assert.ok(!circuit.logicallyConnected(bit1, bit2));
-  assert.ok(!circuit.logicallyConnected(bit1, other));
-  // D<1> and D[1] are one name.
-  assert.equal(circuit.netGroupKey(bit1), circuit.netGroupKey(bit1again));
-  // A probe on bit 1 stays on bit 1 (either spelling), not the bus or bit 2.
-  const one = circuit.cycleNetHighlight(bit1);
-  assert.equal(circuit.netHighlight(bit1again), one);
-  assert.equal(circuit.netHighlight(bus), null);
-  assert.equal(circuit.netHighlight(bit2), null);
-  // A probe on the bus colors every bit it covers that has no color of its own.
+  assert.ok(!circuit.logicallyConnected(bit0, bit1));
+  assert.equal(circuit.netGroupKey(bit0), circuit.netGroupKey(bit0again));
+  // Probing D[0] colors that bit, either spelling, and the bus -- not D[1].
+  const first = circuit.cycleNetHighlight(bit0);
+  assert.equal(color(bit0again), first);
+  assert.equal(color(bus), first);
+  assert.equal(color(bit1), null);
+  assert.equal(color(bit2), null);
+  // Probing D[1] next switches the bus to D[1]'s color; D[0] keeps its own.
+  const second = circuit.cycleNetHighlight(bit1);
+  assert.notEqual(second, first);
+  assert.equal(color(bus), second);
+  assert.equal(color(bit0), first);
+  assert.equal(color(bit2), null);
+  // Probing the bus then recolors every bit with the bus color.
   const all = circuit.cycleNetHighlight(bus);
-  assert.notEqual(all, one);
-  assert.equal(circuit.netHighlight(bit2), all);
-  assert.equal(circuit.netHighlight(bit1), one);
-  assert.equal(circuit.netHighlight(other), null);
-  // Its own color cleared, bit 1 shows the bus color too.
-  circuit.netHighlights.delete(circuit.netGroupKey(bit1));
-  assert.equal(circuit.netHighlight(bit1), all);
+  for (const n of [bus, bit0, bit0again, bit1, bit2]) assert.equal(color(n), all);
+  assert.equal(color(other), null);
+  // A later bit probe takes the bus again; the other bits keep the bus color.
+  const again = circuit.cycleNetHighlight(bit2);
+  assert.equal(color(bus), again);
+  assert.equal(color(bit1), all);
+  // The order survives a save and a load.
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal(loaded.netHighlight(loaded.netOfTerminal({ comp: 'U1', term: 'd' })), again);
   // Only the multi-bit net draws the slash.
   assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 1);
 });

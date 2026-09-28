@@ -10134,7 +10134,7 @@ __exports.renameBeatHighlightKey = renameBeatHighlightKey;
 __exports.drawnNetPaths = drawnNetPaths;
 __exports.resolveBeat = resolveBeat;
 let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
-let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, busNetHighlight, isReferenceMarkerGlobalName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, busNetHighlight, isReferenceMarkerGlobalName } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, applyNetProbe, busNetHighlight, isReferenceMarkerGlobalName; __bind(() => { ({ INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, applyNetProbe, busNetHighlight, isReferenceMarkerGlobalName } = __require("src/core/model.js")); });
 let steinerBranches; __bind(() => { ({ steinerBranches } = __require("src/core/router.js")); });
 /**
  * Beats: an ordered list of view states over one drawing, so a figure can be
@@ -10565,12 +10565,11 @@ function setSwitchFrom(circuit, index, refOrPhase, state) {
 
 /** Highlight colors in beat `index`, keyed by net group. */
 function highlightsAt(circuit, index) {
+  // Each beat's changes are probes made after the ones before it: the latest
+  // counts for a bus and its bits (model.js applyNetProbe).
   const colors = new Map(circuit.netHighlights);
   for (const beat of circuit.beats.slice(0, index + 1)) {
-    for (const [key, color] of Object.entries(beat.highlights)) {
-      if (color) colors.set(key, color);
-      else colors.delete(key);
-    }
+    for (const [key, color] of Object.entries(beat.highlights)) applyNetProbe(colors, key, color);
   }
   return colors;
 }
@@ -11196,7 +11195,8 @@ __modules["src/core/bus.js"] = function (__require, __exports) {
 __exports.busBits = busBits;
 __exports.busWidth = busWidth;
 __exports.busGroupName = busGroupName;
-__exports.coveringBusColor = coveringBusColor;
+__exports.latestBusColor = latestBusColor;
+__exports.busGroupsWithin = busGroupsWithin;
 __exports.netNamesConnect = netNamesConnect;
 __exports.busMarkPoints = busMarkPoints;
 __exports.busMarkD = busMarkD;
@@ -11247,17 +11247,28 @@ function busGroupName(name) {
   return bus.range ? `${bus.base}<${bus.bits[0]}:${bus.bits.at(-1)}>` : `${bus.base}<${bus.bits[0]}>`;
 }
 
-/** The highlight a bus-named net inherits from `colors` (group name ->
- *  color): a highlighted bus range covering all of its bits colors it, so a
- *  probe on `D[3:0]` reaches `D[1]`, while a probe on one bit stays on it. */
-function coveringBusColor(name, colors) {
+/** The highlight a bus-named net shows from `colors` (group name -> color,
+ *  in the order the probes were made): the latest probe on any name it
+ *  connects to (netNamesConnect). A bus shows the bit probed last, a bit
+ *  shows a bus probed after it, and a probe on one bit never reaches
+ *  another. */
+function latestBusColor(name, colors) {
+  if (!busBits(name)) return null;
+  let latest = null;
+  for (const [group, color] of colors) if (color && netNamesConnect(name, group)) latest = color;
+  return latest;
+}
+
+/** The groups among `names` that a probe on bus range `name` recolors: its
+ *  bits and part ranges, all inside it (not itself). */
+function busGroupsWithin(name, names) {
   const bus = busBits(name);
-  if (!bus) return null;
-  for (const [group, color] of colors) {
-    const other = busBits(group);
-    if (color && other?.range && other.base === bus.base && bus.bits.every((bit) => other.bits.includes(bit))) return color;
-  }
-  return null;
+  if (!bus?.range) return [];
+  const own = busGroupName(name);
+  return names.filter((other) => {
+    const inner = busBits(other);
+    return inner && busGroupName(other) !== own && inner.base === bus.base && inner.bits.every((bit) => bus.bits.includes(bit));
+  });
 }
 
 /** Whether two net names are virtually connected: the same name, or two
@@ -14935,6 +14946,7 @@ __exports.isReferenceMarkerGlobalName = isReferenceMarkerGlobalName;
 __exports.isReferenceMarker = isReferenceMarker;
 __exports.referenceMarkerName = referenceMarkerName;
 __exports.busNetHighlight = busNetHighlight;
+__exports.applyNetProbe = applyNetProbe;
 __exports.referenceMarkerNameConflicts = referenceMarkerNameConflicts;
 __exports.referenceMarkerIsLocal = referenceMarkerIsLocal;
 __exports.parseLabelRuns = parseLabelRuns;
@@ -14962,7 +14974,7 @@ let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute; __bind(() => { ({ balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js")); });
 let collapseCollinear; __bind(() => { ({ collapseCollinear } = __require("src/core/wireedit.js")); });
-let busGroupName, coveringBusColor, netNamesConnect; __bind(() => { ({ busGroupName, coveringBusColor, netNamesConnect } = __require("src/core/bus.js")); });
+let busBits, busGroupName, busGroupsWithin, latestBusColor, netNamesConnect; __bind(() => { ({ busBits, busGroupName, busGroupsWithin, latestBusColor, netNamesConnect } = __require("src/core/bus.js")); });
 let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_SIZES, labelFontSize, strokeWidth } = __require("src/core/style.js")); });
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
@@ -15103,14 +15115,25 @@ function referenceMarkerName(component) {
   return canonicalNetName(label?._text || '');
 }
 
-/** A net's color in `colors` (netGroupKey -> color): its group's own, else
- * that of a highlighted bus range covering its bits (bus.js). */
+/** A net's color in `colors` (netGroupKey -> color, in probe order): its
+ * group's own, or for a bus or bit name the latest probe on a name it
+ * connects to (bus.js latestBusColor). */
 function busNetHighlight(circuit, colors, net) {
   const key = circuit.netGroupKey(net);
-  const own = colors.get(key);
-  if (own || !net?.name) return own || null;
+  if (!busBits(net?.name) || !key.startsWith('name:')) return colors.get(key) || null;
   const names = new Map([...colors].map(([group, color]) => [group.replace(/^name:/, ''), color]));
-  return coveringBusColor(net.name, names);
+  return latestBusColor(net.name, names);
+}
+
+/** Record a probe: `key` takes `color` (null clears it) as the latest probe,
+ * and a probe on a bus range hands its color down to the bits and part
+ * ranges inside it by clearing theirs. */
+function applyNetProbe(colors, key, color) {
+  colors.delete(key);
+  if (!color) return;
+  colors.set(key, color);
+  const name = key.replace(/^name:/, '');
+  for (const inner of busGroupsWithin(name, [...colors.keys()].map((group) => group.replace(/^name:/, '')))) colors.delete(`name:${inner}`);
 }
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
@@ -17759,9 +17782,8 @@ class Circuit {
     return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
   }
 
-  /** Highlight color token of a net's electrical group, or null. A net of a
-   * bus without a color of its own takes that of a highlighted bus range
-   * covering its bits. */
+  /** Highlight color token of a net's electrical group, or null. A bus or
+   * bit net shows the latest probe on any name it connects to. */
   netHighlight(net) {
     return busNetHighlight(this, this.netHighlights, net);
   }
@@ -17778,8 +17800,7 @@ class Circuit {
     const from = current ? NET_HIGHLIGHT_COLORS.indexOf(current) + 1 : 0;
     const next = NET_HIGHLIGHT_COLORS.slice(from).find((color) => !taken.has(color)) || null;
     if (!current && !next) throw new Error('every highlight color is already in use');
-    if (next) this.netHighlights.set(key, next);
-    else this.netHighlights.delete(key);
+    applyNetProbe(this.netHighlights, key, next);
     return next;
   }
 
@@ -40220,6 +40241,7 @@ let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core
 let addPinRail; __bind(() => { ({ addPinRail } = __require("src/core/pin-rails.js")); });
 let tidySelection; __bind(() => { ({ tidySelection } = __require("src/core/tidy.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
+let busBits, busWidth, netNamesConnect; __bind(() => { ({ busBits, busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let editorOverlay, svgString; __bind(() => { ({ editorOverlay, svgString } = __require("src/core/render.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
@@ -40279,6 +40301,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -40965,14 +40988,23 @@ function referenceGroupNets(netOrInfo) {
   return [...circuit.nets.values()].filter((candidate) => unnamedReferenceInfoForNet(candidate)?.globalName === info.globalName);
 }
 
+/** The net list's row for a net: its electrical group, except that the bits
+ *  of a bus (bus.js) that a bus range reaches are listed under that bus. */
 function namedNetGroupKey(net) {
+  const bus = busBits(net?.name);
+  if (bus && [...circuit.nets.values()].some((other) => busWidth(other.name) && netNamesConnect(other.name, net.name))) return `bus:${bus.base}`;
   return circuit.netGroupKey(net);
 }
 
+/** The nets that go with `net` when it is hovered or picked: its group, and
+ *  for a bus or bit every net it reaches by name -- a bus all its bits, a
+ *  bit the bus (not the other bits). */
 function namedGroupNets(net) {
   if (!net?.id) return referenceGroupNets(net);
-  const key = namedNetGroupKey(net);
-  return [...circuit.nets.values()].filter((candidate) => namedNetGroupKey(candidate) === key);
+  const key = circuit.netGroupKey(net);
+  const bus = !!busBits(net.name);
+  return [...circuit.nets.values()].filter((candidate) => circuit.netGroupKey(candidate) === key
+    || (bus && netNamesConnect(candidate.name, net.name)));
 }
 
 function visibleNets() {
@@ -40983,7 +41015,8 @@ function visibleNets() {
       .filter((net) => net.terminals.length || net.paths().some((path) => path.length >= 2));
     for (const net of nets) {
       const key = namedNetGroupKey(net);
-      if (!grouped.has(key)) grouped.set(key, net);
+      // A bus's row is its widest range, whose name and reach it shows.
+      if (!grouped.has(key) || busWidth(net.name) > busWidth(grouped.get(key).name)) grouped.set(key, net);
     }
     visibleNetsCache = {
       revision: modelRevision,

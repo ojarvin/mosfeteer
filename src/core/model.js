@@ -3,7 +3,7 @@ import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { busGroupName, coveringBusColor, netNamesConnect } from './bus.js';
+import { busBits, busGroupName, busGroupsWithin, latestBusColor, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
@@ -134,14 +134,25 @@ export function referenceMarkerName(component) {
   return canonicalNetName(label?._text || '');
 }
 
-/** A net's color in `colors` (netGroupKey -> color): its group's own, else
- * that of a highlighted bus range covering its bits (bus.js). */
+/** A net's color in `colors` (netGroupKey -> color, in probe order): its
+ * group's own, or for a bus or bit name the latest probe on a name it
+ * connects to (bus.js latestBusColor). */
 export function busNetHighlight(circuit, colors, net) {
   const key = circuit.netGroupKey(net);
-  const own = colors.get(key);
-  if (own || !net?.name) return own || null;
+  if (!busBits(net?.name) || !key.startsWith('name:')) return colors.get(key) || null;
   const names = new Map([...colors].map(([group, color]) => [group.replace(/^name:/, ''), color]));
-  return coveringBusColor(net.name, names);
+  return latestBusColor(net.name, names);
+}
+
+/** Record a probe: `key` takes `color` (null clears it) as the latest probe,
+ * and a probe on a bus range hands its color down to the bits and part
+ * ranges inside it by clearing theirs. */
+export function applyNetProbe(colors, key, color) {
+  colors.delete(key);
+  if (!color) return;
+  colors.set(key, color);
+  const name = key.replace(/^name:/, '');
+  for (const inner of busGroupsWithin(name, [...colors.keys()].map((group) => group.replace(/^name:/, '')))) colors.delete(`name:${inner}`);
 }
 
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
@@ -2790,9 +2801,8 @@ export class Circuit {
     return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
   }
 
-  /** Highlight color token of a net's electrical group, or null. A net of a
-   * bus without a color of its own takes that of a highlighted bus range
-   * covering its bits. */
+  /** Highlight color token of a net's electrical group, or null. A bus or
+   * bit net shows the latest probe on any name it connects to. */
   netHighlight(net) {
     return busNetHighlight(this, this.netHighlights, net);
   }
@@ -2809,8 +2819,7 @@ export class Circuit {
     const from = current ? NET_HIGHLIGHT_COLORS.indexOf(current) + 1 : 0;
     const next = NET_HIGHLIGHT_COLORS.slice(from).find((color) => !taken.has(color)) || null;
     if (!current && !next) throw new Error('every highlight color is already in use');
-    if (next) this.netHighlights.set(key, next);
-    else this.netHighlights.delete(key);
+    applyNetProbe(this.netHighlights, key, next);
     return next;
   }
 
