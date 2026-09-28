@@ -49,9 +49,22 @@ test('quick-add lands the chosen terminal on the drop point, body continuing the
   ({ placement, world } = landed('nmos', { x: 1, y: 0 }));
   assert.equal(placement.terminal, 'g');
   assert.deepEqual(world, point);
-  // Markers keep their only pose and sit on the point.
-  ({ placement } = landed('ground', { x: 1, y: 0 }));
-  assert.deepEqual({ x: placement.x, y: placement.y, rotation: placement.rotation }, { x: 400, y: 200, rotation: 0 });
+  // Markers sit on the point with their pin facing back along the wire.
+  const hang = (type, direction) => {
+    const { placement: p } = landed(type, direction);
+    const b = def(type).bbox;
+    const centre = applyTransform({ x: 0, y: 0, rotation: p.rotation, mirrorX: p.mirrorX, mirrorY: p.mirrorY }, b.x + b.w / 2, b.y + b.h / 2);
+    assert.deepEqual({ x: p.x, y: p.y }, point);
+    return { x: Math.sign(Math.round(centre.x)), y: Math.sign(Math.round(centre.y)), rotation: p.rotation };
+  };
+  assert.deepEqual(hang('ground', { x: 0, y: 1 }), { x: 0, y: 1, rotation: 0 });
+  assert.deepEqual(hang('supply', { x: 0, y: -1 }), { x: 0, y: -1, rotation: 0 });
+  for (const type of ['ground', 'supply', 'vcm']) {
+    for (const direction of [{ x: 1, y: 0 }, { x: -1, y: 0 }]) {
+      const got = hang(type, direction);
+      assert.deepEqual({ x: got.x, y: got.y }, direction, `${type} toward ${direction.x}`);
+    }
+  }
   // PMOS honours its default mirror while scoring.
   ({ world } = landed('pmos', { x: 0, y: -1 }));
   assert.deepEqual(world, point);
@@ -74,9 +87,10 @@ test('quick-add ports face along the wire and parts inherit the source pose', ()
   placement = quickAddPlacement(def('port'), point, { x: 0, y: 1 });
   const body = applyTransform({ x: 0, y: 0, ...pose(placement) }, -40, 0);
   assert.ok(body.y > 0 && body.x === 0);
-  // Ground keeps its only pose whatever the source.
-  assert.deepEqual(pose(quickAddPlacement(def('ground'), point, { x: 1, y: 0 }, { rotation: 0, mirrorX: true })),
+  // Ground turns rather than mirrors, whatever the source.
+  assert.deepEqual(pose(quickAddPlacement(def('ground'), point, { x: 0, y: 1 }, { rotation: 0, mirrorX: true })),
     { rotation: 0, mirrorX: false, mirrorY: false });
+  assert.equal(pose(quickAddPlacement(def('ground'), point, { x: 1, y: 0 }, { rotation: 0, mirrorX: true })).mirrorX, false);
   // Stacking on a mirrored NMOS drain inherits the mirror; PMOS keeps its default Y mirror.
   const mirroredNmos = { rotation: 0, mirrorX: true, mirrorY: false };
   assert.deepEqual(pose(quickAddPlacement(def('nmos'), point, { x: 0, y: -1 }, mirroredNmos)), { rotation: 0, mirrorX: true, mirrorY: false });

@@ -37306,7 +37306,8 @@ function arrivalDirection(path) {
  * part added from a mirrored transistor inherits that mirror while a gate still
  * lands gate-to-gate. Interface ports turn so their body lies beyond the drop
  * point, preferring a mirror over a rotation. Other single-terminal markers
- * (ground, supply, VCM) keep their only pose. */
+ * (ground, supply, VCM) turn the same way, so their pin faces back along the
+ * wire, preferring a rotation over a mirror; without a wire they stay upright. */
 function quickAddPlacement(def, point, direction = null, source = null) {
   const terminals = def?.terminals || [];
   const defaults = { mirrorX: !!def?.defaultMirrorX, mirrorY: !!def?.defaultMirrorY };
@@ -37317,7 +37318,8 @@ function quickAddPlacement(def, point, direction = null, source = null) {
   });
   if (!terminals.length) return result({ rotation: 0, ...defaults }, null, { x: 0, y: 0 });
   const port = terminals.length === 1 && terminals[0].direction === 'port';
-  if (!direction || (terminals.length === 1 && !port)) {
+  const marker = terminals.length === 1 && !port;
+  if (!direction) {
     const transform = { rotation: 0, ...defaults };
     return result(transform, terminals[0].name, applyTransform({ x: 0, y: 0, ...transform }, terminals[0].x, terminals[0].y));
   }
@@ -37338,8 +37340,8 @@ function quickAddPlacement(def, point, direction = null, source = null) {
         for (const terminal of terminals) {
           const offset = applyTransform({ x: 0, y: 0, ...transform }, terminal.x, terminal.y);
           let score;
-          if (port) {
-            // A port's body lies beyond its pin, along the wire.
+          if (port || marker) {
+            // A port's or marker's body lies beyond its pin, along the wire.
             const reach = applyTransform({ x: 0, y: 0, ...transform }, body.x - terminal.x, body.y - terminal.y);
             const length = Math.hypot(reach.x, reach.y);
             score = length ? (reach.x * direction.x + reach.y * direction.y) / length : -1;
@@ -37351,6 +37353,8 @@ function quickAddPlacement(def, point, direction = null, source = null) {
           const turn = Math.min(Math.abs(rotation - preferred.rotation), 360 - Math.abs(rotation - preferred.rotation));
           const keep = port
             ? [rotation === 0 ? 0 : 1, mirrorY === defaults.mirrorY ? 0 : 1]
+            : marker
+            ? [(mirrorX === defaults.mirrorX ? 0 : 1) + (mirrorY === defaults.mirrorY ? 0 : 1), rotation === 0 ? 0 : 1]
             : [turn, (mirrorX === preferred.mirrorX ? 0 : 1) + (mirrorY === preferred.mirrorY ? 0 : 1)];
           const candidate = { score, keep, transform, terminal: terminal.name, offset };
           if (!best || betterQuickAdd(candidate, best)) best = candidate;
