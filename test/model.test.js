@@ -3923,3 +3923,38 @@ test('a rail marker standing on its pin has no path, and asking costs no routing
   assert.deepEqual(net.paths(), []);
   assert.equal(circuit._routingEnvCache.size, 0);
 });
+
+test('a net label may sit anywhere its box touches its wire, even by one corner', async () => {
+  const c = new Circuit();
+  const net = c.createWireNet({ name: 'OUT', route: [{ x: 0, y: 0 }, { x: 160, y: 0 }] });
+  const label = c.addNetLabel(net, { id: 'L', anchor: { x: 80, y: 0 } });
+  assert.equal(label.netSide, 'above');
+  const w = label.bbox().w;
+  // Above the wire, slid out until only its bottom-left corner meets the end.
+  assert.equal(c.netLabelFits(label, { x: 160 + w / 2, y: 0 }), true);
+  assert.equal(c.netLabelFits(label, { x: 160 + w / 2 + 40, y: 0 }), false);
+  // Straddling the wire is not a place: the wire would run through the text.
+  assert.equal(c.netLabelFits(label, { x: 80, y: 40 }), false);
+  label.moveTo(160 + w / 2, 0);
+  assert.deepEqual(label.anchorWorld(), { x: 160 + w / 2, y: 0 });
+  assert.throws(() => label.moveTo(400, 0), /must touch its net's wire/);
+  // Drawn out past the end, it sits beyond the end, centred on it and aligned toward it.
+  const beyond = c.netLabelDragPlacement(label, { x: 400, y: 0 });
+  assert.deepEqual(beyond, { anchor: { x: 160, y: 0 }, side: 'right' });
+  label.netSide = beyond.side;
+  label.moveTo(160, 0);
+  const box = label.bbox();
+  assert.equal(box.x, 160);
+  assert.equal(box.y + box.h / 2, 0);
+  assert.equal(label.textAlign(), 'left');
+  // From there it slides along the end while an edge still meets it.
+  assert.deepEqual(c.netLabelDragPlacement(label, { x: 160, y: 40 }), { anchor: { x: 160, y: 40 }, side: 'right' });
+  // Dropped clear of the wire over its middle, it lands on the wire again.
+  assert.deepEqual(c.netLabelDragPlacement(label, { x: 80, y: -120 }), { anchor: { x: 80, y: 0 }, side: 'above' });
+  // Saved and loaded off the wire, it stays where it was put.
+  label.moveTo(160, 40);
+  const restored = Circuit.fromJSON(c.toJSON());
+  assert.deepEqual(restored.labels.get('L').anchorWorld(), { x: 160, y: 40 });
+  const { evaluate } = await import('../src/core/commands.js');
+  assert.deepEqual(evaluate(restored).issues.filter((issue) => /does not touch/.test(issue.message)), []);
+});

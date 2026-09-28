@@ -117,7 +117,12 @@ that is aligned left or right keeps that edge where a two-cell box would have
 it and grows away, so a wire stub's label edge stays on its terminal. Aligned text labels round their box up
 to include that inset. Documents without `labelAlignVersion` 3 (or
 `ownedLabelAlignVersion` 2) load their centered part and net labels as
-`parent`.
+`parent`. A net label may sit wherever its box touches its own wire -- along
+an edge, or by one corner at a wire end -- without the wire running through
+its text (`netLabelBoxTouches`, `Circuit#netLabelFits`); its anchor need not
+lie on the wire. Dragged out past a wire end it sits beyond that end on the
+far side, centred on the endpoint and aligned toward it
+(`Circuit#netLabelDragPlacement`).
 
 Interface ports are components and therefore also require unique identities.
 While a port is the only interface pin on its physical net, its authored label

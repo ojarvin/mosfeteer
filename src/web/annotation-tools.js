@@ -52,12 +52,11 @@ function netLabelTargetAt(world) {
 export function moveLabelSafely(label, x, y) {
   try {
     if (label?.isNetLabel?.()) {
-      const net = editor.circuit.nets.get(label.netId);
-      const attachment = net ? editor.circuit._nearestNetPathAttachment(net, { x, y }, label.netSide) : null;
-      if (!attachment) throw new Error('net label has no drawable path');
-      x = attachment.point.x;
-      y = attachment.point.y;
-      label.netSide = attachment.side;
+      const placement = editor.circuit.nets.has(label.netId) ? editor.circuit.netLabelDragPlacement(label, { x, y }) : null;
+      if (!placement) throw new Error('net label has no drawable path');
+      x = placement.anchor.x;
+      y = placement.anchor.y;
+      label.netSide = placement.side;
     }
     label.moveTo(x, y);
     label._moveErrorShown = false;

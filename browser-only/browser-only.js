@@ -11770,8 +11770,8 @@ function evaluate(circuit) {
     if (!net) { malformed(`net label ${label.id} targets missing net ${label.netId}`); continue; }
     if (label.owner) malformed(`net label ${label.id} also has owner ${label.owner}`);
     if (!canonicalNetName(net.name)) malformed(`net label ${label.id} targets unnamed net ${net.id}`);
-    else if (!circuit._netLabelAnchorOnPath(net, label.anchorWorld())) {
-      malformed(`net label ${label.id} anchor is not on drawable net ${net.id}`);
+    else if (!circuit._netLabelAnchorOnPath(net, label.anchorWorld()) && !circuit.netLabelFits(label)) {
+      malformed(`net label ${label.id} does not touch drawable net ${net.id}`);
     }
   }
   const overlapPoints = (a, b) => [
@@ -15033,6 +15033,7 @@ __exports.isReferenceMarker = isReferenceMarker;
 __exports.referenceMarkerName = referenceMarkerName;
 __exports.busNetHighlight = busNetHighlight;
 __exports.applyNetProbe = applyNetProbe;
+__exports.netLabelBoxTouches = netLabelBoxTouches;
 __exports.referenceMarkerNameConflicts = referenceMarkerNameConflicts;
 __exports.referenceMarkerIsLocal = referenceMarkerIsLocal;
 __exports.parseLabelRuns = parseLabelRuns;
@@ -15220,6 +15221,37 @@ function applyNetProbe(colors, key, color) {
   colors.set(key, color);
   const name = key.replace(/^name:/, '');
   for (const inner of busGroupsWithin(name, [...colors.keys()].map((group) => group.replace(/^name:/, '')))) colors.delete(`name:${inner}`);
+}
+
+/** Whether segment a-b meets the closed rectangle `r` at all, its edges
+ * and corners included. */
+function segmentMeetsRect(a, b, r) {
+  let lo = 0;
+  let hi = 1;
+  const clip = (start, delta, min, max) => {
+    if (delta === 0) return start >= min && start <= max;
+    let t0 = (min - start) / delta;
+    let t1 = (max - start) / delta;
+    if (t0 > t1) [t0, t1] = [t1, t0];
+    lo = Math.max(lo, t0);
+    hi = Math.min(hi, t1);
+    return lo <= hi;
+  };
+  return clip(a.x, b.x - a.x, r.x, r.x + r.w) && clip(a.y, b.y - a.y, r.y, r.y + r.h) && lo <= hi;
+}
+
+/** A net label's place is valid when its box touches the net's wire -- an
+ * edge along it, or only a corner at a wire end -- and the wire does not run
+ * through the text. */
+function netLabelBoxTouches(paths, box) {
+  let touches = false;
+  for (const path of paths) {
+    for (let i = 1; i < path.length; i++) {
+      if (segThroughInterior(path[i - 1], path[i], box)) return false;
+      if (!touches && segmentMeetsRect(path[i - 1], path[i], box)) touches = true;
+    }
+  }
+  return touches;
 }
 
 /** A saved bus-count option, or null: offsets are grid-snapped to half cells
@@ -16292,8 +16324,8 @@ class LabelInstance {
       this.circuit.invalidateRoutingCache();
       return;
     }
-    if (this.netId && !this.circuit._netLabelAnchorOnPath(this.netId, { x: wx, y: wy })) {
-      throw new Error('net label anchor must lie on a drawable net path');
+    if (this.netId && !this.circuit.netLabelFits(this, { x: wx, y: wy })) {
+      throw new Error('a net label must touch its net\'s wire');
     }
     if (this.connectorId && typeof this.circuit.moveConnectorLabel === 'function') {
       this.circuit.moveConnectorLabel(this, wx, wy);
@@ -18133,14 +18165,63 @@ class Circuit {
     const anchor = opts.anchor || { x: opts.x || 0, y: opts.y || 0 };
     const targetName = canonicalNetName(requestedName !== undefined ? requestedName : net.name);
     if (!targetName) throw new Error('net label requires a non-empty net name');
-    if (!this._netLabelAnchorOnPath(net, anchor)) throw new Error('net label anchor must lie on a drawable net path');
+    const onPath = this._netLabelAnchorOnPath(net, anchor);
+    const explicitSide = ['above', 'below', 'left', 'right'].includes(opts.netSide);
+    // Off the wire, a label needs a side that puts its box against it.
+    if (!onPath && !explicitSide) throw new Error('net label anchor must lie on a drawable net path');
     if (opts.text !== undefined || opts.name !== undefined) {
       this.renameNet(net, targetName);
     }
-    const netSide = ['above', 'below', 'left', 'right'].includes(opts.netSide)
-      ? opts.netSide
-      : this._defaultNetLabelSide(net, anchor);
-    return this.addLabel({ ...opts, text: net.name, name: undefined, owner: null, netId: net.id, netSide, offset: null, x: anchor.x, y: anchor.y, style: opts.style || { color: net.style.color } });
+    const netSide = explicitSide ? opts.netSide : this._defaultNetLabelSide(net, anchor);
+    const label = this.addLabel({ ...opts, text: net.name, name: undefined, owner: null, netId: net.id, netSide, offset: null, x: anchor.x, y: anchor.y, style: opts.style || { color: net.style.color } });
+    if (!onPath && !this.netLabelFits(label)) {
+      this.labels.delete(label.id);
+      throw new Error('a net label must touch its net\'s wire');
+    }
+    return label;
+  }
+
+  /** Whether `label` would sit validly on `net` (its own by default) with
+   *  its anchor at `anchor` on side `side` (netLabelBoxTouches). */
+  netLabelFits(label, anchor = label.anchorWorld(), side = label.netSide, net = this.nets.get(label.netId)) {
+    if (!net) return false;
+    const saved = { anchor: label.anchor, netSide: label.netSide };
+    label.anchor = snapPoint(anchor.x, anchor.y);
+    label.netSide = side;
+    try {
+      return netLabelBoxTouches(net.paths().filter((path) => path.length >= 2), label.bbox());
+    } finally {
+      label.anchor = saved.anchor;
+      label.netSide = saved.netSide;
+    }
+  }
+
+  /**
+   * Where a net label dragged to anchor `point` goes: { anchor, side }. It
+   * keeps its side and goes where it is put while its box still touches the
+   * wire (a corner at a wire end is enough); pulled out past a wire end, it
+   * sits beyond that end on the far side -- beside a horizontal wire's end,
+   * vertically centred on it and aligned toward it; otherwise it lands on the
+   * nearest point of the wire, on the side the point is on.
+   */
+  netLabelDragPlacement(label, point) {
+    const net = this._resolveNet(label.netId);
+    const p = snapPoint(point.x, point.y);
+    if (label.netSide && this.netLabelFits(label, p, label.netSide, net)) return { anchor: p, side: label.netSide };
+    const attachment = this._nearestNetPathAttachment(net, p, label.netSide);
+    if (!attachment) return null;
+    for (const path of net.paths()) {
+      if (path.length < 2) continue;
+      for (const [end, before] of [[path[0], path[1]], [path.at(-1), path.at(-2)]]) {
+        if (end.x !== attachment.point.x || end.y !== attachment.point.y) continue;
+        if (before.x !== end.x && before.y !== end.y) continue;
+        const out = { x: Math.sign(end.x - before.x), y: Math.sign(end.y - before.y) };
+        if ((p.x - end.x) * out.x + (p.y - end.y) * out.y <= 0) continue;
+        const side = out.x > 0 ? 'right' : out.x < 0 ? 'left' : out.y > 0 ? 'below' : 'above';
+        if (this.netLabelFits(label, end, side, net)) return { anchor: { ...end }, side };
+      }
+    }
+    return { anchor: attachment.point, side: attachment.side };
   }
 
   _netLabelAnchorOnPath(netOrId, point) {
@@ -20964,7 +21045,9 @@ class Circuit {
     for (const label of [...this.labels.values()]) {
       if (label.netId !== source.id) continue;
       const point = label.anchorWorld();
-      const matches = candidates.filter((net) => net && this._netLabelAnchorOnPath(net, point));
+      // The piece its anchor is on, or else the one its box still touches.
+      const onPath = candidates.filter((net) => net && this._netLabelAnchorOnPath(net, point));
+      const matches = onPath.length ? onPath : candidates.filter((net) => net && this.netLabelFits(label, point, label.netSide, net));
       if (matches.length === 1) label.setNetId(matches[0].id);
       else if (matches.length === 0) this.removeLabel(label);
     }
@@ -21012,10 +21095,12 @@ class Circuit {
     for (const label of [...this.labels.values()]) {
       if (label.netId !== net.id) continue;
       const anchor = label.anchorWorld();
-      if (paths.some((path) => pointOnPath(anchor, path))) continue;
-      const replacement = this._nearestNetPathPoint(net, anchor);
-      if (replacement) label.anchor = replacement;
-      else this.removeLabel(label);
+      if (paths.length && this.netLabelFits(label, anchor, label.netSide, net)) continue;
+      const replacement = this._nearestNetPathAttachment(net, anchor, label.netSide);
+      if (replacement) {
+        label.anchor = replacement.point;
+        label.netSide = replacement.side;
+      } else this.removeLabel(label);
     }
   }
 
@@ -21530,7 +21615,7 @@ class Circuit {
         continue;
       }
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
-      if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld())) circuit.labels.delete(label.id);
+      if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld()) && !circuit.netLabelFits(label)) circuit.labels.delete(label.id);
     }
     // Ports predating their owned name label get one, like the boxed ports.
     for (const component of circuit.components.values()) {
@@ -29075,12 +29160,11 @@ function netLabelTargetAt(world) {
 function moveLabelSafely(label, x, y) {
   try {
     if (label?.isNetLabel?.()) {
-      const net = editor.circuit.nets.get(label.netId);
-      const attachment = net ? editor.circuit._nearestNetPathAttachment(net, { x, y }, label.netSide) : null;
-      if (!attachment) throw new Error('net label has no drawable path');
-      x = attachment.point.x;
-      y = attachment.point.y;
-      label.netSide = attachment.side;
+      const placement = editor.circuit.nets.has(label.netId) ? editor.circuit.netLabelDragPlacement(label, { x, y }) : null;
+      if (!placement) throw new Error('net label has no drawable path');
+      x = placement.anchor.x;
+      y = placement.anchor.y;
+      label.netSide = placement.side;
     }
     label.moveTo(x, y);
     label._moveErrorShown = false;

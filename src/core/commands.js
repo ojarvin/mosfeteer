@@ -337,8 +337,8 @@ export function evaluate(circuit) {
     if (!net) { malformed(`net label ${label.id} targets missing net ${label.netId}`); continue; }
     if (label.owner) malformed(`net label ${label.id} also has owner ${label.owner}`);
     if (!canonicalNetName(net.name)) malformed(`net label ${label.id} targets unnamed net ${net.id}`);
-    else if (!circuit._netLabelAnchorOnPath(net, label.anchorWorld())) {
-      malformed(`net label ${label.id} anchor is not on drawable net ${net.id}`);
+    else if (!circuit._netLabelAnchorOnPath(net, label.anchorWorld()) && !circuit.netLabelFits(label)) {
+      malformed(`net label ${label.id} does not touch drawable net ${net.id}`);
     }
   }
   const overlapPoints = (a, b) => [
