@@ -17,6 +17,19 @@ test('an unchanged document produces no commit feedback', () => {
   assert.ok(isEmptyFeedback(commitFeedbackDiff(clone(c), clone(c))));
 });
 
+test('only the labels an edit touched glow, whatever the browser measured', () => {
+  const c = twoResistors();
+  const note = c.addLabel({ text: 'note', x: 0, y: 400 });
+  // The live labels carry browser text metrics; the committed copy does not.
+  for (const label of c.labels.values()) label.setRenderedTextBounds(123, 45);
+  const before = clone(c);
+  c.addComponent('resistor', { x: 800, y: 0 });
+  assert.deepEqual(commitFeedbackDiff(before, c).labels.map((label) => label.owner), ['R3']);
+  const edited = clone(c);
+  note.text = 'changed';
+  assert.deepEqual(commitFeedbackDiff(edited, c).labels.map((label) => label.id), [note.id]);
+});
+
 test('a placed component glows along its own symbol and label, not a box', () => {
   const c = twoResistors();
   const before = clone(c);

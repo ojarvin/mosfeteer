@@ -32850,10 +32850,13 @@ function connectedTerminalKeys(circuit) {
 }
 
 function labelKey(label) {
-  let box = null;
-  try { box = label.bbox(); } catch { /* no drawable box */ }
-  // Owned labels store a local offset, so compare the world box as well.
-  return JSON.stringify([label.toJSON ? label.toJSON() : label, box]);
+  let anchor = null;
+  try { anchor = label.anchorWorld(); } catch { /* no anchor */ }
+  // Owned labels store a local offset, so compare the world anchor as well.
+  // Not the box: the committed `before` document is rebuilt from JSON without
+  // the browser's text measurements, so every box would differ and every
+  // label on the sheet would flash on each commit.
+  return JSON.stringify([label.toJSON ? label.toJSON() : label, anchor]);
 }
 
 /**
