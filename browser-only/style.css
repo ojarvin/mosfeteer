@@ -1846,6 +1846,39 @@ button:disabled {
   color: var(--text);
 }
 
+/* The toolbar's mark opens the Atlas, and the Atlas's mark returns. */
+button.app-mark-button {
+  height: auto;
+  padding: 2px;
+  margin: -2px;
+  border: 0;
+  background: transparent;
+}
+
+button.app-mark-button:hover,
+button.app-mark-button:active {
+  background: var(--bg-hover);
+}
+
+/* The rapier lifts and tips toward the pointer, so the mark reads as a control. */
+.app-mark-button .app-mark-art {
+  transition: transform 180ms cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+
+.app-mark-button:hover .app-mark-art,
+.app-mark-button:focus-visible .app-mark-art {
+  transform: rotate(-14deg) scale(1.1);
+}
+
+.app-mark-button:active .app-mark-art {
+  transform: rotate(-14deg) scale(0.94);
+  transition-duration: 80ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-mark-button .app-mark-art { transition: none; }
+}
+
 .app-mark-art {
   display: block;
   width: 30px;

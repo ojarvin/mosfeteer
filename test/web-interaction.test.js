@@ -408,7 +408,12 @@ test('Atlas creates a circuit through the unsaved-changes guard and preserves na
 test('the Atlas header carries the editor toolbar\'s mark and theme toggle', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const head = html.slice(html.indexOf('<header class="atlas-head'), html.indexOf('</header>', html.indexOf('<header class="atlas-head')));
-  assert.match(head, /^<header[^>]*>\s*<span class="app-mark atlas-mark"/);
+  assert.match(head, /^<header[^>]*>\s*<button type="button" id="atlas-mark" class="app-mark app-mark-button atlas-mark"/);
+  // The mark toggles: the toolbar's opens the Atlas, the Atlas's closes it.
+  assert.match(html, /<button type="button" id="app-mark" class="app-mark app-mark-button"/);
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  assert.match(atlas, /getElementById\('atlas-mark'\)\?\.addEventListener\('click', \(\) => void closeAtlas\(\)\)/);
+  assert.match(atlas, /getElementById\('app-mark'\)\?\.addEventListener\('click', \(\) => void openAtlas\(\)\)/);
   assert.match(head, /id="atlas-theme"[^>]+class="icon-button"[^>]+data-icon="moon"[^>]+aria-pressed="false"/);
   const toolbar = readFileSync(new URL('../src/web/toolbar-ui.js', import.meta.url), 'utf8');
   assert.match(toolbar, /for \(const button of themeButtons\) \{\s*button.setAttribute\('aria-pressed', String\(dark\)\);/);

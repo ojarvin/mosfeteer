@@ -30633,6 +30633,8 @@ function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   document.getElementById('atlas-close')?.addEventListener('click', () => void closeAtlas());
+  document.getElementById('atlas-mark')?.addEventListener('click', () => void closeAtlas());
+  document.getElementById('app-mark')?.addEventListener('click', () => void openAtlas());
   exportEl?.addEventListener('click', exportDesk);
   // A click on a header button leaves the keys with the desk (and a dialog
   // it opens hands them back there); Tab still reaches the buttons.
