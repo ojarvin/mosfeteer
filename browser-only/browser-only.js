@@ -17854,7 +17854,7 @@ class Circuit {
     return net;
   }
 
-  renameNet(netOrId, name) {
+  renameNet(netOrId, name, { markerLabels = true } = {}) {
     this.invalidateRoutingCache();
     const net = this._resolveNet(netOrId);
     const previousGroup = this.netGroupKey(net);
@@ -17864,8 +17864,9 @@ class Circuit {
     // Renaming an unnamed reference-attached net away from its global rail
     // name makes that marker local.  Persist the same child label used by the
     // inline reference editor so analysis and the net list agree about the
-    // new rail scope.
-    if (canonical) {
+    // new rail scope. A batch rename (`markerLabels: false`) renames the rail
+    // itself instead: its markers stay unlabelled.
+    if (canonical && markerLabels) {
       for (const terminal of net.terminals) {
         const component = this.components.get(terminal.comp);
         if (!isReferenceMarker(component)) continue;
@@ -17889,6 +17890,20 @@ class Circuit {
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     this._carryNetHighlight(previousGroup, this.netGroupKey(net));
     return net;
+  }
+
+  /** Rename a net together with every net in its electrical group (equally
+   *  named nets, or every net on one unnamed rail), so a virtual connection
+   *  survives the rename. A bus keeps its bit nets' names: only nets in the
+   *  same group follow. A batch rename never gives rail markers child labels;
+   *  only renaming a marker itself detaches it from its rail. Returns the
+   *  renamed nets, `net` first. */
+  renameNetGroup(netOrId, name) {
+    const net = this._resolveNet(netOrId);
+    const key = this.netGroupKey(net);
+    const group = [net, ...[...this.nets.values()].filter((candidate) => candidate !== net && this.netGroupKey(candidate) === key)];
+    for (const member of group) this.renameNet(member, name, { markerLabels: false });
+    return group;
   }
 
   // ----- persistent net highlights -------------------------------------
@@ -49065,9 +49080,11 @@ function askForNewReferenceShort(startSnapshot) {
   let known;
   try {
     known = new Set(referenceMarkerNameConflicts(loadDocument(JSON.parse(startSnapshot)))
-      .map((entry) => `${entry.refdes}:${entry.name}`));
+      .map((entry) => `${entry.railName}:${entry.name}`));
   } catch { return false; }
-  const conflict = conflicts.find((entry) => !known.has(`${entry.refdes}:${entry.name}`));
+  // A rail already renamed as a whole (from the net list) is no short: a
+  // marker joining it takes the rail's new name.
+  const conflict = conflicts.find((entry) => !known.has(`${entry.railName}:${entry.name}`));
   if (!conflict) return false;
   const historyLength = editor.history.length;
   const marker = editor.circuit.components.get(conflict.refdes);
@@ -50865,19 +50882,25 @@ function startNetRename(net, ref) {
     if (applyText && v && v !== net.name) {
       // A sole port names its net, so this rename can rename that port too.
       // Carry the selection across with it, exactly like a component rename.
-      const ports = net.terminals
-        .map(({ comp }) => editor.circuit.components.get(comp))
-        .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
-      const previous = ports.length === 1 ? ports[0].refdes : null;
+      const solePorts = (member) => {
+        const ports = member.terminals
+          .map(({ comp }) => editor.circuit.components.get(comp))
+          .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
+        return ports.length === 1 ? ports : [];
+      };
+      const before = new Map();
+      for (const member of namedGroupNets(net)) {
+        for (const port of solePorts(member)) before.set(port, port.refdes);
+      }
       commit(() => {
-        editor.circuit.renameNet(net.id, v);
-        // A side-panel rename is an intentional editor action: promote any
-        // compatibility child label synthesized by the model to a real local
-        // reference label so the renamed rail no longer groups with VSS/VDD.
-        editor.circuit._markReferenceLabelsLocal?.(net);
+        // The row stands for the whole name group (equally named nets, or
+        // every net on one rail), so all of them follow and the virtual
+        // connection stays whole. Rail markers take no child labels.
+        editor.circuit.renameNetGroup(net.id, v);
       });
-      const renamed = previous && ports[0].refdes !== previous ? ports[0].refdes : null;
-      if (renamed) {
+      for (const [port, previous] of before) {
+        const renamed = port.refdes !== previous ? port.refdes : null;
+        if (!renamed) continue;
         if (editor.componentRangeAnchor === previous) editor.componentRangeAnchor = renamed;
         if (editor.selected === previous) editor.selected = renamed;
         if (editor.multi.has(previous)) {

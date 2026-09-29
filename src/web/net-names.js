@@ -200,9 +200,11 @@ function askForNewReferenceShort(startSnapshot) {
   let known;
   try {
     known = new Set(referenceMarkerNameConflicts(loadDocument(JSON.parse(startSnapshot)))
-      .map((entry) => `${entry.refdes}:${entry.name}`));
+      .map((entry) => `${entry.railName}:${entry.name}`));
   } catch { return false; }
-  const conflict = conflicts.find((entry) => !known.has(`${entry.refdes}:${entry.name}`));
+  // A rail already renamed as a whole (from the net list) is no short: a
+  // marker joining it takes the rail's new name.
+  const conflict = conflicts.find((entry) => !known.has(`${entry.railName}:${entry.name}`));
   if (!conflict) return false;
   const historyLength = editor.history.length;
   const marker = editor.circuit.components.get(conflict.refdes);

@@ -419,19 +419,25 @@ export function startNetRename(net, ref) {
     if (applyText && v && v !== net.name) {
       // A sole port names its net, so this rename can rename that port too.
       // Carry the selection across with it, exactly like a component rename.
-      const ports = net.terminals
-        .map(({ comp }) => editor.circuit.components.get(comp))
-        .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
-      const previous = ports.length === 1 ? ports[0].refdes : null;
+      const solePorts = (member) => {
+        const ports = member.terminals
+          .map(({ comp }) => editor.circuit.components.get(comp))
+          .filter((component) => component && INTERFACE_PIN_TYPES.has(component.type));
+        return ports.length === 1 ? ports : [];
+      };
+      const before = new Map();
+      for (const member of namedGroupNets(net)) {
+        for (const port of solePorts(member)) before.set(port, port.refdes);
+      }
       commit(() => {
-        editor.circuit.renameNet(net.id, v);
-        // A side-panel rename is an intentional editor action: promote any
-        // compatibility child label synthesized by the model to a real local
-        // reference label so the renamed rail no longer groups with VSS/VDD.
-        editor.circuit._markReferenceLabelsLocal?.(net);
+        // The row stands for the whole name group (equally named nets, or
+        // every net on one rail), so all of them follow and the virtual
+        // connection stays whole. Rail markers take no child labels.
+        editor.circuit.renameNetGroup(net.id, v);
       });
-      const renamed = previous && ports[0].refdes !== previous ? ports[0].refdes : null;
-      if (renamed) {
+      for (const [port, previous] of before) {
+        const renamed = port.refdes !== previous ? port.refdes : null;
+        if (!renamed) continue;
         if (editor.componentRangeAnchor === previous) editor.componentRangeAnchor = renamed;
         if (editor.selected === previous) editor.selected = renamed;
         if (editor.multi.has(previous)) {

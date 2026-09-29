@@ -2786,7 +2786,7 @@ export class Circuit {
     return net;
   }
 
-  renameNet(netOrId, name) {
+  renameNet(netOrId, name, { markerLabels = true } = {}) {
     this.invalidateRoutingCache();
     const net = this._resolveNet(netOrId);
     const previousGroup = this.netGroupKey(net);
@@ -2796,8 +2796,9 @@ export class Circuit {
     // Renaming an unnamed reference-attached net away from its global rail
     // name makes that marker local.  Persist the same child label used by the
     // inline reference editor so analysis and the net list agree about the
-    // new rail scope.
-    if (canonical) {
+    // new rail scope. A batch rename (`markerLabels: false`) renames the rail
+    // itself instead: its markers stay unlabelled.
+    if (canonical && markerLabels) {
       for (const terminal of net.terminals) {
         const component = this.components.get(terminal.comp);
         if (!isReferenceMarker(component)) continue;
@@ -2821,6 +2822,20 @@ export class Circuit {
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     this._carryNetHighlight(previousGroup, this.netGroupKey(net));
     return net;
+  }
+
+  /** Rename a net together with every net in its electrical group (equally
+   *  named nets, or every net on one unnamed rail), so a virtual connection
+   *  survives the rename. A bus keeps its bit nets' names: only nets in the
+   *  same group follow. A batch rename never gives rail markers child labels;
+   *  only renaming a marker itself detaches it from its rail. Returns the
+   *  renamed nets, `net` first. */
+  renameNetGroup(netOrId, name) {
+    const net = this._resolveNet(netOrId);
+    const key = this.netGroupKey(net);
+    const group = [net, ...[...this.nets.values()].filter((candidate) => candidate !== net && this.netGroupKey(candidate) === key)];
+    for (const member of group) this.renameNet(member, name, { markerLabels: false });
+    return group;
   }
 
   // ----- persistent net highlights -------------------------------------

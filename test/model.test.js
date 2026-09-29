@@ -3958,3 +3958,40 @@ test('a net label may sit anywhere its box touches its wire, even by one corner'
   const { evaluate } = await import('../src/core/commands.js');
   assert.deepEqual(evaluate(restored).issues.filter((issue) => /does not touch/.test(issue.message)), []);
 });
+
+test('renameNetGroup renames every equally named net and keeps the group', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 0, y: 400 });
+  c.addComponent('resistor', { refdes: 'R3', x: 0, y: 800 });
+  const first = c.connect('R1.a', 'R1.b');
+  const second = c.connect('R2.a', 'R2.b');
+  const other = c.connect('R3.a', 'R3.b');
+  c.renameNet(first, 'X');
+  c.renameNet(second, 'X');
+  c.renameNet(other, 'Y');
+  const renamed = c.renameNetGroup(second, 'Z');
+  assert.deepEqual(renamed.map((net) => net.id), [second.id, first.id]);
+  assert.equal(first.name, 'Z');
+  assert.equal(second.name, 'Z');
+  assert.equal(other.name, 'Y');
+  assert.equal(c.logicallyConnected(first, second), true);
+});
+
+test('renameNetGroup renames a whole rail without marker child labels', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 0, y: 400 });
+  c.addComponent('ground', { refdes: 'G1', x: 320, y: 0 });
+  c.addComponent('ground', { refdes: 'G2', x: 320, y: 400 });
+  const first = c.connect('R1.a', 'G1.gnd');
+  const second = c.connect('R2.a', 'G2.gnd');
+  assert.equal(c.netGroupKey(first), c.netGroupKey(second));
+  const labelsBefore = c.labels.size;
+  assert.deepEqual(c.renameNetGroup(first, 'AGND').map((net) => net.id), [first.id, second.id]);
+  assert.equal(first.name, 'AGND');
+  assert.equal(second.name, 'AGND');
+  assert.equal(c.labels.size, labelsBefore);
+  assert.equal(c.labelOf('G1'), null);
+  assert.equal(c.netGroupKey(first), c.netGroupKey(second));
+});
