@@ -1395,7 +1395,7 @@ function rebaseMoveGhost() {
   drag.labelOrigins = new Map([...drag.labelOrigins.keys()].map((id) => {
     const label = circuit.labels.get(id);
     const anchor = label?.anchorWorld();
-    return anchor ? [id, { x: anchor.x, y: anchor.y }] : null;
+    return anchor ? [id, { x: anchor.x, y: anchor.y, side: label.netSide }] : null;
   }).filter(Boolean));
   if (drag.detached) {
     for (const id of drag.detachedWireRoutes?.keys() || []) {
@@ -1598,7 +1598,7 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
       const p = mapPoints([l.anchorWorld()])[0];
       if (l.netId) {
         if (delta && !geometryNetIds.has(l.netId)) {
-          deferredNetLabels.push({ label: l, point: p });
+          deferredNetLabels.push({ label: l, point: p, side: l.netSide });
         } else {
           // Net geometry is transformed above; assign the corresponding anchor
           // directly so moveTo cannot reject the valid transformed path.
@@ -1650,7 +1650,9 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
       circuit.reconnectCoincidentNets();
       circuit.teeTerminalsOntoWires(refs);
     }
-    for (const { label, point } of deferredNetLabels) {
+    for (const { label, point, side } of deferredNetLabels) {
+      // The reroute above may have repaired the label onto the other side.
+      if (side) label.netSide = side;
       if (!moveLabelSafely(label, point.x, point.y)) throw new Error(`unable to move net label ${label.id} safely`);
     }
     circuit.syncJunctionSolders();
@@ -4842,7 +4844,10 @@ export function beginObjectMove(refs, labelIds, startWorld, startClient, options
   }));
   const labelOrigins = new Map(labels.map((id) => {
     const l = circuit.labels.get(id);
-    return [id, { x: l.anchorWorld().x, y: l.anchorWorld().y }];
+    // A net label keeps the side it had when the drag began: rerouting its
+    // wire each frame may repair it onto whichever side its last frame's
+    // anchor lay, which flips it when the drag turns back.
+    return [id, { x: l.anchorWorld().x, y: l.anchorWorld().y, side: l.netSide }];
   }));
   drag = {
     mode: 'move', modal: !!options.modal, startClient, startWorld,
@@ -5669,7 +5674,7 @@ export function canvasMouseMove(ev) {
           }
           clipboard = savedClipboard;
           drag.origins = new Map(selectedComps().map((c) => [c.refdes, { x: c.transform.x, y: c.transform.y }]));
-          drag.labelOrigins = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y }]));
+          drag.labelOrigins = new Map(selectedLabels().map((l) => [l.id, { x: l.anchorWorld().x, y: l.anchorWorld().y, side: l.netSide }]));
           hintLine('duplicated selection — dragging the copy');
         }
         if (drag.detached) {
@@ -5705,50 +5710,66 @@ export function canvasMouseMove(ev) {
       if (drag.appliedDelta?.origins === drag.origins &&
           drag.appliedDelta.dx === delta.dx && drag.appliedDelta.dy === delta.dy) return;
       drag.appliedDelta = { origins: drag.origins, dx: delta.dx, dy: delta.dy };
-      for (const [r, o] of drag.origins) {
-        const c = circuit.components.get(r);
-        if (!c) continue;
-        const nx = o.x + delta.dx;
-        const ny = o.y + delta.dy;
-        // Both move variants preview by assigning the transform directly.
-        // Connected moves re-route from moved terminal positions; detached
-        // moves keep the pre-existing wire paths as floating geometry.
-        c.transform.x = nx;
-        c.transform.y = ny;
-        moved.set(r, { dx: nx - o.x, dy: ny - o.y });
-      }
-      // Labels share the same drag delta as every other selected object.
-      // Owned labels follow their component; net labels wait until their net
-      // has been re-anchored below so the new attachment remains valid.
-      if (drag.labelOrigins) {
-        moveLabelOriginsOnce(new Map([...drag.labelOrigins].filter(([id]) => {
-          const label = circuit.labels.get(id);
-          return label && !label.owner && !label.netId;
-        })), delta.dx, delta.dy);
-      }
-      // Restore the pre-drag wire geometry and re-anchor from it with the total
-      // delta, so wires follow the component without accumulating or detaching.
-      for (const [id, saved] of drag.netRoutes || []) {
-        const net = circuit.nets.get(id);
-        if (!net) continue;
-        translateNetGeometry(net, saved, 0, 0);
-        const selectedOnly = drag.selectedNetIds?.has(id) && !drag.touchedNetIds?.has(id);
-        if (selectedOnly && !net.terminals.length) {
-          translateNetGeometry(net, saved, delta.dx, delta.dy);
-        } else {
-          rerouteNet(net, moved);
+      // One frame at `step`: false when a net cannot follow, which rolls the
+      // parts back but not the nets and labels already moved this frame.
+      const applyDragStep = (delta) => {
+        let ok = true;
+        moved.clear();
+        for (const [r, o] of drag.origins) {
+          const c = circuit.components.get(r);
+          if (!c) continue;
+          const nx = o.x + delta.dx;
+          const ny = o.y + delta.dy;
+          // Both move variants preview by assigning the transform directly.
+          // Connected moves re-route from moved terminal positions; detached
+          // moves keep the pre-existing wire paths as floating geometry.
+          c.transform.x = nx;
+          c.transform.y = ny;
+          moved.set(r, { dx: nx - o.x, dy: ny - o.y });
         }
-      }
-      for (const [id, saved] of drag.detachedWireRoutes || []) {
-        const net = circuit.nets.get(id);
-        if (net) translateNetGeometry(net, saved, delta.dx, delta.dy);
-      }
-      for (const [id, o] of drag.labelOrigins || []) {
-        const l = circuit.labels.get(id);
-        if (l?.netId) moveLabelSafely(l, o.x + delta.dx, o.y + delta.dy);
-      }
+        // Labels share the same drag delta as every other selected object.
+        // Owned labels follow their component; net labels wait until their net
+        // has been re-anchored below so the new attachment remains valid.
+        if (drag.labelOrigins) {
+          moveLabelOriginsOnce(new Map([...drag.labelOrigins].filter(([id]) => {
+            const label = circuit.labels.get(id);
+            return label && !label.owner && !label.netId;
+          })), delta.dx, delta.dy);
+        }
+        // Restore the pre-drag wire geometry and re-anchor from it with the total
+        // delta, so wires follow the component without accumulating or detaching.
+        for (const [id, saved] of drag.netRoutes || []) {
+          const net = circuit.nets.get(id);
+          if (!net) continue;
+          translateNetGeometry(net, saved, 0, 0);
+          const selectedOnly = drag.selectedNetIds?.has(id) && !drag.touchedNetIds?.has(id);
+          if (selectedOnly && !net.terminals.length) {
+            translateNetGeometry(net, saved, delta.dx, delta.dy);
+          } else {
+            if (rerouteNet(net, moved) === false) ok = false;
+          }
+        }
+        for (const [id, saved] of drag.detachedWireRoutes || []) {
+          const net = circuit.nets.get(id);
+          if (net) translateNetGeometry(net, saved, delta.dx, delta.dy);
+        }
+        for (const [id, o] of drag.labelOrigins || []) {
+          const l = circuit.labels.get(id);
+          if (!l?.netId) continue;
+          if (o.side) l.netSide = o.side;
+          moveLabelSafely(l, o.x + delta.dx, o.y + delta.dy);
+        }
+        return ok;
+      };
+      // A frame no net can follow stays at the last one that worked, whole:
+      // parts, wires, and labels together.
+      let shown = delta;
+      if (!applyDragStep(delta)) {
+        shown = drag.goodDelta?.origins === drag.origins ? drag.goodDelta : { dx: 0, dy: 0 };
+        applyDragStep(shown);
+      } else drag.goodDelta = { origins: drag.origins, dx: delta.dx, dy: delta.dy };
       if (drag.detached) circuit.syncJunctionSolders();
-      cursor = { x: drag.startCursor.x + delta.dx, y: drag.startCursor.y + delta.dy };
+      cursor = { x: drag.startCursor.x + shown.dx, y: drag.startCursor.y + shown.dy };
       markModelChanged();
     }
     scheduleInteractionRender();

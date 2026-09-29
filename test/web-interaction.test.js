@@ -1247,3 +1247,17 @@ test('canvas text editors never scroll the page when they run past the window', 
     assert.doesNotMatch(body, /input\.focus\(\);/, name);
   }
 });
+
+test('a set drag keeps net label sides and never shows a frame its nets cannot follow', () => {
+  const main = editorSource();
+  // Each frame reroutes from the pre-drag wire, whose label repair would put
+  // the label on whichever side its last frame's anchor lay: the side it had
+  // when the drag began is restored before the label is placed.
+  assert.match(main, /return \[id, \{ x: l\.anchorWorld\(\)\.x, y: l\.anchorWorld\(\)\.y, side: l\.netSide \}\];/);
+  assert.match(main, /if \(o\.side\) l\.netSide = o\.side;\s*moveLabelSafely\(l, o\.x \+ delta\.dx, o\.y \+ delta\.dy\);/);
+  assert.match(main, /if \(side\) label\.netSide = side;\s*if \(!moveLabelSafely\(label, point\.x, point\.y\)\)/);
+  // A failed reroute rolls back only the parts, so the whole frame is redone
+  // at the last delta that worked.
+  assert.match(main, /if \(rerouteNet\(net, moved\) === false\) ok = false;/);
+  assert.match(main, /if \(!applyDragStep\(delta\)\) \{\s*shown = drag\.goodDelta\?\.origins === drag\.origins \? drag\.goodDelta : \{ dx: 0, dy: 0 \};\s*applyDragStep\(shown\);/);
+});
