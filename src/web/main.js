@@ -72,7 +72,7 @@ import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } fr
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
-import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
+import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
 import { netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
@@ -6902,6 +6902,11 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'o') {
     toggleLinkBubbles();
+    return;
+  }
+
+  if (key === 'O') {
+    toggleAllLinkBubbles();
     return;
   }
 

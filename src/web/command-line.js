@@ -77,6 +77,7 @@ export const EDITOR_COMMANDS = [
   { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box, or box the selection (b)' },
   { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
   { name: 'link-bubble', aliases: ['peek', 'show-link'], canvas: true, help: 'show or hide the selected part\'s linked design beside the drawing (o)' },
+  { name: 'link-bubbles-all', aliases: ['peek-all', 'show-all-links'], canvas: true, help: 'show or hide every linked part\'s design beside the drawing (Shift+O)' },
   { name: 'enter-link', aliases: ['dive', 'descend', 'open-link'], canvas: true, help: 'open the selected part\'s linked design, with a way back up (Alt+↓)' },
   { name: 'leave-link', aliases: ['up', 'ascend', 'parent'], canvas: true, help: 'back up to the design this one was opened from (Alt+↑)' },
   { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (Shift+J)' },

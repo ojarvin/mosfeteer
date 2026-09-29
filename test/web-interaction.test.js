@@ -1282,5 +1282,6 @@ test('linked-design bubbles live in a kept layer and dive keys go through hierar
   assert.match(main, /overlayEl\.innerHTML = themeInkSvg\(withGestureOverlay\(overlay, ghost\)\);\s*syncLinkBubbles\(\);/);
   assert.match(main, /if \(ev\.key === 'ArrowDown'\) void enterLinkedDesign\(\);\s*else void leaveLinkedDesign\(\);/);
   assert.match(main, /if \(key === 'o'\) \{\s*toggleLinkBubbles\(\);/);
+  assert.match(main, /if \(key === 'O'\) \{\s*toggleAllLinkBubbles\(\);/);
   assert.match(main, /if \(ev\.detail >= 2\) void enterLinkedDesign\(circuit\.components\.get\(bubble\.refdes\)\);/);
 });

@@ -22,7 +22,7 @@ import { activateAlign, activateAnnotation, activateCopy, activateEquation, acti
   activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
   repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
 import { joinSelectedLines, removeAllNetHighlights } from './annotation-tools.js';
-import { enterLinkedDesign, leaveLinkedDesign, toggleLinkBubbles } from './hierarchy.js';
+import { enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { copyAsImage } from './export-ui.js';
 import { pasteClipboard } from './copy-paste.js';
 import { openSwapPicker } from './insert-menu.js';
@@ -98,6 +98,7 @@ const ACTIONS = {
   line: () => activateShapeAnnotation('line'),
   'join-lines': () => joinSelectedLines(),
   'link-bubble': () => toggleLinkBubbles(),
+  'link-bubbles-all': () => toggleAllLinkBubbles(),
   'enter-link': () => void enterLinkedDesign(),
   'leave-link': () => void leaveLinkedDesign(),
   'align-to': () => activateAlign(),

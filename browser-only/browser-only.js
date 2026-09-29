@@ -33832,7 +33832,7 @@ let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require
 let toggleAtlas, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleSymbolSheet } = __require("src/web/atlas.js")); });
 let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
 let joinSelectedLines, removeAllNetHighlights; __bind(() => { ({ joinSelectedLines, removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
-let enterLinkedDesign, leaveLinkedDesign, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, leaveLinkedDesign, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
+let enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy-paste.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
@@ -33934,6 +33934,7 @@ const ACTIONS = {
   line: () => activateShapeAnnotation('line'),
   'join-lines': () => joinSelectedLines(),
   'link-bubble': () => toggleLinkBubbles(),
+  'link-bubbles-all': () => toggleAllLinkBubbles(),
   'enter-link': () => void enterLinkedDesign(),
   'leave-link': () => void leaveLinkedDesign(),
   'align-to': () => activateAlign(),
@@ -34209,6 +34210,7 @@ const EDITOR_COMMANDS = [
   { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box, or box the selection (b)' },
   { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
   { name: 'link-bubble', aliases: ['peek', 'show-link'], canvas: true, help: 'show or hide the selected part\'s linked design beside the drawing (o)' },
+  { name: 'link-bubbles-all', aliases: ['peek-all', 'show-all-links'], canvas: true, help: 'show or hide every linked part\'s design beside the drawing (Shift+O)' },
   { name: 'enter-link', aliases: ['dive', 'descend', 'open-link'], canvas: true, help: 'open the selected part\'s linked design, with a way back up (Alt+↓)' },
   { name: 'leave-link', aliases: ['up', 'ascend', 'parent'], canvas: true, help: 'back up to the design this one was opened from (Alt+↑)' },
   { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (Shift+J)' },
@@ -39562,6 +39564,7 @@ function installHelp() {
 __modules["src/web/hierarchy.js"] = function (__require, __exports) {
 __exports.linkedDocument = linkedDocument;
 __exports.linkableDesigns = linkableDesigns;
+__exports.toggleAllLinkBubbles = toggleAllLinkBubbles;
 __exports.toggleLinkBubbles = toggleLinkBubbles;
 __exports.closeLinkBubble = closeLinkBubble;
 __exports.linkBubbleOpen = linkBubbleOpen;
@@ -39748,6 +39751,17 @@ function linkTargets() {
   return component ? [component] : [];
 }
 
+/** Shift+O: show every linked part's design, or hide them all when they
+ *  all show. */
+function toggleAllLinkBubbles() {
+  const linked = [...editor.circuit.components.values()].filter((c) => c.link);
+  if (!linked.length) {
+    hintLine('LINK: no part links to a design yet (right-click a part → Link to design)');
+    return;
+  }
+  toggleLinkBubbles(linked);
+}
+
 /** o: show the selected (or pointed-at) parts' linked designs, or hide them
  *  when they all show. */
 function toggleLinkBubbles(components = linkTargets()) {
@@ -39827,11 +39841,13 @@ function currentLayout() {
   const shown = [...bubbles].filter(([, bubble]) => bubble.status !== 'loading');
   const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}`).join(',')}`;
   if (layoutCache.key === key) return layoutCache.layout;
-  const message = { w: 12 * GRID, h: 2 * GRID };
+  // A broken link's box fits its message (24-unit italic, about half an em
+  // a character).
+  const messageSize = (bubble) => ({ w: Math.max(12 * GRID, messageText(bubble).length * 13), h: 2 * GRID });
   const layout = shown.length ? layoutBubbles(circuit.inkBounds(), shown.map(([refdes, bubble]) => ({
     id: refdes,
     part: circuit.components.get(refdes).bboxWorld(),
-    size: bubble.status === 'ready' ? bubble.box : message,
+    size: bubble.status === 'ready' ? bubble.box : messageSize(bubble),
   })), { obstacles: obstacles(circuit), previous: angles }) : [];
   for (const entry of layout) angles.set(entry.id, entry.angle);
   layoutCache = { key, layout };
@@ -39862,6 +39878,8 @@ function mountLinkBubbles(svgRoot, before) {
   syncLinkBubbles();
 }
 
+const messageText = (bubble) => `${bubble.message} · right-click to link another`;
+
 const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** Bring the drawn bubbles up to date: called on every render. A bubble
@@ -39889,7 +39907,8 @@ function syncLinkBubbles() {
         group,
         connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none', 'vector-effect': 'non-scaling-stroke' }),
         dot: svgEl('circle', { class: 'link-bubble-dot', r: 6 }),
-        frame: svgEl('rect', { class: 'link-bubble-frame', rx: 8, 'vector-effect': 'non-scaling-stroke' }),
+        // Rounded corners set the bubble apart from box annotations.
+        frame: svgEl('rect', { class: 'link-bubble-frame', rx: GRID / 2, 'vector-effect': 'non-scaling-stroke' }),
         caption: svgEl('text', { class: 'link-bubble-caption' }),
         image: svgEl('image', { preserveAspectRatio: 'xMidYMid meet' }),
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
@@ -39919,7 +39938,7 @@ function syncLinkBubbles() {
       node.image.style.display = 'none';
       node.message.style.display = '';
       setAttrs(node.message, { x: entry.image.x + entry.image.w / 2, y: entry.image.y + entry.image.h / 2 });
-      const text = `${bubble.message} · right-click to link another`;
+      const text = messageText(bubble);
       if (node.message.textContent !== text) node.message.textContent = text;
     }
     if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
@@ -42435,7 +42454,7 @@ let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind((
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
-let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
+let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
 let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
@@ -49339,6 +49358,11 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  if (key === 'O') {
+    toggleAllLinkBubbles();
+    return;
+  }
+
   // / searches, as Ctrl/Cmd+F does, here and in the Atlas. (While wiring it
   // flips the draft corner instead; see onWireKey.)
   if (key === '/') {
@@ -54908,6 +54932,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['o', 'show or hide the selected (or pointed-at) part\'s linked design beside the drawing; link a part from its right-click menu'],
+    ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],
     ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['Shift/Ctrl-click a vertex', 'on a selected line or arrow, pick vertices (a box over part of it picks those inside); drag one to move them together, Delete removes them, Escape lets go'],

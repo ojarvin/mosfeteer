@@ -38,8 +38,9 @@ along a wire is worst); and clear of other bubbles and their connectors. A
 bubble keeps its angle while that spot stays about as good, so it does not
 jump as the drawing is edited. Fit (`f`) takes the open bubbles in.
 
-`o` again (or **Hide linked design**, or the bubble's own right-click menu)
-closes it. A click on a bubble picks its part. Which bubbles are open is
+`Shift+O` shows every linked part's design at once, or hides them all when
+they all show. `o` again (or **Hide linked design**, or the bubble's own
+right-click menu) closes one. A click on a bubble picks its part. Which bubbles are open is
 remembered per document in this browser; they are never saved in the
 document, exported, or undone.
 

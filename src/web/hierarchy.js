@@ -156,6 +156,17 @@ function linkTargets() {
   return component ? [component] : [];
 }
 
+/** Shift+O: show every linked part's design, or hide them all when they
+ *  all show. */
+export function toggleAllLinkBubbles() {
+  const linked = [...editor.circuit.components.values()].filter((c) => c.link);
+  if (!linked.length) {
+    hintLine('LINK: no part links to a design yet (right-click a part → Link to design)');
+    return;
+  }
+  toggleLinkBubbles(linked);
+}
+
 /** o: show the selected (or pointed-at) parts' linked designs, or hide them
  *  when they all show. */
 export function toggleLinkBubbles(components = linkTargets()) {
@@ -235,11 +246,13 @@ function currentLayout() {
   const shown = [...bubbles].filter(([, bubble]) => bubble.status !== 'loading');
   const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}`).join(',')}`;
   if (layoutCache.key === key) return layoutCache.layout;
-  const message = { w: 12 * GRID, h: 2 * GRID };
+  // A broken link's box fits its message (24-unit italic, about half an em
+  // a character).
+  const messageSize = (bubble) => ({ w: Math.max(12 * GRID, messageText(bubble).length * 13), h: 2 * GRID });
   const layout = shown.length ? layoutBubbles(circuit.inkBounds(), shown.map(([refdes, bubble]) => ({
     id: refdes,
     part: circuit.components.get(refdes).bboxWorld(),
-    size: bubble.status === 'ready' ? bubble.box : message,
+    size: bubble.status === 'ready' ? bubble.box : messageSize(bubble),
   })), { obstacles: obstacles(circuit), previous: angles }) : [];
   for (const entry of layout) angles.set(entry.id, entry.angle);
   layoutCache = { key, layout };
@@ -270,6 +283,8 @@ export function mountLinkBubbles(svgRoot, before) {
   syncLinkBubbles();
 }
 
+const messageText = (bubble) => `${bubble.message} · right-click to link another`;
+
 const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** Bring the drawn bubbles up to date: called on every render. A bubble
@@ -297,7 +312,8 @@ export function syncLinkBubbles() {
         group,
         connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none', 'vector-effect': 'non-scaling-stroke' }),
         dot: svgEl('circle', { class: 'link-bubble-dot', r: 6 }),
-        frame: svgEl('rect', { class: 'link-bubble-frame', rx: 8, 'vector-effect': 'non-scaling-stroke' }),
+        // Rounded corners set the bubble apart from box annotations.
+        frame: svgEl('rect', { class: 'link-bubble-frame', rx: GRID / 2, 'vector-effect': 'non-scaling-stroke' }),
         caption: svgEl('text', { class: 'link-bubble-caption' }),
         image: svgEl('image', { preserveAspectRatio: 'xMidYMid meet' }),
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
@@ -327,7 +343,7 @@ export function syncLinkBubbles() {
       node.image.style.display = 'none';
       node.message.style.display = '';
       setAttrs(node.message, { x: entry.image.x + entry.image.w / 2, y: entry.image.y + entry.image.h / 2 });
-      const text = `${bubble.message} · right-click to link another`;
+      const text = messageText(bubble);
       if (node.message.textContent !== text) node.message.textContent = text;
     }
     if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
