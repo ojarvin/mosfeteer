@@ -7,7 +7,7 @@ import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
-import { addBeat, beatTitle, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
+import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { addBoxAround } from './wrap-box.js';
@@ -544,6 +544,7 @@ export function commandHelp() {
     '  beat list                      - list beats (presentation steps; see docs/beats.md)',
     '  beat add [NAME] [--after N]    - add a beat that looks like the one before it',
     '  beat rm|rename|move N ...      - beat rm N ; beat rename N NAME ; beat move N TO',
+    '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
@@ -1177,6 +1178,11 @@ function beatCommand(circuit, pos, flags, result) {
     moveBeat(circuit, from, to);
     return result(`moved beat ${from + 1} to ${to + 1}`, null, true);
   }
+  if (sub === 'merge') {
+    const indices = pos.slice(1).map((n) => beatIndex(circuit, n));
+    const index = mergeBeats(circuit, indices);
+    return result(`merged beats ${[...new Set(indices)].sort((a, b) => a - b).map((i) => i + 1).join(', ')} into ${beatTitle(circuit, index)}`, { index: index + 1 }, true);
+  }
   if (sub === 'show' || sub === 'dim' || sub === 'hide') {
     const index = beatIndex(circuit, pos[1]);
     const ids = pos.slice(2);
@@ -1196,7 +1202,7 @@ function beatCommand(circuit, pos, flags, result) {
     setSwitchFrom(circuit, index, ref, state);
     return result(`${ref} ${state} from beat ${index + 1}`, null, true);
   }
-  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|show|dim|hide|switch|phases`);
+  throw new Error(`unknown beat command "${sub}"; try: beat list|add|rm|rename|move|merge|show|dim|hide|switch|phases`);
 }
 
 function netCommand(circuit, pos, result) {

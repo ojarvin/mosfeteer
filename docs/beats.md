@@ -110,8 +110,14 @@ renaming a part renames its references.
   this beat on, or in the drawing when no beat is shown), and the highlight
   tool colors nets for this beat on. The dot beside each beat says how the
   selection looks there; clicking it shows or hides it in that beat alone.
-  Ctrl/Cmd-click or Shift-click beats to pick several; Delete (or the chip's
-  menu) then removes them as one undoable edit.
+  Drag a beat's chip along the strip to move it. Ctrl/Cmd-click or
+  Shift-click beats to pick several; Delete (or the chip's menu) then
+  removes them as one undoable edit, and the menu's **Merge** turns them into
+  one beat at the first of them: each object as visible as in the most
+  visible of them, every switch closed that any of them closes (two switch
+  phases active at once), and a net's first highlight among them. TeX phase
+  names join in one formula (`$\phi_1, \phi_2$`). The other beats keep
+  their look.
 - **Presenting.** `Shift+F5` shows the beats full screen from the current one,
   in the editor's light or dark theme. Every beat keeps the whole drawing's
   frame, so only what changes moves.
@@ -120,5 +126,5 @@ renaming a part renames its references.
   print it, else a page of image each), and numbered SVG and PNG files
   (`name-1.svg`, `name-2.svg`, ...). All share the drawing's frame, so the
   pages and files line up.
-- **Commands.** `beat list|add|rm|rename|move|show|dim|hide|switch` and
+- **Commands.** `beat list|add|rm|rename|move|merge|show|dim|hide|switch` and
   `svg --beat N`; see `help`.

@@ -5,7 +5,7 @@ import { loadDocument } from '../src/core/document.js';
 import { runCommand } from '../src/core/commands.js';
 import { BEAT_DIM_INK, BEAT_FADE_INK, svgString } from '../src/core/render.js';
 import {
-  addBeat, closedSwitchHighlight, cycleBeatHighlight, introduceAt, phaseBeats, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
+  addBeat, closedSwitchHighlight, cycleBeatHighlight, introduceAt, mergeBeats, phaseBeats, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
   setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
 } from '../src/core/beats.js';
 
@@ -447,4 +447,26 @@ test('a closed switch carries a net highlight across to the net it shorts', asyn
   const both = closedSwitchHighlight(circuit, (net) => circuit.netHighlight(net));
   assert.equal(both(circuit.netOfTerminal({ comp: 'S1', term: 'b' })), 'red');
   assert.ok(['blue', 'red'].includes(both.switchColor(circuit.components.get('S1'))));
+});
+
+test('merging beats keeps the most visible look, closes any closed switch, and leaves the other beats alone', () => {
+  const circuit = integrator();
+  phaseBeats(circuit);
+  addBeat(circuit, { name: 'after' });
+  setPresenceFrom(circuit, 2, ['VIN'], 'hide');
+  const after = looks(circuit)[2];
+  const index = mergeBeats(circuit, [1, 0]);
+  assert.equal(index, 0);
+  assert.equal(circuit.beats.length, 2);
+  assert.equal(circuit.beats[0].name, '$\\phi_1, \\phi_2$');
+  const view = resolveBeat(circuit, 0);
+  // Both phases' switches are closed; VIN, dimmed only in phi2, shows.
+  assert.deepEqual([...view.switchTypes].filter(([, type]) => type === 'switch_closed').map(([ref]) => ref).sort(), ['S1', 'S2', 'S3', 'S4']);
+  assert.equal(view.dimRefs.has('VIN'), false);
+  assert.deepEqual(looks(circuit)[1], after);
+  assert.throws(() => mergeBeats(circuit, [0]), /two or more/);
+  const cmd = integrator();
+  phaseBeats(cmd);
+  assert.match(runCommand(cmd, 'beat merge 1 2').text, /merged beats 1, 2/);
+  assert.equal(cmd.beats.length, 1);
 });

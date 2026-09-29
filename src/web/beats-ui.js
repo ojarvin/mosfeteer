@@ -5,7 +5,7 @@
  */
 
 import { addTimingDiagram } from '../core/timing-diagram.js';
-import { addBeat, beatTargetId, beatTitle, introduceAt, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats } from '../core/beats.js';
+import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } from './elements.js';
@@ -155,6 +155,73 @@ function clickBeatChip(i, ev) {
   render();
 }
 
+/** Merge the picked beats into one, at the first of them (core/beats.js
+ *  mergeBeats): most visible look, switches closed in any, first highlight. */
+export function mergePickedBeats() {
+  const indices = selectedBeatIndices();
+  if (indices.length < 2) {
+    hintLine('BEATS: Ctrl- or Shift-click two or more beats to merge them');
+    return;
+  }
+  let index = null;
+  commit(() => { index = mergeBeats(editor.circuit, indices); });
+  if (index === null) return;
+  logLine(`merged beats ${indices.map((i) => i + 1).join(', ')} into ${beatLabel(index)}; the other beats look as before`);
+  editor.selectedBeatIds = new Set();
+  editor.beatStripKey = '';
+  setActiveBeat(index);
+}
+
+let chipDragged = false;
+
+/** Drag a chip along the strip to move its beat. A press that never leaves
+ *  the chip stays a click. */
+function beginBeatChipDrag(index, chip, ev) {
+  if (ev.button !== 0) return;
+  const start = { x: ev.clientX, y: ev.clientY };
+  let target = null;
+  let dragging = false;
+  const clear = () => {
+    for (const other of beatListEl.querySelectorAll('.beat-chip-group')) other.classList.remove('drop-before', 'drop-after', 'dragging');
+  };
+  const move = (moveEv) => {
+    if (!dragging && Math.hypot(moveEv.clientX - start.x, moveEv.clientY - start.y) < 6) return;
+    dragging = true;
+    clear();
+    chip.classList.add('dragging');
+    const groups = [...beatListEl.querySelectorAll('.beat-chip-group')];
+    // The slot the pointer is over: before the first chip whose middle it has
+    // not passed, else after the last.
+    const before = groups.findIndex((group) => {
+      const rect = group.getBoundingClientRect();
+      return moveEv.clientX < rect.left + rect.width / 2;
+    });
+    const slot = before === -1 ? groups.length : before;
+    target = slot > index ? slot - 1 : slot;
+    if (target === index) return;
+    if (before === -1) groups.at(-1)?.classList.add('drop-after');
+    else groups[before].classList.add('drop-before');
+  };
+  const up = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    clear();
+    if (!dragging) return;
+    // The click that ends a drag is not a click on the chip.
+    chipDragged = true;
+    setTimeout(() => { chipDragged = false; }, 0);
+    if (target === null || target === index) return;
+    commit(() => moveBeat(editor.circuit, index, target));
+    logLine(`moved beat ${index + 1} to ${target + 1}; every beat looks as before`);
+    editor.beatStripKey = '';
+    render();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+}
+
 function moveBeatBy(index, delta) {
   const to = index + delta;
   if (to < 0 || to >= editor.circuit.beats.length) return;
@@ -260,7 +327,7 @@ export function renderBeatStrip() {
     }
     if (beatHintEl) {
       beatHintEl.textContent = editor.selectedBeatIds.size > 1
-        ? `${editor.selectedBeatIds.size} beats picked — Delete removes them (undoable) · Esc lets go`
+        ? `${editor.selectedBeatIds.size} beats picked — Delete removes them · right-click to merge them · Esc lets go`
         : beatHintText(index);
     }
   };
@@ -291,7 +358,7 @@ export function renderBeatStrip() {
     button.className = 'beat-chip';
     button.dataset.beatIndex = String(i);
     button.setAttribute('aria-pressed', String(i === index));
-    button.title = `${beatLabel(i)} — click to show, Ctrl/Shift-click to pick several, double-click to rename, right-click for more`;
+    button.title = `${beatLabel(i)} — click to show, drag to move, Ctrl/Shift-click to pick several, double-click to rename, right-click for more`;
     const number = document.createElement('span');
     number.className = 'beat-chip-number';
     number.textContent = String(i + 1);
@@ -304,7 +371,10 @@ export function renderBeatStrip() {
     }
     // The canvas keeps the keyboard, so h, s, and friends still work.
     button.addEventListener('mousedown', (ev) => ev.preventDefault());
-    button.addEventListener('click', (ev) => clickBeatChip(i, ev));
+    button.addEventListener('pointerdown', (ev) => beginBeatChipDrag(i, chip, ev));
+    button.addEventListener('click', (ev) => {
+      if (!chipDragged) clickBeatChip(i, ev);
+    });
     button.addEventListener('dblclick', () => startBeatRename(i, button));
     button.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
@@ -383,6 +453,7 @@ function openBeatMenu(index, x, y) {
   appendContextItem(group, 'Move later', () => moveBeatBy(index, 1), { disabled: index === editor.circuit.beats.length - 1 });
   appendContextItem(group, 'Present from here', () => openPresenter(index), { shortcut: 'Shift+F5' });
   const picked = editor.selectedBeatIds.has(editor.circuit.beats[index]?.id) ? editor.selectedBeatIds.size : 1;
+  if (picked > 1) appendContextItem(group, `Merge ${picked} beats`, () => mergePickedBeats());
   appendContextItem(group, picked > 1 ? `Delete ${picked} beats` : 'Delete beat', () => deleteBeat(index), { danger: true, shortcut: 'Del' });
   menu.appendChild(group);
   const rect = menu.getBoundingClientRect();

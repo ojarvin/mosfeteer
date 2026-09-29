@@ -336,6 +336,45 @@ export function moveBeat(circuit, from, to) {
   });
 }
 
+const PRESENCE_RANK = { hide: 0, dim: 1, show: 2 };
+
+/** The name of beats merged into one: TeX names join inside one formula
+ *  (`$\phi_1, \phi_2$`), any other names as text. */
+function mergedBeatName(names) {
+  const given = names.map((name) => String(name || '').trim()).filter(Boolean);
+  if (given.length > 1 && given.every(isTexSource)) return `$${given.map((name) => name.replace(/^\$+|\$+$/g, '').trim()).join(', ')}$`;
+  return given.join(', ');
+}
+
+/**
+ * Merge beats (indices) into one, at the first of them: an object is as
+ * visible as in the most visible of them, a switch is closed when any of them
+ * closes it (two switch phases active at once), and a net takes the first
+ * highlight any of them gives it. Every other beat keeps its look. Returns
+ * the merged beat's index.
+ */
+export function mergeBeats(circuit, indices) {
+  const merged = [...new Set(indices)].sort((a, b) => a - b);
+  for (const index of merged) checkIndex(circuit, index);
+  if (merged.length < 2) throw new Error('pick two or more beats to merge');
+  const [into, ...rest] = merged;
+  const name = mergedBeatName(merged.map((index) => circuit.beats[index].name));
+  editAllTracks(circuit, (tracks) => {
+    for (const entry of tracks) {
+      const values = merged.map((index) => entry.track[index]);
+      if (entry.kind === 'visible') entry.track[into] = values.reduce((a, b) => (PRESENCE_RANK[b] > PRESENCE_RANK[a] ? b : a));
+      else if (entry.kind === 'switches') entry.track[into] = values.includes('closed') ? 'closed' : values[0];
+      else entry.track[into] = values.find((value) => value) ?? values[0];
+    }
+    for (const index of rest.reverse()) {
+      circuit.beats.splice(index, 1);
+      for (const entry of tracks) entry.track.splice(index, 1);
+    }
+  });
+  circuit.beats[into].name = name;
+  return into;
+}
+
 export function renameBeat(circuit, index, name) {
   checkIndex(circuit, index);
   circuit.beats[index].name = String(name || '').trim();

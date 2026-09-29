@@ -4459,6 +4459,19 @@ button.off {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* Dragging a chip to move its beat: the slot it would land in. */
+.beat-chip-group.dragging {
+  opacity: 0.5;
+}
+
+.beat-chip-group.drop-before {
+  box-shadow: -3px 0 0 -1px var(--accent);
+}
+
+.beat-chip-group.drop-after {
+  box-shadow: 3px 0 0 -1px var(--accent);
+}
+
 .beat-chip-number {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
