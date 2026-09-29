@@ -34649,7 +34649,7 @@ __exports.publishObjectClipboard = publishObjectClipboard;
 __exports.armObjectPaste = armObjectPaste;
 __exports.pasteClipboard = pasteClipboard;
 __exports.installCopyPaste = installCopyPaste;
-let Circuit, transformWorldPoints; __bind(() => { ({ Circuit, transformWorldPoints } = __require("src/core/model.js")); });
+let Circuit, INTERFACE_PIN_TYPES, canonicalNetName, normalizeComponentRefdes, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, canonicalNetName, normalizeComponentRefdes, transformWorldPoints } = __require("src/core/model.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
 let encodeObjectClipboard, decodeObjectClipboard; __bind(() => { ({ encodeObjectClipboard, decodeObjectClipboard } = __require("src/core/object-clipboard.js")); });
@@ -35131,6 +35131,20 @@ function finishObjectPaste(kind) {
   else pasteClipboard();
 }
 
+/** The name a copied net takes when pasted. A sole port names its net, and
+ *  the pasted port has a new identity, so a net named after the copied port
+ *  follows the copy's name rather than virtually joining the original. */
+function pastedNetName(copied, refMap) {
+  const ports = copied.terminals.filter((terminal) => {
+    const comp = editor.clipboard.comps.find((c) => c.origRef === terminal.comp);
+    return comp && INTERFACE_PIN_TYPES.has(comp.type) && refMap.has(terminal.comp);
+  });
+  if (ports.length !== 1 || !copied.name) return copied.name;
+  if (normalizeComponentRefdes(copied.name) !== normalizeComponentRefdes(ports[0].comp)) return copied.name;
+  const refdes = refMap.get(ports[0].comp);
+  return canonicalNetName(editor.circuit.labelOf(refdes)?._text || refdes);
+}
+
 /** Paste the clipboard at the cursor (re-centred on the selection anchor). */
 function pasteClipboard({ recordHistory = true, connect = true } = {}) {
   if (!editor.clipboard) {
@@ -35192,7 +35206,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         start: e.start && refMap.has(e.start.comp) ? { comp: refMap.get(e.start.comp), term: e.start.term } : null,
         end: e.end && refMap.has(e.end.comp) ? { comp: refMap.get(e.end.comp), term: e.end.term } : null,
       })) : null;
-      const net = editor.circuit.createWireNet({ name: n.name, routingMode: n.routingMode, allowDiagonal: n.allowDiagonal, drawOrder: n.drawOrder, fixedPaths });
+      const net = editor.circuit.createWireNet({ name: pastedNetName(n, refMap), routingMode: n.routingMode, allowDiagonal: n.allowDiagonal, drawOrder: n.drawOrder, fixedPaths });
       netMap.set(n.id, net);
       for (const t of n.terminals) {
         const newRef = refMap.get(t.comp);
