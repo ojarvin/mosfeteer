@@ -20,6 +20,7 @@ import { activeBeatIndex, beatLabel } from './beats-ui.js';
 import { persistence, displayPath } from './document-session.js';
 import { editor } from './editor-state.js';
 import { copySelectionSource } from './copy-paste.js';
+import { linkBubbleExtras } from './hierarchy.js';
 import { render, syncRenderedLabelMetrics } from './main.js';
 
 const exportGridInput = exportForm?.querySelector('input[name="grid"]');
@@ -68,7 +69,9 @@ export async function copyAsImage() {
   try {
     // Capture the selected model synchronously; ClipboardItem's promised
     // payloads let the write start within this same user gesture.
-    const svg = selectionDrawing(editor.circuit, copySelectionSource());
+    const source = copySelectionSource();
+    const extras = linkBubbleExtras(selectionSubset(editor.circuit, source));
+    const svg = selectionDrawing(editor.circuit, source, extras ? { extras } : {});
     const dpi = exportPngDpi();
     const write = writeDrawingToClipboard(svg, { dpi, scale: exportPngScale(dpi) });
     reportImageCopy('Copying image…');
@@ -141,6 +144,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
       for (const note of result.notes || []) notes.add(note);
       return true;
     };
+    // Open linked-design bubbles export with the drawing, as vector drawing.
+    const extras = linkBubbleExtras(drawing);
     const pages = [];
     for (const job of jobs) {
       const view = job.beat === null ? null : resolveBeat(editor.circuit, job.beat);
@@ -148,6 +153,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
         ...DRAWING_EXPORT_OPTIONS,
         grid,
         pageGuide: editor.pageGuide,
+        ...(extras ? { extras } : {}),
         ...(view ? { beat: { view } } : {}),
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);

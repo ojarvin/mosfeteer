@@ -20,7 +20,7 @@ import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { searchKey } from '../core/design-index.js';
-import { BUBBLE_CAPTION, BUBBLE_PAD, bubbleAt, layoutBubbles } from '../core/link-bubble.js';
+import { BUBBLE_CAPTION, BUBBLE_DOT, BUBBLE_PAD, BUBBLE_RADIUS, bubbleAt, bubbleExtras, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { animateViewTo, fitView } from './canvas-view.js';
@@ -83,8 +83,9 @@ async function pictureOf(circuit) {
   const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
   if (!match) return null;
   const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-  const [, , w, h] = match.slice(1).map(Number);
-  return { box: { w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
+  const [x, y, w, h] = match.slice(1).map(Number);
+  // `svg` stays as drawn, for exports to nest as vector drawing.
+  return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
 }
 
 async function loadBubble(refdes, name) {
@@ -108,7 +109,7 @@ async function loadBubble(refdes, name) {
       if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
     settle(picture
-      ? { name, path: doc.path, status: 'ready', box: picture.box, href: picture.href }
+      ? { name, path: doc.path, status: 'ready', svg: picture.svg, box: picture.box, href: picture.href }
       : { name, status: 'error', message: `“${name}” is empty` });
   } catch (err) {
     settle({ name, status: 'error', message: `“${name}” could not be read: ${err.message}` });
@@ -204,6 +205,27 @@ export function linkBubbleOpen(refdes) {
 export function linkBubbleAt(point) {
   const hit = bubbleAt(currentLayout(), point);
   return hit ? { refdes: hit.id } : null;
+}
+
+/**
+ * The open bubbles, for an export of `drawing` (the document, or a selected
+ * subset of it): render.js `extras`, the designs nested as vector drawing,
+ * laid out as the editor shows them (or afresh around a subset). Only
+ * bubbles whose design has drawn are exported; null when there are none.
+ */
+export function linkBubbleExtras(drawing = editor.circuit) {
+  const whole = drawing === editor.circuit;
+  const ready = [...bubbles].filter(([refdes, bubble]) => bubble.status === 'ready' && drawing.components.has(refdes));
+  if (!ready.length) return null;
+  const layout = whole
+    ? currentLayout().filter((entry) => bubbles.get(entry.id)?.status === 'ready')
+    : layoutBubbles(drawing.inkBounds(), ready.map(([refdes, bubble]) => ({
+      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box,
+    })), { obstacles: obstacles(drawing), previous: angles });
+  return bubbleExtras(layout.map((entry) => {
+    const bubble = bubbles.get(entry.id);
+    return { ...entry, name: bubble.name, svg: bubble.svg, box: bubble.box };
+  }));
 }
 
 /** The frames of the bubbles on show, for fitting the view to them. */
@@ -310,10 +332,10 @@ export function syncLinkBubbles() {
       const group = svgEl('g', { class: 'link-bubble' });
       node = {
         group,
-        connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none', 'vector-effect': 'non-scaling-stroke' }),
-        dot: svgEl('circle', { class: 'link-bubble-dot', r: 6 }),
+        connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none' }),
+        dot: svgEl('circle', { class: 'link-bubble-dot', r: BUBBLE_DOT }),
         // Rounded corners set the bubble apart from box annotations.
-        frame: svgEl('rect', { class: 'link-bubble-frame', rx: GRID / 2, 'vector-effect': 'non-scaling-stroke' }),
+        frame: svgEl('rect', { class: 'link-bubble-frame', rx: BUBBLE_RADIUS }),
         caption: svgEl('text', { class: 'link-bubble-caption' }),
         image: svgEl('image', { preserveAspectRatio: 'xMidYMid meet' }),
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
@@ -442,7 +464,7 @@ export async function leaveLinkedDesign(levels = 1) {
   if (picture && component?.link && pane) {
     pictures.set(childPath, { ...picture, revision: null });
     followDocument();
-    bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', box: picture.box, href: picture.href });
+    bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', svg: picture.svg, box: picture.box, href: picture.href });
     rememberOpen();
     const bubble = currentLayout().find((item) => item.id === target.refdes);
     if (bubble && !reducedMotion()) {

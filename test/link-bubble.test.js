@@ -70,3 +70,24 @@ test('a connector does not run through another bubble', () => {
   };
   for (const a of bubbles) for (const b of bubbles) if (a !== b) assert.ok(!cut(a.connector, b.frame), `${a.id} runs through ${b.id}`);
 });
+
+test('bubbles export as vector drawing: the design nested whole, the frame widening the export', async () => {
+  const { bubbleExtras } = await import('../src/core/link-bubble.js');
+  const { Circuit } = await import('../src/core/model.js');
+  const { svgString } = await import('../src/core/render.js');
+  const child = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-40 -40 400 200"><path d="M 0 0 L 80 0" data-child="yes"/></svg>';
+  const [bubble] = layoutBubbles(drawing, [{ id: 'OA1', part: { x: 1400, y: 360, w: 80, h: 80 }, size: { w: 400, h: 200 } }]);
+  const extras = bubbleExtras([{ ...bubble, name: 'amp & co', svg: child, box: { x: -40, y: -40, w: 400, h: 200 } }]);
+  assert.deepEqual(extras.bounds, [bubble.frame]);
+  assert.match(extras.svg, /<svg x="[\d.-]+" y="[\d.-]+" width="400" height="200" viewBox="-40 -40 400 200" overflow="visible"><path d="M 0 0 L 80 0" data-child="yes"\/><\/svg>/);
+  assert.match(extras.svg, /stroke-width="3" stroke-dasharray="12 12"/);
+  assert.match(extras.svg, /amp &amp; co/);
+  // The export's frame takes the bubble in.
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  const svg = svgString(c, { background: true, padding: 40, extras });
+  const [, x, y, w, h] = svg.match(/viewBox="([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"/).map(Number);
+  const f = bubble.frame;
+  assert.ok(x <= f.x && y <= f.y && x + w >= f.x + f.w && y + h >= f.y + f.h);
+  assert.ok(svg.includes('data-child="yes"'));
+});

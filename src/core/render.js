@@ -693,6 +693,8 @@ export function viewportGridSvg(vp) {
  * opts.underlay: emit an empty editor-underlay group above the grid for effects.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
+ * opts.extras {bounds, svg}: drawing beside the circuit -- rects that widen
+ * the frame, and markup drawn above everything (linked-design bubbles).
  * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it dims
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
  * still so the editor can reach it.
@@ -728,7 +730,17 @@ export function svgString(circuit, opts = {}) {
   const refTextOpacity = (ref) => refOpacity(ref) || (beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
   // A drawn grid frames on whole cells; otherwise the frame hugs what is
   // visible, so a label at the edge does not add its box's empty cells.
-  const b = o.grid ? circuit.bounds(0) : circuit.inkBounds(o.background ? 0 : 20);
+  let b = o.grid ? circuit.bounds(0) : circuit.inkBounds(o.background ? 0 : 20);
+  // Extra drawing beside the circuit (an export's linked-design bubbles)
+  // widens the frame like any other ink.
+  for (const r of o.extras?.bounds || []) {
+    if (b.w <= 0 && b.h <= 0) b = { ...r };
+    else {
+      const x = Math.min(b.x, r.x);
+      const y = Math.min(b.y, r.y);
+      b = { x, y, w: Math.max(b.x + b.w, r.x + r.w) - x, h: Math.max(b.y + b.h, r.y + r.h) - y };
+    }
+  }
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
   if (empty && !vp) {
@@ -1088,6 +1100,7 @@ export function svgString(circuit, opts = {}) {
     else parts.push(group);
   }
 
+  if (o.extras?.svg) parts.push(o.extras.svg);
   parts.push('</svg>');
   return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
 }

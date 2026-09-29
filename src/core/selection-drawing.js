@@ -92,7 +92,13 @@ export function selectionDrawing(document, selection = {}, options = {}) {
   const drawing = selectionSubset(document, selection);
   const padding = options.padding ?? GRID;
   if (!Number.isFinite(padding) || padding < 0) throw new Error('drawing padding must be a non-negative number');
-  const bounds = drawing.inkBounds();
+  let bounds = drawing.inkBounds();
+  // Drawing beside it (render.js `extras`) widens the frame.
+  for (const r of options.extras?.bounds || []) {
+    const x = Math.min(bounds.x, r.x);
+    const y = Math.min(bounds.y, r.y);
+    bounds = { x, y, w: Math.max(bounds.x + bounds.w, r.x + r.w) - x, h: Math.max(bounds.y + bounds.h, r.y + r.h) - y };
+  }
   const viewport = {
     x: bounds.x - padding, y: bounds.y - padding,
     w: Math.max(1, bounds.w + padding * 2), h: Math.max(1, bounds.h + padding * 2),

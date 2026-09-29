@@ -225,8 +225,9 @@ A part may link loosely to another design of the workspace by name
 (`ComponentInstance#link`, [`docs/hierarchy.md`](docs/hierarchy.md)): no
 connectivity, and a missing design is just a broken link. The editor peeks at
 it in a bubble beside the drawing (`o`) or enters it with a trail back up
-(`Alt+↓`/`Alt+↑`); bubbles and the trail are editor state, never saved or
-exported.
+(`Alt+↓`/`Alt+↑`); bubbles and the trail are editor state, never saved, but
+open bubbles export with the drawing (the design nested as vector SVG,
+render.js `extras`).
 
 ### Beats
 

@@ -12,6 +12,7 @@
 import { GRID } from '../core/grid.js';
 import { escapeSvg } from '../core/style.js';
 import { ATLAS_CAPTION, ATLAS_GAP } from './atlas-layout.js';
+import { nestedSvg } from '../core/link-bubble.js';
 
 /** PDF viewers stop at 200 inches a side (14400 pt); one unit prints as
  *  0.75 pt, so a larger sheet is shrunk to fit. */
@@ -27,14 +28,6 @@ const fmt = (value) => String(Math.round(value * 100) / 100);
 function fitCaption(text, width) {
   const room = Math.max(1, Math.floor(width / (CAPTION_SIZE * CAPTION_ADVANCE)));
   return text.length <= room ? text : `${text.slice(0, Math.max(0, room - 1))}…`;
-}
-
-/** A design's export SVG, placed at `tile` and drawn from its own `box`. */
-function nestedDrawing(svg, tile, box) {
-  const open = svg.match(/<svg\b[^>]*>/i);
-  if (!open) return '';
-  const body = svg.slice(open.index + open[0].length).replace(/<\/svg>\s*$/i, '');
-  return `<svg x="${fmt(tile.x)}" y="${fmt(tile.y)}" width="${fmt(tile.w)}" height="${fmt(tile.h)}" viewBox="${fmt(box.x)} ${fmt(box.y)} ${fmt(box.w)} ${fmt(box.h)}" overflow="visible">${body}</svg>`;
 }
 
 /**
@@ -72,7 +65,7 @@ export function atlasSheetSvg(items, { grid = false } = {}) {
     parts.push(`<path class="grid-line" d="${lines.join(' ')}" fill="none" stroke="#e9e9e9" stroke-width="1"/>`);
   }
   for (const item of items) {
-    parts.push(nestedDrawing(item.svg, item, item.box));
+    parts.push(nestedSvg(item.svg, item, item.box));
     if (item.caption) {
       const text = fitCaption(item.caption, item.w + ATLAS_GAP * 0.8);
       parts.push(`<text x="${fmt(item.x)}" y="${fmt(item.y + item.h + CAPTION_SIZE * 0.6)}" dominant-baseline="hanging" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="${fmt(CAPTION_SIZE)}" font-weight="500" fill="var(--text, #111)" fill-opacity="0.6">${escapeSvg(text)}</text>`);

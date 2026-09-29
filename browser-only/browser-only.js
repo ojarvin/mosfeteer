@@ -15325,6 +15325,8 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 __modules["src/core/link-bubble.js"] = function (__require, __exports) {
 __exports.layoutBubbles = layoutBubbles;
 __exports.bubbleAt = bubbleAt;
+__exports.nestedSvg = nestedSvg;
+__exports.bubbleExtras = bubbleExtras;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let segThroughInterior; __bind(() => { ({ segThroughInterior } = __require("src/core/router.js")); });
 /**
@@ -15468,9 +15470,57 @@ function bubbleAt(bubbles, point) {
   return bubbles.find(({ frame }) => point.x >= frame.x && point.x <= frame.x + frame.w && point.y >= frame.y && point.y <= frame.y + frame.h) || null;
 }
 
+// Bubbles are drawn in drawing units, like a thin dashed box annotation, so
+// they scale with the drawing on the canvas and in an export alike.
+const BUBBLE_COLOR = '#1a56db';
+const BUBBLE_STROKE = 3;
+const BUBBLE_DASH = '12 12';
+const BUBBLE_RADIUS = GRID / 2;
+const BUBBLE_DOT = 6;
+const BUBBLE_CAPTION_SIZE = 26;
+
+const fmt = (value) => String(Math.round(value * 100) / 100);
+const escapeText = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** A drawing's own SVG, nested whole at `rect` and drawn from its `box`:
+ *  vector, exactly as its own export draws it. */
+function nestedSvg(svg, rect, box) {
+  const open = svg.match(/<svg\b[^>]*>/i);
+  if (!open) return '';
+  const body = svg.slice(open.index + open[0].length).replace(/<\/svg>\s*$/i, '');
+  return `<svg x="${fmt(rect.x)}" y="${fmt(rect.y)}" width="${fmt(rect.w)}" height="${fmt(rect.h)}" viewBox="${fmt(box.x)} ${fmt(box.y)} ${fmt(box.w)} ${fmt(box.h)}" overflow="visible">${body}</svg>`;
+}
+
+/**
+ * Laid-out bubbles ({ frame, image, connector }) with their designs ({ name,
+ * svg, box }: the design's export SVG and viewBox) as an export's extras
+ * (render.js `extras`): the frames widen the export, and each bubble is its
+ * connector, frame, name, and the design nested as vector drawing.
+ */
+function bubbleExtras(bubbles) {
+  const parts = [];
+  for (const { frame, image, connector: [from, to], name, svg, box } of bubbles) {
+    const stroke = `stroke="${BUBBLE_COLOR}" stroke-width="${BUBBLE_STROKE}" stroke-dasharray="${BUBBLE_DASH}" fill="none"`;
+    parts.push(`<g class="link-bubble">`
+      + `<path d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" ${stroke}/>`
+      + `<rect x="${fmt(frame.x)}" y="${fmt(frame.y)}" width="${fmt(frame.w)}" height="${fmt(frame.h)}" rx="${BUBBLE_RADIUS}" ${stroke}/>`
+      + `<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="${BUBBLE_DOT}" fill="${BUBBLE_COLOR}"/>`
+      + `<text x="${fmt(frame.x + BUBBLE_PAD / 2)}" y="${fmt(frame.y + BUBBLE_CAPTION * 0.75)}" font-family="system-ui, sans-serif" font-size="${BUBBLE_CAPTION_SIZE}" font-weight="600" fill="${BUBBLE_COLOR}">${escapeText(name)}</text>`
+      + nestedSvg(svg, image, box)
+      + `</g>`);
+  }
+  return { bounds: bubbles.map((bubble) => bubble.frame), svg: parts.join('\n') };
+}
+
 __exports.BUBBLE_GAP = BUBBLE_GAP;
 __exports.BUBBLE_PAD = BUBBLE_PAD;
 __exports.BUBBLE_CAPTION = BUBBLE_CAPTION;
+__exports.BUBBLE_COLOR = BUBBLE_COLOR;
+__exports.BUBBLE_STROKE = BUBBLE_STROKE;
+__exports.BUBBLE_DASH = BUBBLE_DASH;
+__exports.BUBBLE_RADIUS = BUBBLE_RADIUS;
+__exports.BUBBLE_DOT = BUBBLE_DOT;
+__exports.BUBBLE_CAPTION_SIZE = BUBBLE_CAPTION_SIZE;
 };
 
 __modules["src/core/model.js"] = function (__require, __exports) {
@@ -23328,6 +23378,8 @@ function viewportGridSvg(vp) {
  * opts.underlay: emit an empty editor-underlay group above the grid for effects.
  * opts.viewport {x,y,w,h}: fixed world window to render (infinite canvas). When
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
+ * opts.extras {bounds, svg}: drawing beside the circuit -- rects that widen
+ * the frame, and markup drawn above everything (linked-design bubbles).
  * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it dims
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
  * still so the editor can reach it.
@@ -23363,7 +23415,17 @@ function svgString(circuit, opts = {}) {
   const refTextOpacity = (ref) => refOpacity(ref) || (beatHiddenRef(ref) ? FADED : beat?.dimRefs.has(ref) ? DIMMED : '');
   // A drawn grid frames on whole cells; otherwise the frame hugs what is
   // visible, so a label at the edge does not add its box's empty cells.
-  const b = o.grid ? circuit.bounds(0) : circuit.inkBounds(o.background ? 0 : 20);
+  let b = o.grid ? circuit.bounds(0) : circuit.inkBounds(o.background ? 0 : 20);
+  // Extra drawing beside the circuit (an export's linked-design bubbles)
+  // widens the frame like any other ink.
+  for (const r of o.extras?.bounds || []) {
+    if (b.w <= 0 && b.h <= 0) b = { ...r };
+    else {
+      const x = Math.min(b.x, r.x);
+      const y = Math.min(b.y, r.y);
+      b = { x, y, w: Math.max(b.x + b.w, r.x + r.w) - x, h: Math.max(b.y + b.h, r.y + r.h) - y };
+    }
+  }
   const vp = o.viewport;
   const empty = b.w <= 0 && b.h <= 0;
   if (empty && !vp) {
@@ -23723,6 +23785,7 @@ function svgString(circuit, opts = {}) {
     else parts.push(group);
   }
 
+  if (o.extras?.svg) parts.push(o.extras.svg);
   parts.push('</svg>');
   return o.themeInk ? themeInkSvg(parts.join('\n')) : parts.join('\n');
 }
@@ -25535,7 +25598,13 @@ function selectionDrawing(document, selection = {}, options = {}) {
   const drawing = selectionSubset(document, selection);
   const padding = options.padding ?? GRID;
   if (!Number.isFinite(padding) || padding < 0) throw new Error('drawing padding must be a non-negative number');
-  const bounds = drawing.inkBounds();
+  let bounds = drawing.inkBounds();
+  // Drawing beside it (render.js `extras`) widens the frame.
+  for (const r of options.extras?.bounds || []) {
+    const x = Math.min(bounds.x, r.x);
+    const y = Math.min(bounds.y, r.y);
+    bounds = { x, y, w: Math.max(bounds.x + bounds.w, r.x + r.w) - x, h: Math.max(bounds.y + bounds.h, r.y + r.h) - y };
+  }
   const viewport = {
     x: bounds.x - padding, y: bounds.y - padding,
     w: Math.max(1, bounds.w + padding * 2), h: Math.max(1, bounds.h + padding * 2),
@@ -30509,6 +30578,7 @@ __exports.sheetCaption = sheetCaption;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let escapeSvg; __bind(() => { ({ escapeSvg } = __require("src/core/style.js")); });
 let ATLAS_CAPTION, ATLAS_GAP; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP } = __require("src/web/atlas-layout.js")); });
+let nestedSvg; __bind(() => { ({ nestedSvg } = __require("src/core/link-bubble.js")); });
 /**
  * The Atlas as one exported sheet: every design shown on the desk, at its
  * real size and place, each under its name, on one page of vector drawing.
@@ -30519,6 +30589,7 @@ let ATLAS_CAPTION, ATLAS_GAP; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP } = __r
  * ids, so nesting any number of them cannot tangle references. Pure: string
  * in, string out.
  */
+
 
 
 
@@ -30538,14 +30609,6 @@ const fmt = (value) => String(Math.round(value * 100) / 100);
 function fitCaption(text, width) {
   const room = Math.max(1, Math.floor(width / (CAPTION_SIZE * CAPTION_ADVANCE)));
   return text.length <= room ? text : `${text.slice(0, Math.max(0, room - 1))}…`;
-}
-
-/** A design's export SVG, placed at `tile` and drawn from its own `box`. */
-function nestedDrawing(svg, tile, box) {
-  const open = svg.match(/<svg\b[^>]*>/i);
-  if (!open) return '';
-  const body = svg.slice(open.index + open[0].length).replace(/<\/svg>\s*$/i, '');
-  return `<svg x="${fmt(tile.x)}" y="${fmt(tile.y)}" width="${fmt(tile.w)}" height="${fmt(tile.h)}" viewBox="${fmt(box.x)} ${fmt(box.y)} ${fmt(box.w)} ${fmt(box.h)}" overflow="visible">${body}</svg>`;
 }
 
 /**
@@ -30583,7 +30646,7 @@ function atlasSheetSvg(items, { grid = false } = {}) {
     parts.push(`<path class="grid-line" d="${lines.join(' ')}" fill="none" stroke="#e9e9e9" stroke-width="1"/>`);
   }
   for (const item of items) {
-    parts.push(nestedDrawing(item.svg, item, item.box));
+    parts.push(nestedSvg(item.svg, item, item.box));
     if (item.caption) {
       const text = fitCaption(item.caption, item.w + ATLAS_GAP * 0.8);
       parts.push(`<text x="${fmt(item.x)}" y="${fmt(item.y + item.h + CAPTION_SIZE * 0.6)}" dominant-baseline="hanging" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="${fmt(CAPTION_SIZE)}" font-weight="500" fill="var(--text, #111)" fill-opacity="0.6">${escapeSvg(text)}</text>`);
@@ -38024,12 +38087,14 @@ let activeBeatIndex, beatLabel; __bind(() => { ({ activeBeatIndex, beatLabel } =
 let persistence, displayPath; __bind(() => { ({ persistence, displayPath } = __require("src/web/document-session.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let copySelectionSource; __bind(() => { ({ copySelectionSource } = __require("src/web/copy-paste.js")); });
+let linkBubbleExtras; __bind(() => { ({ linkBubbleExtras } = __require("src/web/hierarchy.js")); });
 let render, syncRenderedLabelMetrics; __bind(() => { ({ render, syncRenderedLabelMetrics } = __require("src/web/main.js")); });
 /**
  * Exporting the drawing: the export dialog (formats, folder, beat, selection,
  * page guide), writing the files, and copying the drawing as an image. The
  * drawing itself comes from core/document.js and drawing-export.js.
  */
+
 
 
 
@@ -38095,7 +38160,9 @@ async function copyAsImage() {
   try {
     // Capture the selected model synchronously; ClipboardItem's promised
     // payloads let the write start within this same user gesture.
-    const svg = selectionDrawing(editor.circuit, copySelectionSource());
+    const source = copySelectionSource();
+    const extras = linkBubbleExtras(selectionSubset(editor.circuit, source));
+    const svg = selectionDrawing(editor.circuit, source, extras ? { extras } : {});
     const dpi = exportPngDpi();
     const write = writeDrawingToClipboard(svg, { dpi, scale: exportPngScale(dpi) });
     reportImageCopy('Copying image…');
@@ -38168,6 +38235,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
       for (const note of result.notes || []) notes.add(note);
       return true;
     };
+    // Open linked-design bubbles export with the drawing, as vector drawing.
+    const extras = linkBubbleExtras(drawing);
     const pages = [];
     for (const job of jobs) {
       const view = job.beat === null ? null : resolveBeat(editor.circuit, job.beat);
@@ -38175,6 +38244,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
         ...DRAWING_EXPORT_OPTIONS,
         grid,
         pageGuide: editor.pageGuide,
+        ...(extras ? { extras } : {}),
         ...(view ? { beat: { view } } : {}),
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
@@ -39569,6 +39639,7 @@ __exports.toggleLinkBubbles = toggleLinkBubbles;
 __exports.closeLinkBubble = closeLinkBubble;
 __exports.linkBubbleOpen = linkBubbleOpen;
 __exports.linkBubbleAt = linkBubbleAt;
+__exports.linkBubbleExtras = linkBubbleExtras;
 __exports.linkBubbleFrames = linkBubbleFrames;
 __exports.mountLinkBubbles = mountLinkBubbles;
 __exports.syncLinkBubbles = syncLinkBubbles;
@@ -39583,7 +39654,7 @@ let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js"));
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
-let BUBBLE_CAPTION, BUBBLE_PAD, bubbleAt, layoutBubbles; __bind(() => { ({ BUBBLE_CAPTION, BUBBLE_PAD, bubbleAt, layoutBubbles } = __require("src/core/link-bubble.js")); });
+let BUBBLE_CAPTION, BUBBLE_DOT, BUBBLE_PAD, BUBBLE_RADIUS, bubbleAt, bubbleExtras, layoutBubbles; __bind(() => { ({ BUBBLE_CAPTION, BUBBLE_DOT, BUBBLE_PAD, BUBBLE_RADIUS, bubbleAt, bubbleExtras, layoutBubbles } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let animateViewTo, fitView; __bind(() => { ({ animateViewTo, fitView } = __require("src/web/canvas-view.js")); });
@@ -39678,8 +39749,9 @@ async function pictureOf(circuit) {
   const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
   if (!match) return null;
   const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-  const [, , w, h] = match.slice(1).map(Number);
-  return { box: { w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
+  const [x, y, w, h] = match.slice(1).map(Number);
+  // `svg` stays as drawn, for exports to nest as vector drawing.
+  return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
 }
 
 async function loadBubble(refdes, name) {
@@ -39703,7 +39775,7 @@ async function loadBubble(refdes, name) {
       if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
     settle(picture
-      ? { name, path: doc.path, status: 'ready', box: picture.box, href: picture.href }
+      ? { name, path: doc.path, status: 'ready', svg: picture.svg, box: picture.box, href: picture.href }
       : { name, status: 'error', message: `“${name}” is empty` });
   } catch (err) {
     settle({ name, status: 'error', message: `“${name}” could not be read: ${err.message}` });
@@ -39799,6 +39871,27 @@ function linkBubbleOpen(refdes) {
 function linkBubbleAt(point) {
   const hit = bubbleAt(currentLayout(), point);
   return hit ? { refdes: hit.id } : null;
+}
+
+/**
+ * The open bubbles, for an export of `drawing` (the document, or a selected
+ * subset of it): render.js `extras`, the designs nested as vector drawing,
+ * laid out as the editor shows them (or afresh around a subset). Only
+ * bubbles whose design has drawn are exported; null when there are none.
+ */
+function linkBubbleExtras(drawing = editor.circuit) {
+  const whole = drawing === editor.circuit;
+  const ready = [...bubbles].filter(([refdes, bubble]) => bubble.status === 'ready' && drawing.components.has(refdes));
+  if (!ready.length) return null;
+  const layout = whole
+    ? currentLayout().filter((entry) => bubbles.get(entry.id)?.status === 'ready')
+    : layoutBubbles(drawing.inkBounds(), ready.map(([refdes, bubble]) => ({
+      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box,
+    })), { obstacles: obstacles(drawing), previous: angles });
+  return bubbleExtras(layout.map((entry) => {
+    const bubble = bubbles.get(entry.id);
+    return { ...entry, name: bubble.name, svg: bubble.svg, box: bubble.box };
+  }));
 }
 
 /** The frames of the bubbles on show, for fitting the view to them. */
@@ -39905,10 +39998,10 @@ function syncLinkBubbles() {
       const group = svgEl('g', { class: 'link-bubble' });
       node = {
         group,
-        connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none', 'vector-effect': 'non-scaling-stroke' }),
-        dot: svgEl('circle', { class: 'link-bubble-dot', r: 6 }),
+        connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none' }),
+        dot: svgEl('circle', { class: 'link-bubble-dot', r: BUBBLE_DOT }),
         // Rounded corners set the bubble apart from box annotations.
-        frame: svgEl('rect', { class: 'link-bubble-frame', rx: GRID / 2, 'vector-effect': 'non-scaling-stroke' }),
+        frame: svgEl('rect', { class: 'link-bubble-frame', rx: BUBBLE_RADIUS }),
         caption: svgEl('text', { class: 'link-bubble-caption' }),
         image: svgEl('image', { preserveAspectRatio: 'xMidYMid meet' }),
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
@@ -40037,7 +40130,7 @@ async function leaveLinkedDesign(levels = 1) {
   if (picture && component?.link && pane) {
     pictures.set(childPath, { ...picture, revision: null });
     followDocument();
-    bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', box: picture.box, href: picture.href });
+    bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', svg: picture.svg, box: picture.box, href: picture.href });
     rememberOpen();
     const bubble = currentLayout().find((item) => item.id === target.refdes);
     if (bubble && !reducedMotion()) {

@@ -42,7 +42,14 @@ jump as the drawing is edited. Fit (`f`) takes the open bubbles in.
 they all show. `o` again (or **Hide linked design**, or the bubble's own
 right-click menu) closes one. A click on a bubble picks its part. Which bubbles are open is
 remembered per document in this browser; they are never saved in the
-document, exported, or undone.
+document or undone.
+
+A bubble is drawn in drawing units -- a thin dashed box with rounded corners,
+like a box annotation -- so it scales with the drawing. Exports (SVG, PNG,
+PDF, every beat, a selection, Copy as image) include the open bubbles whose
+design has drawn: the frame widens the export, and the design is nested whole
+as vector drawing, exactly as its own export draws it (as the Atlas sheet
+nests designs). A broken link's bubble is not exported.
 
 ## Entering
 
