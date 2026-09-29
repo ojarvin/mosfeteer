@@ -212,6 +212,9 @@ async function refreshCircuitList() {
     children.push(actions);
     circuitSelectEl.replaceChildren(...children);
     circuitSelectEl.dataset.signature = signature;
+    // Links to other designs resolve against this list (hierarchy.js): the
+    // side panel's link dots and any broken bubble look again.
+    render();
   }
   circuitSelectEl.value = editor.currentDocumentPath || '';
   circuitSelectEl.title = editor.currentDocumentPath

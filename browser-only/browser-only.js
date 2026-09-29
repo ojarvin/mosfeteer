@@ -36830,6 +36830,9 @@ async function refreshCircuitList() {
     children.push(actions);
     circuitSelectEl.replaceChildren(...children);
     circuitSelectEl.dataset.signature = signature;
+    // Links to other designs resolve against this list (hierarchy.js): the
+    // side panel's link dots and any broken bubble look again.
+    render();
   }
   circuitSelectEl.value = editor.currentDocumentPath || '';
   circuitSelectEl.title = editor.currentDocumentPath
@@ -39724,16 +39727,15 @@ let trail = [];
 // ----- finding a linked design -----------------------------------------------------
 
 /** Every design the editor knows of: the workspace's, then recent ones. */
-function knownDesigns() {
-  const state = editor.workspaceState || {};
+function knownDesigns(state = editor.workspaceState || {}) {
   return [...(state.documents || []), ...(state.recent || [])].filter((doc) => doc.kind === 'circuit' || !doc.kind);
 }
 
 /** The document a link names, or null: one of that name beside the open
  *  document first, else any. */
-function linkedDocument(name) {
+function linkedDocument(name, state = editor.workspaceState || {}) {
   if (!name) return null;
-  const matches = knownDesigns().filter((doc) => doc.name === name && !doc.missing);
+  const matches = knownDesigns(state).filter((doc) => doc.name === name && !doc.missing);
   return matches.find((doc) => doc.dir && doc.dir === editor.currentDocumentDir) || matches[0] || null;
 }
 
@@ -39761,8 +39763,21 @@ async function pictureOf(circuit) {
   return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
 }
 
-async function loadBubble(refdes, name) {
+/** The document a link names, asking for the workspace's documents when
+ *  the editor has not listed them yet (right after launch) or lists them
+ *  without it, so a link is only broken when the design is really gone. */
+async function resolveLink(name) {
   const doc = linkedDocument(name);
+  if (doc) return doc;
+  try {
+    return linkedDocument(name, await persistence.workspace());
+  } catch {
+    return null;
+  }
+}
+
+async function loadBubble(refdes, name) {
+  const doc = await resolveLink(name);
   const settle = (entry) => {
     if (bubbles.get(refdes)?.name !== name) return; // closed or relinked meanwhile
     bubbles.set(refdes, entry);
@@ -39936,7 +39951,10 @@ function currentLayout() {
   for (const [refdes, bubble] of [...bubbles]) {
     const component = circuit.components.get(refdes);
     if (!component?.link) bubbles.delete(refdes);
-    else if (component.link !== bubble.name) openBubble(component, { remember: false });
+    // A changed link, or a broken one the workspace now has, loads afresh.
+    else if (component.link !== bubble.name || (bubble.status === 'missing' && linkedDocument(bubble.name))) {
+      openBubble(component, { remember: false });
+    }
   }
   const shown = [...bubbles].filter(([, bubble]) => bubble.status !== 'loading');
   const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}`).join(',')}`;
