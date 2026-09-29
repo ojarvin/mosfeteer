@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -128,4 +128,16 @@ test('designs that share a tag pack near each other', () => {
   const pll = spread('pll');
   // The two groups sit apart: their centres further apart than either is wide.
   assert.ok(Math.hypot(adc.mean.x - pll.mean.x, adc.mean.y - pll.mean.y) > Math.min(adc.radius, pll.radius) / 2);
+});
+
+test('a renamed design keeps its remembered place on the desk', () => {
+  const data = new Map([[`${DESK_KEY}/ws`, JSON.stringify({ '/ws/amp.json': { x: 40, y: 80, w: 400, h: 320 } })], ['other', 'x']]);
+  const storage = {
+    get length() { return data.size; },
+    key: (i) => [...data.keys()][i],
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, value),
+  };
+  carryDeskPlace('/ws/amp.json', '/ws/ota.json', storage);
+  assert.deepEqual(JSON.parse(data.get(`${DESK_KEY}/ws`)), { '/ws/ota.json': { x: 40, y: 80, w: 400, h: 320 } });
 });

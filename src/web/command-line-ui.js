@@ -74,6 +74,7 @@ const ACTIONS = {
   tutorial: () => click('btn-tutorial'),
   'phase-beats': () => click('btn-phase-beats'),
   'show-in-folder': () => click('btn-reveal-document'),
+  'rename-document': () => click('btn-rename-document'),
   'delete-document': () => click('btn-delete-circuit'),
   insert: () => activatePlace(),
   wire: () => activateWire(),

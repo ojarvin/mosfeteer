@@ -29871,6 +29871,7 @@ __exports.tileAt = tileAt;
 __exports.neighbourTile = neighbourTile;
 __exports.viewFitting = viewFitting;
 __exports.viewShowing = viewShowing;
+__exports.carryDeskPlace = carryDeskPlace;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 /**
  * Where the Atlas view puts each design, and how much detail a tile needs.
@@ -30076,10 +30077,30 @@ function viewShowing(view, rect, margin = 0.05) {
   return x === view.x && y === view.y ? view : { ...view, x, y };
 }
 
+// Where each design of a workspace sat on the desk, per workspace folder,
+// kept in this browser (atlas.js).
+const DESK_KEY = 'mosfeteer.atlas.desk:';
+
+/** A renamed design keeps its place on every remembered desk. */
+function carryDeskPlace(from, to, storage = globalThis.localStorage) {
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (!key?.startsWith(DESK_KEY)) continue;
+      const slots = JSON.parse(storage.getItem(key) || '{}');
+      if (!slots[from]) continue;
+      slots[to] = slots[from];
+      delete slots[from];
+      storage.setItem(key, JSON.stringify(slots));
+    }
+  } catch { /* the design is simply placed again */ }
+}
+
 __exports.ATLAS_GAP = ATLAS_GAP;
 __exports.ATLAS_CAPTION = ATLAS_CAPTION;
 __exports.SMALL_PX = SMALL_PX;
 __exports.LARGE_PX = LARGE_PX;
+__exports.DESK_KEY = DESK_KEY;
 };
 
 __modules["src/web/atlas-sheet.js"] = function (__require, __exports) {
@@ -30195,7 +30216,7 @@ let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __requi
 let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sheet.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -30374,7 +30395,6 @@ function placeDrawings(entries, previous = null) {
 // Where each design of a workspace sat on the desk last time, so the desk
 // stays put between visits: only a new design, or one that no longer fits
 // its old spot, is placed again. Kept per viewer, in this browser.
-const DESK_KEY = 'mosfeteer.atlas.desk:';
 
 function rememberedSlots(folder) {
   try {
@@ -33476,6 +33496,7 @@ const ACTIONS = {
   tutorial: () => click('btn-tutorial'),
   'phase-beats': () => click('btn-phase-beats'),
   'show-in-folder': () => click('btn-reveal-document'),
+  'rename-document': () => click('btn-rename-document'),
   'delete-document': () => click('btn-delete-circuit'),
   insert: () => activatePlace(),
   wire: () => activateWire(),
@@ -33744,6 +33765,7 @@ const EDITOR_COMMANDS = [
   { name: 'tutorial', aliases: ['learn', 'tour'], help: 'draw a 5T OTA step by step, in a new document' },
   { name: 'phase-beats', aliases: ['beats-from-phases'], help: 'add one beat per switch phase (More menu)' },
   { name: 'show-in-folder', aliases: ['reveal'], help: 'show the document file in the file manager' },
+  { name: 'rename-document', aliases: ['rename-file', 'rename-design'], help: 'rename the current document\'s file: type the new name in the name field' },
   { name: 'delete-document', help: 'permanently delete the current document file (asks first)' },
   // Canvas actions: what a key does to the selection or the tools. `canvas`
   // hands the keyboard back to the drawing once they run. A line with
@@ -36071,6 +36093,7 @@ __exports.openDocumentDialog = openDocumentDialog;
 __exports.chooseWorkspaceFolder = chooseWorkspaceFolder;
 __exports.addDocumentFiles = addDocumentFiles;
 __exports.renderSaveState = renderSaveState;
+__exports.renameDocument = renameDocument;
 __exports.syncActiveCircuit = syncActiveCircuit;
 __exports.startNewDocument = startNewDocument;
 __exports.startSessionHeartbeat = startSessionHeartbeat;
@@ -36083,7 +36106,8 @@ let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDial
 let analysisFormStorageKey; __bind(() => { ({ analysisFormStorageKey } = __require("src/web/analysis-state.js")); });
 let circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm; __bind(() => { ({ circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } = __require("src/web/elements.js")); });
 let dropTutorial; __bind(() => { ({ dropTutorial } = __require("src/web/onboarding.js")); });
-let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
+let carryDeskPlace; __bind(() => { ({ carryDeskPlace } = __require("src/web/atlas-layout.js")); });
 let resetCheckState; __bind(() => { ({ resetCheckState } = __require("src/web/design-check-ui.js")); });
 let viewFromCenter, fitView; __bind(() => { ({ viewFromCenter, fitView } = __require("src/web/canvas-view.js")); });
 let clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope; __bind(() => { ({ clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope } = __require("src/web/analysis-ui.js")); });
@@ -36096,6 +36120,7 @@ let applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render
  * the CLI's active document and reloading files changed on disk; and dropped
  * files. Storage itself is behind persistence.js.
  */
+
 
 
 
@@ -36681,8 +36706,10 @@ function renderSaveState() {
   if (dirtyDot) dirtyDot.hidden = !dirty;
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !editor.currentDocumentPath || editor.deleteInFlight;
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
+  const renameButton = document.getElementById('btn-rename-document');
+  if (renameButton) renameButton.disabled = !canRenameDocument() || editor.saveInFlight > 0;
   circuitNameEl.title = editor.currentDocumentPath
-    ? `${editor.currentDocumentPath}\nRename and save to create a copy next to it.`
+    ? `${editor.currentDocumentPath}\nChange the name and save to create a copy next to it; More → Rename document… renames the file.`
     : `Name used when saving this document ${newDocumentDestination()}`;
   renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
@@ -36691,6 +36718,91 @@ function renderSaveState() {
     saveButton.title = dirty
       ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
       : editor.currentDocumentPath ? `All changes saved to ${editor.currentDocumentPath}` : 'Nothing to save yet';
+  }
+}
+
+// ----- rename --------------------------------------------------------------------
+
+/** Whether the open document's file can be renamed: it has one, and this
+ *  storage can remove the old file (browser-only mode needs a writable
+ *  folder). */
+function canRenameDocument() {
+  const path = editor.currentDocumentPath;
+  return !!path && (!persistence.browserOnly || persistence.deletesFile(path));
+}
+
+let renaming = false;
+
+/** Rename document…: the name field takes the new name; Enter renames the
+ *  file, Escape (or leaving the field) keeps the old one. */
+function beginDocumentRename() {
+  for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
+  if (!canRenameDocument()) {
+    logLine(editor.currentDocumentPath ? 'This document\'s file cannot be renamed here: open its folder as the workspace first.' : 'Save the document first; then it can be renamed.', 'error');
+    return;
+  }
+  renaming = true;
+  circuitNameEl.classList.add('renaming');
+  circuitNameEl.value = editor.currentCircuitName || circuitNameEl.value;
+  circuitNameEl.focus();
+  circuitNameEl.select();
+  hintLine('RENAME: type the new name · Enter renames the file · Esc keeps the old name');
+}
+
+function endDocumentRename() {
+  renaming = false;
+  circuitNameEl.classList.remove('renaming');
+  circuitNameEl.value = editor.currentCircuitName || '';
+  renderSaveState();
+}
+
+/**
+ * Rename the open document's file to `name`, next to where it is: its saved
+ * content is written under the new name, then the old file goes. Unsaved
+ * edits stay unsaved. A name already taken is refused.
+ */
+async function renameDocument(name) {
+  const oldPath = editor.currentDocumentPath;
+  if (!oldPath || name === editor.currentCircuitName) return false;
+  if (!validDocumentName(name)) {
+    logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
+    return false;
+  }
+  editor.syncGeneration += 1;
+  editor.saveInFlight += 1;
+  renderSaveState();
+  const previousScope = analysisFormScope();
+  try {
+    const saved = await withFileAccess(() => persistence.load(oldPath));
+    let data;
+    try {
+      data = await withFileAccess(() => persistence.save({ ...(editor.currentDocumentDir ? { dir: editor.currentDocumentDir } : {}), name }, saved.state, { overwrite: false }));
+    } catch (err) {
+      if (err.code !== 'exists') throw err;
+      logLine(`A document named "${name}" already exists there; pick another name.`, 'error');
+      return false;
+    }
+    await withFileAccess(() => persistence.delete(oldPath));
+    editor.currentCircuitName = data.name;
+    editor.currentDocumentPath = data.path;
+    editor.currentDocumentDir = data.dir;
+    editor.activeSyncSuspended = false;
+    migrateAnalysisFormStorage(previousScope, analysisFormScope());
+    carryDeskPlace(oldPath, data.path);
+    editor.lastSeenRevision = data.revision || null;
+    editor.lastCircuitTag = data.etag || null;
+    persistDraft();
+    await refreshCircuitList();
+    logLine(`Renamed ${displayPath(oldPath)} to ${displayPath(data.path)}.`);
+    return true;
+  } catch (err) {
+    if (err.code === 'canceled') logLine('Rename canceled.');
+    else logLine(`Could not rename the document: ${err.message}`, 'error');
+    return false;
+  } finally {
+    editor.saveInFlight -= 1;
+    editor.syncGeneration += 1;
+    renderSaveState();
   }
 }
 
@@ -37064,6 +37176,26 @@ function installDocumentSession() {
   document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
 
   circuitNameEl.addEventListener('input', renderSaveState);
+
+  document.getElementById('btn-rename-document')?.addEventListener('click', beginDocumentRename);
+  circuitNameEl.addEventListener('keydown', (ev) => {
+    if (!renaming) return;
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const name = circuitNameEl.value.trim();
+      renaming = false;
+      circuitNameEl.classList.remove('renaming');
+      circuitNameEl.blur();
+      void renameDocument(name).then(() => { circuitNameEl.value = editor.currentCircuitName || ''; renderSaveState(); });
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      endDocumentRename();
+      circuitNameEl.blur();
+    }
+  });
+  circuitNameEl.addEventListener('blur', () => { if (renaming) endDocumentRename(); });
 
   circuitSelectEl.addEventListener('change', () => {
     const value = circuitSelectEl.value;

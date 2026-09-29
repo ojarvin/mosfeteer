@@ -51,6 +51,7 @@ export const EDITOR_COMMANDS = [
   { name: 'tutorial', aliases: ['learn', 'tour'], help: 'draw a 5T OTA step by step, in a new document' },
   { name: 'phase-beats', aliases: ['beats-from-phases'], help: 'add one beat per switch phase (More menu)' },
   { name: 'show-in-folder', aliases: ['reveal'], help: 'show the document file in the file manager' },
+  { name: 'rename-document', aliases: ['rename-file', 'rename-design'], help: 'rename the current document\'s file: type the new name in the name field' },
   { name: 'delete-document', help: 'permanently delete the current document file (asks first)' },
   // Canvas actions: what a key does to the selection or the tools. `canvas`
   // hands the keyboard back to the drawing once they run. A line with

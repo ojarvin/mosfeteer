@@ -588,6 +588,11 @@ button:focus-visible {
   outline: none;
 }
 
+/* Rename document…: the name field is taking the file's new name. */
+.toolbar .circuit-picker #circuit-name.renaming {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .dirty-dot {
   flex: 0 0 auto;
   width: 7px;

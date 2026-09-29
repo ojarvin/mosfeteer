@@ -13,7 +13,8 @@ import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisFormStorageKey } from './analysis-state.js';
 import { circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } from './elements.js';
 import { dropTutorial } from './onboarding.js';
-import { logLine } from './status-bar-ui.js';
+import { hintLine, logLine } from './status-bar-ui.js';
+import { carryDeskPlace } from './atlas-layout.js';
 import { resetCheckState } from './design-check-ui.js';
 import { viewFromCenter, fitView } from './canvas-view.js';
 import { clearLatestAnalysisResult, migrateAnalysisFormStorage, analysisFormScope } from './analysis-ui.js';
@@ -589,8 +590,10 @@ export function renderSaveState() {
   if (dirtyDot) dirtyDot.hidden = !dirty;
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !editor.currentDocumentPath || editor.deleteInFlight;
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
+  const renameButton = document.getElementById('btn-rename-document');
+  if (renameButton) renameButton.disabled = !canRenameDocument() || editor.saveInFlight > 0;
   circuitNameEl.title = editor.currentDocumentPath
-    ? `${editor.currentDocumentPath}\nRename and save to create a copy next to it.`
+    ? `${editor.currentDocumentPath}\nChange the name and save to create a copy next to it; More → Rename document… renames the file.`
     : `Name used when saving this document ${newDocumentDestination()}`;
   renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
@@ -599,6 +602,91 @@ export function renderSaveState() {
     saveButton.title = dirty
       ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
       : editor.currentDocumentPath ? `All changes saved to ${editor.currentDocumentPath}` : 'Nothing to save yet';
+  }
+}
+
+// ----- rename --------------------------------------------------------------------
+
+/** Whether the open document's file can be renamed: it has one, and this
+ *  storage can remove the old file (browser-only mode needs a writable
+ *  folder). */
+function canRenameDocument() {
+  const path = editor.currentDocumentPath;
+  return !!path && (!persistence.browserOnly || persistence.deletesFile(path));
+}
+
+let renaming = false;
+
+/** Rename document…: the name field takes the new name; Enter renames the
+ *  file, Escape (or leaving the field) keeps the old one. */
+function beginDocumentRename() {
+  for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
+  if (!canRenameDocument()) {
+    logLine(editor.currentDocumentPath ? 'This document\'s file cannot be renamed here: open its folder as the workspace first.' : 'Save the document first; then it can be renamed.', 'error');
+    return;
+  }
+  renaming = true;
+  circuitNameEl.classList.add('renaming');
+  circuitNameEl.value = editor.currentCircuitName || circuitNameEl.value;
+  circuitNameEl.focus();
+  circuitNameEl.select();
+  hintLine('RENAME: type the new name · Enter renames the file · Esc keeps the old name');
+}
+
+function endDocumentRename() {
+  renaming = false;
+  circuitNameEl.classList.remove('renaming');
+  circuitNameEl.value = editor.currentCircuitName || '';
+  renderSaveState();
+}
+
+/**
+ * Rename the open document's file to `name`, next to where it is: its saved
+ * content is written under the new name, then the old file goes. Unsaved
+ * edits stay unsaved. A name already taken is refused.
+ */
+export async function renameDocument(name) {
+  const oldPath = editor.currentDocumentPath;
+  if (!oldPath || name === editor.currentCircuitName) return false;
+  if (!validDocumentName(name)) {
+    logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
+    return false;
+  }
+  editor.syncGeneration += 1;
+  editor.saveInFlight += 1;
+  renderSaveState();
+  const previousScope = analysisFormScope();
+  try {
+    const saved = await withFileAccess(() => persistence.load(oldPath));
+    let data;
+    try {
+      data = await withFileAccess(() => persistence.save({ ...(editor.currentDocumentDir ? { dir: editor.currentDocumentDir } : {}), name }, saved.state, { overwrite: false }));
+    } catch (err) {
+      if (err.code !== 'exists') throw err;
+      logLine(`A document named "${name}" already exists there; pick another name.`, 'error');
+      return false;
+    }
+    await withFileAccess(() => persistence.delete(oldPath));
+    editor.currentCircuitName = data.name;
+    editor.currentDocumentPath = data.path;
+    editor.currentDocumentDir = data.dir;
+    editor.activeSyncSuspended = false;
+    migrateAnalysisFormStorage(previousScope, analysisFormScope());
+    carryDeskPlace(oldPath, data.path);
+    editor.lastSeenRevision = data.revision || null;
+    editor.lastCircuitTag = data.etag || null;
+    persistDraft();
+    await refreshCircuitList();
+    logLine(`Renamed ${displayPath(oldPath)} to ${displayPath(data.path)}.`);
+    return true;
+  } catch (err) {
+    if (err.code === 'canceled') logLine('Rename canceled.');
+    else logLine(`Could not rename the document: ${err.message}`, 'error');
+    return false;
+  } finally {
+    editor.saveInFlight -= 1;
+    editor.syncGeneration += 1;
+    renderSaveState();
   }
 }
 
@@ -972,6 +1060,26 @@ export function installDocumentSession() {
   document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
 
   circuitNameEl.addEventListener('input', renderSaveState);
+
+  document.getElementById('btn-rename-document')?.addEventListener('click', beginDocumentRename);
+  circuitNameEl.addEventListener('keydown', (ev) => {
+    if (!renaming) return;
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const name = circuitNameEl.value.trim();
+      renaming = false;
+      circuitNameEl.classList.remove('renaming');
+      circuitNameEl.blur();
+      void renameDocument(name).then(() => { circuitNameEl.value = editor.currentCircuitName || ''; renderSaveState(); });
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      endDocumentRename();
+      circuitNameEl.blur();
+    }
+  });
+  circuitNameEl.addEventListener('blur', () => { if (renaming) endDocumentRename(); });
 
   circuitSelectEl.addEventListener('change', () => {
     const value = circuitSelectEl.value;

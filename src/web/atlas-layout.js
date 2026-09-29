@@ -201,3 +201,22 @@ export function viewShowing(view, rect, margin = 0.05) {
   const y = axis(view.y, view.h, rect.y, rect.h);
   return x === view.x && y === view.y ? view : { ...view, x, y };
 }
+
+// Where each design of a workspace sat on the desk, per workspace folder,
+// kept in this browser (atlas.js).
+export const DESK_KEY = 'mosfeteer.atlas.desk:';
+
+/** A renamed design keeps its place on every remembered desk. */
+export function carryDeskPlace(from, to, storage = globalThis.localStorage) {
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (!key?.startsWith(DESK_KEY)) continue;
+      const slots = JSON.parse(storage.getItem(key) || '{}');
+      if (!slots[from]) continue;
+      slots[to] = slots[from];
+      delete slots[from];
+      storage.setItem(key, JSON.stringify(slots));
+    }
+  } catch { /* the design is simply placed again */ }
+}

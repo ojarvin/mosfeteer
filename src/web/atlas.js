@@ -18,7 +18,7 @@ import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
 import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
-import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeInOutCubic, wheelIntent, lerpView, zoomView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -165,7 +165,6 @@ function placeDrawings(entries, previous = null) {
 // Where each design of a workspace sat on the desk last time, so the desk
 // stays put between visits: only a new design, or one that no longer fits
 // its old spot, is placed again. Kept per viewer, in this browser.
-const DESK_KEY = 'mosfeteer.atlas.desk:';
 
 function rememberedSlots(folder) {
   try {
