@@ -13,6 +13,7 @@ import { clientToWorld } from './canvas-view.js';
 import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } from './analysis-ui.js';
 import { editor } from './editor-state.js';
 import { inlineEditLabel } from './label-editor.js';
+import { joinSelectedLines, selectedLines } from './annotation-tools.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
 import { copyAsImage } from './export-ui.js';
 import { openSwapPicker } from './insert-menu.js';
@@ -581,6 +582,8 @@ function appendContextActions(menu, target) {
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
+    const lines = selectedLines();
+    if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);

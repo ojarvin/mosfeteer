@@ -185,6 +185,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['q', 'change the type of the selected (or pointed-at) parts: nmos to pmos, R to C, ...; wiring stays where the pins carry over'],
     ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
+    ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],

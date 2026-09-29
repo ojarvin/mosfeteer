@@ -1342,6 +1342,39 @@ export class LabelInstance {
     return true;
   }
 
+  /** Move vertices (indices) together by dx, dy. */
+  moveVertices(indices, dx, dy) {
+    if (!['arrow', 'line'].includes(this.kind)) return false;
+    const picked = new Set(indices);
+    this.points = this.points.map((point, i) => (picked.has(i) ? snapPoint(point.x + dx, point.y + dy) : point));
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    return true;
+  }
+
+  /** True when vertices (indices) can go together, as for one. */
+  canRemoveVertices(indices) {
+    if (!['arrow', 'line'].includes(this.kind)) return false;
+    const picked = new Set(indices);
+    if (![...picked].every((i) => Number.isInteger(i) && i >= 0 && i < this.points.length)) return false;
+    const rest = this.points.filter((_, i) => !picked.has(i));
+    if (rest.length < 2 || rest.every((p) => p.x === rest[0].x && p.y === rest[0].y)) return false;
+    if (this.kind !== 'arrow') return true;
+    return rest.reduce((sum, p, i) => (i ? sum + Math.hypot(p.x - rest[i - 1].x, p.y - rest[i - 1].y) : 0), 0) >= GRID * 2;
+  }
+
+  /** Drop vertices (indices); the ones left join with straight segments. */
+  removeVertices(indices) {
+    if (!this.canRemoveVertices(indices)) return false;
+    const picked = new Set(indices);
+    this.points = this.points.filter((_, i) => !picked.has(i))
+      .filter((p, i, all) => !i || p.x !== all[i - 1].x || p.y !== all[i - 1].y);
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    this.circuit.invalidateRoutingCache();
+    return true;
+  }
+
   /** True when vertex `index` can go: the path keeps two distinct points,
    * and an arrow keeps its two-cell minimum length. */
   canRemoveVertex(index) {

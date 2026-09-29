@@ -11463,6 +11463,7 @@ let crossNetOverlaps; __bind(() => { ({ crossNetOverlaps } = __require("src/core
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
+let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
 let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
@@ -11471,6 +11472,7 @@ let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapCom
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -12001,6 +12003,7 @@ function commandHelp() {
     '  netlabel list [NET]             - list net labels',
     '  annotation (label/annotate) add [ID] TEXT X Y [--align ALIGN --right-edge X] - place a free annotation',
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
+    '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -12540,6 +12543,10 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.isNetLabel());
     const rows = labels.map((label) => `${label.id} text="${label.text}" at ${pp(label.anchorWorld().x, label.anchorWorld().y)}`);
     return result(rows.join('\n') || '(no annotations)', labels.map((label) => label.toJSON()));
+  }
+  if (op === 'join') {
+    const line = joinLineAnnotations(circuit, pos.slice(1));
+    return result(`joined into line ${line.id} with ${line.points.length} points`, line.toJSON(), true);
   }
   if (op === 'add') {
     const tail = pos.slice(1);
@@ -14913,6 +14920,116 @@ function joinedNames(before, after) {
 
 };
 
+__modules["src/core/line-join.js"] = function (__require, __exports) {
+__exports.tidyPolyline = tidyPolyline;
+__exports.joinPolylines = joinPolylines;
+__exports.joinLineAnnotations = joinLineAnnotations;
+/**
+ * Joining line annotations: several polylines that touch -- end to end, or
+ * along a shared stretch, as copies of one clock cycle laid side by side --
+ * become one continuous line. Their segments are split at each other's
+ * vertices, shared pieces are kept once, and the result is walked from one
+ * end to the other with the straight-through vertices dropped.
+ */
+
+const key = (p) => `${p.x},${p.y}`;
+
+/** Whether `p` lies on segment a-b (grid points, so exact arithmetic). */
+function onSegment(p, a, b) {
+  if ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x) !== 0) return false;
+  return p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x)
+    && p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+}
+
+/** Drop repeated points and the vertices a path runs straight through. */
+function tidyPolyline(points) {
+  const out = [];
+  for (const p of points) {
+    if (out.length && out.at(-1).x === p.x && out.at(-1).y === p.y) continue;
+    if (out.length >= 2) {
+      const a = out.at(-2);
+      const b = out.at(-1);
+      const straight = (b.x - a.x) * (p.y - b.y) - (b.y - a.y) * (p.x - b.x) === 0
+        && (b.x - a.x) * (p.x - b.x) + (b.y - a.y) * (p.y - b.y) > 0;
+      if (straight) out.pop();
+    }
+    out.push({ x: p.x, y: p.y });
+  }
+  return out;
+}
+
+/**
+ * The one polyline that the given polylines draw together, or null when
+ * they do not make one continuous line (apart, branching, or crossing).
+ */
+function joinPolylines(lists) {
+  const polylines = lists.map((points) => (points || []).map((p) => ({ x: p.x, y: p.y }))).filter((points) => points.length >= 2);
+  if (polylines.length < 2) return null;
+  const vertices = new Map();
+  for (const points of polylines) for (const p of points) vertices.set(key(p), p);
+  // Every segment, split at any vertex lying on it; shared pieces once.
+  const edges = new Map();
+  for (const points of polylines) {
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (a.x === b.x && a.y === b.y) continue;
+      const along = [...vertices.values()]
+        .filter((p) => onSegment(p, a, b))
+        .sort((p, q) => (Math.abs(p.x - a.x) + Math.abs(p.y - a.y)) - (Math.abs(q.x - a.x) + Math.abs(q.y - a.y)));
+      for (let j = 1; j < along.length; j++) {
+        const [u, v] = [key(along[j - 1]), key(along[j])];
+        edges.set(u < v ? `${u}|${v}` : `${v}|${u}`, [u, v]);
+      }
+    }
+  }
+  const neighbors = new Map();
+  for (const [u, v] of edges.values()) {
+    if (!neighbors.has(u)) neighbors.set(u, []);
+    if (!neighbors.has(v)) neighbors.set(v, []);
+    neighbors.get(u).push(v);
+    neighbors.get(v).push(u);
+  }
+  if ([...neighbors.values()].some((list) => list.length > 2)) return null;
+  const ends = [...neighbors.keys()].filter((node) => neighbors.get(node).length === 1);
+  if (ends.length !== 2 && ends.length !== 0) return null;
+  // Walk it: from one end, or round a closed loop back to its start.
+  const start = ends[0] || neighbors.keys().next().value;
+  const path = [start];
+  const used = new Set();
+  let node = start;
+  for (;;) {
+    const next = neighbors.get(node).find((other) => !used.has(node < other ? `${node}|${other}` : `${other}|${node}`));
+    if (next === undefined) break;
+    used.add(node < next ? `${node}|${next}` : `${next}|${node}`);
+    path.push(next);
+    node = next;
+  }
+  if (used.size !== edges.size) return null;
+  return tidyPolyline(path.map((id) => vertices.get(id)));
+}
+
+/**
+ * Join line annotations (ids) into the first of them, which keeps its style
+ * and id; the others go. Throws, changing nothing, unless they make one
+ * continuous line. Returns the joined line.
+ */
+function joinLineAnnotations(circuit, ids) {
+  const lines = [...new Set(ids)].map((id) => circuit.labels.get(id)).filter((label) => label?.kind === 'line');
+  if (lines.length < 2) throw new Error('select two or more line annotations to join');
+  const points = joinPolylines(lines.map((line) => line.points));
+  if (!points) throw new Error('these lines do not make one continuous line: they must meet end to end or share a stretch, without branching');
+  const [kept, ...rest] = lines;
+  kept.points = points;
+  kept.anchor = { ...points[0] };
+  kept.end = { ...points.at(-1) };
+  for (const line of rest) circuit.removeLabel(line.id);
+  circuit.invalidateRoutingCache();
+  return kept;
+}
+
+};
+
 __modules["src/core/line-style.js"] = function (__require, __exports) {
 __exports.normalizeArrowhead = normalizeArrowhead;
 __exports.defaultArrowhead = defaultArrowhead;
@@ -16454,6 +16571,39 @@ class LabelInstance {
     this.points[index] = snapPoint(wx, wy);
     this.anchor = { ...this.points[0] };
     this.end = { ...this.points.at(-1) };
+    return true;
+  }
+
+  /** Move vertices (indices) together by dx, dy. */
+  moveVertices(indices, dx, dy) {
+    if (!['arrow', 'line'].includes(this.kind)) return false;
+    const picked = new Set(indices);
+    this.points = this.points.map((point, i) => (picked.has(i) ? snapPoint(point.x + dx, point.y + dy) : point));
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    return true;
+  }
+
+  /** True when vertices (indices) can go together, as for one. */
+  canRemoveVertices(indices) {
+    if (!['arrow', 'line'].includes(this.kind)) return false;
+    const picked = new Set(indices);
+    if (![...picked].every((i) => Number.isInteger(i) && i >= 0 && i < this.points.length)) return false;
+    const rest = this.points.filter((_, i) => !picked.has(i));
+    if (rest.length < 2 || rest.every((p) => p.x === rest[0].x && p.y === rest[0].y)) return false;
+    if (this.kind !== 'arrow') return true;
+    return rest.reduce((sum, p, i) => (i ? sum + Math.hypot(p.x - rest[i - 1].x, p.y - rest[i - 1].y) : 0), 0) >= GRID * 2;
+  }
+
+  /** Drop vertices (indices); the ones left join with straight segments. */
+  removeVertices(indices) {
+    if (!this.canRemoveVertices(indices)) return false;
+    const picked = new Set(indices);
+    this.points = this.points.filter((_, i) => !picked.has(i))
+      .filter((p, i, all) => !i || p.x !== all[i - 1].x || p.y !== all[i - 1].y);
+    this.anchor = { ...this.points[0] };
+    this.end = { ...this.points.at(-1) };
+    this.circuit.invalidateRoutingCache();
     return true;
   }
 
@@ -29172,10 +29322,13 @@ __exports.clearNetLabelPaste = clearNetLabelPaste;
 __exports.pastingNetName = pastingNetName;
 __exports.netLabelPastePreview = netLabelPastePreview;
 __exports.placeNetLabelAt = placeNetLabelAt;
+__exports.selectedLines = selectedLines;
+__exports.joinSelectedLines = joinSelectedLines;
 let INTERFACE_PIN_TYPES, NET_HIGHLIGHT_COLORS, isReferenceMarker, referenceMarkerInfo; __bind(() => { ({ INTERFACE_PIN_TYPES, NET_HIGHLIGHT_COLORS, isReferenceMarker, referenceMarkerInfo } = __require("src/core/model.js")); });
 let cycleBeatHighlight, highlightsAt, setHighlightFrom; __bind(() => { ({ cycleBeatHighlight, highlightsAt, setHighlightFrom } = __require("src/core/beats.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
+let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
 let netLabelPasteKind; __bind(() => { ({ netLabelPasteKind } = __require("src/core/selection.js")); });
 let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
 let constrainAxis; __bind(() => { ({ constrainAxis } = __require("src/web/interaction.js")); });
@@ -29184,11 +29337,12 @@ let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/we
 let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/label-editor.js")); });
 let activeBeatIndex; __bind(() => { ({ activeBeatIndex } = __require("src/web/beats-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot; __bind(() => { ({ activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot } = __require("src/web/main.js")); });
+let activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot; __bind(() => { ({ activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot } = __require("src/web/main.js")); });
 /**
  * Placing things with the label tools: net labels on wires and pins, free
  * text and equation annotations, lines, arrows, boxes, and net highlights.
  */
+
 
 
 
@@ -29568,6 +29722,28 @@ function placeNetLabelAt(world, placement = null) {
   render();
   if (provisional) inlineEditLabel(label, { provisional: true, initialSnapshot: label._provisionalInitialSnapshot, initialName: label._provisionalInitialName });
   return true;
+}
+
+/** The selected line annotations. */
+function selectedLines() {
+  return selectedLabels().filter((label) => label.kind === 'line');
+}
+
+/** Join the selected line annotations into one continuous line
+ *  (core/line-join.js): copied clock cycles into one waveform. */
+function joinSelectedLines() {
+  const lines = selectedLines();
+  if (lines.length < 2) {
+    hintLine('JOIN: select two or more line annotations that meet end to end or share a stretch');
+    return;
+  }
+  let joined = null;
+  commit(() => { joined = joinLineAnnotations(editor.circuit, lines.map((line) => line.id)); });
+  if (!joined) return;
+  setSelection([]);
+  setLabelSelection([joined.id]);
+  logLine(`joined ${lines.length} lines into one with ${joined.points.length} points`);
+  render();
 }
 
 };
@@ -33129,7 +33305,7 @@ let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.
 let openFind, openReplace; __bind(() => { ({ openFind, openReplace } = __require("src/web/find-replace-ui.js")); });
 let toggleAtlas, toggleSymbolSheet; __bind(() => { ({ toggleAtlas, toggleSymbolSheet } = __require("src/web/atlas.js")); });
 let activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo; __bind(() => { ({ activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace, activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render, repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } = __require("src/web/main.js")); });
-let removeAllNetHighlights; __bind(() => { ({ removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
+let joinSelectedLines, removeAllNetHighlights; __bind(() => { ({ joinSelectedLines, removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy-paste.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
@@ -33227,6 +33403,7 @@ const ACTIONS = {
   arrow: () => activateShapeAnnotation('arrow'),
   box: () => activateShapeAnnotation('box'),
   line: () => activateShapeAnnotation('line'),
+  'join-lines': () => joinSelectedLines(),
   'align-to': () => activateAlign(),
   align: (side) => applyLayoutPlan(layoutPlan(side)),
   distribute: (axis) => applyLayoutPlan(layoutPlan(axis)),
@@ -33498,6 +33675,7 @@ const EDITOR_COMMANDS = [
   { name: 'arrow', canvas: true, help: 'draw an annotation arrow (a)' },
   { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box, or box the selection (b)' },
   { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
+  { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (Shift+J)' },
   { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
   { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },
   { name: 'distribute', aliases: ['spread', 'even'], needsArg: true, choices: ['x', 'y'], canvas: true, help: 'space the selection evenly: x (horizontal) or y (vertical)' },
@@ -34073,6 +34251,7 @@ let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas
 let SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis; __bind(() => { ({ SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } = __require("src/web/analysis-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/label-editor.js")); });
+let joinSelectedLines, selectedLines; __bind(() => { ({ joinSelectedLines, selectedLines } = __require("src/web/annotation-tools.js")); });
 let appendBeatContextItems, plainMarkup; __bind(() => { ({ appendBeatContextItems, plainMarkup } = __require("src/web/beats-ui.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
@@ -34086,6 +34265,7 @@ let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, n
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -34664,6 +34844,8 @@ function appendContextActions(menu, target) {
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
+    const lines = selectedLines();
+    if (target.value.kind === 'line' && lines.length > 1) appendContextItem(group, `Join ${lines.length} lines`, joinSelectedLines);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
@@ -40974,7 +41156,7 @@ let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind((
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
-let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview } = __require("src/web/annotation-tools.js")); });
+let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
 let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
 let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => { ({ syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } = __require("src/web/gesture-overlay.js")); });
@@ -47757,6 +47939,11 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  if (key === 'J') {
+    joinSelectedLines();
+    return;
+  }
+
   // / searches, as Ctrl/Cmd+F does, here and in the Atlas. (While wiring it
   // flips the draft corner instead; see onWireKey.)
   if (key === '/') {
@@ -53307,6 +53494,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['q', 'change the type of the selected (or pointed-at) parts: nmos to pmos, R to C, ...; wiring stays where the pins carry over'],
     ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
+    ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],

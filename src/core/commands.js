@@ -7,6 +7,7 @@ import { crossNetOverlaps } from './wiring.js';
 import { svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
+import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
@@ -528,6 +529,7 @@ export function commandHelp() {
     '  netlabel list [NET]             - list net labels',
     '  annotation (label/annotate) add [ID] TEXT X Y [--align ALIGN --right-edge X] - place a free annotation',
     '  annotation rename|move|align|rm ... - edit/remove an annotation label',
+    '  annotation join ID ID ...      - join line annotations that meet end to end or share a stretch into one line',
     '  annotation vertex-rm ID N      - remove vertex N (from 0) of a line or arrow',
     '  list                           - list components',
     '  state                          - full JSON state',
@@ -1067,6 +1069,10 @@ function annotationCommand(circuit, pos, result, flags = {}) {
     const labels = [...circuit.labels.values()].filter((label) => !label.owner && !label.isNetLabel());
     const rows = labels.map((label) => `${label.id} text="${label.text}" at ${pp(label.anchorWorld().x, label.anchorWorld().y)}`);
     return result(rows.join('\n') || '(no annotations)', labels.map((label) => label.toJSON()));
+  }
+  if (op === 'join') {
+    const line = joinLineAnnotations(circuit, pos.slice(1));
+    return result(`joined into line ${line.id} with ${line.points.length} points`, line.toJSON(), true);
   }
   if (op === 'add') {
     const tail = pos.slice(1);

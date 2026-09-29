@@ -21,7 +21,7 @@ import { toggleAtlas, toggleSymbolSheet } from './atlas.js';
 import { activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace,
   activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
   repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
-import { removeAllNetHighlights } from './annotation-tools.js';
+import { joinSelectedLines, removeAllNetHighlights } from './annotation-tools.js';
 import { copyAsImage } from './export-ui.js';
 import { pasteClipboard } from './copy-paste.js';
 import { openSwapPicker } from './insert-menu.js';
@@ -94,6 +94,7 @@ const ACTIONS = {
   arrow: () => activateShapeAnnotation('arrow'),
   box: () => activateShapeAnnotation('box'),
   line: () => activateShapeAnnotation('line'),
+  'join-lines': () => joinSelectedLines(),
   'align-to': () => activateAlign(),
   align: (side) => applyLayoutPlan(layoutPlan(side)),
   distribute: (axis) => applyLayoutPlan(layoutPlan(axis)),

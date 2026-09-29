@@ -7,6 +7,7 @@ import { INTERFACE_PIN_TYPES, NET_HIGHLIGHT_COLORS, isReferenceMarker, reference
 import { cycleBeatHighlight, highlightsAt, setHighlightFrom } from '../core/beats.js';
 import { snap } from '../core/grid.js';
 import { pointOnPath } from '../core/wiring.js';
+import { joinLineAnnotations } from '../core/line-join.js';
 import { netLabelPasteKind } from '../core/selection.js';
 import { confirmChoice } from './file-dialog.js';
 import { constrainAxis } from './interaction.js';
@@ -15,7 +16,7 @@ import { logLine, hintLine } from './status-bar-ui.js';
 import { inlineEditLabel } from './label-editor.js';
 import { activeBeatIndex } from './beats-ui.js';
 import { editor } from './editor-state.js';
-import { activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, setLabelSelection, setSelection, snappedWorld, snapshot } from './main.js';
+import { activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot } from './main.js';
 
 /** Return the drawable wire candidates under a label-placement click.  A
  * snapped crossing may belong to several physical nets; keep those identities
@@ -381,4 +382,26 @@ export function placeNetLabelAt(world, placement = null) {
   render();
   if (provisional) inlineEditLabel(label, { provisional: true, initialSnapshot: label._provisionalInitialSnapshot, initialName: label._provisionalInitialName });
   return true;
+}
+
+/** The selected line annotations. */
+export function selectedLines() {
+  return selectedLabels().filter((label) => label.kind === 'line');
+}
+
+/** Join the selected line annotations into one continuous line
+ *  (core/line-join.js): copied clock cycles into one waveform. */
+export function joinSelectedLines() {
+  const lines = selectedLines();
+  if (lines.length < 2) {
+    hintLine('JOIN: select two or more line annotations that meet end to end or share a stretch');
+    return;
+  }
+  let joined = null;
+  commit(() => { joined = joinLineAnnotations(editor.circuit, lines.map((line) => line.id)); });
+  if (!joined) return;
+  setSelection([]);
+  setLabelSelection([joined.id]);
+  logLine(`joined ${lines.length} lines into one with ${joined.points.length} points`);
+  render();
 }

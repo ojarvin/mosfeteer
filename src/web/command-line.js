@@ -75,6 +75,7 @@ export const EDITOR_COMMANDS = [
   { name: 'arrow', canvas: true, help: 'draw an annotation arrow (a)' },
   { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box, or box the selection (b)' },
   { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
+  { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (Shift+J)' },
   { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
   { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },
   { name: 'distribute', aliases: ['spread', 'even'], needsArg: true, choices: ['x', 'y'], canvas: true, help: 'space the selection evenly: x (horizontal) or y (vertical)' },
