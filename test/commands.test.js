@@ -959,3 +959,13 @@ test('replace refuses a duplicate part name without changing anything', () => {
   assert.throws(() => runCommand(c, 'replace R_{1} R_{2}'), /changed nothing/);
   assert.equal(JSON.stringify(c.toJSON()), before);
 });
+
+test('link and unlink name the design a part stands for', () => {
+  const c = new Circuit();
+  runCommand(c, 'add opamp OA1 --at 0 0');
+  assert.match(runCommand(c, 'link OA1 two stage').text, /OA1 links to two stage/);
+  assert.equal(c.components.get('OA1').link, 'two stage');
+  assert.match(runCommand(c, 'unlink OA1').text, /unlinked/);
+  assert.equal(c.components.get('OA1').link, null);
+  assert.throws(() => runCommand(c, 'link NOPE amp'), /NOPE/);
+});

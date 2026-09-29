@@ -20,6 +20,7 @@
     <div class="toolbar-cluster document-cluster" role="group" aria-label="Document">
       <button type="button" id="app-mark" class="app-mark app-mark-button" aria-label="Atlas: every design in the workspace" aria-keyshortcuts="Shift+Backspace" title="Mosfeteer — open the Atlas (Shift+Backspace)"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></button>
       <div class="circuit-picker" title="">
+        <nav id="hierarchy-trail" class="hierarchy-trail" aria-label="Designs this one was opened from" hidden></nav>
         <input id="circuit-name" type="text" placeholder="Untitled" autocomplete="off" spellcheck="false" aria-label="Document name" title="Name used when saving this document to the workspace folder" />
         <span id="dirty-dot" class="dirty-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" hidden></span>
         <select id="circuit-select" aria-label="Open a document" title="Open a document">
@@ -253,6 +254,7 @@
         <button type="button" data-empty-action="tutorial"><kbd>5 min</kbd><span class="empty-state-text">Learn by drawing a 5T OTA</span></button>
       </div>
       <!-- The canvas corner holds the toggles for the panels that dock on the right. -->
+      <button id="hierarchy-up" type="button" class="hierarchy-up glass" hidden>↑</button>
       <div class="canvas-panel-toggles" role="group" aria-label="Panels">
         <button id="btn-analysis" type="button" class="canvas-panel-toggle glass icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Small-signal analysis" title="Show the small-signal analysis panel (Shift+S)">Analyze</button>
         <button id="btn-side-panel" type="button" class="canvas-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>

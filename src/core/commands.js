@@ -500,6 +500,7 @@ export function commandHelp() {
     '  rotate <refdes> [deg=90]       - rotate by multiples of 90',
     '  mirror <refdes> <x|y>          - flip along an axis',
     '  value <refdes> <V>             - set value/label text',
+    '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  rename <refdes> <new>          - rename a component',
     '  rm <refdes>                    - remove a component',
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbours (visual only)',
@@ -786,6 +787,14 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const v = pos[1];
     circuit.setValue(c.refdes, v);
     return result(`${c.refdes} value = "${v}"`, { refdes: c.refdes, value: v }, true);
+  }
+  if (cmd === 'link' || cmd === 'unlink') {
+    if (!pos[0]) throw new Error('usage: link <refdes> <design> ; unlink <refdes>');
+    const c = circuit.getComponent(pos[0]);
+    const name = cmd === 'unlink' ? null : pos.slice(1).join(' ');
+    if (cmd === 'link' && !name) return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} links to no design`, { refdes: c.refdes, link: c.link });
+    circuit.setLink(c.refdes, name);
+    return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} unlinked`, { refdes: c.refdes, link: c.link }, true);
   }
   if (cmd === 'supplybar' && String(pos[0] || '').toLowerCase() === 'name') {
     if (pos.length < 3) throw new Error('usage: supplybar name <NAME|-> <refdes> [refdes...]');

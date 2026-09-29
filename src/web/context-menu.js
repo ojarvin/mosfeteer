@@ -14,6 +14,7 @@ import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNA
 import { editor } from './editor-state.js';
 import { inlineEditLabel } from './label-editor.js';
 import { joinSelectedLines, selectedLines } from './annotation-tools.js';
+import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hierarchy.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
 import { copyAsImage } from './export-ui.js';
 import { openSwapPicker } from './insert-menu.js';
@@ -201,7 +202,7 @@ function analysisChoiceState(targets, read, expected) {
 /** Add one keyboard-accessible nested menu. The same helper is used for
  * selection, net roles, and device attributes so canvas and side-panel menus
  * have identical hierarchy and interaction semantics. */
-function appendContextSubmenu(parent, label, build) {
+export function appendContextSubmenu(parent, label, build) {
   const trigger = document.createElement('button');
   trigger.type = 'button';
   trigger.textContent = label;
@@ -579,6 +580,7 @@ function appendContextActions(menu, target) {
       appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'q' });
     }
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
+    appendLinkContextItems(group, comp);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
@@ -626,11 +628,13 @@ export function openContextMenuAt(clientX, clientY) {
         : wire
           ? { kind: 'wire', value: { net: wire.net, branch: wire.branch, segment: wire.seg } }
           : null;
+  const bubble = target ? null : linkBubbleAt(world);
   if (target) {
     selectContextTarget(target);
     render();
     openComponentContextMenu(target, clientX, clientY);
-  } else closeComponentContextMenu();
+  } else if (bubble) openLinkBubbleMenu(bubble.refdes, clientX, clientY);
+  else closeComponentContextMenu();
 }
 // As in desktop menus, hovering another item closes submenus it is not part
 // of. The short delay lets a diagonal move from a trigger reach its submenu

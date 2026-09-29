@@ -154,7 +154,10 @@ function placeDrawings(entries, previous = null) {
     return [entry.id, { x, y, w: cellCeil(entry.box.x + entry.box.w) - x, h: cellCeil(entry.box.y + entry.box.h) - y }];
   }));
   const boxes = new Map(entries.map((entry) => [entry.id, entry.box]));
-  const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: entry.links || [] })));
+  // A part linking to another design links the two designs (by name).
+  const idsByName = new Map(entries.map((entry) => [entry.name, entry.id]));
+  const linksOf = (entry) => (entry.index?.links || []).map((name) => idsByName.get(name)).filter(Boolean);
+  const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: linksOf(entry) })));
   const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous, related });
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
@@ -205,7 +208,7 @@ const EMPTY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${8 * GRID}" h
 async function drawingFor(documentInfo, current) {
   if (current) return { svg: drawingSvg(editor.circuit), index: designIndex(editor.circuit), revision: null };
   const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v3');
-  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v1');
+  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v2');
   const [cached, cachedIndex] = key ? await Promise.all([cacheGet(key), cacheGet(indexKey)]) : [null, null];
   if (cached && cachedIndex) return { svg: cached, index: cachedIndex, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
@@ -782,7 +785,7 @@ async function saveTags(entry, text) {
       const revision = saved?.revision || null;
       if (revision) {
         await cachePut(renderingKey(entry.path, revision, 'svg-v3'), entry.svg);
-        await cachePut(renderingKey(entry.path, revision, 'index-v1'), index);
+        await cachePut(renderingKey(entry.path, revision, 'index-v2'), index);
         for (const level of ['small', 'large']) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
           if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);

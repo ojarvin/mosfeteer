@@ -219,6 +219,15 @@ hover glows) in that color without changing their own styles.
   Math face in `src/web/fonts/`; exports embed it when the drawing contains
   math. Persisted/exported text never contains provenance markers.
 
+### Linked designs
+
+A part may link loosely to another design of the workspace by name
+(`ComponentInstance#link`, [`docs/hierarchy.md`](docs/hierarchy.md)): no
+connectivity, and a missing design is just a broken link. The editor peeks at
+it in a bubble beside the drawing (`o`) or enters it with a trail back up
+(`Alt+↓`/`Alt+↑`); bubbles and the trail are editor state, never saved or
+exported.
+
 ### Beats
 
 `circuit.beats` holds presentation steps over the one drawing

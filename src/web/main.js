@@ -72,6 +72,7 @@ import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } fr
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
+import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
 import { netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
@@ -2696,6 +2697,7 @@ export function renderCanvas(modelKey) {
     snapLayerEl.setAttribute('pointer-events', 'none');
     canvasSvgEl.appendChild(snapLayerEl);
     snapPulseKey = '';
+    mountLinkBubbles(canvasSvgEl, overlayEl);
   }
   // Design-check focus is drawn separately (error color); only real selection is blue.
   const nets = [...selectedNets].map((id) => circuit.nets.get(id)).filter(Boolean);
@@ -2871,6 +2873,7 @@ export function renderCanvas(modelKey) {
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
   overlayEl.innerHTML = themeInkSvg(withGestureOverlay(overlay, ghost));
+  syncLinkBubbles();
   syncSnapPulse();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
@@ -4281,6 +4284,20 @@ function canvasMouseDown(ev) {
       };
       try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
       render();
+      return;
+    }
+  }
+
+  // A linked design's bubble is a picture: a click picks its part, a
+  // double-click opens the design.
+  if (mode === 'normal' && !labelMode && !wire && !directWire && !moveMode && !copyMode && !deleteMode && !pickAt(startWorld)) {
+    const bubble = linkBubbleAt(startWorld);
+    if (bubble) {
+      if (ev.detail >= 2) void enterLinkedDesign(circuit.components.get(bubble.refdes));
+      else {
+        setSelection([bubble.refdes]);
+        render();
+      }
       return;
     }
   }
@@ -6408,6 +6425,7 @@ canvasEl.addEventListener('mouseleave', () => {
 // release after a radial choice swallows a late (Windows-order) event.
 let suppressContextMenuUntil = 0;
 installContextMenu();
+installHierarchy();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
 // Releasing Alt drops the mirrored ghost or terminal-snap aid; so does losing the window, since no
@@ -6879,6 +6897,11 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'J') {
     joinSelectedLines();
+    return;
+  }
+
+  if (key === 'o') {
+    toggleLinkBubbles();
     return;
   }
 
@@ -7566,6 +7589,14 @@ window.addEventListener('keydown', (ev) => {
   if (beatStep && !drag && !wire && !directWire) {
     ev.preventDefault();
     stepBeat(beatStep);
+    return;
+  }
+  // Alt+Down enters a linked part's design, Alt+Up goes back up.
+  if (ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey && !inlineInput && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')
+      && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName) && !drag && !wire && !directWire) {
+    ev.preventDefault();
+    if (ev.key === 'ArrowDown') void enterLinkedDesign();
+    else void leaveLinkedDesign();
     return;
   }
   if (ev.key === 'F5') {

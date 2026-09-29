@@ -185,6 +185,8 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['q', 'change the type of the selected (or pointed-at) parts: nmos to pmos, R to C, ...; wiring stays where the pins carry over'],
     ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
+    ['o', 'show or hide the selected (or pointed-at) part\'s linked design beside the drawing; link a part from its right-click menu'],
+    ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['Shift/Ctrl-click a vertex', 'on a selected line or arrow, pick vertices (a box over part of it picks those inside); drag one to move them together, Delete removes them, Escape lets go'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],

@@ -87,7 +87,7 @@ test('the view keeps its scale and top-left corner when the pane resizes', () =>
 test('document title, annotation flyout, and grouped design check are wired', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const main = editorSource();
-  assert.match(html, /<div class="circuit-picker"[^>]*>\s*<input id="circuit-name"[\s\S]*id="dirty-dot"[\s\S]*<select id="circuit-select"/);
+  assert.match(html, /<div class="circuit-picker"[^>]*>\s*(?:<nav id="hierarchy-trail"[^>]*><\/nav>\s*)?<input id="circuit-name"[\s\S]*id="dirty-dot"[\s\S]*<select id="circuit-select"/);
   assert.match(main, /if \(dirtyDot\) dirtyDot\.hidden = !dirty;/);
   // Layer buttons live in the context menu and on Shift+Up/Down, not the rail.
   assert.doesNotMatch(html, /id="btn-bring-front"|id="btn-send-back"/);

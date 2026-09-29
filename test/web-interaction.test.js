@@ -1273,3 +1273,14 @@ test('a set drag keeps net label sides and never shows a frame its nets cannot f
   assert.match(main, /if \(rerouteNet\(net, moved\) === false\) ok = false;/);
   assert.match(main, /if \(!applyDragStep\(delta\)\) \{\s*shown = drag\.goodDelta\?\.origins === drag\.origins \? drag\.goodDelta : \{ dx: 0, dy: 0 \};\s*applyDragStep\(shown\);/);
 });
+
+test('linked-design bubbles live in a kept layer and dive keys go through hierarchy.js', () => {
+  const main = editorSource();
+  // The layer is re-mounted into each rebuilt drawing, under the overlay,
+  // and synchronized on every render.
+  assert.match(main, /mountLinkBubbles\(canvasSvgEl, overlayEl\);/);
+  assert.match(main, /overlayEl\.innerHTML = themeInkSvg\(withGestureOverlay\(overlay, ghost\)\);\s*syncLinkBubbles\(\);/);
+  assert.match(main, /if \(ev\.key === 'ArrowDown'\) void enterLinkedDesign\(\);\s*else void leaveLinkedDesign\(\);/);
+  assert.match(main, /if \(key === 'o'\) \{\s*toggleLinkBubbles\(\);/);
+  assert.match(main, /if \(ev\.detail >= 2\) void enterLinkedDesign\(circuit\.components\.get\(bubble\.refdes\)\);/);
+});

@@ -4979,3 +4979,136 @@ circle.bode-corner {
   color: var(--text-dim);
   font-size: 0.72rem;
 }
+
+/* ----- linked designs (hierarchy.js) ----------------------------------- */
+
+/* The designs a linked one was opened from, before its name. */
+.hierarchy-trail {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hierarchy-trail[hidden] {
+  display: none;
+}
+
+.hierarchy-step {
+  max-width: 10rem;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.hierarchy-step:hover {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+.hierarchy-separator {
+  color: var(--text-dim);
+}
+
+/* Inside a linked design, the canvas wears an accent frame and a way up. */
+.canvas-pane.inside-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.hierarchy-up {
+  position: absolute;
+  z-index: 5;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 50%;
+  padding: 5px 12px;
+  overflow: hidden;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--text);
+  font: inherit;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.hierarchy-up[hidden] {
+  display: none;
+}
+
+.link-bubble-frame {
+  fill: var(--paper, #fff);
+  fill-opacity: 0.6;
+  stroke: var(--accent);
+  stroke-width: 2px;
+  stroke-dasharray: 10 6;
+}
+
+.link-bubble-connector {
+  stroke: var(--accent);
+  stroke-width: 2px;
+  stroke-dasharray: 10 6;
+}
+
+.link-bubble-dot {
+  fill: var(--accent);
+}
+
+.link-bubble-caption {
+  fill: var(--accent);
+  font: 600 26px system-ui, sans-serif;
+}
+
+.link-bubble-message {
+  fill: var(--text-dim);
+  font: italic 24px system-ui, sans-serif;
+}
+
+.link-bubble.broken .link-bubble-frame,
+.link-bubble.broken .link-bubble-connector {
+  stroke: var(--warn);
+}
+
+.link-bubble.broken .link-bubble-caption,
+.link-bubble.broken .link-bubble-dot {
+  fill: var(--warn);
+}
+
+.link-badge circle {
+  fill: var(--paper, #fff);
+  stroke: var(--accent);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+
+.link-badge path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.link-badge.broken circle,
+.link-badge.broken path {
+  stroke: var(--warn);
+}
+
+.component-context-menu .context-submenu.context-submenu-scroll {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}

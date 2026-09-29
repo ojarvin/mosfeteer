@@ -4038,3 +4038,15 @@ test('rails are named V_{SS}, V_{DD}, V_{CM}, and the plain spellings are the sa
   assert.equal(loaded.netHighlights.get('name:V_{SS}'), 'red');
   assert.equal(loaded.nets.get(typed.id).name, 'VSS');
 });
+
+test('a part links loosely to another design by name, saved with it', () => {
+  const c = new Circuit();
+  c.addComponent('opamp', { refdes: 'OA1', x: 0, y: 0 });
+  c.setLink('OA1', 'ota-folded.json');
+  assert.equal(c.components.get('OA1').link, 'ota-folded');
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.equal(loaded.components.get('OA1').link, 'ota-folded');
+  c.setLink('OA1', '');
+  assert.equal(c.components.get('OA1').link, null);
+  assert.equal('link' in c.components.get('OA1').toJSON(), false);
+});

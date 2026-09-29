@@ -98,6 +98,13 @@ function serializedTerminalName(type, term) {
   return term;
 }
 
+/** A design link as stored: the linked design's name, or null. A `.json`
+ *  file name reads as its design name. */
+export function normalizeDesignLink(value) {
+  const name = String(value ?? '').trim().replace(/\.json$/i, '');
+  return name || null;
+}
+
 /** A document's tags, normalized: trimmed, no leading `#`, unique, in order. */
 export function normalizeTags(tags) {
   const seen = new Set();
@@ -1477,6 +1484,10 @@ export class ComponentInstance {
         .map((name) => String(name))
         .filter((name) => signalInputNames.has(name)),
     );
+    // A loose hierarchy link: the name of another design in the workspace
+    // that shows what this part is (an amplifier's transistors, say). It
+    // carries no connectivity; a missing design is simply a broken link.
+    this.link = normalizeDesignLink(opts.link);
     // Schematic blocks are the one resizable symbol. Keep their geometry and
     // perimeter terminal slots on the instance rather than mutating the shared
     // symbol definition (which would resize every block in the document).
@@ -1664,6 +1675,7 @@ export class ComponentInstance {
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
+      ...(this.link ? { link: this.link } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -2590,6 +2602,14 @@ export class Circuit {
       }
     }
     return made;
+  }
+
+  /** Link a part to another design by name (null or '' unlinks). */
+  setLink(refdes, name) {
+    const component = this.getComponent(refdes);
+    if (component.type === 'solder') throw new Error('a solder dot cannot link to a design');
+    component.link = normalizeDesignLink(name);
+    return component;
   }
 
   setValue(refdes, value) {
@@ -6519,6 +6539,7 @@ export class Circuit {
         blockTerminals: c.blockTerminals,
         negativeInputs: c.negativeInputs,
         joinBar: c.joinBar,
+        link: c.link,
         style: c.style,
         analysis: migrateSerializedComponentAnalysis(c.analysis),
         drawOrder: c.drawOrder,

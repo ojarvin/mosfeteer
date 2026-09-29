@@ -63,7 +63,8 @@ export function designIndex(circuit) {
     if (label.owner || label.netId || label.role || !label.text) continue;
     items.push({ kind: 'text', id: label.id, text: label.text, boxes: [box(label.inkRect())] });
   }
-  return { tags: normalizeTags(circuit.tags), items };
+  const links = [...new Set([...circuit.components.values()].map((component) => component.link).filter(Boolean))];
+  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), items };
 }
 
 /**
