@@ -123,6 +123,7 @@ Object.defineProperties(editor, {
   guidesVisible: { get: () => guidesVisible, set: (value) => { guidesVisible = value; } },
   history: { get: () => history, set: (value) => { history = value; } },
   hoverAnnotationId: { get: () => hoverAnnotationId, set: (value) => { hoverAnnotationId = value; } },
+  selectedVertices: { get: () => selectedVertices, set: (value) => { selectedVertices = value; } },
   hoverFromPanel: { get: () => hoverFromPanel, set: (value) => { hoverFromPanel = value; } },
   hoverPinsRef: { get: () => hoverPinsRef, set: (value) => { hoverPinsRef = value; } },
   hoverTarget: { get: () => hoverTarget, set: (value) => { hoverTarget = value; } },
@@ -259,6 +260,8 @@ let selected = null; // primary refdes
 let multi = new Set(); // all selected component refdes (always includes selected)
 let selLabel = null; // primary id of the selected label object (exclusive with component selection)
 let selLabels = new Set(); // all selected label ids (always includes selLabel if any)
+// Picked vertices of the one selected line or arrow: { labelId, indices }.
+let selectedVertices = null;
 let selectedNets = new Set(); // ids of highlighted nets
 let componentRangeAnchor = null; // last component row used as a range anchor
 let netRangeAnchor = null; // last net row used as a range anchor
@@ -880,6 +883,25 @@ export function setLabelSelection(ids, primary = ids[0], preserveMixed = false) 
   selLabel = selectableIds.length
     ? (selectableIds.includes(primary) ? primary : selectableIds[0])
     : null;
+}
+
+/** The picked vertices, while their line or arrow is the whole selection:
+ *  { label, indices } with indices in path order, or null. */
+export function vertexSelection() {
+  if (!selectedVertices || multi.size || selectedNets.size || selectedWires.size || selLabels.size !== 1) return null;
+  const label = circuit.labels.get(selectedVertices.labelId);
+  if (!label?.points || !selLabels.has(label.id)) return null;
+  const indices = [...selectedVertices.indices].filter((i) => i < label.points.length).sort((a, b) => a - b);
+  return indices.length ? { label, indices } : null;
+}
+
+/** Pick vertex `index` of `label` (alone, or toggled into the picks). */
+function pickVertex(label, index, toggle = false) {
+  const current = vertexSelection();
+  const indices = new Set(toggle && current?.label === label ? current.indices : []);
+  if (toggle && indices.has(index)) indices.delete(index);
+  else indices.add(index);
+  selectedVertices = indices.size ? { labelId: label.id, indices } : null;
 }
 
 /** Deserialize a "netId:branch:segment" key into {netId, branch, segment}. */
@@ -1734,7 +1756,36 @@ function rerouteTouchedNets(refs, moved, fresh = false, beforeTerminals = null, 
 /** Delete all selected objects together in one undo step.  Selected whole nets
  *  are removed before segment cuts, so selecting both cannot leave fragments;
  *  touched-but-unselected nets are rerouted afterward. */
+/** A box around part of the one selected line or arrow picks the vertices
+ *  in it (Shift adds to the picks). A box holding all or none of them is an
+ *  ordinary selection box. */
+function pickVerticesInBox(lineId, box, add) {
+  const label = lineId ? circuit.labels.get(lineId) : null;
+  if (!label?.points) return false;
+  const inside = label.points.flatMap((p, i) => (p.x >= box.x0 && p.x <= box.x1 && p.y >= box.y0 && p.y <= box.y1 ? [i] : []));
+  if (!inside.length || inside.length === label.points.length) return false;
+  const current = add ? vertexSelection() : null;
+  setSelection([]);
+  setLabelSelection([label.id]);
+  selectedVertices = { labelId: label.id, indices: new Set([...(current?.indices || []), ...inside]) };
+  hintLine(`${selectedVertices.indices.size} vertices picked — drag one to move them together · Delete removes them`);
+  return true;
+}
+
 export function deleteSelection() {
+  // Picked vertices go on their own; the line keeps the rest.
+  const vertices = vertexSelection();
+  if (vertices) {
+    if (!vertices.label.canRemoveVertices(vertices.indices)) {
+      hintLine(`a ${vertices.label.kind} keeps at least two points — Escape, then Delete removes the whole ${vertices.label.kind}`);
+      return false;
+    }
+    commit(() => vertices.label.removeVertices(vertices.indices));
+    selectedVertices = null;
+    logLine(`removed ${vertices.indices.length} ${vertices.indices.length === 1 ? 'vertex' : 'vertices'}`);
+    render();
+    return true;
+  }
   const comps = selectedComps();
   const labels = selectedLabels();
   const keys = new Set(selectedWires);
@@ -2754,6 +2805,10 @@ export function renderCanvas(modelKey) {
     }),
     resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box'),
     hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
+    selectedVertices: (() => {
+      const picked = vertexSelection();
+      return picked ? { labelId: picked.label.id, indices: picked.indices } : null;
+    })(),
     handleScale: worldPerPixel(),
     ghostTwin,
     symmetryAxis,
@@ -3040,9 +3095,13 @@ function boxSelectionContents(x0, y0, x1, y1) {
 
 export function beginMarqueeSelection(startWorld, startClient, ev) {
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+  // A line or arrow selected alone may have its vertices picked by the box.
+  const soleLine = !multi.size && !selectedNets.size && !selectedWires.size && selLabels.size === 1
+    && circuit.labels.get([...selLabels][0])?.points ? [...selLabels][0] : null;
   if (!ev.shiftKey) setSelection([]);
   drag = {
     mode: 'marquee',
+    soleLine,
     startClient,
     startWorld,
     startSelection: new Set(multi),
@@ -4462,6 +4521,24 @@ function canvasMouseDown(ev) {
   const endpointHit = annotationEndpointAt(startWorld);
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
+  const vertexIndex = endpointHit?.endpoint.startsWith('vertex:') ? Number(endpointHit.endpoint.slice(7)) : -1;
+  // Shift or Ctrl/Cmd on a vertex of the line already selected picks that
+  // vertex too (or lets it go), for a group drag or Delete.
+  if (vertexIndex >= 0 && isSelectionModifier(ev) && selLabels.size === 1 && selLabels.has(endpointHit.label.id) && !multi.size) {
+    pickVertex(endpointHit.label, vertexIndex, true);
+    render();
+    return;
+  }
+  // A press on one of several picked vertices drags them all.
+  const picked = vertexSelection();
+  if (vertexIndex >= 0 && !isSelectionModifier(ev) && picked?.label === endpointHit.label && picked.indices.length > 1 && picked.indices.includes(vertexIndex)) {
+    drag = {
+      mode: 'annotationvertices', label: picked.label, indices: picked.indices,
+      startPoints: picked.label.points.map((point) => ({ ...point })),
+      startClient, startWorld, startSnapshot: snapshot(), moved: false,
+    };
+    return;
+  }
   if (pickedLine && armLabelCopyGrab(pickedLine, startWorld, startClient, ev)) return;
   if (pickedLine && isSelectionModifier(ev)) {
     applyEditorSelection({ kind: 'label', id: pickedLine.id }, true);
@@ -4471,6 +4548,8 @@ function canvasMouseDown(ev) {
   if (endpointHit) {
     setSelection([]);
     setLabelSelection([endpointHit.label.id]);
+    // The vertex is picked on its own, so a click then Delete removes it.
+    if (vertexIndex >= 0) pickVertex(endpointHit.label, vertexIndex);
     drag = { mode: 'annotationendpoint', label: endpointHit.label, endpoint: endpointHit.endpoint, startClient, startWorld, startSnapshot: snapshot(), moved: false };
     return;
   }
@@ -5469,6 +5548,19 @@ export function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'annotationvertices') {
+    if (movedOut) drag.moved = true;
+    if (drag.moved) {
+      const dx = snap(movedWorld.x) - snap(drag.startWorld.x);
+      const dy = snap(movedWorld.y) - snap(drag.startWorld.y);
+      drag.label.points = drag.startPoints.map((point) => ({ ...point }));
+      drag.label.moveVertices(drag.indices, dx, dy);
+      cursor = snappedWorld(movedWorld);
+      markModelChanged(false);
+      scheduleInteractionRender();
+    }
+    return;
+  }
   if (drag.mode === 'annotationendpoint') {
     if (movedOut) drag.moved = true;
     if (drag.moved) {
@@ -6158,13 +6250,13 @@ function finishCanvasMouseUp(ev) {
   } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
-      applyBoxSelection(box.x0, box.y0, box.x1, box.y1, drag.shift);
+      if (drag.mode !== 'marquee' || !pickVerticesInBox(drag.soleLine, box, drag.shift)) applyBoxSelection(box.x0, box.y0, box.x1, box.y1, drag.shift);
       if (drag.mode === 'deletemarquee' && copySelectionExists()) deleteSelection();
     } else if (drag.mode === 'deletemarquee') {
       if (copySelectionExists()) deleteSelection();
       else deleteAtPoint(w);
     }
-  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint' || drag.mode === 'boxresize') {
+  } else if (drag.mode === 'annotationsegment' || drag.mode === 'annotationendpoint' || drag.mode === 'annotationvertices' || drag.mode === 'boxresize') {
     if (drag.moved && snapshot() !== drag.startSnapshot) {
       recordHistoryEntry(drag.startSnapshot);
     }
@@ -6994,6 +7086,12 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   // Escape first lets go of beats picked in the strip; the beat on screen stays.
+  // Escape first lets go of picked vertices, keeping their line selected.
+  if (key === 'Escape' && vertexSelection()) {
+    selectedVertices = null;
+    render();
+    return;
+  }
   if (key === 'Escape' && selectedBeatIds.size > 1) {
     const active = circuit.beats[activeBeatIndex()];
     selectedBeatIds = new Set(active ? [active.id] : []);

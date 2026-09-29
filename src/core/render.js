@@ -1445,7 +1445,15 @@ export function editorOverlay(circuit, opts = {}) {
       const a = label.anchorWorld();
       parts.push(`<rect x="${fmt(b.x)}" y="${fmt(b.y)}" width="${fmt(b.w)}" height="${fmt(b.h)}" fill="none" stroke="${SELECT}" stroke-width="2" rx="2"/>`);
       // Align to draws its own picks; vertex drag points would compete.
-      if (label.points && !opts.alignTool) parts.push(vertexHandles(label, true));
+      if (label.points && !opts.alignTool) {
+        parts.push(vertexHandles(label, true));
+        // Picked vertices (for a group drag or Delete) wear a ring.
+        const picked = opts.selectedVertices?.labelId === label.id ? opts.selectedVertices.indices : [];
+        for (const index of picked) {
+          const p = label.points[index];
+          if (p) parts.push(`<circle class="annotation-vertex-picked" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(10 * unit)}" fill="none" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+        }
+      }
       else if (label.kind !== 'box') parts.push(`<circle cx="${fmt(a.x)}" cy="${fmt(a.y)}" r="3.5" fill="${SELECT}"/>`);
     }
   } else if (opts.selLabel) {

@@ -1194,8 +1194,20 @@ test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () =>
   for (const target of ['pickedLine', 'annotationText', 'annotationGeometry']) {
     const arm = down.indexOf(`armLabelCopyGrab(${target}, startWorld, startClient, ev)`);
     assert.ok(arm >= 0, `${target} arms a copy`);
-    assert.ok(arm < down.indexOf(`isSelectionModifier(ev)`, down.indexOf(target)), `${target} copies before it toggles`);
+    const toggle = target === 'pickedLine' ? down.indexOf('if (pickedLine && isSelectionModifier(ev))') : down.indexOf(`isSelectionModifier(ev)`, down.indexOf(target));
+    assert.ok(arm < toggle, `${target} copies before it toggles`);
   }
+  // The one exception: Shift or Ctrl/Cmd on a vertex of the line already
+  // selected picks that vertex instead.
+  assert.ok(down.indexOf('pickVertex(endpointHit.label, vertexIndex, true)') < down.indexOf('armLabelCopyGrab(pickedLine'));
+});
+
+test('picked line vertices drag together, fall to a partial box, and go with Delete', () => {
+  const main = editorSource();
+  assert.match(main, /drag\.label\.moveVertices\(drag\.indices, dx, dy\);/);
+  assert.match(main, /if \(drag\.mode !== 'marquee' \|\| !pickVerticesInBox\(drag\.soleLine, box, drag\.shift\)\) applyBoxSelection/);
+  assert.match(functionSource('deleteSelection', main), /commit\(\(\) => vertices\.label\.removeVertices\(vertices\.indices\)\)/);
+  assert.match(functionSource('pickVerticesInBox', main), /if \(!inside\.length \|\| inside\.length === label\.points\.length\) return false;/);
 });
 
 test('a still click on a selected object cycles to the next one stacked under it, and a press drags the selected one', () => {
