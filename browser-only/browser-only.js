@@ -14405,6 +14405,125 @@ function searchDesign(index, name, query) {
 __exports.normalizeTags = normalizeTags;
 };
 
+__modules["src/core/design-related.js"] = function (__require, __exports) {
+__exports.nameWords = nameWords;
+__exports.relatednessProfile = relatednessProfile;
+__exports.relatedness = relatedness;
+__exports.relatednessOf = relatednessOf;
+let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
+/**
+ * How related two designs are, for laying out neighbourhoods on the Atlas
+ * desk: a number from 0 (nothing in common) to 1. Several weak hints add up:
+ *
+ *   tags        a shared tag says so outright
+ *   links       a part in one links to the other (hierarchy)
+ *   name        shared words (`ota-folded`, `ota_5t`) or a shared stem
+ *   folder      the same subfolder
+ *   parts       a similar mix of part types (two SAR ADCs, two OTAs)
+ *   nets        shared net names (`CLK`, `V_{REF}`)
+ *
+ * Each hint is a probability-like score; they combine as independent
+ * evidence, 1 - prod(1 - s).
+ */
+
+
+
+// Words a name carries that say nothing about what the design is.
+const FILLER = new Set(['v', 'ver', 'rev', 'new', 'old', 'copy', 'test', 'tmp', 'temp', 'final', 'draft', 'wip', 'backup', 'bak', 'the', 'and', 'of']);
+
+/** A design name's words: split at punctuation, case changes, and digits. */
+function nameWords(name) {
+  return String(name ?? '')
+    .replace(/\.json$/i, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Za-z])(\d)/g, '$1 $2')
+    .replace(/(\d)([A-Za-z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 2 && !FILLER.has(word) && !/^\d+$/.test(word));
+}
+
+const jaccard = (a, b) => {
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const value of a) if (b.has(value)) shared += 1;
+  return shared / (a.size + b.size - shared);
+};
+
+function cosine(a, b) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (const [key, value] of a) {
+    na += value * value;
+    dot += value * (b.get(key) || 0);
+  }
+  for (const value of b.values()) nb += value * value;
+  return na && nb ? dot / Math.sqrt(na * nb) : 0;
+}
+
+// Parts every design has, which say nothing about kinship.
+const COMMON_TYPES = new Set(['ground', 'supply', 'vcm', 'solder', 'port', 'input', 'output', 'inputoutput']);
+
+/**
+ * What relatedness looks at in one design ({ id, name, dir, tags, index,
+ * links }): computed once per design.
+ */
+function relatednessProfile({ id, name = '', dir = '', tags = [], index = null, links = [] }) {
+  const types = new Map();
+  const nets = new Set();
+  for (const item of index?.items || []) {
+    if (item.kind === 'part' && item.type && !COMMON_TYPES.has(item.type)) types.set(item.type, (types.get(item.type) || 0) + 1);
+    if (item.kind === 'net' && item.text) nets.add(searchKey(item.text));
+  }
+  const words = nameWords(name);
+  return {
+    id,
+    name: String(name).toLowerCase().replace(/[^a-z0-9]/g, ''),
+    words: new Set(words),
+    dir: String(dir || ''),
+    tags: new Set((tags || []).map((tag) => String(tag).toLowerCase())),
+    links: new Set(links || []),
+    types,
+    nets,
+  };
+}
+
+/** Relatedness of two profiles, 0..1. */
+function relatedness(a, b) {
+  const hints = [];
+  if ([...a.tags].some((tag) => b.tags.has(tag))) hints.push(0.9);
+  if (a.links.has(b.id) || b.links.has(a.id)) hints.push(0.9);
+  const words = jaccard(a.words, b.words);
+  if (words) hints.push(0.35 + 0.5 * words);
+  else {
+    // A shared stem with no word boundary: `ota5t`, `otafolded`.
+    let stem = 0;
+    while (stem < a.name.length && a.name[stem] === b.name[stem]) stem += 1;
+    if (stem >= 3) hints.push(Math.min(0.6, 0.15 * stem));
+  }
+  if (a.dir && a.dir === b.dir) hints.push(0.25);
+  const parts = cosine(a.types, b.types);
+  if (parts > 0.5) hints.push(0.4 * (parts - 0.5) / 0.5);
+  const nets = jaccard(a.nets, b.nets);
+  if (nets) hints.push(0.35 * nets);
+  return 1 - hints.reduce((keep, s) => keep * (1 - s), 1);
+}
+
+/** A relatedness function over item ids, from their profiles. */
+function relatednessOf(items) {
+  const profiles = new Map(items.map((item) => [item.id, relatednessProfile(item)]));
+  const memo = new Map();
+  return (a, b) => {
+    if (a === b) return 1;
+    const key = a < b ? `${a}\n${b}` : `${b}\n${a}`;
+    if (!memo.has(key)) memo.set(key, profiles.has(a) && profiles.has(b) ? relatedness(profiles.get(a), profiles.get(b)) : 0);
+    return memo.get(key);
+  };
+}
+
+};
+
 __modules["src/core/document.js"] = function (__require, __exports) {
 __exports.validDocumentName = validDocumentName;
 __exports.documentKind = documentKind;
@@ -29954,23 +30073,26 @@ const snap = (value) => Math.round(value / GRID) * GRID;
  * the desk steady: a design stays where it was while its slot there is still
  * free. A design that changed size yields to those that did not: it keeps its
  * top-left, else its centre, else moves to the free spot nearest its old one.
- * Only new designs and those are placed again. Designs that share a tag are
- * drawn toward each other.
+ * Only new designs and those are placed again.
+ *
+ * `related(a, b)` (0..1, core/design-related.js; by default a shared tag)
+ * groups designs into neighbourhoods: related designs are placed one after
+ * another, each drawn toward those already down in proportion.
  *
  * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
  * excluded), slots: Map id -> { x, y, w, h }, bounds }.
  */
-function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null } = {}) {
+function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, related = null } = {}) {
   if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
-  const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
+  const affinity = related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
+  const order = neighbourhoodOrder(items, affinity);
   const stretch = Math.sqrt(aspect);
   const placed = []; // slots: design plus caption band
   const distance2 = (x, y, w, h, to) => ((x + w / 2 - to.x) / stretch) ** 2 + ((y + h / 2 - to.y) * stretch) ** 2;
   const centre = (slot) => ({ x: slot.x + slot.w / 2, y: slot.y + slot.h / 2 });
   const free = (x, y, w, h) => placed.every((p) =>
     x >= p.x + p.w + gap || p.x >= x + w + gap || y >= p.y + p.h + gap || p.y >= y + h + gap);
-  const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
-  const shareTag = (a, b) => [...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag));
   const slotOf = (item) => ({ w: item.w, h: item.h + caption });
   // Where a design wants to be: its old spot, else the middle.
   const home = (item, w, h) => {
@@ -30007,11 +30129,13 @@ function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAP
       continue;
     }
     const target = home(item, w, h);
-    const mates = placed.filter((slot) => shareTag(item.id, slot.id));
-    // Near its old spot (or the middle), and nearer still to a design it
-    // shares a tag with.
+    const mates = placed.map((slot) => [slot, affinity(item.id, slot.id)]).filter(([, a]) => a >= RELATED);
+    const pull = mates.reduce((sum, [, a]) => sum + a, 0);
+    const strongest = Math.max(0, ...mates.map(([, a]) => a));
+    // Near its old spot (or the middle), and nearer still to the designs it
+    // is related to, the closer the kin the harder the pull.
     const cost = (x, y) => distance2(x, y, w, h, target)
-      + (mates.length ? 4 * Math.min(...mates.map((slot) => distance2(x, y, w, h, centre(slot)))) : 0);
+      + (pull ? 4 * strongest * mates.reduce((sum, [slot, a]) => sum + a * distance2(x, y, w, h, centre(slot)), 0) / pull : 0);
     // Spots touching a placed slot on one side, lined up with an edge of a
     // slot nearby (or centred on the one it touches).
     const candidates = [];
@@ -30048,6 +30172,48 @@ function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAP
   const y1 = Math.max(...placed.map((slot) => slot.y + slot.h));
   const slots = new Map(placed.map((slot) => [slot.id, { x: slot.x, y: slot.y, w: slot.w, h: slot.h }]));
   return { tiles, slots, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+}
+
+/** Relatedness below this is no kinship at all. */
+const RELATED = 0.3;
+
+/**
+ * Designs in packing order: neighbourhoods (designs joined by relatedness of
+ * at least RELATED), the largest neighbourhood first; inside one, the largest
+ * design first, then whichever is most related to those already placed.
+ */
+function neighbourhoodOrder(items, affinity) {
+  const bySize = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const parent = new Map(bySize.map((item) => [item.id, item.id]));
+  const find = (id) => { while (parent.get(id) !== id) id = parent.get(id); return id; };
+  for (let i = 0; i < bySize.length; i++) {
+    for (let j = i + 1; j < bySize.length; j++) {
+      if (affinity(bySize[i].id, bySize[j].id) >= RELATED) parent.set(find(bySize[j].id), find(bySize[i].id));
+    }
+  }
+  const groups = new Map();
+  for (const item of bySize) {
+    const root = find(item.id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(item);
+  }
+  const area = (group) => group.reduce((sum, item) => sum + item.w * item.h, 0);
+  const order = [];
+  for (const group of [...groups.values()].sort((a, b) => area(b) - area(a))) {
+    const rest = [...group];
+    const done = [rest.shift()];
+    while (rest.length) {
+      let best = 0;
+      let bestScore = -1;
+      rest.forEach((item, index) => {
+        const score = Math.max(...done.map((other) => affinity(item.id, other.id)));
+        if (score > bestScore + 1e-9) { best = index; bestScore = score; }
+      });
+      done.push(...rest.splice(best, 1));
+    }
+    order.push(...done);
+  }
+  return order;
 }
 
 /** Longest side, in device pixels, of the two baked renderings. */
@@ -30267,6 +30433,7 @@ let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __requi
 let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sheet.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
+let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
@@ -30316,6 +30483,7 @@ let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption }
 
 
 
+
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
@@ -30334,7 +30502,7 @@ const exportEl = document.getElementById('atlas-export');
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks · Esc clears the search, then returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks by kinship · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -30434,7 +30602,8 @@ function placeDrawings(entries, previous = null) {
     return [entry.id, { x, y, w: cellCeil(entry.box.x + entry.box.w) - x, h: cellCeil(entry.box.y + entry.box.h) - y }];
   }));
   const boxes = new Map(entries.map((entry) => [entry.id, entry.box]));
-  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h, tags: entry.index?.tags || [] })), { previous });
+  const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: entry.links || [] })));
+  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous, related });
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -30526,7 +30695,7 @@ async function loadWorkspace(generation) {
     try {
       const { svg, index, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
       const box = viewBoxOf(svg);
-      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, revision, current, svg, box, index });
+      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, dir: doc.dir, revision, current, svg, box, index });
     } catch (err) {
       logLine(`Atlas: could not draw ${doc.name}: ${err.message}`, 'error');
     }
@@ -30915,7 +31084,7 @@ function repackDesk() {
   state.arranged = null;
   if (state.matches) clearSearch();
   arrangeDesk({ animate: true });
-  logLine('Atlas: packed the desk afresh, designs sharing a tag together');
+  logLine('Atlas: packed the desk afresh, related designs together (tags, names, links, parts)');
 }
 
 /** Search keys that act on what was found pack the desk first. */

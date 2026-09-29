@@ -18,6 +18,7 @@ import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { symbolSheet } from '../core/symbol-sheet.js';
 import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
+import { relatednessOf } from '../core/design-related.js';
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeInOutCubic, wheelIntent, lerpView, zoomView } from './gestures.js';
@@ -53,7 +54,7 @@ const exportEl = document.getElementById('atlas-export');
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks · Esc clears the search, then returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks by kinship · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -153,7 +154,8 @@ function placeDrawings(entries, previous = null) {
     return [entry.id, { x, y, w: cellCeil(entry.box.x + entry.box.w) - x, h: cellCeil(entry.box.y + entry.box.h) - y }];
   }));
   const boxes = new Map(entries.map((entry) => [entry.id, entry.box]));
-  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h, tags: entry.index?.tags || [] })), { previous });
+  const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: entry.links || [] })));
+  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous, related });
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -245,7 +247,7 @@ async function loadWorkspace(generation) {
     try {
       const { svg, index, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
       const box = viewBoxOf(svg);
-      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, revision, current, svg, box, index });
+      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, dir: doc.dir, revision, current, svg, box, index });
     } catch (err) {
       logLine(`Atlas: could not draw ${doc.name}: ${err.message}`, 'error');
     }
@@ -634,7 +636,7 @@ function repackDesk() {
   state.arranged = null;
   if (state.matches) clearSearch();
   arrangeDesk({ animate: true });
-  logLine('Atlas: packed the desk afresh, designs sharing a tag together');
+  logLine('Atlas: packed the desk afresh, related designs together (tags, names, links, parts)');
 }
 
 /** Search keys that act on what was found pack the desk first. */

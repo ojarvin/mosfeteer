@@ -28,23 +28,26 @@ const snap = (value) => Math.round(value / GRID) * GRID;
  * the desk steady: a design stays where it was while its slot there is still
  * free. A design that changed size yields to those that did not: it keeps its
  * top-left, else its centre, else moves to the free spot nearest its old one.
- * Only new designs and those are placed again. Designs that share a tag are
- * drawn toward each other.
+ * Only new designs and those are placed again.
+ *
+ * `related(a, b)` (0..1, core/design-related.js; by default a shared tag)
+ * groups designs into neighbourhoods: related designs are placed one after
+ * another, each drawn toward those already down in proportion.
  *
  * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
  * excluded), slots: Map id -> { x, y, w, h }, bounds }.
  */
-export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null } = {}) {
+export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, related = null } = {}) {
   if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
-  const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
+  const affinity = related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
+  const order = neighbourhoodOrder(items, affinity);
   const stretch = Math.sqrt(aspect);
   const placed = []; // slots: design plus caption band
   const distance2 = (x, y, w, h, to) => ((x + w / 2 - to.x) / stretch) ** 2 + ((y + h / 2 - to.y) * stretch) ** 2;
   const centre = (slot) => ({ x: slot.x + slot.w / 2, y: slot.y + slot.h / 2 });
   const free = (x, y, w, h) => placed.every((p) =>
     x >= p.x + p.w + gap || p.x >= x + w + gap || y >= p.y + p.h + gap || p.y >= y + h + gap);
-  const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
-  const shareTag = (a, b) => [...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag));
   const slotOf = (item) => ({ w: item.w, h: item.h + caption });
   // Where a design wants to be: its old spot, else the middle.
   const home = (item, w, h) => {
@@ -81,11 +84,13 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
       continue;
     }
     const target = home(item, w, h);
-    const mates = placed.filter((slot) => shareTag(item.id, slot.id));
-    // Near its old spot (or the middle), and nearer still to a design it
-    // shares a tag with.
+    const mates = placed.map((slot) => [slot, affinity(item.id, slot.id)]).filter(([, a]) => a >= RELATED);
+    const pull = mates.reduce((sum, [, a]) => sum + a, 0);
+    const strongest = Math.max(0, ...mates.map(([, a]) => a));
+    // Near its old spot (or the middle), and nearer still to the designs it
+    // is related to, the closer the kin the harder the pull.
     const cost = (x, y) => distance2(x, y, w, h, target)
-      + (mates.length ? 4 * Math.min(...mates.map((slot) => distance2(x, y, w, h, centre(slot)))) : 0);
+      + (pull ? 4 * strongest * mates.reduce((sum, [slot, a]) => sum + a * distance2(x, y, w, h, centre(slot)), 0) / pull : 0);
     // Spots touching a placed slot on one side, lined up with an edge of a
     // slot nearby (or centred on the one it touches).
     const candidates = [];
@@ -122,6 +127,48 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
   const y1 = Math.max(...placed.map((slot) => slot.y + slot.h));
   const slots = new Map(placed.map((slot) => [slot.id, { x: slot.x, y: slot.y, w: slot.w, h: slot.h }]));
   return { tiles, slots, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+}
+
+/** Relatedness below this is no kinship at all. */
+const RELATED = 0.3;
+
+/**
+ * Designs in packing order: neighbourhoods (designs joined by relatedness of
+ * at least RELATED), the largest neighbourhood first; inside one, the largest
+ * design first, then whichever is most related to those already placed.
+ */
+function neighbourhoodOrder(items, affinity) {
+  const bySize = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const parent = new Map(bySize.map((item) => [item.id, item.id]));
+  const find = (id) => { while (parent.get(id) !== id) id = parent.get(id); return id; };
+  for (let i = 0; i < bySize.length; i++) {
+    for (let j = i + 1; j < bySize.length; j++) {
+      if (affinity(bySize[i].id, bySize[j].id) >= RELATED) parent.set(find(bySize[j].id), find(bySize[i].id));
+    }
+  }
+  const groups = new Map();
+  for (const item of bySize) {
+    const root = find(item.id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(item);
+  }
+  const area = (group) => group.reduce((sum, item) => sum + item.w * item.h, 0);
+  const order = [];
+  for (const group of [...groups.values()].sort((a, b) => area(b) - area(a))) {
+    const rest = [...group];
+    const done = [rest.shift()];
+    while (rest.length) {
+      let best = 0;
+      let bestScore = -1;
+      rest.forEach((item, index) => {
+        const score = Math.max(...done.map((other) => affinity(item.id, other.id)));
+        if (score > bestScore + 1e-9) { best = index; bestScore = score; }
+      });
+      done.push(...rest.splice(best, 1));
+    }
+    order.push(...done);
+  }
+  return order;
 }
 
 /** Longest side, in device pixels, of the two baked renderings. */
