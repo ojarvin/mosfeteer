@@ -7,7 +7,8 @@
  * loose ball -- the largest in the middle, each next one in the free spot
  * nearest the centre -- so the desk reads as one crowded sheet rather than a
  * grid of cards. Slots are whole grid cells, so every design's own grid lines
- * continue the desk's. The same designs always pack the same way.
+ * continue the desk's. The same designs always pack the same way, and a desk
+ * packed before keeps its designs where they were (`previous`).
  */
 
 import { GRID } from '../core/grid.js';
@@ -19,26 +20,72 @@ export const ATLAS_CAPTION = 2 * GRID;
 const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
- * Pack `items` ({ id, w, h } in drawing units, whole grid cells) around the
- * origin. `aspect` stretches the ball to a screen's shape. Each slot also
- * holds a caption band below its design. Returns { tiles: [{ id, x, y, w, h }]
- * (the designs' rectangles, captions excluded), bounds }.
+ * Pack `items` ({ id, w, h, tags } in drawing units, whole grid cells) around
+ * the origin. `aspect` stretches the ball to a screen's shape. Each slot also
+ * holds a caption band below its design.
+ *
+ * `previous` (id -> { x, y, w, h }, a slot from an earlier packing) keeps
+ * the desk steady: a design stays where it was while its slot there is still
+ * free. A design that changed size yields to those that did not: it keeps its
+ * top-left, else its centre, else moves to the free spot nearest its old one.
+ * Only new designs and those are placed again. Designs that share a tag are
+ * drawn toward each other.
+ *
+ * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
+ * excluded), slots: Map id -> { x, y, w, h }, bounds }.
  */
-export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION } = {}) {
-  if (!items.length) return { tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 } };
+export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null } = {}) {
+  if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
   const order = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const stretch = Math.sqrt(aspect);
   const placed = []; // slots: design plus caption band
-  const cost = (x, y, w, h) => ((x + w / 2) / stretch) ** 2 + ((y + h / 2) * stretch) ** 2;
+  const distance2 = (x, y, w, h, to) => ((x + w / 2 - to.x) / stretch) ** 2 + ((y + h / 2 - to.y) * stretch) ** 2;
+  const centre = (slot) => ({ x: slot.x + slot.w / 2, y: slot.y + slot.h / 2 });
   const free = (x, y, w, h) => placed.every((p) =>
     x >= p.x + p.w + gap || p.x >= x + w + gap || y >= p.y + p.h + gap || p.y >= y + h + gap);
+  const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
+  const shareTag = (a, b) => [...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag));
+  const slotOf = (item) => ({ w: item.w, h: item.h + caption });
+  // Where a design wants to be: its old spot, else the middle.
+  const home = (item, w, h) => {
+    const was = previous?.get(item.id);
+    return was ? { x: was.x + (was.w ?? w) / 2, y: was.y + (was.h ?? h) / 2 } : { x: 0, y: 0 };
+  };
+
+  // Designs still fitting where they were stay put, those of the same size
+  // first; a resized one tries its old corner, then its old centre.
+  const pending = [];
+  const resized = [];
   for (const item of order) {
-    const w = item.w;
-    const h = item.h + caption;
+    const { w, h } = slotOf(item);
+    const was = previous?.get(item.id);
+    if (!was) pending.push(item);
+    else if (was.w !== undefined && (was.w !== w || was.h !== h)) resized.push(item);
+    else if (free(was.x, was.y, w, h)) placed.push({ id: item.id, x: was.x, y: was.y, w, h });
+    else pending.push(item);
+  }
+  for (const item of resized) {
+    const { w, h } = slotOf(item);
+    const was = previous.get(item.id);
+    const spots = [[was.x, was.y], [snap(was.x + was.w / 2 - w / 2), snap(was.y + was.h / 2 - h / 2)]];
+    const spot = spots.find(([x, y]) => free(x, y, w, h));
+    if (spot) placed.push({ id: item.id, x: spot[0], y: spot[1], w, h });
+    else pending.unshift(item);
+  }
+
+  for (const item of pending) {
+    const { w, h } = slotOf(item);
     if (!placed.length) {
-      placed.push({ id: item.id, x: snap(-w / 2), y: snap(-h / 2), w, h });
+      const at = home(item, w, h);
+      placed.push({ id: item.id, x: snap(at.x - w / 2), y: snap(at.y - h / 2), w, h });
       continue;
     }
+    const target = home(item, w, h);
+    const mates = placed.filter((slot) => shareTag(item.id, slot.id));
+    // Near its old spot (or the middle), and nearer still to a design it
+    // shares a tag with.
+    const cost = (x, y) => distance2(x, y, w, h, target)
+      + (mates.length ? 4 * Math.min(...mates.map((slot) => distance2(x, y, w, h, centre(slot)))) : 0);
     // Spots touching a placed slot on one side, lined up with an edge of a
     // slot nearby (or centred on the one it touches).
     const candidates = [];
@@ -53,11 +100,11 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
       }
       for (const y of ys) {
         if (y + h + gap < p.y || y > p.y + p.h + gap) continue;
-        for (const x of [p.x + p.w + gap, p.x - gap - w]) candidates.push([cost(x, y, w, h), x, y]);
+        for (const x of [p.x + p.w + gap, p.x - gap - w]) candidates.push([cost(x, y), x, y]);
       }
       for (const x of xs) {
         if (x + w + gap < p.x || x > p.x + p.w + gap) continue;
-        for (const y of [p.y + p.h + gap, p.y - gap - h]) candidates.push([cost(x, y, w, h), x, y]);
+        for (const y of [p.y + p.h + gap, p.y - gap - h]) candidates.push([cost(x, y), x, y]);
       }
     }
     candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
@@ -73,7 +120,8 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
   const y0 = Math.min(...placed.map((slot) => slot.y));
   const x1 = Math.max(...placed.map((slot) => slot.x + slot.w));
   const y1 = Math.max(...placed.map((slot) => slot.y + slot.h));
-  return { tiles, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+  const slots = new Map(placed.map((slot) => [slot.id, { x: slot.x, y: slot.y, w: slot.w, h: slot.h }]));
+  return { tiles, slots, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
 }
 
 /** Longest side, in device pixels, of the two baked renderings. */

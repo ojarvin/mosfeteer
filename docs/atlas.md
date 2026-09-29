@@ -15,6 +15,14 @@ editor's paper and grid, to look around, compare, and open. It is a viewing mode
 work as in the editor (wheel or trackpad scheme, drag, pinch), and the open
 design zooms out of, and back into, exactly where the editor shows it.
 
+The desk stays put between visits: this browser remembers where each design
+of a workspace sat, and a design keeps its spot while it still fits there. A
+design that grew or shrank yields to the others (it keeps its corner, else its
+centre, else moves to the nearest free spot), and a new design is placed near
+the ones it shares a tag with. `Shift+T` forgets the places and packs the desk
+afresh, related designs together. A search packs what it finds tight, and
+clearing it puts every design back in its place.
+
 The top bar mirrors the editor's: the Mosfeteer mark, the workspace name,
 the search, **New**, and the light/dark theme toggle. **New** opens a blank
 schematic in the editor, with the name field focused. Unsaved changes in the
@@ -52,6 +60,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | Ctrl/Cmd+O | another workspace folder (browser-only: add files) |
 | `z` or Space | zoom to the picked design |
 | `f` | fit the whole workspace |
+| `Shift+T` | pack the desk afresh, designs sharing a tag together |
 | `+` / `-` | zoom about the middle |
 | `Shift+D` | theme |
 | Esc | clear the search, else back to the editor |

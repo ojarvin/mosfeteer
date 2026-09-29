@@ -53,7 +53,7 @@ const exportEl = document.getElementById('atlas-export');
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Esc clears the search, then returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -146,20 +146,39 @@ const cellCeil = (value) => Math.ceil(value / GRID) * GRID;
 /** Pack the designs by the whole grid cells they cover, then shift each
  *  drawing by whole cells into its slot: its grid lines continue the desk's.
  *  A tile is the drawing's rectangle on the desk. */
-function placeDrawings(entries) {
+function placeDrawings(entries, previous = null) {
   const cells = new Map(entries.map((entry) => {
     const x = cellFloor(entry.box.x);
     const y = cellFloor(entry.box.y);
     return [entry.id, { x, y, w: cellCeil(entry.box.x + entry.box.w) - x, h: cellCeil(entry.box.y + entry.box.h) - y }];
   }));
   const boxes = new Map(entries.map((entry) => [entry.id, entry.box]));
-  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })));
+  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h, tags: entry.index?.tags || [] })), { previous });
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
     return { id: slot.id, x: box.x + slot.x - cell.x, y: box.y + slot.y - cell.y, w: box.w, h: box.h };
   });
-  return { tiles, bounds: layout.bounds };
+  return { tiles, slots: layout.slots, bounds: layout.bounds };
+}
+
+// Where each design of a workspace sat on the desk last time, so the desk
+// stays put between visits: only a new design, or one that no longer fits
+// its old spot, is placed again. Kept per viewer, in this browser.
+const DESK_KEY = 'mosfeteer.atlas.desk:';
+
+function rememberedSlots(folder) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DESK_KEY + folder) || 'null');
+    return saved && typeof saved === 'object' ? new Map(Object.entries(saved)) : null;
+  } catch { return null; }
+}
+
+function rememberSlots(folder, slots) {
+  try {
+    if (slots) localStorage.setItem(DESK_KEY + folder, JSON.stringify(Object.fromEntries(slots)));
+    else localStorage.removeItem(DESK_KEY + folder);
+  } catch { /* the desk still packs; it just is not remembered */ }
 }
 
 function viewBoxOf(svg) {
@@ -216,6 +235,7 @@ async function loadWorkspace(generation) {
   const workspace = await persistence.workspace();
   if (!state || state.generation !== generation) return false;
   const folder = workspace.workspace || '';
+  state.folder = folder;
   titleEl.textContent = folder.split(/[\\/]/).filter(Boolean).pop() || 'Workspace';
   titleEl.title = folder;
   // A browser-only file waiting for permission again cannot be read yet.
@@ -580,10 +600,14 @@ function arrangeDesk({ animate = true } = {}) {
   // The same designs always pack the same way: keep recent packings, so
   // stepping back (clearing the search) is immediate.
   let layout = state.layouts.get(key);
+  // The whole workspace keeps its remembered places; what a search finds
+  // packs tight.
+  const whole = state.source === 'workspace' && !state.matches;
   if (!layout) {
-    layout = placeDrawings(shown.map((id) => state.entries.get(id)));
+    layout = placeDrawings(shown.map((id) => state.entries.get(id)), whole ? rememberedSlots(state.folder) : null);
     if (state.layouts.size >= 16) state.layouts.delete(state.layouts.keys().next().value);
   }
+  if (whole) rememberSlots(state.folder, layout.slots);
   state.layouts.delete(key);
   state.layouts.set(key, layout);
   const from = new Map(state.tiles.map((tile) => [tile.id, shownTile(tile)]));
@@ -600,6 +624,18 @@ function arrangeDesk({ animate = true } = {}) {
   }
   state.motion = { from, leaving: [...from.values()].filter((tile) => !kept.has(tile.id)), start: performance.now() };
   void animateView(clampView(fitAllView()), ARRANGE_MS);
+}
+
+/** Shift+T: pack the whole desk afresh, related designs together, forgetting
+ *  where they sat. */
+function repackDesk() {
+  if (!state) return;
+  rememberSlots(state.folder, null);
+  state.layouts.clear();
+  state.arranged = null;
+  if (state.matches) clearSearch();
+  arrangeDesk({ animate: true });
+  logLine('Atlas: packed the desk afresh, designs sharing a tag together');
 }
 
 /** Search keys that act on what was found pack the desk first. */
@@ -1456,6 +1492,7 @@ export function onAtlasKey(ev) {
   } else if (key === '#' && selected && state.source === 'workspace') openTagEditor(selected);
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
+  else if (key === 'T' && state.source === 'workspace') repackDesk();
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centreOf().x, centreOf().y);
   else if (key === '-' || key === '_') zoomAbout(1.5, centreOf().x, centreOf().y);
   else if (key === 'D' || (key === 'd' && ev.shiftKey)) toggleTheme();

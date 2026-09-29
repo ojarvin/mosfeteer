@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ATLAS_CAPTION, ATLAS_GAP, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
+import { GRID } from '../src/core/grid.js';
 
 const items = [
   { id: 'a', w: 1200, h: 1800 },
@@ -89,4 +90,42 @@ test('keeping a pick in sight moves the view only as far as it must', () => {
   assert.deepEqual(viewShowing(view, { x: -300, y: 100, w: 200, h: 100 }), { x: -350, y: 0, w: 1000, h: 600 });
   // Larger than the view: centred on that axis.
   assert.deepEqual(viewShowing(view, { x: 2000, y: 100, w: 1500, h: 100 }), { x: 2250, y: 0, w: 1000, h: 600 });
+});
+
+test('a desk packed before keeps its designs where they were', () => {
+  const items = Array.from({ length: 12 }, (_, i) => ({ id: `d${i}`, w: GRID * (4 + (i * 7) % 9), h: GRID * (3 + (i * 5) % 7) }));
+  const first = layoutAtlas(items);
+  // One design grows, as an edit in the editor might make it.
+  const grown = items.map((item) => (item.id === 'd5' ? { ...item, w: item.w + 2 * GRID, h: item.h + GRID } : item));
+  const fresh = layoutAtlas(grown);
+  const kept = layoutAtlas(grown, { previous: first.slots });
+  const moved = (layout) => layout.tiles.filter((tile) => {
+    const was = first.slots.get(tile.id);
+    return was.x !== layout.slots.get(tile.id).x || was.y !== layout.slots.get(tile.id).y;
+  }).length;
+  assert.ok(moved(kept) <= 1, `only the grown design moves (${moved(kept)})`);
+  assert.ok(moved(kept) < moved(fresh));
+  // Nothing overlaps.
+  for (const a of kept.tiles) for (const b of kept.tiles) {
+    if (a === b) continue;
+    assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h + ATLAS_CAPTION <= b.y || b.y + b.h + ATLAS_CAPTION <= a.y);
+  }
+  // A new design joins without moving the rest.
+  const added = layoutAtlas([...items, { id: 'new', w: 4 * GRID, h: 3 * GRID }], { previous: first.slots });
+  for (const item of items) assert.deepEqual(added.slots.get(item.id), first.slots.get(item.id));
+});
+
+test('designs that share a tag pack near each other', () => {
+  const items = Array.from({ length: 10 }, (_, i) => ({ id: `d${i}`, w: 6 * GRID, h: 4 * GRID, tags: i % 2 ? ['adc'] : ['pll'] }));
+  const { tiles } = layoutAtlas(items);
+  const centre = (tile) => ({ x: tile.x + tile.w / 2, y: tile.y + tile.h / 2 });
+  const spread = (tag) => {
+    const group = tiles.filter((tile) => items.find((item) => item.id === tile.id).tags[0] === tag).map(centre);
+    const mean = { x: group.reduce((sum, p) => sum + p.x, 0) / group.length, y: group.reduce((sum, p) => sum + p.y, 0) / group.length };
+    return { mean, radius: Math.max(...group.map((p) => Math.hypot(p.x - mean.x, p.y - mean.y))) };
+  };
+  const adc = spread('adc');
+  const pll = spread('pll');
+  // The two groups sit apart: their centres further apart than either is wide.
+  assert.ok(Math.hypot(adc.mean.x - pll.mean.x, adc.mean.y - pll.mean.y) > Math.min(adc.radius, pll.radius) / 2);
 });
