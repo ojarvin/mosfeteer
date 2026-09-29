@@ -37,7 +37,7 @@ test('a rail name reaches markers with and without a label, and clearing restore
   assert.equal(circuit.netOfTerminal({ comp: 'M2', term: 's' }).name, 'AGND');
   assert.equal(circuit.labelOf('GROUND2').text, 'AGND');
   for (const refdes of ['GROUND1', 'GROUND2']) setSharedLabel(circuit, refdes, '');
-  assert.equal(circuit.netOfTerminal({ comp: 'M1', term: 's' }).name, 'VSS');
+  assert.equal(circuit.netOfTerminal({ comp: 'M1', term: 's' }).name, 'V_{SS}');
   assert.equal(circuit.labelOf('GROUND1'), null);
   assert.throws(() => setSharedLabel(circuit, 'M1', 'x'), /has a name/);
 });

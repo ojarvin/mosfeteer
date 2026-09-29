@@ -164,8 +164,8 @@ test('net names no label shows are found and renamed through the net', () => {
   circuit.addComponent('ground', { refdes: 'G1', x: 80, y: 800 });
   circuit.addComponent('resistor', { refdes: 'R5', x: 80, y: 720, r: 90 });
   circuit.connect('G1.gnd', 'R5.b');
-  assert.ok([...circuit.nets.values()].some((net) => net.name === 'VSS'));
-  assert.equal(findInLabels(circuit, 'VSS').length, 0);
+  assert.ok([...circuit.nets.values()].some((net) => net.name === 'V_{SS}'));
+  assert.equal(findInLabels(circuit, 'V_{SS}').length, 0);
 });
 
 test('replace leaves a global rail net named by its marker alone', () => {
@@ -175,6 +175,6 @@ test('replace leaves a global rail net named by its marker alone', () => {
   const rail = c.connect('R1.a', 'G1.gnd');
   const labelsBefore = c.labels.size;
   replaceInLabels(c, 'VSS', 'AGND');
-  assert.equal(rail.name, 'VSS');
+  assert.equal(rail.name, 'V_{SS}');
   assert.equal(c.labels.size, labelsBefore);
 });

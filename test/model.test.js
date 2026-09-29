@@ -686,15 +686,15 @@ test('reference markers auto-name attached nets and preserve explicit names', ()
   const r1 = c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   const gnd = c.addComponent('ground', { refdes: 'GND1', x: -80, y: 0 });
   const net = c.connect(`${r1.refdes}.a`, `${gnd.refdes}.gnd`);
-  assert.equal(net.name, 'VSS');
+  assert.equal(net.name, 'V_{SS}');
 
   const r2 = c.addComponent('resistor', { refdes: 'R2', x: 400, y: 0 });
   const supply = c.addComponent('supply', { refdes: 'SUPPLY1', x: 480, y: 0 });
-  assert.equal(c.connect(`${r2.refdes}.a`, `${supply.refdes}.p`).name, 'VDD');
+  assert.equal(c.connect(`${r2.refdes}.a`, `${supply.refdes}.p`).name, 'V_{DD}');
 
   const r3 = c.addComponent('resistor', { refdes: 'R3', x: 800, y: 0 });
   const vcm = c.addComponent('vcm', { refdes: 'VCM1', x: 880, y: 0 });
-  assert.equal(c.connect(`${r3.refdes}.a`, `${vcm.refdes}.vcm`).name, 'VCM');
+  assert.equal(c.connect(`${r3.refdes}.a`, `${vcm.refdes}.vcm`).name, 'V_{CM}');
 
   const r4 = c.addComponent('resistor', { refdes: 'R4', x: 1200, y: 0 });
   const named = c.addComponent('ground', { refdes: 'GND2', x: 1120, y: 0 });
@@ -733,7 +733,7 @@ test('a named reference marker becomes a local rail', () => {
   const r = c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   const supply = c.addComponent('supply', { refdes: 'SUPPLY1', x: -80, y: 0, value: 'AVDD' });
   const net = c.connect(`${r.refdes}.a`, `${supply.refdes}.p`);
-  assert.equal(net.name, 'VDD');
+  assert.equal(net.name, 'V_{DD}');
   assert.equal(supply.value, 'AVDD');
   const label = c.addLabel({ text: 'AVDD', owner: supply.refdes, offset: { x: 0, y: -120 } });
   label.setText('AVDD');
@@ -757,7 +757,7 @@ test('reference marker child labels make the marker local and rename its net', (
 });
 
 test('deleting a marker child label restores the global rail and leaves no value text', () => {
-  for (const [type, terminal, global, offset] of [['supply', 'p', 'VDD', -120], ['ground', 'gnd', 'VSS', 120], ['vcm', 'vcm', 'VCM', 120]]) {
+  for (const [type, terminal, global, offset] of [['supply', 'p', 'V_{DD}', -120], ['ground', 'gnd', 'V_{SS}', 120], ['vcm', 'vcm', 'V_{CM}', 120]]) {
     const c = new Circuit();
     c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
     const marker = c.addComponent(type, { refdes: 'M1', x: -80, y: 0 });
@@ -3826,7 +3826,7 @@ test('an unnamed reference marker on a differently named net is a rail conflict'
   runCommand(c, 'connect R1.b G1.gnd');
   const net = c.netOfTerminal({ comp: 'G1', term: 'gnd' });
   assert.equal(net.name, 'OUT');
-  assert.deepEqual(referenceMarkerNameConflicts(c), [{ netId: net.id, refdes: 'G1', name: 'OUT', railName: 'VSS' }]);
+  assert.deepEqual(referenceMarkerNameConflicts(c), [{ netId: net.id, refdes: 'G1', name: 'OUT', railName: 'V_{SS}' }]);
 
   // Taking the rail name resolves it; the marker stays a global reference.
   c.renameNet(net, 'VSS');
@@ -3835,7 +3835,7 @@ test('an unnamed reference marker on a differently named net is a rail conflict'
 
   // An unnamed net simply takes the rail name, and a legacy alias is no conflict.
   runCommand(c, 'connect R3.b P1.p');
-  assert.equal(c.netOfTerminal({ comp: 'P1', term: 'p' }).name, 'VDD');
+  assert.equal(c.netOfTerminal({ comp: 'P1', term: 'p' }).name, 'V_{DD}');
   c.renameNet(net, 'GND');
   assert.deepEqual(referenceMarkerNameConflicts(c), []);
 });
@@ -4014,4 +4014,27 @@ test('a descriptive component name keeps its text and derives a safe identity', 
   assert.ok(c.components.has('OA2'));
   const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
   assert.equal(reloaded.labelOf('X2_stage_opamp').text, '2 stage opamp');
+});
+
+test('rails are named V_{SS}, V_{DD}, V_{CM}, and the plain spellings are the same rails', () => {
+  const c = new Circuit();
+  c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  c.addComponent('resistor', { refdes: 'R2', x: 0, y: 400 });
+  c.addComponent('ground', { refdes: 'G1', x: 320, y: 0 });
+  const rail = c.connect('R1.a', 'G1.gnd');
+  assert.equal(rail.name, 'V_{SS}');
+  // A net labelled with the plain spelling joins the rail.
+  const typed = c.connect('R2.a', 'R2.b');
+  c.renameNet(typed, 'VSS');
+  assert.equal(c.netGroupKey(typed), c.netGroupKey(rail));
+  assert.equal(c.logicallyConnected(typed, rail), true);
+  // An older document's plain rail name, and its highlight, load respelled.
+  const json = c.toJSON();
+  const saved = json.nets.find((net) => net.id === rail.id);
+  saved.name = 'VSS';
+  json.netHighlights = { 'name:VSS': 'red' };
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(json)));
+  assert.equal(loaded.nets.get(rail.id).name, 'V_{SS}');
+  assert.equal(loaded.netHighlights.get('name:V_{SS}'), 'red');
+  assert.equal(loaded.nets.get(typed.id).name, 'VSS');
 });

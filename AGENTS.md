@@ -135,7 +135,9 @@ be a component identity remains a net-only name. `port_filled` is a legacy
 JSON alias for `port`.
 
 Unnamed `ground`, `supply`, and `vcm` markers name an attached unnamed net
-`VSS`, `VDD`, or `VCM` and form shared AC-reference groups. A local owned
+`V_{SS}`, `V_{DD}`, or `V_{CM}` and form shared AC-reference groups; the plain
+spellings `VSS`/`VDD`/`VCM` are the same rails (`src/core/rail-names.js`), and
+older documents' marker-named nets load respelled. A local owned
 marker label is distinct from the global rail name; deleting it clears the
 marker value and restores the global behavior. `GND` remains a compatibility
 alias for an unnamed ground marker.
@@ -165,7 +167,7 @@ edit. Scripted commands never prompt: the model keeps one name and records a
 `netNameWarnings` entry for Design Check. Joining an unnamed `ground`,
 `supply`, or `vcm` marker to a net with another given name is the same kind of
 short: the editor asks, in the same picker, to rename the net to the rail
-(`VSS`/`VDD`/`VCM`), and a cancel reverts the whole edit.
+(`V_{SS}`/`V_{DD}`/`V_{CM}`), and a cancel reverts the whole edit.
 
 A net named with a bit range, `D[7:0]` or `D<7:0>`, is a bus
 (`src/core/bus.js`): by the Virtuoso convention it stands for the parallel

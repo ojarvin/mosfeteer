@@ -73,7 +73,7 @@ test('pins that move reroute only their legs and stay connected', () => {
   assert.deepEqual(collector.terminals.map((t) => `${t.comp}.${t.term}`).sort(), ['Q1.c', 'R1.a']);
   assert.deepEqual(collector.paths()[0][0], q.terminalWorld('c'));
   assert.deepEqual(circuit.netOfTerminal({ comp: 'Q1', term: 'b' }).paths(), [[{ x: -280, y: 0 }, { x: -160, y: 0 }]]);
-  assert.equal(circuit.netOfTerminal({ comp: 'Q1', term: 'e' }).name, 'VSS');
+  assert.equal(circuit.netOfTerminal({ comp: 'Q1', term: 'e' }).name, 'V_{SS}');
 });
 
 test('a pin with no counterpart detaches', () => {
@@ -86,7 +86,7 @@ test('a pin with no counterpart detaches', () => {
 test('an unnamed rail marker renames the net it named', () => {
   const circuit = stage();
   swapComponentType(circuit, 'GROUND1', 'supply');
-  assert.equal(circuit.netOfTerminal({ comp: 'M1', term: 's' }).name, 'VDD');
+  assert.equal(circuit.netOfTerminal({ comp: 'M1', term: 's' }).name, 'V_{DD}');
 });
 
 test('a switch swap moves its whole phase', () => {

@@ -909,7 +909,7 @@ test('a net highlight colors the group wires, net labels, and rail markers witho
   const teal = COLOR_PALETTE.teal;
   assert.match(svg, new RegExp(`data-net-id="${vss.id}"[^>]*stroke="${teal}"`, 'i'));
   assert.match(svg, new RegExp(`data-ref="G1"[\\s\\S]*?stroke="${teal}"`, 'i'));
-  assert.match(svg, new RegExp(`<text[^>]*fill="${teal}"[^>]*>[^<]*VSS`, 'i'));
+  assert.match(svg, new RegExp(`<text[^>]*fill="${teal}"[^>]*>V<tspan[^>]*>SS`, 'i'));
   // Model styles are untouched, so clearing restores the drawing exactly.
   assert.equal(vss.style?.color, ownColor);
   c.clearNetHighlights();

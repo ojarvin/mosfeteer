@@ -15,7 +15,7 @@ test('any node can be the input, a supply rail included', () => {
   // under test, and then it is driven like any other.
   const report = analyzeSmallSignalV2(circuit, { input: 'VDD', output: ports.output, acGrounds: ['VIN'] });
   assert.equal(report.ok, true, report.error || '');
-  assert.equal(report.context.input.name, 'VDD');
+  assert.equal(report.context.input.name, 'V_{DD}');
   assert.equal(report.context.acGroundIds.has(report.context.input.netId), false, 'the input left the reference set');
 
   // The supply reaches the output through R_D against r_o, so the gain is that

@@ -1067,8 +1067,10 @@ __exports.collectAcGrounds = collectAcGrounds;
 __exports.virtualNetAliases = virtualNetAliases;
 __exports.resolveMosBulk = resolveMosBulk;
 __exports.resolveAnalysisContext = resolveAnalysisContext;
+let plainName, railNameKey; __bind(() => { ({ plainName, railNameKey } = __require("src/core/rail-names.js")); });
 let asList, MOS_TYPES; __bind(() => { ({ asList, MOS_TYPES } = __require("src/core/analysis/shared.js")); });
 let canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal; __bind(() => { ({ canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js")); });
+
 
 
 
@@ -1119,7 +1121,9 @@ function netByValue(circuit, value, role) {
     }
   }
 
-  const matches = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
+  const exact = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
+  // A rail answers to either spelling: VDD is V_{DD}.
+  const matches = exact.length ? exact : [...circuit.nets.values()].filter((net) => net.name && railNameKey(net.name) === railNameKey(raw));
   // Several physical nets carrying one name are one node (a virtual
   // connection), so the first of them answers for the whole group.
   if (matches.length) return { ok: true, net: matches[0], value: raw };
@@ -1194,7 +1198,7 @@ function isGlobalReferenceNet(component, net) {
   const info = referenceMarkerInfo(component.type);
   return !referenceMarkerIsLocal(component)
     || isReferenceMarkerGlobalName(info, net.name)
-    || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase());
+    || REFERENCE_NAMES.has(plainName(net.name).toUpperCase());
 }
 
 function collectAcGrounds(circuit, values = []) {
@@ -1206,7 +1210,7 @@ function collectAcGrounds(circuit, values = []) {
     if (isGlobalReferenceNet(component, net)) ids.add(net.id);
   }
   for (const net of circuit.nets.values()) {
-    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase())) {
+    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(plainName(net.name).toUpperCase())) {
       ids.add(net.id);
     }
   }
@@ -11244,6 +11248,7 @@ __exports.busTerminalMarks = busTerminalMarks;
 __exports.defaultBusCountOffset = defaultBusCountOffset;
 __exports.busCountLabels = busCountLabels;
 __exports.busMarkD = busMarkD;
+let railNameKey; __bind(() => { ({ railNameKey } = __require("src/core/rail-names.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
 /**
@@ -11264,6 +11269,7 @@ let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js
  * block), leaving room for an arrowhead. A bus net with no pins marks each branch
  * mid-way instead (busMarkPoints).
  */
+
 
 
 
@@ -11321,13 +11327,14 @@ function busGroupsWithin(name, names) {
   });
 }
 
-/** Whether two net names are virtually connected: the same name, or two
- *  names of one bus that share a bit (`D[3:0]` and `D<1>`). */
+/** Whether two net names are virtually connected: the same name (a rail in
+ *  either spelling, `VSS` or `V_{SS}`), or two names of one bus that share a
+ *  bit (`D[3:0]` and `D<1>`). */
 function netNamesConnect(a, b) {
   const left = String(a ?? '').trim();
   const right = String(b ?? '').trim();
   if (!left || !right) return false;
-  if (left === right) return true;
+  if (left === right || railNameKey(left) === railNameKey(right)) return true;
   const x = busBits(left);
   const y = busBits(right);
   return !!x && !!y && x.base === y.base && x.bits.some((bit) => y.bits.includes(bit));
@@ -15220,6 +15227,7 @@ __exports.componentLabelText = componentLabelText;
 __exports.normalizePlot = normalizePlot;
 __exports.pathHasDiagonal = pathHasDiagonal;
 __exports.diagonalDraftPath = diagonalDraftPath;
+let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
 let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect; __bind(() => { ({ applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js")); });
 let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require("src/core/grid.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
@@ -15241,6 +15249,7 @@ let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeat
 
 
 
+
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
 function canonicalNetName(name) {
@@ -15251,12 +15260,13 @@ function canonicalNetName(name) {
  * entering a marker value (or child label) makes that instance local. */
 const REFERENCE_MARKER_TYPES = Object.freeze(['ground', 'supply', 'vcm']);
 const REFERENCE_MARKER_INFO = Object.freeze({
-  ground: Object.freeze({ terminal: 'gnd', globalName: 'VSS', labelOffset: { x: 0, y: 120 } }),
-  supply: Object.freeze({ terminal: 'p', globalName: 'VDD', labelOffset: { x: 0, y: -120 } }),
-  vcm: Object.freeze({ terminal: 'vcm', globalName: 'VCM', labelOffset: { x: 0, y: 120 } }),
+  ground: Object.freeze({ terminal: 'gnd', globalName: RAIL_NAMES.ground, labelOffset: { x: 0, y: 120 } }),
+  supply: Object.freeze({ terminal: 'p', globalName: RAIL_NAMES.supply, labelOffset: { x: 0, y: -120 } }),
+  vcm: Object.freeze({ terminal: 'vcm', globalName: RAIL_NAMES.vcm, labelOffset: { x: 0, y: 120 } }),
 });
 
-// Keep `GND` as a compatibility alias; new unnamed ground markers use `VSS`.
+// Keep `GND` as a compatibility alias; new unnamed ground markers use
+// `V_{SS}` (which `VSS` also spells, rail-names.js).
 const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
 
 // A schematic block's origin is its center. An even number of cells per side
@@ -15353,7 +15363,8 @@ function referenceMarkerGlobalNames(typeOrInfo) {
 }
 
 function isReferenceMarkerGlobalName(typeOrInfo, name) {
-  return referenceMarkerGlobalNames(typeOrInfo).includes(canonicalNetName(name));
+  const key = railNameKey(name);
+  return referenceMarkerGlobalNames(typeOrInfo).some((global) => railNameKey(global) === key);
 }
 
 function isReferenceMarker(component) {
@@ -18141,7 +18152,7 @@ class Circuit {
   netGroupKey(net) {
     if (!net?.id) return '';
     const rail = this.unnamedReferenceInfo(net)?.globalName;
-    return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
+    return `name:${rail || busGroupName(net.name) || railNameKey(net.name) || net.id}`;
   }
 
   /** Show or hide a bus net's bit counts beside its slashes. Returns
@@ -21718,8 +21729,16 @@ class Circuit {
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
     circuit.tags = normalizeTags(data.tags);
+    // A rail's group is keyed by its V_{..} spelling; older documents keyed
+    // it by the plain one (`name:VSS`).
+    const railKey = (key) => (key.startsWith('name:') ? `name:${railNameKey(key.slice(5))}` : key);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
-      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
+      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(railKey(key), color);
+    }
+    for (const beat of circuit.beats) {
+      for (const key of Object.keys(beat.highlights)) {
+        if (railKey(key) !== key) renameBeatHighlightKey(circuit, key, railKey(key));
+      }
     }
     circuit._loading = true;
     const flippedOpamps = new Set();
@@ -21870,6 +21889,10 @@ class Circuit {
       }
     }
     for (const net of circuit.nets.values()) {
+      // An older document's unnamed marker named its net VSS, VDD, or VCM;
+      // the rails are spelled V_{SS}, V_{DD}, V_{CM} now.
+      const rail = circuit.unnamedReferenceInfo(net);
+      if (rail && net.name !== rail.globalName && railNameKey(net.name) === rail.globalName) net.name = rail.globalName;
       circuit._syncReferenceMarkerNetName(net);
       circuit._syncAnalysisAttributes(net);
       circuit._syncInterfacePinLabels(net, { enforceName: !net.name, preserveSource: true });
@@ -22254,6 +22277,34 @@ function withPngDensity(bytes, dpi) {
 __exports.PNG_DPI_CHOICES = PNG_DPI_CHOICES;
 __exports.DEFAULT_PNG_DPI = DEFAULT_PNG_DPI;
 __exports.DEFAULT_EXPORT_TEXT_PT = DEFAULT_EXPORT_TEXT_PT;
+};
+
+__modules["src/core/rail-names.js"] = function (__require, __exports) {
+__exports.plainName = plainName;
+__exports.railNameKey = railNameKey;
+/**
+ * The global rail names. Unnamed ground, supply, and VCM markers name their
+ * nets V_{SS}, V_{DD}, and V_{CM}; the plain spellings VSS, VDD, and VCM
+ * (older documents, typed net labels) are the same rails.
+ */
+
+const RAIL_NAMES = Object.freeze({ ground: 'V_{SS}', supply: 'V_{DD}', vcm: 'V_{CM}' });
+
+/** A name read without its script markup: `V_{SS}` reads `VSS`. */
+function plainName(name) {
+  return String(name ?? '').trim().replace(/([_^])\{([^}]*)\}/g, '$2');
+}
+
+const ALIASES = new Map(Object.values(RAIL_NAMES).map((name) => [plainName(name), name]));
+
+/** The one spelling a rail name compares by (`VSS` -> `V_{SS}`); any other
+ *  name as written. */
+function railNameKey(name) {
+  const text = String(name ?? '').trim();
+  return ALIASES.get(plainName(text)) || text;
+}
+
+__exports.RAIL_NAMES = RAIL_NAMES;
 };
 
 __modules["src/core/render.js"] = function (__require, __exports) {

@@ -1,3 +1,4 @@
+import { plainName, railNameKey } from '../rail-names.js';
 import { asList, MOS_TYPES } from './shared.js';
 import {
   canonicalNetName,
@@ -54,7 +55,9 @@ function netByValue(circuit, value, role) {
     }
   }
 
-  const matches = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
+  const exact = [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === raw);
+  // A rail answers to either spelling: VDD is V_{DD}.
+  const matches = exact.length ? exact : [...circuit.nets.values()].filter((net) => net.name && railNameKey(net.name) === railNameKey(raw));
   // Several physical nets carrying one name are one node (a virtual
   // connection), so the first of them answers for the whole group.
   if (matches.length) return { ok: true, net: matches[0], value: raw };
@@ -129,7 +132,7 @@ function isGlobalReferenceNet(component, net) {
   const info = referenceMarkerInfo(component.type);
   return !referenceMarkerIsLocal(component)
     || isReferenceMarkerGlobalName(info, net.name)
-    || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase());
+    || REFERENCE_NAMES.has(plainName(net.name).toUpperCase());
 }
 
 export function collectAcGrounds(circuit, values = []) {
@@ -141,7 +144,7 @@ export function collectAcGrounds(circuit, values = []) {
     if (isGlobalReferenceNet(component, net)) ids.add(net.id);
   }
   for (const net of circuit.nets.values()) {
-    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(canonicalNetName(net.name).toUpperCase())) {
+    if (net.analysis?.acGround === true || REFERENCE_NAMES.has(plainName(net.name).toUpperCase())) {
       ids.add(net.id);
     }
   }

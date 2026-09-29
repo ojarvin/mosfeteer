@@ -12,11 +12,11 @@ test('a pin facing the way the rail hangs gets a straight one-cell lead', () => 
   const ground = addPinRail(circuit, { comp: 'M1', term: 's' }, 'ground');
   assert.deepEqual([ground.transform.x, ground.transform.y], [0, 120]);
   assert.deepEqual(leadOf(circuit, 'M1', 's'), [[{ x: 0, y: 80 }, { x: 0, y: 120 }]]);
-  assert.equal(circuit.netOfTerminal({ comp: 'M1', term: 's' }).name, 'VSS');
+  assert.equal(circuit.netOfTerminal({ comp: 'M1', term: 's' }).name, 'V_{SS}');
   runCommand(circuit, 'add pmos M2 --at 400 0');
   addPinRail(circuit, { comp: 'M2', term: 's' }, 'supply');
   assert.deepEqual(leadOf(circuit, 'M2', 's'), [[{ x: 400, y: -80 }, { x: 400, y: -120 }]]);
-  assert.equal(circuit.netOfTerminal({ comp: 'M2', term: 's' }).name, 'VDD');
+  assert.equal(circuit.netOfTerminal({ comp: 'M2', term: 's' }).name, 'V_{DD}');
 });
 
 test('a sideways pin turns one cell toward the rail', () => {

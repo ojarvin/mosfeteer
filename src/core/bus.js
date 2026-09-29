@@ -17,6 +17,7 @@
  * mid-way instead (busMarkPoints).
  */
 
+import { railNameKey } from './rail-names.js';
 import { GRID } from './grid.js';
 import { pointOnPath } from './wiring.js';
 
@@ -73,13 +74,14 @@ export function busGroupsWithin(name, names) {
   });
 }
 
-/** Whether two net names are virtually connected: the same name, or two
- *  names of one bus that share a bit (`D[3:0]` and `D<1>`). */
+/** Whether two net names are virtually connected: the same name (a rail in
+ *  either spelling, `VSS` or `V_{SS}`), or two names of one bus that share a
+ *  bit (`D[3:0]` and `D<1>`). */
 export function netNamesConnect(a, b) {
   const left = String(a ?? '').trim();
   const right = String(b ?? '').trim();
   if (!left || !right) return false;
-  if (left === right) return true;
+  if (left === right || railNameKey(left) === railNameKey(right)) return true;
   const x = busBits(left);
   const y = busBits(right);
   return !!x && !!y && x.base === y.base && x.bits.some((bit) => y.bits.includes(bit));

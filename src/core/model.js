@@ -1,3 +1,4 @@
+import { RAIL_NAMES, railNameKey } from './rail-names.js';
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
@@ -19,12 +20,13 @@ export function canonicalNetName(name) {
  * entering a marker value (or child label) makes that instance local. */
 export const REFERENCE_MARKER_TYPES = Object.freeze(['ground', 'supply', 'vcm']);
 const REFERENCE_MARKER_INFO = Object.freeze({
-  ground: Object.freeze({ terminal: 'gnd', globalName: 'VSS', labelOffset: { x: 0, y: 120 } }),
-  supply: Object.freeze({ terminal: 'p', globalName: 'VDD', labelOffset: { x: 0, y: -120 } }),
-  vcm: Object.freeze({ terminal: 'vcm', globalName: 'VCM', labelOffset: { x: 0, y: 120 } }),
+  ground: Object.freeze({ terminal: 'gnd', globalName: RAIL_NAMES.ground, labelOffset: { x: 0, y: 120 } }),
+  supply: Object.freeze({ terminal: 'p', globalName: RAIL_NAMES.supply, labelOffset: { x: 0, y: -120 } }),
+  vcm: Object.freeze({ terminal: 'vcm', globalName: RAIL_NAMES.vcm, labelOffset: { x: 0, y: 120 } }),
 });
 
-// Keep `GND` as a compatibility alias; new unnamed ground markers use `VSS`.
+// Keep `GND` as a compatibility alias; new unnamed ground markers use
+// `V_{SS}` (which `VSS` also spells, rail-names.js).
 const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.freeze(['GND']) });
 
 // A schematic block's origin is its center. An even number of cells per side
@@ -121,7 +123,8 @@ export function referenceMarkerGlobalNames(typeOrInfo) {
 }
 
 export function isReferenceMarkerGlobalName(typeOrInfo, name) {
-  return referenceMarkerGlobalNames(typeOrInfo).includes(canonicalNetName(name));
+  const key = railNameKey(name);
+  return referenceMarkerGlobalNames(typeOrInfo).some((global) => railNameKey(global) === key);
 }
 
 export function isReferenceMarker(component) {
@@ -2909,7 +2912,7 @@ export class Circuit {
   netGroupKey(net) {
     if (!net?.id) return '';
     const rail = this.unnamedReferenceInfo(net)?.globalName;
-    return `name:${rail || busGroupName(net.name) || net.name || net.id}`;
+    return `name:${rail || busGroupName(net.name) || railNameKey(net.name) || net.id}`;
   }
 
   /** Show or hide a bus net's bit counts beside its slashes. Returns
@@ -6486,8 +6489,16 @@ export class Circuit {
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
     circuit.tags = normalizeTags(data.tags);
+    // A rail's group is keyed by its V_{..} spelling; older documents keyed
+    // it by the plain one (`name:VSS`).
+    const railKey = (key) => (key.startsWith('name:') ? `name:${railNameKey(key.slice(5))}` : key);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
-      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
+      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(railKey(key), color);
+    }
+    for (const beat of circuit.beats) {
+      for (const key of Object.keys(beat.highlights)) {
+        if (railKey(key) !== key) renameBeatHighlightKey(circuit, key, railKey(key));
+      }
     }
     circuit._loading = true;
     const flippedOpamps = new Set();
@@ -6638,6 +6649,10 @@ export class Circuit {
       }
     }
     for (const net of circuit.nets.values()) {
+      // An older document's unnamed marker named its net VSS, VDD, or VCM;
+      // the rails are spelled V_{SS}, V_{DD}, V_{CM} now.
+      const rail = circuit.unnamedReferenceInfo(net);
+      if (rail && net.name !== rail.globalName && railNameKey(net.name) === rail.globalName) net.name = rail.globalName;
       circuit._syncReferenceMarkerNetName(net);
       circuit._syncAnalysisAttributes(net);
       circuit._syncInterfacePinLabels(net, { enforceName: !net.name, preserveSource: true });
