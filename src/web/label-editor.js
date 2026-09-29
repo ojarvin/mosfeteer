@@ -4,7 +4,7 @@
  * marker's value, and a schematic block's caption.
  */
 
-import { INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup } from '../core/model.js';
+import { INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup } from '../core/model.js';
 import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
@@ -343,7 +343,7 @@ export function inlineEditLabel(label, options = {}) {
       // net through the same rename. A switch's label is its phase instead.
       const ordinaryOwner = owner && !isReferenceMarker(owner) && !switchState(owner) && !label.math;
       if (ordinaryOwner) {
-        const canonical = normalizeComponentRefdes(v);
+        const canonical = componentNameIdentity(v);
         if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(canonical)) {
           logLine(`Invalid component name "${v}".`, 'error');
         } else if (canonical !== owner.refdes && editor.circuit.components.has(canonical)) {

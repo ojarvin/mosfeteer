@@ -15052,6 +15052,7 @@ __exports.stripMathDelimiters = stripMathDelimiters;
 __exports.mathTextForMetrics = mathTextForMetrics;
 __exports.normalizeMathSource = normalizeMathSource;
 __exports.normalizeComponentRefdes = normalizeComponentRefdes;
+__exports.componentNameIdentity = componentNameIdentity;
 __exports.componentLabelText = componentLabelText;
 __exports.normalizePlot = normalizePlot;
 __exports.pathHasDiagonal = pathHasDiagonal;
@@ -15830,6 +15831,21 @@ function normalizeComponentRefdes(value) {
 
 const BUS_RANGE_SUFFIX = /\s*[[<]\s*(\d+)\s*:\s*(\d+)\s*[\]>]$/;
 
+const IDENTITY = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** The identity a typed component name gives its part. A descriptive name
+ *  (`2-stage opamp`) keeps its text as the label; its identity joins the
+ *  words with `_`, and one led by a digit takes the SPICE subcircuit prefix:
+ *  `X2_stage_opamp`. Stored refdes and net-side renames stay strict
+ *  (normalizeComponentRefdes): only a name typed for a part is loosened. */
+function componentNameIdentity(value) {
+  const strict = normalizeComponentRefdes(value);
+  if (!strict || IDENTITY.test(strict) || parseLabelRuns(strict).some((run) => run.super)) return strict;
+  const joined = strict.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!joined) return strict;
+  return /^[A-Za-z]/.test(joined) ? joined : `X${joined}`;
+}
+
 /** Return the persisted display source for a component name. Numeric default
  * names use textbook subscript notation (`M_{1}`), while an explicitly
  * formatted source such as `R_{D}` is preserved when it denotes the same
@@ -15838,6 +15854,8 @@ function componentLabelText(refdes, source = null) {
   const canonical = normalizeComponentRefdes(refdes);
   const supplied = source === null || source === undefined ? '' : String(source).trim();
   if (supplied && normalizeComponentRefdes(supplied) === canonical && (/[_^]\{/.test(supplied) || BUS_RANGE_SUFFIX.test(supplied))) return supplied;
+  // A descriptive name is its own display source.
+  if (supplied && supplied !== canonical && componentNameIdentity(supplied) === canonical) return supplied;
   // Interface voltage ports use a two-part textbook name: the voltage
   // marker stays on the baseline while the direction/index is subscripted
   // (VI1 -> V_{I1}, VO2 -> V_{O2}, VIO3 -> V_{IO3}).
@@ -15851,7 +15869,7 @@ function componentLabelText(refdes, source = null) {
  * `M1` and `M_{1}` as the same instance label, but does not mistake a
  * superscript or a custom marker label for the refdes. */
 function labelMatchesRefdes(text, refdes) {
-  return normalizeComponentRefdes(text) === normalizeComponentRefdes(refdes);
+  return componentNameIdentity(text) === normalizeComponentRefdes(refdes);
 }
 
 /**
@@ -17153,8 +17171,8 @@ class Circuit {
     this.invalidateRoutingCache();
     const current = normalizeComponentRefdes(refdes);
     const component = this.getComponent(current);
-    const next = normalizeComponentRefdes(newRefdes);
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
+    const next = componentNameIdentity(newRefdes);
+    if (!IDENTITY.test(next)) {
       throw new Error(`invalid refdes "${next}"`);
     }
     const interfacePin = INTERFACE_PIN_TYPES.has(component.type);
@@ -18072,8 +18090,8 @@ class Circuit {
     const component = this.components.get(refdes);
     if (!component || isReferenceMarker(component)) return false;
     if (this._syncSwitchLabel(refdes, text)) return true;
-    const next = normalizeComponentRefdes(text);
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) throw new Error(`invalid component name "${String(text).trim()}"`);
+    const next = componentNameIdentity(text);
+    if (!IDENTITY.test(next)) throw new Error(`invalid component name "${String(text).trim()}"`);
     this.renameComponent(refdes, next, { displayLabel: text });
     return true;
   }
@@ -39721,7 +39739,7 @@ __exports.inlineEditSchematicBlock = inlineEditSchematicBlock;
 __exports.openComponentChildLabelEditor = openComponentChildLabelEditor;
 __exports.openReferenceMarkerEditor = openReferenceMarkerEditor;
 __exports.inlineEditLabel = inlineEditLabel;
-let INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker, normalizeComponentRefdes, referenceMarkerInfo, stripMathDelimiters, applyMarkup } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup } = __require("src/core/model.js")); });
 let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
@@ -40076,7 +40094,7 @@ function inlineEditLabel(label, options = {}) {
       // net through the same rename. A switch's label is its phase instead.
       const ordinaryOwner = owner && !isReferenceMarker(owner) && !switchState(owner) && !label.math;
       if (ordinaryOwner) {
-        const canonical = normalizeComponentRefdes(v);
+        const canonical = componentNameIdentity(v);
         if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(canonical)) {
           logLine(`Invalid component name "${v}".`, 'error');
         } else if (canonical !== owner.refdes && editor.circuit.components.has(canonical)) {
@@ -50481,7 +50499,7 @@ __exports.sidePanelVisible = sidePanelVisible;
 __exports.setSidePanelVisible = setSidePanelVisible;
 __exports.toggleSidePanel = toggleSidePanel;
 __exports.installSidePanel = installSidePanel;
-let INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, normalizeComponentRefdes, parseLabelRuns, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, normalizeComponentRefdes, parseLabelRuns, applyMarkup } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup } = __require("src/core/model.js")); });
 let switchPhase; __bind(() => { ({ switchPhase } = __require("src/core/beats.js")); });
 let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -50832,7 +50850,7 @@ function startComponentRename(comp, ref) {
   const done = async (applyText) => {
     if (closed || prompting) return;
     const value = input.value.trim();
-    const next = normalizeComponentRefdes(value);
+    const next = componentNameIdentity(value);
     if (applyText && next && next !== comp.refdes && INTERFACE_PIN_TYPES.has(comp.type)) {
       const conflicts = namedConnectionConflicts(value, { ownerRefdes: comp.refdes });
       const portConflict = portNameConflict(conflicts, comp.refdes);
@@ -50856,8 +50874,11 @@ function startComponentRename(comp, ref) {
     closed = true;
     editor.inlineInput = null;
     input.replaceWith(ref);
-    if (applyText && next && next !== comp.refdes &&
-        /^[A-Za-z][A-Za-z0-9_]*$/.test(next) && !editor.circuit.components.has(next)) {
+    // A descriptive name may change its text but keep its identity
+    // (`2-stage opamp`, `2 stage opamp`); that is a rename too.
+    const relabel = next === comp.refdes && value !== editor.circuit.labelOf(comp.refdes)?.text;
+    if (applyText && next && (next !== comp.refdes || relabel) &&
+        /^[A-Za-z][A-Za-z0-9_]*$/.test(next) && (relabel || !editor.circuit.components.has(next))) {
       const previous = comp.refdes;
       const displayLabel = value;
       commit(() => editor.circuit.renameComponent(previous, next, { displayLabel }));

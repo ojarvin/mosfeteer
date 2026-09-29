@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit, NET_HIGHLIGHT_COLORS, referenceMarkerNameConflicts, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
+import { Circuit, componentNameIdentity, NET_HIGHLIGHT_COLORS, referenceMarkerNameConflicts, ComponentInstance, Net, parseTermRef, LabelInstance, applyMarkup, containedWireSegments, extractWireIslands, extractWireFragments, transformWorldPoints, transformComponentWorld, parseLabelRuns } from '../src/core/model.js';
 import { GRID, snap, onGrid } from '../src/core/grid.js';
 import { segThroughInterior } from '../src/core/router.js';
 import { svgString } from '../src/core/render.js';
@@ -3994,4 +3994,24 @@ test('renameNetGroup renames a whole rail without marker child labels', () => {
   assert.equal(c.labels.size, labelsBefore);
   assert.equal(c.labelOf('G1'), null);
   assert.equal(c.netGroupKey(first), c.netGroupKey(second));
+});
+
+test('a descriptive component name keeps its text and derives a safe identity', () => {
+  assert.equal(componentNameIdentity('2-stage opamp'), 'X2_stage_opamp');
+  assert.equal(componentNameIdentity('OTA main'), 'OTA_main');
+  assert.equal(componentNameIdentity('M_{2}'), 'M2');
+  assert.equal(componentNameIdentity('--'), '--');
+  const c = new Circuit();
+  c.addComponent('opamp', { refdes: 'OA1', x: 0, y: 0 });
+  c.labelOf('OA1').setText('2-stage opamp');
+  assert.deepEqual([...c.components.keys()], ['X2_stage_opamp']);
+  assert.equal(c.labelOf('X2_stage_opamp').text, '2-stage opamp');
+  // Same identity, new text: the label follows.
+  c.labelOf('X2_stage_opamp').setText('2 stage opamp');
+  assert.equal(c.labelOf('X2_stage_opamp').text, '2 stage opamp');
+  c.addComponent('opamp', { refdes: 'OA2', x: 0, y: 800 });
+  assert.throws(() => c.labelOf('OA2').setText('2-stage opamp'), /already in use/);
+  assert.ok(c.components.has('OA2'));
+  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  assert.equal(reloaded.labelOf('X2_stage_opamp').text, '2 stage opamp');
 });

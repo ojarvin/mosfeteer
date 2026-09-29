@@ -4,7 +4,7 @@
  * showing or hiding the panel (a drawer on narrow windows).
  */
 
-import { INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, normalizeComponentRefdes, parseLabelRuns, applyMarkup } from '../core/model.js';
+import { INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup } from '../core/model.js';
 import { switchPhase } from '../core/beats.js';
 import { resolveColor } from '../core/style.js';
 import { GRID } from '../core/grid.js';
@@ -334,7 +334,7 @@ export function startComponentRename(comp, ref) {
   const done = async (applyText) => {
     if (closed || prompting) return;
     const value = input.value.trim();
-    const next = normalizeComponentRefdes(value);
+    const next = componentNameIdentity(value);
     if (applyText && next && next !== comp.refdes && INTERFACE_PIN_TYPES.has(comp.type)) {
       const conflicts = namedConnectionConflicts(value, { ownerRefdes: comp.refdes });
       const portConflict = portNameConflict(conflicts, comp.refdes);
@@ -358,8 +358,11 @@ export function startComponentRename(comp, ref) {
     closed = true;
     editor.inlineInput = null;
     input.replaceWith(ref);
-    if (applyText && next && next !== comp.refdes &&
-        /^[A-Za-z][A-Za-z0-9_]*$/.test(next) && !editor.circuit.components.has(next)) {
+    // A descriptive name may change its text but keep its identity
+    // (`2-stage opamp`, `2 stage opamp`); that is a rename too.
+    const relabel = next === comp.refdes && value !== editor.circuit.labelOf(comp.refdes)?.text;
+    if (applyText && next && (next !== comp.refdes || relabel) &&
+        /^[A-Za-z][A-Za-z0-9_]*$/.test(next) && (relabel || !editor.circuit.components.has(next))) {
       const previous = comp.refdes;
       const displayLabel = value;
       commit(() => editor.circuit.renameComponent(previous, next, { displayLabel }));

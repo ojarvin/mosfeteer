@@ -105,7 +105,10 @@ takes it, a differently named one is renamed only after confirmation).
 
 Component names and owned labels are one synchronized unique identity. Names
 accept markup such as `M_{2}` and `R_{D}`; canonicalize for connectivity but
-preserve authored markup for display. Default numeric labels use explicit
+preserve authored markup for display. A descriptive name typed for a part
+(`2-stage opamp`) keeps its text as the label and takes a derived identity
+(`X2_stage_opamp`, `componentNameIdentity`); stored refdes and net-side port
+renames stay strict. Default numeric labels use explicit
 subscripts (`M_{1}`) while refdes connectivity remains `M1`. Never mutate the
 circuit when rejecting a duplicate.
 

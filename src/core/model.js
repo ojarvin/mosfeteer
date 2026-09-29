@@ -762,6 +762,21 @@ export function normalizeComponentRefdes(value) {
 
 const BUS_RANGE_SUFFIX = /\s*[[<]\s*(\d+)\s*:\s*(\d+)\s*[\]>]$/;
 
+const IDENTITY = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** The identity a typed component name gives its part. A descriptive name
+ *  (`2-stage opamp`) keeps its text as the label; its identity joins the
+ *  words with `_`, and one led by a digit takes the SPICE subcircuit prefix:
+ *  `X2_stage_opamp`. Stored refdes and net-side renames stay strict
+ *  (normalizeComponentRefdes): only a name typed for a part is loosened. */
+export function componentNameIdentity(value) {
+  const strict = normalizeComponentRefdes(value);
+  if (!strict || IDENTITY.test(strict) || parseLabelRuns(strict).some((run) => run.super)) return strict;
+  const joined = strict.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!joined) return strict;
+  return /^[A-Za-z]/.test(joined) ? joined : `X${joined}`;
+}
+
 /** Return the persisted display source for a component name. Numeric default
  * names use textbook subscript notation (`M_{1}`), while an explicitly
  * formatted source such as `R_{D}` is preserved when it denotes the same
@@ -770,6 +785,8 @@ export function componentLabelText(refdes, source = null) {
   const canonical = normalizeComponentRefdes(refdes);
   const supplied = source === null || source === undefined ? '' : String(source).trim();
   if (supplied && normalizeComponentRefdes(supplied) === canonical && (/[_^]\{/.test(supplied) || BUS_RANGE_SUFFIX.test(supplied))) return supplied;
+  // A descriptive name is its own display source.
+  if (supplied && supplied !== canonical && componentNameIdentity(supplied) === canonical) return supplied;
   // Interface voltage ports use a two-part textbook name: the voltage
   // marker stays on the baseline while the direction/index is subscripted
   // (VI1 -> V_{I1}, VO2 -> V_{O2}, VIO3 -> V_{IO3}).
@@ -783,7 +800,7 @@ export function componentLabelText(refdes, source = null) {
  * `M1` and `M_{1}` as the same instance label, but does not mistake a
  * superscript or a custom marker label for the refdes. */
 function labelMatchesRefdes(text, refdes) {
-  return normalizeComponentRefdes(text) === normalizeComponentRefdes(refdes);
+  return componentNameIdentity(text) === normalizeComponentRefdes(refdes);
 }
 
 /**
@@ -2085,8 +2102,8 @@ export class Circuit {
     this.invalidateRoutingCache();
     const current = normalizeComponentRefdes(refdes);
     const component = this.getComponent(current);
-    const next = normalizeComponentRefdes(newRefdes);
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) {
+    const next = componentNameIdentity(newRefdes);
+    if (!IDENTITY.test(next)) {
       throw new Error(`invalid refdes "${next}"`);
     }
     const interfacePin = INTERFACE_PIN_TYPES.has(component.type);
@@ -3004,8 +3021,8 @@ export class Circuit {
     const component = this.components.get(refdes);
     if (!component || isReferenceMarker(component)) return false;
     if (this._syncSwitchLabel(refdes, text)) return true;
-    const next = normalizeComponentRefdes(text);
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(next)) throw new Error(`invalid component name "${String(text).trim()}"`);
+    const next = componentNameIdentity(text);
+    if (!IDENTITY.test(next)) throw new Error(`invalid component name "${String(text).trim()}"`);
     this.renameComponent(refdes, next, { displayLabel: text });
     return true;
   }
