@@ -10,7 +10,7 @@ import { segThroughInterior } from './router.js';
 
 export const BUBBLE_GAP = 3 * GRID;
 export const BUBBLE_PAD = GRID;
-export const BUBBLE_CAPTION = GRID;
+export const BUBBLE_CAPTION = 1.5 * GRID;
 
 const snap = (value) => Math.round(value / GRID) * GRID;
 const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
@@ -139,14 +139,20 @@ export function bubbleAt(bubbles, point) {
   return bubbles.find(({ frame }) => point.x >= frame.x && point.x <= frame.x + frame.w && point.y >= frame.y && point.y <= frame.y + frame.h) || null;
 }
 
-// Bubbles are drawn in drawing units, like a thin dashed box annotation, so
+// Bubbles are drawn in drawing units, like a dashed box annotation, so
 // they scale with the drawing on the canvas and in an export alike.
 export const BUBBLE_COLOR = '#1a56db';
-export const BUBBLE_STROKE = 3;
+export const BUBBLE_STROKE = 6;
 export const BUBBLE_DASH = '12 12';
-export const BUBBLE_RADIUS = GRID / 2;
+export const BUBBLE_RADIUS = GRID;
 export const BUBBLE_DOT = 6;
-export const BUBBLE_CAPTION_SIZE = 26;
+export const BUBBLE_CAPTION_SIZE = 36;
+
+/** Where a bubble's name sits: its baseline, inset a cell from the rounded
+ *  top-left corner. */
+export function captionAnchor(frame) {
+  return { x: frame.x + GRID, y: frame.y + 1.25 * GRID };
+}
 
 const fmt = (value) => String(Math.round(value * 100) / 100);
 const escapeText = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -169,12 +175,12 @@ export function nestedSvg(svg, rect, box) {
 export function bubbleExtras(bubbles) {
   const parts = [];
   for (const { frame, image, connector: [from, to], name, svg, box } of bubbles) {
-    const stroke = `stroke="${BUBBLE_COLOR}" stroke-width="${BUBBLE_STROKE}" stroke-dasharray="${BUBBLE_DASH}" fill="none"`;
+    const stroke = `stroke="${BUBBLE_COLOR}" stroke-width="${BUBBLE_STROKE}" stroke-dasharray="${BUBBLE_DASH}" stroke-linecap="round" fill="none"`;
     parts.push(`<g class="link-bubble">`
       + `<path d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" ${stroke}/>`
       + `<rect x="${fmt(frame.x)}" y="${fmt(frame.y)}" width="${fmt(frame.w)}" height="${fmt(frame.h)}" rx="${BUBBLE_RADIUS}" ${stroke}/>`
       + `<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="${BUBBLE_DOT}" fill="${BUBBLE_COLOR}"/>`
-      + `<text x="${fmt(frame.x + BUBBLE_PAD / 2)}" y="${fmt(frame.y + BUBBLE_CAPTION * 0.75)}" font-family="system-ui, sans-serif" font-size="${BUBBLE_CAPTION_SIZE}" font-weight="600" fill="${BUBBLE_COLOR}">${escapeText(name)}</text>`
+      + `<text x="${fmt(captionAnchor(frame).x)}" y="${fmt(captionAnchor(frame).y)}" font-family="system-ui, sans-serif" font-size="${BUBBLE_CAPTION_SIZE}" font-weight="600" fill="${BUBBLE_COLOR}">${escapeText(name)}</text>`
       + nestedSvg(svg, image, box)
       + `</g>`);
   }

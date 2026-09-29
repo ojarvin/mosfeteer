@@ -20,7 +20,7 @@ import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { searchKey } from '../core/design-index.js';
-import { BUBBLE_CAPTION, BUBBLE_DOT, BUBBLE_PAD, BUBBLE_RADIUS, bubbleAt, bubbleExtras, layoutBubbles } from '../core/link-bubble.js';
+import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { animateViewTo, fitView } from './canvas-view.js';
@@ -353,7 +353,7 @@ export function syncLinkBubbles() {
     setAttrs(node.connector, { d: `M ${from.x} ${from.y} L ${to.x} ${to.y}` });
     setAttrs(node.dot, { cx: from.x, cy: from.y });
     setAttrs(node.frame, { x: entry.frame.x, y: entry.frame.y, width: entry.frame.w, height: entry.frame.h });
-    setAttrs(node.caption, { x: entry.frame.x + BUBBLE_PAD / 2, y: entry.frame.y + BUBBLE_CAPTION * 0.75 });
+    setAttrs(node.caption, captionAnchor(entry.frame));
     if (node.caption.textContent !== bubble.name) node.caption.textContent = bubble.name;
     node.from = from;
     node.group.classList.toggle('broken', bubble.status !== 'ready');

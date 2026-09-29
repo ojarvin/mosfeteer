@@ -5051,20 +5051,22 @@ circle.bode-corner {
   display: none;
 }
 
-/* Drawing units, as a thin dashed box annotation (link-bubble.js), so a
+/* Drawing units, as a dashed box annotation (link-bubble.js), so a
    bubble scales with the drawing and exports as it shows. */
 .link-bubble-frame {
   fill: var(--paper, #fff);
   fill-opacity: 0.6;
   stroke: var(--accent);
-  stroke-width: 3;
+  stroke-width: 6;
   stroke-dasharray: 12 12;
+  stroke-linecap: round;
 }
 
 .link-bubble-connector {
   stroke: var(--accent);
-  stroke-width: 3;
+  stroke-width: 6;
   stroke-dasharray: 12 12;
+  stroke-linecap: round;
 }
 
 .link-bubble-dot {
@@ -5073,7 +5075,7 @@ circle.bode-corner {
 
 .link-bubble-caption {
   fill: var(--accent);
-  font: 600 26px system-ui, sans-serif;
+  font: 600 36px system-ui, sans-serif;
 }
 
 .link-bubble-message {

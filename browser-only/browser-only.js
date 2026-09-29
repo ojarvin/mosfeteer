@@ -15325,6 +15325,7 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 __modules["src/core/link-bubble.js"] = function (__require, __exports) {
 __exports.layoutBubbles = layoutBubbles;
 __exports.bubbleAt = bubbleAt;
+__exports.captionAnchor = captionAnchor;
 __exports.nestedSvg = nestedSvg;
 __exports.bubbleExtras = bubbleExtras;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -15341,7 +15342,7 @@ let segThroughInterior; __bind(() => { ({ segThroughInterior } = __require("src/
 
 const BUBBLE_GAP = 3 * GRID;
 const BUBBLE_PAD = GRID;
-const BUBBLE_CAPTION = GRID;
+const BUBBLE_CAPTION = 1.5 * GRID;
 
 const snap = (value) => Math.round(value / GRID) * GRID;
 const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
@@ -15470,14 +15471,20 @@ function bubbleAt(bubbles, point) {
   return bubbles.find(({ frame }) => point.x >= frame.x && point.x <= frame.x + frame.w && point.y >= frame.y && point.y <= frame.y + frame.h) || null;
 }
 
-// Bubbles are drawn in drawing units, like a thin dashed box annotation, so
+// Bubbles are drawn in drawing units, like a dashed box annotation, so
 // they scale with the drawing on the canvas and in an export alike.
 const BUBBLE_COLOR = '#1a56db';
-const BUBBLE_STROKE = 3;
+const BUBBLE_STROKE = 6;
 const BUBBLE_DASH = '12 12';
-const BUBBLE_RADIUS = GRID / 2;
+const BUBBLE_RADIUS = GRID;
 const BUBBLE_DOT = 6;
-const BUBBLE_CAPTION_SIZE = 26;
+const BUBBLE_CAPTION_SIZE = 36;
+
+/** Where a bubble's name sits: its baseline, inset a cell from the rounded
+ *  top-left corner. */
+function captionAnchor(frame) {
+  return { x: frame.x + GRID, y: frame.y + 1.25 * GRID };
+}
 
 const fmt = (value) => String(Math.round(value * 100) / 100);
 const escapeText = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -15500,12 +15507,12 @@ function nestedSvg(svg, rect, box) {
 function bubbleExtras(bubbles) {
   const parts = [];
   for (const { frame, image, connector: [from, to], name, svg, box } of bubbles) {
-    const stroke = `stroke="${BUBBLE_COLOR}" stroke-width="${BUBBLE_STROKE}" stroke-dasharray="${BUBBLE_DASH}" fill="none"`;
+    const stroke = `stroke="${BUBBLE_COLOR}" stroke-width="${BUBBLE_STROKE}" stroke-dasharray="${BUBBLE_DASH}" stroke-linecap="round" fill="none"`;
     parts.push(`<g class="link-bubble">`
       + `<path d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" ${stroke}/>`
       + `<rect x="${fmt(frame.x)}" y="${fmt(frame.y)}" width="${fmt(frame.w)}" height="${fmt(frame.h)}" rx="${BUBBLE_RADIUS}" ${stroke}/>`
       + `<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="${BUBBLE_DOT}" fill="${BUBBLE_COLOR}"/>`
-      + `<text x="${fmt(frame.x + BUBBLE_PAD / 2)}" y="${fmt(frame.y + BUBBLE_CAPTION * 0.75)}" font-family="system-ui, sans-serif" font-size="${BUBBLE_CAPTION_SIZE}" font-weight="600" fill="${BUBBLE_COLOR}">${escapeText(name)}</text>`
+      + `<text x="${fmt(captionAnchor(frame).x)}" y="${fmt(captionAnchor(frame).y)}" font-family="system-ui, sans-serif" font-size="${BUBBLE_CAPTION_SIZE}" font-weight="600" fill="${BUBBLE_COLOR}">${escapeText(name)}</text>`
       + nestedSvg(svg, image, box)
       + `</g>`);
   }
@@ -39654,7 +39661,7 @@ let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js"));
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
-let BUBBLE_CAPTION, BUBBLE_DOT, BUBBLE_PAD, BUBBLE_RADIUS, bubbleAt, bubbleExtras, layoutBubbles; __bind(() => { ({ BUBBLE_CAPTION, BUBBLE_DOT, BUBBLE_PAD, BUBBLE_RADIUS, bubbleAt, bubbleExtras, layoutBubbles } = __require("src/core/link-bubble.js")); });
+let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, layoutBubbles } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let animateViewTo, fitView; __bind(() => { ({ animateViewTo, fitView } = __require("src/web/canvas-view.js")); });
@@ -40019,7 +40026,7 @@ function syncLinkBubbles() {
     setAttrs(node.connector, { d: `M ${from.x} ${from.y} L ${to.x} ${to.y}` });
     setAttrs(node.dot, { cx: from.x, cy: from.y });
     setAttrs(node.frame, { x: entry.frame.x, y: entry.frame.y, width: entry.frame.w, height: entry.frame.h });
-    setAttrs(node.caption, { x: entry.frame.x + BUBBLE_PAD / 2, y: entry.frame.y + BUBBLE_CAPTION * 0.75 });
+    setAttrs(node.caption, captionAnchor(entry.frame));
     if (node.caption.textContent !== bubble.name) node.caption.textContent = bubble.name;
     node.from = from;
     node.group.classList.toggle('broken', bubble.status !== 'ready');

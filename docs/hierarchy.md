@@ -44,8 +44,8 @@ right-click menu) closes one. A click on a bubble picks its part. Which bubbles 
 remembered per document in this browser; they are never saved in the
 document or undone.
 
-A bubble is drawn in drawing units -- a thin dashed box with rounded corners,
-like a box annotation -- so it scales with the drawing. Exports (SVG, PNG,
+A bubble is drawn in drawing units -- a dashed box annotation's stroke, with
+corners rounded by one cell -- so it scales with the drawing. Exports (SVG, PNG,
 PDF, every beat, a selection, Copy as image) include the open bubbles whose
 design has drawn: the frame widens the export, and the design is nested whole
 as vector drawing, exactly as its own export draws it (as the Atlas sheet

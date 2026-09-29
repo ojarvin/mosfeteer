@@ -80,7 +80,7 @@ test('bubbles export as vector drawing: the design nested whole, the frame widen
   const extras = bubbleExtras([{ ...bubble, name: 'amp & co', svg: child, box: { x: -40, y: -40, w: 400, h: 200 } }]);
   assert.deepEqual(extras.bounds, [bubble.frame]);
   assert.match(extras.svg, /<svg x="[\d.-]+" y="[\d.-]+" width="400" height="200" viewBox="-40 -40 400 200" overflow="visible"><path d="M 0 0 L 80 0" data-child="yes"\/><\/svg>/);
-  assert.match(extras.svg, /stroke-width="3" stroke-dasharray="12 12"/);
+  assert.match(extras.svg, /stroke-width="6" stroke-dasharray="12 12"/);
   assert.match(extras.svg, /amp &amp; co/);
   // The export's frame takes the bubble in.
   const c = new Circuit();
