@@ -3,6 +3,7 @@
  * and animating it, and converting between screen and world coordinates.
  */
 
+import { linkBubbleFrames } from './hierarchy.js';
 import { circuitPageGuideFrame } from '../core/page-guide.js';
 import { viewportFrame, viewportGridPath } from '../core/render.js';
 import { snap, GRID } from '../core/grid.js';
@@ -195,6 +196,11 @@ function fitTarget() {
       add(frame.x, b.y);
       add(frame.x + frame.width, b.y + b.h);
     }
+  }
+  // Open linked-design bubbles are part of what is on show.
+  for (const frame of linkBubbleFrames()) {
+    add(frame.x, frame.y);
+    add(frame.x + frame.w, frame.y + frame.h);
   }
   for (const c of selectedComps()) {
     const r = c.bboxWorld();

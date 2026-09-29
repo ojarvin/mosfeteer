@@ -5089,23 +5089,66 @@ circle.bode-corner {
   fill: var(--warn);
 }
 
-.link-badge circle {
-  fill: var(--paper, #fff);
-  stroke: var(--accent);
-  stroke-width: 2px;
-  vector-effect: non-scaling-stroke;
+.link-bubble {
+  transform-box: view-box;
 }
 
-.link-badge path {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2.5;
-  stroke-linecap: round;
+/* A bubble grows out of its part, and shrinks back into it: the editor's
+   pop-in motion. */
+.link-bubble.entering {
+  animation: link-bubble-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.link-badge.broken circle,
-.link-badge.broken path {
-  stroke: var(--warn);
+.link-bubble.leaving {
+  animation: link-bubble-out 180ms ease-in both;
+  pointer-events: none;
+}
+
+@keyframes link-bubble-in {
+  from { opacity: 0; transform: scale(0.6); }
+}
+
+@keyframes link-bubble-out {
+  to { opacity: 0; transform: scale(0.6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link-bubble.entering,
+  .link-bubble.leaving {
+    animation: none;
+  }
+}
+
+/* After a linked part's name in the side panel; red when the link is broken. */
+.link-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+.link-dot.broken {
+  background: var(--danger);
+}
+
+.component-context-menu .context-submenu-search {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.component-context-menu .context-submenu-empty {
+  padding: 4px 8px;
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .component-context-menu .context-submenu.context-submenu-scroll {

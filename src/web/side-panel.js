@@ -18,6 +18,7 @@ import { plainMarkup } from './beats-ui.js';
 import { editor } from './editor-state.js';
 import { confirmNamedConnection, namedConnectionConflicts, portNameConflict, reportPortNameConflict } from './net-names.js';
 import { bindHoverPreview } from './hover-preview.js';
+import { linkDot } from './hierarchy.js';
 import { commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } from './main.js';
 
 let panelFilter = '';
@@ -103,6 +104,8 @@ export function renderComponents() {
     const ref = document.createElement('span');
     ref.className = 'ref';
     appendMarkupText(ref, componentDisplayName(comp));
+    const dot = linkDot(comp);
+    if (dot) ref.appendChild(dot);
     ref.title = isReferenceMarker(comp)
       ? 'Double-click to edit its label'
       : comp.type === 'block'

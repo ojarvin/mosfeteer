@@ -15323,17 +15323,17 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 };
 
 __modules["src/core/link-bubble.js"] = function (__require, __exports) {
-__exports.nearestSide = nearestSide;
 __exports.layoutBubbles = layoutBubbles;
 __exports.bubbleAt = bubbleAt;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let segThroughInterior; __bind(() => { ({ segThroughInterior } = __require("src/core/router.js")); });
 /**
- * Where a linked design's peek bubble goes beside the drawing: outside the
- * drawing's extent, on the side nearest its part, lined up with the part,
- * framed by a box with the design's name, and joined to the part by a
- * connector. Pure geometry in drawing units; the editor draws it
+ * Where a linked design's peek bubble goes beside the drawing: on a ring
+ * outside the drawing's extent, at the angle whose connector to its part
+ * reads best, framed by a box with the design's name. Pure geometry in drawing units; the editor draws it
  * (web/hierarchy.js). Bubbles never enter the document or an export.
  */
+
 
 
 
@@ -15345,60 +15345,122 @@ const snap = (value) => Math.round(value / GRID) * GRID;
 const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
 const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
-/** The side of `drawing` nearest the centre of `part` (both rects). */
-function nearestSide(drawing, part) {
-  const cx = part.x + part.w / 2;
-  const cy = part.y + part.h / 2;
-  const distances = {
-    left: cx - drawing.x,
-    right: drawing.x + drawing.w - cx,
-    top: cy - drawing.y,
-    bottom: drawing.y + drawing.h - cy,
-  };
-  return Object.entries(distances).reduce((best, entry) => (entry[1] < best[1] ? entry : best))[0];
-}
-
 /**
  * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h } }] (the
- * child drawing's size). Returns [{ id, side, frame, image, connector:
+ * child drawing's size). Returns [{ id, angle, frame, image, connector:
  * [from, to] }]: `frame` is the box around the child with room for its
- * caption, `image` where the child is drawn. Bubbles on one side slide along
- * it rather than overlap.
+ * caption, `image` where the child is drawn.
+ *
+ * Bubbles sit on a ring around the drawing, never over it. Each tries angles
+ * all round the ring and takes the spot whose connector reads best: running
+ * diagonally, so it stands apart from the orthogonal wiring; short; and
+ * crossing as little of the drawing as it can (`obstacles`: parts' and
+ * labels' `rects`, wire `segments`; running along a wire is worst). It never
+ * overlaps another bubble, and `previous` (id -> angle) keeps a bubble where
+ * it was while that spot is about as good.
  */
-function layoutBubbles(drawing, requests, { gap = BUBBLE_GAP, pad = BUBBLE_PAD, caption = BUBBLE_CAPTION } = {}) {
+function layoutBubbles(drawing, requests, {
+  gap = BUBBLE_GAP, pad = BUBBLE_PAD, caption = BUBBLE_CAPTION,
+  obstacles = {}, previous = null,
+} = {}) {
+  const rects = obstacles.rects || [];
+  const segments = obstacles.segments || [];
   const placed = [];
+  const connectors = [];
   const out = [];
+  const centre = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
   const sorted = [...requests].sort((a, b) => (a.part.y - b.part.y) || (a.part.x - b.part.x));
   for (const { id, part, size } of sorted) {
-    const side = nearestSide(drawing, part);
     const w = ceilCell(size.w + 2 * pad);
     const h = ceilCell(size.h + 2 * pad + caption);
-    const cx = part.x + part.w / 2;
-    const cy = part.y + part.h / 2;
-    const horizontal = side === 'left' || side === 'right';
-    let frame = horizontal
-      ? { x: side === 'right' ? snap(drawing.x + drawing.w + gap) : snap(drawing.x - gap - w), y: snap(cy - h / 2), w, h }
-      : { x: snap(cx - w / 2), y: side === 'bottom' ? snap(drawing.y + drawing.h + gap) : snap(drawing.y - gap - h), w, h };
-    // Slide along the side, alternating away from the part, until free.
-    const start = { ...frame };
-    for (let step = 1; placed.some((other) => overlaps(frame, other, GRID)) && step < 200; step++) {
-      const offset = Math.ceil(step / 2) * GRID * (step % 2 ? 1 : -1);
-      frame = horizontal ? { ...start, y: start.y + offset } : { ...start, x: start.x + offset };
+    const pc = { x: part.x + part.w / 2, y: part.y + part.h / 2 };
+    const others = rects.filter((r) => !sameRect(r, part) && !contains(part, r));
+    let best = null;
+    for (let step = 0; step < RING_STEPS; step++) {
+      const angle = (360 / RING_STEPS) * step;
+      const u = { x: Math.cos((angle * Math.PI) / 180), y: Math.sin((angle * Math.PI) / 180) };
+      // The nearest spot along this ray whose frame clears the drawing.
+      const tx = Math.abs(u.x) > 1e-9 ? (drawing.w / 2 + gap + w / 2) / Math.abs(u.x) : Infinity;
+      const ty = Math.abs(u.y) > 1e-9 ? (drawing.h / 2 + gap + h / 2) / Math.abs(u.y) : Infinity;
+      let t = Math.min(tx, ty);
+      let frame = null;
+      for (let push = 0; push < 60; push++, t += GRID) {
+        const candidate = { x: snap(centre.x + u.x * t - w / 2), y: snap(centre.y + u.y * t - h / 2), w, h };
+        if (!overlaps(candidate, drawing, gap - GRID) && !placed.some((other) => overlaps(candidate, other, GRID))) {
+          frame = candidate;
+          break;
+        }
+      }
+      if (!frame) continue;
+      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
+      const from = exitPoint(part, pc, to);
+      const cost = connectorCost(from, to, others, segments, connectors, placed)
+        + connectors.filter(([a, b]) => segThroughInterior(a, b, frame)).length * 60
+        - (previous?.get(id) === angle ? STAY_BONUS : 0);
+      if (!best || cost < best.cost) best = { cost, angle, frame, from, to };
     }
+    if (!best) continue;
+    const { frame, angle, from, to } = best;
     placed.push(frame);
+    connectors.push([from, to]);
     const image = { x: frame.x + (w - size.w) / 2, y: frame.y + caption + pad + (h - caption - 2 * pad - size.h) / 2, w: size.w, h: size.h };
-    // From the part's face toward the bubble, to the nearest point of the
-    // frame's facing edge.
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    const from = side === 'right' ? { x: part.x + part.w, y: cy }
-      : side === 'left' ? { x: part.x, y: cy }
-        : side === 'bottom' ? { x: cx, y: part.y + part.h } : { x: cx, y: part.y };
-    const to = side === 'right' ? { x: frame.x, y: clamp(cy, frame.y, frame.y + h) }
-      : side === 'left' ? { x: frame.x + w, y: clamp(cy, frame.y, frame.y + h) }
-        : side === 'bottom' ? { x: clamp(cx, frame.x, frame.x + w), y: frame.y } : { x: clamp(cx, frame.x, frame.x + w), y: frame.y + h };
-    out.push({ id, side, frame, image, connector: [from, to] });
+    out.push({ id, angle, frame, image, connector: [from, to] });
   }
   return out;
+}
+
+const RING_STEPS = 36;
+const STAY_BONUS = 6;
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+const contains = (outer, inner) => inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+
+/** Where the line from the part's centre toward `to` leaves the part. */
+function exitPoint(part, pc, to) {
+  const dx = to.x - pc.x;
+  const dy = to.y - pc.y;
+  const sx = dx ? (part.w / 2) / Math.abs(dx) : Infinity;
+  const sy = dy ? (part.h / 2) / Math.abs(dy) : Infinity;
+  const s = Math.min(1, sx, sy);
+  return { x: pc.x + dx * s, y: pc.y + dy * s };
+}
+
+const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+/** Whether segments a-b and c-d cross (touching ends do not count). */
+function segmentsCross(a, b, c, d) {
+  const d1 = cross(c, d, a);
+  const d2 = cross(c, d, b);
+  const d3 = cross(a, b, c);
+  const d4 = cross(a, b, d);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** Whether segments a-b and c-d lie on one line and share a stretch. */
+function segmentsRunTogether(a, b, c, d) {
+  if (Math.abs(cross(a, b, c)) > 1e-6 || Math.abs(cross(a, b, d)) > 1e-6) return false;
+  const along = (p) => (Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? p.x : p.y);
+  const [lo, hi] = [Math.min(along(a), along(b)), Math.max(along(a), along(b))];
+  return Math.max(lo, Math.min(along(c), along(d))) < Math.min(hi, Math.max(along(c), along(d)));
+}
+
+/** How poorly a connector reads: lower is better. */
+function connectorCost(from, to, rects, segments, connectors, frames) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  // 1 at 45 degrees, 0 along an axis.
+  const diagonal = length ? Math.abs(Math.sin(2 * Math.atan2(dy, dx))) : 0;
+  let cost = length / GRID + 40 * (1 - diagonal);
+  for (const r of rects) if (segThroughInterior(from, to, r)) cost += 25;
+  for (const [a, b] of segments) {
+    if (segmentsRunTogether(from, to, a, b)) cost += 200;
+    else if (segmentsCross(from, to, a, b)) cost += 8;
+  }
+  for (const [a, b] of connectors) if (segmentsCross(from, to, a, b)) cost += 30;
+  for (const frame of frames) if (segThroughInterior(from, to, frame)) cost += 60;
+  return cost;
 }
 
 /** The bubble whose frame holds `point`, if any. */
@@ -33367,6 +33429,7 @@ __exports.worldToClient = worldToClient;
 __exports.worldRect = worldRect;
 __exports.rectContained = rectContained;
 __exports.zoomToWorldRect = zoomToWorldRect;
+let linkBubbleFrames; __bind(() => { ({ linkBubbleFrames } = __require("src/web/hierarchy.js")); });
 let circuitPageGuideFrame; __bind(() => { ({ circuitPageGuideFrame } = __require("src/core/page-guide.js")); });
 let viewportFrame, viewportGridPath; __bind(() => { ({ viewportFrame, viewportGridPath } = __require("src/core/render.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
@@ -33378,6 +33441,7 @@ let render, selectedComps; __bind(() => { ({ render, selectedComps } = __require
  * The canvas view: the world window the pane shows, its zoom limits, fitting
  * and animating it, and converting between screen and world coordinates.
  */
+
 
 
 
@@ -33571,6 +33635,11 @@ function fitTarget() {
       add(frame.x, b.y);
       add(frame.x + frame.width, b.y + b.h);
     }
+  }
+  // Open linked-design bubbles are part of what is on show.
+  for (const frame of linkBubbleFrames()) {
+    add(frame.x, frame.y);
+    add(frame.x + frame.w, frame.y + frame.h);
   }
   for (const c of selectedComps()) {
     const r = c.bboxWorld();
@@ -39497,10 +39566,12 @@ __exports.toggleLinkBubbles = toggleLinkBubbles;
 __exports.closeLinkBubble = closeLinkBubble;
 __exports.linkBubbleOpen = linkBubbleOpen;
 __exports.linkBubbleAt = linkBubbleAt;
+__exports.linkBubbleFrames = linkBubbleFrames;
 __exports.mountLinkBubbles = mountLinkBubbles;
 __exports.syncLinkBubbles = syncLinkBubbles;
 __exports.enterLinkedDesign = enterLinkedDesign;
 __exports.leaveLinkedDesign = leaveLinkedDesign;
+__exports.linkDot = linkDot;
 __exports.appendLinkContextItems = appendLinkContextItems;
 __exports.openLinkBubbleMenu = openLinkBubbleMenu;
 __exports.installHierarchy = installHierarchy;
@@ -39508,10 +39579,11 @@ let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/documen
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
 let BUBBLE_CAPTION, BUBBLE_PAD, bubbleAt, layoutBubbles; __bind(() => { ({ BUBBLE_CAPTION, BUBBLE_PAD, bubbleAt, layoutBubbles } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
-let animateViewTo; __bind(() => { ({ animateViewTo } = __require("src/web/canvas-view.js")); });
+let animateViewTo, fitView; __bind(() => { ({ animateViewTo, fitView } = __require("src/web/canvas-view.js")); });
 let viewFitting; __bind(() => { ({ viewFitting } = __require("src/web/atlas-layout.js")); });
 let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
 let appendContextItem, appendContextSubmenu, closeComponentContextMenu; __bind(() => { ({ appendContextItem, appendContextSubmenu, closeComponentContextMenu } = __require("src/web/context-menu.js")); });
@@ -39529,9 +39601,10 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
  *   entered  Alt+Down (or double-click the bubble): opened in the editor,
  *            with a trail back up (Alt+Up, or the trail in the toolbar).
  *
- * A link to a design that is not in the workspace is simply broken: the
- * bubble says so and the part's menu offers another design. Bubbles are the
- * editor's view state: never saved, exported, or undone.
+ * A link to a design that is not in the workspace is simply broken: the side
+ * panel marks the part with a red dot, and its bubble and menu say so. Which
+ * bubbles are open is remembered per document in this browser; they are
+ * never saved in the document, exported, or undone.
  */
 
 
@@ -39549,14 +39622,20 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
 
 
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
 
-// refdes -> { name, status: 'loading'|'ready'|'missing'|'error', message, box, href: { light, dark } }
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const OPEN_KEY = 'mosfeteer.linkBubbles:';
+const CLOSE_MS = 180;
+const UP_MS = 380;
+
+// refdes -> { name, path, status: 'loading'|'ready'|'missing'|'error', message, box, href: { light, dark } }
 const bubbles = new Map();
-let bubblesDocument = null; // the document the bubbles belong to
-let layout = []; // where the bubbles were last laid out
+let bubblesDocument; // the document the bubbles belong to (undefined: none yet)
+let layoutCache = { key: '', layout: [] };
+const angles = new Map(); // refdes -> the angle its bubble last took
 let layerEl = null;
-const nodes = new Map();
+const nodes = new Map(); // refdes -> its drawn bubble
+const pictures = new Map(); // path -> { revision, box, href }: drawn once per revision
 
 // The way back up: [{ path, name, view, refdes, childPath }], outermost first.
 let trail = [];
@@ -39585,46 +39664,86 @@ function linkableDesigns() {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
-// ----- bubbles -------------------------------------------------------------------
+// ----- pictures ----------------------------------------------------------------------
 
 const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
+/** A design drawn as a bubble's picture, in both themes; null when empty. */
+async function pictureOf(circuit) {
+  if (!circuit.components.size && !circuit.labels.size) return null;
+  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
+  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
+  if (!match) return null;
+  const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
+  const [, , w, h] = match.slice(1).map(Number);
+  return { box: { w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
+}
+
 async function loadBubble(refdes, name) {
   const doc = linkedDocument(name);
-  if (!doc) {
-    bubbles.set(refdes, { name, status: 'missing', message: `“${name}” is not in the workspace` });
+  const settle = (entry) => {
+    if (bubbles.get(refdes)?.name !== name) return; // closed or relinked meanwhile
+    bubbles.set(refdes, entry);
     render();
+    revealBubbles();
+  };
+  if (!doc) {
+    settle({ name, status: 'missing', message: `“${name}” is not in the workspace` });
     return;
   }
   try {
-    const data = await persistence.load(doc.path);
-    const circuit = loadDocument(data.state);
-    const svg = circuit.components.size || circuit.labels.size
-      ? svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false })
-      : null;
-    const match = svg?.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
-    if (!svg || !match) {
-      bubbles.set(refdes, { name, status: 'error', message: `“${name}” is empty` });
-    } else {
-      const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-      const current = bubbles.get(refdes);
-      if (!current || current.name !== name) return; // closed or relinked meanwhile
-      const [, , w, h] = match.slice(1).map(Number);
-      bubbles.set(refdes, { name, path: doc.path, status: 'ready', box: { w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } });
+    const cached = pictures.get(doc.path);
+    let picture = cached && (!doc.revision || cached.revision === doc.revision) ? cached : null;
+    if (!picture) {
+      const data = await persistence.load(doc.path);
+      picture = await pictureOf(loadDocument(data.state));
+      if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
+    settle(picture
+      ? { name, path: doc.path, status: 'ready', box: picture.box, href: picture.href }
+      : { name, status: 'error', message: `“${name}” is empty` });
   } catch (err) {
-    if (bubbles.get(refdes)?.name === name) bubbles.set(refdes, { name, status: 'error', message: `“${name}” could not be read: ${err.message}` });
+    settle({ name, status: 'error', message: `“${name}” could not be read: ${err.message}` });
   }
-  render();
-  revealBubble(refdes);
 }
 
-/** Linked parts an action is about: the selected ones, else the one under
- *  the cursor, else the one whose bubble is under it. */
+// ----- which bubbles are open ----------------------------------------------------------
+
+function rememberOpen() {
+  const path = editor.currentDocumentPath;
+  if (!path) return;
+  try {
+    if (bubbles.size) localStorage.setItem(OPEN_KEY + path, JSON.stringify([...bubbles.keys()]));
+    else localStorage.removeItem(OPEN_KEY + path);
+  } catch { /* not remembered, then */ }
+}
+
+function rememberedOpen(path) {
+  if (!path) return [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(OPEN_KEY + path) || '[]');
+    return Array.isArray(saved) ? saved : [];
+  } catch { return []; }
+}
+
+/** Another document is open: its own remembered bubbles come back. */
+function followDocument() {
+  if (bubblesDocument === editor.currentDocumentPath) return;
+  bubblesDocument = editor.currentDocumentPath;
+  bubbles.clear();
+  angles.clear();
+  for (const refdes of rememberedOpen(bubblesDocument)) {
+    const component = editor.circuit.components.get(refdes);
+    if (component?.link) openBubble(component, { remember: false });
+  }
+}
+
+/** Linked parts an action is about: the selected ones, else the one whose
+ *  bubble is under the cursor. */
 function linkTargets() {
   const selected = selectedComps().filter((c) => c.link);
   if (selected.length) return selected;
-  const bubble = bubbleAt(layout, editor.cursor);
+  const bubble = bubbleAt(currentLayout(), editor.cursor);
   const component = bubble ? editor.circuit.components.get(bubble.id) : null;
   return component ? [component] : [];
 }
@@ -39637,22 +39756,25 @@ function toggleLinkBubbles(components = linkTargets()) {
     hintLine('LINK: select a part linked to a design (right-click → Link to design), then o shows it beside the drawing');
     return;
   }
+  followDocument();
   const close = linked.every((c) => bubbles.has(c.refdes));
   for (const component of linked) {
-    if (close) bubbles.delete(component.refdes);
+    if (close) closeLinkBubble(component.refdes);
     else if (!bubbles.has(component.refdes)) openBubble(component);
   }
   render();
 }
 
-function openBubble(component) {
-  bubblesDocument = editor.currentDocumentPath;
+function openBubble(component, { remember = true } = {}) {
   bubbles.set(component.refdes, { name: component.link, status: 'loading' });
+  if (remember) rememberOpen();
   void loadBubble(component.refdes, component.link);
 }
 
 function closeLinkBubble(refdes) {
-  if (bubbles.delete(refdes)) render();
+  if (!bubbles.delete(refdes)) return;
+  rememberOpen();
+  render();
 }
 
 function linkBubbleOpen(refdes) {
@@ -39661,29 +39783,62 @@ function linkBubbleOpen(refdes) {
 
 /** The part whose bubble is at a world point: { refdes } or null. */
 function linkBubbleAt(point) {
-  const hit = bubbleAt(layout, point);
+  const hit = bubbleAt(currentLayout(), point);
   return hit ? { refdes: hit.id } : null;
 }
 
-/** Pan (and zoom out if need be) so a new bubble shows beside the drawing. */
-function revealBubble(refdes) {
-  const bubble = layout.find((entry) => entry.id === refdes);
-  const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
-  if (!bubble || !pane) return;
-  const view = editor.view;
-  const frame = bubble.frame;
-  const inView = frame.x >= view.x && frame.y >= view.y && frame.x + frame.w <= view.x + view.w && frame.y + frame.h <= view.y + view.h;
-  if (inView) return;
-  const drawing = editor.circuit.inkBounds();
-  const x0 = Math.min(drawing.x, frame.x);
-  const y0 = Math.min(drawing.y, frame.y);
-  const x1 = Math.max(drawing.x + drawing.w, frame.x + frame.w);
-  const y1 = Math.max(drawing.y + drawing.h, frame.y + frame.h);
-  const target = viewFitting({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pane.width, pane.height, 0.05);
-  animateViewTo(target, 260);
+/** The frames of the bubbles on show, for fitting the view to them. */
+function linkBubbleFrames() {
+  return currentLayout().map((bubble) => bubble.frame);
 }
 
-// ----- drawing the bubbles ---------------------------------------------------------
+/** A bubble that has just appeared out of view brings the view to fit it. */
+function revealBubbles() {
+  const view = editor.view;
+  const hidden = currentLayout().some(({ frame }) => frame.x < view.x || frame.y < view.y
+    || frame.x + frame.w > view.x + view.w || frame.y + frame.h > view.y + view.h);
+  if (hidden) fitView({ animate: true });
+}
+
+// ----- laying them out -----------------------------------------------------------------
+
+/** What a connector should keep clear of: parts, labels, and wires. */
+function obstacles(circuit) {
+  const rects = [];
+  for (const component of circuit.components.values()) if (component.type !== 'solder') rects.push(component.bboxWorld());
+  for (const label of circuit.labels.values()) if (label.text && !label.points) rects.push(label.inkRect());
+  const segments = [];
+  for (const net of circuit.nets.values()) {
+    for (const path of net.paths()) for (let i = 1; i < path.length; i++) segments.push([path[i - 1], path[i]]);
+  }
+  return { rects, segments };
+}
+
+/** The bubbles with a picture (or a broken link) to show, laid out; kept
+ *  while neither the drawing nor the bubbles change. */
+function currentLayout() {
+  followDocument();
+  const circuit = editor.circuit;
+  for (const [refdes, bubble] of [...bubbles]) {
+    const component = circuit.components.get(refdes);
+    if (!component?.link) bubbles.delete(refdes);
+    else if (component.link !== bubble.name) openBubble(component, { remember: false });
+  }
+  const shown = [...bubbles].filter(([, bubble]) => bubble.status !== 'loading');
+  const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}`).join(',')}`;
+  if (layoutCache.key === key) return layoutCache.layout;
+  const message = { w: 12 * GRID, h: 2 * GRID };
+  const layout = shown.length ? layoutBubbles(circuit.inkBounds(), shown.map(([refdes, bubble]) => ({
+    id: refdes,
+    part: circuit.components.get(refdes).bboxWorld(),
+    size: bubble.status === 'ready' ? bubble.box : message,
+  })), { obstacles: obstacles(circuit), previous: angles }) : [];
+  for (const entry of layout) angles.set(entry.id, entry.angle);
+  layoutCache = { key, layout };
+  return layout;
+}
+
+// ----- drawing them --------------------------------------------------------------------
 
 function svgEl(name, attrs = {}) {
   const el = document.createElementNS(SVG_NS, name);
@@ -39700,52 +39855,34 @@ function setAttrs(el, attrs) {
 
 /** Put the bubble layer into a freshly built canvas drawing, under `before`
  *  (the per-frame overlay). The layer and its pictures are kept across
- *  rebuilds, so a picture is decoded once. */
+ *  rebuilds, so a picture is decoded once and never flickers. */
 function mountLinkBubbles(svgRoot, before) {
-  if (!layerEl) {
-    layerEl = svgEl('g', { class: 'link-bubbles' });
-  }
+  if (!layerEl) layerEl = svgEl('g', { class: 'link-bubbles' });
   svgRoot.insertBefore(layerEl, before || null);
   syncLinkBubbles();
 }
 
-/** Bring the bubbles (and the linked-part badges) up to date with the
- *  drawing: called on every render. */
+const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+/** Bring the drawn bubbles up to date: called on every render. A bubble
+ *  appears only once its picture is ready, growing out of its part; a
+ *  closed one shrinks back into it. */
 function syncLinkBubbles() {
-  if (!layerEl) return;
-  if (bubblesDocument !== editor.currentDocumentPath) {
-    bubbles.clear();
-    bubblesDocument = editor.currentDocumentPath;
-  }
   checkTrail();
-  const circuit = editor.circuit;
-  // A bubble goes with its part, and follows a changed link.
-  for (const [refdes, bubble] of [...bubbles]) {
-    const component = circuit.components.get(refdes);
-    if (!component?.link) bubbles.delete(refdes);
-    else if (component.link !== bubble.name) openBubble(component);
-  }
-  const linkedParts = [...circuit.components.values()].filter((c) => c.link);
-  if (!linkedParts.length && !bubbles.size) {
-    layout = [];
-    if (layerEl.childNodes.length) layerEl.replaceChildren();
-    nodes.clear();
-    return;
-  }
-  const drawing = circuit.inkBounds();
-  const placeholder = { w: 10 * GRID, h: 3 * GRID };
-  layout = bubbles.size ? layoutBubbles(drawing, [...bubbles].map(([refdes, bubble]) => ({
-    id: refdes,
-    part: circuit.components.get(refdes).bboxWorld(),
-    size: bubble.status === 'ready' ? bubble.box : placeholder,
-  }))) : [];
+  if (!layerEl) return;
+  const layout = currentLayout();
   const dark = document.documentElement.classList.contains('dark');
   const live = new Set();
   for (const entry of layout) {
     const bubble = bubbles.get(entry.id);
-    const key = `bubble:${entry.id}`;
-    live.add(key);
-    let node = nodes.get(key);
+    live.add(entry.id);
+    let node = nodes.get(entry.id);
+    if (node?.closing) {
+      node.group.remove();
+      nodes.delete(entry.id);
+      node = null;
+    }
+    const [from, to] = entry.connector;
     if (!node) {
       const group = svgEl('g', { class: 'link-bubble' });
       node = {
@@ -39758,16 +39895,22 @@ function syncLinkBubbles() {
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
       };
       group.append(node.connector, node.frame, node.dot, node.caption, node.image, node.message);
-      nodes.set(key, node);
+      nodes.set(entry.id, node);
+      if (!reducedMotion()) {
+        // Grow out of the part. The class goes once it has played, so the
+        // canvas redrawing under it never plays it again.
+        group.style.transformOrigin = `${from.x}px ${from.y}px`;
+        group.classList.add('entering');
+        group.addEventListener('animationend', () => group.classList.remove('entering'), { once: true });
+      }
     }
-    const [from, to] = entry.connector;
     setAttrs(node.connector, { d: `M ${from.x} ${from.y} L ${to.x} ${to.y}` });
     setAttrs(node.dot, { cx: from.x, cy: from.y });
     setAttrs(node.frame, { x: entry.frame.x, y: entry.frame.y, width: entry.frame.w, height: entry.frame.h });
     setAttrs(node.caption, { x: entry.frame.x + BUBBLE_PAD / 2, y: entry.frame.y + BUBBLE_CAPTION * 0.75 });
-    const caption = bubble.status === 'ready' ? bubble.name : `${bubble.name} (link)`;
-    if (node.caption.textContent !== caption) node.caption.textContent = caption;
-    node.group.classList.toggle('broken', bubble.status === 'missing' || bubble.status === 'error');
+    if (node.caption.textContent !== bubble.name) node.caption.textContent = bubble.name;
+    node.from = from;
+    node.group.classList.toggle('broken', bubble.status !== 'ready');
     if (bubble.status === 'ready') {
       setAttrs(node.image, { x: entry.image.x, y: entry.image.y, width: entry.image.w, height: entry.image.h, href: dark ? bubble.href.dark : bubble.href.light });
       node.image.style.display = '';
@@ -39776,39 +39919,31 @@ function syncLinkBubbles() {
       node.image.style.display = 'none';
       node.message.style.display = '';
       setAttrs(node.message, { x: entry.image.x + entry.image.w / 2, y: entry.image.y + entry.image.h / 2 });
-      const text = bubble.status === 'loading' ? 'Loading…' : `${bubble.message} · right-click to link another`;
+      const text = `${bubble.message} · right-click to link another`;
       if (node.message.textContent !== text) node.message.textContent = text;
     }
     if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
   }
-  // A small link badge marks every linked part, broken ones in the warning color.
-  for (const component of linkedParts) {
-    const key = `badge:${component.refdes}`;
-    live.add(key);
-    let node = nodes.get(key);
-    if (!node) {
-      const group = svgEl('g', { class: 'link-badge' });
-      const title = svgEl('title');
-      group.append(svgEl('circle', { r: 14 }), svgEl('path', { d: 'M -6 2 L -2 -2 M -9 -1 a 4 4 0 0 1 0 -6 l 1 -1 a 4 4 0 0 1 6 0 M 9 1 a 4 4 0 0 1 0 6 l -1 1 a 4 4 0 0 1 -6 0', transform: 'translate(0 0)' }), title);
-      node = { group, title };
-      nodes.set(key, node);
+  for (const [refdes, node] of [...nodes]) {
+    if (live.has(refdes) || node.closing) continue;
+    if (reducedMotion() || !node.group.isConnected) {
+      node.group.remove();
+      nodes.delete(refdes);
+      continue;
     }
-    const box = component.bboxWorld();
-    setAttrs(node.group, { transform: `translate(${box.x + box.w} ${box.y})` });
-    const broken = !linkedDocument(component.link);
-    node.group.classList.toggle('broken', broken);
-    const title = `${component.refdes} links to ${component.link}${broken ? ' (not in the workspace)' : ''} · o shows it · Alt+↓ opens it`;
-    if (node.title.textContent !== title) node.title.textContent = title;
-    if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
-  }
-  for (const [key, node] of [...nodes]) {
-    if (live.has(key)) continue;
-    node.group.remove();
-    nodes.delete(key);
+    node.closing = true;
+    node.group.classList.remove('entering');
+    node.group.style.transformOrigin = `${node.from.x}px ${node.from.y}px`;
+    node.group.classList.add('leaving');
+    setTimeout(() => {
+      if (nodes.get(refdes) !== node) return;
+      node.group.remove();
+      nodes.delete(refdes);
+    }, CLOSE_MS);
   }
 }
 
-// ----- entering and leaving ---------------------------------------------------------
+// ----- entering and leaving ------------------------------------------------------------
 
 /** The trail is only good while the documents it passed through are the
  *  ones open: opening another design any other way leaves the hierarchy. */
@@ -39816,6 +39951,8 @@ function checkTrail() {
   if (trail.length && trail.at(-1).childPath !== editor.currentDocumentPath) trail = [];
   renderTrail();
 }
+
+const paneRect = () => document.querySelector('.canvas-pane')?.getBoundingClientRect();
 
 /** Alt+Down (or double-click a bubble): open a linked part's design in the
  *  editor, remembering the way back. */
@@ -39836,8 +39973,8 @@ async function enterLinkedDesign(component = linkTargets()[0]) {
   const entry = { path: editor.currentDocumentPath, name: editor.currentCircuitName, view: { ...editor.view }, refdes: component.refdes, childPath: doc.path };
   // With its bubble open, zoom into the picture first: the child then opens
   // where it was seen.
-  const bubble = layout.find((item) => item.id === component.refdes);
-  const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
+  const bubble = currentLayout().find((item) => item.id === component.refdes);
+  const pane = paneRect();
   if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane) {
     animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 240);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -39854,8 +39991,9 @@ async function enterLinkedDesign(component = linkTargets()[0]) {
   return true;
 }
 
-/** Alt+Up (or a step of the trail): back to the design `levels` up, where
- *  it was left, its linked part selected. */
+/** Alt+Up (or a step of the trail): back to the design `levels` up. The
+ *  design just left shrinks into its bubble there as the view returns to
+ *  where the parent was left, its linked part selected. */
 async function leaveLinkedDesign(levels = 1) {
   checkTrail();
   if (!trail.length) {
@@ -39864,11 +40002,34 @@ async function leaveLinkedDesign(levels = 1) {
   }
   const index = Math.max(0, trail.length - levels);
   const target = trail[index];
+  // The child as saved, drawn now, so its bubble is ready the moment the
+  // parent opens.
+  const childPath = editor.currentDocumentPath;
+  let picture = null;
+  if (levels === 1) {
+    try { picture = await pictureOf(loadDocument(JSON.parse(editor.lastSavedSnapshot))); } catch { picture = null; }
+  }
   const opened = await openDocumentPath(target.path);
   if (!opened) return false;
   trail = trail.slice(0, index);
+  const component = editor.circuit.components.get(target.refdes);
+  if (component) setSelection([target.refdes]);
+  const pane = paneRect();
+  if (picture && component?.link && pane) {
+    pictures.set(childPath, { ...picture, revision: null });
+    followDocument();
+    bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', box: picture.box, href: picture.href });
+    rememberOpen();
+    const bubble = currentLayout().find((item) => item.id === target.refdes);
+    if (bubble && !reducedMotion()) {
+      Object.assign(editor.view, viewFitting(bubble.image, pane.width, pane.height, 0.05));
+      render();
+      animateViewTo(target.view, UP_MS);
+      renderTrail();
+      return true;
+    }
+  }
   Object.assign(editor.view, target.view);
-  if (editor.circuit.components.has(target.refdes)) setSelection([target.refdes]);
   renderTrail();
   render();
   return true;
@@ -39908,7 +40069,21 @@ function renderTrail() {
   });
 }
 
-// ----- menus -----------------------------------------------------------------------
+// ----- the side panel and menus ------------------------------------------------------
+
+/** The dot after a linked part's name in the side panel: the accent color,
+ *  or red when the design it names is not in the workspace. */
+function linkDot(component) {
+  if (!component?.link) return null;
+  const dot = document.createElement('span');
+  const broken = !linkedDocument(component.link);
+  dot.className = `link-dot${broken ? ' broken' : ''}`;
+  dot.title = broken
+    ? `Links to “${component.link}”, which is not in the workspace — right-click to link another`
+    : `Links to ${component.link} · o shows it · Alt+↓ opens it`;
+  dot.setAttribute('aria-label', dot.title);
+  return dot;
+}
 
 function setLinks(components, name) {
   commit(() => { for (const component of components) editor.circuit.setLink(component.refdes, name); });
@@ -39927,13 +40102,55 @@ function appendLinkContextItems(group, component) {
   appendDesignPicker(group, scope, component.link);
 }
 
+/** The designs to link to, with a field that narrows them as it is typed
+ *  into (typing anywhere in the list goes there). */
 function appendDesignPicker(group, scope, current) {
-  appendContextSubmenu(group, current ? 'Link to another design' : 'Link to design', (submenu) => {
-    submenu.classList.add('context-submenu-scroll');
+  const submenu = appendContextSubmenu(group, current ? 'Link to another design' : 'Link to design', (list) => {
+    list.classList.add('context-submenu-scroll');
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'context-submenu-search';
+    search.placeholder = 'Find a design…';
+    search.setAttribute('aria-label', 'Find a design to link to');
+    list.appendChild(search);
     const designs = linkableDesigns();
-    if (!designs.length) appendContextItem(submenu, 'No other designs in the workspace', () => {}, { disabled: true });
-    for (const doc of designs) appendContextItem(submenu, doc.name, () => setLinks(scope, doc.name), { active: doc.name === current });
-    if (current) appendContextItem(submenu, 'None (unlink)', () => setLinks(scope, null));
+    const items = designs.map((doc) => {
+      appendContextItem(list, doc.name, () => setLinks(scope, doc.name), { active: doc.name === current });
+      const item = list.lastElementChild;
+      item.dataset.key = searchKey(doc.name);
+      return item;
+    });
+    const empty = document.createElement('div');
+    empty.className = 'context-submenu-empty';
+    empty.textContent = designs.length ? 'No design matches' : 'No other designs in the workspace';
+    empty.hidden = designs.length > 0;
+    list.appendChild(empty);
+    if (current) appendContextItem(list, 'None (unlink)', () => setLinks(scope, null));
+    const visible = () => items.filter((item) => !item.hidden);
+    search.addEventListener('input', () => {
+      const key = searchKey(search.value);
+      for (const item of items) item.hidden = !!key && !item.dataset.key.includes(key);
+      empty.hidden = visible().length > 0;
+    });
+    search.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') return;
+      ev.stopPropagation();
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        visible()[0]?.click();
+      } else if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        visible()[0]?.focus();
+      }
+    });
+    list.addEventListener('keydown', (ev) => {
+      if (ev.target === search || ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      search.focus();
+    });
+  });
+  submenu.previousElementSibling?.addEventListener('keydown', (ev) => {
+    if (ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey || ev.key === ' ') return;
+    submenu.querySelector('.context-submenu-search')?.focus();
   });
 }
 
@@ -52010,12 +52227,14 @@ let plainMarkup; __bind(() => { ({ plainMarkup } = __require("src/web/beats-ui.j
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let confirmNamedConnection, namedConnectionConflicts, portNameConflict, reportPortNameConflict; __bind(() => { ({ confirmNamedConnection, namedConnectionConflicts, portNameConflict, reportPortNameConflict } = __require("src/web/net-names.js")); });
 let bindHoverPreview; __bind(() => { ({ bindHoverPreview } = __require("src/web/hover-preview.js")); });
+let linkDot; __bind(() => { ({ linkDot } = __require("src/web/hierarchy.js")); });
 let commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets; __bind(() => { ({ commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, selectedComp, selectedLabel, setSelection, sortedComps, transientCopyGhostNetIds, visibleNets } = __require("src/web/main.js")); });
 /**
  * The side panel: the component and net lists with their filter and renames,
  * the selection detail, collapsible sections, the resizable width, and
  * showing or hiding the panel (a drawer on narrow windows).
  */
+
 
 
 
@@ -52116,6 +52335,8 @@ function renderComponents() {
     const ref = document.createElement('span');
     ref.className = 'ref';
     appendMarkupText(ref, componentDisplayName(comp));
+    const dot = linkDot(comp);
+    if (dot) ref.appendChild(dot);
     ref.title = isReferenceMarker(comp)
       ? 'Double-click to edit its label'
       : comp.type === 'block'

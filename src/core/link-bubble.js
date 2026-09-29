@@ -1,12 +1,12 @@
 /**
- * Where a linked design's peek bubble goes beside the drawing: outside the
- * drawing's extent, on the side nearest its part, lined up with the part,
- * framed by a box with the design's name, and joined to the part by a
- * connector. Pure geometry in drawing units; the editor draws it
+ * Where a linked design's peek bubble goes beside the drawing: on a ring
+ * outside the drawing's extent, at the angle whose connector to its part
+ * reads best, framed by a box with the design's name. Pure geometry in drawing units; the editor draws it
  * (web/hierarchy.js). Bubbles never enter the document or an export.
  */
 
 import { GRID } from './grid.js';
+import { segThroughInterior } from './router.js';
 
 export const BUBBLE_GAP = 3 * GRID;
 export const BUBBLE_PAD = GRID;
@@ -16,60 +16,122 @@ const snap = (value) => Math.round(value / GRID) * GRID;
 const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
 const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
-/** The side of `drawing` nearest the centre of `part` (both rects). */
-export function nearestSide(drawing, part) {
-  const cx = part.x + part.w / 2;
-  const cy = part.y + part.h / 2;
-  const distances = {
-    left: cx - drawing.x,
-    right: drawing.x + drawing.w - cx,
-    top: cy - drawing.y,
-    bottom: drawing.y + drawing.h - cy,
-  };
-  return Object.entries(distances).reduce((best, entry) => (entry[1] < best[1] ? entry : best))[0];
-}
-
 /**
  * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h } }] (the
- * child drawing's size). Returns [{ id, side, frame, image, connector:
+ * child drawing's size). Returns [{ id, angle, frame, image, connector:
  * [from, to] }]: `frame` is the box around the child with room for its
- * caption, `image` where the child is drawn. Bubbles on one side slide along
- * it rather than overlap.
+ * caption, `image` where the child is drawn.
+ *
+ * Bubbles sit on a ring around the drawing, never over it. Each tries angles
+ * all round the ring and takes the spot whose connector reads best: running
+ * diagonally, so it stands apart from the orthogonal wiring; short; and
+ * crossing as little of the drawing as it can (`obstacles`: parts' and
+ * labels' `rects`, wire `segments`; running along a wire is worst). It never
+ * overlaps another bubble, and `previous` (id -> angle) keeps a bubble where
+ * it was while that spot is about as good.
  */
-export function layoutBubbles(drawing, requests, { gap = BUBBLE_GAP, pad = BUBBLE_PAD, caption = BUBBLE_CAPTION } = {}) {
+export function layoutBubbles(drawing, requests, {
+  gap = BUBBLE_GAP, pad = BUBBLE_PAD, caption = BUBBLE_CAPTION,
+  obstacles = {}, previous = null,
+} = {}) {
+  const rects = obstacles.rects || [];
+  const segments = obstacles.segments || [];
   const placed = [];
+  const connectors = [];
   const out = [];
+  const centre = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
   const sorted = [...requests].sort((a, b) => (a.part.y - b.part.y) || (a.part.x - b.part.x));
   for (const { id, part, size } of sorted) {
-    const side = nearestSide(drawing, part);
     const w = ceilCell(size.w + 2 * pad);
     const h = ceilCell(size.h + 2 * pad + caption);
-    const cx = part.x + part.w / 2;
-    const cy = part.y + part.h / 2;
-    const horizontal = side === 'left' || side === 'right';
-    let frame = horizontal
-      ? { x: side === 'right' ? snap(drawing.x + drawing.w + gap) : snap(drawing.x - gap - w), y: snap(cy - h / 2), w, h }
-      : { x: snap(cx - w / 2), y: side === 'bottom' ? snap(drawing.y + drawing.h + gap) : snap(drawing.y - gap - h), w, h };
-    // Slide along the side, alternating away from the part, until free.
-    const start = { ...frame };
-    for (let step = 1; placed.some((other) => overlaps(frame, other, GRID)) && step < 200; step++) {
-      const offset = Math.ceil(step / 2) * GRID * (step % 2 ? 1 : -1);
-      frame = horizontal ? { ...start, y: start.y + offset } : { ...start, x: start.x + offset };
+    const pc = { x: part.x + part.w / 2, y: part.y + part.h / 2 };
+    const others = rects.filter((r) => !sameRect(r, part) && !contains(part, r));
+    let best = null;
+    for (let step = 0; step < RING_STEPS; step++) {
+      const angle = (360 / RING_STEPS) * step;
+      const u = { x: Math.cos((angle * Math.PI) / 180), y: Math.sin((angle * Math.PI) / 180) };
+      // The nearest spot along this ray whose frame clears the drawing.
+      const tx = Math.abs(u.x) > 1e-9 ? (drawing.w / 2 + gap + w / 2) / Math.abs(u.x) : Infinity;
+      const ty = Math.abs(u.y) > 1e-9 ? (drawing.h / 2 + gap + h / 2) / Math.abs(u.y) : Infinity;
+      let t = Math.min(tx, ty);
+      let frame = null;
+      for (let push = 0; push < 60; push++, t += GRID) {
+        const candidate = { x: snap(centre.x + u.x * t - w / 2), y: snap(centre.y + u.y * t - h / 2), w, h };
+        if (!overlaps(candidate, drawing, gap - GRID) && !placed.some((other) => overlaps(candidate, other, GRID))) {
+          frame = candidate;
+          break;
+        }
+      }
+      if (!frame) continue;
+      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
+      const from = exitPoint(part, pc, to);
+      const cost = connectorCost(from, to, others, segments, connectors, placed)
+        + connectors.filter(([a, b]) => segThroughInterior(a, b, frame)).length * 60
+        - (previous?.get(id) === angle ? STAY_BONUS : 0);
+      if (!best || cost < best.cost) best = { cost, angle, frame, from, to };
     }
+    if (!best) continue;
+    const { frame, angle, from, to } = best;
     placed.push(frame);
+    connectors.push([from, to]);
     const image = { x: frame.x + (w - size.w) / 2, y: frame.y + caption + pad + (h - caption - 2 * pad - size.h) / 2, w: size.w, h: size.h };
-    // From the part's face toward the bubble, to the nearest point of the
-    // frame's facing edge.
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    const from = side === 'right' ? { x: part.x + part.w, y: cy }
-      : side === 'left' ? { x: part.x, y: cy }
-        : side === 'bottom' ? { x: cx, y: part.y + part.h } : { x: cx, y: part.y };
-    const to = side === 'right' ? { x: frame.x, y: clamp(cy, frame.y, frame.y + h) }
-      : side === 'left' ? { x: frame.x + w, y: clamp(cy, frame.y, frame.y + h) }
-        : side === 'bottom' ? { x: clamp(cx, frame.x, frame.x + w), y: frame.y } : { x: clamp(cx, frame.x, frame.x + w), y: frame.y + h };
-    out.push({ id, side, frame, image, connector: [from, to] });
+    out.push({ id, angle, frame, image, connector: [from, to] });
   }
   return out;
+}
+
+const RING_STEPS = 36;
+const STAY_BONUS = 6;
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+const contains = (outer, inner) => inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+
+/** Where the line from the part's centre toward `to` leaves the part. */
+function exitPoint(part, pc, to) {
+  const dx = to.x - pc.x;
+  const dy = to.y - pc.y;
+  const sx = dx ? (part.w / 2) / Math.abs(dx) : Infinity;
+  const sy = dy ? (part.h / 2) / Math.abs(dy) : Infinity;
+  const s = Math.min(1, sx, sy);
+  return { x: pc.x + dx * s, y: pc.y + dy * s };
+}
+
+const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+/** Whether segments a-b and c-d cross (touching ends do not count). */
+function segmentsCross(a, b, c, d) {
+  const d1 = cross(c, d, a);
+  const d2 = cross(c, d, b);
+  const d3 = cross(a, b, c);
+  const d4 = cross(a, b, d);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** Whether segments a-b and c-d lie on one line and share a stretch. */
+function segmentsRunTogether(a, b, c, d) {
+  if (Math.abs(cross(a, b, c)) > 1e-6 || Math.abs(cross(a, b, d)) > 1e-6) return false;
+  const along = (p) => (Math.abs(b.x - a.x) >= Math.abs(b.y - a.y) ? p.x : p.y);
+  const [lo, hi] = [Math.min(along(a), along(b)), Math.max(along(a), along(b))];
+  return Math.max(lo, Math.min(along(c), along(d))) < Math.min(hi, Math.max(along(c), along(d)));
+}
+
+/** How poorly a connector reads: lower is better. */
+function connectorCost(from, to, rects, segments, connectors, frames) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  // 1 at 45 degrees, 0 along an axis.
+  const diagonal = length ? Math.abs(Math.sin(2 * Math.atan2(dy, dx))) : 0;
+  let cost = length / GRID + 40 * (1 - diagonal);
+  for (const r of rects) if (segThroughInterior(from, to, r)) cost += 25;
+  for (const [a, b] of segments) {
+    if (segmentsRunTogether(from, to, a, b)) cost += 200;
+    else if (segmentsCross(from, to, a, b)) cost += 8;
+  }
+  for (const [a, b] of connectors) if (segmentsCross(from, to, a, b)) cost += 30;
+  for (const frame of frames) if (segThroughInterior(from, to, frame)) cost += 60;
+  return cost;
 }
 
 /** The bubble whose frame holds `point`, if any. */

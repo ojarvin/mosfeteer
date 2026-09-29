@@ -9,19 +9,21 @@
  *   entered  Alt+Down (or double-click the bubble): opened in the editor,
  *            with a trail back up (Alt+Up, or the trail in the toolbar).
  *
- * A link to a design that is not in the workspace is simply broken: the
- * bubble says so and the part's menu offers another design. Bubbles are the
- * editor's view state: never saved, exported, or undone.
+ * A link to a design that is not in the workspace is simply broken: the side
+ * panel marks the part with a red dot, and its bubble and menu say so. Which
+ * bubbles are open is remembered per document in this browser; they are
+ * never saved in the document, exported, or undone.
  */
 
 import { loadDocument } from '../core/document.js';
 import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
+import { searchKey } from '../core/design-index.js';
 import { BUBBLE_CAPTION, BUBBLE_PAD, bubbleAt, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
-import { animateViewTo } from './canvas-view.js';
+import { animateViewTo, fitView } from './canvas-view.js';
 import { viewFitting } from './atlas-layout.js';
 import { componentContextMenuEl } from './elements.js';
 import { appendContextItem, appendContextSubmenu, closeComponentContextMenu } from './context-menu.js';
@@ -30,13 +32,18 @@ import { persistence, openDocumentPath } from './document-session.js';
 import { commit, render, selectedComps, setSelection } from './main.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const OPEN_KEY = 'mosfeteer.linkBubbles:';
+const CLOSE_MS = 180;
+const UP_MS = 380;
 
-// refdes -> { name, status: 'loading'|'ready'|'missing'|'error', message, box, href: { light, dark } }
+// refdes -> { name, path, status: 'loading'|'ready'|'missing'|'error', message, box, href: { light, dark } }
 const bubbles = new Map();
-let bubblesDocument = null; // the document the bubbles belong to
-let layout = []; // where the bubbles were last laid out
+let bubblesDocument; // the document the bubbles belong to (undefined: none yet)
+let layoutCache = { key: '', layout: [] };
+const angles = new Map(); // refdes -> the angle its bubble last took
 let layerEl = null;
-const nodes = new Map();
+const nodes = new Map(); // refdes -> its drawn bubble
+const pictures = new Map(); // path -> { revision, box, href }: drawn once per revision
 
 // The way back up: [{ path, name, view, refdes, childPath }], outermost first.
 let trail = [];
@@ -65,46 +72,86 @@ export function linkableDesigns() {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
-// ----- bubbles -------------------------------------------------------------------
+// ----- pictures ----------------------------------------------------------------------
 
 const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
+/** A design drawn as a bubble's picture, in both themes; null when empty. */
+async function pictureOf(circuit) {
+  if (!circuit.components.size && !circuit.labels.size) return null;
+  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
+  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
+  if (!match) return null;
+  const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
+  const [, , w, h] = match.slice(1).map(Number);
+  return { box: { w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
+}
+
 async function loadBubble(refdes, name) {
   const doc = linkedDocument(name);
-  if (!doc) {
-    bubbles.set(refdes, { name, status: 'missing', message: `“${name}” is not in the workspace` });
+  const settle = (entry) => {
+    if (bubbles.get(refdes)?.name !== name) return; // closed or relinked meanwhile
+    bubbles.set(refdes, entry);
     render();
+    revealBubbles();
+  };
+  if (!doc) {
+    settle({ name, status: 'missing', message: `“${name}” is not in the workspace` });
     return;
   }
   try {
-    const data = await persistence.load(doc.path);
-    const circuit = loadDocument(data.state);
-    const svg = circuit.components.size || circuit.labels.size
-      ? svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false })
-      : null;
-    const match = svg?.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
-    if (!svg || !match) {
-      bubbles.set(refdes, { name, status: 'error', message: `“${name}” is empty` });
-    } else {
-      const [light, dark] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
-      const current = bubbles.get(refdes);
-      if (!current || current.name !== name) return; // closed or relinked meanwhile
-      const [, , w, h] = match.slice(1).map(Number);
-      bubbles.set(refdes, { name, path: doc.path, status: 'ready', box: { w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } });
+    const cached = pictures.get(doc.path);
+    let picture = cached && (!doc.revision || cached.revision === doc.revision) ? cached : null;
+    if (!picture) {
+      const data = await persistence.load(doc.path);
+      picture = await pictureOf(loadDocument(data.state));
+      if (picture) pictures.set(doc.path, { ...picture, revision: doc.revision || data.revision || null });
     }
+    settle(picture
+      ? { name, path: doc.path, status: 'ready', box: picture.box, href: picture.href }
+      : { name, status: 'error', message: `“${name}” is empty` });
   } catch (err) {
-    if (bubbles.get(refdes)?.name === name) bubbles.set(refdes, { name, status: 'error', message: `“${name}” could not be read: ${err.message}` });
+    settle({ name, status: 'error', message: `“${name}” could not be read: ${err.message}` });
   }
-  render();
-  revealBubble(refdes);
 }
 
-/** Linked parts an action is about: the selected ones, else the one under
- *  the cursor, else the one whose bubble is under it. */
+// ----- which bubbles are open ----------------------------------------------------------
+
+function rememberOpen() {
+  const path = editor.currentDocumentPath;
+  if (!path) return;
+  try {
+    if (bubbles.size) localStorage.setItem(OPEN_KEY + path, JSON.stringify([...bubbles.keys()]));
+    else localStorage.removeItem(OPEN_KEY + path);
+  } catch { /* not remembered, then */ }
+}
+
+function rememberedOpen(path) {
+  if (!path) return [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(OPEN_KEY + path) || '[]');
+    return Array.isArray(saved) ? saved : [];
+  } catch { return []; }
+}
+
+/** Another document is open: its own remembered bubbles come back. */
+function followDocument() {
+  if (bubblesDocument === editor.currentDocumentPath) return;
+  bubblesDocument = editor.currentDocumentPath;
+  bubbles.clear();
+  angles.clear();
+  for (const refdes of rememberedOpen(bubblesDocument)) {
+    const component = editor.circuit.components.get(refdes);
+    if (component?.link) openBubble(component, { remember: false });
+  }
+}
+
+/** Linked parts an action is about: the selected ones, else the one whose
+ *  bubble is under the cursor. */
 function linkTargets() {
   const selected = selectedComps().filter((c) => c.link);
   if (selected.length) return selected;
-  const bubble = bubbleAt(layout, editor.cursor);
+  const bubble = bubbleAt(currentLayout(), editor.cursor);
   const component = bubble ? editor.circuit.components.get(bubble.id) : null;
   return component ? [component] : [];
 }
@@ -117,22 +164,25 @@ export function toggleLinkBubbles(components = linkTargets()) {
     hintLine('LINK: select a part linked to a design (right-click → Link to design), then o shows it beside the drawing');
     return;
   }
+  followDocument();
   const close = linked.every((c) => bubbles.has(c.refdes));
   for (const component of linked) {
-    if (close) bubbles.delete(component.refdes);
+    if (close) closeLinkBubble(component.refdes);
     else if (!bubbles.has(component.refdes)) openBubble(component);
   }
   render();
 }
 
-function openBubble(component) {
-  bubblesDocument = editor.currentDocumentPath;
+function openBubble(component, { remember = true } = {}) {
   bubbles.set(component.refdes, { name: component.link, status: 'loading' });
+  if (remember) rememberOpen();
   void loadBubble(component.refdes, component.link);
 }
 
 export function closeLinkBubble(refdes) {
-  if (bubbles.delete(refdes)) render();
+  if (!bubbles.delete(refdes)) return;
+  rememberOpen();
+  render();
 }
 
 export function linkBubbleOpen(refdes) {
@@ -141,29 +191,62 @@ export function linkBubbleOpen(refdes) {
 
 /** The part whose bubble is at a world point: { refdes } or null. */
 export function linkBubbleAt(point) {
-  const hit = bubbleAt(layout, point);
+  const hit = bubbleAt(currentLayout(), point);
   return hit ? { refdes: hit.id } : null;
 }
 
-/** Pan (and zoom out if need be) so a new bubble shows beside the drawing. */
-function revealBubble(refdes) {
-  const bubble = layout.find((entry) => entry.id === refdes);
-  const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
-  if (!bubble || !pane) return;
-  const view = editor.view;
-  const frame = bubble.frame;
-  const inView = frame.x >= view.x && frame.y >= view.y && frame.x + frame.w <= view.x + view.w && frame.y + frame.h <= view.y + view.h;
-  if (inView) return;
-  const drawing = editor.circuit.inkBounds();
-  const x0 = Math.min(drawing.x, frame.x);
-  const y0 = Math.min(drawing.y, frame.y);
-  const x1 = Math.max(drawing.x + drawing.w, frame.x + frame.w);
-  const y1 = Math.max(drawing.y + drawing.h, frame.y + frame.h);
-  const target = viewFitting({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, pane.width, pane.height, 0.05);
-  animateViewTo(target, 260);
+/** The frames of the bubbles on show, for fitting the view to them. */
+export function linkBubbleFrames() {
+  return currentLayout().map((bubble) => bubble.frame);
 }
 
-// ----- drawing the bubbles ---------------------------------------------------------
+/** A bubble that has just appeared out of view brings the view to fit it. */
+function revealBubbles() {
+  const view = editor.view;
+  const hidden = currentLayout().some(({ frame }) => frame.x < view.x || frame.y < view.y
+    || frame.x + frame.w > view.x + view.w || frame.y + frame.h > view.y + view.h);
+  if (hidden) fitView({ animate: true });
+}
+
+// ----- laying them out -----------------------------------------------------------------
+
+/** What a connector should keep clear of: parts, labels, and wires. */
+function obstacles(circuit) {
+  const rects = [];
+  for (const component of circuit.components.values()) if (component.type !== 'solder') rects.push(component.bboxWorld());
+  for (const label of circuit.labels.values()) if (label.text && !label.points) rects.push(label.inkRect());
+  const segments = [];
+  for (const net of circuit.nets.values()) {
+    for (const path of net.paths()) for (let i = 1; i < path.length; i++) segments.push([path[i - 1], path[i]]);
+  }
+  return { rects, segments };
+}
+
+/** The bubbles with a picture (or a broken link) to show, laid out; kept
+ *  while neither the drawing nor the bubbles change. */
+function currentLayout() {
+  followDocument();
+  const circuit = editor.circuit;
+  for (const [refdes, bubble] of [...bubbles]) {
+    const component = circuit.components.get(refdes);
+    if (!component?.link) bubbles.delete(refdes);
+    else if (component.link !== bubble.name) openBubble(component, { remember: false });
+  }
+  const shown = [...bubbles].filter(([, bubble]) => bubble.status !== 'loading');
+  const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}`).join(',')}`;
+  if (layoutCache.key === key) return layoutCache.layout;
+  const message = { w: 12 * GRID, h: 2 * GRID };
+  const layout = shown.length ? layoutBubbles(circuit.inkBounds(), shown.map(([refdes, bubble]) => ({
+    id: refdes,
+    part: circuit.components.get(refdes).bboxWorld(),
+    size: bubble.status === 'ready' ? bubble.box : message,
+  })), { obstacles: obstacles(circuit), previous: angles }) : [];
+  for (const entry of layout) angles.set(entry.id, entry.angle);
+  layoutCache = { key, layout };
+  return layout;
+}
+
+// ----- drawing them --------------------------------------------------------------------
 
 function svgEl(name, attrs = {}) {
   const el = document.createElementNS(SVG_NS, name);
@@ -180,52 +263,34 @@ function setAttrs(el, attrs) {
 
 /** Put the bubble layer into a freshly built canvas drawing, under `before`
  *  (the per-frame overlay). The layer and its pictures are kept across
- *  rebuilds, so a picture is decoded once. */
+ *  rebuilds, so a picture is decoded once and never flickers. */
 export function mountLinkBubbles(svgRoot, before) {
-  if (!layerEl) {
-    layerEl = svgEl('g', { class: 'link-bubbles' });
-  }
+  if (!layerEl) layerEl = svgEl('g', { class: 'link-bubbles' });
   svgRoot.insertBefore(layerEl, before || null);
   syncLinkBubbles();
 }
 
-/** Bring the bubbles (and the linked-part badges) up to date with the
- *  drawing: called on every render. */
+const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+/** Bring the drawn bubbles up to date: called on every render. A bubble
+ *  appears only once its picture is ready, growing out of its part; a
+ *  closed one shrinks back into it. */
 export function syncLinkBubbles() {
-  if (!layerEl) return;
-  if (bubblesDocument !== editor.currentDocumentPath) {
-    bubbles.clear();
-    bubblesDocument = editor.currentDocumentPath;
-  }
   checkTrail();
-  const circuit = editor.circuit;
-  // A bubble goes with its part, and follows a changed link.
-  for (const [refdes, bubble] of [...bubbles]) {
-    const component = circuit.components.get(refdes);
-    if (!component?.link) bubbles.delete(refdes);
-    else if (component.link !== bubble.name) openBubble(component);
-  }
-  const linkedParts = [...circuit.components.values()].filter((c) => c.link);
-  if (!linkedParts.length && !bubbles.size) {
-    layout = [];
-    if (layerEl.childNodes.length) layerEl.replaceChildren();
-    nodes.clear();
-    return;
-  }
-  const drawing = circuit.inkBounds();
-  const placeholder = { w: 10 * GRID, h: 3 * GRID };
-  layout = bubbles.size ? layoutBubbles(drawing, [...bubbles].map(([refdes, bubble]) => ({
-    id: refdes,
-    part: circuit.components.get(refdes).bboxWorld(),
-    size: bubble.status === 'ready' ? bubble.box : placeholder,
-  }))) : [];
+  if (!layerEl) return;
+  const layout = currentLayout();
   const dark = document.documentElement.classList.contains('dark');
   const live = new Set();
   for (const entry of layout) {
     const bubble = bubbles.get(entry.id);
-    const key = `bubble:${entry.id}`;
-    live.add(key);
-    let node = nodes.get(key);
+    live.add(entry.id);
+    let node = nodes.get(entry.id);
+    if (node?.closing) {
+      node.group.remove();
+      nodes.delete(entry.id);
+      node = null;
+    }
+    const [from, to] = entry.connector;
     if (!node) {
       const group = svgEl('g', { class: 'link-bubble' });
       node = {
@@ -238,16 +303,22 @@ export function syncLinkBubbles() {
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
       };
       group.append(node.connector, node.frame, node.dot, node.caption, node.image, node.message);
-      nodes.set(key, node);
+      nodes.set(entry.id, node);
+      if (!reducedMotion()) {
+        // Grow out of the part. The class goes once it has played, so the
+        // canvas redrawing under it never plays it again.
+        group.style.transformOrigin = `${from.x}px ${from.y}px`;
+        group.classList.add('entering');
+        group.addEventListener('animationend', () => group.classList.remove('entering'), { once: true });
+      }
     }
-    const [from, to] = entry.connector;
     setAttrs(node.connector, { d: `M ${from.x} ${from.y} L ${to.x} ${to.y}` });
     setAttrs(node.dot, { cx: from.x, cy: from.y });
     setAttrs(node.frame, { x: entry.frame.x, y: entry.frame.y, width: entry.frame.w, height: entry.frame.h });
     setAttrs(node.caption, { x: entry.frame.x + BUBBLE_PAD / 2, y: entry.frame.y + BUBBLE_CAPTION * 0.75 });
-    const caption = bubble.status === 'ready' ? bubble.name : `${bubble.name} (link)`;
-    if (node.caption.textContent !== caption) node.caption.textContent = caption;
-    node.group.classList.toggle('broken', bubble.status === 'missing' || bubble.status === 'error');
+    if (node.caption.textContent !== bubble.name) node.caption.textContent = bubble.name;
+    node.from = from;
+    node.group.classList.toggle('broken', bubble.status !== 'ready');
     if (bubble.status === 'ready') {
       setAttrs(node.image, { x: entry.image.x, y: entry.image.y, width: entry.image.w, height: entry.image.h, href: dark ? bubble.href.dark : bubble.href.light });
       node.image.style.display = '';
@@ -256,39 +327,31 @@ export function syncLinkBubbles() {
       node.image.style.display = 'none';
       node.message.style.display = '';
       setAttrs(node.message, { x: entry.image.x + entry.image.w / 2, y: entry.image.y + entry.image.h / 2 });
-      const text = bubble.status === 'loading' ? 'Loading…' : `${bubble.message} · right-click to link another`;
+      const text = `${bubble.message} · right-click to link another`;
       if (node.message.textContent !== text) node.message.textContent = text;
     }
     if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
   }
-  // A small link badge marks every linked part, broken ones in the warning color.
-  for (const component of linkedParts) {
-    const key = `badge:${component.refdes}`;
-    live.add(key);
-    let node = nodes.get(key);
-    if (!node) {
-      const group = svgEl('g', { class: 'link-badge' });
-      const title = svgEl('title');
-      group.append(svgEl('circle', { r: 14 }), svgEl('path', { d: 'M -6 2 L -2 -2 M -9 -1 a 4 4 0 0 1 0 -6 l 1 -1 a 4 4 0 0 1 6 0 M 9 1 a 4 4 0 0 1 0 6 l -1 1 a 4 4 0 0 1 -6 0', transform: 'translate(0 0)' }), title);
-      node = { group, title };
-      nodes.set(key, node);
+  for (const [refdes, node] of [...nodes]) {
+    if (live.has(refdes) || node.closing) continue;
+    if (reducedMotion() || !node.group.isConnected) {
+      node.group.remove();
+      nodes.delete(refdes);
+      continue;
     }
-    const box = component.bboxWorld();
-    setAttrs(node.group, { transform: `translate(${box.x + box.w} ${box.y})` });
-    const broken = !linkedDocument(component.link);
-    node.group.classList.toggle('broken', broken);
-    const title = `${component.refdes} links to ${component.link}${broken ? ' (not in the workspace)' : ''} · o shows it · Alt+↓ opens it`;
-    if (node.title.textContent !== title) node.title.textContent = title;
-    if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
-  }
-  for (const [key, node] of [...nodes]) {
-    if (live.has(key)) continue;
-    node.group.remove();
-    nodes.delete(key);
+    node.closing = true;
+    node.group.classList.remove('entering');
+    node.group.style.transformOrigin = `${node.from.x}px ${node.from.y}px`;
+    node.group.classList.add('leaving');
+    setTimeout(() => {
+      if (nodes.get(refdes) !== node) return;
+      node.group.remove();
+      nodes.delete(refdes);
+    }, CLOSE_MS);
   }
 }
 
-// ----- entering and leaving ---------------------------------------------------------
+// ----- entering and leaving ------------------------------------------------------------
 
 /** The trail is only good while the documents it passed through are the
  *  ones open: opening another design any other way leaves the hierarchy. */
@@ -296,6 +359,8 @@ function checkTrail() {
   if (trail.length && trail.at(-1).childPath !== editor.currentDocumentPath) trail = [];
   renderTrail();
 }
+
+const paneRect = () => document.querySelector('.canvas-pane')?.getBoundingClientRect();
 
 /** Alt+Down (or double-click a bubble): open a linked part's design in the
  *  editor, remembering the way back. */
@@ -316,8 +381,8 @@ export async function enterLinkedDesign(component = linkTargets()[0]) {
   const entry = { path: editor.currentDocumentPath, name: editor.currentCircuitName, view: { ...editor.view }, refdes: component.refdes, childPath: doc.path };
   // With its bubble open, zoom into the picture first: the child then opens
   // where it was seen.
-  const bubble = layout.find((item) => item.id === component.refdes);
-  const pane = document.querySelector('.canvas-pane')?.getBoundingClientRect();
+  const bubble = currentLayout().find((item) => item.id === component.refdes);
+  const pane = paneRect();
   if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane) {
     animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 240);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -334,8 +399,9 @@ export async function enterLinkedDesign(component = linkTargets()[0]) {
   return true;
 }
 
-/** Alt+Up (or a step of the trail): back to the design `levels` up, where
- *  it was left, its linked part selected. */
+/** Alt+Up (or a step of the trail): back to the design `levels` up. The
+ *  design just left shrinks into its bubble there as the view returns to
+ *  where the parent was left, its linked part selected. */
 export async function leaveLinkedDesign(levels = 1) {
   checkTrail();
   if (!trail.length) {
@@ -344,11 +410,34 @@ export async function leaveLinkedDesign(levels = 1) {
   }
   const index = Math.max(0, trail.length - levels);
   const target = trail[index];
+  // The child as saved, drawn now, so its bubble is ready the moment the
+  // parent opens.
+  const childPath = editor.currentDocumentPath;
+  let picture = null;
+  if (levels === 1) {
+    try { picture = await pictureOf(loadDocument(JSON.parse(editor.lastSavedSnapshot))); } catch { picture = null; }
+  }
   const opened = await openDocumentPath(target.path);
   if (!opened) return false;
   trail = trail.slice(0, index);
+  const component = editor.circuit.components.get(target.refdes);
+  if (component) setSelection([target.refdes]);
+  const pane = paneRect();
+  if (picture && component?.link && pane) {
+    pictures.set(childPath, { ...picture, revision: null });
+    followDocument();
+    bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', box: picture.box, href: picture.href });
+    rememberOpen();
+    const bubble = currentLayout().find((item) => item.id === target.refdes);
+    if (bubble && !reducedMotion()) {
+      Object.assign(editor.view, viewFitting(bubble.image, pane.width, pane.height, 0.05));
+      render();
+      animateViewTo(target.view, UP_MS);
+      renderTrail();
+      return true;
+    }
+  }
   Object.assign(editor.view, target.view);
-  if (editor.circuit.components.has(target.refdes)) setSelection([target.refdes]);
   renderTrail();
   render();
   return true;
@@ -388,7 +477,21 @@ function renderTrail() {
   });
 }
 
-// ----- menus -----------------------------------------------------------------------
+// ----- the side panel and menus ------------------------------------------------------
+
+/** The dot after a linked part's name in the side panel: the accent color,
+ *  or red when the design it names is not in the workspace. */
+export function linkDot(component) {
+  if (!component?.link) return null;
+  const dot = document.createElement('span');
+  const broken = !linkedDocument(component.link);
+  dot.className = `link-dot${broken ? ' broken' : ''}`;
+  dot.title = broken
+    ? `Links to “${component.link}”, which is not in the workspace — right-click to link another`
+    : `Links to ${component.link} · o shows it · Alt+↓ opens it`;
+  dot.setAttribute('aria-label', dot.title);
+  return dot;
+}
 
 function setLinks(components, name) {
   commit(() => { for (const component of components) editor.circuit.setLink(component.refdes, name); });
@@ -407,13 +510,55 @@ export function appendLinkContextItems(group, component) {
   appendDesignPicker(group, scope, component.link);
 }
 
+/** The designs to link to, with a field that narrows them as it is typed
+ *  into (typing anywhere in the list goes there). */
 function appendDesignPicker(group, scope, current) {
-  appendContextSubmenu(group, current ? 'Link to another design' : 'Link to design', (submenu) => {
-    submenu.classList.add('context-submenu-scroll');
+  const submenu = appendContextSubmenu(group, current ? 'Link to another design' : 'Link to design', (list) => {
+    list.classList.add('context-submenu-scroll');
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'context-submenu-search';
+    search.placeholder = 'Find a design…';
+    search.setAttribute('aria-label', 'Find a design to link to');
+    list.appendChild(search);
     const designs = linkableDesigns();
-    if (!designs.length) appendContextItem(submenu, 'No other designs in the workspace', () => {}, { disabled: true });
-    for (const doc of designs) appendContextItem(submenu, doc.name, () => setLinks(scope, doc.name), { active: doc.name === current });
-    if (current) appendContextItem(submenu, 'None (unlink)', () => setLinks(scope, null));
+    const items = designs.map((doc) => {
+      appendContextItem(list, doc.name, () => setLinks(scope, doc.name), { active: doc.name === current });
+      const item = list.lastElementChild;
+      item.dataset.key = searchKey(doc.name);
+      return item;
+    });
+    const empty = document.createElement('div');
+    empty.className = 'context-submenu-empty';
+    empty.textContent = designs.length ? 'No design matches' : 'No other designs in the workspace';
+    empty.hidden = designs.length > 0;
+    list.appendChild(empty);
+    if (current) appendContextItem(list, 'None (unlink)', () => setLinks(scope, null));
+    const visible = () => items.filter((item) => !item.hidden);
+    search.addEventListener('input', () => {
+      const key = searchKey(search.value);
+      for (const item of items) item.hidden = !!key && !item.dataset.key.includes(key);
+      empty.hidden = visible().length > 0;
+    });
+    search.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') return;
+      ev.stopPropagation();
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        visible()[0]?.click();
+      } else if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        visible()[0]?.focus();
+      }
+    });
+    list.addEventListener('keydown', (ev) => {
+      if (ev.target === search || ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      search.focus();
+    });
+  });
+  submenu.previousElementSibling?.addEventListener('keydown', (ev) => {
+    if (ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey || ev.key === ' ') return;
+    submenu.querySelector('.context-submenu-search')?.focus();
   });
 }
 
