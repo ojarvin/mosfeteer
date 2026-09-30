@@ -5162,7 +5162,7 @@ circle.bode-corner {
 
 /* The timing diagram dialog: one wave per phase, typed as slots. */
 .timing-dialog {
-  width: min(34rem, calc(100vw - 32px));
+  width: min(24rem, calc(100vw - 32px));
 }
 
 .timing-dialog .timing-dialog-legend {
@@ -5192,13 +5192,29 @@ circle.bode-corner {
   min-width: 0;
 }
 
-.timing-dialog .timing-dialog-slot {
+/* Not modal: it stands beside the drawing while the diagram is redrawn. */
+.timing-dialog:not(:modal) {
+  position: fixed;
+  /* Over the side panel, clear of the diagram under the drawing. */
+  inset: 56px 16px auto auto;
+  margin: 0;
+  z-index: 40;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.35);
+}
+
+.timing-dialog .timing-dialog-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.timing-dialog .timing-dialog-options label {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.timing-dialog .timing-dialog-slot input {
+.timing-dialog .timing-dialog-options input[type="number"] {
   width: 4.5rem;
 }
 

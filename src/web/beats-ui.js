@@ -4,8 +4,8 @@
  * presenter. The beat model is core/beats.js.
  */
 
-import { DEFAULT_SLOT_CELLS, addTimingDiagram, beatTimingBits, existingTimingDiagram, invertTimingBits, parseTimingBits, timingRowSources } from '../core/timing-diagram.js';
-import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, isComplementPhase } from '../core/beats.js';
+import { DEFAULT_SLOT_CELLS, addTimingDiagram, beatTimingBits, existingTimingDiagram, parseTimingBits, timingRowSources } from '../core/timing-diagram.js';
+import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } from './elements.js';
@@ -477,10 +477,17 @@ function addPhaseBeats() {
   setActiveBeat(index);
 }
 
-/** The timing diagram dialog: one wave per phase, typed as slots (0/1, a
- * _ or ^ gap, x don't care), started from the diagram already drawn or the
- * beats; Draw draws it, or redraws it in place (core/timing-diagram.js). */
+/** The timing diagram dialog: one wave per phase, typed as slots (1 high,
+ * 0 low, x don't care), started from the diagram already drawn or the beats.
+ * It stays open beside the drawing: Draw (Enter) draws or redraws the
+ * diagram in place and the waves can be changed again (core/timing-diagram.js). */
+let timingDialog = null;
+
 function openTimingDialog() {
+  if (timingDialog) {
+    timingDialog.querySelector('input')?.focus();
+    return;
+  }
   let rows;
   try {
     rows = timingRowSources(editor.circuit);
@@ -503,35 +510,38 @@ function openTimingDialog() {
     node.append(...children);
     return node;
   };
-  const baseRow = (row) => (isComplementPhase(row.key) ? rows.find((other) => samePhase(other.key, complementKey(row.key))) : null);
-  const inputs = rows.map((row) => {
-    const complementOf = baseRow(row);
+  const inputs = rows.map((row) => make('input', {
+    type: 'text',
     // A complement follows its phase inverted until it is given a wave of its own.
-    const value = row.from === 'complement' || row.from === 'template' ? '' : row.bits;
-    return make('input', { type: 'text', value, spellcheck: 'false', autocomplete: 'off', 'aria-label': `${plainMarkup(row.source)} wave`, 'data-complement-of': complementOf ? String(rows.indexOf(complementOf)) : '' });
-  });
+    value: row.from === 'complement' || row.from === 'low' ? '' : row.bits,
+    spellcheck: 'false',
+    autocomplete: 'off',
+    'aria-label': `${plainMarkup(row.source)} wave`,
+  }));
   const status = make('p', { class: 'timing-dialog-status', role: 'status' });
-  const placeholders = () => {
-    for (const input of inputs) {
-      const of = input.dataset.complementOf;
-      input.placeholder = of !== '' && inputs[Number(of)].value.trim()
-        ? `${invertTimingBits(inputs[Number(of)].value.replace(/\s+/g, ''))} (${plainMarkup(rows[Number(of)].source)} inverted)`
-        : 'template wave';
-    }
+  const hints = () => {
+    rows.forEach((row, index) => {
+      const beats = beatTimingBits(editor.circuit, row.key);
+      inputs[index].placeholder = row.complementOf !== undefined ? `${plainMarkup(rows[row.complementOf].source)} inverted`
+        : beats ? `${beats} (from the beats)` : 'low';
+    });
     try {
       for (const input of inputs) parseTimingBits(input.value);
       status.textContent = '';
+      return true;
     } catch (err) {
       status.textContent = err.message;
+      return false;
     }
   };
   const slot = make('input', { type: 'number', min: '1', max: '64', step: '1', value: String(before?.slot || DEFAULT_SLOT_CELLS), 'aria-label': 'Slot width in cells' });
+  const gaps = make('input', { type: 'checkbox' });
+  gaps.checked = before ? before.gaps : true;
   const fromBeats = make('button', { type: 'button', text: 'Fill from beats', title: 'One slot per beat: high where the phase\'s switches are closed' });
   if (!editor.circuit.beats.length) fromBeats.disabled = true;
   fromBeats.addEventListener('click', () => {
-    // A complement is left to follow its phase, inverted.
-    rows.forEach((row, index) => { inputs[index].value = baseRow(row) ? '' : beatTimingBits(editor.circuit, row.key); });
-    placeholders();
+    rows.forEach((row, index) => { inputs[index].value = row.complementOf !== undefined ? '' : beatTimingBits(editor.circuit, row.key); });
+    hints();
   });
   const grid = make('div', { class: 'timing-dialog-rows' });
   rows.forEach((row, index) => {
@@ -541,60 +551,69 @@ function openTimingDialog() {
     else appendMarkupText(name, texToLabelMarkup(row.source));
     grid.append(make('label', {}, [name, inputs[index]]));
   });
-  const form = make('form', { method: 'dialog' }, [
-    make('h2', { text: before ? 'Timing diagram' : 'Draw a timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'One character per slot: 1 high, 0 low, _ or ^ a short low or high gap (non-overlap), x don\'t care. A short wave holds its last level.' }),
+  const close = () => {
+    timingDialog?.close();
+    timingDialog?.remove();
+    timingDialog = null;
+  };
+  const closeButton = make('button', { type: 'button', text: 'Close' });
+  closeButton.addEventListener('click', close);
+  const form = make('form', {}, [
+    make('h2', { text: 'Timing diagram' }),
+    make('p', { class: 'timing-dialog-legend', text: 'One character per slot: 1 high, 0 low, x don\'t care. The waves repeat, so each shows its last slot before the start and its first after the end.' }),
     grid,
-    make('label', { class: 'timing-dialog-slot' }, [make('span', { text: 'Slot width' }), slot, make('span', { text: 'cells' })]),
+    make('div', { class: 'timing-dialog-options' }, [
+      make('label', {}, [make('span', { text: 'Slot' }), slot, make('span', { text: 'cells' })]),
+      make('label', { title: 'A one-cell gap wherever a phase changes: falling edges come early and rising edges late, so no two phases are high at once' }, [gaps, make('span', { text: 'Non-overlap gaps' })]),
+    ]),
     status,
     make('div', { class: 'dialog-actions' }, [
       fromBeats,
-      make('button', { value: 'cancel', text: 'Cancel' }),
-      make('button', { value: 'draw', class: 'confirm-action', text: before ? 'Redraw' : 'Draw' }),
+      closeButton,
+      make('button', { type: 'submit', class: 'confirm-action', text: 'Draw' }),
     ]),
   ]);
   const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [form]);
-  dialog.addEventListener('keydown', (event) => event.stopPropagation());
-  form.addEventListener('input', placeholders);
-  form.addEventListener('submit', (event) => {
-    if (event.submitter?.value !== 'draw') return;
-    try {
-      for (const input of inputs) parseTimingBits(input.value);
-    } catch (err) {
+  dialog.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
       event.preventDefault();
-      status.textContent = err.message;
+      close();
     }
   });
-  dialog.addEventListener('close', () => {
-    dialog.remove();
-    if (dialog.returnValue !== 'draw') return;
+  form.addEventListener('input', hints);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!hints()) return;
     const bits = {};
     rows.forEach((row, index) => {
       if (inputs[index].value.trim()) bits[String(index + 1)] = inputs[index].value;
     });
-    drawTimingDiagram({ bits, slot: Number(slot.value) || DEFAULT_SLOT_CELLS });
-  }, { once: true });
-  placeholders();
+    drawTimingDiagram({ bits, slot: Number(slot.value) || DEFAULT_SLOT_CELLS, gaps: gaps.checked });
+  });
+  hints();
   document.body.append(dialog);
-  dialog.showModal();
+  timingDialog = dialog;
+  // Not modal: the drawing stays in view, and the diagram can be redrawn as
+  // the waves are changed.
+  dialog.show();
   inputs[0]?.focus();
 }
 
 /** Draw (or redraw) the diagram: the dialog's waves are the whole truth, so
  *  a row left empty is not kept from the diagram drawn before. */
-function drawTimingDiagram({ bits, slot }) {
+function drawTimingDiagram({ bits, slot, gaps }) {
+  const first = !existingTimingDiagram(editor.circuit);
   let rows = [];
   try {
-    commit(() => { rows = addTimingDiagram(editor.circuit, { bits, slot, fromBeats: true }); });
+    commit(() => { rows = addTimingDiagram(editor.circuit, { bits, slot, gaps, fromBeats: true }); });
   } catch (err) {
     logLine(`Could not draw the timing diagram: ${err.message}`, 'error');
     return;
   }
   if (!rows.length) return;
-  setSelection([]);
-  setLabelSelection(rows.flatMap((row) => [row.label, ...row.lines]));
-  logLine(`drew a timing diagram for ${rows.length} phase${rows.length === 1 ? '' : 's'}; the More menu's Timing diagram edits its waves, or type timing φ1=1_0_ in the command line`);
-  fitView({ animate: true });
+  logLine(`drew the timing diagram for ${rows.length} phase${rows.length === 1 ? '' : 's'}`);
+  if (first) fitView({ animate: true });
   render();
 }
 

@@ -143,6 +143,8 @@ const FLAG_ARITY = {
   text: 1,
   slot: 1,
   beats: 0,
+  gaps: 0,
+  'no-gaps': 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -553,12 +555,13 @@ export function commandHelp() {
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
-    '  timing [PHASE=WAVE ...] [--slot N] [--beats]',
+    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps|--no-gaps]',
     '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
-    '                                   slots of 0/1 (low/high), _ or ^ (a one-cell low or high gap), x (don\'t care); PHASE is',
-    '                                   its name (φ1, $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep',
-    '                                   their wave, a complement inverts its phase, else one slot per beat; --beats retakes',
-    '                                   every unset row from the beats; --slot sets a slot\'s width in cells (default 4)',
+    '                                   one character per slot: 1 high, 0 low, x don\'t care. PHASE is its name (φ1,',
+    '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
+    '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',
+    '                                   retakes them from the beats. Waves repeat past both ends; --no-gaps drops the',
+    '                                   one-cell non-overlap gaps at each change; --slot N is a slot\'s width in cells',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -972,13 +975,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const bits = {};
     for (const arg of pos) {
       const at = arg.lastIndexOf('=');
-      if (at <= 0) throw new Error(`usage: timing [PHASE=WAVE ...] [--slot N] [--beats]; "${arg}" is not PHASE=WAVE`);
+      if (at <= 0) throw new Error(`usage: timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps|--no-gaps]; "${arg}" is not PHASE=WAVE`);
       bits[arg.slice(0, at)] = arg.slice(at + 1);
     }
     const slot = flags.slot ? Number(flags.slot[0]) : null;
     if (flags.slot && !(slot >= 1)) throw new Error('--slot is a width in cells, at least 1');
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot });
-    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${row.bits || '(template)'}`).join(', ')}`, rows, true);
+    const gaps = flags['no-gaps'] ? false : flags.gaps ? true : null;
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps });
+    const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
+    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}`).join(', ')}`, rows, true);
   }
   if (cmd === 'switch') {
     const [ref, state] = pos;

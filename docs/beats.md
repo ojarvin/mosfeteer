@@ -80,25 +80,31 @@ the one on screen as one undoable edit.
 
 **Timing diagram** (More menu; `timing`) draws one row per phase under the
 drawing, in the phases' order with each complement right after its phase:
-the phase's name as a free label, right-aligned in a column flush with the
-drawing's left edge, and its wave, two cells tall with vertical edges. A wave
-is typed as slots, one character each: `1` high, `0` low, `_` or `^` a short
-low or high gap (one cell wide in every row, for non-overlapping clocks), `x`
-don't care (a crossed band); a short wave holds its last level. The menu item
-opens a form with one field per phase, started from the diagram already drawn,
-else from the beats (one slot per beat, high where the phase's switches are
-closed; **Fill from beats** refills it), with the slot width in cells. A
-complement left empty is its phase inverted (`_` and `^` swap) and keeps
-following it; a phase with neither a wave nor beats gets a template (4 cells
-low, 8 high, 8 low, 4 high) to edit by hand. The command takes the same waves:
-`timing φ1=1_0_ φ2=0_1_ --slot 2`, a phase named by its text, TeX, row
-number, or `~φ1` for its complement; rows not named keep their waves, and
-`--beats` retakes them from the beats.
+the phase's name as a free label, right-aligned in a column left of the
+waves, and its wave, two cells tall with vertical edges. A wave is typed as
+slots, one character each: `1` high, `0` low, `x` don't care (a crossed
+band); a short wave holds its last level. The waves repeat, so each row shows
+half a slot of its last level before the start and of its first after the
+end, where its transitions are. With **Non-overlap gaps** (on unless turned
+off), every slot boundary where some phase changes gets a one-cell gap in
+every row: a phase falling there has already fallen and one rising has not
+yet risen, so no two phases are high at once.
+
+The menu item opens a form that stays open beside the drawing: one field per
+phase, started from the diagram already drawn, else from the beats (one slot
+per beat, high where the phase's switches are closed; **Fill from beats**
+refills it), with the slot width in cells and the gaps. **Draw** (Enter)
+draws the diagram, or redraws it where its waves start, and the waves can be
+changed again. A complement left empty is its phase inverted -- high in the
+gaps -- and keeps following it; any other phase left empty is low. The
+command takes the same waves: `timing φ1=10 φ2=01 --slot 2`, a phase named
+by its text, TeX, row number, or `~φ1` for its complement; rows not named
+keep their waves, `--beats` retakes them from the beats, and `--no-gaps` /
+`--gaps` set the gaps.
 
 The diagram's annotations remember their phase and wave, so drawing it again
-replaces it where it stands rather than adding another. They are ordinary
-lines otherwise: drag vertices to adjust one by hand (a redraw then replaces
-that edit).
+replaces it rather than adding another. They are ordinary lines otherwise:
+drag vertices to adjust one by hand (a redraw then replaces that edit).
 
 Placeholders fall out of rule 4: to stand in for a bias transistor until it
 appears, put a net label (or a port) on the gate net, hide it from the beat

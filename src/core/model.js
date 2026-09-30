@@ -861,13 +861,14 @@ function labelMatchesRefdes(text, refdes) {
 const finite = (value) => Number.isFinite(value);
 const round = (value, digits = 4) => Number(value.toPrecision(digits));
 
-/** A timing diagram row's data, as saved: its phase, its wave string (0, 1,
- * _, ^ and x), and the slot width in cells; null when unusable. */
+/** A timing diagram row's data, as saved: its phase, its own wave (1, 0
+ * and x), the slot width in cells, and `gaps: false` without non-overlap
+ * gaps; null when unusable. */
 export function normalizeTiming(timing) {
   if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
-  const bits = typeof timing.bits === 'string' && /^[01_^x]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
+  const bits = typeof timing.bits === 'string' && /^[01x]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
   const slot = Math.max(1, Math.min(64, Math.round(Number(timing.slot)) || 4));
-  return { phase: timing.phase.slice(0, 200), ...(bits ? { bits } : {}), slot };
+  return { phase: timing.phase.slice(0, 200), ...(bits ? { bits } : {}), slot, ...(timing.gaps === false ? { gaps: false } : {}) };
 }
 
 /**
