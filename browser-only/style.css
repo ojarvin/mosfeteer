@@ -5159,3 +5159,55 @@ circle.bode-corner {
   max-height: min(60vh, 420px);
   overflow-y: auto;
 }
+
+/* The timing diagram dialog: one wave per phase, typed as slots. */
+.timing-dialog {
+  width: min(34rem, calc(100vw - 32px));
+}
+
+.timing-dialog .timing-dialog-legend {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.timing-dialog .timing-dialog-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  margin: 10px 0;
+}
+
+.timing-dialog .timing-dialog-rows label {
+  display: contents;
+}
+
+.timing-dialog .timing-dialog-name {
+  align-self: center;
+  justify-self: end;
+}
+
+.timing-dialog .timing-dialog-rows input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+  min-width: 0;
+}
+
+.timing-dialog .timing-dialog-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timing-dialog .timing-dialog-slot input {
+  width: 4.5rem;
+}
+
+.timing-dialog .timing-dialog-status {
+  min-height: 1.2em;
+  color: var(--danger, #d33);
+  font-size: 0.8rem;
+}
+
+.timing-dialog .dialog-actions button:first-child {
+  margin-right: auto;
+}

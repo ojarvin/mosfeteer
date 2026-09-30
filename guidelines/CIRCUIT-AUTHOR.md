@@ -234,7 +234,11 @@ beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF|PHASE open|closed
                                set a switch (its whole phase) from beat N on
 beat phases [--after N]        add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed
-timing                         add a timing diagram template under the drawing, one waveform per switch phase
+timing [PHASE=WAVE ...] [--slot N] [--beats]
+                               draw (or redraw in place) a timing diagram, one wave per switch phase;
+                               WAVE: 1 high, 0 low, _/^ a one-cell low/high gap, x don't care, per slot;
+                               unset rows keep their wave, a complement is its phase inverted, else
+                               one slot per beat; ~PHASE names the complement
 box ID... [--text TEXT]        a dashed box one cell around parts, nets, and labels (a functional block)
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list

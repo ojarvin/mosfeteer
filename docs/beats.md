@@ -78,16 +78,27 @@ drawn position. Only phases some switch is on make beats: a complement merely
 offered in the menu makes none. The beats are ordinary beats, inserted after
 the one on screen as one undoable edit.
 
-**Timing diagram from switch phases** (More menu; `timing`) draws a template
-under the drawing, one row per phase in the same order, each complement right
-after its phase: the phase's name as
-a free label, right-aligned in a column flush with the drawing's left edge,
-and a line annotation two cells tall with vertical edges, 4 cells low, 8
-high, 8 low, 4 high (a complement's row inverted). Every row starts
-identical; drag, add, or remove
-vertices to draw each phase's real timing (in Delete, clicking a vertex of a
-line with more than two points removes just that vertex). The rows are plain
-annotations: they carry no link to the switches afterwards.
+**Timing diagram** (More menu; `timing`) draws one row per phase under the
+drawing, in the phases' order with each complement right after its phase:
+the phase's name as a free label, right-aligned in a column flush with the
+drawing's left edge, and its wave, two cells tall with vertical edges. A wave
+is typed as slots, one character each: `1` high, `0` low, `_` or `^` a short
+low or high gap (one cell wide in every row, for non-overlapping clocks), `x`
+don't care (a crossed band); a short wave holds its last level. The menu item
+opens a form with one field per phase, started from the diagram already drawn,
+else from the beats (one slot per beat, high where the phase's switches are
+closed; **Fill from beats** refills it), with the slot width in cells. A
+complement left empty is its phase inverted (`_` and `^` swap) and keeps
+following it; a phase with neither a wave nor beats gets a template (4 cells
+low, 8 high, 8 low, 4 high) to edit by hand. The command takes the same waves:
+`timing φ1=1_0_ φ2=0_1_ --slot 2`, a phase named by its text, TeX, row
+number, or `~φ1` for its complement; rows not named keep their waves, and
+`--beats` retakes them from the beats.
+
+The diagram's annotations remember their phase and wave, so drawing it again
+replaces it where it stands rather than adding another. They are ordinary
+lines otherwise: drag vertices to adjust one by hand (a redraw then replaces
+that edit).
 
 Placeholders fall out of rule 4: to stand in for a bias transistor until it
 appears, put a net label (or a port) on the gate net, hide it from the beat

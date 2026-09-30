@@ -861,6 +861,15 @@ function labelMatchesRefdes(text, refdes) {
 const finite = (value) => Number.isFinite(value);
 const round = (value, digits = 4) => Number(value.toPrecision(digits));
 
+/** A timing diagram row's data, as saved: its phase, its wave string (0, 1,
+ * _, ^ and x), and the slot width in cells; null when unusable. */
+export function normalizeTiming(timing) {
+  if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
+  const bits = typeof timing.bits === 'string' && /^[01_^x]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
+  const slot = Math.max(1, Math.min(64, Math.round(Number(timing.slot)) || 4));
+  return { phase: timing.phase.slice(0, 200), ...(bits ? { bits } : {}), slot };
+}
+
 /**
  * A plot annotation's data, as saved: the sketch's frequency range, its
  * magnitude and phase samples, the straight-line asymptote, the marked
@@ -960,6 +969,8 @@ export class LabelInstance {
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
     this.plot = this.kind === 'box' && opts.plot ? normalizePlot(opts.plot) : null;
+    // A timing diagram's name or wave (timing-diagram.js) remembers its row.
+    this.timing = normalizeTiming(opts.timing);
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
@@ -1465,6 +1476,7 @@ export class LabelInstance {
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
+      ...(this.timing ? { timing: { ...this.timing } } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -6697,6 +6709,7 @@ export class Circuit {
           points: l.points || null,
           textAnchor: l.textAnchor || null,
           plot: l.plot || null,
+          timing: l.timing || null,
           style: l.style || null,
           drawOrder: l.drawOrder,
         });

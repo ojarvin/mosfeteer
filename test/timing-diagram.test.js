@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
-import { addTimingDiagram, timingWavePoints } from '../src/core/timing-diagram.js';
+import { addBeat, setSwitchFrom } from '../src/core/beats.js';
+import { addTimingDiagram, invertTimingBits, parseTimingBits, timingColumns, timingRowGeometry, timingWavePoints } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -63,7 +64,7 @@ test('timing command adds the template and needs a phase', () => {
   const result = runCommand(circuit, 'timing');
   assert.equal(result.json.length, 1);
   assert.equal(circuit.labels.get(result.json[0].line).kind, 'line');
-  assert.match(runCommand(circuit, 'help').text, /timing\s+- add a timing diagram/);
+  assert.match(runCommand(circuit, 'help').text, /timing \[PHASE=WAVE \.\.\.\]/);
 });
 
 test('line vertices can be removed down to two distinct points', () => {
@@ -119,4 +120,81 @@ test('a complementary phase gets the inverse wave', () => {
   assert.deepEqual(rows.map((row) => row.phase), ['$\\varphi_{1}$', '$\\overline{\\varphi_{1}}$', '$\\varphi_{2}$']);
   const [first, second] = rows.map((row) => circuit.labels.get(row.line).points);
   assert.deepEqual(second.map((p) => p.y - second[0].y), first.map((p) => first[0].y - p.y));
+});
+
+function clocked() {
+  const circuit = new Circuit();
+  run(circuit,
+    'add switch_open S1 --at 0 0', 'value S1 $\\varphi_1$',
+    'add switch_open S2 --at 400 0', 'value S2 $\\varphi_2$',
+    'add switch_open S3 --at 800 0', 'value S3 $\\overline{\\varphi_1}$');
+  return circuit;
+}
+const waves = (circuit, row) => row.lines.map((id) => circuit.labels.get(id).points);
+
+test('a wave string: slots of 0 and 1, one-cell gaps, and don\'t-cares', () => {
+  assert.equal(parseTimingBits('00 11 L H - x X ^'), '001101_xx^');
+  assert.throws(() => parseTimingBits('0a1'), /not "a"/);
+  assert.equal(invertTimingBits('01_^x'), '10^_x');
+  // A gap in any row is a one-cell column in every row.
+  const columns = timingColumns(['1_0', '0^1'], 0, 4);
+  assert.deepEqual(columns.map((c) => [c.x, c.w]), [[0, 160], [160, 40], [200, 160]]);
+  const { lines, crosses } = timingRowGeometry('1_0', columns, 0);
+  assert.deepEqual(lines, [[{ x: 0, y: 0 }, { x: 160, y: 0 }, { x: 160, y: 80 }, { x: 360, y: 80 }]]);
+  assert.deepEqual(crosses, []);
+  // A don't-care breaks the wave and draws a crossed band of its own.
+  const dc = timingRowGeometry('0x1', timingColumns(['0x1'], 0, 1), 0);
+  assert.deepEqual(dc.lines, [[{ x: 0, y: 80 }, { x: 40, y: 80 }], [{ x: 80, y: 0 }, { x: 120, y: 0 }]]);
+  assert.equal(dc.crosses.length, 4);
+});
+
+test('typed waves draw each row; a complement left unset is its phase inverted', () => {
+  const circuit = clocked();
+  // Rows are numbered as drawn: φ1, its complement, φ2.
+  const rows = runCommand(circuit, 'timing φ1=1_0_ 3=0_1_ --slot 2').json;
+  assert.deepEqual(rows.map((row) => row.bits), ['1_0_', '0^1^', '0_1_']);
+  // φ1: high 2 cells, low through the gap and the next slot and gap.
+  assert.deepEqual(waves(circuit, rows[0])[0].map((p) => p.x - waves(circuit, rows[0])[0][0].x), [0, 80, 80, 240]);
+  assert.throws(() => runCommand(circuit, 'timing φ9=01'), /no switch phase "φ9"/);
+  assert.throws(() => runCommand(circuit, 'timing 01'), /not PHASE=WAVE/);
+});
+
+test('drawing it again replaces the diagram where it stands, keeping each wave', () => {
+  const circuit = clocked();
+  runCommand(circuit, 'timing φ1=1100 φ2=0011');
+  const first = circuit.labels.size;
+  const origin = (c) => Math.min(...[...c.labels.values()].filter((l) => l.timing && l.kind === 'line').map((l) => l.bbox().x));
+  const x = origin(circuit);
+  const rows = runCommand(circuit, 'timing ~φ1=x0x0').json;
+  assert.deepEqual(rows.map((row) => row.bits), ['1100', 'x0x0', '0011']);
+  assert.equal(origin(circuit), x);
+  assert.ok(circuit.labels.size >= first);
+  // Saved and loaded, the diagram still knows its waves.
+  const loaded = Circuit.fromJSON(circuit.toJSON());
+  assert.deepEqual(runCommand(loaded, 'timing').json.map((row) => row.bits), ['1100', 'x0x0', '0011']);
+});
+
+test('without typed waves, the beats set the timing: one slot per beat', () => {
+  const circuit = clocked();
+  addBeat(circuit);
+  addBeat(circuit);
+  addBeat(circuit);
+  setSwitchFrom(circuit, 0, '$\\varphi_1$', 'closed');
+  setSwitchFrom(circuit, 1, '$\\varphi_1$', 'open');
+  setSwitchFrom(circuit, 1, '$\\varphi_2$', 'closed');
+  setSwitchFrom(circuit, 2, '$\\varphi_2$', 'open');
+  assert.deepEqual(runCommand(circuit, 'timing').json.map((row) => row.bits), ['100', '011', '010']);
+  // --beats takes the waves from the beats again over the drawn ones.
+  runCommand(circuit, 'timing φ2=111');
+  setSwitchFrom(circuit, 2, '$\\varphi_1$', 'closed');
+  assert.deepEqual(runCommand(circuit, 'timing --beats').json.map((row) => row.bits), ['101', '010', '010']);
+});
+
+test('a complement drawn inverted keeps following its phase', () => {
+  const circuit = clocked();
+  runCommand(circuit, 'timing φ1=1_0_ φ2=0_1_');
+  assert.deepEqual(runCommand(circuit, 'timing φ1=10').json.map((row) => row.bits), ['10', '01', '0_1_']);
+  // Given a wave of its own, it keeps that one.
+  runCommand(circuit, 'timing ~φ1=0000');
+  assert.deepEqual(runCommand(circuit, 'timing φ1=11').json.map((row) => row.bits), ['11', '0000', '0_1_']);
 });

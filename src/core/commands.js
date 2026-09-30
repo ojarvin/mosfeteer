@@ -4,7 +4,7 @@ import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { applyDir, applyTransform, fmt, rectsOverlap } from './geometry.js';
 import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { crossNetOverlaps } from './wiring.js';
-import { svgString } from './render.js';
+import { plainTexText, svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
@@ -141,6 +141,8 @@ const FLAG_ARITY = {
   case: 0,
   regex: 0,
   text: 1,
+  slot: 1,
+  beats: 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -551,7 +553,12 @@ export function commandHelp() {
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
-    '  timing                         - add a timing diagram template under the drawing, one waveform per switch phase',
+    '  timing [PHASE=WAVE ...] [--slot N] [--beats]',
+    '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
+    '                                   slots of 0/1 (low/high), _ or ^ (a one-cell low or high gap), x (don\'t care); PHASE is',
+    '                                   its name (φ1, $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep',
+    '                                   their wave, a complement inverts its phase, else one slot per beat; --beats retakes',
+    '                                   every unset row from the beats; --slot sets a slot\'s width in cells (default 4)',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -962,8 +969,16 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if (cmd === 'beat' || cmd === 'beats') return beatCommand(circuit, pos, flags, result);
   if (cmd === 'timing') {
-    const rows = addTimingDiagram(circuit);
-    return result(`added a timing diagram template: ${rows.map((row) => `${row.phase} ${row.line}`).join(', ')}`, rows, true);
+    const bits = {};
+    for (const arg of pos) {
+      const at = arg.lastIndexOf('=');
+      if (at <= 0) throw new Error(`usage: timing [PHASE=WAVE ...] [--slot N] [--beats]; "${arg}" is not PHASE=WAVE`);
+      bits[arg.slice(0, at)] = arg.slice(at + 1);
+    }
+    const slot = flags.slot ? Number(flags.slot[0]) : null;
+    if (flags.slot && !(slot >= 1)) throw new Error('--slot is a width in cells, at least 1');
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot });
+    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${row.bits || '(template)'}`).join(', ')}`, rows, true);
   }
   if (cmd === 'switch') {
     const [ref, state] = pos;
