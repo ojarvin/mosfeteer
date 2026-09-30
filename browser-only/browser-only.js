@@ -40801,7 +40801,7 @@ let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/we
 let worldToClient; __bind(() => { ({ worldToClient } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let placeNetLabelAt; __bind(() => { ({ placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
-let applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, undo; __bind(() => { ({ applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, undo } = __require("src/web/main.js")); });
+let applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo; __bind(() => { ({ applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } = __require("src/web/main.js")); });
 /**
  * Choosing a part to place: the insert menu (i) with its fuzzy search,
  * categories, and recent placements, and the quick-add menu a pin drag or a
@@ -40904,8 +40904,10 @@ function pickInsertType(type) {
 }
 
 function onInsertKey(key, shiftKey = false) {
-  if (key === 'u' && editor.pendingPlace) {
-    undo();
+  // With a ghost in hand, u and Shift+U undo and redo and keep placing it.
+  if ((key === 'u' || key === 'U') && editor.pendingPlace) {
+    if (key === 'u') undo();
+    else redo();
     return;
   }
   // Arrow keys browse the picker; once a ghost exists they move the cursor and ghost.
@@ -43319,10 +43321,24 @@ function cancelDirectDraft() {
   if (drag?.mode === 'directpick') drag = null;
   return true;
 }
+/** The tool in hand, for undo and redo to give back: a slip undone in the
+ *  place, wire, label, or any other tool leaves that tool active (placing
+ *  the same part), without the draft that belonged to the undone state. */
+function captureToolState() {
+  return {
+    insert: mode === 'insert' ? pendingPlace : null,
+    labelMode,
+    copyMode,
+    moveMode,
+    deleteMode,
+    wire: wire ? { routeStyle: wire.routeStyle } : null,
+    directWire: directWire ? { routeMode: directWire.routeMode } : null,
+  };
+}
+
 function restoreToolState(state) {
-  if (!state?.copyMode && !state?.moveMode && !state?.deleteMode) return;
-  mode = 'normal';
-  labelMode = null;
+  if (!state) return;
+  labelMode = state.labelMode;
   annotationPoints = [];
   visual = null;
   drag = null;
@@ -43331,16 +43347,25 @@ function restoreToolState(state) {
   deleteMode = !!state.deleteMode;
   movePending = false;
   copyPending = false;
+  if (state.insert) {
+    mode = 'insert';
+    pendingPlace = state.insert;
+  }
+  if (state.wire) {
+    wire = { ...newWireDraft(), ...(state.wire.routeStyle === 'diagonal' ? { routeStyle: 'diagonal', allowDiagonal: true } : {}) };
+    terminalSnap = !!altHeld;
+  }
+  if (state.directWire) directWire = { source: null, points: [], ...(state.directWire.routeMode ? { routeMode: state.directWire.routeMode } : {}) };
 }
 
 function undo() {
+  const toolState = captureToolState();
   const cancelled = cancelDirectDraft();
   if (!history.length) {
     if (cancelled) render();
     else hintLine('nothing to undo');
     return;
   }
-  const toolState = { copyMode, moveMode, deleteMode };
   const kept = alignTool && keptAlignSelection();
   future.push(snapshot());
   applyJson(history.pop());
@@ -43350,13 +43375,13 @@ function undo() {
 }
 
 function redo() {
+  const toolState = captureToolState();
   const cancelled = cancelDirectDraft();
   if (!future.length) {
     if (cancelled) render();
     else hintLine('nothing to redo');
     return;
   }
-  const toolState = { copyMode, moveMode, deleteMode };
   const kept = alignTool && keptAlignSelection();
   rememberHistory(snapshot(), false);
   applyJson(future.pop());
@@ -49359,6 +49384,11 @@ function onWireKey(key) {
     }
   } else if (key === 'Enter') {
     commitWireAtCursor();
+  } else if (key === 'u' || key === 'U') {
+    // Undo and redo keep the Wire tool, as every tool keeps itself.
+    if (key === 'u') undo();
+    else redo();
+    return;
   } else if (key === '/') {
     // Flip which way the corner of the leg under the cursor turns.
     if (wire) {

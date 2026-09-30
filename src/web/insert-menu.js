@@ -18,7 +18,7 @@ import { hintLine, logLine } from './status-bar-ui.js';
 import { worldToClient } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { placeNetLabelAt } from './annotation-tools.js';
-import { applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, undo } from './main.js';
+import { applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } from './main.js';
 
 const PLACEMENT = {
   r: 'resistor',
@@ -100,8 +100,10 @@ function pickInsertType(type) {
 }
 
 export function onInsertKey(key, shiftKey = false) {
-  if (key === 'u' && editor.pendingPlace) {
-    undo();
+  // With a ghost in hand, u and Shift+U undo and redo and keep placing it.
+  if ((key === 'u' || key === 'U') && editor.pendingPlace) {
+    if (key === 'u') undo();
+    else redo();
     return;
   }
   // Arrow keys browse the picker; once a ghost exists they move the cursor and ghost.

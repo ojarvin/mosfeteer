@@ -595,10 +595,24 @@ function cancelDirectDraft() {
   if (drag?.mode === 'directpick') drag = null;
   return true;
 }
+/** The tool in hand, for undo and redo to give back: a slip undone in the
+ *  place, wire, label, or any other tool leaves that tool active (placing
+ *  the same part), without the draft that belonged to the undone state. */
+function captureToolState() {
+  return {
+    insert: mode === 'insert' ? pendingPlace : null,
+    labelMode,
+    copyMode,
+    moveMode,
+    deleteMode,
+    wire: wire ? { routeStyle: wire.routeStyle } : null,
+    directWire: directWire ? { routeMode: directWire.routeMode } : null,
+  };
+}
+
 function restoreToolState(state) {
-  if (!state?.copyMode && !state?.moveMode && !state?.deleteMode) return;
-  mode = 'normal';
-  labelMode = null;
+  if (!state) return;
+  labelMode = state.labelMode;
   annotationPoints = [];
   visual = null;
   drag = null;
@@ -607,16 +621,25 @@ function restoreToolState(state) {
   deleteMode = !!state.deleteMode;
   movePending = false;
   copyPending = false;
+  if (state.insert) {
+    mode = 'insert';
+    pendingPlace = state.insert;
+  }
+  if (state.wire) {
+    wire = { ...newWireDraft(), ...(state.wire.routeStyle === 'diagonal' ? { routeStyle: 'diagonal', allowDiagonal: true } : {}) };
+    terminalSnap = !!altHeld;
+  }
+  if (state.directWire) directWire = { source: null, points: [], ...(state.directWire.routeMode ? { routeMode: state.directWire.routeMode } : {}) };
 }
 
 export function undo() {
+  const toolState = captureToolState();
   const cancelled = cancelDirectDraft();
   if (!history.length) {
     if (cancelled) render();
     else hintLine('nothing to undo');
     return;
   }
-  const toolState = { copyMode, moveMode, deleteMode };
   const kept = alignTool && keptAlignSelection();
   future.push(snapshot());
   applyJson(history.pop());
@@ -626,13 +649,13 @@ export function undo() {
 }
 
 export function redo() {
+  const toolState = captureToolState();
   const cancelled = cancelDirectDraft();
   if (!future.length) {
     if (cancelled) render();
     else hintLine('nothing to redo');
     return;
   }
-  const toolState = { copyMode, moveMode, deleteMode };
   const kept = alignTool && keptAlignSelection();
   rememberHistory(snapshot(), false);
   applyJson(future.pop());
@@ -6635,6 +6658,11 @@ function onWireKey(key) {
     }
   } else if (key === 'Enter') {
     commitWireAtCursor();
+  } else if (key === 'u' || key === 'U') {
+    // Undo and redo keep the Wire tool, as every tool keeps itself.
+    if (key === 'u') undo();
+    else redo();
+    return;
   } else if (key === '/') {
     // Flip which way the corner of the leg under the cursor turns.
     if (wire) {
