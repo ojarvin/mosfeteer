@@ -1557,19 +1557,34 @@ test('moving an authorized diagonal endpoint through a blocker uses a safe repla
   }
 });
 
-test('authorized diagonal re-anchor rejects an unsafe preserved suffix and rolls back', () => {
+test('an unsafe preserved suffix is replaced by a fresh route, never installed', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
   c.addComponent('resistor', { refdes: 'R2', x: 680, y: 120 });
   const n = c.wireTo('R1.b', { x: 600, y: 120 }, [{ x: 200, y: 120 }], { routeStyle: 'diagonal' });
-  const before = n.paths();
 
+  // R1 lands on its own old wire: keeping that wire's body would run it
+  // through R1, so the wire is laid out afresh between the pins.
   c.moveComponent('R1', 320, 120);
-  assert.equal(c.rerouteNet(n, new Map([['R1', { dx: 240, dy: 120 }]])), false);
-  assert.deepEqual(c.getComponent('R1').transform, {
-    x: 80, y: 0, rotation: 0, mirrorX: false, mirrorY: false,
-  });
-  assert.deepEqual(n.paths(), before);
+  assert.equal(c.rerouteNet(n, new Map([['R1', { dx: 240, dy: 120 }]])), true);
+  assert.deepEqual(n.paths(), [[{ x: 400, y: 120 }, { x: 600, y: 120 }]]);
+});
+
+test('dragging a part back straightens the detour its first move made', () => {
+  const c = new Circuit();
+  c.addComponent('switch_open', { refdes: 'S1', x: 440, y: 400 });
+  c.addComponent('ground', { refdes: 'G1', x: 560, y: 400, rotation: 270 });
+  const n = c.connect('S1.b', 'G1.gnd');
+  // Moved up two cells, the switch reached its ground one cell away by a
+  // detour whose body runs under where the switch had been.
+  c.getComponent('S1').transform.y -= 80;
+  n.route = [{ x: 520, y: 320 }, { x: 560, y: 320 }, { x: 560, y: 360 }, { x: 480, y: 360 }, { x: 480, y: 400 }, { x: 560, y: 400 }];
+  n.branches = null;
+  // Keeping that body would run the wire through the switch dragged back:
+  // the wire is laid out afresh, straight again, instead of refusing.
+  c.getComponent('S1').transform.y += 80;
+  assert.equal(c.rerouteNet(n, new Map([['S1', { dx: 0, dy: 80 }]])), true);
+  assert.deepEqual(n.paths(), [[{ x: 520, y: 400 }, { x: 560, y: 400 }]]);
 });
 
 test('fixed geometry is protected from refresh and reduction but deletable literally', () => {

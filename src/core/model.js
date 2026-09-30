@@ -629,6 +629,16 @@ export function transformWorldPoints(points = [], center, operation = 'rotate') 
   return points.map(map);
 }
 
+/** How many times a polyline turns. */
+function pathBends(path) {
+  let bends = 0;
+  for (let i = 1; i < path.length - 1; i++) {
+    const a = path[i - 1]; const b = path[i]; const c = path[i + 1];
+    if ((b.x - a.x) * (c.y - b.y) !== (b.y - a.y) * (c.x - b.x)) bends++;
+  }
+  return bends;
+}
+
 const SIDE_VECTORS = { above: { x: 0, y: -1 }, below: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
 
 function turnVector(v, operation) {
@@ -3965,16 +3975,32 @@ export class Circuit {
       // changing the caller's copy of the last valid wire shape.
       return leg && leg.length >= 1 ? leg : null;
     }
+    // A connector joined to the old body can fold back over that body -- a
+    // part dragged back where it came from would retrace the detour its
+    // first move made. A fresh route between the same two ends replaces it
+    // when that fails, or when the fresh one is no longer and bends no more:
+    // the move has just straightened the wire.
+    const authoredDiagonal = net.allowDiagonal || poly.some((p, i) => i > 0 && isDiagonalSegment(poly[i - 1], p));
+    const straightened = (joined, fresh) => {
+      if (authoredDiagonal) return joined;
+      const route = fresh();
+      if (!joined) return route && route.length >= 2 ? route : null;
+      if (!route || route.length < 2) return joined;
+      return pathBends(route) <= pathBends(joined) && pathLength(route) <= pathLength(joined) ? route : joined;
+    };
     if (a0) {
       // Keep the wire's shape when its legs can take the move up; otherwise
       // route a minimum safe connector to the body.
       const stretched = safeCandidate(stretchedLeg(poly, a0.cur));
       if (stretched) return stretched;
       const leg = endpointLeg(poly[0], poly[1], a0.cur, true);
-      if (!leg || leg.length < 1) return null;
-      const out = [...leg, ...poly.slice(1)];
-      collapseCollinear(out);
-      return safeCandidate(out);
+      let out = null;
+      if (leg && leg.length >= 1) {
+        out = [...leg, ...poly.slice(1)];
+        collapseCollinear(out);
+        out = safeCandidate(out);
+      }
+      return straightened(out, () => smartRoute(a0.cur, poly[n - 1], routeEnv));
     }
     if (a1) {
       // The path is stored in start-to-end order. Keep the wire's shape when
@@ -3983,10 +4009,13 @@ export class Circuit {
       const stretched = safeCandidate(stretchedLeg([...poly].reverse(), a1.cur)?.reverse());
       if (stretched) return stretched;
       const leg = endpointLeg(poly[n - 1], poly[n - 2], a1.cur, false);
-      if (!leg || leg.length < 1) return null;
-      const out = [...poly.slice(0, n - 2), ...leg];
-      collapseCollinear(out);
-      return safeCandidate(out);
+      let out = null;
+      if (leg && leg.length >= 1) {
+        out = [...poly.slice(0, n - 2), ...leg];
+        collapseCollinear(out);
+        out = safeCandidate(out);
+      }
+      return straightened(out, () => smartRoute(poly[0], a1.cur, routeEnv));
     }
     return poly.map((p) => ({ ...p }));
   }
