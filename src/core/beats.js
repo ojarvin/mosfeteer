@@ -106,6 +106,51 @@ export function closedSwitchHighlight(circuit, highlightOf, typeOf = (component)
   return highlight;
 }
 
+const OVERBAR = /^\\(?:overline|bar)\{(.*)\}$/;
+
+/** The complementary phase, drawn with an overbar: $\varphi_1$ gives
+ * $\overline{\varphi_1}$ and back again. Plain text takes its bar as math. */
+export function complementPhase(source) {
+  const text = String(source ?? '').trim();
+  if (!text) return '';
+  const body = isTexSource(text) ? text.replace(/^\$+|\$+$/g, '').trim() : text;
+  const barred = body.match(OVERBAR);
+  return barred ? `$${barred[1]}$` : `$\\overline{${body}}$`;
+}
+
+/** The key of a phase's complement (`key` is a phaseKey). */
+export function complementKey(key) {
+  return phaseKey(complementPhase(key));
+}
+
+/** Whether two phase keys name one phase: equal, or plain text and the same
+ * text as math (a plain phase's complement is math, and so is its bar undone). */
+export function samePhase(a, b) {
+  if (a === b) return true;
+  const bare = (key) => (isTexSource(key) ? key.replace(/^\$+|\$+$/g, '') : key);
+  return isTexSource(a) !== isTexSource(b) && bare(a) === bare(b);
+}
+
+/** The switches on the complement of phase `key`. */
+export function complementSwitches(circuit, key) {
+  const complement = complementKey(key);
+  return [...circuit.components.values()].filter((c) => switchState(c) && switchPhase(c) && samePhase(switchGroupKey(c), complement));
+}
+
+/** Whether a phase is written as another's complement: its TeX is barred. */
+export function isComplementPhase(key) {
+  return isTexSource(key) && OVERBAR.test(String(key).replace(/^\$+|\$+$/g, '').trim());
+}
+
+/** Whether phase `key`'s switches are closed while phase `active` is: its
+ * own phase closes them, and a barred phase is closed whenever the phase it
+ * complements is open -- the active one's complement is open with it. */
+export function phaseClosedIn(key, active) {
+  if (samePhase(key, active)) return true;
+  if (!isComplementPhase(key)) return false;
+  return !samePhase(complementKey(key), active);
+}
+
 /** What beats and groups know a switch by: its phase, or its own refdes. */
 export function switchGroupKey(component) {
   return phaseKey(switchPhase(component)) || component.refdes;
@@ -462,6 +507,9 @@ export function setSwitchFrom(circuit, index, refOrPhase, state) {
   const track = valueTrack(circuit.beats, 'switches', key, base);
   carryForward(track, index, state);
   writeValueTrack(circuit.beats, 'switches', key, track, base);
+  // In beats a phase's complement stands opposite it.
+  const complement = switchState(circuit.components.get(key)) ? null : complementSwitches(circuit, key)[0];
+  if (complement) invertBeatSwitchKey(circuit, key, switchGroupKey(complement));
 }
 
 /** Highlight colors in beat `index`, keyed by net group. */
@@ -502,14 +550,23 @@ export function cycleBeatHighlight(circuit, index, net, colors) {
 // ----- beats from switch phases -------------------------------------------------
 
 /** The phases in the drawing, in the order their first switch was placed:
- * [{ key, source }], where source is that switch's own spelling. */
-export function switchPhases(circuit) {
+ * [{ key, source }], where source is that switch's own spelling. With
+ * `complements`, each is followed by its complement when no switch uses that
+ * yet ({ key, source, complement: true }): what a phase menu offers. */
+export function switchPhases(circuit, { complements = false } = {}) {
   const phases = new Map();
   for (const component of circuit.components.values()) {
     const source = switchPhase(component);
     if (source && !phases.has(phaseKey(source))) phases.set(phaseKey(source), { key: phaseKey(source), source });
   }
-  return [...phases.values()];
+  if (!complements) return [...phases.values()];
+  const offered = [];
+  for (const phase of phases.values()) {
+    offered.push(phase);
+    const key = complementKey(phase.key);
+    if (![...phases.keys()].some((used) => samePhase(used, key)) && !offered.some((other) => samePhase(other.key, key))) offered.push({ key, source: complementPhase(phase.source), complement: true });
+  }
+  return offered;
 }
 
 const isAttachment = (component) => REFERENCE_MARKER_TYPES.includes(component?.type) || INTERFACE_PIN_TYPES.has(component?.type);
@@ -545,7 +602,7 @@ export function phaseLive(circuit, key) {
   const closed = (component) => {
     if (!switchState(component)) return true;
     const phase = phaseKey(switchPhase(component));
-    return phase ? phase === key : switchState(component) === 'closed';
+    return phase ? phaseClosedIn(phase, key) : switchState(component) === 'closed';
   };
   const netsOf = new Map();
   // The ends a part touches: the rails it is on, and the pins on its wires.
@@ -607,9 +664,10 @@ function setSwitchAt(circuit, index, key, state) {
 
 /**
  * Insert one beat per switch phase at `index`, named after the phase: its
- * switches closed and every other phase's open, what still works in that
- * phase shown and the rest -- open switches included -- dimmed (phaseLive).
- * Returns how many beats.
+ * switches closed and every other phase's open (a barred phase closed
+ * wherever the phase it complements is open), what still works in that phase
+ * shown and the rest -- open switches included -- dimmed (phaseLive). Only
+ * phases some switch is on make beats. Returns how many beats.
  */
 export function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
   const phases = switchPhases(circuit);
@@ -618,7 +676,7 @@ export function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
   phases.forEach(({ key, source }, step) => {
     const at = index + step;
     addBeat(circuit, { index: at, name: source });
-    for (const other of phases) setSwitchAt(circuit, at, other.key, other.key === key ? 'closed' : 'open');
+    for (const other of phases) setSwitchAt(circuit, at, other.key, phaseClosedIn(other.key, key) ? 'closed' : 'open');
     const live = phaseLive(circuit, key);
     for (const component of listable) {
       setPresenceAt(circuit, at, [component.refdes], live.has(component.refdes) ? 'show' : 'dim');
@@ -649,6 +707,15 @@ export function carryBeatSwitchKey(circuit, from, to, { move = false } = {}) {
     beat.switches[to] = beat.switches[from];
     if (move) delete beat.switches[from];
   }
+}
+
+/** Set phase `to`'s position in every beat opposite phase `from`'s: a
+ * complement in beats. Its drawn position is left alone. */
+export function invertBeatSwitchKey(circuit, from, to) {
+  if (!circuit.beats?.length) return;
+  const track = valueTrack(circuit.beats, 'switches', from, switchBase(circuit, from))
+    .map((state) => (state === 'open' ? 'closed' : 'open'));
+  writeValueTrack(circuit.beats, 'switches', to, track, switchBase(circuit, to));
 }
 
 /** A net group renamed as a whole keeps its per-beat highlights. */

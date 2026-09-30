@@ -147,7 +147,9 @@ a switch's owned label names its phase (the controlling signal, stored as its
 value; `$...$` is TeX drawn as math, compared by `phaseKey`), not its
 identity, so several switches may share it. Switches on one
 phase form a group that opens and closes together, in the drawing
-(`setSwitchState`) and in beats. Label text naming the switch's own refdes
+(`setSwitchState`) and in beats; in beats a phase's complement (its name
+with an overbar, `complementPhase`) stands opposite it, while the drawing
+keeps each switch as drawn. Label text naming the switch's own refdes
 clears the phase.
 
 Supplies may join their bars (`joinBar`, `src/core/supply-bars.js`). A joined

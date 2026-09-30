@@ -8,7 +8,7 @@ import { busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNa
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
-import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } from './beats.js';
+import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -2127,7 +2127,8 @@ export class Circuit {
    * switches drawn. */
   setSwitchState(refOrPhase, state) {
     if (!SWITCH_TYPES[state]) throw new Error('a switch is open or closed');
-    const group = switchesOf(this, switchKeyFor(this, refOrPhase));
+    const key = switchKeyFor(this, refOrPhase);
+    const group = switchesOf(this, key);
     for (const component of group) {
       component.type = SWITCH_TYPES[state];
       component.def = getSymbol(component.type);
@@ -2159,9 +2160,14 @@ export class Circuit {
     const after = switchGroupKey(component);
     if (after !== before) {
       const peers = switchesOf(this, after).filter((other) => other !== component);
+      // The drawing keeps the switch as drawn; in beats a new complement
+      // stands opposite its phase.
+      const inverse = peers.length || !component.value ? [] : complementSwitches(this, after).filter((other) => other !== component);
       if (peers.length) {
         component.type = peers[0].type;
         component.def = peers[0].def;
+      } else if (inverse.length) {
+        invertBeatSwitchKey(this, switchGroupKey(inverse[0]), after);
       } else {
         carryBeatSwitchKey(this, before, after, { move: !switchesOf(this, before).length });
       }

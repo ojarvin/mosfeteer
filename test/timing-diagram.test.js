@@ -100,3 +100,23 @@ test('annotation vertex-rm removes one vertex by index', () => {
   assert.throws(() => runCommand(circuit, `annotation vertex-rm ${line.id} 0`), /cannot remove vertex 0/);
   assert.throws(() => runCommand(circuit, 'annotation vertex-rm nope 0'), /unknown line or arrow/);
 });
+
+test('a complementary phase gets the inverse wave', () => {
+  const wave = timingWavePoints(0, 0);
+  const inverse = timingWavePoints(0, 0, { inverted: true });
+  assert.deepEqual(inverse.map((p) => p.x), wave.map((p) => p.x));
+  assert.deepEqual(inverse.map((p) => p.y), wave.map((p) => 80 - p.y));
+  const circuit = new Circuit();
+  // The complement is drawn first; its phase still leads the diagram, and
+  // the complement comes right after it.
+  runCommand(circuit, 'add switch_open S2 --at 0 400');
+  runCommand(circuit, 'value S2 $\\overline{\\varphi_1}$');
+  runCommand(circuit, 'add switch_open S3 --at 0 800');
+  runCommand(circuit, 'value S3 $\\varphi_2$');
+  runCommand(circuit, 'add switch_open S1 --at 0 0');
+  runCommand(circuit, 'value S1 $\\varphi_1$');
+  const rows = addTimingDiagram(circuit);
+  assert.deepEqual(rows.map((row) => row.phase), ['$\\varphi_{1}$', '$\\overline{\\varphi_{1}}$', '$\\varphi_{2}$']);
+  const [first, second] = rows.map((row) => circuit.labels.get(row.line).points);
+  assert.deepEqual(second.map((p) => p.y - second[0].y), first.map((p) => first[0].y - p.y));
+});

@@ -7,7 +7,9 @@ import { BEAT_DIM_INK, BEAT_FADE_INK, svgString } from '../src/core/render.js';
 import {
   addBeat, closedSwitchHighlight, cycleBeatHighlight, introduceAt, mergeBeats, phaseBeats, moveBeat, removeBeat, resolveBeat, setSwitchFrom,
   setPresenceAt, setPresenceFrom, switchStateAt, visibleBeats,
+  complementPhase, phaseClosedIn, phaseKey, switchPhases,
 } from '../src/core/beats.js';
+import { plainTexText } from '../src/core/render.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 const COLORS = ['red', 'orange', 'yellow'];
@@ -469,4 +471,60 @@ test('merging beats keeps the most visible look, closes any closed switch, and l
   phaseBeats(cmd);
   assert.match(runCommand(cmd, 'beat merge 1 2').text, /merged beats 1, 2/);
   assert.equal(cmd.beats.length, 1);
+});
+
+test('a phase has a complement: its name with an overbar, offered before any switch uses it', () => {
+  assert.equal(complementPhase('$\\varphi_1$'), '$\\overline{\\varphi_1}$');
+  assert.equal(complementPhase('$\\overline{\\varphi_1}$'), '$\\varphi_1$');
+  assert.equal(complementPhase('CLK'), '$\\overline{CLK}$');
+  assert.equal(plainTexText(complementPhase('$\\varphi_1$')), 'φ\u03051\u0305');
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 $\\varphi_1$', 'add switch_open S2 --at 0 400', 'value S2 $\\varphi_2$');
+  assert.deepEqual(switchPhases(circuit).map((p) => p.source), ['$\\varphi_1$', '$\\varphi_2$']);
+  assert.deepEqual(switchPhases(circuit, { complements: true }).map((p) => [p.source, !!p.complement]), [
+    ['$\\varphi_1$', false], ['$\\overline{\\varphi_1}$', true], ['$\\varphi_2$', false], ['$\\overline{\\varphi_2}$', true],
+  ]);
+  // Used, a complement is a phase of its own and offered once.
+  run(circuit, 'add switch_open S3 --at 0 800', 'value S3 $\\overline{\\varphi_1}$');
+  assert.deepEqual(switchPhases(circuit, { complements: true }).map((p) => p.source), ['$\\varphi_1$', '$\\varphi_2$', '$\\overline{\\varphi_2}$', '$\\overline{\\varphi_1}$']);
+  // A plain phase and its bar undone are one phase.
+  const k = phaseKey('CLK');
+  assert.equal(phaseClosedIn(phaseKey(complementPhase('CLK')), k), false);
+  assert.equal(phaseClosedIn(phaseKey(complementPhase('CLK')), phaseKey('X')), true);
+});
+
+test('a complement switch stands opposite its phase in every beat, but is drawn as the user draws it', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 $\\varphi_1$', 'add switch_open S2 --at 0 400');
+  addBeat(circuit);
+  addBeat(circuit);
+  setSwitchFrom(circuit, 1, 'S1', 'closed');
+  run(circuit, 'value S2 $\\overline{\\varphi_1}$');
+  // The drawing keeps both switches open.
+  assert.equal(circuit.getComponent('S2').type, 'switch_open');
+  circuit.setSwitchState('S1', 'closed');
+  assert.equal(circuit.getComponent('S2').type, 'switch_open');
+  // Beats keep the complement opposite, whichever of the two is flipped.
+  const states = () => [0, 1].map((i) => [switchStateAt(circuit, 'S1', i), switchStateAt(circuit, 'S2', i)]);
+  circuit.setSwitchState('S1', 'open');
+  setSwitchFrom(circuit, 0, 'S1', 'open');
+  setSwitchFrom(circuit, 1, 'S1', 'closed');
+  assert.deepEqual(states(), [['open', 'closed'], ['closed', 'open']]);
+  setSwitchFrom(circuit, 0, 'S2', 'open');
+  assert.deepEqual(states(), [['closed', 'open'], ['closed', 'open']]);
+});
+
+test('phase beats are made only for phases in use; a complement is closed while its phase is open', () => {
+  const circuit = new Circuit();
+  run(circuit,
+    'add switch_open S1 --at 0 0', 'value S1 $\\varphi_1$',
+    'add switch_open S2 --at 0 400', 'value S2 $\\varphi_2$',
+    'add switch_open S3 --at 0 800', 'value S3 $\\overline{\\varphi_1}$');
+  // φ̄2 is only offered, never used: no beat for it.
+  assert.equal(phaseBeats(circuit), 3);
+  assert.deepEqual(circuit.beats.map((beat) => beat.name), ['$\\varphi_1$', '$\\varphi_2$', '$\\overline{\\varphi_1}$']);
+  const closed = (index) => ['S1', 'S2', 'S3'].filter((ref) => switchStateAt(circuit, ref, index) === 'closed');
+  assert.deepEqual(closed(0), ['S1']);
+  assert.deepEqual(closed(1), ['S2', 'S3']);
+  assert.deepEqual(closed(2), ['S3']);
 });

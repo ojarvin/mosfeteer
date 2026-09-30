@@ -241,6 +241,9 @@ export function texToLabelMarkup(source) {
  * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
 export function plainTexText(source) {
   return stripMathDelimiters(source)
+    // An overbar (a complementary phase, $\overline{\phi_1}$) as a combining
+    // overline over each character it covers: ϕ̅1̅.
+    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => [...plainTexText(inner)].map((ch) => `${ch}\u0305`).join(''))
     .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
     .replace(/[_^]\{([^}]*)\}/g, '$1')
     .replace(/[_^{}]/g, '');

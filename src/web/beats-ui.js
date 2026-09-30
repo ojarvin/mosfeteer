@@ -5,7 +5,7 @@
  */
 
 import { addTimingDiagram } from '../core/timing-diagram.js';
-import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats } from '../core/beats.js';
+import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } from './elements.js';
@@ -266,8 +266,12 @@ export function toggleSelectionInBeat(target = 'hide') {
 }
 
 /** The selected switches' groups: each phase once, or a lone switch. */
-function selectedSwitchGroups() {
-  return [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
+function selectedSwitchGroups({ onBeat = false } = {}) {
+  const groups = [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
+  if (!onBeat) return groups;
+  // On a beat a phase and its complement flip together already, the other
+  // way round.
+  return groups.filter((c, i) => !switchPhase(c) || !groups.slice(0, i).some((other) => switchPhase(other) && samePhase(switchGroupKey(other), complementKey(switchGroupKey(c)))));
 }
 
 // Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
@@ -278,12 +282,12 @@ const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))}
 /** s: open or close the selected switches, with the rest of their phases --
  * in the drawing, or from the beat on screen on. */
 export function flipSelectedSwitches() {
-  const groups = selectedSwitchGroups();
+  const index = activeBeatIndex();
+  const groups = selectedSwitchGroups({ onBeat: index !== null });
   if (!groups.length) {
     hintLine('SWITCH: select a switch to open or close it (with every switch on its phase)');
     return;
   }
-  const index = activeBeatIndex();
   const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(editor.circuit, c.refdes, index));
   const next = groups.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
   commit(() => {

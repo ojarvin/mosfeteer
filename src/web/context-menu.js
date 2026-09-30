@@ -307,7 +307,8 @@ function appendSwitchPhaseMenu(menu, target) {
     logLine(`${scope.map((c) => c.refdes).join(', ')} ${source ? `on phase ${plainMarkup(source)}` : 'on no phase'}`);
   };
   appendContextSubmenu(menu, 'Phase', (submenu) => {
-    for (const { key, source } of switchPhases(editor.circuit)) {
+    // Each phase is offered with its complement (its name with an overbar).
+    for (const { key, source } of switchPhases(editor.circuit, { complements: true })) {
       appendContextItem(submenu, plainMarkup(source), () => setPhase(source), { active: all((c) => switchGroupKey(c) === key) });
     }
     appendContextItem(submenu, 'None', () => setPhase(''), { active: all((c) => !switchPhase(c)) });

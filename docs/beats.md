@@ -53,9 +53,18 @@ name (`S_{3}`) takes it out of any phase.
 A switch's right-click menu has **Phase**, to put the selected switches on an
 existing phase, on none, or on a new one, and **Select → Same switch phase**.
 
+Every phase has a **complement**, its name with an overbar: `$\varphi_1$` and
+`$\overline{\varphi_1}$` (a plain-text phase's bar is math:
+`$\overline{CLK}$`). The Phase menu offers each phase's complement as soon as
+the phase exists. In beats a complement's switches stand opposite the
+phase's: flipping either on a beat flips both, and a complement's first switch
+takes the phase's beats the other way round. The drawing itself keeps every
+switch as drawn -- all open, say -- until one is flipped there.
+
 **Beats from switch phases** (More menu; `beat phases`) adds one beat per
 phase, in the order the phases were first drawn, named after the phase. Each
-closes that phase's switches and opens every other phase's, and shows the
+closes that phase's switches and opens every other phase's -- a complement is
+closed wherever its phase is open -- and shows the
 phase's equivalent circuit: the open switches are dimmed, and the rest splits
 into islands joined through anything but a rail. An island's ends are the
 rails, pins, and named nets (a virtual connection) it touches. An island keeps
@@ -65,14 +74,17 @@ least one end -- an integrator holding its charge, say -- or when its closed
 switches join two ends, such as an output reset to VCM. Anything else is cut
 off and dimmed, a capacitor floating between open switches included, so the
 whole circuit stays readable. Switches without a phase keep their
-drawn position. The beats are ordinary beats, inserted after the one on
-screen as one undoable edit.
+drawn position. Only phases some switch is on make beats: a complement merely
+offered in the menu makes none. The beats are ordinary beats, inserted after
+the one on screen as one undoable edit.
 
 **Timing diagram from switch phases** (More menu; `timing`) draws a template
-under the drawing, one row per phase in the same order: the phase's name as
+under the drawing, one row per phase in the same order, each complement right
+after its phase: the phase's name as
 a free label, right-aligned in a column flush with the drawing's left edge,
 and a line annotation two cells tall with vertical edges, 4 cells low, 8
-high, 8 low, 4 high. Every row starts identical; drag, add, or remove
+high, 8 low, 4 high (a complement's row inverted). Every row starts
+identical; drag, add, or remove
 vertices to draw each phase's real timing (in Delete, clicking a vertex of a
 line with more than two points removes just that vertex). The rows are plain
 annotations: they carry no link to the switches afterwards.

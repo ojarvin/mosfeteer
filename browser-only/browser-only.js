@@ -10105,6 +10105,12 @@ __exports.switchPhase = switchPhase;
 __exports.isTexSource = isTexSource;
 __exports.phaseKey = phaseKey;
 __exports.closedSwitchHighlight = closedSwitchHighlight;
+__exports.complementPhase = complementPhase;
+__exports.complementKey = complementKey;
+__exports.samePhase = samePhase;
+__exports.complementSwitches = complementSwitches;
+__exports.isComplementPhase = isComplementPhase;
+__exports.phaseClosedIn = phaseClosedIn;
 __exports.switchGroupKey = switchGroupKey;
 __exports.switchesOf = switchesOf;
 __exports.switchKeyFor = switchKeyFor;
@@ -10135,6 +10141,7 @@ __exports.phaseLive = phaseLive;
 __exports.phaseBeats = phaseBeats;
 __exports.renameBeatObject = renameBeatObject;
 __exports.carryBeatSwitchKey = carryBeatSwitchKey;
+__exports.invertBeatSwitchKey = invertBeatSwitchKey;
 __exports.renameBeatHighlightKey = renameBeatHighlightKey;
 __exports.drawnNetPaths = drawnNetPaths;
 __exports.resolveBeat = resolveBeat;
@@ -10247,6 +10254,51 @@ function closedSwitchHighlight(circuit, highlightOf, typeOf = (component) => com
     return key === undefined ? null : shared.get(find(key)) || null;
   };
   return highlight;
+}
+
+const OVERBAR = /^\\(?:overline|bar)\{(.*)\}$/;
+
+/** The complementary phase, drawn with an overbar: $\varphi_1$ gives
+ * $\overline{\varphi_1}$ and back again. Plain text takes its bar as math. */
+function complementPhase(source) {
+  const text = String(source ?? '').trim();
+  if (!text) return '';
+  const body = isTexSource(text) ? text.replace(/^\$+|\$+$/g, '').trim() : text;
+  const barred = body.match(OVERBAR);
+  return barred ? `$${barred[1]}$` : `$\\overline{${body}}$`;
+}
+
+/** The key of a phase's complement (`key` is a phaseKey). */
+function complementKey(key) {
+  return phaseKey(complementPhase(key));
+}
+
+/** Whether two phase keys name one phase: equal, or plain text and the same
+ * text as math (a plain phase's complement is math, and so is its bar undone). */
+function samePhase(a, b) {
+  if (a === b) return true;
+  const bare = (key) => (isTexSource(key) ? key.replace(/^\$+|\$+$/g, '') : key);
+  return isTexSource(a) !== isTexSource(b) && bare(a) === bare(b);
+}
+
+/** The switches on the complement of phase `key`. */
+function complementSwitches(circuit, key) {
+  const complement = complementKey(key);
+  return [...circuit.components.values()].filter((c) => switchState(c) && switchPhase(c) && samePhase(switchGroupKey(c), complement));
+}
+
+/** Whether a phase is written as another's complement: its TeX is barred. */
+function isComplementPhase(key) {
+  return isTexSource(key) && OVERBAR.test(String(key).replace(/^\$+|\$+$/g, '').trim());
+}
+
+/** Whether phase `key`'s switches are closed while phase `active` is: its
+ * own phase closes them, and a barred phase is closed whenever the phase it
+ * complements is open -- the active one's complement is open with it. */
+function phaseClosedIn(key, active) {
+  if (samePhase(key, active)) return true;
+  if (!isComplementPhase(key)) return false;
+  return !samePhase(complementKey(key), active);
 }
 
 /** What beats and groups know a switch by: its phase, or its own refdes. */
@@ -10605,6 +10657,9 @@ function setSwitchFrom(circuit, index, refOrPhase, state) {
   const track = valueTrack(circuit.beats, 'switches', key, base);
   carryForward(track, index, state);
   writeValueTrack(circuit.beats, 'switches', key, track, base);
+  // In beats a phase's complement stands opposite it.
+  const complement = switchState(circuit.components.get(key)) ? null : complementSwitches(circuit, key)[0];
+  if (complement) invertBeatSwitchKey(circuit, key, switchGroupKey(complement));
 }
 
 /** Highlight colors in beat `index`, keyed by net group. */
@@ -10645,14 +10700,23 @@ function cycleBeatHighlight(circuit, index, net, colors) {
 // ----- beats from switch phases -------------------------------------------------
 
 /** The phases in the drawing, in the order their first switch was placed:
- * [{ key, source }], where source is that switch's own spelling. */
-function switchPhases(circuit) {
+ * [{ key, source }], where source is that switch's own spelling. With
+ * `complements`, each is followed by its complement when no switch uses that
+ * yet ({ key, source, complement: true }): what a phase menu offers. */
+function switchPhases(circuit, { complements = false } = {}) {
   const phases = new Map();
   for (const component of circuit.components.values()) {
     const source = switchPhase(component);
     if (source && !phases.has(phaseKey(source))) phases.set(phaseKey(source), { key: phaseKey(source), source });
   }
-  return [...phases.values()];
+  if (!complements) return [...phases.values()];
+  const offered = [];
+  for (const phase of phases.values()) {
+    offered.push(phase);
+    const key = complementKey(phase.key);
+    if (![...phases.keys()].some((used) => samePhase(used, key)) && !offered.some((other) => samePhase(other.key, key))) offered.push({ key, source: complementPhase(phase.source), complement: true });
+  }
+  return offered;
 }
 
 const isAttachment = (component) => REFERENCE_MARKER_TYPES.includes(component?.type) || INTERFACE_PIN_TYPES.has(component?.type);
@@ -10688,7 +10752,7 @@ function phaseLive(circuit, key) {
   const closed = (component) => {
     if (!switchState(component)) return true;
     const phase = phaseKey(switchPhase(component));
-    return phase ? phase === key : switchState(component) === 'closed';
+    return phase ? phaseClosedIn(phase, key) : switchState(component) === 'closed';
   };
   const netsOf = new Map();
   // The ends a part touches: the rails it is on, and the pins on its wires.
@@ -10750,9 +10814,10 @@ function setSwitchAt(circuit, index, key, state) {
 
 /**
  * Insert one beat per switch phase at `index`, named after the phase: its
- * switches closed and every other phase's open, what still works in that
- * phase shown and the rest -- open switches included -- dimmed (phaseLive).
- * Returns how many beats.
+ * switches closed and every other phase's open (a barred phase closed
+ * wherever the phase it complements is open), what still works in that phase
+ * shown and the rest -- open switches included -- dimmed (phaseLive). Only
+ * phases some switch is on make beats. Returns how many beats.
  */
 function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
   const phases = switchPhases(circuit);
@@ -10761,7 +10826,7 @@ function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
   phases.forEach(({ key, source }, step) => {
     const at = index + step;
     addBeat(circuit, { index: at, name: source });
-    for (const other of phases) setSwitchAt(circuit, at, other.key, other.key === key ? 'closed' : 'open');
+    for (const other of phases) setSwitchAt(circuit, at, other.key, phaseClosedIn(other.key, key) ? 'closed' : 'open');
     const live = phaseLive(circuit, key);
     for (const component of listable) {
       setPresenceAt(circuit, at, [component.refdes], live.has(component.refdes) ? 'show' : 'dim');
@@ -10792,6 +10857,15 @@ function carryBeatSwitchKey(circuit, from, to, { move = false } = {}) {
     beat.switches[to] = beat.switches[from];
     if (move) delete beat.switches[from];
   }
+}
+
+/** Set phase `to`'s position in every beat opposite phase `from`'s: a
+ * complement in beats. Its drawn position is left alone. */
+function invertBeatSwitchKey(circuit, from, to) {
+  if (!circuit.beats?.length) return;
+  const track = valueTrack(circuit.beats, 'switches', from, switchBase(circuit, from))
+    .map((state) => (state === 'open' ? 'closed' : 'open'));
+  writeValueTrack(circuit.beats, 'switches', to, track, switchBase(circuit, to));
 }
 
 /** A net group renamed as a whole keeps its per-beat highlights. */
@@ -15590,7 +15664,7 @@ let busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesCo
 let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_SIZES, labelFontSize, strokeWidth } = __require("src/core/style.js")); });
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
-let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf } = __require("src/core/beats.js")); });
+let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
 
 
 
@@ -17720,7 +17794,8 @@ class Circuit {
    * switches drawn. */
   setSwitchState(refOrPhase, state) {
     if (!SWITCH_TYPES[state]) throw new Error('a switch is open or closed');
-    const group = switchesOf(this, switchKeyFor(this, refOrPhase));
+    const key = switchKeyFor(this, refOrPhase);
+    const group = switchesOf(this, key);
     for (const component of group) {
       component.type = SWITCH_TYPES[state];
       component.def = getSymbol(component.type);
@@ -17752,9 +17827,14 @@ class Circuit {
     const after = switchGroupKey(component);
     if (after !== before) {
       const peers = switchesOf(this, after).filter((other) => other !== component);
+      // The drawing keeps the switch as drawn; in beats a new complement
+      // stands opposite its phase.
+      const inverse = peers.length || !component.value ? [] : complementSwitches(this, after).filter((other) => other !== component);
       if (peers.length) {
         component.type = peers[0].type;
         component.def = peers[0].def;
+      } else if (inverse.length) {
+        invertBeatSwitchKey(this, switchGroupKey(inverse[0]), after);
       } else {
         carryBeatSwitchKey(this, before, after, { move: !switchesOf(this, before).length });
       }
@@ -23002,6 +23082,9 @@ function texToLabelMarkup(source) {
  * messages: $\phi_{1}$ reads ϕ1, V_{BN} reads VBN. */
 function plainTexText(source) {
   return stripMathDelimiters(source)
+    // An overbar (a complementary phase, $\overline{\phi_1}$) as a combining
+    // overline over each character it covers: ϕ̅1̅.
+    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => [...plainTexText(inner)].map((ch) => `${ch}\u0305`).join(''))
     .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
     .replace(/[_^]\{([^}]*)\}/g, '$1')
     .replace(/[_^{}]/g, '');
@@ -26900,13 +26983,14 @@ __modules["src/core/timing-diagram.js"] = function (__require, __exports) {
 __exports.timingWavePoints = timingWavePoints;
 __exports.addTimingDiagram = addTimingDiagram;
 let GRID, ceilGrid, floorGrid; __bind(() => { ({ GRID, ceilGrid, floorGrid } = __require("src/core/grid.js")); });
-let isTexSource, switchPhases; __bind(() => { ({ isTexSource, switchPhases } = __require("src/core/beats.js")); });
+let complementKey, isComplementPhase, isTexSource, samePhase, switchPhases; __bind(() => { ({ complementKey, isComplementPhase, isTexSource, samePhase, switchPhases } = __require("src/core/beats.js")); });
 /**
  * Timing diagram template: one clock waveform per switch phase, drawn under
  * the drawing as plain annotations the author then edits into the real
  * timing. Each phase gets a free label (its own spelling, TeX drawn as math)
  * and a line annotation two cells tall with vertical edges: 4 cells low,
- * 8 high, 8 low, 4 high.
+ * 8 high, 8 low, 4 high. A complementary (barred) phase's wave is the
+ * inverse.
  */
 
 
@@ -26919,9 +27003,10 @@ const ROW_PITCH = 3 * GRID;
 const GAP_BELOW_DRAWING = 2 * GRID;
 const LABEL_GAP = GRID;
 
-/** Points of one template waveform starting at (x, top). */
-function timingWavePoints(x, top) {
-  const level = (high) => (high ? top : top + WAVE_HEIGHT);
+/** Points of one template waveform starting at (x, top); `inverted` for a
+ *  complementary phase. */
+function timingWavePoints(x, top, { inverted = false } = {}) {
+  const level = (high) => (high !== inverted ? top : top + WAVE_HEIGHT);
   const points = [{ x, y: level(WAVE[0][1]) }];
   for (const [cells, high] of WAVE) {
     const last = points.at(-1);
@@ -26931,12 +27016,25 @@ function timingWavePoints(x, top) {
   return points;
 }
 
+/** Phases in drawing order, each complement right after its phase; a pair
+ *  goes where the first of the two was drawn. */
+function timingOrder(phases) {
+  const baseOf = (phase) => (isComplementPhase(phase.key) ? phases.find((other) => samePhase(other.key, complementKey(phase.key))) : null) || phase;
+  const ordered = [];
+  for (const phase of phases) {
+    const base = baseOf(phase);
+    if (ordered.includes(base)) continue;
+    ordered.push(base, ...phases.filter((other) => other !== base && baseOf(other) === base));
+  }
+  return ordered;
+}
+
 /**
  * Add the template under everything drawn so far. Returns the ids of the
  * labels and lines it added, row by row: [{ phase, label, line }].
  */
 function addTimingDiagram(circuit) {
-  const phases = switchPhases(circuit);
+  const phases = timingOrder(switchPhases(circuit));
   if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
   const drawn = circuit.bounds();
   const left = floorGrid(drawn.x);
@@ -26954,7 +27052,8 @@ function addTimingDiagram(circuit) {
   const edge = left + column;
   for (const label of labels) label.moveTo(edge - label.bbox().w / 2, label.anchor.y);
   return labels.map((label, row) => {
-    const line = circuit.addAnnotation('line', { points: timingWavePoints(edge + LABEL_GAP, top + row * ROW_PITCH) });
+    const inverted = isComplementPhase(phases[row].key);
+    const line = circuit.addAnnotation('line', { points: timingWavePoints(edge + LABEL_GAP, top + row * ROW_PITCH, { inverted }) });
     return { phase: phases[row].key, label: label.id, line: line.id };
   });
 }
@@ -32486,7 +32585,7 @@ __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
 let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
-let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats } = __require("src/core/beats.js")); });
+let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl; __bind(() => { ({ canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } = __require("src/web/elements.js")); });
@@ -32764,8 +32863,12 @@ function toggleSelectionInBeat(target = 'hide') {
 }
 
 /** The selected switches' groups: each phase once, or a lone switch. */
-function selectedSwitchGroups() {
-  return [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
+function selectedSwitchGroups({ onBeat = false } = {}) {
+  const groups = [...new Map(selectedComps().filter((c) => switchState(c)).map((c) => [switchGroupKey(c), c])).values()];
+  if (!onBeat) return groups;
+  // On a beat a phase and its complement flip together already, the other
+  // way round.
+  return groups.filter((c, i) => !switchPhase(c) || !groups.slice(0, i).some((other) => switchPhase(other) && samePhase(switchGroupKey(other), complementKey(switchGroupKey(c)))));
 }
 
 // Plain text for messages: φ_{1} reads φ1, $\phi_1$ reads ϕ1.
@@ -32776,12 +32879,12 @@ const switchGroupName = (c) => (switchPhase(c) ? `${plainMarkup(switchPhase(c))}
 /** s: open or close the selected switches, with the rest of their phases --
  * in the drawing, or from the beat on screen on. */
 function flipSelectedSwitches() {
-  const groups = selectedSwitchGroups();
+  const index = activeBeatIndex();
+  const groups = selectedSwitchGroups({ onBeat: index !== null });
   if (!groups.length) {
     hintLine('SWITCH: select a switch to open or close it (with every switch on its phase)');
     return;
   }
-  const index = activeBeatIndex();
   const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(editor.circuit, c.refdes, index));
   const next = groups.every((c) => stateOf(c) === 'closed') ? 'open' : 'closed';
   commit(() => {
@@ -35249,7 +35352,8 @@ function appendSwitchPhaseMenu(menu, target) {
     logLine(`${scope.map((c) => c.refdes).join(', ')} ${source ? `on phase ${plainMarkup(source)}` : 'on no phase'}`);
   };
   appendContextSubmenu(menu, 'Phase', (submenu) => {
-    for (const { key, source } of switchPhases(editor.circuit)) {
+    // Each phase is offered with its complement (its name with an overbar).
+    for (const { key, source } of switchPhases(editor.circuit, { complements: true })) {
       appendContextItem(submenu, plainMarkup(source), () => setPhase(source), { active: all((c) => switchGroupKey(c) === key) });
     }
     appendContextItem(submenu, 'None', () => setPhase(''), { active: all((c) => !switchPhase(c)) });
