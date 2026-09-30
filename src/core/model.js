@@ -862,8 +862,8 @@ const finite = (value) => Number.isFinite(value);
 const round = (value, digits = 4) => Number(value.toPrecision(digits));
 
 /** A timing diagram row's data, as saved: its phase, its own wave (1s and
- * 0s), the slot width in cells, and which phases are kept from
- * overlapping (`gaps`); null when unusable. */
+ * 0s), the slot width in cells, which phases are kept from overlapping
+ * (`gaps`), and its edge shift; null when unusable. */
 export function normalizeTiming(timing) {
   if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
   const bits = typeof timing.bits === 'string' && /^[01]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
@@ -873,7 +873,16 @@ export function normalizeTiming(timing) {
   const gaps = timing.gaps === false ? false
     : Array.isArray(timing.gaps) ? timing.gaps.filter((pair) => Array.isArray(pair) && pair.length === 2 && pair.every((key) => typeof key === 'string')).map(([a, b]) => [a.slice(0, 200), b.slice(0, 200)])
       : undefined;
-  return { phase: timing.phase.slice(0, 200), ...(bits ? { bits } : {}), slot, ...(gaps !== undefined ? { gaps } : {}) };
+  // Edge shifts in whole cells, earlier negative (timing-diagram.js).
+  const cells = (value) => Math.max(-8, Math.min(8, Math.round(Number(value)) || 0));
+  const shift = timing.shift && typeof timing.shift === 'object' ? { fall: cells(timing.shift.fall), rise: cells(timing.shift.rise) } : null;
+  return {
+    phase: timing.phase.slice(0, 200),
+    ...(bits ? { bits } : {}),
+    slot,
+    ...(gaps !== undefined ? { gaps } : {}),
+    ...(shift && (shift.fall || shift.rise) ? { shift } : {}),
+  };
 }
 
 /**

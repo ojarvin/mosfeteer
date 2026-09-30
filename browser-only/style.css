@@ -5245,8 +5245,7 @@ circle.bode-corner {
   text-align: right;
 }
 
-.timing-dialog .timing-dialog-options,
-.timing-pairs {
+.timing-dialog .timing-dialog-options {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5254,11 +5253,54 @@ circle.bode-corner {
   margin-top: 8px;
 }
 
-.timing-dialog .timing-dialog-options label,
-.timing-pairs label {
+.timing-dialog .timing-dialog-options label {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.timing-shift-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timing-shift-pair button {
+  min-width: 1.8rem;
+  padding-inline: 4px;
+}
+
+.timing-shift {
+  flex: 0 0 auto;
+  min-width: 3.5rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The pairs kept apart: checkboxes on one aligned grid. */
+.timing-pairs {
+  margin-top: 10px;
+}
+
+.timing-pairs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.timing-pairs-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+  gap: 4px 12px;
+}
+
+.timing-pairs-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .timing-dialog .timing-dialog-options input[type="number"] {

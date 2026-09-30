@@ -11545,8 +11545,8 @@ let plainTexText, svgString; __bind(() => { ({ plainTexText, svgString } = __req
 let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
 let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
-let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
-let addTimingDiagram; __bind(() => { ({ addTimingDiagram } = __require("src/core/timing-diagram.js")); });
+let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom, switchPhases; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom, switchPhases } = __require("src/core/beats.js")); });
+let addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
 let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
@@ -11700,6 +11700,8 @@ const FLAG_ARITY = {
   beats: 0,
   gaps: 1,
   'no-gaps': 0,
+  fall: 1,
+  rise: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -12110,14 +12112,15 @@ function commandHelp() {
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
-    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...]',
+    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise PHASE=N,...]',
     '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
     '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',
     '                                   retakes them from the beats. Waves repeat past both ends; --slot N is a slot\'s',
     '                                   width in cells. --gaps sets which phases never overlap (a one-cell gap where one',
-    '                                   falls as the other rises): auto (any two never high together), none, or pairs',
+    '                                   falls as the other rises): auto (any two never high together), none, or pairs.',
+    '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier)',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -12544,9 +12547,30 @@ function dispatch(circuit, cmd, pos, flags, io) {
         if (names.length !== 2 || !names[0] || !names[1]) throw new Error(`--gaps takes auto, none, or pairs such as φ1:φ2,φ2:φ3, not "${pair}"`);
         return names;
       });
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps });
+    // --fall PHASE=N,... / --rise PHASE=N,...: edges moved N cells (negative earlier).
+    const shifts = {};
+    for (const edge of ['fall', 'rise']) {
+      if (!flags[edge]) continue;
+      for (const item of String(flags[edge][0]).split(',').filter(Boolean)) {
+        const at = item.lastIndexOf('=');
+        const cells = Number(item.slice(at + 1));
+        if (at <= 0 || !Number.isInteger(cells)) throw new Error(`--${edge} takes PHASE=N (whole cells, negative earlier), not "${item}"`);
+        const name = item.slice(0, at);
+        shifts[name] = { ...(shifts[name] || {}), [edge]: cells };
+      }
+    }
+    const current = existingTimingDiagram(circuit);
+    for (const [name, shift] of Object.entries(shifts)) {
+      // An edge not named keeps its shift.
+      const phases = timingOrder(switchPhases(circuit));
+      const key = timingPhaseNamed(phases, name)?.key;
+      const kept = key ? current?.shifts.get(key) : null;
+      shifts[name] = { fall: shift.fall ?? kept?.fall ?? 0, rise: shift.rise ?? kept?.rise ?? 0 };
+    }
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts });
     const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
-    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}`).join(', ')}`, rows, true);
+    const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
+    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}`, rows, true);
   }
   if (cmd === 'switch') {
     const [ref, state] = pos;
@@ -16558,8 +16582,8 @@ const finite = (value) => Number.isFinite(value);
 const round = (value, digits = 4) => Number(value.toPrecision(digits));
 
 /** A timing diagram row's data, as saved: its phase, its own wave (1s and
- * 0s), the slot width in cells, and which phases are kept from
- * overlapping (`gaps`); null when unusable. */
+ * 0s), the slot width in cells, which phases are kept from overlapping
+ * (`gaps`), and its edge shift; null when unusable. */
 function normalizeTiming(timing) {
   if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
   const bits = typeof timing.bits === 'string' && /^[01]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
@@ -16569,7 +16593,16 @@ function normalizeTiming(timing) {
   const gaps = timing.gaps === false ? false
     : Array.isArray(timing.gaps) ? timing.gaps.filter((pair) => Array.isArray(pair) && pair.length === 2 && pair.every((key) => typeof key === 'string')).map(([a, b]) => [a.slice(0, 200), b.slice(0, 200)])
       : undefined;
-  return { phase: timing.phase.slice(0, 200), ...(bits ? { bits } : {}), slot, ...(gaps !== undefined ? { gaps } : {}) };
+  // Edge shifts in whole cells, earlier negative (timing-diagram.js).
+  const cells = (value) => Math.max(-8, Math.min(8, Math.round(Number(value)) || 0));
+  const shift = timing.shift && typeof timing.shift === 'object' ? { fall: cells(timing.shift.fall), rise: cells(timing.shift.rise) } : null;
+  return {
+    phase: timing.phase.slice(0, 200),
+    ...(bits ? { bits } : {}),
+    slot,
+    ...(gaps !== undefined ? { gaps } : {}),
+    ...(shift && (shift.fall || shift.rise) ? { shift } : {}),
+  };
 }
 
 /**
@@ -27033,6 +27066,7 @@ __exports.beatTimingBits = beatTimingBits;
 __exports.defaultTimingPairs = defaultTimingPairs;
 __exports.timingColumns = timingColumns;
 __exports.timingRowGeometry = timingRowGeometry;
+__exports.normalizeEdgeShift = normalizeEdgeShift;
 __exports.timingOrder = timingOrder;
 __exports.timingPhaseNamed = timingPhaseNamed;
 __exports.existingTimingDiagram = existingTimingDiagram;
@@ -27161,26 +27195,46 @@ function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, pairs = [], inve
   return { columns, levels: drawn, count };
 }
 
+/** How far an edge may shift, in cells, either way. */
+const MAX_EDGE_SHIFT = 8;
+
 /**
  * The points of one row's wave: its `levels` over `columns`, from `x`, top
- * at `top`, with vertical edges.
+ * at `top`, with vertical edges. `shift` moves the row's falling and rising
+ * edges by whole cells ({ fall, rise }, negative earlier): a bottom plate's
+ * switch opening a cell before its top plate's. An edge stays inside the
+ * columns on either side of it and after the edge before it.
  */
-function timingRowGeometry(levels, columns, x, top) {
+function timingRowGeometry(levels, columns, x, top, shift = {}) {
   const y = (level) => (level === '1' ? top : top + WAVE_HEIGHT);
-  const points = [];
-  let x0 = x;
-  columns.forEach((column, index) => {
-    const level = y(levels[index]);
-    if (!points.length) points.push({ x: x0, y: level });
-    else if (points.at(-1).y !== level) points.push({ x: x0, y: level });
-    x0 += column.w;
-    points.push({ x: x0, y: level });
-  });
-  // A level held over several columns is one segment.
-  for (let i = points.length - 2; i > 0; i -= 1) {
-    if (points[i - 1].y === points[i].y && points[i].y === points[i + 1].y) points.splice(i, 1);
+  const starts = [];
+  columns.reduce((at, column) => { starts.push(at); return at + column.w; }, x);
+  const end = x + columns.reduce((sum, column) => sum + column.w, 0);
+  const points = [{ x, y: y(levels[0]) }];
+  let last = x;
+  for (let index = 1; index < columns.length; index += 1) {
+    if (levels[index] === levels[index - 1]) continue;
+    const cells = levels[index] === '1' ? shift.rise || 0 : shift.fall || 0;
+    const lo = Math.max(starts[index - 1], last);
+    const hi = starts[index] + columns[index].w;
+    const at = Math.max(lo, Math.min(hi, starts[index] + cells * GRID));
+    points.push({ x: at, y: y(levels[index - 1]) }, { x: at, y: y(levels[index]) });
+    last = at;
   }
-  return points;
+  points.push({ x: end, y: y(levels.at(-1)) });
+  // A level held over several columns is one segment; an edge pushed onto
+  // the next one cancels out.
+  for (let i = points.length - 2; i > 0; i -= 1) {
+    const [a, b, c] = [points[i - 1], points[i], points[i + 1]];
+    if ((a.y === b.y && b.y === c.y) || (a.x === b.x && b.x === c.x)) points.splice(i, 1);
+  }
+  return points.filter((point, i) => i === 0 || point.x !== points[i - 1].x || point.y !== points[i - 1].y);
+}
+
+/** A row's edge shift as saved or given: whole cells within the limit. */
+function normalizeEdgeShift(shift) {
+  const cells = (value) => Math.max(-MAX_EDGE_SHIFT, Math.min(MAX_EDGE_SHIFT, Math.round(Number(value)) || 0));
+  return { fall: cells(shift?.fall), rise: cells(shift?.rise) };
 }
 
 /** Phases in drawing order, each complement right after its phase; a pair
@@ -27210,20 +27264,24 @@ function timingPhaseNamed(phases, name) {
   return phase;
 }
 
-/** The diagram already drawn: its annotations' ids, each phase's own wave,
- *  its slot width and non-overlap setting, and where it stands ({ x, y }:
+/** The diagram already drawn: its annotations' ids, each phase's own wave
+ *  and edge shift, its slot width and non-overlap setting, and where it stands ({ x, y }:
  *  its waves' left edge and first row's top). Null when there is none. */
 function existingTimingDiagram(circuit) {
   const parts = [...circuit.labels.values()].filter((label) => label.timing);
   if (!parts.length) return null;
   const bits = new Map();
-  for (const label of parts) if (typeof label.timing.bits === 'string') bits.set(label.timing.phase, label.timing.bits);
+  const shifts = new Map();
+  for (const label of parts) {
+    if (typeof label.timing.bits === 'string') bits.set(label.timing.phase, label.timing.bits);
+    if (label.timing.shift) shifts.set(label.timing.phase, normalizeEdgeShift(label.timing.shift));
+  }
   const waves = parts.filter((label) => label.kind !== 'label');
   const names = parts.filter((label) => label.kind === 'label');
   const x = waves.length ? Math.min(...waves.map((label) => label.bbox().x)) : Math.max(...names.map((label) => label.bbox().x + label.bbox().w)) + LABEL_GAP;
   const y = waves.length ? Math.min(...waves.map((label) => label.bbox().y)) : Math.min(...names.map((label) => label.anchorWorld().y - WAVE_HEIGHT / 2));
   const first = parts.find((label) => label.timing.slot) || parts[0];
-  return { ids: parts.map((label) => label.id), bits, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
+  return { ids: parts.map((label) => label.id), bits, shifts, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
 }
 
 /** The pairs of rows kept from overlapping under `setting`: 'auto' (every
@@ -27262,10 +27320,14 @@ function timingRowSources(circuit, { fromBeats = false, typed = new Map() } = {}
  * by phase name (see timingPhaseNamed); `fromBeats` takes the waves not given
  * from the beats rather than the diagram already drawn; `slot` is a slot's
  * width in cells; `gaps` is 'auto', 'none', or pairs of phase names kept from
- * overlapping (both kept from the diagram drawn before when not given).
- * Returns the rows: [{ phase, bits, from, label, line, lines }].
+ * overlapping (both kept from the diagram drawn before when not given);
+ * `shifts` gives rows' edge shifts ({ fall, rise } cells) by phase name, the
+ * rest keeping theirs. A complement following its phase takes the phase's
+ * shifts the other way round -- the phase falling early, it rises early --
+ * plus its own. Returns the rows: [{ phase, bits, from, shift, label, line,
+ * lines }].
  */
-function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null } = {}) {
+function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {} } = {}) {
   const phases = timingOrder(switchPhases(circuit));
   if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
   const named = (name) => {
@@ -27277,6 +27339,15 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
   for (const [name, text] of Object.entries(given)) typed.set(named(name).key, parseTimingBits(text));
   const rows = timingRowSources(circuit, { fromBeats, typed });
   const before = existingTimingDiagram(circuit);
+  const ownShift = new Map();
+  for (const [name, shift] of Object.entries(givenShifts)) ownShift.set(named(name).key, normalizeEdgeShift(shift));
+  const own = (key) => ownShift.get(key) ?? before?.shifts.get(key) ?? { fall: 0, rise: 0 };
+  const drawnShift = rows.map((row) => {
+    const mine = own(row.key);
+    if (row.complementOf === undefined) return mine;
+    const base = own(rows[row.complementOf].key);
+    return normalizeEdgeShift({ fall: base.rise + mine.fall, rise: base.fall + mine.rise });
+  });
   const slotCells = Math.max(1, Math.round(Number(slot) || before?.slot || DEFAULT_SLOT_CELLS));
   const setting = gaps === null || gaps === undefined ? before?.gaps ?? 'auto'
     : gaps === false ? 'none'
@@ -27297,7 +27368,12 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
     align: 'right',
     x: 0,
     y: top + row * ROW_PITCH + WAVE_HEIGHT / 2,
-    timing: { phase: key, ...(from === 'complement' || from === 'low' ? {} : { bits }), ...settings },
+    timing: {
+      phase: key,
+      ...(from === 'complement' || from === 'low' ? {} : { bits }),
+      ...(own(key).fall || own(key).rise ? { shift: own(key) } : {}),
+      ...settings,
+    },
   }));
   // Names in a right-aligned column, the waves a cell after it; the whole
   // centred under the drawing.
@@ -27307,13 +27383,14 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
   for (const label of labels) label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, label.anchor.y);
   return labels.map((label, row) => {
     const { key, bits, from } = rows[row];
-    const points = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH);
+    const points = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH, drawnShift[row]);
     const line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
-    return { phase: key, bits, from, label: label.id, line, lines: [line] };
+    return { phase: key, bits, from, shift: own(key), label: label.id, line, lines: [line] };
   });
 }
 
 __exports.DEFAULT_SLOT_CELLS = DEFAULT_SLOT_CELLS;
+__exports.MAX_EDGE_SHIFT = MAX_EDGE_SHIFT;
 };
 
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
@@ -32840,7 +32917,7 @@ __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
-let DEFAULT_SLOT_CELLS, addTimingDiagram, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, addTimingDiagram, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources } = __require("src/core/timing-diagram.js")); });
+let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources } = __require("src/core/timing-diagram.js")); });
 let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
@@ -33372,6 +33449,7 @@ function openTimingDialog() {
     base: row.complementOf,
     follows: row.from === 'complement',
     wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
+    shift: before?.shifts.get(row.key) || { fall: 0, rise: 0 },
   }));
   const state = {
     cursor: { row: 0, slot: 0 },
@@ -33401,9 +33479,10 @@ function openTimingDialog() {
     const bits = {};
     rows.forEach((row, index) => { if (!row.follows) bits[String(index + 1)] = row.wave.join(''); });
     const gaps = Array.isArray(state.gaps) ? state.gaps.map(([a, b]) => [String(a + 1), String(b + 1)]) : state.gaps;
+    const shifts = Object.fromEntries(rows.map((row, index) => [String(index + 1), row.shift]));
     const start = snapshot();
     try {
-      addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps, fromBeats: true });
+      addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps, shifts, fromBeats: true });
     } catch (err) {
       status.textContent = err.message;
       return;
@@ -33430,8 +33509,9 @@ function openTimingDialog() {
     pairsBox.replaceChildren();
     const own = rows.map((row, index) => index).filter((index) => rows[index].base === undefined);
     const active = activePairs();
-    const label = make('span', { class: 'timing-pairs-title', text: 'Never overlap:' });
-    pairsBox.append(label);
+    const head = make('div', { class: 'timing-pairs-head' }, [make('span', { class: 'timing-pairs-title', text: 'Never overlap' })]);
+    const list = make('div', { class: 'timing-pairs-list' });
+    pairsBox.append(head, list);
     for (let a = 0; a < own.length; a += 1) {
       for (let b = a + 1; b < own.length; b += 1) {
         const pair = [own[a], own[b]];
@@ -33444,13 +33524,13 @@ function openTimingDialog() {
           renderPairs();
           redraw();
         });
-        pairsBox.append(make('label', {}, [box, make('span', { text: `${plainMarkup(rows[pair[0]].source)} · ${plainMarkup(rows[pair[1]].source)}` })]));
+        list.append(make('label', {}, [box, make('span', { text: `${plainMarkup(rows[pair[0]].source)} · ${plainMarkup(rows[pair[1]].source)}` })]));
       }
     }
     const auto = make('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'automatic' : 'Automatic', title: 'Keep apart every two phases that are never high in the same slot' });
     auto.disabled = state.gaps === 'auto';
     auto.addEventListener('click', () => { state.gaps = 'auto'; renderPairs(); redraw(); });
-    pairsBox.append(auto);
+    head.append(auto);
   };
 
   const renderGrid = () => {
@@ -33483,7 +33563,15 @@ function openTimingDialog() {
         renderGrid();
       });
       cells.append(add);
-      grid.append(make('div', { class: 'timing-grid-line' }, [name, cells]));
+      const edge = (arrow, cells) => (cells ? `${arrow}${cells > 0 ? '+' : '−'}${Math.abs(cells)}` : '');
+      const shift = make('span', {
+        class: 'timing-shift',
+        text: [edge('↓', row.shift.fall), edge('↑', row.shift.rise)].filter(Boolean).join(' '),
+        title: row.shift.fall || row.shift.rise
+          ? `Falls ${Math.abs(row.shift.fall)} cell${Math.abs(row.shift.fall) === 1 ? '' : 's'} ${row.shift.fall < 0 ? 'early' : 'late'}, rises ${Math.abs(row.shift.rise)} ${row.shift.rise < 0 ? 'early' : 'late'} ([ ] and { } move them)`
+          : 'Edges on the slot boundaries ([ ] move the falls, { } the rises)',
+      });
+      grid.append(make('div', { class: 'timing-grid-line' }, [name, cells, shift]));
     });
     const count = make('div', { class: 'timing-grid-foot', text: state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
     grid.append(count);
@@ -33499,6 +33587,12 @@ function openTimingDialog() {
     if (state.cursor.slot >= length()) for (const r of rows) if (!r.follows) r.wave.push(r.wave.at(-1) ?? '0');
     row.wave[state.cursor.slot] = level;
     if (advance) state.cursor.slot = Math.min(state.cursor.slot + 1, length());
+    change();
+  };
+  // Move the cursor row's falling or rising edges a cell earlier (-1) or later.
+  const shiftEdge = (edge, by) => {
+    const row = rows[state.cursor.row];
+    row.shift = { ...row.shift, [edge]: Math.max(-MAX_EDGE_SHIFT, Math.min(MAX_EDGE_SHIFT, row.shift[edge] + by)) };
     change();
   };
   // At the empty cell after the end, these act on the last slot.
@@ -33531,6 +33625,8 @@ function openTimingDialog() {
       setCell({ h: '1', H: '1', l: '0', L: '0' }[event.key] || event.key, { advance: true });
     } else if (event.key === ' ') {
       setCell(shown(rows[row], Math.min(slot, length() - 1)) === '1' ? '0' : '1');
+    } else if (['[', ']', '{', '}'].includes(event.key)) {
+      shiftEdge(event.key === '[' || event.key === ']' ? 'fall' : 'rise', event.key === '[' || event.key === '{' ? -1 : 1);
     } else if (event.key === '+' || event.key === 'Insert') {
       repeatSlot();
     } else if (event.key === 'Delete' || event.key === 'Backspace' || event.key === '-') {
@@ -33560,12 +33656,25 @@ function openTimingDialog() {
   };
   const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
     make('h2', { text: 'Timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it.' }),
+    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges.' }),
     grid,
     make('div', { class: 'timing-dialog-options' }, [
       button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
       button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
       make('label', {}, [make('span', { text: 'Slot' }), slotInput, make('span', { text: 'cells' })]),
+    ]),
+    make('div', { class: 'timing-dialog-options timing-shift-controls' }, [
+      make('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
+      make('span', { class: 'timing-shift-pair' }, [
+        make('span', { text: 'Fall' }),
+        button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
+        button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
+      ]),
+      make('span', { class: 'timing-shift-pair' }, [
+        make('span', { text: 'Rise' }),
+        button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
+        button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
+      ]),
     ]),
     pairsBox,
     status,

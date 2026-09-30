@@ -160,3 +160,31 @@ test('annotation vertex-rm removes one vertex by index', () => {
   assert.throws(() => runCommand(circuit, `annotation vertex-rm ${line.id} 0`), /cannot remove vertex 0/);
   assert.throws(() => runCommand(circuit, 'annotation vertex-rm nope 0'), /unknown line or arrow/);
 });
+
+test('a row\'s edges shift by whole cells: a bottom plate opening before its top plate', () => {
+  const columns = [{ w: 80 }, { w: 160 }, { w: 160 }, { w: 80 }];
+  const levels = ['0', '1', '0', '0'];
+  // Falling a cell early; rising a cell late.
+  assert.deepEqual(timingRowGeometry(levels, columns, 0, 0, { fall: -1 }).map((p) => p.x), [0, 80, 80, 200, 200, 480]);
+  assert.deepEqual(timingRowGeometry(levels, columns, 0, 0, { rise: 1 }).map((p) => p.x), [0, 120, 120, 240, 240, 480]);
+  // An edge stays within the columns beside it.
+  assert.ok(timingRowGeometry(levels, columns, 0, 0, { fall: -8 }).every((p) => p.x >= 0 && p.x <= 480));
+});
+
+test('shifts are kept per phase, and a following complement mirrors its phase\'s', () => {
+  const circuit = clocked();
+  runCommand(circuit, 'timing φ1=10 φ2=01 --fall φ1=-1');
+  const line = (phase) => wavesOf(circuit).find((l) => l.timing.phase === phase).points;
+  const fallX = (points) => points.find((p, i) => i > 0 && points[i - 1].x === p.x && points[i - 1].y < p.y).x;
+  const riseX = (points) => points.find((p, i) => i > 0 && points[i - 1].x === p.x && points[i - 1].y > p.y).x;
+  const plain = Circuit.fromJSON(circuit.toJSON());
+  runCommand(plain, 'timing --fall φ1=0');
+  // φ1 falls a cell early; its complement rises a cell early with it.
+  assert.equal(fallX(line('$\\varphi_{1}$')), fallX(wavesOf(plain).find((l) => l.timing.phase === '$\\varphi_{1}$').points) - 40);
+  assert.equal(riseX(line('$\\overline{\\varphi_{1}}$')), riseX(wavesOf(plain).find((l) => l.timing.phase === '$\\overline{\\varphi_{1}}$').points) - 40);
+  // Kept through redraws and a save; an edge not named keeps its shift.
+  runCommand(circuit, 'timing --rise φ1=1');
+  const loaded = Circuit.fromJSON(circuit.toJSON());
+  assert.deepEqual(rowsOf(loaded, 'timing')[0].shift, { fall: -1, rise: 1 });
+  assert.throws(() => runCommand(loaded, 'timing --fall φ1=early'), /PHASE=N/);
+});

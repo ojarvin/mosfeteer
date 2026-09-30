@@ -100,14 +100,21 @@ type `1` or `0`; the empty cell after the last slot adds one. `+` repeats
 the slot at the cursor in every row -- a state held one slot longer -- and
 Delete removes it. The slot width is in cells, and **Never overlap** lists
 every pair of phases to keep apart (**Automatic** returns to the default).
-Every change redraws the diagram in place, and an editing session is one
-undo entry. A complement follows its phase inverted until one of its own
+A row's edges can also move off the slot boundaries by whole cells: `[` and
+`]` move the cursor row's falling edges a cell earlier or later, `{` and `}`
+its rising edges (or the **Fall** and **Rise** buttons) -- a bottom plate's
+switch opening a cell before its top plate's is its phase's wave with the
+fall a cell early. The row shows its shift (`↓−1`). A complement following
+its phase takes the phase's shifts the other way round: the phase falling
+early, it rises early. Every change redraws the diagram in place, and an
+editing session is one undo entry. A complement follows its phase inverted until one of its own
 slots is changed; any other phase with no wave is low.
 
 The command takes the same waves: `timing φ1=10 φ2=01 --slot 2`, a phase
 named by its text, TeX, row number, or `~φ1` for its complement; rows not
-named keep their waves, `--beats` retakes them from the beats, and
-`--gaps auto|none|φ1:φ2,...` sets the pairs kept apart.
+named keep their waves, `--beats` retakes them from the beats,
+`--gaps auto|none|φ1:φ2,...` sets the pairs kept apart, and
+`--fall φ1'=-1` / `--rise PHASE=N` shift edges by cells.
 
 The diagram's annotations remember their phase and wave, so drawing it again
 replaces it rather than adding another. They are ordinary lines otherwise:

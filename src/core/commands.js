@@ -8,8 +8,8 @@ import { plainTexText, svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
-import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
-import { addTimingDiagram } from './timing-diagram.js';
+import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom, switchPhases } from './beats.js';
+import { addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { addBoxAround } from './wrap-box.js';
 import { swapCandidates, swapComponentType } from './swap.js';
@@ -145,6 +145,8 @@ const FLAG_ARITY = {
   beats: 0,
   gaps: 1,
   'no-gaps': 0,
+  fall: 1,
+  rise: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -555,14 +557,15 @@ export function commandHelp() {
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
-    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...]',
+    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise PHASE=N,...]',
     '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
     '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',
     '                                   retakes them from the beats. Waves repeat past both ends; --slot N is a slot\'s',
     '                                   width in cells. --gaps sets which phases never overlap (a one-cell gap where one',
-    '                                   falls as the other rises): auto (any two never high together), none, or pairs',
+    '                                   falls as the other rises): auto (any two never high together), none, or pairs.',
+    '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier)',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -989,9 +992,30 @@ function dispatch(circuit, cmd, pos, flags, io) {
         if (names.length !== 2 || !names[0] || !names[1]) throw new Error(`--gaps takes auto, none, or pairs such as φ1:φ2,φ2:φ3, not "${pair}"`);
         return names;
       });
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps });
+    // --fall PHASE=N,... / --rise PHASE=N,...: edges moved N cells (negative earlier).
+    const shifts = {};
+    for (const edge of ['fall', 'rise']) {
+      if (!flags[edge]) continue;
+      for (const item of String(flags[edge][0]).split(',').filter(Boolean)) {
+        const at = item.lastIndexOf('=');
+        const cells = Number(item.slice(at + 1));
+        if (at <= 0 || !Number.isInteger(cells)) throw new Error(`--${edge} takes PHASE=N (whole cells, negative earlier), not "${item}"`);
+        const name = item.slice(0, at);
+        shifts[name] = { ...(shifts[name] || {}), [edge]: cells };
+      }
+    }
+    const current = existingTimingDiagram(circuit);
+    for (const [name, shift] of Object.entries(shifts)) {
+      // An edge not named keeps its shift.
+      const phases = timingOrder(switchPhases(circuit));
+      const key = timingPhaseNamed(phases, name)?.key;
+      const kept = key ? current?.shifts.get(key) : null;
+      shifts[name] = { fall: shift.fall ?? kept?.fall ?? 0, rise: shift.rise ?? kept?.rise ?? 0 };
+    }
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts });
     const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
-    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}`).join(', ')}`, rows, true);
+    const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
+    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}`, rows, true);
   }
   if (cmd === 'switch') {
     const [ref, state] = pos;

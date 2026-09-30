@@ -4,7 +4,7 @@
  * presenter. The beat model is core/beats.js.
  */
 
-import { DEFAULT_SLOT_CELLS, addTimingDiagram, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources } from '../core/timing-diagram.js';
+import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
@@ -519,6 +519,7 @@ function openTimingDialog() {
     base: row.complementOf,
     follows: row.from === 'complement',
     wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
+    shift: before?.shifts.get(row.key) || { fall: 0, rise: 0 },
   }));
   const state = {
     cursor: { row: 0, slot: 0 },
@@ -548,9 +549,10 @@ function openTimingDialog() {
     const bits = {};
     rows.forEach((row, index) => { if (!row.follows) bits[String(index + 1)] = row.wave.join(''); });
     const gaps = Array.isArray(state.gaps) ? state.gaps.map(([a, b]) => [String(a + 1), String(b + 1)]) : state.gaps;
+    const shifts = Object.fromEntries(rows.map((row, index) => [String(index + 1), row.shift]));
     const start = snapshot();
     try {
-      addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps, fromBeats: true });
+      addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps, shifts, fromBeats: true });
     } catch (err) {
       status.textContent = err.message;
       return;
@@ -577,8 +579,9 @@ function openTimingDialog() {
     pairsBox.replaceChildren();
     const own = rows.map((row, index) => index).filter((index) => rows[index].base === undefined);
     const active = activePairs();
-    const label = make('span', { class: 'timing-pairs-title', text: 'Never overlap:' });
-    pairsBox.append(label);
+    const head = make('div', { class: 'timing-pairs-head' }, [make('span', { class: 'timing-pairs-title', text: 'Never overlap' })]);
+    const list = make('div', { class: 'timing-pairs-list' });
+    pairsBox.append(head, list);
     for (let a = 0; a < own.length; a += 1) {
       for (let b = a + 1; b < own.length; b += 1) {
         const pair = [own[a], own[b]];
@@ -591,13 +594,13 @@ function openTimingDialog() {
           renderPairs();
           redraw();
         });
-        pairsBox.append(make('label', {}, [box, make('span', { text: `${plainMarkup(rows[pair[0]].source)} · ${plainMarkup(rows[pair[1]].source)}` })]));
+        list.append(make('label', {}, [box, make('span', { text: `${plainMarkup(rows[pair[0]].source)} · ${plainMarkup(rows[pair[1]].source)}` })]));
       }
     }
     const auto = make('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'automatic' : 'Automatic', title: 'Keep apart every two phases that are never high in the same slot' });
     auto.disabled = state.gaps === 'auto';
     auto.addEventListener('click', () => { state.gaps = 'auto'; renderPairs(); redraw(); });
-    pairsBox.append(auto);
+    head.append(auto);
   };
 
   const renderGrid = () => {
@@ -630,7 +633,15 @@ function openTimingDialog() {
         renderGrid();
       });
       cells.append(add);
-      grid.append(make('div', { class: 'timing-grid-line' }, [name, cells]));
+      const edge = (arrow, cells) => (cells ? `${arrow}${cells > 0 ? '+' : '−'}${Math.abs(cells)}` : '');
+      const shift = make('span', {
+        class: 'timing-shift',
+        text: [edge('↓', row.shift.fall), edge('↑', row.shift.rise)].filter(Boolean).join(' '),
+        title: row.shift.fall || row.shift.rise
+          ? `Falls ${Math.abs(row.shift.fall)} cell${Math.abs(row.shift.fall) === 1 ? '' : 's'} ${row.shift.fall < 0 ? 'early' : 'late'}, rises ${Math.abs(row.shift.rise)} ${row.shift.rise < 0 ? 'early' : 'late'} ([ ] and { } move them)`
+          : 'Edges on the slot boundaries ([ ] move the falls, { } the rises)',
+      });
+      grid.append(make('div', { class: 'timing-grid-line' }, [name, cells, shift]));
     });
     const count = make('div', { class: 'timing-grid-foot', text: state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
     grid.append(count);
@@ -646,6 +657,12 @@ function openTimingDialog() {
     if (state.cursor.slot >= length()) for (const r of rows) if (!r.follows) r.wave.push(r.wave.at(-1) ?? '0');
     row.wave[state.cursor.slot] = level;
     if (advance) state.cursor.slot = Math.min(state.cursor.slot + 1, length());
+    change();
+  };
+  // Move the cursor row's falling or rising edges a cell earlier (-1) or later.
+  const shiftEdge = (edge, by) => {
+    const row = rows[state.cursor.row];
+    row.shift = { ...row.shift, [edge]: Math.max(-MAX_EDGE_SHIFT, Math.min(MAX_EDGE_SHIFT, row.shift[edge] + by)) };
     change();
   };
   // At the empty cell after the end, these act on the last slot.
@@ -678,6 +695,8 @@ function openTimingDialog() {
       setCell({ h: '1', H: '1', l: '0', L: '0' }[event.key] || event.key, { advance: true });
     } else if (event.key === ' ') {
       setCell(shown(rows[row], Math.min(slot, length() - 1)) === '1' ? '0' : '1');
+    } else if (['[', ']', '{', '}'].includes(event.key)) {
+      shiftEdge(event.key === '[' || event.key === ']' ? 'fall' : 'rise', event.key === '[' || event.key === '{' ? -1 : 1);
     } else if (event.key === '+' || event.key === 'Insert') {
       repeatSlot();
     } else if (event.key === 'Delete' || event.key === 'Backspace' || event.key === '-') {
@@ -707,12 +726,25 @@ function openTimingDialog() {
   };
   const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
     make('h2', { text: 'Timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it.' }),
+    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges.' }),
     grid,
     make('div', { class: 'timing-dialog-options' }, [
       button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
       button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
       make('label', {}, [make('span', { text: 'Slot' }), slotInput, make('span', { text: 'cells' })]),
+    ]),
+    make('div', { class: 'timing-dialog-options timing-shift-controls' }, [
+      make('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
+      make('span', { class: 'timing-shift-pair' }, [
+        make('span', { text: 'Fall' }),
+        button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
+        button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
+      ]),
+      make('span', { class: 'timing-shift-pair' }, [
+        make('span', { text: 'Rise' }),
+        button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
+        button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
+      ]),
     ]),
     pairsBox,
     status,
