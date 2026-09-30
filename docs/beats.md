@@ -79,9 +79,10 @@ offered in the menu makes none. The beats are ordinary beats, inserted after
 the one on screen as one undoable edit.
 
 **Timing diagram** (More menu; `timing`) draws one row per phase under the
-drawing, centred on its width, in the phases' order with each complement
-right after its phase: the phase's name as a free label, right-aligned in a
-column left of the waves, and its wave, two cells tall with vertical edges.
+drawing, in the phases' order with each complement right after its phase:
+its wave, two cells tall with vertical edges, the waves centred on the
+drawing's width, and the phase's name as a free label, right-aligned in a
+column just left of them.
 A wave is a row of slots, each high or low; a short wave holds its last
 level. The waves repeat, so each row shows half a slot of its last level
 before the start and of its first after the end, where its transitions are.

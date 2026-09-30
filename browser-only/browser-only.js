@@ -22254,10 +22254,11 @@ class Circuit {
    * (symbolInkRect, LabelInstance#inkRect). Used
    * to frame exports and fit the view, so a label at the edge adds no
    * empty cells. */
-  inkBounds(margin = 0) {
+  /** `labels` picks the labels that count (all by default). */
+  inkBounds(margin = 0, { labels = null } = {}) {
     const rects = [];
     for (const c of this.components.values()) rects.push(c.inkRectWorld());
-    for (const label of this.labels.values()) rects.push(label.inkRect());
+    for (const label of this.labels.values()) if (!labels || labels(label)) rects.push(label.inkRect());
     for (const net of this.nets.values()) {
       const pts = net.pathPoints();
       if (pts.length) rects.push(rectFromPoints(pts));
@@ -27073,7 +27074,7 @@ __exports.existingTimingDiagram = existingTimingDiagram;
 __exports.timingPairs = timingPairs;
 __exports.timingRowSources = timingRowSources;
 __exports.addTimingDiagram = addTimingDiagram;
-let GRID, ceilGrid, floorGrid; __bind(() => { ({ GRID, ceilGrid, floorGrid } = __require("src/core/grid.js")); });
+let GRID, ceilGrid, snap; __bind(() => { ({ GRID, ceilGrid, snap } = __require("src/core/grid.js")); });
 let complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, switchPhases, switchStateAt, switchesOf; __bind(() => { ({ complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, switchPhases, switchStateAt, switchesOf } = __require("src/core/beats.js")); });
 let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.js")); });
 /**
@@ -27316,7 +27317,7 @@ function timingRowSources(circuit, { fromBeats = false, typed = new Map() } = {}
 
 /**
  * Draw the diagram, replacing one already drawn, else under everything
- * drawn so far; either way centred on the drawing's width. `bits` gives waves
+ * drawn so far; either way with its waves centred on the drawing's width. `bits` gives waves
  * by phase name (see timingPhaseNamed); `fromBeats` takes the waves not given
  * from the beats rather than the diagram already drawn; `slot` is a slot's
  * width in cells; `gaps` is 'auto', 'none', or pairs of phase names kept from
@@ -27357,7 +27358,7 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
   });
 
   if (before) for (const id of before.ids) circuit.removeLabel(id);
-  const drawn = circuit.inkBounds();
+  const drawn = circuit.inkBounds(0, { labels: (label) => !label.timing });
   const top = before ? before.y : ceilGrid(drawn.y + drawn.h) + GAP_BELOW_DRAWING;
   // A complement drawn as its phase inverted keeps following it: its wave is
   // not remembered as its own.
@@ -27375,11 +27376,10 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
       ...settings,
     },
   }));
-  // Names in a right-aligned column, the waves a cell after it; the whole
-  // centred under the drawing.
-  const column = Math.max(...labels.map((label) => label.bbox().w));
-  const width = column + LABEL_GAP + columns.reduce((sum, c) => sum + c.w, 0);
-  const waveX = floorGrid(drawn.x + drawn.w / 2 - width / 2 + GRID / 2) + column + LABEL_GAP;
+  // The waves centred under the drawing; their names right-aligned in a
+  // column just left of them.
+  const waves = columns.reduce((sum, c) => sum + c.w, 0);
+  const waveX = snap(drawn.x + drawn.w / 2 - waves / 2);
   for (const label of labels) label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, label.anchor.y);
   return labels.map((label, row) => {
     const { key, bits, from } = rows[row];

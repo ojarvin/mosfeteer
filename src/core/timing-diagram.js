@@ -22,7 +22,7 @@
  * replaces it where it stands.
  */
 
-import { GRID, ceilGrid, floorGrid } from './grid.js';
+import { GRID, ceilGrid, snap } from './grid.js';
 import { complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, switchPhases, switchStateAt, switchesOf } from './beats.js';
 import { plainTexText } from './render.js';
 
@@ -238,7 +238,7 @@ export function timingRowSources(circuit, { fromBeats = false, typed = new Map()
 
 /**
  * Draw the diagram, replacing one already drawn, else under everything
- * drawn so far; either way centred on the drawing's width. `bits` gives waves
+ * drawn so far; either way with its waves centred on the drawing's width. `bits` gives waves
  * by phase name (see timingPhaseNamed); `fromBeats` takes the waves not given
  * from the beats rather than the diagram already drawn; `slot` is a slot's
  * width in cells; `gaps` is 'auto', 'none', or pairs of phase names kept from
@@ -279,7 +279,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   });
 
   if (before) for (const id of before.ids) circuit.removeLabel(id);
-  const drawn = circuit.inkBounds();
+  const drawn = circuit.inkBounds(0, { labels: (label) => !label.timing });
   const top = before ? before.y : ceilGrid(drawn.y + drawn.h) + GAP_BELOW_DRAWING;
   // A complement drawn as its phase inverted keeps following it: its wave is
   // not remembered as its own.
@@ -297,11 +297,10 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
       ...settings,
     },
   }));
-  // Names in a right-aligned column, the waves a cell after it; the whole
-  // centred under the drawing.
-  const column = Math.max(...labels.map((label) => label.bbox().w));
-  const width = column + LABEL_GAP + columns.reduce((sum, c) => sum + c.w, 0);
-  const waveX = floorGrid(drawn.x + drawn.w / 2 - width / 2 + GRID / 2) + column + LABEL_GAP;
+  // The waves centred under the drawing; their names right-aligned in a
+  // column just left of them.
+  const waves = columns.reduce((sum, c) => sum + c.w, 0);
+  const waveX = snap(drawn.x + drawn.w / 2 - waves / 2);
   for (const label of labels) label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, label.anchor.y);
   return labels.map((label, row) => {
     const { key, bits, from } = rows[row];

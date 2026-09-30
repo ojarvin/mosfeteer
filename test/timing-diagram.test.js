@@ -65,14 +65,11 @@ test('the diagram sits under the drawing, one named row per phase, complements a
   const names = rows.map((row) => circuit.labels.get(row.label));
   assert.ok(names.every((label) => label.align === 'right' && label.math));
   assert.ok(wavesOf(circuit).every((line) => line.bbox().y >= drawn.y + drawn.h + 80), 'below the drawing');
-  // Names and waves together are centred on the drawing's width.
-  const ink = circuit.inkBounds();
-  const parts = [...circuit.labels.values()].filter((l) => l.timing);
-  const left = Math.min(...parts.map((l) => l.bbox().x));
-  const right = Math.max(...parts.map((l) => l.bbox().x + l.bbox().w));
-  const inkNoTiming = (() => { const copy = Circuit.fromJSON(circuit.toJSON()); for (const l of [...copy.labels.values()]) if (l.timing) copy.removeLabel(l.id); return copy.inkBounds(); })();
-  assert.ok(Math.abs((left + right) / 2 - (inkNoTiming.x + inkNoTiming.w / 2)) <= 60, `centred (${left}..${right} under ${inkNoTiming.x}+${inkNoTiming.w})`);
-  void ink;
+  // The waves are centred on the drawing's width.
+  const drawing = (() => { const copy = Circuit.fromJSON(circuit.toJSON()); for (const l of [...copy.labels.values()]) if (l.timing) copy.removeLabel(l.id); return copy.inkBounds(); })();
+  const left = Math.min(...wavesOf(circuit).map((l) => l.bbox().x));
+  const right = Math.max(...wavesOf(circuit).map((l) => l.bbox().x + l.bbox().w));
+  assert.ok(Math.abs((left + right) / 2 - (drawing.x + drawing.w / 2)) <= 20, `centred (${left}..${right} under ${drawing.x}+${drawing.w})`);
   assert.throws(() => runCommand(circuit, 'timing φ9=01'), /no switch phase "φ9"/);
   assert.throws(() => runCommand(circuit, 'timing 01'), /not PHASE=WAVE/);
   assert.match(runCommand(circuit, 'help').text, /timing \[PHASE=WAVE \.\.\.\]/);

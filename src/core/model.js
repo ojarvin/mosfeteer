@@ -6534,10 +6534,11 @@ export class Circuit {
    * (symbolInkRect, LabelInstance#inkRect). Used
    * to frame exports and fit the view, so a label at the edge adds no
    * empty cells. */
-  inkBounds(margin = 0) {
+  /** `labels` picks the labels that count (all by default). */
+  inkBounds(margin = 0, { labels = null } = {}) {
     const rects = [];
     for (const c of this.components.values()) rects.push(c.inkRectWorld());
-    for (const label of this.labels.values()) rects.push(label.inkRect());
+    for (const label of this.labels.values()) if (!labels || labels(label)) rects.push(label.inkRect());
     for (const net of this.nets.values()) {
       const pts = net.pathPoints();
       if (pts.length) rects.push(rectFromPoints(pts));
