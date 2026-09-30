@@ -212,6 +212,12 @@ test('guides stay local: a distant peer neither spaces nor aligns', () => {
   assert.deepEqual(placementGuides([item('A', -80000, 0), item('B', -40000, 0)], item('__ghost__', 0, 0)), []);
 });
 
+test('alignment reaches across a whole drawing: a bias part or rail lined up far away', () => {
+  const guides = placementGuides([item('M9', 0, 8000, 120, 160, 'nmos')], item('__ghost__', 0, 0, 40, 40, 'supply'));
+  assert.deepEqual(guides.map((guide) => guide.kind), ['align']);
+  assert.deepEqual(guides[0].points.map((point) => point.id), ['__ghost__', 'M9']);
+});
+
 test('alignment reaches far, where the eye cannot judge it, without a long ruler', () => {
   // Forty cells away the row is still named, but its length is not a spacing
   // anyone matches, so no direct dimension is drawn beside it.
