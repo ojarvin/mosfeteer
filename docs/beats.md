@@ -79,28 +79,35 @@ offered in the menu makes none. The beats are ordinary beats, inserted after
 the one on screen as one undoable edit.
 
 **Timing diagram** (More menu; `timing`) draws one row per phase under the
-drawing, in the phases' order with each complement right after its phase:
-the phase's name as a free label, right-aligned in a column left of the
-waves, and its wave, two cells tall with vertical edges. A wave is typed as
-slots, one character each: `1` high, `0` low, `x` don't care (a crossed
-band); a short wave holds its last level. The waves repeat, so each row shows
-half a slot of its last level before the start and of its first after the
-end, where its transitions are. With **Non-overlap gaps** (on unless turned
-off), every slot boundary where some phase changes gets a one-cell gap in
-every row: a phase falling there has already fallen and one rising has not
-yet risen, so no two phases are high at once.
+drawing, centred on its width, in the phases' order with each complement
+right after its phase: the phase's name as a free label, right-aligned in a
+column left of the waves, and its wave, two cells tall with vertical edges.
+A wave is a row of slots, each high or low; a short wave holds its last
+level. The waves repeat, so each row shows half a slot of its last level
+before the start and of its first after the end, where its transitions are.
 
-The menu item opens a form that stays open beside the drawing: one field per
-phase, started from the diagram already drawn, else from the beats (one slot
-per beat, high where the phase's switches are closed; **Fill from beats**
-refills it), with the slot width in cells and the gaps. **Draw** (Enter)
-draws the diagram, or redraws it where its waves start, and the waves can be
-changed again. A complement left empty is its phase inverted -- high in the
-gaps -- and keeps following it; any other phase left empty is low. The
-command takes the same waves: `timing φ1=10 φ2=01 --slot 2`, a phase named
-by its text, TeX, row number, or `~φ1` for its complement; rows not named
-keep their waves, `--beats` retakes them from the beats, and `--no-gaps` /
-`--gaps` set the gaps.
+Non-overlap is kept between pairs of phases: by default every two that are
+never high in the same slot. Where one of a pair falls as the other rises, a
+one-cell gap opens in every row; in it the pair's fall comes early and its
+rise late, so the two are never high at once, and other phases change as the
+gap opens. A complement is its phase inverted, high in the gaps.
+
+The menu item opens an editor beside the drawing: a grid with a row of slots
+per phase, started from the diagram already drawn, else from the beats (one
+slot per beat, high where the phase's switches are closed; **From beats**
+refills it). Click a slot to flip it, or move a cursor with the arrows and
+type `1` or `0`; the empty cell after the last slot adds one. `+` repeats
+the slot at the cursor in every row -- a state held one slot longer -- and
+Delete removes it. The slot width is in cells, and **Never overlap** lists
+every pair of phases to keep apart (**Automatic** returns to the default).
+Every change redraws the diagram in place, and an editing session is one
+undo entry. A complement follows its phase inverted until one of its own
+slots is changed; any other phase with no wave is low.
+
+The command takes the same waves: `timing φ1=10 φ2=01 --slot 2`, a phase
+named by its text, TeX, row number, or `~φ1` for its complement; rows not
+named keep their waves, `--beats` retakes them from the beats, and
+`--gaps auto|none|φ1:φ2,...` sets the pairs kept apart.
 
 The diagram's annotations remember their phase and wave, so drawing it again
 replaces it rather than adding another. They are ordinary lines otherwise:

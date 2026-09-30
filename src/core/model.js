@@ -861,14 +861,19 @@ function labelMatchesRefdes(text, refdes) {
 const finite = (value) => Number.isFinite(value);
 const round = (value, digits = 4) => Number(value.toPrecision(digits));
 
-/** A timing diagram row's data, as saved: its phase, its own wave (1, 0
- * and x), the slot width in cells, and `gaps: false` without non-overlap
- * gaps; null when unusable. */
+/** A timing diagram row's data, as saved: its phase, its own wave (1s and
+ * 0s), the slot width in cells, and which phases are kept from
+ * overlapping (`gaps`); null when unusable. */
 export function normalizeTiming(timing) {
   if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
-  const bits = typeof timing.bits === 'string' && /^[01x]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
+  const bits = typeof timing.bits === 'string' && /^[01]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
   const slot = Math.max(1, Math.min(64, Math.round(Number(timing.slot)) || 4));
-  return { phase: timing.phase.slice(0, 200), ...(bits ? { bits } : {}), slot, ...(timing.gaps === false ? { gaps: false } : {}) };
+  // Non-overlap: absent for the default pairs, false for none, or the pairs
+  // of phases kept apart.
+  const gaps = timing.gaps === false ? false
+    : Array.isArray(timing.gaps) ? timing.gaps.filter((pair) => Array.isArray(pair) && pair.length === 2 && pair.every((key) => typeof key === 'string')).map(([a, b]) => [a.slice(0, 200), b.slice(0, 200)])
+      : undefined;
+  return { phase: timing.phase.slice(0, 200), ...(bits ? { bits } : {}), slot, ...(gaps !== undefined ? { gaps } : {}) };
 }
 
 /**

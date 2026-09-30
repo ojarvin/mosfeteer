@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { addBeat, setSwitchFrom } from '../src/core/beats.js';
-import { addTimingDiagram, parseTimingBits, timingColumns, timingRowGeometry } from '../src/core/timing-diagram.js';
+import { addTimingDiagram, defaultTimingPairs, parseTimingBits, timingColumns, timingRowGeometry } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -18,39 +18,41 @@ function clocked() {
 const rowsOf = (circuit, line) => runCommand(circuit, line).json;
 const wavesOf = (circuit) => [...circuit.labels.values()].filter((l) => l.timing && l.kind === 'line');
 
-test('a wave is typed as slots: 1 high, 0 low, x don\'t care', () => {
-  assert.equal(parseTimingBits('10 H L x X'), '1010xx');
-  assert.throws(() => parseTimingBits('1_0'), /not "_"/);
+test('a wave is typed as slots: 1 high, 0 low', () => {
+  assert.equal(parseTimingBits('10 H L'), '1010');
+  assert.throws(() => parseTimingBits('1x0'), /not "x"/);
 });
 
-test('waves repeat past both ends, and a non-overlap gap opens at every change', () => {
-  // φ1 = 10, φ2 = 01: lead-in (last slot), slots, lead-out (first slot),
-  // with a one-cell gap wherever either changes.
-  const { columns, levels } = timingColumns(['10', '01'], { slotCells: 4 });
+test('waves repeat past both ends, and a gap keeps a pair from overlapping', () => {
+  // φ1 = 10, φ2 = 01, kept apart: lead-in (last slot), slots, lead-out (first
+  // slot), with a one-cell gap wherever one falls as the other rises.
+  const { columns, levels } = timingColumns(['10', '01'], { slotCells: 4, pairs: [[0, 1]] });
   assert.deepEqual(columns.map((c) => `${c.kind}${c.w / 40}`), ['lead2', 'gap1', 'slot4', 'gap1', 'slot4', 'gap1', 'lead2']);
   assert.deepEqual(levels, [['0', '0', '1', '0', '0', '0', '1'], ['1', '0', '0', '0', '1', '0', '0']]);
-  // In the gaps both are low: no overlap. Without gaps the columns abut.
-  assert.deepEqual(timingColumns(['10', '01'], { gaps: false }).columns.map((c) => c.kind), ['lead', 'slot', 'slot', 'lead']);
+  // With no pair, the columns abut.
+  assert.deepEqual(timingColumns(['10', '01']).columns.map((c) => c.kind), ['lead', 'slot', 'slot', 'lead']);
+  // A phase outside the pair changes as the gap opens.
+  const three = timingColumns(['10', '01', '10'], { pairs: [[0, 1]] });
+  assert.deepEqual(three.levels[2], ['0', '1', '1', '0', '0', '1', '1']);
   // A complement is its phase inverted, gaps included: high in them.
-  assert.deepEqual(timingColumns(['10', ''], { inverted: [null, 0] }).levels[1], ['1', '1', '0', '1', '1', '1', '0']);
+  assert.deepEqual(timingColumns(['10', '', '01'], { inverted: [null, 0, null], pairs: [[0, 2]] }).levels[1], ['1', '1', '0', '1', '1', '1', '0']);
   // A short wave holds its last level; no wave at all is low.
-  const held = timingColumns(['1', '0011']);
-  assert.ok(held.levels[0].every((level) => level === '1'));
+  assert.ok(timingColumns(['1', '0011']).levels[0].every((level) => level === '1'));
   assert.ok(timingColumns(['', '01']).levels[0].every((level) => level === '0'));
 });
 
-test('a row draws as a wave with vertical edges; a don\'t care is a crossed band', () => {
-  const columns = [{ w: 80 }, { w: 160 }, { w: 80 }];
-  assert.deepEqual(timingRowGeometry(['0', '1', '0'], columns, 0, 0).lines, [[
-    { x: 0, y: 80 }, { x: 80, y: 80 }, { x: 80, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 80 }, { x: 320, y: 80 },
-  ]]);
-  const dc = timingRowGeometry(['0', 'x', '1'], columns, 0, 0);
-  assert.deepEqual(dc.lines, [[{ x: 0, y: 80 }, { x: 80, y: 80 }], [{ x: 240, y: 0 }, { x: 320, y: 0 }]]);
-  assert.equal(dc.crosses.length, 4);
-  // Neighbouring don't-care columns (a gap beside one) draw as one band.
-  const wide = timingRowGeometry(['x', 'x', '1'], columns, 0, 0);
-  assert.equal(wide.crosses.length, 4);
-  assert.deepEqual(wide.crosses[0], [{ x: 0, y: 0 }, { x: 240, y: 0 }]);
+test('by default the phases kept apart are those never high together', () => {
+  // φ1 and φ2 alternate; φ3 overlaps both; φ4 is never high.
+  assert.deepEqual(defaultTimingPairs(['1000', '0010', '1110', '0000']), [[0, 1]]);
+  // A complement row takes no part.
+  assert.deepEqual(defaultTimingPairs(['10', '01'], new Set([1])), []);
+});
+
+test('a row draws with vertical edges', () => {
+  const columns = [{ w: 80 }, { w: 160 }, { w: 80 }, { w: 40 }];
+  assert.deepEqual(timingRowGeometry(['0', '1', '0', '0'], columns, 0, 0), [
+    { x: 0, y: 80 }, { x: 80, y: 80 }, { x: 80, y: 0 }, { x: 240, y: 0 }, { x: 240, y: 80 }, { x: 360, y: 80 },
+  ]);
 });
 
 test('the diagram sits under the drawing, one named row per phase, complements after their phase', () => {
@@ -63,6 +65,14 @@ test('the diagram sits under the drawing, one named row per phase, complements a
   const names = rows.map((row) => circuit.labels.get(row.label));
   assert.ok(names.every((label) => label.align === 'right' && label.math));
   assert.ok(wavesOf(circuit).every((line) => line.bbox().y >= drawn.y + drawn.h + 80), 'below the drawing');
+  // Names and waves together are centred on the drawing's width.
+  const ink = circuit.inkBounds();
+  const parts = [...circuit.labels.values()].filter((l) => l.timing);
+  const left = Math.min(...parts.map((l) => l.bbox().x));
+  const right = Math.max(...parts.map((l) => l.bbox().x + l.bbox().w));
+  const inkNoTiming = (() => { const copy = Circuit.fromJSON(circuit.toJSON()); for (const l of [...copy.labels.values()]) if (l.timing) copy.removeLabel(l.id); return copy.inkBounds(); })();
+  assert.ok(Math.abs((left + right) / 2 - (inkNoTiming.x + inkNoTiming.w / 2)) <= 60, `centred (${left}..${right} under ${inkNoTiming.x}+${inkNoTiming.w})`);
+  void ink;
   assert.throws(() => runCommand(circuit, 'timing φ9=01'), /no switch phase "φ9"/);
   assert.throws(() => runCommand(circuit, 'timing 01'), /not PHASE=WAVE/);
   assert.match(runCommand(circuit, 'help').text, /timing \[PHASE=WAVE \.\.\.\]/);
@@ -80,12 +90,15 @@ test('drawing it again replaces the diagram where its waves start, keeping each 
   for (let i = 0; i < 3; i += 1) runCommand(circuit, 'timing');
   assert.equal(start(circuit), x, 'the waves stay put');
   assert.equal(circuit.labels.size, count, 'replaced, not added');
-  assert.deepEqual(rowsOf(circuit, 'timing ~φ1=x0x0').map((row) => row.bits), ['1100', 'x0x0', '0011']);
-  // Saved and loaded, the diagram still knows its waves and gaps setting.
-  runCommand(circuit, 'timing --no-gaps');
+  assert.deepEqual(rowsOf(circuit, 'timing ~φ1=0100').map((row) => row.bits), ['1100', '0100', '0011']);
+  // Saved and loaded, the diagram still knows its waves and its pairs.
+  runCommand(circuit, 'timing --gaps φ1:φ2');
   const loaded = Circuit.fromJSON(circuit.toJSON());
-  assert.deepEqual(rowsOf(loaded, 'timing').map((row) => row.bits), ['1100', 'x0x0', '0011']);
+  assert.deepEqual(rowsOf(loaded, 'timing').map((row) => row.bits), ['1100', '0100', '0011']);
+  assert.deepEqual(wavesOf(loaded)[0].timing.gaps, [['$\\varphi_{1}$', '$\\varphi_{2}$']]);
+  runCommand(loaded, 'timing --no-gaps');
   assert.ok(wavesOf(loaded).every((line) => line.timing.gaps === false));
+  assert.throws(() => runCommand(loaded, 'timing --gaps φ1'), /pairs such as/);
 });
 
 test('a complement drawn inverted keeps following its phase, until it has a wave of its own', () => {

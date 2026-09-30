@@ -3,13 +3,16 @@
  * drawing as annotations -- each phase's name (its own spelling, TeX drawn
  * as math) and its wave, two cells tall with vertical edges.
  *
- * A wave is typed as slots, one character each: `1` high, `0` low, `x`
- * don't care (a crossed band). A short wave holds its last level. The waves
- * repeat, so each row shows a little of its last slot before the start and
- * of its first after the end, where its transitions are. With non-overlap
- * gaps, every slot boundary where some phase changes gets a one-cell gap in
- * every row: a phase falling there has already fallen and one rising has not
- * yet risen, so no two phases are high at once.
+ * A wave is typed as slots, one character each: `1` high, `0` low. A short
+ * wave holds its last level. The waves repeat, so each row
+ * shows a little of its last slot before the start and of its first after
+ * the end, where its transitions are.
+ *
+ * Non-overlap is kept between pairs of phases: by default every two that
+ * are never high in the same slot. Where one of a pair falls and the other
+ * rises, a one-cell gap opens in every row; in it the pair's fall comes early
+ * and its rise late, so the two are never high at once. Other phases change
+ * at the start of the gap.
  *
  * A row's wave is, first to last: the one given for it; the one it had in
  * the diagram already; for a complement (a barred phase), its phase drawn
@@ -32,18 +35,17 @@ export const DEFAULT_SLOT_CELLS = 4;
 /** Slots a diagram with no wave at all shows. */
 const EMPTY_SLOTS = 4;
 
-/** A wave as typed: 1, 0 and x kept (H, L and X too), anything else
- *  rejected; spaces ignored. */
+/** A wave as typed: 1 and 0 kept (H and L too), anything else rejected;
+ *  spaces ignored. */
 export function parseTimingBits(text) {
-  const bits = String(text ?? '').replace(/\s+/g, '')
-    .replace(/[lL]/g, '0').replace(/[hH]/g, '1').replace(/X/g, 'x');
-  const bad = bits.match(/[^01x]/);
-  if (bad) throw new Error(`a timing wave is made of 1 (high), 0 (low) and x (don't care), one per slot, not "${bad[0]}"`);
+  const bits = String(text ?? '').replace(/\s+/g, '').replace(/[lL]/g, '0').replace(/[hH]/g, '1');
+  const bad = bits.match(/[^01]/);
+  if (bad) throw new Error(`a timing wave is made of 1 (high) and 0 (low), one per slot, not "${bad[0]}"`);
   return bits;
 }
 
-/** A level the other way up; don't care stays. */
-const invert = (level) => (level === '0' ? '1' : level === '1' ? '0' : level);
+/** A level the other way up. */
+const invert = (level) => (level === '0' ? '1' : '0');
 
 /** A phase's wave from the beats: one slot per beat, high where its switches
  *  are closed. Empty without beats. */
@@ -55,28 +57,57 @@ export function beatTimingBits(circuit, key) {
 
 /** The level in a gap between `before` and `after`: high only where both
  *  are, so a fall comes early and a rise late. */
-const gapLevel = (before, after) => (before === 'x' || after === 'x' ? 'x' : before === '1' && after === '1' ? '1' : '0');
+const gapLevel = (before, after) => (before === '1' && after === '1' ? '1' : '0');
+
+/** Each row's slots, `count` long: a short wave holds its last level, no
+ *  wave is low. */
+function slotLevels(waves) {
+  const count = Math.max(0, ...waves.map((bits) => bits.length)) || EMPTY_SLOTS;
+  return waves.map((bits) => Array.from({ length: count }, (_, i) => bits[i] ?? bits.at(-1) ?? '0'));
+}
+
+/** The pairs of rows kept apart by default: both high somewhere, never high
+ *  in the same slot. Rows in `skip` (drawn
+ *  as another inverted) take no part. Pairs are [a, b] row indices, a < b. */
+export function defaultTimingPairs(waves, skip = new Set()) {
+  const slots = slotLevels(waves);
+  const pairs = [];
+  for (let a = 0; a < slots.length; a += 1) {
+    for (let b = a + 1; b < slots.length; b += 1) {
+      if (skip.has(a) || skip.has(b)) continue;
+      const high = (row) => slots[row].some((level) => level === '1');
+      if (high(a) && high(b) && !slots[a].some((level, i) => level === '1' && slots[b][i] === '1')) pairs.push([a, b]);
+    }
+  }
+  return pairs;
+}
 
 /**
  * The columns every row shares, and each row's level in each: [{ w, kind:
- * 'lead'|'slot'|'gap' }] and, per row, ['0'|'1'|'x', ...]. `waves` are the
+ * 'lead'|'slot'|'gap' }] and, per row, ['0'|'1', ...]. `waves` are the
  * rows' own waves ('' for low throughout); `inverted[row]` draws a row as
- * that other row's levels inverted (a complement). The waves repeat: a lead
+ * that other row's levels inverted (a complement); `pairs` ([a, b] row
+ * indices) are the rows kept from overlapping. The waves repeat: a lead
  * column before the first slot holds the last slot's level, one after the
  * end the first slot's.
  */
-export function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, gaps = true, inverted = [] } = {}) {
-  const count = Math.max(0, ...waves.map((bits) => bits.length)) || EMPTY_SLOTS;
-  const slots = waves.map((bits) => Array.from({ length: count }, (_, i) => bits[i] ?? bits.at(-1) ?? '0'));
+export function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, pairs = [], inverted = [] } = {}) {
+  const slots = slotLevels(waves);
+  const count = slots[0]?.length || EMPTY_SLOTS;
   // The repeating sequence, with the lead-in and lead-out.
   const sequence = slots.map((row) => [row.at(-1), ...row, row[0]]);
   const lead = Math.max(1, Math.floor(slotCells / 2)) * GRID;
   const columns = [];
   const levels = waves.map(() => []);
   sequence[0]?.forEach((_, index) => {
-    if (index > 0 && gaps && sequence.some((row) => row[index - 1] !== row[index])) {
+    const falls = (row) => sequence[row][index - 1] === '1' && sequence[row][index] === '0';
+    const rises = (row) => sequence[row][index - 1] === '0' && sequence[row][index] === '1';
+    const apart = index > 0 ? pairs.filter(([a, b]) => (falls(a) && rises(b)) || (rises(a) && falls(b))) : [];
+    if (apart.length) {
+      const kept = new Set(apart.flat());
       columns.push({ w: GRID, kind: 'gap' });
-      sequence.forEach((row, r) => levels[r].push(gapLevel(row[index - 1], row[index])));
+      // The pair falls early and rises late; the rest change as the gap opens.
+      sequence.forEach((row, r) => levels[r].push(kept.has(r) ? gapLevel(row[index - 1], row[index]) : row[index]));
     }
     const edge = index === 0 || index === sequence[0].length - 1;
     columns.push({ w: edge ? lead : slotCells * GRID, kind: edge ? 'lead' : 'slot' });
@@ -88,50 +119,24 @@ export function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, gaps = tr
 
 /**
  * The points of one row's wave: its `levels` over `columns`, from `x`, top
- * at `top`. Returns { lines, crosses }, point lists: the wave breaks at a
- * don't care, which is drawn as its own crossed band.
+ * at `top`, with vertical edges.
  */
 export function timingRowGeometry(levels, columns, x, top) {
-  const high = top;
-  const low = top + WAVE_HEIGHT;
-  const lines = [];
-  const crosses = [];
-  let current = null;
+  const y = (level) => (level === '1' ? top : top + WAVE_HEIGHT);
+  const points = [];
   let x0 = x;
-  let band = null; // the don't-care run being drawn: [from, to]
-  const endBand = () => {
-    if (!band) return;
-    const [b0, b1] = band;
-    crosses.push([{ x: b0, y: high }, { x: b1, y: high }], [{ x: b0, y: low }, { x: b1, y: low }],
-      [{ x: b0, y: high }, { x: b1, y: low }], [{ x: b0, y: low }, { x: b1, y: high }]);
-    band = null;
-  };
   columns.forEach((column, index) => {
-    const level = levels[index];
-    const x1 = x0 + column.w;
-    if (level === 'x') {
-      // Neighbouring don't-care columns (a gap beside one) are one band.
-      if (current) lines.push(current);
-      current = null;
-      band = band ? [band[0], x1] : [x0, x1];
-    } else {
-      endBand();
-      const y = level === '1' ? high : low;
-      if (!current) current = [{ x: x0, y }];
-      else if (current.at(-1).y !== y) current.push({ x: x0, y });
-      current.push({ x: x1, y });
-    }
-    x0 = x1;
+    const level = y(levels[index]);
+    if (!points.length) points.push({ x: x0, y: level });
+    else if (points.at(-1).y !== level) points.push({ x: x0, y: level });
+    x0 += column.w;
+    points.push({ x: x0, y: level });
   });
-  endBand();
-  if (current) lines.push(current);
   // A level held over several columns is one segment.
-  for (const line of lines) {
-    for (let i = line.length - 2; i > 0; i -= 1) {
-      if (line[i - 1].y === line[i].y && line[i].y === line[i + 1].y) line.splice(i, 1);
-    }
+  for (let i = points.length - 2; i > 0; i -= 1) {
+    if (points[i - 1].y === points[i].y && points[i].y === points[i + 1].y) points.splice(i, 1);
   }
-  return { lines, crosses };
+  return points;
 }
 
 /** Phases in drawing order, each complement right after its phase; a pair
@@ -162,8 +167,8 @@ export function timingPhaseNamed(phases, name) {
 }
 
 /** The diagram already drawn: its annotations' ids, each phase's own wave,
- *  its slot width and gaps, and where its waves start ({ x, y }: the first
- *  column's left edge and the first row's top). Null when there is none. */
+ *  its slot width and non-overlap setting, and where it stands ({ x, y }:
+ *  its waves' left edge and first row's top). Null when there is none. */
 export function existingTimingDiagram(circuit) {
   const parts = [...circuit.labels.values()].filter((label) => label.timing);
   if (!parts.length) return null;
@@ -174,7 +179,20 @@ export function existingTimingDiagram(circuit) {
   const x = waves.length ? Math.min(...waves.map((label) => label.bbox().x)) : Math.max(...names.map((label) => label.bbox().x + label.bbox().w)) + LABEL_GAP;
   const y = waves.length ? Math.min(...waves.map((label) => label.bbox().y)) : Math.min(...names.map((label) => label.anchorWorld().y - WAVE_HEIGHT / 2));
   const first = parts.find((label) => label.timing.slot) || parts[0];
-  return { ids: parts.map((label) => label.id), bits, x, y, slot: first.timing.slot, gaps: first.timing.gaps !== false };
+  return { ids: parts.map((label) => label.id), bits, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
+}
+
+/** The pairs of rows kept from overlapping under `setting`: 'auto' (every
+ *  two never high together, defaultTimingPairs), 'none', or pairs of phase
+ *  keys. Returns [a, b] row indices. */
+export function timingPairs(rows, setting = 'auto') {
+  if (setting === 'none' || setting === false) return [];
+  if (Array.isArray(setting)) {
+    const index = (key) => rows.findIndex((row) => samePhase(row.key, key));
+    return setting.map(([a, b]) => [index(a), index(b)]).filter(([a, b]) => a >= 0 && b >= 0 && a !== b).map(([a, b]) => [Math.min(a, b), Math.max(a, b)]);
+  }
+  const skip = new Set(rows.flatMap((row, index) => (row.complementOf !== undefined ? [index] : [])));
+  return defaultTimingPairs(rows.map((row) => row.bits), skip);
 }
 
 /** Every phase's wave as the diagram would draw it now (see the header):
@@ -195,37 +213,40 @@ export function timingRowSources(circuit, { fromBeats = false, typed = new Map()
 }
 
 /**
- * Draw the diagram, replacing one already drawn where it stands, else under
- * everything drawn so far. `bits` gives waves by phase name (see
- * timingPhaseNamed); `fromBeats` takes the waves not given from the beats
- * rather than the diagram already drawn; `slot` is a slot's width in cells
- * and `gaps` turns the non-overlap gaps on or off (both kept from the diagram
- * drawn before when not given). Returns the rows: [{ phase, bits, from,
- * label, line, lines }].
+ * Draw the diagram, replacing one already drawn, else under everything
+ * drawn so far; either way centred on the drawing's width. `bits` gives waves
+ * by phase name (see timingPhaseNamed); `fromBeats` takes the waves not given
+ * from the beats rather than the diagram already drawn; `slot` is a slot's
+ * width in cells; `gaps` is 'auto', 'none', or pairs of phase names kept from
+ * overlapping (both kept from the diagram drawn before when not given).
+ * Returns the rows: [{ phase, bits, from, label, line, lines }].
  */
 export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null } = {}) {
   const phases = timingOrder(switchPhases(circuit));
   if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
-  const typed = new Map();
-  for (const [name, text] of Object.entries(given)) {
+  const named = (name) => {
     const phase = timingPhaseNamed(phases, name);
     if (!phase) throw new Error(`no switch phase "${name}"; phases: ${phases.map((p, i) => `${i + 1} ${plainTexText(p.source)}`).join(', ')}`);
-    typed.set(phase.key, parseTimingBits(text));
-  }
+    return phase;
+  };
+  const typed = new Map();
+  for (const [name, text] of Object.entries(given)) typed.set(named(name).key, parseTimingBits(text));
   const rows = timingRowSources(circuit, { fromBeats, typed });
   const before = existingTimingDiagram(circuit);
   const slotCells = Math.max(1, Math.round(Number(slot) || before?.slot || DEFAULT_SLOT_CELLS));
-  const withGaps = gaps ?? before?.gaps ?? true;
+  const setting = gaps === null || gaps === undefined ? before?.gaps ?? 'auto'
+    : gaps === false ? 'none'
+      : Array.isArray(gaps) ? gaps.map(([a, b]) => [named(a).key, named(b).key]) : gaps;
   const { columns, levels } = timingColumns(rows.map((row) => row.bits), {
-    slotCells, gaps: withGaps, inverted: rows.map((row) => row.complementOf ?? null),
+    slotCells, pairs: timingPairs(rows, setting), inverted: rows.map((row) => row.complementOf ?? null),
   });
 
   if (before) for (const id of before.ids) circuit.removeLabel(id);
-  const drawn = circuit.bounds();
+  const drawn = circuit.inkBounds();
   const top = before ? before.y : ceilGrid(drawn.y + drawn.h) + GAP_BELOW_DRAWING;
   // A complement drawn as its phase inverted keeps following it: its wave is
   // not remembered as its own.
-  const settings = { slot: slotCells, ...(withGaps ? {} : { gaps: false }) };
+  const settings = { slot: slotCells, ...(setting === 'auto' ? {} : { gaps: setting === 'none' ? false : setting }) };
   const labels = rows.map(({ key, source, bits, from }, row) => circuit.addLabel({
     text: source,
     math: isTexSource(source),
@@ -234,15 +255,16 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     y: top + row * ROW_PITCH + WAVE_HEIGHT / 2,
     timing: { phase: key, ...(from === 'complement' || from === 'low' ? {} : { bits }), ...settings },
   }));
-  // The waves stay where they started; a first diagram puts its names in a
-  // column flush with the drawing's left edge, the waves a cell after them.
+  // Names in a right-aligned column, the waves a cell after it; the whole
+  // centred under the drawing.
   const column = Math.max(...labels.map((label) => label.bbox().w));
-  const waveX = before ? before.x : floorGrid(drawn.x) + column + LABEL_GAP;
+  const width = column + LABEL_GAP + columns.reduce((sum, c) => sum + c.w, 0);
+  const waveX = floorGrid(drawn.x + drawn.w / 2 - width / 2 + GRID / 2) + column + LABEL_GAP;
   for (const label of labels) label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, label.anchor.y);
   return labels.map((label, row) => {
     const { key, bits, from } = rows[row];
-    const { lines, crosses } = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH);
-    const ids = [...lines, ...crosses].map((points) => circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id);
-    return { phase: key, bits, from, label: label.id, line: ids[0], lines: ids };
+    const points = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH);
+    const line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
+    return { phase: key, bits, from, label: label.id, line, lines: [line] };
   });
 }

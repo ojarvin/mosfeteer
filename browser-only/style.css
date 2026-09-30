@@ -5160,9 +5160,18 @@ circle.bode-corner {
   overflow-y: auto;
 }
 
-/* The timing diagram dialog: one wave per phase, typed as slots. */
+/* The timing diagram editor: a grid of slots beside the drawing. */
 .timing-dialog {
-  width: min(24rem, calc(100vw - 32px));
+  width: min(26rem, calc(100vw - 32px));
+}
+
+/* Not modal: it stands beside the drawing while the diagram is redrawn. */
+.timing-dialog:not(:modal) {
+  position: fixed;
+  inset: 56px 16px auto auto;
+  margin: 0;
+  z-index: 40;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.35);
 }
 
 .timing-dialog .timing-dialog-legend {
@@ -5170,52 +5179,95 @@ circle.bode-corner {
   font-size: 0.8rem;
 }
 
-.timing-dialog .timing-dialog-rows {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 10px;
-  margin: 10px 0;
-}
-
-.timing-dialog .timing-dialog-rows label {
-  display: contents;
-}
-
-.timing-dialog .timing-dialog-name {
-  align-self: center;
-  justify-self: end;
-}
-
-.timing-dialog .timing-dialog-rows input {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  letter-spacing: 0.08em;
-  min-width: 0;
-}
-
-/* Not modal: it stands beside the drawing while the diagram is redrawn. */
-.timing-dialog:not(:modal) {
-  position: fixed;
-  /* Over the side panel, clear of the diagram under the drawing. */
-  inset: 56px 16px auto auto;
-  margin: 0;
-  z-index: 40;
-  box-shadow: 0 8px 32px rgb(0 0 0 / 0.35);
-}
-
-.timing-dialog .timing-dialog-options {
+.timing-grid {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  outline: none;
 }
 
-.timing-dialog .timing-dialog-options label {
+.timing-grid:focus-visible {
+  border-color: var(--accent);
+}
+
+.timing-grid-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.timing-grid-name {
+  flex: 0 0 3.2rem;
+  text-align: right;
+}
+
+.timing-grid-row {
+  display: flex;
+  gap: 2px;
+}
+
+/* A slot: filled high, outlined low. */
+.timing-cell {
+  width: 18px;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--text-dim) 45%, transparent);
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.timing-cell.level-1 {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.timing-grid-row.follows .timing-cell {
+  opacity: 0.45;
+}
+
+.timing-cell.cursor {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.timing-grid-foot {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.timing-dialog .timing-dialog-options,
+.timing-pairs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 8px;
+}
+
+.timing-dialog .timing-dialog-options label,
+.timing-pairs label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .timing-dialog .timing-dialog-options input[type="number"] {
   width: 4.5rem;
+}
+
+.timing-pairs-title {
+  color: var(--text-dim);
+  font-size: 0.8rem;
 }
 
 .timing-dialog .timing-dialog-status {
@@ -5224,6 +5276,7 @@ circle.bode-corner {
   font-size: 0.8rem;
 }
 
-.timing-dialog .dialog-actions button:first-child {
-  margin-right: auto;
+.timing-cell.new {
+  border-style: dashed;
+  opacity: 0.6;
 }

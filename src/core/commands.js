@@ -143,7 +143,7 @@ const FLAG_ARITY = {
   text: 1,
   slot: 1,
   beats: 0,
-  gaps: 0,
+  gaps: 1,
   'no-gaps': 0,
 };
 
@@ -555,13 +555,14 @@ export function commandHelp() {
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
-    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps|--no-gaps]',
+    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...]',
     '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
-    '                                   one character per slot: 1 high, 0 low, x don\'t care. PHASE is its name (φ1,',
+    '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
     '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',
-    '                                   retakes them from the beats. Waves repeat past both ends; --no-gaps drops the',
-    '                                   one-cell non-overlap gaps at each change; --slot N is a slot\'s width in cells',
+    '                                   retakes them from the beats. Waves repeat past both ends; --slot N is a slot\'s',
+    '                                   width in cells. --gaps sets which phases never overlap (a one-cell gap where one',
+    '                                   falls as the other rises): auto (any two never high together), none, or pairs',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -975,12 +976,19 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const bits = {};
     for (const arg of pos) {
       const at = arg.lastIndexOf('=');
-      if (at <= 0) throw new Error(`usage: timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps|--no-gaps]; "${arg}" is not PHASE=WAVE`);
+      if (at <= 0) throw new Error(`usage: timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...]; "${arg}" is not PHASE=WAVE`);
       bits[arg.slice(0, at)] = arg.slice(at + 1);
     }
     const slot = flags.slot ? Number(flags.slot[0]) : null;
     if (flags.slot && !(slot >= 1)) throw new Error('--slot is a width in cells, at least 1');
-    const gaps = flags['no-gaps'] ? false : flags.gaps ? true : null;
+    // --gaps auto | none | φ1:φ2,φ2:φ3 (the pairs kept from overlapping).
+    const gapText = flags['no-gaps'] ? 'none' : flags.gaps ? String(flags.gaps[0]).trim() : null;
+    const gaps = gapText === null ? null : gapText === 'auto' || gapText === 'none' ? gapText
+      : gapText.split(',').filter(Boolean).map((pair) => {
+        const names = pair.split(':');
+        if (names.length !== 2 || !names[0] || !names[1]) throw new Error(`--gaps takes auto, none, or pairs such as φ1:φ2,φ2:φ3, not "${pair}"`);
+        return names;
+      });
     const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps });
     const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}`).join(', ')}`, rows, true);
