@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GRID } from '../src/core/grid.js';
-import { bubbleAt, layoutBubbles } from '../src/core/link-bubble.js';
+import { bubbleAt, bubbleOffset, layoutBubbles } from '../src/core/link-bubble.js';
 
 const drawing = { x: 0, y: 0, w: 1600, h: 800 };
 const disjoint = (a, b) => a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
@@ -90,4 +90,22 @@ test('bubbles export as vector drawing: the design nested whole, the frame widen
   const f = bubble.frame;
   assert.ok(x <= f.x && y <= f.y && x + w >= f.x + f.w && y + h >= f.y + f.h);
   assert.ok(svg.includes('data-child="yes"'));
+});
+
+test('a dragged bubble stays where it was put beside its part, and others keep clear', () => {
+  const part = { x: 760, y: 360, w: 80, h: 80 };
+  const offset = bubbleOffset(part, { x: 1010, y: 350 });
+  assert.deepEqual(offset, { dx: 200, dy: -40 });
+  const [pinned, free] = layoutBubbles(drawing, [
+    { id: 'B', part: { x: 200, y: 360, w: 80, h: 80 }, size: { w: 400, h: 300 } },
+    { id: 'A', part, size: { w: 400, h: 300 }, offset },
+  ]);
+  assert.equal(pinned.id, 'A');
+  // Inside the drawing's extent too: the user put it there.
+  assert.deepEqual({ x: pinned.frame.x, y: pinned.frame.y }, { x: 1000, y: 360 });
+  assert.deepEqual(pinned.connector[1], { x: 1000, y: 400 });
+  assert.ok(disjoint(pinned.frame, free.frame));
+  // It follows its part when the part moves.
+  const [moved] = layoutBubbles(drawing, [{ id: 'A', part: { ...part, x: part.x + GRID }, size: { w: 400, h: 300 }, offset }]);
+  assert.equal(moved.frame.x, 1000 + GRID);
 });

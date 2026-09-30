@@ -17,8 +17,9 @@ const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
 const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
 /**
- * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h } }] (the
- * child drawing's size). Returns [{ id, angle, frame, image, connector:
+ * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h }, offset? }]
+ * (the child drawing's size; `offset` pins the frame's top-left corner at
+ * that displacement from the part's centre, where the user dragged it). Returns [{ id, angle, frame, image, connector:
  * [from, to] }]: `frame` is the box around the child with room for its
  * caption, `image` where the child is drawn.
  *
@@ -40,14 +41,20 @@ export function layoutBubbles(drawing, requests, {
   const connectors = [];
   const out = [];
   const centre = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
-  const sorted = [...requests].sort((a, b) => (a.part.y - b.part.y) || (a.part.x - b.part.x));
-  for (const { id, part, size } of sorted) {
+  // Pinned bubbles go first, where they were put; the rest keep clear of them.
+  const sorted = [...requests].sort((a, b) => (!!b.offset - !!a.offset) || (a.part.y - b.part.y) || (a.part.x - b.part.x));
+  for (const { id, part, size, offset } of sorted) {
     const w = ceilCell(size.w + 2 * pad);
     const h = ceilCell(size.h + 2 * pad + caption);
     const pc = { x: part.x + part.w / 2, y: part.y + part.h / 2 };
     const others = rects.filter((r) => !sameRect(r, part) && !contains(part, r));
     let best = null;
-    for (let step = 0; step < RING_STEPS; step++) {
+    if (offset) {
+      const frame = { x: snap(pc.x + offset.dx), y: snap(pc.y + offset.dy), w, h };
+      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
+      best = { angle: previous?.get(id) ?? 0, frame, from: exitPoint(part, pc, to), to };
+    }
+    for (let step = 0; !offset && step < RING_STEPS; step++) {
       const angle = (360 / RING_STEPS) * step;
       const u = { x: Math.cos((angle * Math.PI) / 180), y: Math.sin((angle * Math.PI) / 180) };
       // The nearest spot along this ray whose frame clears the drawing.
@@ -132,6 +139,12 @@ function connectorCost(from, to, rects, segments, connectors, frames) {
   for (const [a, b] of connectors) if (segmentsCross(from, to, a, b)) cost += 30;
   for (const frame of frames) if (segThroughInterior(from, to, frame)) cost += 60;
   return cost;
+}
+
+/** The `offset` that pins a laid-out bubble's `frame` at `at` (its new
+ *  top-left corner) beside a part: grid-aligned, as the layout keeps it. */
+export function bubbleOffset(part, at) {
+  return { dx: snap(at.x) - (part.x + part.w / 2), dy: snap(at.y) - (part.y + part.h / 2) };
 }
 
 /** The bubble whose frame holds `point`, if any. */

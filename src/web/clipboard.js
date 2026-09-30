@@ -9,9 +9,11 @@ export function pngDataUrlBlob(dataUrl) {
   return new Blob([bytes], { type: 'image/png' });
 }
 
-/** Start both clipboard payloads immediately; SVG is carried as plain text for
- * browsers without a portable SVG clipboard image type. The PNG is `scale`
- * pixels per unit and records `dpi`, as a PNG export does. */
+/** Copy the drawing as a PNG image only: a text payload beside it (the SVG
+ * source) is what some apps, Office on Windows among them, paste instead.
+ * The write starts at once with the PNG promised, so it stays within the user
+ * gesture. The PNG is `scale` pixels per unit and records `dpi`, as a PNG
+ * export does. */
 export function writeDrawingToClipboard(svg, {
   dpi = DEFAULT_PNG_DPI,
   scale = pngRasterScale(dpi),
@@ -21,12 +23,9 @@ export function writeDrawingToClipboard(svg, {
   rasterize = svgToPngDataUrl,
 } = {}) {
   if (!clipboard?.write || !ClipboardItem) throw new Error('image clipboard is unavailable in this browser');
-  const drawing = Promise.resolve().then(() => embedFont(svg));
-  const png = drawing.then((value) => rasterize(value, scale, { dpi })).then(pngDataUrlBlob);
-  const text = drawing.then((value) => new Blob([value], { type: 'text/plain' }));
-  // A browser can reject the write before consuming either payload promise.
-  // Keep preparation errors observed in that case as well.
+  const png = Promise.resolve().then(() => embedFont(svg)).then((value) => rasterize(value, scale, { dpi })).then(pngDataUrlBlob);
+  // A browser can reject the write before consuming the payload promise.
+  // Keep a preparation error observed in that case as well.
   png.catch(() => {});
-  text.catch(() => {});
-  return clipboard.write([new ClipboardItem({ 'image/png': png, 'text/plain': text })]);
+  return clipboard.write([new ClipboardItem({ 'image/png': png })]);
 }

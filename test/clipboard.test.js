@@ -8,7 +8,7 @@ class ClipboardItemStub {
   constructor(types) { this.types = types; }
 }
 
-test('image clipboard starts its write synchronously with promised PNG and SVG text', async () => {
+test('image clipboard starts its write synchronously with the PNG alone', async () => {
   let payload;
   let prepared = false;
   let finishPreparation;
@@ -28,16 +28,13 @@ test('image clipboard starts its write synchronously with promised PNG and SVG t
   });
   assert.ok(payload, 'write must begin before any async preparation');
   assert.equal(prepared, false);
-  assert.deepEqual(Object.keys(payload.types), ['image/png', 'text/plain']);
+  // No text payload: some apps would paste the SVG source instead of the image.
+  assert.deepEqual(Object.keys(payload.types), ['image/png']);
   finishPreparation();
   await write;
   const png = await payload.types['image/png'];
   assert.equal(png.type, 'image/png');
-  assert.equal(png.size, 8);
   assert.deepEqual([...new Uint8Array(await png.arrayBuffer())], [137, 80, 78, 71, 13, 10, 26, 10]);
-  const text = await payload.types['text/plain'];
-  assert.equal(text.type, 'text/plain');
-  assert.equal(await text.text(), '<svg><style>font</style></svg>');
 });
 
 test('unsupported browsers and rejected clipboard writes expose errors', async () => {

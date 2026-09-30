@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit } from '../src/core/model.js';
+import { Circuit, transformNetLabelPlacement } from '../src/core/model.js';
 import { evaluate, runCommand } from '../src/core/commands.js';
 import { addTerminalStubs, stubLabelPlacement } from '../src/core/stubs.js';
 
@@ -130,4 +130,17 @@ test('a straight stub of any length labels beside its pin; a bent one has no suc
     { anchor: { x: 800, y: -120 }, netSide: 'left', align: 'parent' });
   assert.equal(stubLabelPlacement(circuit, { comp: 'R1', term: 'a' }, { x: -320, y: 80 }), null);
   assert.equal(stubLabelPlacement(circuit, { comp: 'R1', term: 'a' }, { x: 0, y: 0 }), null);
+});
+
+test('a stub label turns with its drawing: side and the edge kept toward the pin', () => {
+  // A gate stub's label, right-aligned toward the pin on its right.
+  assert.deepEqual(transformNetLabelPlacement({ netSide: 'above', align: 'right' }, 'mirrorX'), { netSide: 'above', align: 'left' });
+  assert.deepEqual(transformNetLabelPlacement({ netSide: 'above', align: 'right' }, 'mirrorY'), { netSide: 'below', align: 'right' });
+  assert.deepEqual(transformNetLabelPlacement({ netSide: 'left', align: 'parent' }, 'mirrorX'), { netSide: 'right', align: 'parent' });
+  assert.deepEqual(transformNetLabelPlacement({ netSide: 'above', align: 'right' }, 'rotate'), { netSide: 'right', align: 'parent' });
+  assert.deepEqual(transformNetLabelPlacement({ netSide: 'left', align: 'parent' }, 'rotateCCW'), { netSide: 'below', align: 'parent' });
+  assert.deepEqual(transformNetLabelPlacement({ netSide: null, align: 'center' }, 'rotate180'), { netSide: 'below', align: 'center' });
+  // Mirrored twice, a label is back as it was.
+  const once = transformNetLabelPlacement({ netSide: 'below', align: 'left' }, 'mirrorX');
+  assert.deepEqual(transformNetLabelPlacement(once, 'mirrorX'), { netSide: 'below', align: 'left' });
 });

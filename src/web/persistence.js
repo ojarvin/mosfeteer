@@ -17,6 +17,7 @@ const HANDLE_DB = 'mosfeteer-browser-files';
 const HANDLE_STORE = 'handles';
 const FOLDER_KEY = 'folder';
 const LOCATION_KEY = 'location';
+const EXPORT_FOLDER_KEY = 'export-folder:';
 const DOCUMENT_TYPES = [{ description: 'Mosfeteer schematic', accept: { 'application/json': ['.json'] } }];
 
 /** Return the initial export destination for the active persistence mode. */
@@ -217,6 +218,9 @@ export function createBrowserPersistenceAdapter({
   const kinds = new Map(); // path -> { revision, valid }, so a listing parses each file once
   // The file last opened or saved: file pickers start in its folder.
   let location = null;
+  // Export folders by their displayed path (the folder's name). They are
+  // never the workspace: choosing one leaves the open folder alone.
+  const exportFolders = new Map();
   // A record is { path, name, handle, state?, lastModified?, revision?, legacy? }:
   // with a handle the file is read and written in place; without one, `state`
   // holds the contents read this session.
@@ -243,6 +247,7 @@ export function createBrowserPersistenceAdapter({
     for (const value of stored) {
       if (value?.kind === 'location' && value.handle) location = value.handle;
       else if (value?.kind === 'folder' && value.handle) folder = { name: value.name || value.handle.name, handle: value.handle, locked: false };
+      else if (value?.kind === 'export-folder' && value.handle && value.path) exportFolders.set(value.path, value.handle);
       else if (value?.kind === 'file' && value.handle && value.path && !opened.has(value.path)) {
         opened.set(value.path, { path: value.path, name: value.name, handle: value.handle });
       }
@@ -461,6 +466,39 @@ export function createBrowserPersistenceAdapter({
     return { path: name };
   }
 
+  const canChooseExportFolder = () => typeof windowImpl?.showDirectoryPicker === 'function';
+
+  /** Pick a folder to export into, without touching the workspace folder. */
+  async function chooseExportFolder(dir = '') {
+    await ready;
+    if (!canChooseExportFolder()) return null;
+    let handle;
+    try {
+      const current = exportFolders.get(dir);
+      handle = await windowImpl.showDirectoryPicker({
+        id: 'mosfeteer-export',
+        mode: 'readwrite',
+        ...(current ? { startIn: current } : {}),
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') return null;
+      throw error;
+    }
+    let path = null;
+    for (const [known, knownHandle] of exportFolders) {
+      try {
+        if (await knownHandle.isSameEntry(handle)) path = known;
+      } catch { /* keep looking */ }
+    }
+    if (!path) {
+      path = handle.name;
+      for (let n = 2; exportFolders.has(path) || path === BROWSER_DOWNLOADS; n += 1) path = `${handle.name} (${n})`;
+    }
+    exportFolders.set(path, handle);
+    await remember({ key: `${EXPORT_FOLDER_KEY}${path}`, kind: 'export-folder', path, handle });
+    return { path };
+  }
+
   /** Ask where to save; resolves { handle|null, name } or null when canceled. */
   async function saveFile(name) {
     if (pickSaveFile) {
@@ -630,8 +668,17 @@ export function createBrowserPersistenceAdapter({
     browserOnly: true,
     liveSync: false,
     supportedExportFormats: new Set(['svg', 'png']),
-    /** Reserve a native save target before PNG rasterization loses user activation. */
-    prepareExport: async ({ name, formats = [] } = {}) => {
+    get canChooseExportFolder() { return canChooseExportFolder(); },
+    /** While the submit still carries user activation: ask for access to a
+     *  chosen export folder, or reserve a native PNG save target before
+     *  rasterization loses the activation. */
+    prepareExport: async ({ name, formats = [], dir = '' } = {}) => {
+      await ready;
+      const exportFolder = exportFolders.get(dir);
+      if (exportFolder) {
+        if (!await permitted(exportFolder, 'readwrite', true)) throw needsAccess('', dir, 'readwrite');
+        return null;
+      }
       if (!formats.includes('png') || download || typeof windowImpl?.showSaveFilePicker !== 'function') return null;
       try {
         const handle = await windowImpl.showSaveFilePicker({
@@ -649,9 +696,10 @@ export function createBrowserPersistenceAdapter({
     setWorkspace: workspace,
     browse: async () => ({ dir: BROWSER_DOWNLOADS, entries: [], parent: null, home: '', workspace: BROWSER_DOWNLOADS }),
     createFolder: async () => { throw new Error('create folders with the browser\'s folder picker'); },
-    pickFile: async ({ mode = 'open', name = '' } = {}) => {
+    pickFile: async ({ mode = 'open', name = '', dir = '' } = {}) => {
       if (mode === 'open') return openFiles();
       if (mode === 'folder') return chooseFolder();
+      if (mode === 'export-folder') return chooseExportFolder(dir);
       await ready;
       const fallbackName = validDocumentName(name) || 'circuit';
       const selected = await saveFile(fallbackName);
@@ -701,10 +749,27 @@ export function createBrowserPersistenceAdapter({
     reveal: async () => { throw new Error('the browser cannot show files in the file manager'); },
     active: async () => ({ active: '', path: '' }),
     heartbeat: async () => {},
-    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }, { prepared = null } = {}) => {
+    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '', overwrite = false }, { prepared = null } = {}) => {
       const supported = formats.filter((format) => ['svg', 'png'].includes(format));
       const unsupported = formats.filter((format) => !['svg', 'png'].includes(format));
       if (unsupported.length) throw Object.assign(new Error(`browser-only export does not support: ${unsupported.join(', ')}`), { code: 'unsupported-format' });
+      await ready;
+      const exportFolder = exportFolders.get(dir);
+      if (exportFolder) {
+        if (!await permitted(exportFolder, 'readwrite', true)) throw needsAccess('', dir, 'readwrite');
+        const files = supported.map((format) => ({ fileName: `${name}.${format}`, contents: format === 'svg' ? svg : dataUrlBlob(png) }));
+        if (!overwrite) {
+          const existing = [];
+          for (const { fileName } of files) {
+            try { await exportFolder.getFileHandle(fileName); existing.push(`${dir}/${fileName}`); } catch { /* free */ }
+          }
+          if (existing.length) throw Object.assign(new Error(`${existing.length === 1 ? 'a file' : 'files'} already exist`), { code: 'exists', existing });
+        }
+        for (const { fileName, contents } of files) await writeFileHandle(await exportFolder.getFileHandle(fileName, { create: true }), contents);
+        return { dir, paths: files.map(({ fileName }) => `${dir}/${fileName}`) };
+      }
+      // A folder this browser no longer knows (or never could) downloads.
+      dir = BROWSER_DOWNLOADS;
       const paths = [];
       if (supported.includes('svg')) {
         const fileName = `${name}.svg`;

@@ -36,13 +36,18 @@ whose connector reads best: diagonal, so it stands apart from the orthogonal
 wiring; short; crossing as few parts, labels, and wires as it can (running
 along a wire is worst); and clear of other bubbles and their connectors. A
 bubble keeps its angle while that spot stays about as good, so it does not
-jump as the drawing is edited. Fit (`f`) takes the open bubbles in.
+jump as the drawing is edited. Dragging a bubble puts it where it is
+dropped, even over the drawing: it then keeps that place beside its part
+(following the part when it moves) until its menu's **Put back beside the
+drawing**. Fit (`f`) takes the open bubbles in; opening one out of view fits
+the view to it, and hiding bubbles that were on screen fits the view back in,
+unless it is zoomed in past the whole drawing.
 
 `Shift+O` shows every linked part's design at once, or hides them all when
 they all show. `o` again (or **Hide linked design**, or the bubble's own
-right-click menu) closes one. A click on a bubble picks its part. Which bubbles are open is
-remembered per document in this browser; they are never saved in the
-document or undone.
+right-click menu) closes one. A click on a bubble picks its part. Which bubbles are open, and
+where any was dragged, is remembered per document in this browser; they are
+never saved in the document or undone.
 
 A bubble is drawn in drawing units -- a dashed box annotation's stroke, with
 corners rounded by one cell -- so it scales with the drawing. Exports (SVG, PNG,

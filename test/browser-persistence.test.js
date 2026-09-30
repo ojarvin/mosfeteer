@@ -366,3 +366,46 @@ test('file pickers start next to the file last opened or saved, also after a rel
   assert.equal(starts[2].folder, home);
   assert.equal(starts[2].name, 'mixer.json');
 });
+
+test('an export folder is its own: exports are written there and the workspace stays', async () => {
+  const disk = fakeDisk();
+  const designs = disk.folder('designs', { 'amp.json': JSON.stringify(drawing()) });
+  const figures = disk.folder('figures');
+  const handleStore = memoryHandleStore();
+  const downloads = [];
+  let picks = [designs, figures];
+  const options = {
+    storage: memoryStorage(),
+    windowImpl: { showDirectoryPicker: async () => picks.shift() },
+    handleStore,
+  };
+  const persistence = createBrowserPersistenceAdapter({ ...options, download: (contents, name) => downloads.push(name) });
+  assert.equal(persistence.canChooseExportFolder, true);
+  await persistence.pickFile({ mode: 'folder' });
+  assert.deepEqual(await persistence.pickFile({ mode: 'export-folder' }), { path: 'figures' });
+  assert.equal((await persistence.workspace()).workspace, 'designs');
+
+  const exported = await persistence.exportFiles({ dir: 'figures', name: 'amp', formats: ['svg'], svg: '<svg></svg>' });
+  assert.deepEqual(exported.paths, ['figures/amp.svg']);
+  assert.equal(figures.files.get('amp.svg').text, '<svg></svg>');
+  assert.deepEqual(downloads, []);
+  await assert.rejects(
+    persistence.exportFiles({ dir: 'figures', name: 'amp', formats: ['svg'], svg: '<svg/>' }),
+    (error) => error.code === 'exists' && error.existing[0] === 'figures/amp.svg',
+  );
+  await persistence.exportFiles({ dir: 'figures', name: 'amp', formats: ['svg'], svg: '<svg/>', overwrite: true });
+  assert.equal(figures.files.get('amp.svg').text, '<svg/>');
+
+  // A reload remembers it; access comes back on the export click.
+  disk.permission = 'prompt';
+  disk.activation = true;
+  const reloaded = createBrowserPersistenceAdapter(options);
+  await reloaded.prepareExport({ name: 'amp', formats: ['svg'], dir: 'figures' });
+  assert.equal(disk.permission, 'granted');
+  assert.equal((await reloaded.workspace()).workspace, 'designs');
+
+  // An unknown folder name falls back to a download.
+  const fallback = await persistence.exportFiles({ dir: 'elsewhere', name: 'amp', formats: ['svg'], svg: '<svg/>' });
+  assert.deepEqual(downloads, ['amp.svg']);
+  assert.equal(fallback.dir, 'Browser downloads');
+});

@@ -629,6 +629,31 @@ export function transformWorldPoints(points = [], center, operation = 'rotate') 
   return points.map(map);
 }
 
+const SIDE_VECTORS = { above: { x: 0, y: -1 }, below: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+
+function turnVector(v, operation) {
+  let { x, y } = v;
+  if (operation === 'rotate' || operation === 'rotateCCW' || operation === 'rotate180' || operation === 'rotate270') {
+    const turns = operation === 'rotateCCW' || operation === 'rotate270' ? 3 : operation === 'rotate180' ? 2 : 1;
+    for (let i = 0; i < turns; i++) [x, y] = [-y, x];
+  } else if (operation === 'mirrorX') x = -x;
+  else if (operation === 'mirrorY') y = -y;
+  return Object.entries(SIDE_VECTORS).find(([, s]) => s.x === x && s.y === y)[0];
+}
+
+/** A net label's side of its wire and its alignment after the world-space
+ *  operation that carries its anchor and wire: `{ netSide, align }`. The side
+ *  turns with the drawing, and a left or right alignment -- the edge kept
+ *  toward a stub's terminal (core/stubs.js) -- follows that edge, so a
+ *  mirrored stub's label still reaches back to its terminal. Turned upright,
+ *  where the text cannot face that edge, the label aligns to its wire. */
+export function transformNetLabelPlacement({ netSide = null, align = 'parent' } = {}, operation) {
+  const side = turnVector(SIDE_VECTORS[netSide || 'above'], operation);
+  if (align !== 'left' && align !== 'right') return { netSide: side, align };
+  const edge = turnVector(SIDE_VECTORS[align], operation);
+  return { netSide: side, align: edge === 'left' || edge === 'right' ? edge : 'parent' };
+}
+
 /** Compose a component's local transform with a world-space D4 operation.
  * Brute-force matching keeps mirror ordering identical to geometry.js and is
  * easier to audit than a collection of reflection parity cases. */

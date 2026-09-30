@@ -109,8 +109,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
     // user activation. Rasterization below is asynchronous and may otherwise
     // make a later download click get blocked by the browser. A set of beat
     // files is downloaded instead of asking for each one.
-    const prepared = persistence.prepareExport && jobs.length === 1
-      ? await persistence.prepareExport({ name, formats })
+    const prepared = persistence.prepareExport
+      ? await persistence.prepareExport({ name, formats: jobs.length === 1 ? formats : [], dir })
       : null;
     // A MathML label can acquire its final browser-sized box after the last
     // canvas paint. Sync it before taking bounds for the exported viewBox.
@@ -211,7 +211,7 @@ async function runAtlasExport({ dir, name, formats, grid = false, dark = false, 
   };
   try {
     report(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
-    const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats }) : null;
+    const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats, dir }) : null;
     const { svg: sheet, scale, count } = target.build({ grid });
     const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(sheet) : sheet);
     const request = { dir, name, formats, svg };
@@ -285,6 +285,8 @@ function renderExportLocation() {
   const dpi = exportForm.querySelector('select[name="pngDpi"]');
   if (dpi) dpi.disabled = !formats.includes('.png');
   const submit = document.getElementById('export-submit');
+  const choose = document.getElementById('export-choose-folder');
+  if (choose && persistence.browserOnly) choose.hidden = !persistence.canChooseExportFolder;
   if (submit) submit.disabled = !formats.length || !exportFolder || !validDocumentName(document.getElementById('export-name')?.value);
 }
 
@@ -387,7 +389,16 @@ export function installExportUi() {
   exportForm?.addEventListener('change', renderExportLocation);
 
   document.getElementById('export-choose-folder')?.addEventListener('click', async () => {
-    const choice = await showFileDialog(persistence, { mode: 'folder', dir: exportFolder, title: 'Choose export folder' });
+    // Browser-only mode picks an export folder of its own, never the workspace.
+    let choice;
+    try {
+      choice = persistence.browserOnly
+        ? await persistence.pickFile({ mode: 'export-folder', dir: exportFolder })
+        : await showFileDialog(persistence, { mode: 'folder', dir: exportFolder, title: 'Choose export folder' });
+    } catch (err) {
+      logLine(`Could not choose the export folder: ${err.message}`, 'error');
+      return;
+    }
     if (!choice) return;
     exportFolder = choice.path;
     renderExportLocation();

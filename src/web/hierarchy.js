@@ -11,8 +11,8 @@
  *
  * A link to a design that is not in the workspace is simply broken: the side
  * panel marks the part with a red dot, and its bubble and menu say so. Which
- * bubbles are open is remembered per document in this browser; they are
- * never saved in the document, exported, or undone.
+ * bubbles are open, and where any was dragged to, is remembered per document
+ * in this browser; they are never saved in the document or undone.
  */
 
 import { loadDocument } from '../core/document.js';
@@ -20,10 +20,10 @@ import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { searchKey } from '../core/design-index.js';
-import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, layoutBubbles } from '../core/link-bubble.js';
+import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
-import { animateViewTo, fitView } from './canvas-view.js';
+import { animateViewTo, fitTarget, fitView } from './canvas-view.js';
 import { viewFitting } from './atlas-layout.js';
 import { componentContextMenuEl } from './elements.js';
 import { appendContextItem, appendContextSubmenu, closeComponentContextMenu } from './context-menu.js';
@@ -33,6 +33,7 @@ import { commit, render, selectedComps, setSelection } from './main.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const OPEN_KEY = 'mosfeteer.linkBubbles:';
+const SPOTS_KEY = 'mosfeteer.linkBubbleSpots:';
 const CLOSE_MS = 180;
 const UP_MS = 380;
 
@@ -41,6 +42,7 @@ const bubbles = new Map();
 let bubblesDocument; // the document the bubbles belong to (undefined: none yet)
 let layoutCache = { key: '', layout: [] };
 const angles = new Map(); // refdes -> the angle its bubble last took
+const spots = new Map(); // refdes -> { dx, dy }: a dragged bubble's corner from its part's centre
 let layerEl = null;
 const nodes = new Map(); // refdes -> its drawn bubble
 const pictures = new Map(); // path -> { revision, box, href }: drawn once per revision
@@ -139,6 +141,23 @@ function rememberOpen() {
   } catch { /* not remembered, then */ }
 }
 
+function rememberSpots() {
+  const path = editor.currentDocumentPath;
+  if (!path) return;
+  try {
+    if (spots.size) localStorage.setItem(SPOTS_KEY + path, JSON.stringify(Object.fromEntries(spots)));
+    else localStorage.removeItem(SPOTS_KEY + path);
+  } catch { /* not remembered, then */ }
+}
+
+function rememberedSpots(path) {
+  if (!path) return {};
+  try {
+    const saved = JSON.parse(localStorage.getItem(SPOTS_KEY + path) || '{}');
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch { return {}; }
+}
+
 function rememberedOpen(path) {
   if (!path) return [];
   try {
@@ -153,6 +172,10 @@ function followDocument() {
   bubblesDocument = editor.currentDocumentPath;
   bubbles.clear();
   angles.clear();
+  spots.clear();
+  for (const [refdes, spot] of Object.entries(rememberedSpots(bubblesDocument))) {
+    if (Number.isFinite(spot?.dx) && Number.isFinite(spot?.dy)) spots.set(refdes, { dx: spot.dx, dy: spot.dy });
+  }
   for (const refdes of rememberedOpen(bubblesDocument)) {
     const component = editor.circuit.components.get(refdes);
     if (component?.link) openBubble(component, { remember: false });
@@ -190,11 +213,13 @@ export function toggleLinkBubbles(components = linkTargets()) {
   }
   followDocument();
   const close = linked.every((c) => bubbles.has(c.refdes));
+  const shown = close ? linkBubbleFrames() : [];
   for (const component of linked) {
-    if (close) closeLinkBubble(component.refdes);
+    if (close) closeLinkBubble(component.refdes, { refit: false });
     else if (!bubbles.has(component.refdes)) openBubble(component);
   }
   render();
+  if (close) refitAfterClosing(shown);
 }
 
 function openBubble(component, { remember = true } = {}) {
@@ -203,10 +228,26 @@ function openBubble(component, { remember = true } = {}) {
   void loadBubble(component.refdes, component.link);
 }
 
-export function closeLinkBubble(refdes) {
+export function closeLinkBubble(refdes, { refit = true } = {}) {
+  const shown = refit ? linkBubbleFrames() : [];
   if (!bubbles.delete(refdes)) return;
   rememberOpen();
   render();
+  if (refit) refitAfterClosing(shown);
+}
+
+/** Bubbles that were just hidden leave room the view no longer needs: when
+ *  the view showed all that is left with room to spare and a hidden bubble
+ *  was on screen, it fits inward again. A view zoomed in past that is kept. */
+function refitAfterClosing(before) {
+  const view = editor.view;
+  const onScreen = (frame) => frame.x < view.x + view.w && frame.x + frame.w > view.x
+    && frame.y < view.y + view.h && frame.y + frame.h > view.y;
+  const remaining = new Set(linkBubbleFrames().map((frame) => `${frame.x},${frame.y},${frame.w},${frame.h}`));
+  const left = before.filter((frame) => !remaining.has(`${frame.x},${frame.y},${frame.w},${frame.h}`));
+  if (!left.some(onScreen)) return;
+  const target = fitTarget();
+  if (target.w < view.w * 0.98 && target.h < view.h * 0.98) fitView({ animate: true });
 }
 
 export function linkBubbleOpen(refdes) {
@@ -232,12 +273,35 @@ export function linkBubbleExtras(drawing = editor.circuit) {
   const layout = whole
     ? currentLayout().filter((entry) => bubbles.get(entry.id)?.status === 'ready')
     : layoutBubbles(drawing.inkBounds(), ready.map(([refdes, bubble]) => ({
-      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box,
+      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box, offset: spots.get(refdes),
     })), { obstacles: obstacles(drawing), previous: angles });
   return bubbleExtras(layout.map((entry) => {
     const bubble = bubbles.get(entry.id);
     return { ...entry, name: bubble.name, svg: bubble.svg, box: bubble.box };
   }));
+}
+
+/** Drag a bubble: its frame's top-left corner goes to `at` (a world point),
+ *  and stays there beside its part until put back. `remember` saves the
+ *  spot, once the drag ends. */
+export function moveLinkBubble(refdes, at, { remember = true } = {}) {
+  const component = editor.circuit.components.get(refdes);
+  if (!component || !bubbles.has(refdes)) return;
+  spots.set(refdes, bubbleOffset(component.bboxWorld(), at));
+  if (remember) rememberSpots();
+  render();
+}
+
+/** The frame a bubble is drawn in now, or null. */
+export function linkBubbleFrame(refdes) {
+  return currentLayout().find((entry) => entry.id === refdes)?.frame || null;
+}
+
+/** Put a dragged bubble back where the layout would place it. */
+export function resetLinkBubble(refdes) {
+  if (!spots.delete(refdes)) return;
+  rememberSpots();
+  render();
 }
 
 /** The frames of the bubbles on show, for fitting the view to them. */
@@ -281,7 +345,8 @@ function currentLayout() {
     }
   }
   const shown = [...bubbles].filter(([, bubble]) => bubble.status !== 'loading');
-  const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}`).join(',')}`;
+  const spot = (refdes) => (spots.has(refdes) ? `@${spots.get(refdes).dx},${spots.get(refdes).dy}` : '');
+  const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}${spot(refdes)}`).join(',')}`;
   if (layoutCache.key === key) return layoutCache.layout;
   // A broken link's box fits its message (24-unit italic, about half an em
   // a character).
@@ -290,6 +355,7 @@ function currentLayout() {
     id: refdes,
     part: circuit.components.get(refdes).bboxWorld(),
     size: bubble.status === 'ready' ? bubble.box : messageSize(bubble),
+    offset: spots.get(refdes),
   })), { obstacles: obstacles(circuit), previous: angles }) : [];
   for (const entry of layout) angles.set(entry.id, entry.angle);
   layoutCache = { key, layout };
@@ -632,6 +698,7 @@ export function openLinkBubbleMenu(refdes, x, y) {
   group.className = 'context-menu-group';
   appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });
   appendContextItem(group, 'Hide linked design', () => closeLinkBubble(refdes), { shortcut: 'o' });
+  if (spots.has(refdes)) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
   appendDesignPicker(group, [component], component.link);
   menu.appendChild(group);
   menu.querySelector('button:not(:disabled)')?.focus();

@@ -15324,6 +15324,7 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 
 __modules["src/core/link-bubble.js"] = function (__require, __exports) {
 __exports.layoutBubbles = layoutBubbles;
+__exports.bubbleOffset = bubbleOffset;
 __exports.bubbleAt = bubbleAt;
 __exports.captionAnchor = captionAnchor;
 __exports.nestedSvg = nestedSvg;
@@ -15349,8 +15350,9 @@ const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
 const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
 /**
- * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h } }] (the
- * child drawing's size). Returns [{ id, angle, frame, image, connector:
+ * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h }, offset? }]
+ * (the child drawing's size; `offset` pins the frame's top-left corner at
+ * that displacement from the part's centre, where the user dragged it). Returns [{ id, angle, frame, image, connector:
  * [from, to] }]: `frame` is the box around the child with room for its
  * caption, `image` where the child is drawn.
  *
@@ -15372,14 +15374,20 @@ function layoutBubbles(drawing, requests, {
   const connectors = [];
   const out = [];
   const centre = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
-  const sorted = [...requests].sort((a, b) => (a.part.y - b.part.y) || (a.part.x - b.part.x));
-  for (const { id, part, size } of sorted) {
+  // Pinned bubbles go first, where they were put; the rest keep clear of them.
+  const sorted = [...requests].sort((a, b) => (!!b.offset - !!a.offset) || (a.part.y - b.part.y) || (a.part.x - b.part.x));
+  for (const { id, part, size, offset } of sorted) {
     const w = ceilCell(size.w + 2 * pad);
     const h = ceilCell(size.h + 2 * pad + caption);
     const pc = { x: part.x + part.w / 2, y: part.y + part.h / 2 };
     const others = rects.filter((r) => !sameRect(r, part) && !contains(part, r));
     let best = null;
-    for (let step = 0; step < RING_STEPS; step++) {
+    if (offset) {
+      const frame = { x: snap(pc.x + offset.dx), y: snap(pc.y + offset.dy), w, h };
+      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
+      best = { angle: previous?.get(id) ?? 0, frame, from: exitPoint(part, pc, to), to };
+    }
+    for (let step = 0; !offset && step < RING_STEPS; step++) {
       const angle = (360 / RING_STEPS) * step;
       const u = { x: Math.cos((angle * Math.PI) / 180), y: Math.sin((angle * Math.PI) / 180) };
       // The nearest spot along this ray whose frame clears the drawing.
@@ -15464,6 +15472,12 @@ function connectorCost(from, to, rects, segments, connectors, frames) {
   for (const [a, b] of connectors) if (segmentsCross(from, to, a, b)) cost += 30;
   for (const frame of frames) if (segThroughInterior(from, to, frame)) cost += 60;
   return cost;
+}
+
+/** The `offset` that pins a laid-out bubble's `frame` at `at` (its new
+ *  top-left corner) beside a part: grid-aligned, as the layout keeps it. */
+function bubbleOffset(part, at) {
+  return { dx: snap(at.x) - (part.x + part.w / 2), dy: snap(at.y) - (part.y + part.h / 2) };
 }
 
 /** The bubble whose frame holds `point`, if any. */
@@ -15553,6 +15567,7 @@ __exports.containedWireSegments = containedWireSegments;
 __exports.extractWireIslands = extractWireIslands;
 __exports.extractWireFragments = extractWireFragments;
 __exports.transformWorldPoints = transformWorldPoints;
+__exports.transformNetLabelPlacement = transformNetLabelPlacement;
 __exports.transformComponentWorld = transformComponentWorld;
 __exports.netTerminalPositionKey = netTerminalPositionKey;
 __exports.parseTermRef = parseTermRef;
@@ -16205,6 +16220,31 @@ function transformWorldPoints(points = [], center, operation = 'rotate') {
     return { x: snap(x + c.x), y: snap(y + c.y) };
   };
   return points.map(map);
+}
+
+const SIDE_VECTORS = { above: { x: 0, y: -1 }, below: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+
+function turnVector(v, operation) {
+  let { x, y } = v;
+  if (operation === 'rotate' || operation === 'rotateCCW' || operation === 'rotate180' || operation === 'rotate270') {
+    const turns = operation === 'rotateCCW' || operation === 'rotate270' ? 3 : operation === 'rotate180' ? 2 : 1;
+    for (let i = 0; i < turns; i++) [x, y] = [-y, x];
+  } else if (operation === 'mirrorX') x = -x;
+  else if (operation === 'mirrorY') y = -y;
+  return Object.entries(SIDE_VECTORS).find(([, s]) => s.x === x && s.y === y)[0];
+}
+
+/** A net label's side of its wire and its alignment after the world-space
+ *  operation that carries its anchor and wire: `{ netSide, align }`. The side
+ *  turns with the drawing, and a left or right alignment -- the edge kept
+ *  toward a stub's terminal (core/stubs.js) -- follows that edge, so a
+ *  mirrored stub's label still reaches back to its terminal. Turned upright,
+ *  where the text cannot face that edge, the label aligns to its wire. */
+function transformNetLabelPlacement({ netSide = null, align = 'parent' } = {}, operation) {
+  const side = turnVector(SIDE_VECTORS[netSide || 'above'], operation);
+  if (align !== 'left' && align !== 'right') return { netSide: side, align };
+  const edge = turnVector(SIDE_VECTORS[align], operation);
+  return { netSide: side, align: edge === 'left' || edge === 'right' ? edge : 'parent' };
 }
 
 /** Compose a component's local transform with a world-space D4 operation.
@@ -33492,6 +33532,7 @@ __exports.cancelViewAnimation = cancelViewAnimation;
 __exports.animateViewTo = animateViewTo;
 __exports.refitIfFitted = refitIfFitted;
 __exports.fitView = fitView;
+__exports.fitTarget = fitTarget;
 __exports.fittedView = fittedView;
 __exports.applyCanvasViewport = applyCanvasViewport;
 __exports.clientToWorld = clientToWorld;
@@ -33860,9 +33901,11 @@ function pngDataUrlBlob(dataUrl) {
   return new Blob([bytes], { type: 'image/png' });
 }
 
-/** Start both clipboard payloads immediately; SVG is carried as plain text for
- * browsers without a portable SVG clipboard image type. The PNG is `scale`
- * pixels per unit and records `dpi`, as a PNG export does. */
+/** Copy the drawing as a PNG image only: a text payload beside it (the SVG
+ * source) is what some apps, Office on Windows among them, paste instead.
+ * The write starts at once with the PNG promised, so it stays within the user
+ * gesture. The PNG is `scale` pixels per unit and records `dpi`, as a PNG
+ * export does. */
 function writeDrawingToClipboard(svg, {
   dpi = DEFAULT_PNG_DPI,
   scale = pngRasterScale(dpi),
@@ -33872,14 +33915,11 @@ function writeDrawingToClipboard(svg, {
   rasterize = svgToPngDataUrl,
 } = {}) {
   if (!clipboard?.write || !ClipboardItem) throw new Error('image clipboard is unavailable in this browser');
-  const drawing = Promise.resolve().then(() => embedFont(svg));
-  const png = drawing.then((value) => rasterize(value, scale, { dpi })).then(pngDataUrlBlob);
-  const text = drawing.then((value) => new Blob([value], { type: 'text/plain' }));
-  // A browser can reject the write before consuming either payload promise.
-  // Keep preparation errors observed in that case as well.
+  const png = Promise.resolve().then(() => embedFont(svg)).then((value) => rasterize(value, scale, { dpi })).then(pngDataUrlBlob);
+  // A browser can reject the write before consuming the payload promise.
+  // Keep a preparation error observed in that case as well.
   png.catch(() => {});
-  text.catch(() => {});
-  return clipboard.write([new ClipboardItem({ 'image/png': png, 'text/plain': text })]);
+  return clipboard.write([new ClipboardItem({ 'image/png': png })]);
 }
 
 };
@@ -36009,7 +36049,9 @@ function dropCopyGhostMirror() {
   markModelChanged();
 }
 
-function commitCopyGhost() {
+/** Drop the copy ghost; `again` starts the next copy of the same set, as the
+ *  copy tool does (a Ctrl-drag copy is one). */
+function commitCopyGhost({ again = true } = {}) {
   if (!editor.drag?.ghost) return false;
   const ghost = editor.drag.ghost;
   // The mirror was pasted after `beforeSnapshot`, so both halves already sit
@@ -36025,6 +36067,7 @@ function commitCopyGhost() {
   const mirrored = !!ghost.mirror;
   editor.drag = null;
   editor.copyPending = false;
+  if (!again) return true;
   startCopyGhost({ x: editor.cursor.x, y: editor.cursor.y }, { x: 0, y: 0 }, anchorShift);
   if (mirrored && editor.symmetry?.operation) armCopyGhostMirror();
   return true;
@@ -38210,8 +38253,8 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
     // user activation. Rasterization below is asynchronous and may otherwise
     // make a later download click get blocked by the browser. A set of beat
     // files is downloaded instead of asking for each one.
-    const prepared = persistence.prepareExport && jobs.length === 1
-      ? await persistence.prepareExport({ name, formats })
+    const prepared = persistence.prepareExport
+      ? await persistence.prepareExport({ name, formats: jobs.length === 1 ? formats : [], dir })
       : null;
     // A MathML label can acquire its final browser-sized box after the last
     // canvas paint. Sync it before taking bounds for the exported viewBox.
@@ -38312,7 +38355,7 @@ async function runAtlasExport({ dir, name, formats, grid = false, dark = false, 
   };
   try {
     report(`Exporting ${formats.map((format) => `${name}.${format}`).join(', ')}…`);
-    const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats }) : null;
+    const prepared = persistence.prepareExport ? await persistence.prepareExport({ name, formats, dir }) : null;
     const { svg: sheet, scale, count } = target.build({ grid });
     const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(sheet) : sheet);
     const request = { dir, name, formats, svg };
@@ -38386,6 +38429,8 @@ function renderExportLocation() {
   const dpi = exportForm.querySelector('select[name="pngDpi"]');
   if (dpi) dpi.disabled = !formats.includes('.png');
   const submit = document.getElementById('export-submit');
+  const choose = document.getElementById('export-choose-folder');
+  if (choose && persistence.browserOnly) choose.hidden = !persistence.canChooseExportFolder;
   if (submit) submit.disabled = !formats.length || !exportFolder || !validDocumentName(document.getElementById('export-name')?.value);
 }
 
@@ -38488,7 +38533,16 @@ function installExportUi() {
   exportForm?.addEventListener('change', renderExportLocation);
 
   document.getElementById('export-choose-folder')?.addEventListener('click', async () => {
-    const choice = await showFileDialog(persistence, { mode: 'folder', dir: exportFolder, title: 'Choose export folder' });
+    // Browser-only mode picks an export folder of its own, never the workspace.
+    let choice;
+    try {
+      choice = persistence.browserOnly
+        ? await persistence.pickFile({ mode: 'export-folder', dir: exportFolder })
+        : await showFileDialog(persistence, { mode: 'folder', dir: exportFolder, title: 'Choose export folder' });
+    } catch (err) {
+      logLine(`Could not choose the export folder: ${err.message}`, 'error');
+      return;
+    }
     if (!choice) return;
     exportFolder = choice.path;
     renderExportLocation();
@@ -39650,6 +39704,9 @@ __exports.closeLinkBubble = closeLinkBubble;
 __exports.linkBubbleOpen = linkBubbleOpen;
 __exports.linkBubbleAt = linkBubbleAt;
 __exports.linkBubbleExtras = linkBubbleExtras;
+__exports.moveLinkBubble = moveLinkBubble;
+__exports.linkBubbleFrame = linkBubbleFrame;
+__exports.resetLinkBubble = resetLinkBubble;
 __exports.linkBubbleFrames = linkBubbleFrames;
 __exports.mountLinkBubbles = mountLinkBubbles;
 __exports.syncLinkBubbles = syncLinkBubbles;
@@ -39664,10 +39721,10 @@ let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js"));
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
-let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, layoutBubbles } = __require("src/core/link-bubble.js")); });
+let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, layoutBubbles } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
-let animateViewTo, fitView; __bind(() => { ({ animateViewTo, fitView } = __require("src/web/canvas-view.js")); });
+let animateViewTo, fitTarget, fitView; __bind(() => { ({ animateViewTo, fitTarget, fitView } = __require("src/web/canvas-view.js")); });
 let viewFitting; __bind(() => { ({ viewFitting } = __require("src/web/atlas-layout.js")); });
 let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
 let appendContextItem, appendContextSubmenu, closeComponentContextMenu; __bind(() => { ({ appendContextItem, appendContextSubmenu, closeComponentContextMenu } = __require("src/web/context-menu.js")); });
@@ -39687,8 +39744,8 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
  *
  * A link to a design that is not in the workspace is simply broken: the side
  * panel marks the part with a red dot, and its bubble and menu say so. Which
- * bubbles are open is remembered per document in this browser; they are
- * never saved in the document, exported, or undone.
+ * bubbles are open, and where any was dragged to, is remembered per document
+ * in this browser; they are never saved in the document or undone.
  */
 
 
@@ -39709,6 +39766,7 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const OPEN_KEY = 'mosfeteer.linkBubbles:';
+const SPOTS_KEY = 'mosfeteer.linkBubbleSpots:';
 const CLOSE_MS = 180;
 const UP_MS = 380;
 
@@ -39717,6 +39775,7 @@ const bubbles = new Map();
 let bubblesDocument; // the document the bubbles belong to (undefined: none yet)
 let layoutCache = { key: '', layout: [] };
 const angles = new Map(); // refdes -> the angle its bubble last took
+const spots = new Map(); // refdes -> { dx, dy }: a dragged bubble's corner from its part's centre
 let layerEl = null;
 const nodes = new Map(); // refdes -> its drawn bubble
 const pictures = new Map(); // path -> { revision, box, href }: drawn once per revision
@@ -39815,6 +39874,23 @@ function rememberOpen() {
   } catch { /* not remembered, then */ }
 }
 
+function rememberSpots() {
+  const path = editor.currentDocumentPath;
+  if (!path) return;
+  try {
+    if (spots.size) localStorage.setItem(SPOTS_KEY + path, JSON.stringify(Object.fromEntries(spots)));
+    else localStorage.removeItem(SPOTS_KEY + path);
+  } catch { /* not remembered, then */ }
+}
+
+function rememberedSpots(path) {
+  if (!path) return {};
+  try {
+    const saved = JSON.parse(localStorage.getItem(SPOTS_KEY + path) || '{}');
+    return saved && typeof saved === 'object' ? saved : {};
+  } catch { return {}; }
+}
+
 function rememberedOpen(path) {
   if (!path) return [];
   try {
@@ -39829,6 +39905,10 @@ function followDocument() {
   bubblesDocument = editor.currentDocumentPath;
   bubbles.clear();
   angles.clear();
+  spots.clear();
+  for (const [refdes, spot] of Object.entries(rememberedSpots(bubblesDocument))) {
+    if (Number.isFinite(spot?.dx) && Number.isFinite(spot?.dy)) spots.set(refdes, { dx: spot.dx, dy: spot.dy });
+  }
   for (const refdes of rememberedOpen(bubblesDocument)) {
     const component = editor.circuit.components.get(refdes);
     if (component?.link) openBubble(component, { remember: false });
@@ -39866,11 +39946,13 @@ function toggleLinkBubbles(components = linkTargets()) {
   }
   followDocument();
   const close = linked.every((c) => bubbles.has(c.refdes));
+  const shown = close ? linkBubbleFrames() : [];
   for (const component of linked) {
-    if (close) closeLinkBubble(component.refdes);
+    if (close) closeLinkBubble(component.refdes, { refit: false });
     else if (!bubbles.has(component.refdes)) openBubble(component);
   }
   render();
+  if (close) refitAfterClosing(shown);
 }
 
 function openBubble(component, { remember = true } = {}) {
@@ -39879,10 +39961,26 @@ function openBubble(component, { remember = true } = {}) {
   void loadBubble(component.refdes, component.link);
 }
 
-function closeLinkBubble(refdes) {
+function closeLinkBubble(refdes, { refit = true } = {}) {
+  const shown = refit ? linkBubbleFrames() : [];
   if (!bubbles.delete(refdes)) return;
   rememberOpen();
   render();
+  if (refit) refitAfterClosing(shown);
+}
+
+/** Bubbles that were just hidden leave room the view no longer needs: when
+ *  the view showed all that is left with room to spare and a hidden bubble
+ *  was on screen, it fits inward again. A view zoomed in past that is kept. */
+function refitAfterClosing(before) {
+  const view = editor.view;
+  const onScreen = (frame) => frame.x < view.x + view.w && frame.x + frame.w > view.x
+    && frame.y < view.y + view.h && frame.y + frame.h > view.y;
+  const remaining = new Set(linkBubbleFrames().map((frame) => `${frame.x},${frame.y},${frame.w},${frame.h}`));
+  const left = before.filter((frame) => !remaining.has(`${frame.x},${frame.y},${frame.w},${frame.h}`));
+  if (!left.some(onScreen)) return;
+  const target = fitTarget();
+  if (target.w < view.w * 0.98 && target.h < view.h * 0.98) fitView({ animate: true });
 }
 
 function linkBubbleOpen(refdes) {
@@ -39908,12 +40006,35 @@ function linkBubbleExtras(drawing = editor.circuit) {
   const layout = whole
     ? currentLayout().filter((entry) => bubbles.get(entry.id)?.status === 'ready')
     : layoutBubbles(drawing.inkBounds(), ready.map(([refdes, bubble]) => ({
-      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box,
+      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box, offset: spots.get(refdes),
     })), { obstacles: obstacles(drawing), previous: angles });
   return bubbleExtras(layout.map((entry) => {
     const bubble = bubbles.get(entry.id);
     return { ...entry, name: bubble.name, svg: bubble.svg, box: bubble.box };
   }));
+}
+
+/** Drag a bubble: its frame's top-left corner goes to `at` (a world point),
+ *  and stays there beside its part until put back. `remember` saves the
+ *  spot, once the drag ends. */
+function moveLinkBubble(refdes, at, { remember = true } = {}) {
+  const component = editor.circuit.components.get(refdes);
+  if (!component || !bubbles.has(refdes)) return;
+  spots.set(refdes, bubbleOffset(component.bboxWorld(), at));
+  if (remember) rememberSpots();
+  render();
+}
+
+/** The frame a bubble is drawn in now, or null. */
+function linkBubbleFrame(refdes) {
+  return currentLayout().find((entry) => entry.id === refdes)?.frame || null;
+}
+
+/** Put a dragged bubble back where the layout would place it. */
+function resetLinkBubble(refdes) {
+  if (!spots.delete(refdes)) return;
+  rememberSpots();
+  render();
 }
 
 /** The frames of the bubbles on show, for fitting the view to them. */
@@ -39957,7 +40078,8 @@ function currentLayout() {
     }
   }
   const shown = [...bubbles].filter(([, bubble]) => bubble.status !== 'loading');
-  const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}`).join(',')}`;
+  const spot = (refdes) => (spots.has(refdes) ? `@${spots.get(refdes).dx},${spots.get(refdes).dy}` : '');
+  const key = `${editor.modelRevision}|${editor.currentDocumentPath}|${shown.map(([refdes, b]) => `${refdes}:${b.status}:${b.box?.w}x${b.box?.h}${spot(refdes)}`).join(',')}`;
   if (layoutCache.key === key) return layoutCache.layout;
   // A broken link's box fits its message (24-unit italic, about half an em
   // a character).
@@ -39966,6 +40088,7 @@ function currentLayout() {
     id: refdes,
     part: circuit.components.get(refdes).bboxWorld(),
     size: bubble.status === 'ready' ? bubble.box : messageSize(bubble),
+    offset: spots.get(refdes),
   })), { obstacles: obstacles(circuit), previous: angles }) : [];
   for (const entry of layout) angles.set(entry.id, entry.angle);
   layoutCache = { key, layout };
@@ -40308,6 +40431,7 @@ function openLinkBubbleMenu(refdes, x, y) {
   group.className = 'context-menu-group';
   appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });
   appendContextItem(group, 'Hide linked design', () => closeLinkBubble(refdes), { shortcut: 'o' });
+  if (spots.has(refdes)) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
   appendDesignPicker(group, [component], component.link);
   menu.appendChild(group);
   menu.querySelector('button:not(:disabled)')?.focus();
@@ -42518,12 +42642,12 @@ __exports.activateMove = activateMove;
 __exports.activateCopy = activateCopy;
 __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
-let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } = __require("src/core/model.js")); });
+let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let pinJoinPoints; __bind(() => { ({ pinJoinPoints } = __require("src/web/gestures.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
-let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
+let addTerminalStubs, stubLabelPlacement; __bind(() => { ({ addTerminalStubs, stubLabelPlacement } = __require("src/core/stubs.js")); });
 let addPinRail; __bind(() => { ({ addPinRail } = __require("src/core/pin-rails.js")); });
 let tidySelection; __bind(() => { ({ tidySelection } = __require("src/core/tidy.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
@@ -42572,7 +42696,7 @@ let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind((
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
-let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
+let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
 let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
@@ -43991,6 +44115,12 @@ function rebaseMoveGhost() {
     const anchor = label?.anchorWorld();
     return anchor ? [id, { x: anchor.x, y: anchor.y, side: label.netSide }] : null;
   }).filter(Boolean));
+  if (drag.riderLabelOrigins) {
+    drag.riderLabelOrigins = new Map([...drag.riderLabelOrigins.keys()].map((id) => {
+      const label = circuit.labels.get(id);
+      return label ? [id, { ...label.anchorWorld(), side: label.netSide }] : null;
+    }).filter(Boolean));
+  }
   if (drag.detached) {
     for (const id of drag.detachedWireRoutes?.keys() || []) {
       const net = circuit.nets.get(id);
@@ -44005,6 +44135,24 @@ function rebaseMoveGhost() {
   }
 }
 
+/** Whether the one selected part has wires of its own: a net with drawn
+ *  wire and no other part's pin, such as a labelled stub. Those turn with the
+ *  part, rigidly, instead of rerouting back to where their free ends were. */
+function carriesOwnWires() {
+  const comps = selectedComps();
+  if (comps.length !== 1) return false;
+  return [...netsTouching([comps[0].refdes])].some((id) => {
+    const net = circuit.nets.get(id);
+    return net?.paths().length && net.terminals.every((t) => t.comp === comps[0].refdes);
+  });
+}
+
+/** The one selected part's origin, which a lone part turns about. */
+function singletonOrigin() {
+  const comps = selectedComps();
+  return comps.length === 1 ? { x: comps[0].transform.x, y: comps[0].transform.y } : null;
+}
+
 /**
  * Rotate a singleton component about its own origin, or about the copy point
  * while a copy ghost is active. Multi-component and mixed selections are
@@ -44016,10 +44164,10 @@ function rotateSelectionAbout(deg) {
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
   const turns = ((deg % 360) + 360) % 360;
   const operation = turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate';
-  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
     const changed = transformMixedSelection(
       operation,
-      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
+      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot || singletonOrigin() },
     );
     if (changed && inCopyGhost) {
       refreshCopyGhostBase({ operation, pivot });
@@ -44059,10 +44207,10 @@ function mirrorSelectionAbout(axis) {
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
   const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
-  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
     const changed = transformMixedSelection(
       operation,
-      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
+      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot || singletonOrigin() },
     );
     if (changed && inCopyGhost) {
       refreshCopyGhostBase({ operation, pivot });
@@ -44178,6 +44326,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
   try {
     const selectedAnnotationIds = new Set(selectedLabels().filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
     const deferredNetLabels = [];
+    const turnedStubLabels = [];
     for (const c of selectedComps()) {
       c.transform = delta
         ? { ...c.transform, x: c.transform.x + delta.dx, y: c.transform.y + delta.dy }
@@ -44186,7 +44335,11 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     const mapPoints = (points) => delta
       ? points.map((point) => ({ x: point.x + delta.dx, y: point.y + delta.dy }))
       : transformWorldPoints(points, center, operation);
-    for (const l of selectedLabels()) {
+    // A net label rides on its wire: every label of a net carried whole
+    // goes with it, selected or not.
+    const carriedLabels = new Set(selectedLabels());
+    for (const l of circuit.labels.values()) if (l.netId && geometryNetIds.has(l.netId)) carriedLabels.add(l);
+    for (const l of carriedLabels) {
       if (l.parent && selectedAnnotationIds.has(l.parent)) continue;
       if (l.owner && selectedRefSet.has(l.owner)) continue;
       const p = mapPoints([l.anchorWorld()])[0];
@@ -44197,6 +44350,8 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
           // Net geometry is transformed above; assign the corresponding anchor
           // directly so moveTo cannot reject the valid transformed path.
           l.anchor = { x: snap(p.x), y: snap(p.y) };
+          if (!delta && geometryNetIds.has(l.netId)) Object.assign(l, transformNetLabelPlacement(l, operation));
+          if (!delta && operation.startsWith('rotate')) turnedStubLabels.push(l);
         }
       } else if (['arrow', 'box', 'line'].includes(l.kind)) {
         l.anchor = p;
@@ -44243,6 +44398,20 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     if (delta) {
       circuit.reconnectCoincidentNets();
       circuit.teeTerminalsOntoWires(refs);
+    }
+    // A stub's label turned upright or back sits as a fresh stub's does:
+    // above a level stub aligned toward its pin, beside an upright one.
+    for (const label of turnedStubLabels) {
+      const net = circuit.nets.get(label.netId);
+      const path = net?.terminals.length === 1 ? net.paths() : null;
+      if (path?.length !== 1 || path[0].length !== 2) continue;
+      const pin = circuit.getComponent(net.terminals[0].comp).terminalWorld(net.terminals[0].term);
+      const end = path[0].find((point) => point.x !== pin.x || point.y !== pin.y);
+      const placement = end && stubLabelPlacement(circuit, net.terminals[0], end);
+      if (placement && placement.anchor.x === label.anchor.x && placement.anchor.y === label.anchor.y) {
+        label.netSide = placement.netSide;
+        label.align = placement.align;
+      }
     }
     for (const { label, point, side } of deferredNetLabels) {
       // The reroute above may have repaired the label onto the other side.
@@ -46729,6 +46898,17 @@ function beginCopyDrag(grab, ev) {
     canvasMouseMove(ev);
     return;
   }
+  // Selected wires go with the copy as the copy tool's ghost carries them:
+  // a moved duplicate of the parts alone would leave the wire pieces behind.
+  if (multi.has(hit.refdes) && (selectedWires.size || selectedWire || selectedNets.size)) {
+    const savedClipboard = clipboard;
+    if (copySelection({ quiet: true }) && startCopyGhost(startWorld, startClient)) {
+      // The user's own copy buffer comes back once the copy is dropped.
+      drag.releaseCommits = { clipboard: savedClipboard };
+      canvasMouseMove(ev);
+      return;
+    }
+  }
   // A joined supply bar moves (or copies) as one part.
   const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
@@ -46859,14 +47039,16 @@ function canvasMouseDown(ev) {
     }
   }
 
-  // A linked design's bubble is a picture: a click picks its part, a
-  // double-click opens the design.
+  // A linked design's bubble is a picture: a click picks its part, a drag
+  // moves the bubble, a double-click opens the design.
   if (mode === 'normal' && !labelMode && !wire && !directWire && !moveMode && !copyMode && !deleteMode && !pickAt(startWorld)) {
     const bubble = linkBubbleAt(startWorld);
     if (bubble) {
       if (ev.detail >= 2) void enterLinkedDesign(circuit.components.get(bubble.refdes));
       else {
         setSelection([bubble.refdes]);
+        drag = { mode: 'bubblemove', refdes: bubble.refdes, frame: linkBubbleFrame(bubble.refdes), startWorld, startClient, moved: false };
+        try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
         render();
       }
       return;
@@ -48054,6 +48236,12 @@ function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'bubblemove') {
+    if (!movedOut && !drag.moved) return;
+    drag.moved = true;
+    if (drag.frame) moveLinkBubble(drag.refdes, { x: drag.frame.x + w.x - drag.startWorld.x, y: drag.frame.y + w.y - drag.startWorld.y }, { remember: false });
+    return;
+  }
   if (drag.mode === 'boxresize') {
     if (!movedOut && !drag.moved) return;
     drag.moved = true;
@@ -48381,6 +48569,23 @@ function canvasMouseMove(ev) {
           const net = circuit.nets.get(id);
           if (net) drag.netRoutes.set(id, captureNetGeometry(net));
         }
+        // A net whose every pin moves goes along rigidly, and so do its
+        // labels, selected or not: left to themselves they would be put
+        // back on the wire wherever is nearest.
+        const movingRefs = new Set(drag.origins.keys());
+        drag.riderLabelOrigins = new Map();
+        for (const id of drag.netRoutes.keys()) {
+          const net = circuit.nets.get(id);
+          const rigid = net && (net.terminals.length
+            ? net.terminals.every((t) => movingRefs.has(t.comp))
+            : drag.selectedNetIds.has(id));
+          if (!rigid) continue;
+          for (const label of circuit.netLabels(net)) {
+            if (drag.labelOrigins?.has(label.id)) continue;
+            const anchor = label.anchorWorld();
+            drag.riderLabelOrigins.set(label.id, { x: anchor.x, y: anchor.y, side: label.netSide });
+          }
+        }
         drag.committed = true;
       }
       const delta = snappedDragDelta(drag.startWorld, movedWorld);
@@ -48433,7 +48638,7 @@ function canvasMouseMove(ev) {
           const net = circuit.nets.get(id);
           if (net) translateNetGeometry(net, saved, delta.dx, delta.dy);
         }
-        for (const [id, o] of drag.labelOrigins || []) {
+        for (const [id, o] of [...drag.labelOrigins || [], ...drag.riderLabelOrigins || []]) {
           const l = circuit.labels.get(id);
           if (!l?.netId) continue;
           if (o.side) l.netSide = o.side;
@@ -48493,6 +48698,12 @@ function finishCanvasMouseUp(ev) {
     finishPinWire(releaseWorld, ev);
     return;
   }
+  if (drag.mode === 'bubblemove') {
+    if (drag.moved && drag.frame) moveLinkBubble(drag.refdes, { x: drag.frame.x + releaseWorld.x - drag.startWorld.x, y: drag.frame.y + releaseWorld.y - drag.startWorld.y });
+    drag = null;
+    render();
+    return;
+  }
   if (drag.mode === 'copygrab') {
     applyEditorSelection(drag.label ? { kind: 'label', id: drag.label.id } : { kind: 'component', id: drag.hit.refdes }, true);
     drag = null;
@@ -48520,6 +48731,13 @@ function finishCanvasMouseUp(ev) {
     return;
   }
   if (drag.mode === 'copyghost') {
+    // A Ctrl-drag copy drops where it is released.
+    if (drag.releaseCommits) {
+      const { clipboard: saved } = drag.releaseCommits;
+      moveCopyGhost(movedWorld);
+      commitCopyGhost({ again: false });
+      clipboard = saved;
+    }
     render();
     return;
   }
@@ -51324,6 +51542,7 @@ const HANDLE_DB = 'mosfeteer-browser-files';
 const HANDLE_STORE = 'handles';
 const FOLDER_KEY = 'folder';
 const LOCATION_KEY = 'location';
+const EXPORT_FOLDER_KEY = 'export-folder:';
 const DOCUMENT_TYPES = [{ description: 'Mosfeteer schematic', accept: { 'application/json': ['.json'] } }];
 
 /** Return the initial export destination for the active persistence mode. */
@@ -51524,6 +51743,9 @@ function createBrowserPersistenceAdapter({
   const kinds = new Map(); // path -> { revision, valid }, so a listing parses each file once
   // The file last opened or saved: file pickers start in its folder.
   let location = null;
+  // Export folders by their displayed path (the folder's name). They are
+  // never the workspace: choosing one leaves the open folder alone.
+  const exportFolders = new Map();
   // A record is { path, name, handle, state?, lastModified?, revision?, legacy? }:
   // with a handle the file is read and written in place; without one, `state`
   // holds the contents read this session.
@@ -51550,6 +51772,7 @@ function createBrowserPersistenceAdapter({
     for (const value of stored) {
       if (value?.kind === 'location' && value.handle) location = value.handle;
       else if (value?.kind === 'folder' && value.handle) folder = { name: value.name || value.handle.name, handle: value.handle, locked: false };
+      else if (value?.kind === 'export-folder' && value.handle && value.path) exportFolders.set(value.path, value.handle);
       else if (value?.kind === 'file' && value.handle && value.path && !opened.has(value.path)) {
         opened.set(value.path, { path: value.path, name: value.name, handle: value.handle });
       }
@@ -51768,6 +51991,39 @@ function createBrowserPersistenceAdapter({
     return { path: name };
   }
 
+  const canChooseExportFolder = () => typeof windowImpl?.showDirectoryPicker === 'function';
+
+  /** Pick a folder to export into, without touching the workspace folder. */
+  async function chooseExportFolder(dir = '') {
+    await ready;
+    if (!canChooseExportFolder()) return null;
+    let handle;
+    try {
+      const current = exportFolders.get(dir);
+      handle = await windowImpl.showDirectoryPicker({
+        id: 'mosfeteer-export',
+        mode: 'readwrite',
+        ...(current ? { startIn: current } : {}),
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') return null;
+      throw error;
+    }
+    let path = null;
+    for (const [known, knownHandle] of exportFolders) {
+      try {
+        if (await knownHandle.isSameEntry(handle)) path = known;
+      } catch { /* keep looking */ }
+    }
+    if (!path) {
+      path = handle.name;
+      for (let n = 2; exportFolders.has(path) || path === BROWSER_DOWNLOADS; n += 1) path = `${handle.name} (${n})`;
+    }
+    exportFolders.set(path, handle);
+    await remember({ key: `${EXPORT_FOLDER_KEY}${path}`, kind: 'export-folder', path, handle });
+    return { path };
+  }
+
   /** Ask where to save; resolves { handle|null, name } or null when canceled. */
   async function saveFile(name) {
     if (pickSaveFile) {
@@ -51937,8 +52193,17 @@ function createBrowserPersistenceAdapter({
     browserOnly: true,
     liveSync: false,
     supportedExportFormats: new Set(['svg', 'png']),
-    /** Reserve a native save target before PNG rasterization loses user activation. */
-    prepareExport: async ({ name, formats = [] } = {}) => {
+    get canChooseExportFolder() { return canChooseExportFolder(); },
+    /** While the submit still carries user activation: ask for access to a
+     *  chosen export folder, or reserve a native PNG save target before
+     *  rasterization loses the activation. */
+    prepareExport: async ({ name, formats = [], dir = '' } = {}) => {
+      await ready;
+      const exportFolder = exportFolders.get(dir);
+      if (exportFolder) {
+        if (!await permitted(exportFolder, 'readwrite', true)) throw needsAccess('', dir, 'readwrite');
+        return null;
+      }
       if (!formats.includes('png') || download || typeof windowImpl?.showSaveFilePicker !== 'function') return null;
       try {
         const handle = await windowImpl.showSaveFilePicker({
@@ -51956,9 +52221,10 @@ function createBrowserPersistenceAdapter({
     setWorkspace: workspace,
     browse: async () => ({ dir: BROWSER_DOWNLOADS, entries: [], parent: null, home: '', workspace: BROWSER_DOWNLOADS }),
     createFolder: async () => { throw new Error('create folders with the browser\'s folder picker'); },
-    pickFile: async ({ mode = 'open', name = '' } = {}) => {
+    pickFile: async ({ mode = 'open', name = '', dir = '' } = {}) => {
       if (mode === 'open') return openFiles();
       if (mode === 'folder') return chooseFolder();
+      if (mode === 'export-folder') return chooseExportFolder(dir);
       await ready;
       const fallbackName = validDocumentName(name) || 'circuit';
       const selected = await saveFile(fallbackName);
@@ -52008,10 +52274,27 @@ function createBrowserPersistenceAdapter({
     reveal: async () => { throw new Error('the browser cannot show files in the file manager'); },
     active: async () => ({ active: '', path: '' }),
     heartbeat: async () => {},
-    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '' }, { prepared = null } = {}) => {
+    exportFiles: async ({ dir = BROWSER_DOWNLOADS, name, formats = [], svg = '', png = '', overwrite = false }, { prepared = null } = {}) => {
       const supported = formats.filter((format) => ['svg', 'png'].includes(format));
       const unsupported = formats.filter((format) => !['svg', 'png'].includes(format));
       if (unsupported.length) throw Object.assign(new Error(`browser-only export does not support: ${unsupported.join(', ')}`), { code: 'unsupported-format' });
+      await ready;
+      const exportFolder = exportFolders.get(dir);
+      if (exportFolder) {
+        if (!await permitted(exportFolder, 'readwrite', true)) throw needsAccess('', dir, 'readwrite');
+        const files = supported.map((format) => ({ fileName: `${name}.${format}`, contents: format === 'svg' ? svg : dataUrlBlob(png) }));
+        if (!overwrite) {
+          const existing = [];
+          for (const { fileName } of files) {
+            try { await exportFolder.getFileHandle(fileName); existing.push(`${dir}/${fileName}`); } catch { /* free */ }
+          }
+          if (existing.length) throw Object.assign(new Error(`${existing.length === 1 ? 'a file' : 'files'} already exist`), { code: 'exists', existing });
+        }
+        for (const { fileName, contents } of files) await writeFileHandle(await exportFolder.getFileHandle(fileName, { create: true }), contents);
+        return { dir, paths: files.map(({ fileName }) => `${dir}/${fileName}`) };
+      }
+      // A folder this browser no longer knows (or never could) downloads.
+      dir = BROWSER_DOWNLOADS;
       const paths = [];
       if (supported.includes('svg')) {
         const fileName = `${name}.svg`;

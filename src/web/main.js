@@ -10,12 +10,12 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformWorldPoints } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { pinJoinPoints } from './gestures.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
-import { addTerminalStubs } from '../core/stubs.js';
+import { addTerminalStubs, stubLabelPlacement } from '../core/stubs.js';
 import { addPinRail } from '../core/pin-rails.js';
 import { tidySelection } from '../core/tidy.js';
 import { addBoxAround } from '../core/wrap-box.js';
@@ -72,7 +72,7 @@ import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } fr
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
-import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
+import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
 import { netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
@@ -1420,6 +1420,12 @@ function rebaseMoveGhost() {
     const anchor = label?.anchorWorld();
     return anchor ? [id, { x: anchor.x, y: anchor.y, side: label.netSide }] : null;
   }).filter(Boolean));
+  if (drag.riderLabelOrigins) {
+    drag.riderLabelOrigins = new Map([...drag.riderLabelOrigins.keys()].map((id) => {
+      const label = circuit.labels.get(id);
+      return label ? [id, { ...label.anchorWorld(), side: label.netSide }] : null;
+    }).filter(Boolean));
+  }
   if (drag.detached) {
     for (const id of drag.detachedWireRoutes?.keys() || []) {
       const net = circuit.nets.get(id);
@@ -1434,6 +1440,24 @@ function rebaseMoveGhost() {
   }
 }
 
+/** Whether the one selected part has wires of its own: a net with drawn
+ *  wire and no other part's pin, such as a labelled stub. Those turn with the
+ *  part, rigidly, instead of rerouting back to where their free ends were. */
+function carriesOwnWires() {
+  const comps = selectedComps();
+  if (comps.length !== 1) return false;
+  return [...netsTouching([comps[0].refdes])].some((id) => {
+    const net = circuit.nets.get(id);
+    return net?.paths().length && net.terminals.every((t) => t.comp === comps[0].refdes);
+  });
+}
+
+/** The one selected part's origin, which a lone part turns about. */
+function singletonOrigin() {
+  const comps = selectedComps();
+  return comps.length === 1 ? { x: comps[0].transform.x, y: comps[0].transform.y } : null;
+}
+
 /**
  * Rotate a singleton component about its own origin, or about the copy point
  * while a copy ghost is active. Multi-component and mixed selections are
@@ -1445,10 +1469,10 @@ function rotateSelectionAbout(deg) {
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
   const turns = ((deg % 360) + 360) % 360;
   const operation = turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate';
-  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
     const changed = transformMixedSelection(
       operation,
-      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
+      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot || singletonOrigin() },
     );
     if (changed && inCopyGhost) {
       refreshCopyGhostBase({ operation, pivot });
@@ -1488,10 +1512,10 @@ function mirrorSelectionAbout(axis) {
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
   const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
-  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner)) {
+  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
     const changed = transformMixedSelection(
       operation,
-      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot },
+      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot || singletonOrigin() },
     );
     if (changed && inCopyGhost) {
       refreshCopyGhostBase({ operation, pivot });
@@ -1607,6 +1631,7 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
   try {
     const selectedAnnotationIds = new Set(selectedLabels().filter((l) => ['arrow', 'box', 'line'].includes(l.kind)).map((l) => l.id));
     const deferredNetLabels = [];
+    const turnedStubLabels = [];
     for (const c of selectedComps()) {
       c.transform = delta
         ? { ...c.transform, x: c.transform.x + delta.dx, y: c.transform.y + delta.dy }
@@ -1615,7 +1640,11 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
     const mapPoints = (points) => delta
       ? points.map((point) => ({ x: point.x + delta.dx, y: point.y + delta.dy }))
       : transformWorldPoints(points, center, operation);
-    for (const l of selectedLabels()) {
+    // A net label rides on its wire: every label of a net carried whole
+    // goes with it, selected or not.
+    const carriedLabels = new Set(selectedLabels());
+    for (const l of circuit.labels.values()) if (l.netId && geometryNetIds.has(l.netId)) carriedLabels.add(l);
+    for (const l of carriedLabels) {
       if (l.parent && selectedAnnotationIds.has(l.parent)) continue;
       if (l.owner && selectedRefSet.has(l.owner)) continue;
       const p = mapPoints([l.anchorWorld()])[0];
@@ -1626,6 +1655,8 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
           // Net geometry is transformed above; assign the corresponding anchor
           // directly so moveTo cannot reject the valid transformed path.
           l.anchor = { x: snap(p.x), y: snap(p.y) };
+          if (!delta && geometryNetIds.has(l.netId)) Object.assign(l, transformNetLabelPlacement(l, operation));
+          if (!delta && operation.startsWith('rotate')) turnedStubLabels.push(l);
         }
       } else if (['arrow', 'box', 'line'].includes(l.kind)) {
         l.anchor = p;
@@ -1672,6 +1703,20 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
     if (delta) {
       circuit.reconnectCoincidentNets();
       circuit.teeTerminalsOntoWires(refs);
+    }
+    // A stub's label turned upright or back sits as a fresh stub's does:
+    // above a level stub aligned toward its pin, beside an upright one.
+    for (const label of turnedStubLabels) {
+      const net = circuit.nets.get(label.netId);
+      const path = net?.terminals.length === 1 ? net.paths() : null;
+      if (path?.length !== 1 || path[0].length !== 2) continue;
+      const pin = circuit.getComponent(net.terminals[0].comp).terminalWorld(net.terminals[0].term);
+      const end = path[0].find((point) => point.x !== pin.x || point.y !== pin.y);
+      const placement = end && stubLabelPlacement(circuit, net.terminals[0], end);
+      if (placement && placement.anchor.x === label.anchor.x && placement.anchor.y === label.anchor.y) {
+        label.netSide = placement.netSide;
+        label.align = placement.align;
+      }
     }
     for (const { label, point, side } of deferredNetLabels) {
       // The reroute above may have repaired the label onto the other side.
@@ -4158,6 +4203,17 @@ function beginCopyDrag(grab, ev) {
     canvasMouseMove(ev);
     return;
   }
+  // Selected wires go with the copy as the copy tool's ghost carries them:
+  // a moved duplicate of the parts alone would leave the wire pieces behind.
+  if (multi.has(hit.refdes) && (selectedWires.size || selectedWire || selectedNets.size)) {
+    const savedClipboard = clipboard;
+    if (copySelection({ quiet: true }) && startCopyGhost(startWorld, startClient)) {
+      // The user's own copy buffer comes back once the copy is dropped.
+      drag.releaseCommits = { clipboard: savedClipboard };
+      canvasMouseMove(ev);
+      return;
+    }
+  }
   // A joined supply bar moves (or copies) as one part.
   const refs = multi.has(hit.refdes) ? [...multi] : supplyBarGroup(hit.refdes);
   const labels = multi.has(hit.refdes) ? [...selLabels] : [];
@@ -4288,14 +4344,16 @@ function canvasMouseDown(ev) {
     }
   }
 
-  // A linked design's bubble is a picture: a click picks its part, a
-  // double-click opens the design.
+  // A linked design's bubble is a picture: a click picks its part, a drag
+  // moves the bubble, a double-click opens the design.
   if (mode === 'normal' && !labelMode && !wire && !directWire && !moveMode && !copyMode && !deleteMode && !pickAt(startWorld)) {
     const bubble = linkBubbleAt(startWorld);
     if (bubble) {
       if (ev.detail >= 2) void enterLinkedDesign(circuit.components.get(bubble.refdes));
       else {
         setSelection([bubble.refdes]);
+        drag = { mode: 'bubblemove', refdes: bubble.refdes, frame: linkBubbleFrame(bubble.refdes), startWorld, startClient, moved: false };
+        try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
         render();
       }
       return;
@@ -5483,6 +5541,12 @@ export function canvasMouseMove(ev) {
     }
     return;
   }
+  if (drag.mode === 'bubblemove') {
+    if (!movedOut && !drag.moved) return;
+    drag.moved = true;
+    if (drag.frame) moveLinkBubble(drag.refdes, { x: drag.frame.x + w.x - drag.startWorld.x, y: drag.frame.y + w.y - drag.startWorld.y }, { remember: false });
+    return;
+  }
   if (drag.mode === 'boxresize') {
     if (!movedOut && !drag.moved) return;
     drag.moved = true;
@@ -5810,6 +5874,23 @@ export function canvasMouseMove(ev) {
           const net = circuit.nets.get(id);
           if (net) drag.netRoutes.set(id, captureNetGeometry(net));
         }
+        // A net whose every pin moves goes along rigidly, and so do its
+        // labels, selected or not: left to themselves they would be put
+        // back on the wire wherever is nearest.
+        const movingRefs = new Set(drag.origins.keys());
+        drag.riderLabelOrigins = new Map();
+        for (const id of drag.netRoutes.keys()) {
+          const net = circuit.nets.get(id);
+          const rigid = net && (net.terminals.length
+            ? net.terminals.every((t) => movingRefs.has(t.comp))
+            : drag.selectedNetIds.has(id));
+          if (!rigid) continue;
+          for (const label of circuit.netLabels(net)) {
+            if (drag.labelOrigins?.has(label.id)) continue;
+            const anchor = label.anchorWorld();
+            drag.riderLabelOrigins.set(label.id, { x: anchor.x, y: anchor.y, side: label.netSide });
+          }
+        }
         drag.committed = true;
       }
       const delta = snappedDragDelta(drag.startWorld, movedWorld);
@@ -5862,7 +5943,7 @@ export function canvasMouseMove(ev) {
           const net = circuit.nets.get(id);
           if (net) translateNetGeometry(net, saved, delta.dx, delta.dy);
         }
-        for (const [id, o] of drag.labelOrigins || []) {
+        for (const [id, o] of [...drag.labelOrigins || [], ...drag.riderLabelOrigins || []]) {
           const l = circuit.labels.get(id);
           if (!l?.netId) continue;
           if (o.side) l.netSide = o.side;
@@ -5922,6 +6003,12 @@ function finishCanvasMouseUp(ev) {
     finishPinWire(releaseWorld, ev);
     return;
   }
+  if (drag.mode === 'bubblemove') {
+    if (drag.moved && drag.frame) moveLinkBubble(drag.refdes, { x: drag.frame.x + releaseWorld.x - drag.startWorld.x, y: drag.frame.y + releaseWorld.y - drag.startWorld.y });
+    drag = null;
+    render();
+    return;
+  }
   if (drag.mode === 'copygrab') {
     applyEditorSelection(drag.label ? { kind: 'label', id: drag.label.id } : { kind: 'component', id: drag.hit.refdes }, true);
     drag = null;
@@ -5949,6 +6036,13 @@ function finishCanvasMouseUp(ev) {
     return;
   }
   if (drag.mode === 'copyghost') {
+    // A Ctrl-drag copy drops where it is released.
+    if (drag.releaseCommits) {
+      const { clipboard: saved } = drag.releaseCommits;
+      moveCopyGhost(movedWorld);
+      commitCopyGhost({ again: false });
+      clipboard = saved;
+    }
     render();
     return;
   }

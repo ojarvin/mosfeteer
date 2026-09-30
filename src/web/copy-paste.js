@@ -415,7 +415,9 @@ export function dropCopyGhostMirror() {
   markModelChanged();
 }
 
-export function commitCopyGhost() {
+/** Drop the copy ghost; `again` starts the next copy of the same set, as the
+ *  copy tool does (a Ctrl-drag copy is one). */
+export function commitCopyGhost({ again = true } = {}) {
   if (!editor.drag?.ghost) return false;
   const ghost = editor.drag.ghost;
   // The mirror was pasted after `beforeSnapshot`, so both halves already sit
@@ -431,6 +433,7 @@ export function commitCopyGhost() {
   const mirrored = !!ghost.mirror;
   editor.drag = null;
   editor.copyPending = false;
+  if (!again) return true;
   startCopyGhost({ x: editor.cursor.x, y: editor.cursor.y }, { x: 0, y: 0 }, anchorShift);
   if (mirrored && editor.symmetry?.operation) armCopyGhostMirror();
   return true;

@@ -174,7 +174,7 @@ export function fitView({ animate = false } = {}) {
 }
 
 /** The view that fits the drawing (its ink, a page guide, the selection). */
-function fitTarget() {
+export function fitTarget() {
   const target = { ...editor.view };
   let x0 = Infinity;
   let y0 = Infinity;
