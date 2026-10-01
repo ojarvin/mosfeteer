@@ -31601,6 +31601,7 @@ let setDocumentTags; __bind(() => { ({ setDocumentTags } = __require("src/web/ta
 let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
 let exportAtlasSheet; __bind(() => { ({ exportAtlasSheet } = __require("src/web/export-ui.js")); });
 let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption } = __require("src/web/atlas-sheet.js")); });
+let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -31613,6 +31614,7 @@ let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption }
  * leaving zoom between the editor's view and the design's tile, which works
  * because a tile is the drawing at its real size.
  */
+
 
 
 
@@ -31655,7 +31657,7 @@ const exportEl = document.getElementById('atlas-export');
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks by kinship · Esc clears the search, then returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks by kinship · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -32320,6 +32322,45 @@ function exportDesk() {
   });
 }
 
+// ----- copy as image ----------------------------------------------------------------
+
+/** The designs picked: the multi-pick with the picked one, else that one. */
+function pickedIds() {
+  const ids = new Set(state.picked || []);
+  if (state.selected) ids.add(state.selected);
+  return [...ids].filter((id) => state.tiles.some((tile) => tile.id === id));
+}
+
+/** Ctrl+Shift+C: the picked designs as one image on the clipboard, packed
+ *  together at their real sizes with their captions, as the sheet export
+ *  draws them -- to share a few designs at once. */
+async function copyPickedAsImage() {
+  if (!state || state.source !== 'workspace') return;
+  const ids = pickedIds();
+  if (!ids.length) {
+    statusEl.textContent = 'Pick a design (Ctrl- or Shift-click for several), then Ctrl+Shift+C copies them';
+    return;
+  }
+  const tiles = ids.map((id) => state.tiles.find((tile) => tile.id === id));
+  const packed = layoutAtlas(tiles.map((tile) => ({ id: tile.id, w: tile.w, h: tile.h })));
+  const items = packed.tiles.map((tile) => {
+    const entry = state.entries.get(tile.id);
+    return { ...tile, svg: entry.svg, box: entry.box, caption: sheetCaption(entry.name, entry.index?.tags || []) };
+  });
+  const { svg } = atlasSheetSvg(items);
+  // A few designs at real size can be a large picture: keep it within what
+  // a clipboard and a paste target handle.
+  const { w, h } = packed.bounds;
+  const scale = Math.min(2, 6000 / Math.max(w, h, 1));
+  statusEl.textContent = `Copying ${ids.length} design${ids.length === 1 ? '' : 's'}…`;
+  try {
+    await writeDrawingToClipboard(svg, { scale });
+    statusEl.textContent = `Copied ${ids.length} design${ids.length === 1 ? '' : 's'} as an image — paste into another app`;
+  } catch (err) {
+    statusEl.textContent = `Could not copy the image: ${err.message}`;
+  }
+}
+
 // ----- tags ---------------------------------------------------------------------
 
 /** `#` on a picked design: its tags in a field at its caption. Enter saves
@@ -32502,7 +32543,7 @@ function drawZoomBox(ctx, palette) {
 
 function drawCaption(ctx, tile, entry, rect, palette) {
   if (state.source === 'symbols') return;
-  const selected = state.selected === tile.id;
+  const selected = state.selected === tile.id || !!state.picked?.has(tile.id);
   const hovered = state.hover === tile.id;
   // The pick is a bracket at each of the design's corners, the
   // hover a faint frame -- the picked design (the open one, at first) takes
@@ -33079,7 +33120,11 @@ function onAtlasKey(ev) {
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
-  if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
+  if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && key.toLowerCase() === 'c') void copyPickedAsImage();
+  else if (key === 'Escape' && state.picked?.size) {
+    state.picked = null;
+    requestDraw();
+  } else if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
@@ -33223,7 +33268,24 @@ function onPointerUp(ev) {
   rootEl.classList.remove('panning');
   if (!drag || drag.moved || ev.button !== 0) return;
   const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
-  state.selected = hit?.id || null;
+  // Ctrl- or Shift-click adds a design to the pick or takes it out; a plain
+  // click picks one.
+  if ((ev.ctrlKey || ev.metaKey || ev.shiftKey) && hit && state.source === 'workspace') {
+    state.picked ||= new Set();
+    if (state.selected && state.selected !== hit.id) state.picked.add(state.selected);
+    if (state.picked.has(hit.id)) {
+      state.picked.delete(hit.id);
+      state.selected = [...state.picked].at(-1) || null;
+    } else {
+      state.picked.add(hit.id);
+      state.selected = hit.id;
+    }
+    const count = pickedIds().length;
+    statusEl.textContent = `${count} design${count === 1 ? '' : 's'} picked · Ctrl+Shift+C copies ${count === 1 ? 'it' : 'them'} as an image`;
+  } else {
+    state.picked = null;
+    state.selected = hit?.id || null;
+  }
   requestDraw();
 }
 

@@ -58,6 +58,8 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | drag, wheel, pinch | pan and zoom |
 | right-drag | zoom to the box |
 | click / arrows / Tab | pick a design |
+| Ctrl- or Shift-click | add a design to the pick, or take it out (Esc clears) |
+| Ctrl+Shift+C | copy the picked designs as one image, packed together with their captions |
 | double-click / Enter | open it (after the unsaved-changes check) |
 | `/` or Ctrl/Cmd+F | search the designs |
 | `#` | edit the picked design's tags |
