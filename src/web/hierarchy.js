@@ -49,6 +49,9 @@ const pictures = new Map(); // path -> { revision, box, href }: drawn once per r
 
 // The way back up: [{ path, name, view, refdes, childPath }], outermost first.
 let trail = [];
+// While a dive or climb opens its document, the trail is not yet updated for
+// it; checking it then would take the move for leaving the hierarchy.
+let navigating = false;
 
 // ----- finding a linked design -----------------------------------------------------
 
@@ -475,6 +478,7 @@ export function syncLinkBubbles() {
 /** The trail is only good while the documents it passed through are the
  *  ones open: opening another design any other way leaves the hierarchy. */
 function checkTrail() {
+  if (navigating) return;
   if (trail.length && trail.at(-1).childPath !== editor.currentDocumentPath) trail = [];
   renderTrail();
 }
@@ -506,7 +510,9 @@ export async function enterLinkedDesign(component = linkTargets()[0]) {
     animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 240);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  const opened = await openDocumentPath(doc.path);
+  navigating = true;
+  let opened;
+  try { opened = await openDocumentPath(doc.path); } finally { navigating = false; }
   if (!opened) {
     Object.assign(editor.view, entry.view);
     render();
@@ -536,7 +542,9 @@ export async function leaveLinkedDesign(levels = 1) {
   if (levels === 1) {
     try { picture = await pictureOf(loadDocument(JSON.parse(editor.lastSavedSnapshot))); } catch { picture = null; }
   }
-  const opened = await openDocumentPath(target.path);
+  navigating = true;
+  let opened;
+  try { opened = await openDocumentPath(target.path); } finally { navigating = false; }
   if (!opened) return false;
   trail = trail.slice(0, index);
   const component = editor.circuit.components.get(target.refdes);
