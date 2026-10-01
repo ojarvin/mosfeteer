@@ -2,47 +2,29 @@
 
 <h1 align="center">Mosfeteer</h1>
 
-<p align="center">A keyboard-driven editor for textbook-style analog schematics, with assisted wiring, presentation beats, symbolic small-signal and noise analysis, and an atlas of your whole workspace.</p>
+<p align="center">An interactive desk for analog circuit design: draw textbook-quality schematics fast, explain them step by step, and derive their equations, in one keyboard-driven editor that needs nothing but Node.</p>
 
 ![A folded-cascode OTA with its bias network in the editor, split diagonally between the light and dark themes](docs/images/editor.png)
 
-## Fast editing
+**What it does**
 
-Press `i` and type to insert a part. Assisted wiring lays each wire out on the grid around the parts as you draw it, and keeps it tidy when parts move. Design Check (`x`) catches dangling pins, overlapping text, and off-grid geometry. Press `?` for every shortcut.
+- **Draw fast.** `i` and type to insert a part; wires route themselves on the grid and stay tidy as parts move; type label names first (`DOUT[3:0]` places every bit); paste pictures beside the circuit. `?` lists every key.
+- **Explain step by step.** Beats show, dim, or hide parts and flip switches over one drawing; a timing diagram of the switch phases (`Shift+K`) turns into beats that step through the clocking.
+- **Derive the equations.** Symbolic `Z_in`, `Z_out`, `A_v`, poles, zeros, and input-referred noise, simplified as a textbook would, with each term traced back to its devices.
+- **See the whole workspace.** The Atlas lays every design out on one sheet; parts link to the designs they stand for, so you can peek into or dive through a hierarchy.
+- **Share it.** SVG, PNG, and PDF export, copy-as-image, and a browser-only build that runs from a folder with no install.
 
-![Fuzzy insert picker filtered to MOS transistors, open beside the OTA](docs/images/insert.png)
-
-| Persistent net highlights (`9`) | Right-drag a part for quick actions |
-| :---: | :---: |
-| ![The OTA with its V_XN, V_XP, V_OUT, and tail nets each highlighted in a different color](docs/images/highlight.png) | ![Radial menu around M9 with rotate, mirror, move, copy, align, and delete](docs/images/radial.png) |
-
-## Beats
-
-Beats are presentation steps over one drawing: each shows, dims, or hides parts, sets switch positions, and highlights nets, without copying anything. Build a figure up step by step (`Shift+B`, then `+`), present it full screen (`Shift+F5`), or export every beat as numbered files that line up.
-
-![Four beats of the OTA: the input pair, the folded cascode, the first bias branch, and the full bias network](docs/images/beats.png)
-
-Label switches with the phase that drives them, and **Beats from switch phases** (More menu) adds one beat per phase: its switches closed, the others open, and whatever the open switches cut off dimmed.
+## Explain a circuit in steps
 
 ![A switched-capacitor integrator in its two phases: C1 samples V_IN in phi 1, and dumps its charge into C2 in phi 2](docs/images/phase-beats.png)
 
-## Symbolic analysis
-
-Pick the input and output nets to derive `Z_in`, `Z_out`, `A_v`, and any poles and zeros, simplified the way a textbook would. Turn on thermal and flicker noise to get the input-referred noise density, term by term, with each device's share in a table. Hover or click any term to light up the devices it comes from, then annotate the schematic with the results.
+## Derive it symbolically
 
 ![Input-referred thermal and flicker noise of the folded-cascode OTA; clicking the g_m8/g_m3 term lights up M8 and M3 on the schematic](docs/images/analysis.png)
 
-## Atlas view
-
-Press `Shift+Backspace` to step back from the drawing to the whole workspace: every design at its real size on one sheet of paper, packed together so you can look around, compare, and pick up where you left off. Pan and zoom as in the editor, right-drag to zoom into a region, and double-click a design to open it; the view zooms straight into it.
+## Every design on one desk
 
 ![The Atlas view of a workspace: seventeen schematics, from single-transistor stages to folded-cascode OTAs, packed on one sheet](docs/images/atlas.png)
-
-## Symbols
-
-Analog, digital, and mixed-signal symbols share one textbook style, plus resizable blocks and signal-flow nodes for block diagrams. **Settings → Symbols** shows every one of them.
-
-![A selection of passive, source, transistor, amplifier, reference, port, logic, flip-flop, and ADC symbols](docs/images/symbols.png)
 
 ## Install and run
 
