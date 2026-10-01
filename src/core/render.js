@@ -233,6 +233,12 @@ export function texToLabelMarkup(source) {
   const text = String(source ?? '').trim();
   if (!(text.length >= 2 && text.startsWith('$') && text.endsWith('$'))) return text;
   return stripMathDelimiters(text)
+    // An overbar (a complementary phase) as a combining overline on each
+    // character under it, markup left as it is.
+    .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => inner.replace(/\\([A-Za-z]+)/g, (__, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
+      .replace(/([_^])([^{])/g, '$1{$2}').replace(/[^_^{}]/g, (ch) => `${ch}\u0305`))
+    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g, '$1')
+    .replace(/\\,|\\ /g, ' ')
     .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
     .replace(/([_^])([^{])/g, '$1{$2}');
 }
@@ -244,6 +250,8 @@ export function plainTexText(source) {
     // An overbar (a complementary phase, $\overline{\phi_1}$) as a combining
     // overline over each character it covers: ϕ̅1̅.
     .replace(/\\(?:overline|bar)\{((?:[^{}]|\{[^{}]*\})*)\}/g, (_, inner) => [...plainTexText(inner)].map((ch) => `${ch}\u0305`).join(''))
+    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g, '$1')
+    .replace(/\\,|\\ /g, ' ')
     .replace(/\\([A-Za-z]+)/g, (_, name) => GREEK_LOWER[name] || GREEK_UPPER[name] || name)
     .replace(/[_^]\{([^}]*)\}/g, '$1')
     .replace(/[_^{}]/g, '');

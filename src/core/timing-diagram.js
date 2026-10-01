@@ -181,6 +181,14 @@ function timingSpot(circuit, area, drawn) {
   return below;
 }
 
+/** A state's name: its phases' names as one -- one math expression when any
+ *  is TeX ($\varphi_1, \varphi_2$), plain names as text inside it. */
+export function stateName(sources) {
+  if (!sources.some(isTexSource)) return sources.join(', ');
+  const body = (source) => (isTexSource(source) ? source.replace(/^\$+|\$+$/g, '').trim() : `\\mathrm{${source}}`);
+  return `$${sources.map(body).join(',\\ ')}$`;
+}
+
 /**
  * The states a drawn diagram steps through, for beats: each run of slots in
  * which the same phases are high is one state, [{ name, closed: Set of phase
@@ -197,7 +205,7 @@ export function timingStates(circuit) {
     const closed = rows.filter((row) => high(row, slot));
     const key = closed.map((row) => row.key).join('|');
     if (states.at(-1)?.key === key) continue;
-    states.push({ key, name: closed.length ? closed.map((row) => row.source).join(', ') : 'all open', closed: new Set(closed.map((row) => row.key)) });
+    states.push({ key, name: closed.length ? stateName(closed.map((row) => row.source)) : 'all open', closed: new Set(closed.map((row) => row.key)) });
   }
   // A wave that ends as it starts goes round: its last state is its first.
   if (states.length > 1 && states[0].key === states.at(-1).key) states.pop();

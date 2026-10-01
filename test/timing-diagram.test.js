@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
+import { plainTexText } from '../src/core/render.js';
 import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
 import { addTimingDiagram, defaultTimingPairs, parseTimingBits, timingColumns, timingRowGeometry, timingStates } from '../src/core/timing-diagram.js';
 
@@ -217,7 +218,9 @@ test('beats follow the timing diagram: one per state, overlapping phases closed 
   runCommand(circuit, 'timing φ1=110 φ2=011');
   const states = timingStates(circuit);
   assert.deepEqual(states.map((s) => [...s.closed].length), [1, 2, 2]);
-  assert.deepEqual(states.map((s) => s.name), ['$\\varphi_1$', '$\\varphi_1$, $\\varphi_2$', '$\\overline{\\varphi_1}$, $\\varphi_2$']);
+  // One name per state, a single math expression (no `$`s left inside).
+  assert.deepEqual(states.map((s) => s.name), ['$\\varphi_1$', '$\\varphi_1,\\ \\varphi_2$', '$\\overline{\\varphi_1},\\ \\varphi_2$']);
+  assert.equal(plainTexText(states[2].name), 'φ\u03051\u0305, φ2');
   const result = runCommand(circuit, 'beat phases');
   assert.match(result.text, /timing diagram/);
   assert.deepEqual(circuit.beats.map((beat) => beat.name), states.map((s) => s.name));
