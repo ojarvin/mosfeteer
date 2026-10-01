@@ -33415,6 +33415,7 @@ __exports.mergePickedBeats = mergePickedBeats;
 __exports.toggleSelectionInBeat = toggleSelectionInBeat;
 __exports.flipSelectedSwitches = flipSelectedSwitches;
 __exports.renderBeatStrip = renderBeatStrip;
+__exports.openTimingDialog = openTimingDialog;
 __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
@@ -33430,11 +33431,13 @@ let closeComponentContextMenu, appendContextItem; __bind(() => { ({ closeCompone
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/side-panel.js")); });
 let commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, snapshot; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, snapshot } = __require("src/web/main.js")); });
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 /**
  * Beats in the editor: the beat strip, stepping and editing beats, hiding
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
 
 
 
@@ -33909,6 +33912,7 @@ function addPhaseBeats() {
   const states = timingStates(editor.circuit);
   commit(() => { count = phaseBeats(editor.circuit, { index, states }); });
   if (!count) return;
+  noteTip('phase-beats');
   logLine(states
     ? `added ${count} beats, one per state of the timing diagram: phases high together close together, and what they cut off is dimmed`
     : `added ${count} phase beats: each dims its open switches and whatever they cut off (draw a timing diagram to close phases together)`);
@@ -33923,6 +33927,7 @@ function addPhaseBeats() {
 let timingEditor = null;
 
 function openTimingDialog() {
+  noteTip('timing-open');
   if (timingEditor) {
     timingEditor.grid.focus();
     return;
@@ -34006,6 +34011,7 @@ function openTimingDialog() {
     const first = !state.session;
     if (!state.session || state.session.revision !== editor.modelRevision) recordHistoryEntry(start, true, 'none');
     markModelChanged();
+    if (!state.session) noteTip('timing-drawn');
     state.session = { revision: editor.modelRevision };
     if (first && !before) fitView({ animate: true });
     render();
@@ -36196,11 +36202,13 @@ let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRen
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue; __bind(() => { ({ handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } = __require("src/web/style-controls.js")); });
 let activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire; __bind(() => { ({ activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } = __require("src/web/main.js")); });
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 /**
  * The right-click context menu on parts, wires, labels, and nets: its
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -36501,6 +36509,7 @@ function appendSwitchPhaseMenu(menu, target) {
   const scope = switches.length ? switches : [target.value];
   const all = (test) => scope.every(test);
   const setPhase = (source) => {
+    noteTip('phase-menu');
     commit(() => { for (const c of scope) editor.circuit.setValue(c.refdes, source); });
     logLine(`${scope.map((c) => c.refdes).join(', ')} ${source ? `on phase ${plainMarkup(source)}` : 'on no phase'}`);
   };
@@ -43013,11 +43022,13 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel; __bind(() => { ({ confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel } = __require("src/web/net-names.js")); });
 let commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, selectedComps, snapshot, supplyBarGroup; __bind(() => { ({ commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, selectedComps, snapshot, supplyBarGroup } = __require("src/web/main.js")); });
+let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 /**
  * The inline editors that open over the canvas: label and annotation text,
  * a part's name and child labels, a supply bar's rail name, a reference
  * marker's value, and a schematic block's caption.
  */
+
 
 
 
@@ -43372,6 +43383,7 @@ function inlineEditLabel(label, options = {}) {
           nameBar(v);
           namePeers(v);
         });
+        if (switchState(owner)) noteTip('switch-phase-set');
       }
     }
     else if (options.removeOnEmpty && !v) commit(() => {
@@ -44110,7 +44122,7 @@ let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, 
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
-let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
+let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, openTimingDialog, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, openTimingDialog, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
@@ -51155,6 +51167,12 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  // Shift+K: the timing diagram editor (K for clocks).
+  if (key === 'K') {
+    openTimingDialog();
+    return;
+  }
+
   if (key === 'o') {
     toggleLinkBubbles();
     return;
@@ -55778,6 +55796,27 @@ const TIPS = Object.freeze([
     retiredBy: 'net-highlight',
     text: 'Press 9 and click a net to color it through the whole drawing; 8 clears all highlights.',
   },
+  {
+    id: 'switch-phase',
+    trigger: 'switch-phase-set',
+    after: 2,
+    retiredBy: 'phase-menu',
+    text: 'Right-click a switch → Phase: a phase in use, or its complement (overbar). s flips a whole phase.',
+  },
+  {
+    id: 'timing-diagram',
+    trigger: 'switch-phase-set',
+    after: 4,
+    retiredBy: 'timing-open',
+    text: 'Shift+K draws a timing diagram of the phases, edited as a grid of slots beside the drawing.',
+  },
+  {
+    id: 'timing-beats',
+    trigger: 'timing-drawn',
+    after: 2,
+    retiredBy: 'phase-beats',
+    text: 'Make beats in the timing editor steps the drawing through the timing, one beat per state.',
+  },
 ]);
 
 const TIP_COOLDOWN_MS = 4 * 60 * 1000;
@@ -56822,6 +56861,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],
     ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
+    ['Shift+K', 'timing diagram of the switch phases: edit its slots in a grid beside the drawing; Make beats steps through it'],
     ['Shift/Ctrl-click a vertex', 'on a selected line or arrow, pick vertices (a box over part of it picks those inside); drag one to move them together, Delete removes them, Escape lets go'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],

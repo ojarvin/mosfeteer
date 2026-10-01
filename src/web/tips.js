@@ -48,6 +48,27 @@ export const TIPS = Object.freeze([
     retiredBy: 'net-highlight',
     text: 'Press 9 and click a net to color it through the whole drawing; 8 clears all highlights.',
   },
+  {
+    id: 'switch-phase',
+    trigger: 'switch-phase-set',
+    after: 2,
+    retiredBy: 'phase-menu',
+    text: 'Right-click a switch → Phase: a phase in use, or its complement (overbar). s flips a whole phase.',
+  },
+  {
+    id: 'timing-diagram',
+    trigger: 'switch-phase-set',
+    after: 4,
+    retiredBy: 'timing-open',
+    text: 'Shift+K draws a timing diagram of the phases, edited as a grid of slots beside the drawing.',
+  },
+  {
+    id: 'timing-beats',
+    trigger: 'timing-drawn',
+    after: 2,
+    retiredBy: 'phase-beats',
+    text: 'Make beats in the timing editor steps the drawing through the timing, one beat per state.',
+  },
 ]);
 
 export const TIP_COOLDOWN_MS = 4 * 60 * 1000;

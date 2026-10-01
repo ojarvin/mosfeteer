@@ -23,6 +23,7 @@ import { appendMarkupText, componentDisplayName, setPanelCollapsed, startCompone
 import { busWidth, netNamesConnect } from '../core/bus.js';
 import { handleStyleControlClick, selectionStyleState, styleDefaults, syncStyleControls, wireStyleValue } from './style-controls.js';
 import { activateCopy, activateMove, annotationGeometryAt, commit, deleteSelection, namedGroupNets, pickAt, pickLabel, pickWire, render, restackSelected, selectedComps, selectedTransform, setLabelSelection, setSelection, supplyBarGroup, supplyBarHit, syncSelectedWire } from './main.js';
+import { noteTip } from './onboarding.js';
 
 function contextStyleValue(target, field) {
   if (target?.kind === 'wire') {
@@ -303,6 +304,7 @@ function appendSwitchPhaseMenu(menu, target) {
   const scope = switches.length ? switches : [target.value];
   const all = (test) => scope.every(test);
   const setPhase = (source) => {
+    noteTip('phase-menu');
     commit(() => { for (const c of scope) editor.circuit.setValue(c.refdes, source); });
     logLine(`${scope.map((c) => c.refdes).join(', ')} ${source ? `on phase ${plainMarkup(source)}` : 'on no phase'}`);
   };

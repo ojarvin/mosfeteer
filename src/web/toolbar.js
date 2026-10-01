@@ -189,6 +189,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],
     ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
+    ['Shift+K', 'timing diagram of the switch phases: edit its slots in a grid beside the drawing; Make beats steps through it'],
     ['Shift/Ctrl-click a vertex', 'on a selected line or arrow, pick vertices (a box over part of it picks those inside); drag one to move them together, Delete removes them, Escape lets go'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],

@@ -14,6 +14,7 @@ import { logLine } from './status-bar-ui.js';
 import { editor } from './editor-state.js';
 import { confirmNamedConnection, interfacePortNet, namedConnectionConflicts, portNameConflict, renameLabelThroughModel, reportPortNameConflict, restoreProvisionalLabel } from './net-names.js';
 import { commit, cycleLabelSelection, markModelChanged, recordHistoryEntry, render, selectedComps, snapshot, supplyBarGroup } from './main.js';
+import { noteTip } from './onboarding.js';
 
 /** Standard inline-editor keys: Enter or blur commits, Escape cancels, and
  *  Shift+Enter inserts a line break where the field accepts one. Extra keys
@@ -357,6 +358,7 @@ export function inlineEditLabel(label, options = {}) {
           nameBar(v);
           namePeers(v);
         });
+        if (switchState(owner)) noteTip('switch-phase-set');
       }
     }
     else if (options.removeOnEmpty && !v) commit(() => {

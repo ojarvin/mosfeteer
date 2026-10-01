@@ -15,6 +15,7 @@ import { closeComponentContextMenu, appendContextItem } from './context-menu.js'
 import { editor } from './editor-state.js';
 import { appendMarkupText } from './side-panel.js';
 import { commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, snapshot } from './main.js';
+import { noteTip } from './onboarding.js';
 
 export function activeBeatIndex() {
   if (!editor.activeBeatId) return null;
@@ -477,6 +478,7 @@ function addPhaseBeats() {
   const states = timingStates(editor.circuit);
   commit(() => { count = phaseBeats(editor.circuit, { index, states }); });
   if (!count) return;
+  noteTip('phase-beats');
   logLine(states
     ? `added ${count} beats, one per state of the timing diagram: phases high together close together, and what they cut off is dimmed`
     : `added ${count} phase beats: each dims its open switches and whatever they cut off (draw a timing diagram to close phases together)`);
@@ -490,7 +492,8 @@ function addPhaseBeats() {
  * the whole session is one undo entry (core/timing-diagram.js). */
 let timingEditor = null;
 
-function openTimingDialog() {
+export function openTimingDialog() {
+  noteTip('timing-open');
   if (timingEditor) {
     timingEditor.grid.focus();
     return;
@@ -574,6 +577,7 @@ function openTimingDialog() {
     const first = !state.session;
     if (!state.session || state.session.revision !== editor.modelRevision) recordHistoryEntry(start, true, 'none');
     markModelChanged();
+    if (!state.session) noteTip('timing-drawn');
     state.session = { revision: editor.modelRevision };
     if (first && !before) fitView({ animate: true });
     render();
