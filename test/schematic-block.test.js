@@ -167,9 +167,16 @@ test('blocks and box annotations share the eight resize handles; arrow vertices 
   assert.match(overlay, new RegExp(`data-resize-kind="annotation" data-resize-id="${box.id}"`));
   assert.equal((overlay.match(/data-resize-handle=/g) || []).length, 16);
   assert.match(overlay, /data-resize-handle="e"[^>]*><rect x="346" y="46" width="28" height="28"/);
-  // Handles keep their screen size: at 2 world units per pixel they double.
-  const zoomedOut = editorOverlay(circuit, { resizeBoxes: [box.id], handleScale: 2 });
-  assert.match(zoomedOut, /data-resize-handle="e"[^>]*><rect x="332" y="32" width="56" height="56"/);
+  // Handles keep their screen size: at 2 world units per pixel they double,
+  // on a box big enough on screen to hold them.
+  const big = circuit.addAnnotation('box', { x: 0, y: 400, end: { x: 480, y: 720 } });
+  const zoomedOut = editorOverlay(circuit, { resizeBoxes: [big.id], handleScale: 2 });
+  assert.match(zoomedOut, /data-resize-handle="e"[^>]*><rect x="452" y="532" width="56" height="56"/);
+  // A box small on screen keeps only its corners, shrunk to a quarter of its
+  // shorter side, so its body stays clickable.
+  const small = editorOverlay(circuit, { resizeBoxes: [box.id], handleScale: 2 });
+  assert.equal((small.match(/data-resize-handle=/g) || []).length, 4);
+  assert.match(small, /data-resize-handle="nw"[^>]*><rect x="185" y="-15" width="30" height="30"/);
   assert.equal((overlay.match(/class="annotation-vertex-handle"/g) || []).length, 3);
 
   const hovered = editorOverlay(circuit, { hoverAnnotation: arrow.id });

@@ -1216,15 +1216,18 @@ export function editorOverlay(circuit, opts = {}) {
   // overlay (a selection outline, a net glow) can cover and steal a press.
   const handleParts = [];
   // Handles keep a constant on-screen size (`handleScale` is world units per
-  // screen pixel): a 14 px mark inside a 28 px grab area.
+  // screen pixel): a 14 px mark inside a 28 px grab area. Zoomed out, a box
+  // can be smaller on screen than its handles; they then shrink with it (to
+  // a quarter of its shorter side), and below 80 px only the corners remain,
+  // so a press on the body still selects and moves it.
   const unit = Number.isFinite(opts.handleScale) && opts.handleScale > 0 ? opts.handleScale : 1;
   const resizeHandles = (kind, id, name, r) => {
-    const handles = [
-      ['nw', r.x, r.y], ['n', r.x + r.w / 2, r.y], ['ne', r.x + r.w, r.y],
-      ['e', r.x + r.w, r.y + r.h / 2], ['se', r.x + r.w, r.y + r.h],
-      ['s', r.x + r.w / 2, r.y + r.h], ['sw', r.x, r.y + r.h], ['w', r.x, r.y + r.h / 2],
-    ];
-    const square = (x, y, px) => `x="${fmt(x - px * unit / 2)}" y="${fmt(y - px * unit / 2)}" width="${fmt(px * unit)}" height="${fmt(px * unit)}"`;
+    const side = Math.min(r.w, r.h) / unit;
+    const fit = Math.min(1, side / (4 * 28));
+    const corners = [['nw', r.x, r.y], ['ne', r.x + r.w, r.y], ['se', r.x + r.w, r.y + r.h], ['sw', r.x, r.y + r.h]];
+    const edges = [['n', r.x + r.w / 2, r.y], ['e', r.x + r.w, r.y + r.h / 2], ['s', r.x + r.w / 2, r.y + r.h], ['w', r.x, r.y + r.h / 2]];
+    const handles = side < 80 ? corners : [...corners, ...edges];
+    const square = (x, y, px) => `x="${fmt(x - px * fit * unit / 2)}" y="${fmt(y - px * fit * unit / 2)}" width="${fmt(px * fit * unit)}" height="${fmt(px * fit * unit)}"`;
     return `<g class="resize-handles" data-resize-kind="${kind}" data-resize-id="${escapeSvg(id)}">${handles.map(([handle, x, y]) => `<g data-resize-handle="${handle}" role="button" tabindex="0" aria-label="Resize ${escapeSvg(name)} ${handle}"><rect ${square(x, y, 28)} fill="transparent"/><rect ${square(x, y, 14)} rx="${fmt(2 * unit)}" fill="var(--accent, #4f9cf9)" stroke="var(--paper, #fff)" stroke-width="2" vector-effect="non-scaling-stroke"/></g>`).join('')}</g>`;
   };
   for (const ref of opts.resizeBlocks || []) {
