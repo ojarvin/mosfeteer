@@ -5322,3 +5322,25 @@ circle.bode-corner {
   border-style: dashed;
   opacity: 0.6;
 }
+
+/* The label tools ask for the text first, in a small field by the cursor. */
+.label-prompt {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  min-width: 260px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+}
+
+.label-prompt-title {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.label-prompt input {
+  font: inherit;
+}

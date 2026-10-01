@@ -11311,6 +11311,7 @@ function cornerNames(poles, zeros) {
 
 __modules["src/core/bus.js"] = function (__require, __exports) {
 __exports.busBits = busBits;
+__exports.expandLabelNames = expandLabelNames;
 __exports.busWidth = busWidth;
 __exports.busGroupName = busGroupName;
 __exports.latestBusColor = latestBusColor;
@@ -11361,6 +11362,34 @@ function busBits(name) {
   const bits = [];
   for (let bit = from; bit !== to + step; bit += step) bits.push(bit);
   return { base: match[1].trim(), bits, range: match[3] !== undefined };
+}
+
+/**
+ * The net labels a typed name places, in order: names separated by spaces or
+ * commas, each bus range spelled out bit by bit as written (`DOUT[3:0]` ->
+ * `DOUT[3]` ... `DOUT[0]`, angle brackets kept). `CLK DOUT<1:0>` -> CLK,
+ * DOUT<1>, DOUT<0>. Commas inside braces belong to the name.
+ */
+function expandLabelNames(text) {
+  const names = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of String(text ?? '')) {
+    if (ch === '{') depth += 1;
+    if (ch === '}') depth = Math.max(0, depth - 1);
+    if (!depth && (ch === ',' || /\s/.test(ch))) {
+      if (current) names.push(current);
+      current = '';
+    } else current += ch;
+  }
+  if (current) names.push(current);
+  return names.flatMap((name) => {
+    const bus = busBits(name);
+    if (!bus?.range) return [name];
+    const [open, close] = name.trimEnd().endsWith('>') ? ['<', '>'] : ['[', ']'];
+    const base = name.slice(0, name.search(/[[<]\s*\d+\s*(?::\s*\d+\s*)?[\]>]\s*$/));
+    return bus.bits.map((bit) => `${base}${open}${bit}${close}`);
+  });
 }
 
 /** Bits in a bus name (`D[7:0]` -> 8), or 0 for a single bit or any other name. */
@@ -30361,6 +30390,9 @@ __exports.SMALL_SIGNAL_PORT_TYPES = SMALL_SIGNAL_PORT_TYPES;
 __modules["src/web/annotation-tools.js"] = function (__require, __exports) {
 __exports.moveLabelSafely = moveLabelSafely;
 __exports.placeAnnotationAt = placeAnnotationAt;
+__exports.promptLabelText = promptLabelText;
+__exports.askAnnotationText = askAnnotationText;
+__exports.askNetLabelNames = askNetLabelNames;
 __exports.placeEquationAt = placeEquationAt;
 __exports.draftPointAt = draftPointAt;
 __exports.commitLineAnnotation = commitLineAnnotation;
@@ -30369,6 +30401,7 @@ __exports.placeShapeAnnotation = placeShapeAnnotation;
 __exports.highlightNetAt = highlightNetAt;
 __exports.removeAllNetHighlights = removeAllNetHighlights;
 __exports.beginNetLabelPaste = beginNetLabelPaste;
+__exports.beginNetLabelSequence = beginNetLabelSequence;
 __exports.clearNetLabelPaste = clearNetLabelPaste;
 __exports.pastingNetName = pastingNetName;
 __exports.netLabelPastePreview = netLabelPastePreview;
@@ -30381,6 +30414,8 @@ let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
 let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
 let netLabelPasteKind; __bind(() => { ({ netLabelPasteKind } = __require("src/core/selection.js")); });
+let expandLabelNames; __bind(() => { ({ expandLabelNames } = __require("src/core/bus.js")); });
+let worldToClient; __bind(() => { ({ worldToClient } = __require("src/web/canvas-view.js")); });
 let confirmChoice; __bind(() => { ({ confirmChoice } = __require("src/web/file-dialog.js")); });
 let constrainAxis; __bind(() => { ({ constrainAxis } = __require("src/web/interaction.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
@@ -30388,11 +30423,13 @@ let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/we
 let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/label-editor.js")); });
 let activeBeatIndex; __bind(() => { ({ activeBeatIndex } = __require("src/web/beats-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot; __bind(() => { ({ activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot } = __require("src/web/main.js")); });
+let enterNetLabelMode, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot; __bind(() => { ({ enterNetLabelMode, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot } = __require("src/web/main.js")); });
 /**
  * Placing things with the label tools: net labels on wires and pins, free
  * text and equation annotations, lines, arrows, boxes, and net highlights.
  */
+
+
 
 
 
@@ -30462,17 +30499,102 @@ function moveLabelSafely(label, x, y) {
   }
 }
 
-/** Place a label through the persistent Virtuoso label tools. */
+// Free text typed before it is placed (Shift+N), or null to type it after.
+let pendingAnnotationText = null;
+
+/** Place a label through the persistent Virtuoso label tools: the text typed
+ *  first, or a label to type into. */
 function placeAnnotationAt(world) {
   let label;
   const point = { x: snap(world.x), y: snap(world.y) };
-  commit(() => { label = editor.circuit.addLabel({ text: 'label', x: point.x, y: point.y, align: 'center' }); });
+  const text = pendingAnnotationText;
+  pendingAnnotationText = null;
+  const math = !!text && text.length >= 2 && text.startsWith('$') && text.endsWith('$');
+  commit(() => { label = editor.circuit.addLabel({ text: text || 'label', x: point.x, y: point.y, align: 'center', ...(math ? { math } : {}) }); });
   setSelection([]);
   setLabelSelection([label.id]);
   editor.labelMode = null;
-  logLine(`placed annotation @ (${point.x},${point.y})`);
+  logLine(`placed annotation${text ? ` "${text}"` : ''} @ (${point.x},${point.y})`);
   render();
-  inlineEditLabel(label);
+  if (!text) inlineEditLabel(label);
+}
+
+/**
+ * Ask for a label's text before it is placed, in a small field by the
+ * cursor. Resolves the text typed (Enter), '' for none (Enter on an empty
+ * field: type it after placing), or null when dismissed (Esc).
+ */
+function promptLabelText({ title, placeholder = '' }) {
+  document.querySelector('.label-prompt')?.remove();
+  const box = document.createElement('div');
+  box.className = 'label-prompt glass';
+  const heading = document.createElement('div');
+  heading.className = 'label-prompt-title';
+  heading.textContent = title;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', title);
+  box.append(heading, input);
+  const at = worldToClient(editor.cursor.x, editor.cursor.y);
+  box.style.left = `${Math.max(8, Math.min(window.innerWidth - 300, at.x + 12))}px`;
+  box.style.top = `${Math.max(8, Math.min(window.innerHeight - 90, at.y + 12))}px`;
+  document.body.append(box);
+  // Focus once the key that opened it is done: the editor puts focus back on
+  // the canvas as it handles that key.
+  setTimeout(() => input.focus(), 0);
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      if (!box.isConnected) return;
+      box.remove();
+      window.removeEventListener('pointerdown', outside, true);
+      resolve(value);
+    };
+    // A press anywhere else dismisses it.
+    const outside = (event) => { if (!box.contains(event.target)) finish(null); };
+    window.addEventListener('pointerdown', outside, true);
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') { event.preventDefault(); finish(input.value.trim()); }
+      else if (event.key === 'Escape') { event.preventDefault(); finish(null); }
+    });
+  });
+}
+
+/** Shift+N: the text first, then a click places it. Esc leaves the tool;
+ *  Enter on an empty field places a label to type into. */
+function askAnnotationText() {
+  pendingAnnotationText = null;
+  promptLabelText({ title: 'Free text', placeholder: 'text, or $TeX$; Enter alone: type it after placing' }).then((text) => {
+    if (editor.labelMode !== 'annotation') return;
+    if (text === null) {
+      activateSelect();
+      render();
+      return;
+    }
+    pendingAnnotationText = text || null;
+    hintLine(text ? `ANNOTATION: click to place "${text}"; Esc cancels` : 'ANNOTATION: click anywhere to place free text; Esc cancels');
+    render();
+  });
+}
+
+/** Shift+L: the names first -- several, separated by spaces or commas, a bus
+ *  range spelled out bit by bit (`DOUT[3:0]`) -- then each click on a wire
+ *  places the next. Esc leaves the tool; Enter on an empty field names each
+ *  wire after it is clicked, as before. */
+function askNetLabelNames() {
+  promptLabelText({ title: 'Net label', placeholder: 'name(s): CLK, DOUT[3:0] … Enter alone: name each after placing' }).then((text) => {
+    if (editor.labelMode !== 'net') return;
+    if (text === null) {
+      activateSelect();
+      render();
+      return;
+    }
+    const names = expandLabelNames(text);
+    if (names.length) beginNetLabelSequence(names);
+  });
 }
 
 /** Place a math-capable ordinary label and open its editor with the caret
@@ -30658,28 +30780,50 @@ function removeAllNetHighlights() {
 
 // The name a pasted net label carries while the net label tool places it.
 // Cleared whenever a tool is picked, so plain Shift+L never inherits it.
+// The names the net label tool carries: { names, index, once, repeat }. A
+// pasted label repeats its one name until Esc; typed names are placed one
+// after another, the tool ending with the last.
 let pastedNetName = null;
 
 /** Paste a copied net label: the net label tool, carrying `name`, places it
  * on the wires clicked until Esc. `once` ends after one placement (a drag). */
 function beginNetLabelPaste(name, { once = false } = {}) {
-  activateNetLabel();
-  pastedNetName = { name, once };
+  enterNetLabelMode();
+  pastedNetName = { names: [name], index: 0, once, repeat: true };
   hintLine(`NET LABEL: click a wire to name its net ${name}; Esc ends`);
   render();
   return true;
 }
 
+/** Place `names` on the wires clicked next, one each, in order. */
+function beginNetLabelSequence(names) {
+  enterNetLabelMode();
+  pastedNetName = { names, index: 0, once: false, repeat: false };
+  sequenceHint();
+  render();
+}
+
+function sequenceHint() {
+  const { names, index } = pastedNetName;
+  const rest = names.length - index - 1;
+  hintLine(`NET LABEL: click a wire for ${names[index]}${rest ? ` (then ${names[index + 1]}${rest > 1 ? ` and ${rest - 1} more` : ''})` : ''}; Esc ends`);
+}
+
 function clearNetLabelPaste() {
   pastedNetName = null;
+  pendingAnnotationText = null;
 }
 
 function pastingNetName() {
-  return editor.labelMode === 'net' ? pastedNetName?.name || null : null;
+  return editor.labelMode === 'net' && pastedNetName ? pastedNetName.names[pastedNetName.index] || null : null;
 }
 
-/** Where the pasted name would land under `world`, for the overlay preview. */
+/** Where the pasted name would land under `world`, for the overlay preview;
+ *  free text typed first follows the cursor too. */
 function netLabelPastePreview(world) {
+  if (editor.labelMode === 'annotation' && pendingAnnotationText) {
+    return { text: pendingAnnotationText.replace(/^\$+|\$+$/g, ''), x: snap(world.x), y: snap(world.y) + 16, onWire: true };
+  }
   const name = pastingNetName();
   if (!name) return null;
   const target = netLabelTargetAt(world);
@@ -30724,13 +30868,20 @@ async function pasteNetLabelAt(world, name) {
 function placeNetLabelAt(world, placement = null) {
   const name = pastingNetName();
   if (name) {
-    // A dragged label places once, hit or miss, then hands back to Select.
-    const once = !!pastedNetName.once;
-    pasteNetLabelAt(world, name).then(() => {
-      if (once) {
+    // A dragged label places once, hit or miss, then hands back to Select;
+    // typed names step on to the next, and the last hands back too.
+    const queue = pastedNetName;
+    pasteNetLabelAt(world, name).then((placed) => {
+      if (queue.once) {
         activateSelect();
-        render();
+      } else if (placed && !queue.repeat && pastedNetName === queue) {
+        queue.index += 1;
+        if (queue.index >= queue.names.length) {
+          activateSelect();
+          logLine(`placed ${queue.names.length} net label${queue.names.length === 1 ? '' : 's'}`);
+        } else sequenceHint();
       }
+      render();
     });
     return true;
   }
@@ -43556,6 +43707,7 @@ __exports.keyHintContext = keyHintContext;
 __exports.runLine = runLine;
 __exports.interactionState = interactionState;
 __exports.hasWireDraft = hasWireDraft;
+__exports.enterNetLabelMode = enterNetLabelMode;
 __exports.activateNetLabel = activateNetLabel;
 __exports.activateHighlight = activateHighlight;
 __exports.activateAnnotation = activateAnnotation;
@@ -43625,7 +43777,7 @@ let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickA
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
-let moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
+let askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
 let netMarkerRefs, setHoverTarget, updateCanvasHover; __bind(() => { ({ netMarkerRefs, setHoverTarget, updateCanvasHover } = __require("src/web/hover-preview.js")); });
 let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => { ({ syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } = __require("src/web/gesture-overlay.js")); });
@@ -51048,8 +51200,16 @@ function activateLabelPlacement(kind) {
   render();
 }
 
-function activateNetLabel() {
+/** The net label tool without asking for a name (a pasted label carries
+ *  its own). */
+function enterNetLabelMode() {
   activateLabelPlacement('net');
+}
+
+/** Shift+L: the net label tool, asking for the names to place first. */
+function activateNetLabel() {
+  enterNetLabelMode();
+  askNetLabelNames();
 }
 
 function activateHighlight() {
@@ -51058,6 +51218,7 @@ function activateHighlight() {
 
 function activateAnnotation() {
   activateLabelPlacement('annotation');
+  askAnnotationText();
 }
 
 function activateEquation() {
@@ -56259,8 +56420,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
-    ['Shift+L', 'persistent electrical net-label placement'],
-    ['Shift+N', 'place one free annotation, then return to selection'],
+    ['Shift+L', 'type net label names (a bus DOUT[3:0] spells out its bits), then click wires to place each'],
+    ['Shift+N', 'type free text, then click to place it once'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
     ['b', 'place one two-point box, then return to selection; with a selection, box it (in the box tool, click objects to pick them, Enter boxes them)'],
@@ -56368,8 +56529,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],
   ['labels', [
-    ['Shift+L', 'click an unambiguous wire to place a net label; Esc exits'],
-    ['Shift+N', 'click anywhere to place one annotation; returns to selection'],
+    ['Shift+L', 'type the names, then click a wire for each; Esc exits'],
+    ['Shift+N', 'type the text, then click to place it; returns to selection'],
     ['t / = / F2', 'edit the selected (or pointed-at) label or part name'],
     ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
     ['dd / Delete', 'delete the selected label'],

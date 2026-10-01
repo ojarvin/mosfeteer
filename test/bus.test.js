@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
-import { busBits, busMarkD, busMarkPoints, busTerminalMarks, busWidth, netNamesConnect, straightLeadLength } from '../src/core/bus.js';
+import { busBits, busMarkD, busMarkPoints, busTerminalMarks, busWidth, netNamesConnect, expandLabelNames, straightLeadLength } from '../src/core/bus.js';
 import { getSymbol } from '../src/core/components/index.js';
 
 test('bus names carry a bit range in brackets or angle brackets', () => {
@@ -178,4 +178,12 @@ test('a bus net can show its bit count beside each slash, and each count moves w
   runCommand(circuit, 'connect R1.b R2.a --name D[1]');
   assert.throws(() => runCommand(circuit, `net ${circuit.netOfTerminal({ comp: 'R1', term: 'b' }).id} bitcount on`), /not a multi-bit bus/);
   assert.throws(() => runCommand(circuit, `net ${net.id} bitcount maybe`), /usage: net <id> bitcount on\|off/);
+});
+
+test('typed label names spell a bus out bit by bit, in written order', () => {
+  assert.deepEqual(expandLabelNames('DOUT[3:0]'), ['DOUT[3]', 'DOUT[2]', 'DOUT[1]', 'DOUT[0]']);
+  assert.deepEqual(expandLabelNames('CLK, DOUT<0:1>'), ['CLK', 'DOUT<0>', 'DOUT<1>']);
+  // One bit, plain names, and commas inside markup are left as they are.
+  assert.deepEqual(expandLabelNames('D[3] V_{a,b}  RST'), ['D[3]', 'V_{a,b}', 'RST']);
+  assert.deepEqual(expandLabelNames('  '), []);
 });

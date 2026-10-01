@@ -73,7 +73,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
-import { moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
+import { askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
 import { netMarkerRefs, setHoverTarget, updateCanvasHover } from './hover-preview.js';
 import { syncSnapPulse, annotationReach, cutAlong, withGestureOverlay } from './gesture-overlay.js';
@@ -7425,8 +7425,16 @@ function activateLabelPlacement(kind) {
   render();
 }
 
-export function activateNetLabel() {
+/** The net label tool without asking for a name (a pasted label carries
+ *  its own). */
+export function enterNetLabelMode() {
   activateLabelPlacement('net');
+}
+
+/** Shift+L: the net label tool, asking for the names to place first. */
+export function activateNetLabel() {
+  enterNetLabelMode();
+  askNetLabelNames();
 }
 
 export function activateHighlight() {
@@ -7435,6 +7443,7 @@ export function activateHighlight() {
 
 export function activateAnnotation() {
   activateLabelPlacement('annotation');
+  askAnnotationText();
 }
 
 export function activateEquation() {

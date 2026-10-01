@@ -36,6 +36,34 @@ export function busBits(name) {
   return { base: match[1].trim(), bits, range: match[3] !== undefined };
 }
 
+/**
+ * The net labels a typed name places, in order: names separated by spaces or
+ * commas, each bus range spelled out bit by bit as written (`DOUT[3:0]` ->
+ * `DOUT[3]` ... `DOUT[0]`, angle brackets kept). `CLK DOUT<1:0>` -> CLK,
+ * DOUT<1>, DOUT<0>. Commas inside braces belong to the name.
+ */
+export function expandLabelNames(text) {
+  const names = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of String(text ?? '')) {
+    if (ch === '{') depth += 1;
+    if (ch === '}') depth = Math.max(0, depth - 1);
+    if (!depth && (ch === ',' || /\s/.test(ch))) {
+      if (current) names.push(current);
+      current = '';
+    } else current += ch;
+  }
+  if (current) names.push(current);
+  return names.flatMap((name) => {
+    const bus = busBits(name);
+    if (!bus?.range) return [name];
+    const [open, close] = name.trimEnd().endsWith('>') ? ['<', '>'] : ['[', ']'];
+    const base = name.slice(0, name.search(/[[<]\s*\d+\s*(?::\s*\d+\s*)?[\]>]\s*$/));
+    return bus.bits.map((bit) => `${base}${open}${bit}${close}`);
+  });
+}
+
 /** Bits in a bus name (`D[7:0]` -> 8), or 0 for a single bit or any other name. */
 export function busWidth(name) {
   const bus = busBits(name);

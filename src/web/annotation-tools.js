@@ -9,6 +9,8 @@ import { snap } from '../core/grid.js';
 import { pointOnPath } from '../core/wiring.js';
 import { joinLineAnnotations } from '../core/line-join.js';
 import { netLabelPasteKind } from '../core/selection.js';
+import { expandLabelNames } from '../core/bus.js';
+import { worldToClient } from './canvas-view.js';
 import { confirmChoice } from './file-dialog.js';
 import { constrainAxis } from './interaction.js';
 import { noteTip } from './onboarding.js';
@@ -16,7 +18,7 @@ import { logLine, hintLine } from './status-bar-ui.js';
 import { inlineEditLabel } from './label-editor.js';
 import { activeBeatIndex } from './beats-ui.js';
 import { editor } from './editor-state.js';
-import { activateNetLabel, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot } from './main.js';
+import { enterNetLabelMode, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot } from './main.js';
 
 /** Return the drawable wire candidates under a label-placement click.  A
  * snapped crossing may belong to several physical nets; keep those identities
@@ -71,17 +73,102 @@ export function moveLabelSafely(label, x, y) {
   }
 }
 
-/** Place a label through the persistent Virtuoso label tools. */
+// Free text typed before it is placed (Shift+N), or null to type it after.
+let pendingAnnotationText = null;
+
+/** Place a label through the persistent Virtuoso label tools: the text typed
+ *  first, or a label to type into. */
 export function placeAnnotationAt(world) {
   let label;
   const point = { x: snap(world.x), y: snap(world.y) };
-  commit(() => { label = editor.circuit.addLabel({ text: 'label', x: point.x, y: point.y, align: 'center' }); });
+  const text = pendingAnnotationText;
+  pendingAnnotationText = null;
+  const math = !!text && text.length >= 2 && text.startsWith('$') && text.endsWith('$');
+  commit(() => { label = editor.circuit.addLabel({ text: text || 'label', x: point.x, y: point.y, align: 'center', ...(math ? { math } : {}) }); });
   setSelection([]);
   setLabelSelection([label.id]);
   editor.labelMode = null;
-  logLine(`placed annotation @ (${point.x},${point.y})`);
+  logLine(`placed annotation${text ? ` "${text}"` : ''} @ (${point.x},${point.y})`);
   render();
-  inlineEditLabel(label);
+  if (!text) inlineEditLabel(label);
+}
+
+/**
+ * Ask for a label's text before it is placed, in a small field by the
+ * cursor. Resolves the text typed (Enter), '' for none (Enter on an empty
+ * field: type it after placing), or null when dismissed (Esc).
+ */
+export function promptLabelText({ title, placeholder = '' }) {
+  document.querySelector('.label-prompt')?.remove();
+  const box = document.createElement('div');
+  box.className = 'label-prompt glass';
+  const heading = document.createElement('div');
+  heading.className = 'label-prompt-title';
+  heading.textContent = title;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', title);
+  box.append(heading, input);
+  const at = worldToClient(editor.cursor.x, editor.cursor.y);
+  box.style.left = `${Math.max(8, Math.min(window.innerWidth - 300, at.x + 12))}px`;
+  box.style.top = `${Math.max(8, Math.min(window.innerHeight - 90, at.y + 12))}px`;
+  document.body.append(box);
+  // Focus once the key that opened it is done: the editor puts focus back on
+  // the canvas as it handles that key.
+  setTimeout(() => input.focus(), 0);
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      if (!box.isConnected) return;
+      box.remove();
+      window.removeEventListener('pointerdown', outside, true);
+      resolve(value);
+    };
+    // A press anywhere else dismisses it.
+    const outside = (event) => { if (!box.contains(event.target)) finish(null); };
+    window.addEventListener('pointerdown', outside, true);
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') { event.preventDefault(); finish(input.value.trim()); }
+      else if (event.key === 'Escape') { event.preventDefault(); finish(null); }
+    });
+  });
+}
+
+/** Shift+N: the text first, then a click places it. Esc leaves the tool;
+ *  Enter on an empty field places a label to type into. */
+export function askAnnotationText() {
+  pendingAnnotationText = null;
+  promptLabelText({ title: 'Free text', placeholder: 'text, or $TeX$; Enter alone: type it after placing' }).then((text) => {
+    if (editor.labelMode !== 'annotation') return;
+    if (text === null) {
+      activateSelect();
+      render();
+      return;
+    }
+    pendingAnnotationText = text || null;
+    hintLine(text ? `ANNOTATION: click to place "${text}"; Esc cancels` : 'ANNOTATION: click anywhere to place free text; Esc cancels');
+    render();
+  });
+}
+
+/** Shift+L: the names first -- several, separated by spaces or commas, a bus
+ *  range spelled out bit by bit (`DOUT[3:0]`) -- then each click on a wire
+ *  places the next. Esc leaves the tool; Enter on an empty field names each
+ *  wire after it is clicked, as before. */
+export function askNetLabelNames() {
+  promptLabelText({ title: 'Net label', placeholder: 'name(s): CLK, DOUT[3:0] … Enter alone: name each after placing' }).then((text) => {
+    if (editor.labelMode !== 'net') return;
+    if (text === null) {
+      activateSelect();
+      render();
+      return;
+    }
+    const names = expandLabelNames(text);
+    if (names.length) beginNetLabelSequence(names);
+  });
 }
 
 /** Place a math-capable ordinary label and open its editor with the caret
@@ -267,28 +354,50 @@ export function removeAllNetHighlights() {
 
 // The name a pasted net label carries while the net label tool places it.
 // Cleared whenever a tool is picked, so plain Shift+L never inherits it.
+// The names the net label tool carries: { names, index, once, repeat }. A
+// pasted label repeats its one name until Esc; typed names are placed one
+// after another, the tool ending with the last.
 let pastedNetName = null;
 
 /** Paste a copied net label: the net label tool, carrying `name`, places it
  * on the wires clicked until Esc. `once` ends after one placement (a drag). */
 export function beginNetLabelPaste(name, { once = false } = {}) {
-  activateNetLabel();
-  pastedNetName = { name, once };
+  enterNetLabelMode();
+  pastedNetName = { names: [name], index: 0, once, repeat: true };
   hintLine(`NET LABEL: click a wire to name its net ${name}; Esc ends`);
   render();
   return true;
 }
 
+/** Place `names` on the wires clicked next, one each, in order. */
+export function beginNetLabelSequence(names) {
+  enterNetLabelMode();
+  pastedNetName = { names, index: 0, once: false, repeat: false };
+  sequenceHint();
+  render();
+}
+
+function sequenceHint() {
+  const { names, index } = pastedNetName;
+  const rest = names.length - index - 1;
+  hintLine(`NET LABEL: click a wire for ${names[index]}${rest ? ` (then ${names[index + 1]}${rest > 1 ? ` and ${rest - 1} more` : ''})` : ''}; Esc ends`);
+}
+
 export function clearNetLabelPaste() {
   pastedNetName = null;
+  pendingAnnotationText = null;
 }
 
 export function pastingNetName() {
-  return editor.labelMode === 'net' ? pastedNetName?.name || null : null;
+  return editor.labelMode === 'net' && pastedNetName ? pastedNetName.names[pastedNetName.index] || null : null;
 }
 
-/** Where the pasted name would land under `world`, for the overlay preview. */
+/** Where the pasted name would land under `world`, for the overlay preview;
+ *  free text typed first follows the cursor too. */
 export function netLabelPastePreview(world) {
+  if (editor.labelMode === 'annotation' && pendingAnnotationText) {
+    return { text: pendingAnnotationText.replace(/^\$+|\$+$/g, ''), x: snap(world.x), y: snap(world.y) + 16, onWire: true };
+  }
   const name = pastingNetName();
   if (!name) return null;
   const target = netLabelTargetAt(world);
@@ -333,13 +442,20 @@ async function pasteNetLabelAt(world, name) {
 export function placeNetLabelAt(world, placement = null) {
   const name = pastingNetName();
   if (name) {
-    // A dragged label places once, hit or miss, then hands back to Select.
-    const once = !!pastedNetName.once;
-    pasteNetLabelAt(world, name).then(() => {
-      if (once) {
+    // A dragged label places once, hit or miss, then hands back to Select;
+    // typed names step on to the next, and the last hands back too.
+    const queue = pastedNetName;
+    pasteNetLabelAt(world, name).then((placed) => {
+      if (queue.once) {
         activateSelect();
-        render();
+      } else if (placed && !queue.repeat && pastedNetName === queue) {
+        queue.index += 1;
+        if (queue.index >= queue.names.length) {
+          activateSelect();
+          logLine(`placed ${queue.names.length} net label${queue.names.length === 1 ? '' : 's'}`);
+        } else sequenceHint();
       }
+      render();
     });
     return true;
   }
