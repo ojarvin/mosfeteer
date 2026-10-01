@@ -5423,6 +5423,33 @@ export class Circuit {
   }
 
   /** Junction points of a net's branches, counting each terminal as an arm. */
+  /** The MOS gates a net's wire runs straight through along the gate's own
+   *  axis, with no other wire leaving them: a gate bus. */
+  _gateBusPassThroughs(net) {
+    const paths = net.branches?.length ? net.branches : net.route?.length >= 2 ? [net.route] : [];
+    const out = [];
+    for (const t of net.terminals) {
+      const c = this.components.get(t.comp);
+      if (t.term !== 'g' || !/^[np]mos/.test(c?.type || '')) continue;
+      const def = c.terminalDefs.find((d) => d.name === 'g');
+      const p = c.terminalWorld('g');
+      const axis = this._pinDir(c, def, p.x, p.y);
+      const arms = new Set();
+      for (const path of paths) {
+        for (let i = 1; i < path.length; i += 1) {
+          const [a, b] = [path[i - 1], path[i]];
+          const towards = (q) => `${Math.sign(q.x - p.x)},${Math.sign(q.y - p.y)}`;
+          if (a.x === p.x && a.y === p.y) arms.add(towards(b));
+          else if (b.x === p.x && b.y === p.y) arms.add(towards(a));
+          else if (pointOnPath(p, [a, b])) { arms.add(towards(a)); arms.add(towards(b)); }
+        }
+      }
+      const along = new Set([`${axis.x},${axis.y}`, `${-axis.x},${-axis.y}`]);
+      if (arms.size === 2 && [...arms].every((arm) => along.has(arm))) out.push(p);
+    }
+    return out;
+  }
+
   _netJunctions(net, paths) {
     const terminals = net.terminals.map((t) => this.getComponent(t.comp)?.terminalWorld(t.term)).filter(Boolean);
     return junctionPoints(paths, terminals, net.allowDiagonal);
@@ -6494,6 +6521,16 @@ export class Circuit {
           if ((a.x === b.x && p.x === a.x && p.y > Math.min(a.y, b.y) && p.y < Math.max(a.y, b.y)) ||
               (a.y === b.y && p.y === a.y && p.x > Math.min(a.x, b.x) && p.x < Math.max(a.x, b.x))) mark(`${p.x},${p.y}`, net);
         }
+      }
+    }
+    // A MOS gate bus drawn straight through the gates (the documented gate
+    // crossing) joins each gate it passes without a tee: no dot there.
+    for (const net of this.nets.values()) {
+      if (net.routingMode === 'fixed') continue;
+      for (const p of this._gateBusPassThroughs(net)) {
+        const key = `${p.x},${p.y}`;
+        junctions.get(key)?.delete(net.id);
+        if (junctions.get(key)?.size === 0) junctions.delete(key);
       }
     }
     const added = [];

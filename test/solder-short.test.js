@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
+import { runCommand } from '../src/core/commands.js';
 
 /** A horizontal and a vertical two-terminal net crossing at (400,200). */
 function crossing({ horizontal = '', vertical = '' } = {}) {
@@ -71,4 +72,19 @@ test('shortNetsAt also joins a fixed (literal) net, keeping every path literal',
   const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
   assert.equal(reloaded.nets.size, 1);
   assert.ok(h);
+});
+
+test('a gate bus drawn straight through MOS gates puts no dot on the gates it passes', () => {
+  const c = new Circuit();
+  for (const line of ['add nmos M1 --at 400 400', 'add nmos M2 --at 800 400', 'add nmos M3 --at 1200 400',
+    'add resistor R1 --at 0 400', 'add resistor R2 --at 1080 160 --rot 90', 'connect R1.b M1.g M2.g M3.g R2.b']) runCommand(c, line);
+  const net = c.netOfTerminal({ comp: 'M1', term: 'g' });
+  // One straight line through every gate, then up from M3's gate to R2.
+  net.branches = [[{ x: 80, y: 400 }, { x: 1080, y: 400 }], [{ x: 1080, y: 400 }, { x: 1080, y: 240 }]];
+  net.route = net.branches[0];
+  net.junctions = [];
+  c.syncJunctionSolders();
+  const dots = [...c.components.values()].filter((part) => part.type === 'solder').map((part) => [part.transform.x, part.transform.y]);
+  // M1 and M2 are passed straight through; M3's gate is a real tee.
+  assert.deepEqual(dots, [[1080, 400]]);
 });
