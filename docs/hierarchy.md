@@ -30,7 +30,7 @@ together.
 `o` (or the menu's **Show linked design**) shows the selected parts' linked
 designs beside the drawing, each in a bubble: the design drawn as a picture at
 its real size, framed by a dashed box with its name, and joined to its part by
-a connector. A bubble appears once its picture is ready, growing out of its
+a connector (the design itself: its free equations and pasted images are left out, for clarity). A bubble appears once its picture is ready, growing out of its
 part (the editor's pop-in motion); closing it shrinks it back.
 
 Bubbles sit on a ring around the drawing, never over it
