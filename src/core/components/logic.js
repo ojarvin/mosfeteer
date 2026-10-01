@@ -73,8 +73,9 @@ const opampDiff = defineSymbol({
 /**
  * Comparators: the single-ended op-amp's body and inputs with a comparator
  * mark in the middle -- a rising edge (low, a step up, high) crossed by a
- * horizontal threshold line. The clocked comparator adds a clock input from
- * below, entering the lower edge with the D flip-flop's clock wedge.
+ * horizontal threshold line. The clocked comparator adds a clock input on
+ * the left between the two inputs, with the D flip-flop's clock wedge on the
+ * body's straight edge.
  */
 const COMPARATOR_MARK = [
   { kind: 'path', d: 'M -52 18 L -24 18 L -24 -18 L 4 -18', style: 'symbol' },
@@ -90,7 +91,7 @@ function comparatorSymbol(type, description, { clocked = false } = {}) {
       { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
       { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
       { name: 'o', x: 160, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
-      ...(clocked ? [{ name: 'clk', x: -40, y: 120, direction: 'input', dir: { x: 0, y: 1 } }] : []),
+      ...(clocked ? [{ name: 'clk', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } }] : []),
     ],
     bbox: { x: -200, y: -120, w: 360, h: 240 },
     graphics: [
@@ -103,10 +104,10 @@ function comparatorSymbol(type, description, { clocked = false } = {}) {
       { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
       ...COMPARATOR_MARK,
       ...(clocked ? [
-        // The clock lead meets the lower edge at x=-40 (y=66.4); the wedge
-        // stands on that edge, both ends on it, pointing up into the body.
-        { kind: 'path', d: 'M -40 120 L -40 66.4', style: 'symbol' },
-        { kind: 'path', d: 'M -60 76.4 L -40 38.4 L -20 56.4', style: 'symbol' },
+        // The clock lead meets the left edge between the inputs; the wedge
+        // stands on that edge, both ends on it, as on a D flip-flop.
+        { kind: 'path', d: 'M -200 0 L -107.19 0', style: 'symbol' },
+        { kind: 'path', d: 'M -107.19 -16 L -75.19 0 L -107.19 16', style: 'symbol' },
       ] : []),
     ],
     textPos: null,

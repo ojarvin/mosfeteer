@@ -546,13 +546,13 @@ test('refdes prefixes by component type', () => {
   }
 });
 
-test('comparators: the op-amp\'s inputs and output, a comparator mark, and a clock from below', () => {
+test('comparators: the op-amp\'s inputs and output, a comparator mark, and a clock between the inputs', () => {
   const plain = getSymbol('comparator');
   const clocked = getSymbol('comparator_clocked');
   const pins = (def) => Object.fromEntries(def.terminals.map((t) => [t.name, [t.x, t.y]]));
   assert.deepEqual(pins(plain), { ip: [-200, -40], im: [-200, 40], o: [160, 0] });
-  assert.deepEqual(pins(clocked), { ip: [-200, -40], im: [-200, 40], o: [160, 0], clk: [-40, 120] });
-  assert.deepEqual(clocked.terminals.find((t) => t.name === 'clk').dir, { x: 0, y: 1 });
+  assert.deepEqual(pins(clocked), { ip: [-200, -40], im: [-200, 40], o: [160, 0], clk: [-200, 0] });
+  assert.deepEqual(clocked.terminals.find((t) => t.name === 'clk').dir, { x: -1, y: 0 });
   assert.deepEqual(plain.bbox, getSymbol('opamp').bbox);
   assert.deepEqual(clocked.bbox, getSymbol('opamp').bbox);
   // The comparator mark: a rising edge crossed by a threshold line.
