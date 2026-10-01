@@ -70,6 +70,55 @@ const opampDiff = defineSymbol({
   defaultValue: '',
 });
 
+/**
+ * Comparators: the single-ended op-amp's body and inputs with a comparator
+ * mark in the middle -- a rising edge (low, a step up, high) crossed by a
+ * horizontal threshold line. The clocked comparator adds a clock input from
+ * below, entering the lower edge with the D flip-flop's clock wedge.
+ */
+const COMPARATOR_MARK = [
+  { kind: 'path', d: 'M -52 18 L -24 18 L -24 -18 L 4 -18', style: 'symbol' },
+  { kind: 'path', d: 'M -42 0 L -6 0', style: 'symbol' },
+];
+
+function comparatorSymbol(type, description, { clocked = false } = {}) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix: 'U',
+    terminals: [
+      { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+      { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+      { name: 'o', x: 160, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
+      ...(clocked ? [{ name: 'clk', x: -40, y: 120, direction: 'input', dir: { x: 0, y: 1 } }] : []),
+    ],
+    bbox: { x: -200, y: -120, w: 360, h: 240 },
+    graphics: [
+      { kind: 'path', d: 'M -200 40 L -107.81 40', style: 'symbol' },
+      { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
+      { kind: 'path', d: 'M 92.81 0 L 160 0', style: 'symbol' },
+      { kind: 'path', d: 'M -107.19 99.99 L -107.19 -100 L 92.81 0 Z', style: 'emph' },
+      { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
+      { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
+      { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+      ...COMPARATOR_MARK,
+      ...(clocked ? [
+        // The clock lead meets the lower edge at x=-40 (y=66.4); the wedge
+        // stands on that edge, both ends on it, pointing up into the body.
+        { kind: 'path', d: 'M -40 120 L -40 66.4', style: 'symbol' },
+        { kind: 'path', d: 'M -60 76.4 L -40 38.4 L -20 56.4', style: 'symbol' },
+      ] : []),
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -160 },
+    defaultValue: '',
+  });
+}
+
+const comparator = comparatorSymbol('comparator', 'Comparator');
+const comparatorClocked = comparatorSymbol('comparator_clocked', 'Clocked comparator', { clocked: true });
+
 const inverter = defineSymbol({
   type: 'inverter',
   description: 'Inverter (NOT gate)',
@@ -204,4 +253,4 @@ export const nor3_gate = gate('nor3_gate', '3-input NOR Gate', OR_BODY, { inputs
 export const xor3_gate = gate('xor3_gate', '3-input XOR Gate', [...XOR_BODY, ...XOR_FRONT], { inputs: [-120, -120, -120], inputNames: ['a', 'b', 'c'], inputLeadEnds: [-76.88, -67, -76.88], output: 160, outputLead: 72.55, width: 280 });
 export const xnor3_gate = gate('xnor3_gate', '3-input XNOR Gate', [...XOR_BODY, ...XOR_FRONT], { inputs: [-120, -120, -120], inputNames: ['a', 'b', 'c'], inputLeadEnds: [-76.88, -67, -76.88], output: 160, outputLead: 102.87, bubbleAt: [89.37, 0], width: 280 });
 
-export { opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer };
+export { opamp, opampDiff, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer };

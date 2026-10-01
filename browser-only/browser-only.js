@@ -13009,7 +13009,7 @@ const SYMBOL_CATEGORY_RULES = [
   ['Switches', /^switch_/],
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
-  ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
+  ['Macros', /^(opamp|opamp_diff|comparator|comparator_clocked|adc|dac)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Blocks / shells', /^block$/],
@@ -13433,7 +13433,7 @@ let portInput, portOutput, portInputOutput, port; __bind(() => { ({ portInput, p
 let current_source, voltage_source; __bind(() => { ({ current_source, voltage_source } = __require("src/core/components/current.js")); });
 let vccs, vcvs; __bind(() => { ({ vccs, vcvs } = __require("src/core/components/vccs.js")); });
 let impedance; __bind(() => { ({ impedance } = __require("src/core/components/impedance.js")); });
-let opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate; __bind(() => { ({ opamp, opampDiff, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js")); });
+let opamp, opampDiff, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate; __bind(() => { ({ opamp, opampDiff, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js")); });
 let adc, dac; __bind(() => { ({ adc, dac } = __require("src/core/components/converter.js")); });
 let dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb; __bind(() => { ({ dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } = __require("src/core/components/flipflop.js")); });
 let variable_resistor, variable_capacitor, variable_inductor; __bind(() => { ({ variable_resistor, variable_capacitor, variable_inductor } = __require("src/core/components/variable.js")); });
@@ -13495,6 +13495,8 @@ const symbolTypes = {
   vcvs,
   opamp,
   opamp_diff: opampDiff,
+  comparator,
+  comparator_clocked: comparatorClocked,
   inverter,
   buffer,
   tristate_inverter: tristateInverter,
@@ -13677,6 +13679,55 @@ const opampDiff = defineSymbol({
   defaultValue: '',
 });
 
+/**
+ * Comparators: the single-ended op-amp's body and inputs with a comparator
+ * mark in the middle -- a rising edge (low, a step up, high) crossed by a
+ * horizontal threshold line. The clocked comparator adds a clock input from
+ * below, entering the lower edge with the D flip-flop's clock wedge.
+ */
+const COMPARATOR_MARK = [
+  { kind: 'path', d: 'M -52 18 L -24 18 L -24 -18 L 4 -18', style: 'symbol' },
+  { kind: 'path', d: 'M -42 0 L -6 0', style: 'symbol' },
+];
+
+function comparatorSymbol(type, description, { clocked = false } = {}) {
+  return defineSymbol({
+    type,
+    description,
+    refPrefix: 'U',
+    terminals: [
+      { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+      { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+      { name: 'o', x: 160, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
+      ...(clocked ? [{ name: 'clk', x: -40, y: 120, direction: 'input', dir: { x: 0, y: 1 } }] : []),
+    ],
+    bbox: { x: -200, y: -120, w: 360, h: 240 },
+    graphics: [
+      { kind: 'path', d: 'M -200 40 L -107.81 40', style: 'symbol' },
+      { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
+      { kind: 'path', d: 'M 92.81 0 L 160 0', style: 'symbol' },
+      { kind: 'path', d: 'M -107.19 99.99 L -107.19 -100 L 92.81 0 Z', style: 'emph' },
+      { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
+      { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
+      { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+      ...COMPARATOR_MARK,
+      ...(clocked ? [
+        // The clock lead meets the lower edge at x=-40 (y=66.4); the wedge
+        // stands on that edge, both ends on it, pointing up into the body.
+        { kind: 'path', d: 'M -40 120 L -40 66.4', style: 'symbol' },
+        { kind: 'path', d: 'M -60 76.4 L -40 38.4 L -20 56.4', style: 'symbol' },
+      ] : []),
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -160 },
+    defaultValue: '',
+  });
+}
+
+const comparator = comparatorSymbol('comparator', 'Comparator');
+const comparatorClocked = comparatorSymbol('comparator_clocked', 'Clocked comparator', { clocked: true });
+
 const inverter = defineSymbol({
   type: 'inverter',
   description: 'Inverter (NOT gate)',
@@ -13815,6 +13866,8 @@ const xnor3_gate = gate('xnor3_gate', '3-input XNOR Gate', [...XOR_BODY, ...XOR_
 
 __exports.opamp = opamp;
 __exports.opampDiff = opampDiff;
+__exports.comparator = comparator;
+__exports.comparatorClocked = comparatorClocked;
 __exports.inverter = inverter;
 __exports.buffer = buffer;
 __exports.tristateInverter = tristateInverter;
@@ -26598,7 +26651,7 @@ const PARTNERS = new Map([
   ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
-  ['signal_sum', 'signal_multiply'], ['opamp', 'opamp_diff'],
+  ['signal_sum', 'signal_multiply'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
   ...['and', 'or', 'xor'].flatMap((gate) => [2, 3].map((n) => [`${gate}${n}_gate`, `n${gate}${n}_gate`])),
 ].flatMap(([a, b]) => [[a, b], [b, a]]));
 

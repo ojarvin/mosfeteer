@@ -16,7 +16,7 @@ export const SYMBOL_CATEGORY_RULES = [
   ['Switches', /^switch_/],
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
-  ['Macros', /^(opamp|opamp_diff|adc|dac)$/],
+  ['Macros', /^(opamp|opamp_diff|comparator|comparator_clocked|adc|dac)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Blocks / shells', /^block$/],

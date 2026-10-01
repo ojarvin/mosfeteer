@@ -79,7 +79,7 @@ test('insert categories keep switches and macros separate and include vccs with 
   const groups = Object.fromEntries(symbolCategories().map(({ title, types }) => [title, types]));
   assert.deepEqual(groups.Switches, ['switch_open', 'switch_closed']);
   assert.deepEqual([...groups['Sources & power']].sort(), ['current_source', 'ground', 'supply', 'vccs', 'vcm', 'vcvs', 'voltage_source']);
-  assert.deepEqual([...groups.Macros].sort(), ['adc', 'dac', 'opamp', 'opamp_diff']);
+  assert.deepEqual([...groups.Macros].sort(), ['adc', 'comparator', 'comparator_clocked', 'dac', 'opamp', 'opamp_diff']);
   assert.ok(groups.Logic.includes('mux2') && groups.Logic.includes('tristate_buffer') && groups.Logic.includes('xnor3_gate'));
   assert.ok(groups.Sequential.includes('dff') && groups.Sequential.includes('latch_enb_rstb_qb'));
   assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply']);
