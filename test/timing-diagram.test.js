@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
-import { addBeat, setSwitchFrom } from '../src/core/beats.js';
-import { addTimingDiagram, defaultTimingPairs, parseTimingBits, timingColumns, timingRowGeometry } from '../src/core/timing-diagram.js';
+import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
+import { addTimingDiagram, defaultTimingPairs, parseTimingBits, timingColumns, timingRowGeometry, timingStates } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -64,7 +64,13 @@ test('the diagram sits under the drawing, one named row per phase, complements a
   ]);
   const names = rows.map((row) => circuit.labels.get(row.label));
   assert.ok(names.every((label) => label.align === 'right' && label.math));
-  assert.ok(wavesOf(circuit).every((line) => line.bbox().y >= drawn.y + drawn.h + 80), 'below the drawing');
+  // Clear of every part by a cell (here the drawing leaves room only below).
+  const parts = [...circuit.components.values()].map((part) => part.bboxWorld());
+  for (const line of wavesOf(circuit)) {
+    const r = line.bbox();
+    assert.ok(parts.every((p) => r.y >= p.y + p.h + 40 || p.y >= r.y + r.h + 40 || r.x >= p.x + p.w + 40 || p.x >= r.x + r.w + 40), 'clear of the parts');
+  }
+  void drawn;
   // The waves are centred on the drawing's width.
   const drawing = (() => { const copy = Circuit.fromJSON(circuit.toJSON()); for (const l of [...copy.labels.values()]) if (l.timing) copy.removeLabel(l.id); return copy.inkBounds(); })();
   const left = Math.min(...wavesOf(circuit).map((l) => l.bbox().x));
@@ -185,3 +191,48 @@ test('shifts are kept per phase, and a following complement mirrors its phase\'s
   assert.deepEqual(rowsOf(loaded, 'timing')[0].shift, { fall: -1, rise: 1 });
   assert.throws(() => runCommand(loaded, 'timing --fall φ1=early'), /PHASE=N/);
 });
+
+test('a new diagram floats up into the drawing where it has room, and then stays put', () => {
+  const circuit = new Circuit();
+  // Two tall columns of switches with an empty middle between them.
+  run(circuit,
+    'add switch_open S1 --at 0 0', 'value S1 $\\varphi_1$', 'add switch_open S2 --at 0 1600', 'value S2 $\\varphi_2$',
+    'add switch_open S3 --at 2000 0', 'value S3 $\\varphi_1$', 'add switch_open S4 --at 2000 1600', 'value S4 $\\varphi_2$');
+  runCommand(circuit, 'timing φ1=10 φ2=01');
+  const top = () => Math.min(...wavesOf(circuit).map((l) => l.bbox().y));
+  const left = () => Math.min(...wavesOf(circuit).map((l) => l.bbox().x));
+  assert.ok(top() < 1600, `in the middle, not below (${top()})`);
+  // Moved by hand, a redraw keeps it there; asked to, it is placed again.
+  for (const label of [...circuit.labels.values()].filter((l) => l.timing)) label.moveTo(label.anchorWorld().x + 400, label.anchorWorld().y + 400);
+  const moved = [left(), top()];
+  runCommand(circuit, 'timing φ1=1100');
+  assert.deepEqual([left(), top()], moved);
+  runCommand(circuit, 'timing --place');
+  assert.notDeepEqual([left(), top()], moved);
+});
+
+test('beats follow the timing diagram: one per state, overlapping phases closed together', () => {
+  const circuit = clocked();
+  // φ1 alone, then φ1 with φ2, then φ2 alone; φ̄1 follows inverted.
+  runCommand(circuit, 'timing φ1=110 φ2=011');
+  const states = timingStates(circuit);
+  assert.deepEqual(states.map((s) => [...s.closed].length), [1, 2, 2]);
+  assert.deepEqual(states.map((s) => s.name), ['$\\varphi_1$', '$\\varphi_1$, $\\varphi_2$', '$\\overline{\\varphi_1}$, $\\varphi_2$']);
+  const result = runCommand(circuit, 'beat phases');
+  assert.match(result.text, /timing diagram/);
+  assert.deepEqual(circuit.beats.map((beat) => beat.name), states.map((s) => s.name));
+  assert.equal(switchStateAt(circuit, 'S1', 1), 'closed');
+  assert.equal(switchStateAt(circuit, 'S2', 1), 'closed');
+  assert.equal(switchStateAt(circuit, 'S3', 1), 'open');
+});
+
+test('rows keep the order they were given', () => {
+  const circuit = clocked();
+  runCommand(circuit, 'timing φ1=10 φ2=01 --order φ2,φ1');
+  const order = () => [...circuit.labels.values()].filter((l) => l.timing && l.kind === 'label')
+    .sort((a, b) => a.anchorWorld().y - b.anchorWorld().y).map((l) => l.timing.phase);
+  assert.deepEqual(order(), ['$\\varphi_{2}$', '$\\varphi_{1}$', '$\\overline{\\varphi_{1}}$']);
+  runCommand(circuit, 'timing φ1=1100');
+  assert.deepEqual(order(), ['$\\varphi_{2}$', '$\\varphi_{1}$', '$\\overline{\\varphi_{1}}$'], 'kept through a redraw');
+});
+

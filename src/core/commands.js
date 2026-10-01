@@ -9,7 +9,7 @@ import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom, switchPhases } from './beats.js';
-import { addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed } from './timing-diagram.js';
+import { addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { addBoxAround } from './wrap-box.js';
 import { swapCandidates, swapComponentType } from './swap.js';
@@ -147,6 +147,8 @@ const FLAG_ARITY = {
   'no-gaps': 0,
   fall: 1,
   rise: 1,
+  order: 1,
+  place: 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -556,8 +558,9 @@ export function commandHelp() {
     '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
-    '  beat phases [--after N]        - add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed',
-    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise PHASE=N,...]',
+    '  beat phases [--after N]        - add a beat per state of the timing diagram (phases high together close together),',
+    '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
+    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise PHASE=N,...] [--order A,B,...] [--place]',
     '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
@@ -565,7 +568,9 @@ export function commandHelp() {
     '                                   retakes them from the beats. Waves repeat past both ends; --slot N is a slot\'s',
     '                                   width in cells. --gaps sets which phases never overlap (a one-cell gap where one',
     '                                   falls as the other rises): auto (any two never high together), none, or pairs.',
-    '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier)',
+    '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier);',
+    '                                   --order φ2,φ1 sets the rows\' order; a drawn diagram stays where it stands,',
+    '                                   --place puts it again where the drawing has room for it',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -1012,7 +1017,8 @@ function dispatch(circuit, cmd, pos, flags, io) {
       const kept = key ? current?.shifts.get(key) : null;
       shifts[name] = { fall: shift.fall ?? kept?.fall ?? 0, rise: shift.rise ?? kept?.rise ?? 0 };
     }
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts });
+    const order = flags.order ? String(flags.order[0]).split(',').map((name) => name.trim()).filter(Boolean) : null;
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place });
     const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}`, rows, true);
@@ -1259,8 +1265,10 @@ function beatCommand(circuit, pos, flags, result) {
   }
   if (sub === 'phases') {
     const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
-    const count = phaseBeats(circuit, { index });
-    return result(`added beats ${index + 1}..${index + count}, one per switch phase`, { index: index + 1, count }, true);
+    // With a timing diagram drawn, its states are the beats; else one per phase.
+    const states = timingStates(circuit);
+    const count = phaseBeats(circuit, { index, states });
+    return result(`added beats ${index + 1}..${index + count}, ${states ? 'one per state of the timing diagram' : 'one per switch phase'}`, { index: index + 1, count }, true);
   }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);

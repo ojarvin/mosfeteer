@@ -598,11 +598,17 @@ function railGroups(circuit) {
  * wire; the open switches are never in it.
  */
 export function phaseLive(circuit, key) {
+  return liveWhen(circuit, (phase) => phaseClosedIn(phase, key));
+}
+
+/** What still works while the phases `isClosed(phaseKey)` says are closed --
+ *  any set of them at once, as a timing diagram's state has (phaseLive). */
+export function liveWhen(circuit, isClosed) {
   const rails = railGroups(circuit);
   const closed = (component) => {
     if (!switchState(component)) return true;
     const phase = phaseKey(switchPhase(component));
-    return phase ? phaseClosedIn(phase, key) : switchState(component) === 'closed';
+    return phase ? isClosed(phase) : switchState(component) === 'closed';
   };
   const netsOf = new Map();
   // The ends a part touches: the rails it is on, and the pins on its wires.
@@ -669,20 +675,27 @@ function setSwitchAt(circuit, index, key, state) {
  * shown and the rest -- open switches included -- dimmed (phaseLive). Only
  * phases some switch is on make beats. Returns how many beats.
  */
-export function phaseBeats(circuit, { index = circuit.beats.length } = {}) {
+export function phaseBeats(circuit, { index = circuit.beats.length, states = null } = {}) {
   const phases = switchPhases(circuit);
   if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+  // One phase closed at a time, unless `states` ([{ name, closed: Set of
+  // phase keys }], a timing diagram's) says which close together.
+  const steps = states || phases.map(({ key, source }) => ({
+    name: source,
+    closed: new Set(phases.filter((other) => phaseClosedIn(other.key, key)).map((other) => other.key)),
+  }));
   const listable = [...circuit.components.values()].filter((c) => beatObjectKind(circuit, c.refdes) === 'component');
-  phases.forEach(({ key, source }, step) => {
+  steps.forEach(({ name, closed }, step) => {
     const at = index + step;
-    addBeat(circuit, { index: at, name: source });
-    for (const other of phases) setSwitchAt(circuit, at, other.key, phaseClosedIn(other.key, key) ? 'closed' : 'open');
-    const live = phaseLive(circuit, key);
+    const isClosed = (key) => [...closed].some((other) => samePhase(other, key));
+    addBeat(circuit, { index: at, name });
+    for (const phase of phases) setSwitchAt(circuit, at, phase.key, isClosed(phase.key) ? 'closed' : 'open');
+    const live = liveWhen(circuit, isClosed);
     for (const component of listable) {
       setPresenceAt(circuit, at, [component.refdes], live.has(component.refdes) ? 'show' : 'dim');
     }
   });
-  return phases.length;
+  return steps.length;
 }
 
 // ----- model maintenance -----------------------------------------------------

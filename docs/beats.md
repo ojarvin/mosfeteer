@@ -61,11 +61,17 @@ phase's: flipping either on a beat flips both, and a complement's first switch
 takes the phase's beats the other way round. The drawing itself keeps every
 switch as drawn -- all open, say -- until one is flipped there.
 
-**Beats from switch phases** (More menu; `beat phases`) adds one beat per
-phase, in the order the phases were first drawn, named after the phase. Each
-closes that phase's switches and opens every other phase's -- a complement is
-closed wherever its phase is open -- and shows the
-phase's equivalent circuit: the open switches are dimmed, and the rest splits
+**Beats from phases / timing** (More menu, or the timing editor's **Make
+beats**; `beat phases`) follows one flow: switches name their phases, a timing
+diagram (when one is drawn) says which phases are high when, and the beats
+step through that. With a diagram, it adds one beat per state the diagram
+steps through -- a run of slots with the same phases high -- named after the
+phases high in it, so overlapping phases close together; a wave that ends as
+it starts goes round, its last state being its first. Without a diagram, it
+guesses one phase at a time: a beat per phase, in the order the phases were
+first drawn, closing that phase's switches and opening every other phase's (a
+complement is closed wherever its phase is open). Each beat shows its
+equivalent circuit: the open switches are dimmed, and the rest splits
 into islands joined through anything but a rail. An island's ends are the
 rails, pins, and named nets (a virtual connection) it touches. An island keeps
 working and stays shown, with the pins and rail markers on its wires, when it
@@ -116,6 +122,14 @@ named by its text, TeX, row number, or `~φ1` for its complement; rows not
 named keep their waves, `--beats` retakes them from the beats,
 `--gaps auto|none|φ1:φ2,...` sets the pairs kept apart, and
 `--fall φ1'=-1` / `--rise PHASE=N` shift edges by cells.
+
+A new diagram is placed with its waves centred on the drawing's width, as
+high as the drawing leaves room for it -- floating up into an empty part of
+the drawing -- else below everything. After that it stays where it stands:
+drag it anywhere, and redraws keep it there. It does not move out of the way
+of later drawing; **Re-place** (`timing --place`) puts it where the drawing
+has room again. Rows move up and down with Alt+↑/↓ (or the **Row** buttons;
+`timing --order φ2,φ1`), and keep that order.
 
 The diagram's annotations remember their phase and wave, so drawing it again
 replaces it rather than adding another. They are ordinary lines otherwise:
