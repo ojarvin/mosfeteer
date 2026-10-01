@@ -6,7 +6,7 @@
  */
 
 import { Circuit } from '../core/model.js';
-import { createDocument, loadDocument } from '../core/document.js';
+import { createDocument, loadDocument, relinkDocumentState } from '../core/document.js';
 import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { createWindowSession } from './window-session.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
@@ -650,6 +650,7 @@ function endDocumentRename() {
  */
 export async function renameDocument(name) {
   const oldPath = editor.currentDocumentPath;
+  const oldName = editor.currentCircuitName;
   if (!oldPath || name === editor.currentCircuitName) return false;
   if (!validDocumentName(name)) {
     logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
@@ -681,6 +682,7 @@ export async function renameDocument(name) {
     persistDraft();
     await refreshCircuitList();
     logLine(`Renamed ${displayPath(oldPath)} to ${displayPath(data.path)}.`);
+    await relinkWorkspace(oldName, data.name, data.path);
     return true;
   } catch (err) {
     if (err.code === 'canceled') logLine('Rename canceled.');
@@ -690,6 +692,31 @@ export async function renameDocument(name) {
     editor.saveInFlight -= 1;
     editor.syncGeneration += 1;
     renderSaveState();
+  }
+}
+
+/** A design renamed from `from` to `to`: every other known document whose
+ *  parts link to `from` is saved linking to `to`, unless another design is
+ *  still called `from` (the links then still find one). */
+async function relinkWorkspace(from, to, renamedPath) {
+  const known = [...(editor.workspaceState?.documents || []), ...(editor.workspaceState?.recent || [])]
+    .filter((doc) => (doc.kind === 'circuit' || !doc.kind) && !doc.missing && !doc.locked);
+  if (known.some((doc) => doc.name === from && doc.path !== renamedPath)) return;
+  const relinked = [];
+  for (const doc of known) {
+    if (doc.path === renamedPath || relinked.includes(doc.name)) continue;
+    try {
+      const loaded = await persistence.load(doc.path);
+      if (!relinkDocumentState(loaded.state, from, to)) continue;
+      await persistence.save({ path: doc.path }, loaded.state, { overwrite: true, force: true });
+      relinked.push(doc.name);
+    } catch (err) {
+      logLine(`Could not update the links in ${doc.name}: ${err.message}`, 'error');
+    }
+  }
+  if (relinked.length) {
+    logLine(`Links to ${from} now name ${to} in ${relinked.join(', ')}.`);
+    await refreshCircuitList();
   }
 }
 

@@ -109,3 +109,20 @@ test('a dragged bubble stays where it was put beside its part, and others keep c
   const [moved] = layoutBubbles(drawing, [{ id: 'A', part: { ...part, x: part.x + GRID }, size: { w: 400, h: 300 }, offset }]);
   assert.equal(moved.frame.x, 1000 + GRID);
 });
+
+test('a renamed design\'s links follow it in a saved document', async () => {
+  const { Circuit } = await import('../src/core/model.js');
+  const { relinkDocumentState } = await import('../src/core/document.js');
+  const c = new Circuit();
+  c.addComponent('block', { refdes: 'X1', x: 0, y: 0 });
+  c.addComponent('block', { refdes: 'X2', x: 400, y: 0 });
+  c.addComponent('block', { refdes: 'X3', x: 800, y: 0 });
+  c.setLink('X1', 'amp');
+  c.setLink('X2', 'amp.json');
+  c.setLink('X3', 'bias');
+  const state = c.toJSON();
+  assert.equal(relinkDocumentState(state, 'amp', 'ota'), 2);
+  assert.deepEqual(state.components.map((part) => part.link ?? null), ['ota', 'ota', 'bias']);
+  assert.equal(relinkDocumentState(state, 'missing', 'x'), 0);
+  assert.equal(relinkDocumentState(state, 'ota', 'ota'), 0);
+});

@@ -14666,7 +14666,8 @@ __exports.documentKind = documentKind;
 __exports.createDocument = createDocument;
 __exports.loadDocument = loadDocument;
 __exports.renderDocument = renderDocument;
-let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+__exports.relinkDocumentState = relinkDocumentState;
+let Circuit, normalizeDesignLink; __bind(() => { ({ Circuit, normalizeDesignLink } = __require("src/core/model.js")); });
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 
 
@@ -14697,6 +14698,25 @@ function loadDocument(data) {
   return circuit;
 }
 function renderDocument(document, options = {}) { return svgString(document, options); }
+
+/**
+ * Point every link in a document's saved state that names design `from` at
+ * `to` instead (a design renamed). The state is changed in place; returns how
+ * many parts were relinked.
+ */
+function relinkDocumentState(state, from, to) {
+  const old = normalizeDesignLink(from);
+  const next = normalizeDesignLink(to);
+  if (!old || !next || old === next || !Array.isArray(state?.components)) return 0;
+  let count = 0;
+  for (const component of state.components) {
+    if (component && normalizeDesignLink(component.link) === old) {
+      component.link = next;
+      count += 1;
+    }
+  }
+  return count;
+}
 
 };
 
@@ -37462,7 +37482,7 @@ __exports.startNewDocument = startNewDocument;
 __exports.startSessionHeartbeat = startSessionHeartbeat;
 __exports.installDocumentSession = installDocumentSession;
 let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
-let createDocument, loadDocument; __bind(() => { ({ createDocument, loadDocument } = __require("src/core/document.js")); });
+let createDocument, loadDocument, relinkDocumentState; __bind(() => { ({ createDocument, loadDocument, relinkDocumentState } = __require("src/core/document.js")); });
 let createPersistenceAdapter, validDocumentName; __bind(() => { ({ createPersistenceAdapter, validDocumentName } = __require("src/web/persistence.js")); });
 let createWindowSession; __bind(() => { ({ createWindowSession } = __require("src/web/window-session.js")); });
 let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
@@ -38129,6 +38149,7 @@ function endDocumentRename() {
  */
 async function renameDocument(name) {
   const oldPath = editor.currentDocumentPath;
+  const oldName = editor.currentCircuitName;
   if (!oldPath || name === editor.currentCircuitName) return false;
   if (!validDocumentName(name)) {
     logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
@@ -38160,6 +38181,7 @@ async function renameDocument(name) {
     persistDraft();
     await refreshCircuitList();
     logLine(`Renamed ${displayPath(oldPath)} to ${displayPath(data.path)}.`);
+    await relinkWorkspace(oldName, data.name, data.path);
     return true;
   } catch (err) {
     if (err.code === 'canceled') logLine('Rename canceled.');
@@ -38169,6 +38191,31 @@ async function renameDocument(name) {
     editor.saveInFlight -= 1;
     editor.syncGeneration += 1;
     renderSaveState();
+  }
+}
+
+/** A design renamed from `from` to `to`: every other known document whose
+ *  parts link to `from` is saved linking to `to`, unless another design is
+ *  still called `from` (the links then still find one). */
+async function relinkWorkspace(from, to, renamedPath) {
+  const known = [...(editor.workspaceState?.documents || []), ...(editor.workspaceState?.recent || [])]
+    .filter((doc) => (doc.kind === 'circuit' || !doc.kind) && !doc.missing && !doc.locked);
+  if (known.some((doc) => doc.name === from && doc.path !== renamedPath)) return;
+  const relinked = [];
+  for (const doc of known) {
+    if (doc.path === renamedPath || relinked.includes(doc.name)) continue;
+    try {
+      const loaded = await persistence.load(doc.path);
+      if (!relinkDocumentState(loaded.state, from, to)) continue;
+      await persistence.save({ path: doc.path }, loaded.state, { overwrite: true, force: true });
+      relinked.push(doc.name);
+    } catch (err) {
+      logLine(`Could not update the links in ${doc.name}: ${err.message}`, 'error');
+    }
+  }
+  if (relinked.length) {
+    logLine(`Links to ${from} now name ${to} in ${relinked.join(', ')}.`);
+    await refreshCircuitList();
   }
 }
 

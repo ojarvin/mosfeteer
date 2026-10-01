@@ -3,8 +3,11 @@
 A part can link to another design of the workspace to show what it is -- an
 op-amp in a system drawing linked to the amplifier's transistor schematic.
 The link is loose: it names the design (`ComponentInstance#link`, saved as the
-part's `link`), carries no connectivity, and is never netlisted. A link to a
-design that is not in the workspace (renamed or removed) is simply broken:
+part's `link`), carries no connectivity, and is never netlisted. Renaming a
+design in the editor (More → Rename document…) relinks the workspace's other
+documents to the new name, unless another design still has the old one
+(`relinkDocumentState`). A link to a design that is not in the workspace
+(removed, or renamed outside the editor) is simply broken:
 the side panel marks the part with a red dot (a linked part's dot is otherwise
 the accent color), its bubble says so, and its menu offers another design.
 
