@@ -116,6 +116,10 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
     const spot = candidates.find(([, x, y]) => free(x, y, w, h));
     placed.push({ id: item.id, x: spot[1], y: spot[2], w, h });
   }
+  // Each design, nearest the middle first, slides toward the middle while it
+  // can, so the gaps a design that shrank, moved, or went leaves behind close
+  // up. A settled desk does not move: only a gap moves anything.
+  settle(placed, gap);
   const byId = new Map(placed.map((slot) => [slot.id, slot]));
   const tiles = items.map(({ id, h }) => {
     const slot = byId.get(id);
@@ -127,6 +131,32 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
   const y1 = Math.max(...placed.map((slot) => slot.y + slot.h));
   const slots = new Map(placed.map((slot) => [slot.id, { x: slot.x, y: slot.y, w: slot.w, h: slot.h }]));
   return { tiles, slots, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+}
+
+/** Slide slots toward the middle of the desk (the origin, where packing
+ *  starts), a grid cell at a time along each axis, while the way is free. */
+function settle(placed, gap) {
+  if (placed.length < 2) return;
+  const middle = { x: 0, y: 0 };
+  const free = (slot, x, y) => placed.every((p) => p === slot ||
+    x >= p.x + p.w + gap || p.x >= x + slot.w + gap || y >= p.y + p.h + gap || p.y >= y + slot.h + gap);
+  const away = (slot) => Math.hypot(slot.x + slot.w / 2 - middle.x, slot.y + slot.h / 2 - middle.y);
+  for (let pass = 0; pass < 4; pass += 1) {
+    let moved = false;
+    for (const slot of [...placed].sort((a, b) => away(a) - away(b) || a.id.localeCompare(b.id))) {
+      for (const axis of ['x', 'y']) {
+        const size = axis === 'x' ? slot.w : slot.h;
+        const toward = Math.sign(middle[axis] - (slot[axis] + size / 2));
+        // Only while the step brings it nearer, never past the middle.
+        while (toward && Math.abs(middle[axis] - (slot[axis] + toward * GRID + size / 2)) < Math.abs(middle[axis] - (slot[axis] + size / 2))
+          && free(slot, axis === 'x' ? slot.x + toward * GRID : slot.x, axis === 'y' ? slot.y + toward * GRID : slot.y)) {
+          slot[axis] += toward * GRID;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
 }
 
 /** Relatedness below this is no kinship at all. */

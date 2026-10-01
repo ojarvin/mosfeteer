@@ -103,8 +103,12 @@ test('a desk packed before keeps its designs where they were', () => {
     const was = first.slots.get(tile.id);
     return was.x !== layout.slots.get(tile.id).x || was.y !== layout.slots.get(tile.id).y;
   }).length;
-  assert.ok(moved(kept) <= 1, `only the grown design moves (${moved(kept)})`);
+  // The grown design moves, and its neighbours close the gap it left; the
+  // rest stay put.
+  assert.ok(moved(kept) <= 3, `only the grown design and the gap's neighbours move (${moved(kept)})`);
   assert.ok(moved(kept) < moved(fresh));
+  // Unchanged, the desk does not move at all.
+  assert.equal(moved(layoutAtlas(items, { previous: first.slots })), 0);
   // Nothing overlaps.
   for (const a of kept.tiles) for (const b of kept.tiles) {
     if (a === b) continue;
@@ -141,3 +145,18 @@ test('a renamed design keeps its remembered place on the desk', () => {
   carryDeskPlace('/ws/amp.json', '/ws/ota.json', storage);
   assert.deepEqual(JSON.parse(data.get(`${DESK_KEY}/ws`)), { '/ws/ota.json': { x: 40, y: 80, w: 400, h: 320 } });
 });
+
+test('the desk closes the gap a design leaves', () => {
+  const items = Array.from({ length: 9 }, (_, i) => ({ id: `d${i}`, w: 6 * GRID, h: 4 * GRID }));
+  const first = layoutAtlas(items);
+  // The middle design goes (deleted, or renamed away): a neighbour slides
+  // into its spot, so the hole moves out to the edge of the desk.
+  const middle = first.tiles.find((tile) => tile.x <= 0 && tile.x + tile.w >= 0 && tile.y <= 0 && tile.y + tile.h >= 0);
+  const after = layoutAtlas(items.filter((item) => item.id !== middle.id), { previous: first.slots });
+  assert.ok(after.tiles.some((tile) => tile.x <= 0 && tile.x + tile.w >= 0 && tile.y <= 0 && tile.y + tile.h >= 0), 'the middle is filled');
+  for (const a of after.tiles) for (const b of after.tiles) {
+    if (a === b) continue;
+    assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h + ATLAS_CAPTION <= b.y || b.y + b.h + ATLAS_CAPTION <= a.y);
+  }
+});
+
