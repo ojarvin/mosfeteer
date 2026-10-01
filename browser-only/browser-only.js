@@ -31731,10 +31731,11 @@ function draw() {
     const entry = state.entries.get(tile.id);
     const found = state.matches?.get(tile.id);
     // A search fades every design it does not find; what it finds in one is
-    // marked under the drawing, like a highlighter.
+    // marked under the drawing, like a highlighter, while the search box has
+    // focus -- away from it, the marks step aside and the drawings read clean.
     const fade = (state.matches && !found ? 0.18 : 1) * alpha;
     ctx.globalAlpha = alpha;
-    if (found?.hits.length) drawHits(ctx, tile, entry, found.hits, palette);
+    if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
     ctx.globalAlpha = (entry.current ? 1 : reveal) * fade;
     const level = detail === 'small' ? 'small' : 'large';
     const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
@@ -32907,6 +32908,9 @@ function installAtlas() {
     });
   });
   searchEl?.addEventListener('input', () => applySearch(searchEl.value));
+  // The highlighter marks show only while the search box has focus.
+  searchEl?.addEventListener('focus', () => requestDraw());
+  searchEl?.addEventListener('blur', () => requestDraw());
   searchEl?.addEventListener('keydown', (ev) => {
     // The desk's own keys (z, f, arrows) are text here.
     ev.stopPropagation();

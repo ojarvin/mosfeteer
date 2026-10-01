@@ -77,7 +77,8 @@ The search field finds designs by what is in them: part names, part types
 (`pmos`, `current source`), net names, and any text, looking through markup
 (`vcm`, `V_CM`, and `V_{CM}` are the same word). Every word must be found;
 `#word` looks only at the document's tags. Designs it does not find fade,
-and what it finds is marked in each design. When typing pauses (400 ms), the
+and what it finds is marked in each design while the field has focus (the
+marks step aside when it loses it, and return with it). When typing pauses (400 ms), the
 desk packs the designs found together on their own and fits them; a search
 that finds nothing leaves the desk as it was, faded. Enter, Esc, and
 clearing the search pack at once. Enter (Shift+Enter) steps through the
