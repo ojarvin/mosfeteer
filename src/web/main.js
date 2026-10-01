@@ -62,7 +62,7 @@ import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatO
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
-import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
+import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
 import { installFindReplace, openFind, openReplace, renderTextMatches } from './find-replace-ui.js';
 import { installTagsField, renderTagsField } from './tags-ui.js';
 import { installCommandLine } from './command-line-ui.js';
@@ -8023,6 +8023,7 @@ window.addEventListener('keydown', (ev) => {
 
 installCommandLine();
 installAtlas();
+installMarkupShortcuts();
 
 // ----- boot ------------------------------------------------------------
 

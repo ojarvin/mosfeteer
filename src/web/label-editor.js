@@ -373,6 +373,8 @@ export function inlineEditLabel(label, options = {}) {
   // again on the same selection; a selection that mixes plain and sub/super
   // text reverts everything in it to normal. The canvas re-renders the markup
   // live so the effect is visible while editing.
+  // Ctrl+, / Ctrl+. are handled here, live (side-panel.js installMarkupShortcuts).
+  input.dataset.markupKeys = 'own';
   const toggleMarkup = (mark) => {
     const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, mark);
     if (!res) return;

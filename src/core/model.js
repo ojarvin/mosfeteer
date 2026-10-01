@@ -467,7 +467,10 @@ export const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent'])
 /**
  * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
  * raw label string (used by the inline label editor's Ctrl+, / Ctrl+. ).
- * Returns {text, selStart, selEnd} or null when there is no selection.
+ * Returns {text, selStart, selEnd}.
+ *  - With no selection, a caret inside a group of that mark steps out past
+ *    its `}` (an empty group is removed); elsewhere an empty group opens at
+ *    the caret, which goes inside it: type `V`, Ctrl+, `OUT` for `V_{OUT}`.
  *  - A selection fully inside one `_{...}`/`^{...}` group unwraps that group
  *    (pressing the hotkey again reverts the subscript).
  *  - A selection that overlaps any markup unwraps every group it touches
@@ -475,7 +478,17 @@ export const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent'])
  *  - Otherwise (plain text) the selection is wrapped in the markup.
  */
 export function applyMarkup(text, s, e, mark) {
-  if (s === e || s > e) return null;
+  if (s > e) return null;
+  if (s === e) {
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== mark || text[i + 1] !== '{') continue;
+      const j = text.indexOf('}', i + 2);
+      if (j === -1 || s < i + 2 || s > j) continue;
+      if (j === i + 2) return { text: text.slice(0, i) + text.slice(j + 1), selStart: i, selEnd: i };
+      return { text, selStart: j + 1, selEnd: j + 1 };
+    }
+    return { text: `${text.slice(0, s)}${mark}{}${text.slice(s)}`, selStart: s + 2, selEnd: s + 2 };
+  }
   const groups = [];
   for (let i = 0; i < text.length; i++) {
     if (text[i] === mark && text[i + 1] === '{') {

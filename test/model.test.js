@@ -2562,8 +2562,12 @@ test('applyMarkup wraps, unwraps, and reverts mixed selections', () => {
   // a selection spanning markup + plain text reverts everything to normal
   r = applyMarkup('V_{IN}OUT', 1, 5, '_');
   assert.deepEqual(r, { text: 'VINOUT', selStart: 1, selEnd: 5 });
-  // no selection -> null
-  assert.equal(applyMarkup('abc', 1, 1, '_'), null);
+  // no selection: a group opens at the caret, the caret inside; again, it
+  // steps out past the group (an empty one goes)
+  r = applyMarkup('V', 1, 1, '_');
+  assert.deepEqual(r, { text: 'V_{}', selStart: 3, selEnd: 3 });
+  assert.deepEqual(applyMarkup(r.text, 3, 3, '_'), { text: 'V', selStart: 1, selEnd: 1 });
+  assert.deepEqual(applyMarkup('V_{OUT}', 6, 6, '_'), { text: 'V_{OUT}', selStart: 7, selEnd: 7 });
 });
 
 test('owned label anchorWorld follows the component transform', () => {

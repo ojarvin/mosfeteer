@@ -304,16 +304,26 @@ export function renderNets() {
 
 /** Open the inline refdes editor for a component row. Invalid or occupied
  * names are rejected before commit, leaving the model and selection untouched. */
-/** Ctrl/Cmd+, and Ctrl/Cmd+. toggle sub/superscript markup in a plain name field. */
-function bindMarkupShortcuts(input) {
-  input.addEventListener('keydown', (ev) => {
-    if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== ',' && ev.key !== '.')) return;
+/** Ctrl/Cmd+, and Ctrl/Cmd+. toggle sub/superscript markup in any text
+ * field or text area, wherever a name or label is typed: one handler for the
+ * page, so a field added later has it too. It listens before the field
+ * does, as a field may keep its keys from the editor; one that handles them
+ * itself (the label editor, `data-markup-keys="own"`) is left to. */
+export function installMarkupShortcuts() {
+  document.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented || !(ev.ctrlKey || ev.metaKey) || ev.altKey || (ev.key !== ',' && ev.key !== '.')) return;
+    const input = ev.target;
+    const typed = input?.tagName === 'TEXTAREA' || (input?.tagName === 'INPUT' && ['text', 'search', ''].includes(input.type));
+    if (!typed || input.readOnly || input.disabled || input.dataset.markupKeys === 'own') return;
     ev.preventDefault();
+    ev.stopPropagation();
     const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, ev.key === ',' ? '_' : '^');
     if (!res) return;
     input.value = res.text;
     input.setSelectionRange(res.selStart, res.selEnd);
-  });
+    // Fields that react as they are typed into (find, the timing editor) see it.
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, true);
 }
 
 export function startComponentRename(comp, ref) {
@@ -327,7 +337,6 @@ export function startComponentRename(comp, ref) {
   input.value = currentLabel?.text || (ordinaryInstance ? componentLabelText(comp.refdes) : comp.refdes);
   input.placeholder = input.value;
   input.spellcheck = false;
-  bindMarkupShortcuts(input);
   ref.replaceWith(input);
   editor.inlineInput = input;
   input.focus();
@@ -398,7 +407,6 @@ export function startNetRename(net, ref) {
   input.value = net.name || '';
   input.placeholder = net.id;
   input.spellcheck = false;
-  bindMarkupShortcuts(input);
   ref.replaceWith(input);
   input.focus();
   input.select();

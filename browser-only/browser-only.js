@@ -16311,7 +16311,10 @@ const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
 /**
  * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
  * raw label string (used by the inline label editor's Ctrl+, / Ctrl+. ).
- * Returns {text, selStart, selEnd} or null when there is no selection.
+ * Returns {text, selStart, selEnd}.
+ *  - With no selection, a caret inside a group of that mark steps out past
+ *    its `}` (an empty group is removed); elsewhere an empty group opens at
+ *    the caret, which goes inside it: type `V`, Ctrl+, `OUT` for `V_{OUT}`.
  *  - A selection fully inside one `_{...}`/`^{...}` group unwraps that group
  *    (pressing the hotkey again reverts the subscript).
  *  - A selection that overlaps any markup unwraps every group it touches
@@ -16319,7 +16322,17 @@ const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
  *  - Otherwise (plain text) the selection is wrapped in the markup.
  */
 function applyMarkup(text, s, e, mark) {
-  if (s === e || s > e) return null;
+  if (s > e) return null;
+  if (s === e) {
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== mark || text[i + 1] !== '{') continue;
+      const j = text.indexOf('}', i + 2);
+      if (j === -1 || s < i + 2 || s > j) continue;
+      if (j === i + 2) return { text: text.slice(0, i) + text.slice(j + 1), selStart: i, selEnd: i };
+      return { text, selStart: j + 1, selEnd: j + 1 };
+    }
+    return { text: `${text.slice(0, s)}${mark}{}${text.slice(s)}`, selStart: s + 2, selEnd: s + 2 };
+  }
   const groups = [];
   for (let i = 0; i < text.length; i++) {
     if (text[i] === mark && text[i + 1] === '{') {
@@ -43172,6 +43185,8 @@ function inlineEditLabel(label, options = {}) {
   // again on the same selection; a selection that mixes plain and sub/super
   // text reverts everything in it to normal. The canvas re-renders the markup
   // live so the effect is visible while editing.
+  // Ctrl+, / Ctrl+. are handled here, live (side-panel.js installMarkupShortcuts).
+  input.dataset.markupKeys = 'own';
   const toggleMarkup = (mark) => {
     const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, mark);
     if (!res) return;
@@ -43896,7 +43911,7 @@ let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObject
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
-let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, sidePanelVisible, setSidePanelVisible } = __require("src/web/side-panel.js")); });
+let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts, sidePanelVisible, setSidePanelVisible; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts, sidePanelVisible, setSidePanelVisible } = __require("src/web/side-panel.js")); });
 let installFindReplace, openFind, openReplace, renderTextMatches; __bind(() => { ({ installFindReplace, openFind, openReplace, renderTextMatches } = __require("src/web/find-replace-ui.js")); });
 let installTagsField, renderTagsField; __bind(() => { ({ installTagsField, renderTagsField } = __require("src/web/tags-ui.js")); });
 let installCommandLine; __bind(() => { ({ installCommandLine } = __require("src/web/command-line-ui.js")); });
@@ -51928,6 +51943,7 @@ window.addEventListener('keydown', (ev) => {
 
 installCommandLine();
 installAtlas();
+installMarkupShortcuts();
 
 // ----- boot ------------------------------------------------------------
 
@@ -53877,6 +53893,7 @@ __exports.componentDisplayName = componentDisplayName;
 __exports.appendMarkupText = appendMarkupText;
 __exports.renderComponents = renderComponents;
 __exports.renderNets = renderNets;
+__exports.installMarkupShortcuts = installMarkupShortcuts;
 __exports.startComponentRename = startComponentRename;
 __exports.startNetRename = startNetRename;
 __exports.renderDetail = renderDetail;
@@ -54207,16 +54224,26 @@ function renderNets() {
 
 /** Open the inline refdes editor for a component row. Invalid or occupied
  * names are rejected before commit, leaving the model and selection untouched. */
-/** Ctrl/Cmd+, and Ctrl/Cmd+. toggle sub/superscript markup in a plain name field. */
-function bindMarkupShortcuts(input) {
-  input.addEventListener('keydown', (ev) => {
-    if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== ',' && ev.key !== '.')) return;
+/** Ctrl/Cmd+, and Ctrl/Cmd+. toggle sub/superscript markup in any text
+ * field or text area, wherever a name or label is typed: one handler for the
+ * page, so a field added later has it too. It listens before the field
+ * does, as a field may keep its keys from the editor; one that handles them
+ * itself (the label editor, `data-markup-keys="own"`) is left to. */
+function installMarkupShortcuts() {
+  document.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented || !(ev.ctrlKey || ev.metaKey) || ev.altKey || (ev.key !== ',' && ev.key !== '.')) return;
+    const input = ev.target;
+    const typed = input?.tagName === 'TEXTAREA' || (input?.tagName === 'INPUT' && ['text', 'search', ''].includes(input.type));
+    if (!typed || input.readOnly || input.disabled || input.dataset.markupKeys === 'own') return;
     ev.preventDefault();
+    ev.stopPropagation();
     const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, ev.key === ',' ? '_' : '^');
     if (!res) return;
     input.value = res.text;
     input.setSelectionRange(res.selStart, res.selEnd);
-  });
+    // Fields that react as they are typed into (find, the timing editor) see it.
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, true);
 }
 
 function startComponentRename(comp, ref) {
@@ -54230,7 +54257,6 @@ function startComponentRename(comp, ref) {
   input.value = currentLabel?.text || (ordinaryInstance ? componentLabelText(comp.refdes) : comp.refdes);
   input.placeholder = input.value;
   input.spellcheck = false;
-  bindMarkupShortcuts(input);
   ref.replaceWith(input);
   editor.inlineInput = input;
   input.focus();
@@ -54301,7 +54327,6 @@ function startNetRename(net, ref) {
   input.value = net.name || '';
   input.placeholder = net.id;
   input.spellcheck = false;
-  bindMarkupShortcuts(input);
   ref.replaceWith(input);
   input.focus();
   input.select();
