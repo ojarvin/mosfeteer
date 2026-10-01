@@ -303,8 +303,13 @@ geometry; the rules for how to lay them out are in `style-guide.md`.
   commits at a free point or wire interior, so the new endpoint need not be a
   terminal. Hold `Alt` while wiring to snap the cursor to the nearest
   terminal; releasing `Alt` returns to ordinary grid cursor behavior. `F3`
-  toggles the route choice for new wires. There is no separate uppercase-`W`
-  editor mode.
+  toggles the route choice for new wires: orthogonal mode autoroutes each leg,
+  diagonal mode draws each leg between clicked points straight (legs at pins
+  are still routed). Only the diagonal segments themselves are special: an
+  orthogonal segment drawn in diagonal mode routes, reroutes, and is joined
+  exactly as one drawn in orthogonal mode, and a net's orthogonal branches
+  reroute as usual beside its diagonal ones. There is no separate
+  uppercase-`W` editor mode.
 - While placing a component or copying a selection, hold `Alt` to pin a mirror
   axis and place the mirrored pair in one gesture. `Ctrl/Cmd+R` remains the
   explicit vertical-mirror transform; `Alt` is not a wire-symmetry mode.

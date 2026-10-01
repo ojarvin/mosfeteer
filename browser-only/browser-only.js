@@ -19870,7 +19870,9 @@ class Circuit {
     // first move made. A fresh route between the same two ends replaces it
     // when that fails, or when the fresh one is no longer and bends no more:
     // the move has just straightened the wire.
-    const authoredDiagonal = net.allowDiagonal || poly.some((p, i) => i > 0 && isDiagonalSegment(poly[i - 1], p));
+    // Only a branch with diagonal segments is authored diagonal wire; the
+    // orthogonal branches of the same net reroute like any other.
+    const authoredDiagonal = poly.some((p, i) => i > 0 && isDiagonalSegment(poly[i - 1], p));
     const straightened = (joined, fresh) => {
       if (authoredDiagonal) return joined;
       const route = fresh();
@@ -47736,7 +47738,7 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
       return;
     }
     const wireHit = pickWire({ x, y });
-    if (wire.routeStyle === 'diagonal' && wireHit) {
+    if (wire.routeStyle === 'diagonal' && wireHit && diagonalWireHit(wireHit)) {
       const target = exactWireTargetAt({ x, y });
       if (target?.ambiguous) {
         logLine('diagonal wire target is ambiguous — select one exact path');
@@ -47762,6 +47764,16 @@ function doWireClick(x, y, terminalHit, fixedEndpoint = null, fixedTarget = null
   render();
 }
 
+/** Whether a wire hit is on a diagonal segment. Only diagonal wire is met at
+ *  exact points in diagonal mode; an orthogonal segment is met as the
+ *  orthogonal mode meets it, whichever mode drew it. */
+function diagonalWireHit(hit) {
+  const path = hit?.net?.paths()[hit.branch];
+  const a = path?.[hit.seg - 1];
+  const b = path?.[hit.seg];
+  return !!a && !!b && a.x !== b.x && a.y !== b.y;
+}
+
 /** A wire begun by clicking in the Wire tool: the situation both the Alt-snap
  *  and the pin-drag tips are about. The first tip that is due wins. */
 function noteWireToolStart() {
@@ -47779,7 +47791,7 @@ function startWireAt(w) {
   if (wireHit) {
     let P;
     let k;
-    if (wire.routeStyle === 'diagonal') {
+    if (wire.routeStyle === 'diagonal' && diagonalWireHit(wireHit)) {
       const target = exactWireTargetAt(w);
       if (target?.ambiguous || !target || target.netId !== wireHit.net.id || target.pathIndex !== wireHit.branch) {
         logLine('diagonal wire must start at one exact point on the selected wire');
@@ -47905,7 +47917,7 @@ function joinWireToNet(wireHit, selectedTarget = null) {
     }
     P = targetIdentity.point;
     k = targetIdentity.segmentIndex - 1;
-  } else if (wire.routeStyle === 'diagonal') {
+  } else if (wire.routeStyle === 'diagonal' && diagonalWireHit(wireHit)) {
     targetIdentity = exactWireTargetAt(cursor);
     if (targetIdentity?.ambiguous) {
       logLine('diagonal wire target is ambiguous — select one exact wire target');

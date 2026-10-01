@@ -1587,6 +1587,29 @@ test('dragging a part back straightens the detour its first move made', () => {
   assert.deepEqual(n.paths(), [[{ x: 520, y: 400 }, { x: 560, y: 400 }]]);
 });
 
+
+test('a diagonal branch elsewhere in a net does not freeze its orthogonal branches', () => {
+  const c = new Circuit();
+  c.addComponent('switch_open', { refdes: 'S1', x: 440, y: 400 });
+  c.addComponent('ground', { refdes: 'G1', x: 560, y: 400, rotation: 270 });
+  c.addComponent('resistor', { refdes: 'R1', x: 880, y: 760 });
+  const n = c.connect('S1.b', 'G1.gnd');
+  c.getComponent('S1').transform.y -= 80;
+  // The detour, plus a diagonal branch from the ground's pin to R1.
+  n.terminals.push({ comp: 'R1', term: 'a' });
+  n.branches = [
+    [{ x: 520, y: 320 }, { x: 560, y: 320 }, { x: 560, y: 360 }, { x: 480, y: 360 }, { x: 480, y: 400 }, { x: 560, y: 400 }],
+    [{ x: 560, y: 400 }, { x: 760, y: 600 }, { x: 800, y: 600 }, { x: 800, y: 760 }],
+  ];
+  n.route = n.branches[0];
+  n.allowDiagonal = true;
+  c.getComponent('S1').transform.y += 80;
+  assert.equal(c.rerouteNet(n, new Map([['S1', { dx: 0, dy: 80 }]])), true);
+  assert.deepEqual(n.paths()[0], [{ x: 520, y: 400 }, { x: 560, y: 400 }]);
+  // The diagonal branch is left as drawn.
+  assert.deepEqual(n.paths()[1], [{ x: 560, y: 400 }, { x: 760, y: 600 }, { x: 800, y: 600 }, { x: 800, y: 760 }]);
+});
+
 test('fixed geometry is protected from refresh and reduction but deletable literally', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });

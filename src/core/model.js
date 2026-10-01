@@ -4026,7 +4026,9 @@ export class Circuit {
     // first move made. A fresh route between the same two ends replaces it
     // when that fails, or when the fresh one is no longer and bends no more:
     // the move has just straightened the wire.
-    const authoredDiagonal = net.allowDiagonal || poly.some((p, i) => i > 0 && isDiagonalSegment(poly[i - 1], p));
+    // Only a branch with diagonal segments is authored diagonal wire; the
+    // orthogonal branches of the same net reroute like any other.
+    const authoredDiagonal = poly.some((p, i) => i > 0 && isDiagonalSegment(poly[i - 1], p));
     const straightened = (joined, fresh) => {
       if (authoredDiagonal) return joined;
       const route = fresh();
