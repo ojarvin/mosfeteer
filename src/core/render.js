@@ -573,6 +573,11 @@ function shapeAnnotationSvg(label, opacity = '') {
   }
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
+  if (label.kind === 'box' && label.image) {
+    // A pasted picture, whole and undistorted in its box.
+    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+    return `<image class="image-annotation" x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" preserveAspectRatio="xMidYMid meet" href="${label.image.src}"${opacity}/>`;
+  }
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;

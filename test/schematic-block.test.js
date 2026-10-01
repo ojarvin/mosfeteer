@@ -222,3 +222,23 @@ test('block sizes are even cell counts, keeping the center and every pin on the 
   legacy.components.find((c) => c.refdes === 'B1').blockSize = { w: 240, h: 120 };
   assert.deepEqual(Circuit.fromJSON(legacy).components.get('B1').blockSize, { w: 240, h: 120 });
 });
+
+test('a pasted picture is a box that keeps its proportions, saved and drawn whole', async () => {
+  const { normalizeImage } = await import('../src/core/model.js');
+  const { svgString } = await import('../src/core/render.js');
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.equal(normalizeImage({ src: 'data:image/svg+xml;base64,PHN2Zz4=', aspect: 1 }), null, 'no SVG: it could carry script');
+  assert.equal(normalizeImage({ src: png, aspect: 0 }), null);
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, image: { src: png, aspect: 2 } });
+  // Dragging the right edge out: the height follows.
+  box.resizeBox({ x: 0, y: 0, w: 800, h: 200 });
+  assert.deepEqual([box.anchor, box.end], [{ x: 0, y: 0 }, { x: 800, y: 400 }]);
+  // Dragging the top edge up from the bottom: the width follows, left kept.
+  box.resizeBox({ x: 0, y: -400, w: 800, h: 800 });
+  assert.deepEqual([box.anchor, box.end], [{ x: 0, y: -400 }, { x: 1600, y: 400 }]);
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  const again = [...loaded.labels.values()][0];
+  assert.deepEqual(again.image, { src: png, aspect: 2 });
+  assert.match(svgString(loaded), /<image class="image-annotation"[^>]*preserveAspectRatio="xMidYMid meet" href="data:image\/png;base64,/);
+});

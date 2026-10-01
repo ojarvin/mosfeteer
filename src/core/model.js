@@ -874,6 +874,19 @@ function labelMatchesRefdes(text, refdes) {
 const finite = (value) => Number.isFinite(value);
 const round = (value, digits = 4) => Number(value.toPrecision(digits));
 
+/** The largest picture a document keeps, as data URL text. */
+export const MAX_IMAGE_DATA = 4 * 1024 * 1024;
+
+/** A pasted picture as saved: a PNG, JPEG, or WebP data URL (raster only --
+ *  an SVG could carry script) and its width over height; null otherwise. */
+export function normalizeImage(image) {
+  const src = typeof image?.src === 'string' ? image.src : '';
+  const aspect = Number(image?.aspect);
+  if (src.length > MAX_IMAGE_DATA || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(src)) return null;
+  if (!(aspect > 0) || !Number.isFinite(aspect)) return null;
+  return { src, aspect };
+}
+
 /** A timing diagram row's data, as saved: its phase, its own wave (1s and
  * 0s), the slot width in cells, which phases are kept from overlapping
  * (`gaps`), and its edge shift; null when unusable. */
@@ -997,6 +1010,8 @@ export class LabelInstance {
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
     this.plot = this.kind === 'box' && opts.plot ? normalizePlot(opts.plot) : null;
+    // A box may carry a pasted picture drawn in its place, at its own aspect.
+    this.image = this.kind === 'box' && opts.image ? normalizeImage(opts.image) : null;
     // A timing diagram's name or wave (timing-diagram.js) remembers its row.
     this.timing = normalizeTiming(opts.timing);
     const net = this.netId ? circuit.nets.get(this.netId) : null;
@@ -1390,6 +1405,18 @@ export class LabelInstance {
       x0: Math.min(this.anchor.x, this.end.x), x1: Math.max(this.anchor.x, this.end.x),
       y0: Math.min(this.anchor.y, this.end.y), y1: Math.max(this.anchor.y, this.end.y),
     };
+    // A picture keeps its proportions: the side dragged sets the size, the
+    // other follows (to the nearest cell), from the edges that stayed put.
+    if (this.image) {
+      const aspect = this.image.aspect;
+      const widthLed = (next.x1 - next.x0) !== (prev.x1 - prev.x0) || (next.y1 - next.y0) === (prev.y1 - prev.y0);
+      let w = next.x1 - next.x0;
+      let h = next.y1 - next.y0;
+      if (widthLed) h = Math.max(GRID, snap(w / aspect));
+      else w = Math.max(GRID, snap(h * aspect));
+      if (next.x0 !== prev.x0 && next.x1 === prev.x1) next.x0 = next.x1 - w; else next.x1 = next.x0 + w;
+      if (next.y0 !== prev.y0 && next.y1 === prev.y1) next.y0 = next.y1 - h; else next.y1 = next.y0 + h;
+    }
     const follow = (v, a0, a1, b0, b1) => {
       const refs = [[a0, b0], [(a0 + a1) / 2, (b0 + b1) / 2], [a1, b1]];
       const [from, to] = refs.reduce((best, ref) => (Math.abs(v - ref[0]) < Math.abs(v - best[0]) ? ref : best));
@@ -1504,6 +1531,7 @@ export class LabelInstance {
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
+      ...(this.image ? { image: { ...this.image } } : {}),
       ...(this.timing ? { timing: { ...this.timing } } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -6777,6 +6805,7 @@ export class Circuit {
           points: l.points || null,
           textAnchor: l.textAnchor || null,
           plot: l.plot || null,
+          image: l.image || null,
           timing: l.timing || null,
           style: l.style || null,
           drawOrder: l.drawOrder,

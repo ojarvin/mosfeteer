@@ -510,7 +510,12 @@ wire after it is clicked instead); at a crossing, select/highlight the
 intended net first. `Shift+N` likewise asks for its text first, places it
 once, and returns to selection; `a` places a multi-point arrow by
 clicking vertices, while `b` places one box. The generic insert-menu entry is
-also an annotation. `l` draws a non-electrical multi-point line annotation with
+also an annotation. A picture pasted onto the drawing (Ctrl/Cmd+V with a PNG,
+JPEG, WebP, GIF, or BMP on the clipboard; never SVG, which could carry script)
+becomes a box annotation drawing it whole: kept in the document as a PNG,
+JPEG, or WebP data URL (scaled to at most 1600 px, 4 MB), resized from its
+handles keeping its proportions, and exported with the drawing; linked-design
+bubbles leave it out. `l` draws a non-electrical multi-point line annotation with
 rounded caps; its snapped vertices and segments remain editable. Line and
 arrow drafts share the wire tool's keys: Enter ends at the cursor, Backspace
 removes the last point, Shift locks the current leg orthogonal (as it locks a

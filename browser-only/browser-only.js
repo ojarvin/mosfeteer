@@ -15828,6 +15828,7 @@ __exports.normalizeMathSource = normalizeMathSource;
 __exports.normalizeComponentRefdes = normalizeComponentRefdes;
 __exports.componentNameIdentity = componentNameIdentity;
 __exports.componentLabelText = componentLabelText;
+__exports.normalizeImage = normalizeImage;
 __exports.normalizeTiming = normalizeTiming;
 __exports.normalizePlot = normalizePlot;
 __exports.pathHasDiagonal = pathHasDiagonal;
@@ -16719,6 +16720,19 @@ function labelMatchesRefdes(text, refdes) {
 const finite = (value) => Number.isFinite(value);
 const round = (value, digits = 4) => Number(value.toPrecision(digits));
 
+/** The largest picture a document keeps, as data URL text. */
+const MAX_IMAGE_DATA = 4 * 1024 * 1024;
+
+/** A pasted picture as saved: a PNG, JPEG, or WebP data URL (raster only --
+ *  an SVG could carry script) and its width over height; null otherwise. */
+function normalizeImage(image) {
+  const src = typeof image?.src === 'string' ? image.src : '';
+  const aspect = Number(image?.aspect);
+  if (src.length > MAX_IMAGE_DATA || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(src)) return null;
+  if (!(aspect > 0) || !Number.isFinite(aspect)) return null;
+  return { src, aspect };
+}
+
 /** A timing diagram row's data, as saved: its phase, its own wave (1s and
  * 0s), the slot width in cells, which phases are kept from overlapping
  * (`gaps`), and its edge shift; null when unusable. */
@@ -16842,6 +16856,8 @@ class LabelInstance {
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
     this.plot = this.kind === 'box' && opts.plot ? normalizePlot(opts.plot) : null;
+    // A box may carry a pasted picture drawn in its place, at its own aspect.
+    this.image = this.kind === 'box' && opts.image ? normalizeImage(opts.image) : null;
     // A timing diagram's name or wave (timing-diagram.js) remembers its row.
     this.timing = normalizeTiming(opts.timing);
     const net = this.netId ? circuit.nets.get(this.netId) : null;
@@ -17235,6 +17251,18 @@ class LabelInstance {
       x0: Math.min(this.anchor.x, this.end.x), x1: Math.max(this.anchor.x, this.end.x),
       y0: Math.min(this.anchor.y, this.end.y), y1: Math.max(this.anchor.y, this.end.y),
     };
+    // A picture keeps its proportions: the side dragged sets the size, the
+    // other follows (to the nearest cell), from the edges that stayed put.
+    if (this.image) {
+      const aspect = this.image.aspect;
+      const widthLed = (next.x1 - next.x0) !== (prev.x1 - prev.x0) || (next.y1 - next.y0) === (prev.y1 - prev.y0);
+      let w = next.x1 - next.x0;
+      let h = next.y1 - next.y0;
+      if (widthLed) h = Math.max(GRID, snap(w / aspect));
+      else w = Math.max(GRID, snap(h * aspect));
+      if (next.x0 !== prev.x0 && next.x1 === prev.x1) next.x0 = next.x1 - w; else next.x1 = next.x0 + w;
+      if (next.y0 !== prev.y0 && next.y1 === prev.y1) next.y0 = next.y1 - h; else next.y1 = next.y0 + h;
+    }
     const follow = (v, a0, a1, b0, b1) => {
       const refs = [[a0, b0], [(a0 + a1) / 2, (b0 + b1) / 2], [a1, b1]];
       const [from, to] = refs.reduce((best, ref) => (Math.abs(v - ref[0]) < Math.abs(v - best[0]) ? ref : best));
@@ -17349,6 +17377,7 @@ class LabelInstance {
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
+      ...(this.image ? { image: { ...this.image } } : {}),
       ...(this.timing ? { timing: { ...this.timing } } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -22622,6 +22651,7 @@ class Circuit {
           points: l.points || null,
           textAnchor: l.textAnchor || null,
           plot: l.plot || null,
+          image: l.image || null,
           timing: l.timing || null,
           style: l.style || null,
           drawOrder: l.drawOrder,
@@ -22683,6 +22713,7 @@ __exports.MATH_LABEL_PAD = MATH_LABEL_PAD;
 __exports.LABEL_ALIGNS = LABEL_ALIGNS;
 __exports.INTERFACE_PIN_TYPES = INTERFACE_PIN_TYPES;
 __exports.MOS_ANALYSIS_TYPES = MOS_ANALYSIS_TYPES;
+__exports.MAX_IMAGE_DATA = MAX_IMAGE_DATA;
 __exports.LabelInstance = LabelInstance;
 __exports.ComponentInstance = ComponentInstance;
 __exports.Net = Net;
@@ -23673,6 +23704,11 @@ function shapeAnnotationSvg(label, opacity = '') {
   }
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
+  if (label.kind === 'box' && label.image) {
+    // A pasted picture, whole and undistorted in its box.
+    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+    return `<image class="image-annotation" x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" preserveAspectRatio="xMidYMid meet" href="${label.image.src}"${opacity}/>`;
+  }
   if (label.kind === 'box') {
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
     return `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(Math.abs(b.x - a.x))}" height="${fmt(Math.abs(b.y - a.y))}" fill="none"${opacity} ${attrs}/>`;
@@ -36872,8 +36908,8 @@ __exports.publishObjectClipboard = publishObjectClipboard;
 __exports.armObjectPaste = armObjectPaste;
 __exports.pasteClipboard = pasteClipboard;
 __exports.installCopyPaste = installCopyPaste;
-let Circuit, INTERFACE_PIN_TYPES, canonicalNetName, normalizeComponentRefdes, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, canonicalNetName, normalizeComponentRefdes, transformWorldPoints } = __require("src/core/model.js")); });
-let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
+let Circuit, INTERFACE_PIN_TYPES, MAX_IMAGE_DATA, canonicalNetName, normalizeComponentRefdes, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, MAX_IMAGE_DATA, canonicalNetName, normalizeComponentRefdes, transformWorldPoints } = __require("src/core/model.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
 let encodeObjectClipboard, decodeObjectClipboard; __bind(() => { ({ encodeObjectClipboard, decodeObjectClipboard } = __require("src/core/object-clipboard.js")); });
 let copyableLabelPayload; __bind(() => { ({ copyableLabelPayload } = __require("src/web/selection.js")); });
@@ -37323,6 +37359,83 @@ function commitCopyGhost({ again = true } = {}) {
   return true;
 }
 
+// ----- pasted pictures -------------------------------------------------------------
+
+// Raster pictures only: an SVG could carry script into the document.
+const PASTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'];
+// A picture larger than this, on its longer side, is scaled down as pasted.
+const MAX_IMAGE_PX = 1600;
+// The width a pasted picture starts at on the drawing, at most.
+const START_WIDTH = 20 * GRID;
+
+function readDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error || new Error('could not read the picture'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function decodedImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('the clipboard picture could not be read'));
+    image.src = src;
+  });
+}
+
+/** A pasted picture as the document keeps it: a PNG, JPEG, or WebP data URL
+ *  no larger than MAX_IMAGE_PX on its longer side (re-encoded when it was
+ *  larger, or of another type), and its aspect. */
+async function storedImage(file) {
+  const original = await readDataUrl(file);
+  const image = await decodedImage(original);
+  const aspect = image.naturalWidth / image.naturalHeight;
+  const fits = Math.max(image.naturalWidth, image.naturalHeight) <= MAX_IMAGE_PX;
+  const kept = /^data:image\/(png|jpeg|webp);/.test(original);
+  if (fits && kept && original.length <= MAX_IMAGE_DATA / 2) return { src: original, aspect, width: image.naturalWidth };
+  const k = Math.min(1, MAX_IMAGE_PX / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * k));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * k));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  let src = canvas.toDataURL('image/webp', 0.9);
+  if (!src.startsWith('data:image/webp')) src = canvas.toDataURL('image/png');
+  if (src.length > MAX_IMAGE_DATA) src = canvas.toDataURL('image/jpeg', 0.85);
+  return { src, aspect, width: canvas.width };
+}
+
+/** Put a pasted picture on the drawing at the cursor, selected, its box at
+ *  most START_WIDTH wide and keeping the picture's proportions. */
+async function pasteImage(file) {
+  let image;
+  try {
+    image = await storedImage(file);
+  } catch (err) {
+    logLine(`Could not paste the picture: ${err.message}`, 'error');
+    return;
+  }
+  if (image.src.length > MAX_IMAGE_DATA) {
+    logLine('The picture is too large to keep in the document, even scaled down.', 'error');
+    return;
+  }
+  const w = Math.max(2 * GRID, snap(Math.min(START_WIDTH, image.width)));
+  const h = Math.max(GRID, snap(w / image.aspect));
+  const x = snap(editor.cursor.x);
+  const y = snap(editor.cursor.y);
+  let box = null;
+  commit(() => {
+    box = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, image: { src: image.src, aspect: image.aspect } });
+  });
+  if (!box) return;
+  setSelection([]);
+  setLabelSelection([box.id]);
+  logLine(`pasted a picture (${Math.round(image.src.length / 1024)} kB); drag a corner to resize it, keeping its proportions`);
+  render();
+}
+
 // The copy buffer also goes on the system clipboard as tagged JSON text, so
 // objects copied in one editor paste into another (another tab, window, or
 // workspace). Ctrl/Cmd+V reads it from the browser's paste event, which needs
@@ -37419,6 +37532,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
           points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
           ...(l.plot ? { plot: l.plot } : {}),
+          ...(l.image ? { image: l.image } : {}),
         });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);
@@ -37504,6 +37618,17 @@ function installCopyPaste() {
   });
 
   document.addEventListener('paste', (ev) => {
+    // A picture on the clipboard is pasted onto the drawing, unless a text
+    // field is being typed into.
+    const target = ev.target;
+    const typing = target?.tagName === 'TEXTAREA' || target?.tagName === 'INPUT' || target?.isContentEditable;
+    const picture = typing ? null : [...(ev.clipboardData?.files || [])].find((file) => PASTED_IMAGE_TYPES.includes(file.type));
+    if (picture) {
+      objectPaste = null;
+      ev.preventDefault();
+      void pasteImage(picture);
+      return;
+    }
     const armed = objectPaste;
     if (!armed) return;
     objectPaste = null;
@@ -53872,6 +53997,7 @@ function copyableLabelPayload(label) {
     math: !!label.math,
     mathBox: (label.math && typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
     ...(label.plot ? { plot: label.plot } : {}),
+    ...(label.image ? { image: label.image } : {}),
   };
 }
 

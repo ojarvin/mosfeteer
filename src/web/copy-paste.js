@@ -5,8 +5,8 @@
  * core/selection.js; the clipboard format is core/object-clipboard.js.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, canonicalNetName, normalizeComponentRefdes, transformWorldPoints } from '../core/model.js';
-import { snap } from '../core/grid.js';
+import { Circuit, INTERFACE_PIN_TYPES, MAX_IMAGE_DATA, canonicalNetName, normalizeComponentRefdes, transformWorldPoints } from '../core/model.js';
+import { GRID, snap } from '../core/grid.js';
 import { resolveCopySelection } from '../core/selection.js';
 import { encodeObjectClipboard, decodeObjectClipboard } from '../core/object-clipboard.js';
 import { copyableLabelPayload } from './selection.js';
@@ -439,6 +439,83 @@ export function commitCopyGhost({ again = true } = {}) {
   return true;
 }
 
+// ----- pasted pictures -------------------------------------------------------------
+
+// Raster pictures only: an SVG could carry script into the document.
+const PASTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'];
+// A picture larger than this, on its longer side, is scaled down as pasted.
+const MAX_IMAGE_PX = 1600;
+// The width a pasted picture starts at on the drawing, at most.
+const START_WIDTH = 20 * GRID;
+
+function readDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error || new Error('could not read the picture'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function decodedImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('the clipboard picture could not be read'));
+    image.src = src;
+  });
+}
+
+/** A pasted picture as the document keeps it: a PNG, JPEG, or WebP data URL
+ *  no larger than MAX_IMAGE_PX on its longer side (re-encoded when it was
+ *  larger, or of another type), and its aspect. */
+async function storedImage(file) {
+  const original = await readDataUrl(file);
+  const image = await decodedImage(original);
+  const aspect = image.naturalWidth / image.naturalHeight;
+  const fits = Math.max(image.naturalWidth, image.naturalHeight) <= MAX_IMAGE_PX;
+  const kept = /^data:image\/(png|jpeg|webp);/.test(original);
+  if (fits && kept && original.length <= MAX_IMAGE_DATA / 2) return { src: original, aspect, width: image.naturalWidth };
+  const k = Math.min(1, MAX_IMAGE_PX / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * k));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * k));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  let src = canvas.toDataURL('image/webp', 0.9);
+  if (!src.startsWith('data:image/webp')) src = canvas.toDataURL('image/png');
+  if (src.length > MAX_IMAGE_DATA) src = canvas.toDataURL('image/jpeg', 0.85);
+  return { src, aspect, width: canvas.width };
+}
+
+/** Put a pasted picture on the drawing at the cursor, selected, its box at
+ *  most START_WIDTH wide and keeping the picture's proportions. */
+async function pasteImage(file) {
+  let image;
+  try {
+    image = await storedImage(file);
+  } catch (err) {
+    logLine(`Could not paste the picture: ${err.message}`, 'error');
+    return;
+  }
+  if (image.src.length > MAX_IMAGE_DATA) {
+    logLine('The picture is too large to keep in the document, even scaled down.', 'error');
+    return;
+  }
+  const w = Math.max(2 * GRID, snap(Math.min(START_WIDTH, image.width)));
+  const h = Math.max(GRID, snap(w / image.aspect));
+  const x = snap(editor.cursor.x);
+  const y = snap(editor.cursor.y);
+  let box = null;
+  commit(() => {
+    box = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, image: { src: image.src, aspect: image.aspect } });
+  });
+  if (!box) return;
+  setSelection([]);
+  setLabelSelection([box.id]);
+  logLine(`pasted a picture (${Math.round(image.src.length / 1024)} kB); drag a corner to resize it, keeping its proportions`);
+  render();
+}
+
 // The copy buffer also goes on the system clipboard as tagged JSON text, so
 // objects copied in one editor paste into another (another tab, window, or
 // workspace). Ctrl/Cmd+V reads it from the browser's paste event, which needs
@@ -535,6 +612,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           x: l.x + dx, y: l.y + dy, end: l.end && { x: l.end.x + dx, y: l.end.y + dy },
           points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
           ...(l.plot ? { plot: l.plot } : {}),
+          ...(l.image ? { image: l.image } : {}),
         });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);
@@ -620,6 +698,17 @@ export function installCopyPaste() {
   });
 
   document.addEventListener('paste', (ev) => {
+    // A picture on the clipboard is pasted onto the drawing, unless a text
+    // field is being typed into.
+    const target = ev.target;
+    const typing = target?.tagName === 'TEXTAREA' || target?.tagName === 'INPUT' || target?.isContentEditable;
+    const picture = typing ? null : [...(ev.clipboardData?.files || [])].find((file) => PASTED_IMAGE_TYPES.includes(file.type));
+    if (picture) {
+      objectPaste = null;
+      ev.preventDefault();
+      void pasteImage(picture);
+      return;
+    }
     const armed = objectPaste;
     if (!armed) return;
     objectPaste = null;
