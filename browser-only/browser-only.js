@@ -27333,7 +27333,9 @@ let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.
 
 const WAVE_HEIGHT = 2 * GRID;
 const ROW_PITCH = 3 * GRID;
-const GAP_BELOW_DRAWING = 2 * GRID;
+// The diagram keeps three cells from what is drawn, so it reads as its own
+// figure rather than part of the circuit.
+const CLEARANCE = 3 * GRID;
 const LABEL_GAP = GRID;
 /** A slot's default width, in cells. */
 const DEFAULT_SLOT_CELLS = 4;
@@ -27465,7 +27467,7 @@ function normalizeEdgeShift(shift) {
 }
 
 /** The top of the highest spot, from the drawing's top down, where a diagram
- *  `area` wide ({ x, w, h }) clears everything drawn by a cell; below the
+ *  `area` wide ({ x, w, h }) clears everything drawn by CLEARANCE; below the
  *  drawing when nothing higher is free. */
 function timingSpot(circuit, area, drawn) {
   const obstacles = [];
@@ -27479,9 +27481,9 @@ function timingSpot(circuit, area, drawn) {
       }
     }
   }
-  const clear = (top) => obstacles.every((r) => r.x + r.w + GRID <= area.x || area.x + area.w + GRID <= r.x
-    || r.y + r.h + GRID <= top || top + area.h + GRID <= r.y);
-  const below = ceilGrid(drawn.y + drawn.h) + GAP_BELOW_DRAWING;
+  const clear = (top) => obstacles.every((r) => r.x + r.w + CLEARANCE <= area.x || area.x + area.w + CLEARANCE <= r.x
+    || r.y + r.h + CLEARANCE <= top || top + area.h + CLEARANCE <= r.y);
+  const below = ceilGrid(drawn.y + drawn.h) + CLEARANCE;
   for (let top = ceilGrid(drawn.y); top < below; top += GRID) if (clear(top)) return top;
   return below;
 }
@@ -33432,6 +33434,7 @@ __exports.mergePickedBeats = mergePickedBeats;
 __exports.toggleSelectionInBeat = toggleSelectionInBeat;
 __exports.flipSelectedSwitches = flipSelectedSwitches;
 __exports.renderBeatStrip = renderBeatStrip;
+__exports.toggleTimingDialog = toggleTimingDialog;
 __exports.openTimingDialog = openTimingDialog;
 __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
@@ -33939,9 +33942,20 @@ function addPhaseBeats() {
 /** The timing diagram editor: a grid of slots, one row per phase, beside
  * the drawing. A cursor moves over it: 1, 0 and x set a slot, Space flips
  * one, + repeats the cursor's slot in every row (a state held one slot
- * longer), Delete removes it. Every change redraws the diagram in place, and
+ * longer), * the whole sequence, Delete removes it. Every change redraws the diagram in place, and
  * the whole session is one undo entry (core/timing-diagram.js). */
 let timingEditor = null;
+
+function syncTimingToggle() {
+  document.getElementById('btn-timing-diagram')?.setAttribute('aria-checked', String(!!timingEditor));
+}
+
+/** Shift+K and the menu item open the editor, or close it when it is open,
+ * as the other panels' keys do. */
+function toggleTimingDialog() {
+  if (timingEditor) timingEditor.close();
+  else openTimingDialog();
+}
 
 function openTimingDialog() {
   noteTip('timing-open');
@@ -34152,6 +34166,15 @@ function openTimingDialog() {
     state.cursor.slot = slot + 1;
     change();
   };
+  // Repeat the whole sequence once, every row's wave copied after itself,
+  // for a second period to edit afterwards.
+  const repeatSequence = () => {
+    settle();
+    const n = length();
+    for (const row of rows) if (!row.follows) row.wave = [...row.wave, ...row.wave];
+    state.cursor.slot = Math.min(state.cursor.slot + n, length());
+    change();
+  };
   const removeSlot = () => {
     settle();
     if (length() <= 1) return;
@@ -34179,6 +34202,8 @@ function openTimingDialog() {
       shiftEdge(event.key === '[' || event.key === ']' ? 'fall' : 'rise', event.key === '[' || event.key === '{' ? -1 : 1);
     } else if (event.key === '+' || event.key === 'Insert') {
       repeatSlot();
+    } else if (event.key === '*') {
+      repeatSequence();
     } else if (event.key === 'Delete' || event.key === 'Backspace' || event.key === '-') {
       removeSlot();
     } else return;
@@ -34210,17 +34235,21 @@ function openTimingDialog() {
     addPhaseBeats();
   });
   const close = () => {
+    const focused = dialog.contains(document.activeElement);
     timingEditor?.dialog.close();
     timingEditor?.dialog.remove();
     timingEditor = null;
+    syncTimingToggle();
+    if (focused) canvasEl.focus({ preventScroll: true });
   };
   const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
     make('h2', { text: 'Timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Make beats steps through the states drawn.' }),
+    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Make beats steps through the states drawn.' }),
     grid,
     make('div', { class: 'timing-dialog-options' }, [
       button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
       button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
+      button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
       make('label', {}, [make('span', { text: 'Slot' }), slotInput, make('span', { text: 'cells' })]),
     ]),
     make('div', { class: 'timing-dialog-options timing-shift-controls' }, [
@@ -34247,7 +34276,8 @@ function openTimingDialog() {
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
-    if (event.key === 'Escape') {
+    // Shift+K closes it again, except while typing a number.
+    if (event.key === 'Escape' || (event.key === 'K' && !event.ctrlKey && !event.metaKey && !event.altKey && event.target.tagName !== 'INPUT')) {
       event.preventDefault();
       close();
     }
@@ -34255,7 +34285,8 @@ function openTimingDialog() {
   renderGrid();
   renderPairs();
   document.body.append(dialog);
-  timingEditor = { dialog, grid };
+  timingEditor = { dialog, grid, close };
+  syncTimingToggle();
   // Not modal: the diagram stays in view as it is edited.
   dialog.show();
   grid.focus();
@@ -34379,7 +34410,7 @@ function installBeatsUi() {
   document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
   document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
   document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
-  document.getElementById('btn-timing-diagram')?.addEventListener('click', openTimingDialog);
+  document.getElementById('btn-timing-diagram')?.addEventListener('click', toggleTimingDialog);
   document.getElementById('beat-strip-close')?.addEventListener('click', () => {
     editor.beatStripOpen = false;
     setActiveBeat(null);
@@ -44139,7 +44170,7 @@ let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, 
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
-let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, openTimingDialog, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, openTimingDialog, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
+let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
@@ -51184,9 +51215,9 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // Shift+K: the timing diagram editor (K for clocks).
+  // Shift+K: the timing diagram editor (K for clocks), open or closed.
   if (key === 'K') {
-    openTimingDialog();
+    toggleTimingDialog();
     return;
   }
 

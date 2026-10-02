@@ -58,7 +58,7 @@ import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysi
 import { installModelFigure } from './model-figure.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
-import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, openTimingDialog, onPresenterKey, installBeatsUi } from './beats-ui.js';
+import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi } from './beats-ui.js';
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
@@ -7032,9 +7032,9 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // Shift+K: the timing diagram editor (K for clocks).
+  // Shift+K: the timing diagram editor (K for clocks), open or closed.
   if (key === 'K') {
-    openTimingDialog();
+    toggleTimingDialog();
     return;
   }
 

@@ -488,9 +488,20 @@ function addPhaseBeats() {
 /** The timing diagram editor: a grid of slots, one row per phase, beside
  * the drawing. A cursor moves over it: 1, 0 and x set a slot, Space flips
  * one, + repeats the cursor's slot in every row (a state held one slot
- * longer), Delete removes it. Every change redraws the diagram in place, and
+ * longer), * the whole sequence, Delete removes it. Every change redraws the diagram in place, and
  * the whole session is one undo entry (core/timing-diagram.js). */
 let timingEditor = null;
+
+function syncTimingToggle() {
+  document.getElementById('btn-timing-diagram')?.setAttribute('aria-checked', String(!!timingEditor));
+}
+
+/** Shift+K and the menu item open the editor, or close it when it is open,
+ * as the other panels' keys do. */
+export function toggleTimingDialog() {
+  if (timingEditor) timingEditor.close();
+  else openTimingDialog();
+}
 
 export function openTimingDialog() {
   noteTip('timing-open');
@@ -701,6 +712,15 @@ export function openTimingDialog() {
     state.cursor.slot = slot + 1;
     change();
   };
+  // Repeat the whole sequence once, every row's wave copied after itself,
+  // for a second period to edit afterwards.
+  const repeatSequence = () => {
+    settle();
+    const n = length();
+    for (const row of rows) if (!row.follows) row.wave = [...row.wave, ...row.wave];
+    state.cursor.slot = Math.min(state.cursor.slot + n, length());
+    change();
+  };
   const removeSlot = () => {
     settle();
     if (length() <= 1) return;
@@ -728,6 +748,8 @@ export function openTimingDialog() {
       shiftEdge(event.key === '[' || event.key === ']' ? 'fall' : 'rise', event.key === '[' || event.key === '{' ? -1 : 1);
     } else if (event.key === '+' || event.key === 'Insert') {
       repeatSlot();
+    } else if (event.key === '*') {
+      repeatSequence();
     } else if (event.key === 'Delete' || event.key === 'Backspace' || event.key === '-') {
       removeSlot();
     } else return;
@@ -759,17 +781,21 @@ export function openTimingDialog() {
     addPhaseBeats();
   });
   const close = () => {
+    const focused = dialog.contains(document.activeElement);
     timingEditor?.dialog.close();
     timingEditor?.dialog.remove();
     timingEditor = null;
+    syncTimingToggle();
+    if (focused) canvasEl.focus({ preventScroll: true });
   };
   const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
     make('h2', { text: 'Timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Make beats steps through the states drawn.' }),
+    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Make beats steps through the states drawn.' }),
     grid,
     make('div', { class: 'timing-dialog-options' }, [
       button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
       button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
+      button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
       make('label', {}, [make('span', { text: 'Slot' }), slotInput, make('span', { text: 'cells' })]),
     ]),
     make('div', { class: 'timing-dialog-options timing-shift-controls' }, [
@@ -796,7 +822,8 @@ export function openTimingDialog() {
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
-    if (event.key === 'Escape') {
+    // Shift+K closes it again, except while typing a number.
+    if (event.key === 'Escape' || (event.key === 'K' && !event.ctrlKey && !event.metaKey && !event.altKey && event.target.tagName !== 'INPUT')) {
       event.preventDefault();
       close();
     }
@@ -804,7 +831,8 @@ export function openTimingDialog() {
   renderGrid();
   renderPairs();
   document.body.append(dialog);
-  timingEditor = { dialog, grid };
+  timingEditor = { dialog, grid, close };
+  syncTimingToggle();
   // Not modal: the diagram stays in view as it is edited.
   dialog.show();
   grid.focus();
@@ -928,7 +956,7 @@ export function installBeatsUi() {
   document.getElementById('beat-present')?.addEventListener('click', () => openPresenter());
   document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
   document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
-  document.getElementById('btn-timing-diagram')?.addEventListener('click', openTimingDialog);
+  document.getElementById('btn-timing-diagram')?.addEventListener('click', toggleTimingDialog);
   document.getElementById('beat-strip-close')?.addEventListener('click', () => {
     editor.beatStripOpen = false;
     setActiveBeat(null);

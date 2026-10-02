@@ -84,7 +84,7 @@ drawn position. Only phases some switch is on make beats: a complement merely
 offered in the menu makes none. The beats are ordinary beats, inserted after
 the one on screen as one undoable edit.
 
-**Timing diagram** (More menu; `timing`) draws one row per phase under the
+**Timing diagram** (More menu or `Shift+K`, which also closes it; `timing`) draws one row per phase under the
 drawing, in the phases' order with each complement right after its phase:
 its wave, two cells tall with vertical edges, the waves centred on the
 drawing's width, and the phase's name as a free label, right-aligned in a
@@ -104,8 +104,9 @@ per phase, started from the diagram already drawn, else from the beats (one
 slot per beat, high where the phase's switches are closed; **From beats**
 refills it). Click a slot to flip it, or move a cursor with the arrows and
 type `1` or `0`; the empty cell after the last slot adds one. `+` repeats
-the slot at the cursor in every row -- a state held one slot longer -- and
-Delete removes it. The slot width is in cells, and **Never overlap** lists
+the slot at the cursor in every row -- a state held one slot longer -- `*` (**Repeat all**) copies
+every wave once after itself, a second period to edit, and Delete removes
+a slot. The slot width is in cells, and **Never overlap** lists
 every pair of phases to keep apart (**Automatic** returns to the default).
 A row's edges can also move off the slot boundaries by whole cells: `[` and
 `]` move the cursor row's falling edges a cell earlier or later, `{` and `}`

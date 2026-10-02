@@ -28,7 +28,9 @@ import { plainTexText } from './render.js';
 
 const WAVE_HEIGHT = 2 * GRID;
 const ROW_PITCH = 3 * GRID;
-const GAP_BELOW_DRAWING = 2 * GRID;
+// The diagram keeps three cells from what is drawn, so it reads as its own
+// figure rather than part of the circuit.
+const CLEARANCE = 3 * GRID;
 const LABEL_GAP = GRID;
 /** A slot's default width, in cells. */
 export const DEFAULT_SLOT_CELLS = 4;
@@ -160,7 +162,7 @@ export function normalizeEdgeShift(shift) {
 }
 
 /** The top of the highest spot, from the drawing's top down, where a diagram
- *  `area` wide ({ x, w, h }) clears everything drawn by a cell; below the
+ *  `area` wide ({ x, w, h }) clears everything drawn by CLEARANCE; below the
  *  drawing when nothing higher is free. */
 function timingSpot(circuit, area, drawn) {
   const obstacles = [];
@@ -174,9 +176,9 @@ function timingSpot(circuit, area, drawn) {
       }
     }
   }
-  const clear = (top) => obstacles.every((r) => r.x + r.w + GRID <= area.x || area.x + area.w + GRID <= r.x
-    || r.y + r.h + GRID <= top || top + area.h + GRID <= r.y);
-  const below = ceilGrid(drawn.y + drawn.h) + GAP_BELOW_DRAWING;
+  const clear = (top) => obstacles.every((r) => r.x + r.w + CLEARANCE <= area.x || area.x + area.w + CLEARANCE <= r.x
+    || r.y + r.h + CLEARANCE <= top || top + area.h + CLEARANCE <= r.y);
+  const below = ceilGrid(drawn.y + drawn.h) + CLEARANCE;
   for (let top = ceilGrid(drawn.y); top < below; top += GRID) if (clear(top)) return top;
   return below;
 }

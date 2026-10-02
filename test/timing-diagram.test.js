@@ -65,11 +65,11 @@ test('the diagram sits under the drawing, one named row per phase, complements a
   ]);
   const names = rows.map((row) => circuit.labels.get(row.label));
   assert.ok(names.every((label) => label.align === 'right' && label.math));
-  // Clear of every part by a cell (here the drawing leaves room only below).
+  // Clear of every part by three cells (here the drawing leaves room only below).
   const parts = [...circuit.components.values()].map((part) => part.bboxWorld());
   for (const line of wavesOf(circuit)) {
     const r = line.bbox();
-    assert.ok(parts.every((p) => r.y >= p.y + p.h + 40 || p.y >= r.y + r.h + 40 || r.x >= p.x + p.w + 40 || p.x >= r.x + r.w + 40), 'clear of the parts');
+    assert.ok(parts.every((p) => r.y >= p.y + p.h + 120 || p.y >= r.y + r.h + 120 || r.x >= p.x + p.w + 120 || p.x >= r.x + r.w + 120), 'clear of the parts');
   }
   void drawn;
   // The waves are centred on the drawing's width.
