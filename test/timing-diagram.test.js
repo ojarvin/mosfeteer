@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { plainTexText } from '../src/core/render.js';
 import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
-import { addTimingDiagram, defaultTimingPairs, parseTimingBits, timingColumns, timingRowGeometry, timingStates } from '../src/core/timing-diagram.js';
+import { addTimingDiagram, defaultTimingPairs, parseTimingBits, timingColumns, timingPairs, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -77,9 +77,9 @@ test('the diagram sits under the drawing, one named row per phase, complements a
   const left = Math.min(...wavesOf(circuit).map((l) => l.bbox().x));
   const right = Math.max(...wavesOf(circuit).map((l) => l.bbox().x + l.bbox().w));
   assert.ok(Math.abs((left + right) / 2 - (drawing.x + drawing.w / 2)) <= 20, `centred (${left}..${right} under ${drawing.x}+${drawing.w})`);
-  assert.throws(() => runCommand(circuit, 'timing φ9=01'), /no switch phase "φ9"/);
+  assert.throws(() => runCommand(circuit, 'timing φ9=01'), /no row "φ9"/);
   assert.throws(() => runCommand(circuit, 'timing 01'), /not PHASE=WAVE/);
-  assert.match(runCommand(circuit, 'help').text, /timing \[PHASE=WAVE \.\.\.\]/);
+  assert.match(runCommand(circuit, 'help').text, /timing \[ROW=WAVE \.\.\.\] \[--add NAME,\.\.\.\]/);
   const empty = new Circuit();
   run(empty, 'add switch_open S1 --at 0 0');
   assert.throws(() => runCommand(empty, 'timing'), /no switch has a phase/);
@@ -239,3 +239,40 @@ test('rows keep the order they were given', () => {
   assert.deepEqual(order(), ['$\\varphi_{2}$', '$\\varphi_{1}$', '$\\overline{\\varphi_{1}}$'], 'kept through a redraw');
 });
 
+
+test('signals of the diagram\'s own: no switches needed, kept by the drawing, removed by name', async () => {
+  const { removeTimingDiagram, timingRowSources: sourcesOf } = await import('../src/core/timing-diagram.js');
+  const circuit = new Circuit();
+  runCommand(circuit, 'add dff U1 --at 0 0');
+  assert.throws(() => runCommand(circuit, 'timing'), /no switch has a phase .*timing --add CLK/);
+  runCommand(circuit, 'timing --add CLK,EN CLK=1010 EN=0011');
+  runCommand(circuit, 'timing --add $\\overline{EN}$');
+  // Saved and loaded, the rows stay, with their waves; the barred one follows EN.
+  const loaded = Circuit.fromJSON(circuit.toJSON());
+  assert.deepEqual(sourcesOf(loaded).map(({ source, bits, from, signal }) => [source, bits, from, signal]), [
+    ['CLK', '1010', 'diagram', true], ['EN', '0011', 'diagram', true], ['$\\overline{EN}$', '', 'complement', true],
+  ]);
+  assert.throws(() => runCommand(loaded, 'timing --add CLK'), /has CLK already/);
+  // Signals switch nothing: no beats come from them.
+  assert.equal(timingStates(loaded), null);
+  runCommand(loaded, 'timing --rm CLK');
+  assert.deepEqual(sourcesOf(loaded).map((row) => row.source), ['EN', '$\\overline{EN}$']);
+  // The last rows gone, so is the diagram.
+  const { text } = runCommand(loaded, 'timing --rm EN,~EN');
+  assert.match(text, /removed the timing diagram/);
+  assert.equal([...loaded.labels.values()].filter((label) => label.timing).length, 0);
+  assert.equal(removeTimingDiagram(loaded), false);
+});
+
+test('a signal beside switch phases is kept apart from them only when asked', () => {
+  const circuit = clocked();
+  runCommand(circuit, 'timing φ1=10 φ2=01 --add CLK CLK=0101');
+  const sources = timingRowSources(circuit);
+  assert.deepEqual(sources.map((row) => row.source).at(-1), 'CLK');
+  assert.throws(() => runCommand(circuit, 'timing --rm φ1'), /is a switch phase/);
+  // CLK is never high with φ1, yet no pair with it is kept apart by default.
+  const pairs = timingPairs(sources, 'auto').map((pair) => pair.map((i) => sources[i].source));
+  assert.ok(pairs.every((pair) => !pair.includes('CLK')), JSON.stringify(pairs));
+  // Beats come from the phases alone.
+  assert.ok(timingStates(circuit).every((state) => ![...state.closed].includes('CLK')));
+});

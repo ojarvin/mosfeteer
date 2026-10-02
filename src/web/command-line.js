@@ -128,7 +128,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'annotation', aliases: ['annotate', 'label', 'note', 'text'], help: 'annotation add TEXT X Y ...' },
   { name: 'switch', help: 'switch REF|PHASE open|closed' },
   { name: 'beat', help: 'beat list|add|rm|show|dim|hide ...' },
-  { name: 'timing', help: 'draw a timing diagram: timing φ1=10 φ2=01 (or from the beats)' },
+  { name: 'timing', help: 'draw a timing diagram: timing φ1=10 φ2=01 (or from the beats); --add CLK adds a signal of its own' },
   { name: 'list', aliases: ['ls', 'components', 'parts'], help: 'list components' },
   { name: 'eval', help: 'quality report' },
   { name: 'explain', aliases: ['diagnose'], help: 'explain eval | explain connect ...' },

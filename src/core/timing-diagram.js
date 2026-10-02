@@ -1,7 +1,11 @@
 /**
  * Timing diagram: one clock waveform per switch phase, drawn under the
  * drawing as annotations -- each phase's name (its own spelling, TeX drawn
- * as math) and its wave, two cells tall with vertical edges.
+ * as math) and its wave, two cells tall with vertical edges. Rows may also
+ * be signals of the diagram's own (a clock, an enable, a drawing with no
+ * switches at all): added and removed by name, and kept by the drawn
+ * diagram (`timing.signal`). They are drawn like phases but play no part
+ * in beats.
  *
  * A wave is typed as slots, one character each: `1` high, `0` low. A short
  * wave holds its last level. The waves repeat, so each row
@@ -55,6 +59,22 @@ export function beatTimingBits(circuit, key) {
   const [first] = switchesOf(circuit, key);
   if (!first) return '';
   return (circuit.beats || []).map((_, index) => (switchStateAt(circuit, first.refdes, index) === 'closed' ? '1' : '0')).join('');
+}
+
+/** The rows a diagram has, in drawing order: every switch phase, then the
+ *  diagram's own signals (`signal: true`) -- those drawn already, plus
+ *  `add`, minus `remove` (names as typed). A signal named like a switch
+ *  phase is that phase. */
+export function timingPhases(circuit, { add = [], remove = [] } = {}) {
+  const phases = switchPhases(circuit);
+  const known = (key, list) => list.some((phase) => samePhase(phase.key, key));
+  const signals = [];
+  for (const signal of [...(existingTimingDiagram(circuit)?.signals || []), ...add.map((source) => ({ key: phaseKey(source), source: String(source).trim() }))]) {
+    if (known(signal.key, phases) || known(signal.key, signals)) continue;
+    if (remove.some((name) => samePhase(phaseKey(name), signal.key))) continue;
+    signals.push({ ...signal, signal: true });
+  }
+  return timingOrder([...phases, ...signals]);
 }
 
 /** The level in a gap between `before` and `after`: high only where both
@@ -198,7 +218,9 @@ export function stateName(sources) {
  */
 export function timingStates(circuit) {
   if (!existingTimingDiagram(circuit)) return null;
-  const rows = timingRowSources(circuit);
+  // The diagram's own signals switch nothing.
+  const rows = timingRowSources(circuit).filter((row) => !row.signal);
+  if (!rows.length) return null;
   const count = Math.max(1, ...rows.map((row) => row.bits.length));
   const level = (row, slot) => (row.bits.length ? row.bits[Math.min(slot, row.bits.length - 1)] : '0');
   const high = (row, slot) => (row.complementOf !== undefined ? level(rows[row.complementOf], slot) === '0' : level(row, slot) === '1');
@@ -259,8 +281,11 @@ export function existingTimingDiagram(circuit) {
   const y = waves.length ? Math.min(...waves.map((label) => label.bbox().y)) : Math.min(...names.map((label) => label.anchorWorld().y - WAVE_HEIGHT / 2));
   const first = parts.find((label) => label.timing.slot) || parts[0];
   // The rows' order, top to bottom, as the names stand.
-  const order = [...names].sort((a, b) => a.anchorWorld().y - b.anchorWorld().y).map((label) => label.timing.phase);
-  return { ids: parts.map((label) => label.id), bits, shifts, order, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
+  const sorted = [...names].sort((a, b) => a.anchorWorld().y - b.anchorWorld().y);
+  const order = sorted.map((label) => label.timing.phase);
+  // The diagram's own signals, spelled as their names are.
+  const signals = sorted.filter((label) => label.timing.signal).map((label) => ({ key: label.timing.phase, source: label.text }));
+  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -272,34 +297,46 @@ function arranged(phases, order) {
 }
 
 /** The pairs of rows kept from overlapping under `setting`: 'auto' (every
- *  two never high together, defaultTimingPairs), 'none', or pairs of phase
- *  keys. Returns [a, b] row indices. */
+ *  two phases never high together, defaultTimingPairs), 'none', or pairs
+ *  of phase keys. Returns [a, b] row indices. */
 export function timingPairs(rows, setting = 'auto') {
   if (setting === 'none' || setting === false) return [];
   if (Array.isArray(setting)) {
     const index = (key) => rows.findIndex((row) => samePhase(row.key, key));
     return setting.map(([a, b]) => [index(a), index(b)]).filter(([a, b]) => a >= 0 && b >= 0 && a !== b).map(([a, b]) => [Math.min(a, b), Math.max(a, b)]);
   }
-  const skip = new Set(rows.flatMap((row, index) => (row.complementOf !== undefined ? [index] : [])));
+  // A complement follows its phase; a signal of the diagram's own is kept
+  // apart only when asked.
+  const skip = new Set(rows.flatMap((row, index) => (row.complementOf !== undefined || row.signal ? [index] : [])));
   return defaultTimingPairs(rows.map((row) => row.bits), skip);
 }
 
-/** Every phase's wave as the diagram would draw it now (see the header):
- *  [{ key, source, bits, from, complementOf }], `from` one of 'typed',
- *  'diagram', 'complement' (drawn as row `complementOf` inverted), 'beats',
- *  or 'low' (bits empty). */
-export function timingRowSources(circuit, { fromBeats = false, typed = new Map(), order = null } = {}) {
+/** Every row's wave as the diagram would draw it now (see the header):
+ *  [{ key, source, bits, from, complementOf, signal }], `from` one of
+ *  'typed', 'diagram', 'complement' (drawn as row `complementOf` inverted),
+ *  'beats', or 'low' (bits empty); `signal` marks the diagram's own signals.
+ *  `phases` defaults to timingPhases. */
+export function timingRowSources(circuit, { fromBeats = false, typed = new Map(), order = null, phases: given = null } = {}) {
   const drawnBefore = existingTimingDiagram(circuit);
-  const phases = arranged(timingOrder(switchPhases(circuit)), order || drawnBefore?.order);
+  const phases = arranged(given || timingPhases(circuit), order || drawnBefore?.order);
   const before = fromBeats ? null : drawnBefore;
-  return phases.map(({ key, source }) => {
-    if (typed.has(key)) return { key, source, bits: typed.get(key), from: 'typed' };
-    if (before?.bits.has(key)) return { key, source, bits: before.bits.get(key), from: 'diagram' };
+  return phases.map(({ key, source, signal }) => {
+    const own = signal ? { signal: true } : {};
+    if (typed.has(key)) return { key, source, bits: typed.get(key), from: 'typed', ...own };
+    if (before?.bits.has(key)) return { key, source, bits: before.bits.get(key), from: 'diagram', ...own };
     const base = isComplementPhase(key) ? phases.findIndex((other) => samePhase(other.key, complementKey(key))) : -1;
-    if (base >= 0) return { key, source, bits: '', from: 'complement', complementOf: base };
-    const beats = beatTimingBits(circuit, key);
-    return beats ? { key, source, bits: beats, from: 'beats' } : { key, source, bits: '', from: 'low' };
+    if (base >= 0) return { key, source, bits: '', from: 'complement', complementOf: base, ...own };
+    const beats = signal ? '' : beatTimingBits(circuit, key);
+    return beats ? { key, source, bits: beats, from: 'beats' } : { key, source, bits: '', from: 'low', ...own };
   });
+}
+
+/** Take the drawn diagram away; returns whether there was one. */
+export function removeTimingDiagram(circuit) {
+  const before = existingTimingDiagram(circuit);
+  if (!before) return false;
+  for (const id of before.ids) circuit.removeLabel(id);
+  return true;
 }
 
 /**
@@ -315,17 +352,31 @@ export function timingRowSources(circuit, { fromBeats = false, typed = new Map()
  * plus its own. Returns the rows: [{ phase, bits, from, shift, label, line,
  * lines }].
  */
-export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false } = {}) {
-  const phases = timingOrder(switchPhases(circuit));
-  if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [] } = {}) {
+  const current = timingPhases(circuit);
+  for (const name of add) {
+    if (!String(name).trim()) throw new Error('a signal needs a name');
+    const taken = current.find((phase) => samePhase(phase.key, phaseKey(name)));
+    if (taken) throw new Error(`the diagram has ${plainTexText(taken.source)} already`);
+  }
+  for (const name of remove) {
+    const phase = timingPhaseNamed(current, name);
+    if (!phase) throw new Error(`the diagram has no row "${name}"`);
+    if (!phase.signal) throw new Error(`${plainTexText(phase.source)} is a switch phase: its row comes from its switches`);
+  }
+  const phases = timingPhases(circuit, { add, remove: remove.map((name) => timingPhaseNamed(current, name).source) });
+  if (!phases.length) {
+    if (remove.length && removeTimingDiagram(circuit)) return [];
+    throw new Error('nothing to draw yet: no switch has a phase (label switches with the signal that controls them), and the diagram has no signals (timing --add CLK)');
+  }
   const named = (name) => {
     const phase = timingPhaseNamed(phases, name);
-    if (!phase) throw new Error(`no switch phase "${name}"; phases: ${phases.map((p, i) => `${i + 1} ${plainTexText(p.source)}`).join(', ')}`);
+    if (!phase) throw new Error(`no row "${name}"; rows: ${phases.map((p, i) => `${i + 1} ${plainTexText(p.source)}`).join(', ')}`);
     return phase;
   };
   const typed = new Map();
   for (const [name, text] of Object.entries(given)) typed.set(named(name).key, parseTimingBits(text));
-  const rows = timingRowSources(circuit, { fromBeats, typed, order: order ? order.map((name) => named(name).key) : null });
+  const rows = timingRowSources(circuit, { fromBeats, typed, phases, order: order ? order.map((name) => named(name).key) : null });
   const before = existingTimingDiagram(circuit);
   const ownShift = new Map();
   for (const [name, shift] of Object.entries(givenShifts)) ownShift.set(named(name).key, normalizeEdgeShift(shift));
@@ -349,7 +400,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   // A complement drawn as its phase inverted keeps following it: its wave is
   // not remembered as its own.
   const settings = { slot: slotCells, ...(setting === 'auto' ? {} : { gaps: setting === 'none' ? false : setting }) };
-  const labels = rows.map(({ key, source, bits, from }, row) => circuit.addLabel({
+  const labels = rows.map(({ key, source, bits, from, signal }, row) => circuit.addLabel({
     text: source,
     math: isTexSource(source),
     align: 'right',
@@ -360,6 +411,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
       phase: key,
       ...(from === 'complement' || from === 'low' ? {} : { bits }),
       ...(own(key).fall || own(key).rise ? { shift: own(key) } : {}),
+      ...(signal ? { signal: true } : {}),
       ...settings,
     },
   }));
@@ -380,9 +432,9 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   }
   labels.forEach((label, row) => label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, top + row * ROW_PITCH + WAVE_HEIGHT / 2));
   return labels.map((label, row) => {
-    const { key, bits, from } = rows[row];
+    const { key, bits, from, signal } = rows[row];
     const points = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH, drawnShift[row]);
     const line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
-    return { phase: key, bits, from, shift: own(key), label: label.id, line, lines: [line] };
+    return { phase: key, bits, from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
   });
 }

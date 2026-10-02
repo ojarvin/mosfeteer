@@ -235,14 +235,16 @@ beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF|PHASE open|closed
                                set a switch (its whole phase) from beat N on
 beat phases [--after N]        add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed
-timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise PHASE=N,...]
+timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...]
                                draw (or redraw in place) a timing diagram under the drawing, one wave
                                per switch phase; WAVE: one character per slot, 1 high, 0 low; waves
                                repeat past both ends; --gaps sets which phase pairs never overlap
                                (default: any two never high together); unset rows keep their wave, a
                                complement is its phase inverted, else one slot per beat, else low;
                                ~PHASE names the complement; --fall/--rise move a phase's falling/rising
-                               edges N cells (negative earlier), e.g. a bottom plate opening early
+                               edges N cells (negative earlier), e.g. a bottom plate opening early;
+                               --add CLK,EN adds rows of the diagram's own, not tied to switches (no
+                               switches needed), --rm removes them; they are drawn but make no beats
 box ID... [--text TEXT]        a dashed box one cell around parts, nets, and labels (a functional block)
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list

@@ -8,8 +8,8 @@ import { plainTexText, svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
-import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom, switchPhases } from './beats.js';
-import { addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates } from './timing-diagram.js';
+import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
+import { addTimingDiagram, existingTimingDiagram, timingPhaseNamed, timingPhases, timingStates } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { addBoxAround } from './wrap-box.js';
 import { RENUMBER_ORDERS, renumberParts } from './renumber.js';
@@ -151,6 +151,8 @@ const FLAG_ARITY = {
   rise: 1,
   order: 1,
   place: 0,
+  add: 1,
+  rm: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -563,7 +565,8 @@ export function commandHelp() {
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
-    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise PHASE=N,...] [--order A,B,...] [--place]',
+    '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
+    '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
     '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
@@ -1022,16 +1025,21 @@ function dispatch(circuit, cmd, pos, flags, io) {
         shifts[name] = { ...(shifts[name] || {}), [edge]: cells };
       }
     }
+    // --add NAME,... / --rm NAME,...: the diagram's own signals (rows not
+    // tied to switches).
+    const list = (flag) => (flags[flag] ? String(flags[flag][0]).split(',').map((name) => name.trim()).filter(Boolean) : []);
+    const signalsAdded = list('add');
+    const signalsRemoved = list('rm');
     const current = existingTimingDiagram(circuit);
     for (const [name, shift] of Object.entries(shifts)) {
       // An edge not named keeps its shift.
-      const phases = timingOrder(switchPhases(circuit));
-      const key = timingPhaseNamed(phases, name)?.key;
+      const key = timingPhaseNamed(timingPhases(circuit, { add: signalsAdded }), name)?.key;
       const kept = key ? current?.shifts.get(key) : null;
       shifts[name] = { fall: shift.fall ?? kept?.fall ?? 0, rise: shift.rise ?? kept?.rise ?? 0 };
     }
     const order = flags.order ? String(flags.order[0]).split(',').map((name) => name.trim()).filter(Boolean) : null;
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place });
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved });
+    if (!rows.length) return result('removed the timing diagram: it had no rows left', [], true);
     const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}`, rows, true);

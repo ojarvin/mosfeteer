@@ -11599,8 +11599,8 @@ let plainTexText, svgString; __bind(() => { ({ plainTexText, svgString } = __req
 let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
 let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
-let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom, switchPhases; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom, switchPhases } = __require("src/core/beats.js")); });
-let addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates } = __require("src/core/timing-diagram.js")); });
+let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
+let addTimingDiagram, existingTimingDiagram, timingPhaseNamed, timingPhases, timingStates; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingPhaseNamed, timingPhases, timingStates } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
 let RENUMBER_ORDERS, renumberParts; __bind(() => { ({ RENUMBER_ORDERS, renumberParts } = __require("src/core/renumber.js")); });
@@ -11761,6 +11761,8 @@ const FLAG_ARITY = {
   rise: 1,
   order: 1,
   place: 0,
+  add: 1,
+  rm: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -12173,7 +12175,8 @@ function commandHelp() {
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
     '  beat phases [--after N]        - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
-    '  timing [PHASE=WAVE ...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise PHASE=N,...] [--order A,B,...] [--place]',
+    '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
+    '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
     '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
@@ -12632,16 +12635,21 @@ function dispatch(circuit, cmd, pos, flags, io) {
         shifts[name] = { ...(shifts[name] || {}), [edge]: cells };
       }
     }
+    // --add NAME,... / --rm NAME,...: the diagram's own signals (rows not
+    // tied to switches).
+    const list = (flag) => (flags[flag] ? String(flags[flag][0]).split(',').map((name) => name.trim()).filter(Boolean) : []);
+    const signalsAdded = list('add');
+    const signalsRemoved = list('rm');
     const current = existingTimingDiagram(circuit);
     for (const [name, shift] of Object.entries(shifts)) {
       // An edge not named keeps its shift.
-      const phases = timingOrder(switchPhases(circuit));
-      const key = timingPhaseNamed(phases, name)?.key;
+      const key = timingPhaseNamed(timingPhases(circuit, { add: signalsAdded }), name)?.key;
       const kept = key ? current?.shifts.get(key) : null;
       shifts[name] = { fall: shift.fall ?? kept?.fall ?? 0, rise: shift.rise ?? kept?.rise ?? 0 };
     }
     const order = flags.order ? String(flags.order[0]).split(',').map((name) => name.trim()).filter(Boolean) : null;
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place });
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved });
+    if (!rows.length) return result('removed the timing diagram: it had no rows left', [], true);
     const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}`, rows, true);
@@ -16942,7 +16950,8 @@ function normalizeImage(image) {
 
 /** A timing diagram row's data, as saved: its phase, its own wave (1s and
  * 0s), the slot width in cells, which phases are kept from overlapping
- * (`gaps`), and its edge shift; null when unusable. */
+ * (`gaps`), its edge shift, and whether it is a signal of the diagram's own
+ * rather than a switch phase (`signal`); null when unusable. */
 function normalizeTiming(timing) {
   if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
   const bits = typeof timing.bits === 'string' && /^[01]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
@@ -16961,6 +16970,7 @@ function normalizeTiming(timing) {
     slot,
     ...(gaps !== undefined ? { gaps } : {}),
     ...(shift && (shift.fall || shift.rise) ? { shift } : {}),
+    ...(timing.signal === true ? { signal: true } : {}),
   };
 }
 
@@ -27660,6 +27670,7 @@ function tidySelection(circuit, { refs = [], netIds = [], labelIds = [] } = {}) 
 __modules["src/core/timing-diagram.js"] = function (__require, __exports) {
 __exports.parseTimingBits = parseTimingBits;
 __exports.beatTimingBits = beatTimingBits;
+__exports.timingPhases = timingPhases;
 __exports.defaultTimingPairs = defaultTimingPairs;
 __exports.timingColumns = timingColumns;
 __exports.timingRowGeometry = timingRowGeometry;
@@ -27671,6 +27682,7 @@ __exports.timingPhaseNamed = timingPhaseNamed;
 __exports.existingTimingDiagram = existingTimingDiagram;
 __exports.timingPairs = timingPairs;
 __exports.timingRowSources = timingRowSources;
+__exports.removeTimingDiagram = removeTimingDiagram;
 __exports.addTimingDiagram = addTimingDiagram;
 let GRID, ceilGrid, snap; __bind(() => { ({ GRID, ceilGrid, snap } = __require("src/core/grid.js")); });
 let complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, switchPhases, switchStateAt, switchesOf; __bind(() => { ({ complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, switchPhases, switchStateAt, switchesOf } = __require("src/core/beats.js")); });
@@ -27678,7 +27690,11 @@ let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.
 /**
  * Timing diagram: one clock waveform per switch phase, drawn under the
  * drawing as annotations -- each phase's name (its own spelling, TeX drawn
- * as math) and its wave, two cells tall with vertical edges.
+ * as math) and its wave, two cells tall with vertical edges. Rows may also
+ * be signals of the diagram's own (a clock, an enable, a drawing with no
+ * switches at all): added and removed by name, and kept by the drawn
+ * diagram (`timing.signal`). They are drawn like phases but play no part
+ * in beats.
  *
  * A wave is typed as slots, one character each: `1` high, `0` low. A short
  * wave holds its last level. The waves repeat, so each row
@@ -27732,6 +27748,22 @@ function beatTimingBits(circuit, key) {
   const [first] = switchesOf(circuit, key);
   if (!first) return '';
   return (circuit.beats || []).map((_, index) => (switchStateAt(circuit, first.refdes, index) === 'closed' ? '1' : '0')).join('');
+}
+
+/** The rows a diagram has, in drawing order: every switch phase, then the
+ *  diagram's own signals (`signal: true`) -- those drawn already, plus
+ *  `add`, minus `remove` (names as typed). A signal named like a switch
+ *  phase is that phase. */
+function timingPhases(circuit, { add = [], remove = [] } = {}) {
+  const phases = switchPhases(circuit);
+  const known = (key, list) => list.some((phase) => samePhase(phase.key, key));
+  const signals = [];
+  for (const signal of [...(existingTimingDiagram(circuit)?.signals || []), ...add.map((source) => ({ key: phaseKey(source), source: String(source).trim() }))]) {
+    if (known(signal.key, phases) || known(signal.key, signals)) continue;
+    if (remove.some((name) => samePhase(phaseKey(name), signal.key))) continue;
+    signals.push({ ...signal, signal: true });
+  }
+  return timingOrder([...phases, ...signals]);
 }
 
 /** The level in a gap between `before` and `after`: high only where both
@@ -27875,7 +27907,9 @@ function stateName(sources) {
  */
 function timingStates(circuit) {
   if (!existingTimingDiagram(circuit)) return null;
-  const rows = timingRowSources(circuit);
+  // The diagram's own signals switch nothing.
+  const rows = timingRowSources(circuit).filter((row) => !row.signal);
+  if (!rows.length) return null;
   const count = Math.max(1, ...rows.map((row) => row.bits.length));
   const level = (row, slot) => (row.bits.length ? row.bits[Math.min(slot, row.bits.length - 1)] : '0');
   const high = (row, slot) => (row.complementOf !== undefined ? level(rows[row.complementOf], slot) === '0' : level(row, slot) === '1');
@@ -27936,8 +27970,11 @@ function existingTimingDiagram(circuit) {
   const y = waves.length ? Math.min(...waves.map((label) => label.bbox().y)) : Math.min(...names.map((label) => label.anchorWorld().y - WAVE_HEIGHT / 2));
   const first = parts.find((label) => label.timing.slot) || parts[0];
   // The rows' order, top to bottom, as the names stand.
-  const order = [...names].sort((a, b) => a.anchorWorld().y - b.anchorWorld().y).map((label) => label.timing.phase);
-  return { ids: parts.map((label) => label.id), bits, shifts, order, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
+  const sorted = [...names].sort((a, b) => a.anchorWorld().y - b.anchorWorld().y);
+  const order = sorted.map((label) => label.timing.phase);
+  // The diagram's own signals, spelled as their names are.
+  const signals = sorted.filter((label) => label.timing.signal).map((label) => ({ key: label.timing.phase, source: label.text }));
+  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -27949,34 +27986,46 @@ function arranged(phases, order) {
 }
 
 /** The pairs of rows kept from overlapping under `setting`: 'auto' (every
- *  two never high together, defaultTimingPairs), 'none', or pairs of phase
- *  keys. Returns [a, b] row indices. */
+ *  two phases never high together, defaultTimingPairs), 'none', or pairs
+ *  of phase keys. Returns [a, b] row indices. */
 function timingPairs(rows, setting = 'auto') {
   if (setting === 'none' || setting === false) return [];
   if (Array.isArray(setting)) {
     const index = (key) => rows.findIndex((row) => samePhase(row.key, key));
     return setting.map(([a, b]) => [index(a), index(b)]).filter(([a, b]) => a >= 0 && b >= 0 && a !== b).map(([a, b]) => [Math.min(a, b), Math.max(a, b)]);
   }
-  const skip = new Set(rows.flatMap((row, index) => (row.complementOf !== undefined ? [index] : [])));
+  // A complement follows its phase; a signal of the diagram's own is kept
+  // apart only when asked.
+  const skip = new Set(rows.flatMap((row, index) => (row.complementOf !== undefined || row.signal ? [index] : [])));
   return defaultTimingPairs(rows.map((row) => row.bits), skip);
 }
 
-/** Every phase's wave as the diagram would draw it now (see the header):
- *  [{ key, source, bits, from, complementOf }], `from` one of 'typed',
- *  'diagram', 'complement' (drawn as row `complementOf` inverted), 'beats',
- *  or 'low' (bits empty). */
-function timingRowSources(circuit, { fromBeats = false, typed = new Map(), order = null } = {}) {
+/** Every row's wave as the diagram would draw it now (see the header):
+ *  [{ key, source, bits, from, complementOf, signal }], `from` one of
+ *  'typed', 'diagram', 'complement' (drawn as row `complementOf` inverted),
+ *  'beats', or 'low' (bits empty); `signal` marks the diagram's own signals.
+ *  `phases` defaults to timingPhases. */
+function timingRowSources(circuit, { fromBeats = false, typed = new Map(), order = null, phases: given = null } = {}) {
   const drawnBefore = existingTimingDiagram(circuit);
-  const phases = arranged(timingOrder(switchPhases(circuit)), order || drawnBefore?.order);
+  const phases = arranged(given || timingPhases(circuit), order || drawnBefore?.order);
   const before = fromBeats ? null : drawnBefore;
-  return phases.map(({ key, source }) => {
-    if (typed.has(key)) return { key, source, bits: typed.get(key), from: 'typed' };
-    if (before?.bits.has(key)) return { key, source, bits: before.bits.get(key), from: 'diagram' };
+  return phases.map(({ key, source, signal }) => {
+    const own = signal ? { signal: true } : {};
+    if (typed.has(key)) return { key, source, bits: typed.get(key), from: 'typed', ...own };
+    if (before?.bits.has(key)) return { key, source, bits: before.bits.get(key), from: 'diagram', ...own };
     const base = isComplementPhase(key) ? phases.findIndex((other) => samePhase(other.key, complementKey(key))) : -1;
-    if (base >= 0) return { key, source, bits: '', from: 'complement', complementOf: base };
-    const beats = beatTimingBits(circuit, key);
-    return beats ? { key, source, bits: beats, from: 'beats' } : { key, source, bits: '', from: 'low' };
+    if (base >= 0) return { key, source, bits: '', from: 'complement', complementOf: base, ...own };
+    const beats = signal ? '' : beatTimingBits(circuit, key);
+    return beats ? { key, source, bits: beats, from: 'beats' } : { key, source, bits: '', from: 'low', ...own };
   });
+}
+
+/** Take the drawn diagram away; returns whether there was one. */
+function removeTimingDiagram(circuit) {
+  const before = existingTimingDiagram(circuit);
+  if (!before) return false;
+  for (const id of before.ids) circuit.removeLabel(id);
+  return true;
 }
 
 /**
@@ -27992,17 +28041,31 @@ function timingRowSources(circuit, { fromBeats = false, typed = new Map(), order
  * plus its own. Returns the rows: [{ phase, bits, from, shift, label, line,
  * lines }].
  */
-function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false } = {}) {
-  const phases = timingOrder(switchPhases(circuit));
-  if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [] } = {}) {
+  const current = timingPhases(circuit);
+  for (const name of add) {
+    if (!String(name).trim()) throw new Error('a signal needs a name');
+    const taken = current.find((phase) => samePhase(phase.key, phaseKey(name)));
+    if (taken) throw new Error(`the diagram has ${plainTexText(taken.source)} already`);
+  }
+  for (const name of remove) {
+    const phase = timingPhaseNamed(current, name);
+    if (!phase) throw new Error(`the diagram has no row "${name}"`);
+    if (!phase.signal) throw new Error(`${plainTexText(phase.source)} is a switch phase: its row comes from its switches`);
+  }
+  const phases = timingPhases(circuit, { add, remove: remove.map((name) => timingPhaseNamed(current, name).source) });
+  if (!phases.length) {
+    if (remove.length && removeTimingDiagram(circuit)) return [];
+    throw new Error('nothing to draw yet: no switch has a phase (label switches with the signal that controls them), and the diagram has no signals (timing --add CLK)');
+  }
   const named = (name) => {
     const phase = timingPhaseNamed(phases, name);
-    if (!phase) throw new Error(`no switch phase "${name}"; phases: ${phases.map((p, i) => `${i + 1} ${plainTexText(p.source)}`).join(', ')}`);
+    if (!phase) throw new Error(`no row "${name}"; rows: ${phases.map((p, i) => `${i + 1} ${plainTexText(p.source)}`).join(', ')}`);
     return phase;
   };
   const typed = new Map();
   for (const [name, text] of Object.entries(given)) typed.set(named(name).key, parseTimingBits(text));
-  const rows = timingRowSources(circuit, { fromBeats, typed, order: order ? order.map((name) => named(name).key) : null });
+  const rows = timingRowSources(circuit, { fromBeats, typed, phases, order: order ? order.map((name) => named(name).key) : null });
   const before = existingTimingDiagram(circuit);
   const ownShift = new Map();
   for (const [name, shift] of Object.entries(givenShifts)) ownShift.set(named(name).key, normalizeEdgeShift(shift));
@@ -28026,7 +28089,7 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
   // A complement drawn as its phase inverted keeps following it: its wave is
   // not remembered as its own.
   const settings = { slot: slotCells, ...(setting === 'auto' ? {} : { gaps: setting === 'none' ? false : setting }) };
-  const labels = rows.map(({ key, source, bits, from }, row) => circuit.addLabel({
+  const labels = rows.map(({ key, source, bits, from, signal }, row) => circuit.addLabel({
     text: source,
     math: isTexSource(source),
     align: 'right',
@@ -28037,6 +28100,7 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
       phase: key,
       ...(from === 'complement' || from === 'low' ? {} : { bits }),
       ...(own(key).fall || own(key).rise ? { shift: own(key) } : {}),
+      ...(signal ? { signal: true } : {}),
       ...settings,
     },
   }));
@@ -28057,10 +28121,10 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
   }
   labels.forEach((label, row) => label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, top + row * ROW_PITCH + WAVE_HEIGHT / 2));
   return labels.map((label, row) => {
-    const { key, bits, from } = rows[row];
+    const { key, bits, from, signal } = rows[row];
     const points = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH, drawnShift[row]);
     const line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
-    return { phase: key, bits, from, shift: own(key), label: label.id, line, lines: [line] };
+    return { phase: key, bits, from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
   });
 }
 
@@ -33819,8 +33883,8 @@ __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
-let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, timingRowSources } = __require("src/core/timing-diagram.js")); });
-let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey } = __require("src/core/beats.js")); });
+let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
+let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl; __bind(() => { ({ canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } = __require("src/web/elements.js")); });
@@ -34324,6 +34388,8 @@ function addPhaseBeats() {
  * longer), * the whole sequence, Delete removes it. Every change redraws the diagram in place, and
  * the whole session is one undo entry (core/timing-diagram.js). */
 let timingEditor = null;
+// Slots a first signal starts with, in a diagram with no rows yet.
+const EMPTY_SIGNAL_SLOTS = 4;
 
 function syncTimingToggle() {
   document.getElementById('btn-timing-diagram')?.setAttribute('aria-checked', String(!!timingEditor));
@@ -34349,10 +34415,7 @@ function openTimingDialog() {
     logLine(err.message, 'error');
     return;
   }
-  if (!sources.length) {
-    logLine('no switch has a phase yet: label switches with the signal that controls them', 'error');
-    return;
-  }
+  // With no switch phases it opens empty: signals are added by name.
   const before = existingTimingDiagram(editor.circuit);
   const make = (tag, props = {}, children = []) => {
     const node = document.createElement(tag);
@@ -34372,6 +34435,7 @@ function openTimingDialog() {
     // The row a complement follows, by its phase (rows can be reordered).
     baseKey: row.complementOf !== undefined ? sources[row.complementOf].key : undefined,
     follows: row.from === 'complement',
+    signal: !!row.signal,
     wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
     shift: before?.shifts.get(row.key) || { fall: 0, rise: 0 },
   }));
@@ -34408,9 +34472,14 @@ function openTimingDialog() {
     const order = rows.map((row) => row.key);
     const place = state.place;
     state.place = false;
+    // Signals added or removed here since the diagram was last drawn.
+    const drawnRows = timingPhases(editor.circuit);
+    const add = rows.filter((row) => row.signal && !drawnRows.some((phase) => samePhase(phase.key, row.key))).map((row) => row.source);
+    const remove = drawnRows.filter((phase) => phase.signal && !rows.some((row) => samePhase(row.key, phase.key))).map((phase) => phase.source);
     const start = snapshot();
     try {
-      addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps: state.gaps, shifts, order, place, fromBeats: true });
+      if (rows.length) addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps: state.gaps, shifts, order, place, fromBeats: true, add, remove });
+      else removeTimingDiagram(editor.circuit);
     } catch (err) {
       status.textContent = err.message;
       return;
@@ -34434,7 +34503,7 @@ function openTimingDialog() {
     if (state.gaps === 'none') return [];
     if (Array.isArray(state.gaps)) return state.gaps;
     const waves = rows.map((row) => (row.follows ? '' : row.wave.join('')));
-    return defaultTimingPairs(waves, new Set(rows.flatMap((row, index) => (row.baseKey !== undefined ? [index] : []))))
+    return defaultTimingPairs(waves, new Set(rows.flatMap((row, index) => (row.baseKey !== undefined || row.signal ? [index] : []))))
       .map(([a, b]) => [rows[a].key, rows[b].key]);
   };
   const renderPairs = () => {
@@ -34505,13 +34574,16 @@ function openTimingDialog() {
       });
       grid.append(make('div', { class: 'timing-grid-line' }, [name, cells, shift]));
     });
-    const count = make('div', { class: 'timing-grid-foot', text: state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
+    const count = make('div', { class: 'timing-grid-foot', text: !rows.length ? 'no rows yet: add a signal below'
+      : state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
     grid.append(count);
+    removeRow.disabled = !rows[state.cursor.row]?.signal;
   };
 
   const change = () => { renderGrid(); renderPairs(); redraw(); };
   const setCell = (level, { advance = false } = {}) => {
     const row = rows[state.cursor.row];
+    if (!row) return;
     detach(row);
     settle();
     // The empty cell after the last slot adds a slot: every other row holds
@@ -34519,6 +34591,37 @@ function openTimingDialog() {
     if (state.cursor.slot >= length()) for (const r of rows) if (!r.follows) r.wave.push(r.wave.at(-1) ?? '0');
     row.wave[state.cursor.slot] = level;
     if (advance) state.cursor.slot = Math.min(state.cursor.slot + 1, length());
+    change();
+  };
+  // A signal of the diagram's own, not tied to a switch: low throughout to
+  // start with, as long as the other rows.
+  const addSignal = (name) => {
+    const source = name.trim();
+    if (!source) return false;
+    const key = phaseKey(source);
+    if (rows.some((row) => samePhase(row.key, key))) {
+      status.textContent = `the diagram has ${source} already`;
+      return false;
+    }
+    settle();
+    rows.push({ key, source, signal: true, follows: false, wave: Array.from({ length: rows.length ? length() : EMPTY_SIGNAL_SLOTS }, () => '0'), shift: { fall: 0, rise: 0 } });
+    state.cursor = { row: rows.length - 1, slot: 0 };
+    change();
+    return true;
+  };
+  const removeSignal = () => {
+    const row = rows[state.cursor.row];
+    if (!row?.signal) return;
+    rows.splice(state.cursor.row, 1);
+    // A complement that followed it keeps the wave it showed.
+    for (const other of rows) {
+      if (other.baseKey !== undefined && samePhase(other.baseKey, row.key)) {
+        if (other.follows) other.wave = Array.from({ length: length() }, (_, i) => ({ 0: '1', 1: '0' })[at(row, i)]);
+        other.follows = false;
+        other.baseKey = undefined;
+      }
+    }
+    state.cursor.row = Math.max(0, Math.min(state.cursor.row, rows.length - 1));
     change();
   };
   // Move the cursor row up (-1) or down a row; the order is the diagram's.
@@ -34598,6 +34701,8 @@ function openTimingDialog() {
   };
   const fromBeats = button('From beats', 'One slot per beat: high where the phase\'s switches are closed', () => {
     rows.forEach((row) => {
+      // A signal of the diagram's own has no switches to read.
+      if (row.signal) return;
       if (row.baseKey !== undefined) { row.follows = true; row.wave = []; } else row.wave = [...beatTimingBits(editor.circuit, row.key)];
     });
     change();
@@ -34613,6 +34718,17 @@ function openTimingDialog() {
   const makeBeats = button('Make beats', 'Add one beat per state of this timing diagram, after the beat on screen: phases high together close together', () => {
     addPhaseBeats();
   });
+  const signalInput = make('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
+  const addButton = button('Add signal', 'Add a row of your own, not tied to any switch (Enter in the field)', () => {
+    if (addSignal(signalInput.value)) signalInput.value = '';
+  });
+  signalInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    if (addSignal(signalInput.value)) signalInput.value = '';
+    grid.focus();
+  });
+  const removeRow = button('Remove row', 'Remove the cursor row: a signal added here (a switch phase\'s row comes from its switches)', removeSignal);
   const close = () => {
     const focused = dialog.contains(document.activeElement);
     timingEditor?.dialog.close();
@@ -34623,7 +34739,7 @@ function openTimingDialog() {
   };
   const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
     make('h2', { text: 'Timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Make beats steps through the states drawn.' }),
+    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
     grid,
     make('div', { class: 'timing-dialog-options' }, [
       button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
@@ -34648,6 +34764,9 @@ function openTimingDialog() {
         button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
         button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
       ]),
+    ]),
+    make('div', { class: 'timing-dialog-options timing-signal-controls' }, [
+      make('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
     ]),
     pairsBox,
     status,
@@ -36089,7 +36208,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'annotation', aliases: ['annotate', 'label', 'note', 'text'], help: 'annotation add TEXT X Y ...' },
   { name: 'switch', help: 'switch REF|PHASE open|closed' },
   { name: 'beat', help: 'beat list|add|rm|show|dim|hide ...' },
-  { name: 'timing', help: 'draw a timing diagram: timing φ1=10 φ2=01 (or from the beats)' },
+  { name: 'timing', help: 'draw a timing diagram: timing φ1=10 φ2=01 (or from the beats); --add CLK adds a signal of its own' },
   { name: 'list', aliases: ['ls', 'components', 'parts'], help: 'list components' },
   { name: 'eval', help: 'quality report' },
   { name: 'explain', aliases: ['diagnose'], help: 'explain eval | explain connect ...' },
@@ -57439,7 +57558,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],
     ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
-    ['Shift+K', 'timing diagram of the switch phases: edit its slots in a grid beside the drawing; Make beats steps through it'],
+    ['Shift+K', 'timing diagram of the switch phases and signals you add: edit its slots in a grid beside the drawing; Make beats steps through the phases'],
     ['Shift/Ctrl-click a vertex', 'on a selected line or arrow, pick vertices (a box over part of it picks those inside); drag one to move them together, Delete removes them, Escape lets go'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],

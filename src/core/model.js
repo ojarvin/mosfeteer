@@ -922,7 +922,8 @@ export function normalizeImage(image) {
 
 /** A timing diagram row's data, as saved: its phase, its own wave (1s and
  * 0s), the slot width in cells, which phases are kept from overlapping
- * (`gaps`), and its edge shift; null when unusable. */
+ * (`gaps`), its edge shift, and whether it is a signal of the diagram's own
+ * rather than a switch phase (`signal`); null when unusable. */
 export function normalizeTiming(timing) {
   if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
   const bits = typeof timing.bits === 'string' && /^[01]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
@@ -941,6 +942,7 @@ export function normalizeTiming(timing) {
     slot,
     ...(gaps !== undefined ? { gaps } : {}),
     ...(shift && (shift.fall || shift.rise) ? { shift } : {}),
+    ...(timing.signal === true ? { signal: true } : {}),
   };
 }
 

@@ -118,6 +118,15 @@ early, it rises early. Every change redraws the diagram in place, and an
 editing session is one undo entry. A complement follows its phase inverted until one of its own
 slots is changed; any other phase with no wave is low.
 
+Rows need not be switch phases: **Signals** in the editor (or `timing
+--add CLK,EN`) adds rows of the diagram's own -- a clock, an enable, every
+row of a drawing with no switches at all -- low throughout to start with;
+**Remove row** (`--rm`) takes one away, and the diagram goes with its last
+row. The drawn diagram keeps them (`timing.signal`). A signal is drawn like
+a phase, a barred one following it inverted, but it switches nothing: it
+makes no beats, and is kept apart from another row only when its pair is
+ticked.
+
 The command takes the same waves: `timing φ1=10 φ2=01 --slot 2`, a phase
 named by its text, TeX, row number, or `~φ1` for its complement; rows not
 named keep their waves, `--beats` retakes them from the beats,
