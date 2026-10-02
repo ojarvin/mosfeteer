@@ -30,6 +30,7 @@ import { appendContextItem, appendContextSubmenu, openMenuAt } from './context-m
 import { editor } from './editor-state.js';
 import { persistence, openDocumentPath } from './document-session.js';
 import { commit, render, selectedComps, setSelection } from './main.js';
+import { reducedMotion } from './motion.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const OPEN_KEY = 'mosfeteer.linkBubbles:';
@@ -415,7 +416,6 @@ export function mountLinkBubbles(svgRoot, before) {
 
 const messageText = (bubble) => `${bubble.message} · right-click to link another`;
 
-const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** Bring the drawn bubbles up to date: called on every render. A bubble
  *  appears only once its picture is ready, growing out of its part; a

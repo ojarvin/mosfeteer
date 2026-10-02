@@ -32220,6 +32220,7 @@ let exportAtlasSheet; __bind(() => { ({ exportAtlasSheet } = __require("src/web/
 let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption } = __require("src/web/atlas-sheet.js")); });
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 let slideChrome; __bind(() => { ({ slideChrome } = __require("src/web/chrome-slide.js")); });
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -32232,6 +32233,7 @@ let slideChrome; __bind(() => { ({ slideChrome } = __require("src/web/chrome-sli
  * leaving zoom between the editor's view and the design's tile, which works
  * because a tile is the drawing at its real size.
  */
+
 
 
 
@@ -32842,7 +32844,7 @@ function arrangeDesk({ animate = true } = {}) {
   state.bounds = layout.bounds;
   const kept = new Set(layout.tiles.map((tile) => tile.id));
   if (state.selected && !kept.has(state.selected)) state.selected = null;
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   if (!animate || reduced) {
     state.motion = null;
     if (animate) setView(fitAllView());
@@ -33303,7 +33305,7 @@ function setView(view) {
  *  can move the destination while it flies. */
 function animateView(target, duration = 320, { camera = false, scatter = null } = {}) {
   stopAnimation();
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   if (reduced || duration <= 0) {
     setView(target);
     return Promise.resolve();
@@ -33489,7 +33491,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   // Startup keeps its own cover and reveal. The class goes on before the
   // desk shows: focusing it restyles at once, and a visible first style
   // would fade out and back in.
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   // A transition the user starts runs in three steps: the editor's toolbars
   // slide away, the camera moves, the Atlas's slide in (chrome-slide.js).
   // On startup the editor's are simply not there yet.
@@ -33650,7 +33652,7 @@ async function closeAtlas({ animate = true } = {}) {
   clearTimeout(state.arrangeTimer);
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
   // With reduced motion the desk just fades from where it is.
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   const back = animate && !reduced && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
   if (back) {
     state.quiet = true;
@@ -33716,7 +33718,7 @@ async function openTile(tile) {
   }
   if (state.opening) return;
   const generation = state.generation;
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   // The header keeps naming the design it came from until the Atlas is gone.
   state.opening = true;
   const landed = () => state?.generation === generation;
@@ -34088,11 +34090,13 @@ let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/
 let commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } = __require("src/web/main.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let chooseAction; __bind(() => { ({ chooseAction } = __require("src/web/file-dialog.js")); });
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * Beats in the editor: the beat strip, stepping and editing beats, hiding
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
 
 
 
@@ -35047,7 +35051,7 @@ function showPresenterFrame(animate = true) {
   // The new frame fades in over the old one, which then goes; every beat
   // shares the drawing's frame, so only what changed appears to move.
   const previous = [...presenterStageEl.children];
-  const still = !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const still = !animate || reducedMotion();
   if (still) previous.forEach((el) => el.remove());
   else {
     frame.classList.add('entering');
@@ -35556,7 +35560,6 @@ __exports.syncViewToPane = syncViewToPane;
 __exports.minViewW = minViewW;
 __exports.maxViewW = maxViewW;
 __exports.followCursor = followCursor;
-__exports.prefersReducedMotion = prefersReducedMotion;
 __exports.cancelViewAnimation = cancelViewAnimation;
 __exports.animateViewTo = animateViewTo;
 __exports.refitIfFitted = refitIfFitted;
@@ -35577,10 +35580,12 @@ let viewFollowingCursor, worldAndCursorFromClient; __bind(() => { ({ viewFollowi
 let lerpView; __bind(() => { ({ lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let render, selectedComps; __bind(() => { ({ render, selectedComps } = __require("src/web/main.js")); });
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * The canvas view: the world window the pane shows, its zoom limits, fitting
  * and animating it, and converting between screen and world coordinates.
  */
+
 
 
 
@@ -35691,10 +35696,6 @@ function followCursor() {
 // eye can follow where the drawing went. Any direct pan/zoom cancels it.
 let viewAnimation = 0;
 
-function prefersReducedMotion() {
-  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-}
-
 function cancelViewAnimation() {
   if (viewAnimation) cancelAnimationFrame(viewAnimation);
   viewAnimation = 0;
@@ -35704,7 +35705,7 @@ function animateViewTo(target, ms = 200) {
   cancelViewAnimation();
   const from = { ...editor.view };
   const to = { x: target.x, y: target.y, w: target.w, h: target.h };
-  if (prefersReducedMotion() || document.hidden) {
+  if (reducedMotion() || document.hidden) {
     Object.assign(editor.view, to);
     render();
     return;
@@ -35916,6 +35917,7 @@ function zoomToWorldRect(r) {
 
 __modules["src/web/chrome-slide.js"] = function (__require, __exports) {
 __exports.slideChrome = slideChrome;
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * The toolbars step aside for a camera move: the ones on screen slide off
  * toward their own edge of the window, the camera moves, and the next view's
@@ -35925,9 +35927,10 @@ __exports.slideChrome = slideChrome;
  * motion they simply go and come.
  */
 
+
+
 const CHROME_SLIDE_MS = 180;
 
-const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** Slide the toolbars under `root` away (`away` true) or back. Resolves when
  *  they have arrived; at once when `animate` is false, with reduced motion,
@@ -35992,7 +35995,7 @@ __modules["src/web/command-line-ui.js"] = function (__require, __exports) {
 __exports.runCommandLine = runCommandLine;
 __exports.installCommandLine = installCommandLine;
 let EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete; __bind(() => { ({ EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete } = __require("src/web/command-line.js")); });
-let analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, scrollSchemeButton, tipsButton; __bind(() => { ({ analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, scrollSchemeButton, tipsButton } = __require("src/web/elements.js")); });
+let analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButton, scrollSchemeButton, tipsButton; __bind(() => { ({ analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButton, scrollSchemeButton, tipsButton } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let applyLogDrawerEvent, hintLine, logCommand, logLine; __bind(() => { ({ applyLogDrawerEvent, hintLine, logCommand, logLine } = __require("src/web/status-bar-ui.js")); });
 let toggleTheme, setGrid, setCrosshair, setGuides; __bind(() => { ({ toggleTheme, setGrid, setCrosshair, setGuides } = __require("src/web/toolbar-ui.js")); });
@@ -36062,6 +36065,7 @@ const ACTIONS = {
   dark: (state) => toggleTo(state, document.documentElement.classList.contains('dark'), toggleTheme),
   beats: (state) => toggleTo(state, editor.beatStripOpen, toggleBeatStrip),
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
+  'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
   trackpad: (state) => toggleTo(state, checked(scrollSchemeButton), () => scrollSchemeButton?.click()),
   'page-guide': (state) => (state
     ? document.querySelector(`[data-page-guide="${state === 'none' ? '' : state}"]`)?.click()
@@ -36336,6 +36340,7 @@ const EDITOR_COMMANDS = [
   { name: 'dark', aliases: ['theme', 'dark-mode', 'darkmode', 'night', 'light'], toggle: true, help: 'switch the dark theme on or off (Shift+D)' },
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beat strip (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
+  { name: 'reduce-motion', aliases: ['reduce-animations', 'reduced-motion'], toggle: true, help: 'reduce animations: no zooms, slides, or flashes (Settings)' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
   { name: 'atlas', aliases: ['atlas-view', 'collage', 'overview', 'gallery', 'all-designs'], help: 'every design in the workspace at its real size (Shift+Backspace)' },
@@ -40245,6 +40250,7 @@ const panelFilterEl = document.getElementById('panel-filter');
 const sidePanelEl = document.getElementById('side-panel');
 const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
+const reduceMotionButton = document.getElementById('btn-reduce-motion');
 const themeBtn = document.getElementById('btn-theme');
 /** The theme toggles: the editor toolbar's and the Atlas header's. */
 const themeButtons = [themeBtn, document.getElementById('atlas-theme')].filter(Boolean);
@@ -40350,6 +40356,7 @@ __exports.panelFilterEl = panelFilterEl;
 __exports.sidePanelEl = sidePanelEl;
 __exports.sidePanelToggleEl = sidePanelToggleEl;
 __exports.scrollSchemeButton = scrollSchemeButton;
+__exports.reduceMotionButton = reduceMotionButton;
 __exports.themeBtn = themeBtn;
 __exports.themeButtons = themeButtons;
 __exports.gridBtn = gridBtn;
@@ -41970,6 +41977,7 @@ let appendContextItem, appendContextSubmenu, openMenuAt; __bind(() => { ({ appen
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
 let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, render, selectedComps, setSelection } = __require("src/web/main.js")); });
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * A loose design hierarchy in the editor (docs/hierarchy.md). A part may link
  * to another design of the workspace (ComponentInstance#link) to show what
@@ -41987,6 +41995,7 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
  * in this browser; they are never saved in the document or undone. Parts
  * linked to one design share one bubble, a connector to each.
  */
+
 
 
 
@@ -42387,7 +42396,6 @@ function mountLinkBubbles(svgRoot, before) {
 
 const messageText = (bubble) => `${bubble.message} · right-click to link another`;
 
-const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** Bring the drawn bubbles up to date: called on every render. A bubble
  *  appears only once its picture is ready, growing out of its part; a
@@ -42857,6 +42865,7 @@ const ICON_PATHS = {
   symbols: '<path d="M2 12h4l1.5-4 3 8 3-8 3 8 1.5-4H22"/>',
   crosshair: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
   guides: '<path d="M5 4v16M12 4v16M19 4v16" stroke-dasharray="3 2.4"/><path d="M5 12h7M12 12h7"/><path d="M5 9.5v5M12 9.5v5M19 9.5v5"/>',
+  motion: '<path d="M3 8h7M5 12h6M3 16h7"/><circle cx="16" cy="12" r="4"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   'align-left': '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>',
@@ -53278,6 +53287,50 @@ function installModelFigure() {
 
 };
 
+__modules["src/web/motion.js"] = function (__require, __exports) {
+__exports.reducedMotion = reducedMotion;
+__exports.reduceMotionSetting = reduceMotionSetting;
+__exports.setReduceMotionSetting = setReduceMotionSetting;
+/**
+ * Reduced motion: the system's preference, or the app's own setting
+ * (Settings → Reduce animations). While either asks for it the root element
+ * carries `data-reduce-motion`, which the stylesheet's reduced-motion rules
+ * key on, and reducedMotion() is what scripted animations ask.
+ */
+
+const SETTING_KEY = 'mosfeteer.reduceMotion';
+
+const query = globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)') || null;
+
+let setting = (() => {
+  try { return globalThis.localStorage?.getItem(SETTING_KEY) === '1'; } catch { return false; }
+})();
+
+/** Whether to leave animations out, by the system's choice or the app's. */
+function reducedMotion() {
+  return setting || !!query?.matches;
+}
+
+/** The app's own setting, whatever the system says. */
+function reduceMotionSetting() {
+  return setting;
+}
+
+function setReduceMotionSetting(on) {
+  setting = !!on;
+  try { globalThis.localStorage?.setItem(SETTING_KEY, setting ? '1' : ''); } catch { /* per-session only */ }
+  syncReducedMotion();
+}
+
+function syncReducedMotion() {
+  globalThis.document?.documentElement?.toggleAttribute('data-reduce-motion', reducedMotion());
+}
+
+query?.addEventListener?.('change', syncReducedMotion);
+syncReducedMotion();
+
+};
+
 __modules["src/web/net-names.js"] = function (__require, __exports) {
 __exports.renameLabelThroughModel = renameLabelThroughModel;
 __exports.interfacePortNet = interfacePortNet;
@@ -55764,6 +55817,9 @@ __exports.collapsedPanels = collapsedPanels;
 
 __modules["src/web/startup.js"] = function (__require, __exports) {
 __exports.revealStartup = revealStartup;
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
+
+
 /** Keep the first frame covered until its document or Atlas drawings are ready. */
 let reveal = null;
 
@@ -55771,7 +55827,7 @@ function revealStartup() {
   if (reveal) return reveal;
   const cover = document.getElementById('startup-cover');
   if (!cover) return Promise.resolve();
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   reveal = cover.animate([{ opacity: 1 }, { opacity: 0 }], {
     duration: reduced ? 0 : 700, easing: 'ease-out', fill: 'forwards',
   }).finished.finally(() => cover.remove());
@@ -56831,11 +56887,11 @@ __exports.installToolbarUi = installToolbarUi;
 let normalizePageGuide, pageGuideCaption; __bind(() => { ({ normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let minimalRevealScroll; __bind(() => { ({ minimalRevealScroll } = __require("src/web/toolbar.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
-let canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
+let canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor; __bind(() => { ({ ICON_PATHS, syncToolCursor } = __require("src/web/icons.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
-let prefersReducedMotion; __bind(() => { ({ prefersReducedMotion } = __require("src/web/canvas-view.js")); });
+let reduceMotionSetting, reducedMotion, setReduceMotionSetting; __bind(() => { ({ reduceMotionSetting, reducedMotion, setReduceMotionSetting } = __require("src/web/motion.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let saveCircuit; __bind(() => { ({ saveCircuit } = __require("src/web/document-session.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -57326,7 +57382,7 @@ function toggleTheme() {
   // Redraw too: what is drawn per theme (a peek bubble's picture) follows.
   const apply = () => { applyTheme(next); render(); };
   // Crossfade the whole window where the browser supports view transitions.
-  if (document.startViewTransition && !prefersReducedMotion()) document.startViewTransition(apply);
+  if (document.startViewTransition && !reducedMotion()) document.startViewTransition(apply);
   else apply();
 }
 
@@ -57484,6 +57540,13 @@ function installToolbarUi() {
   });
 
   syncScrollSchemeButton();
+
+  reduceMotionButton?.addEventListener('click', () => {
+    setReduceMotionSetting(!reduceMotionSetting());
+    reduceMotionButton.setAttribute('aria-checked', String(reduceMotionSetting()));
+    hintLine(reduceMotionSetting() ? 'animations reduced' : reducedMotion() ? 'animations still reduced: the system asks for reduced motion' : 'animations on');
+  });
+  reduceMotionButton?.setAttribute('aria-checked', String(reduceMotionSetting()));
 
   // Persist the theme across reloads; default to light unless the system prefers dark.
   try {

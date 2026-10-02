@@ -19,9 +19,9 @@ test('startup cover fades once, stays until the fade finishes, and respects redu
       },
       remove() { removed = true; },
     };
-    const reveal = vm.runInNewContext(`${startup.replace('export function', 'function')}\nrevealStartup`, {
+    const reveal = vm.runInNewContext(`${startup.replace(/^import .*$/m, '').replace('export function', 'function')}\nrevealStartup`, {
       document: { getElementById: () => cover },
-      window: { matchMedia: () => ({ matches: reduced }) },
+      reducedMotion: () => reduced,
     });
     const first = reveal();
     assert.equal(reveal(), first);

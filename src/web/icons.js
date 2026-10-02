@@ -25,6 +25,7 @@ export const ICON_PATHS = {
   symbols: '<path d="M2 12h4l1.5-4 3 8 3-8 3 8 1.5-4H22"/>',
   crosshair: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
   guides: '<path d="M5 4v16M12 4v16M19 4v16" stroke-dasharray="3 2.4"/><path d="M5 12h7M12 12h7"/><path d="M5 9.5v5M12 9.5v5M19 9.5v5"/>',
+  motion: '<path d="M3 8h7M5 12h6M3 16h7"/><circle cx="16" cy="12" r="4"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   'align-left': '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>',

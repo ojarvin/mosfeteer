@@ -6,7 +6,7 @@
  */
 
 import { EDITOR_COMMANDS, canonicalDocumentLine, commandLineIntent, commandWord, didYouMean, lineSuggestions, resolveEditorCommand, tabComplete } from './command-line.js';
-import { analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, scrollSchemeButton, tipsButton } from './elements.js';
+import { analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButton, scrollSchemeButton, tipsButton } from './elements.js';
 import { editor } from './editor-state.js';
 import { applyLogDrawerEvent, hintLine, logCommand, logLine } from './status-bar-ui.js';
 import { toggleTheme, setGrid, setCrosshair, setGuides } from './toolbar-ui.js';
@@ -52,6 +52,7 @@ const ACTIONS = {
   dark: (state) => toggleTo(state, document.documentElement.classList.contains('dark'), toggleTheme),
   beats: (state) => toggleTo(state, editor.beatStripOpen, toggleBeatStrip),
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
+  'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
   trackpad: (state) => toggleTo(state, checked(scrollSchemeButton), () => scrollSchemeButton?.click()),
   'page-guide': (state) => (state
     ? document.querySelector(`[data-page-guide="${state === 'none' ? '' : state}"]`)?.click()

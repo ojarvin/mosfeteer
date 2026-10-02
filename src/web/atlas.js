@@ -37,6 +37,7 @@ import { exportAtlasSheet } from './export-ui.js';
 import { atlasSheetSvg, sheetCaption } from './atlas-sheet.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { slideChrome } from './chrome-slide.js';
+import { reducedMotion } from './motion.js';
 
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
@@ -622,7 +623,7 @@ function arrangeDesk({ animate = true } = {}) {
   state.bounds = layout.bounds;
   const kept = new Set(layout.tiles.map((tile) => tile.id));
   if (state.selected && !kept.has(state.selected)) state.selected = null;
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   if (!animate || reduced) {
     state.motion = null;
     if (animate) setView(fitAllView());
@@ -1083,7 +1084,7 @@ function setView(view) {
  *  can move the destination while it flies. */
 function animateView(target, duration = 320, { camera = false, scatter = null } = {}) {
   stopAnimation();
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   if (reduced || duration <= 0) {
     setView(target);
     return Promise.resolve();
@@ -1269,7 +1270,7 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   // Startup keeps its own cover and reveal. The class goes on before the
   // desk shows: focusing it restyles at once, and a visible first style
   // would fade out and back in.
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   // A transition the user starts runs in three steps: the editor's toolbars
   // slide away, the camera moves, the Atlas's slide in (chrome-slide.js).
   // On startup the editor's are simply not there yet.
@@ -1430,7 +1431,7 @@ export async function closeAtlas({ animate = true } = {}) {
   clearTimeout(state.arrangeTimer);
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
   // With reduced motion the desk just fades from where it is.
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   const back = animate && !reduced && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
   if (back) {
     state.quiet = true;
@@ -1496,7 +1497,7 @@ async function openTile(tile) {
   }
   if (state.opening) return;
   const generation = state.generation;
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   // The header keeps naming the design it came from until the Atlas is gone.
   state.opening = true;
   const landed = () => state?.generation === generation;

@@ -11,6 +11,7 @@ import { viewFollowingCursor, worldAndCursorFromClient } from './interaction.js'
 import { lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
 import { render, selectedComps } from './main.js';
+import { reducedMotion } from './motion.js';
 
 // The pane's size, measured once and kept until the pane resizes. Reading
 // layout after the render has written the canvas forces the browser to lay
@@ -112,10 +113,6 @@ export function followCursor() {
 // eye can follow where the drawing went. Any direct pan/zoom cancels it.
 let viewAnimation = 0;
 
-export function prefersReducedMotion() {
-  return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-}
-
 export function cancelViewAnimation() {
   if (viewAnimation) cancelAnimationFrame(viewAnimation);
   viewAnimation = 0;
@@ -125,7 +122,7 @@ export function animateViewTo(target, ms = 200) {
   cancelViewAnimation();
   const from = { ...editor.view };
   const to = { x: target.x, y: target.y, w: target.w, h: target.h };
-  if (prefersReducedMotion() || document.hidden) {
+  if (reducedMotion() || document.hidden) {
     Object.assign(editor.view, to);
     render();
     return;

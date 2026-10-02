@@ -18,6 +18,7 @@ import { appendMarkupText } from './side-panel.js';
 import { commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } from './main.js';
 import { noteTip } from './onboarding.js';
 import { chooseAction } from './file-dialog.js';
+import { reducedMotion } from './motion.js';
 
 export function activeBeatIndex() {
   if (!editor.activeBeatId) return null;
@@ -957,7 +958,7 @@ function showPresenterFrame(animate = true) {
   // The new frame fades in over the old one, which then goes; every beat
   // shares the drawing's frame, so only what changed appears to move.
   const previous = [...presenterStageEl.children];
-  const still = !animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const still = !animate || reducedMotion();
   if (still) previous.forEach((el) => el.remove());
   else {
     frame.classList.add('entering');

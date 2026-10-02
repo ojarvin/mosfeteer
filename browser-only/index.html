@@ -78,7 +78,7 @@
          Outside the view cluster so a folded toolbar keeps it. -->
     <div class="toolbar-cluster settings-cluster" role="group" aria-label="Settings">
       <div class="toolbar-popover">
-        <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings: page guide, scrolling, tips, and the tutorial">Settings</button>
+        <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings: page guide, animations, scrolling, tips, and the tutorial">Settings</button>
         <div id="settings-menu" class="toolbar-menu settings-menu" role="menu" aria-label="Settings" hidden>
           <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
           <p class="toolbar-menu-note">Shows the width at which an exported figure set to full column or text width gets 8 pt text, the size of IEEE figure captions (subscripts are set smaller). Export pads the figure, or the exported selection, to this width, centred.</p>
@@ -88,6 +88,9 @@
             <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-2col">IEEE double column (7.16 in)</button>
             <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="a4">A4 page (16 cm)</button>
           </div>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <p class="toolbar-menu-heading">Display</p>
+          <button id="btn-reduce-motion" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="motion" title="Leave out zooms, slides, and other animations, as the system's reduced-motion preference does">Reduce animations</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Input</p>
           <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Two-finger scroll pans and pinch zooms; off: the mouse wheel zooms">Trackpad scrolling</button>

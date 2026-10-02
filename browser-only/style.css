@@ -1880,9 +1880,8 @@ button.app-mark-button:active {
   transition-duration: 80ms;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .app-mark-button .app-mark-art { transition: none; }
-}
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .app-mark-button .app-mark-art { transition: none; }
 
 .app-mark-art {
   display: block;
@@ -3459,13 +3458,12 @@ button.off {
   100% { transform: scale(1); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :is(.mode-toolbar, .rail-flyout) .mode-control,
-  :is(.mode-toolbar, .rail-flyout) .mode-control[aria-pressed="true"] .button-icon,
-  :is(.mode-toolbar, .rail-flyout) .mode-control.tool-flash {
-    transition: none;
-    animation: none;
-  }
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] :is(.mode-toolbar, .rail-flyout) .mode-control,
+:root[data-reduce-motion] :is(.mode-toolbar, .rail-flyout) .mode-control[aria-pressed="true"] .button-icon,
+:root[data-reduce-motion] :is(.mode-toolbar, .rail-flyout) .mode-control.tool-flash {
+  transition: none;
+  animation: none;
 }
 
 /* A tool change (or a wire-shape change) pulses the active rail button once,
@@ -3742,9 +3740,8 @@ button.off {
   100% { opacity: 0; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .landing-ripple { animation-name: landing-out; }
-}
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .landing-ripple { animation-name: landing-out; }
 
 /* ----- equation to schematic highlight --------------------------------
    Hovering or locking a sub-expression in the Analyze dock retraces the
@@ -3790,10 +3787,9 @@ button.off {
   outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .analysis-equation-value [data-node] {
-    transition: background 90ms ease-out;
-  }
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root:not([data-reduce-motion]) .analysis-equation-value [data-node] {
+  transition: background 90ms ease-out;
 }
 
 /* ----- quick-add menu (drop a pin-drag wire in empty space) ------ */
@@ -3975,18 +3971,17 @@ button.off {
   to { --radial-t: 1; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .side-panel {
-    transition: none !important;
-  }
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .side-panel {
+  transition: none !important;
+}
 
-  .radial-hub,
-  .radial-item,
-  .quick-add,
-  .rail-flyout,
-  .log-drawer {
-    animation: none;
-  }
+:root[data-reduce-motion] .radial-hub,
+:root[data-reduce-motion] .radial-item,
+:root[data-reduce-motion] .quick-add,
+:root[data-reduce-motion] .rail-flyout,
+:root[data-reduce-motion] .log-drawer {
+  animation: none;
 }
 
 .gesture-knife {
@@ -4135,11 +4130,10 @@ button.off {
   animation-duration: 180ms;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .snap-pulse {
-    animation: none;
-    opacity: 0;
-  }
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .snap-pulse {
+  animation: none;
+  opacity: 0;
 }
 
 /* Contextual tip: one quiet line in the canvas corner, never modal. */
@@ -4202,9 +4196,8 @@ button.off {
   to { opacity: 1; transform: none; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tip-card { animation: none; }
-}
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .tip-card { animation: none; }
 
 /* Settings menu: headed sections; the page guide has a note on its purpose. */
 .settings-menu {
@@ -4393,10 +4386,9 @@ button.off {
   100% { transform: none; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tutorial-cheer { animation: none; }
-  .tutorial-bar span { transition: none; }
-}
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .tutorial-cheer { animation: none; }
+:root[data-reduce-motion] .tutorial-bar span { transition: none; }
 
 
 /* ----- beats ------------------------------------------------------------- */
@@ -4713,11 +4705,10 @@ button.off {
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  /* No zooms: the Atlas and the editor cross-fade, which is not motion. */
-  .atlas { animation: none; transition: opacity 180ms ease-out; }
-  .atlas.leaving { transition: opacity 180ms ease-in; }
-}
+/* Reduced motion (motion.js): no zooms; the Atlas and the editor
+   cross-fade, which is not motion. */
+:root[data-reduce-motion] .atlas { animation: none; transition: opacity 180ms ease-out; }
+:root[data-reduce-motion] .atlas.leaving { transition: opacity 180ms ease-in; }
 
 .presenter {
   position: fixed;
@@ -4761,10 +4752,9 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
   to { opacity: 1; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .presenter-frame.entering {
-    animation: none;
-  }
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .presenter-frame.entering {
+  animation: none;
 }
 
 .presenter-count {
@@ -5126,11 +5116,10 @@ circle.bode-corner {
   to { opacity: 0; transform: scale(0.6); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .link-bubble.entering,
-  .link-bubble.leaving {
-    animation: none;
-  }
+/* Reduced motion: the system preference or Settings (motion.js). */
+:root[data-reduce-motion] .link-bubble.entering,
+:root[data-reduce-motion] .link-bubble.leaving {
+  animation: none;
 }
 
 /* After a linked part's name in the side panel; red when the link is broken. */

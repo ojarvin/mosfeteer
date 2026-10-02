@@ -8,11 +8,11 @@
 import { normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { minimalRevealScroll } from './toolbar.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
-import { canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
+import { canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, reduceMotionButton, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
 import { ICON_PATHS, syncToolCursor } from './icons.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { runCheck } from './design-check-ui.js';
-import { prefersReducedMotion } from './canvas-view.js';
+import { reduceMotionSetting, reducedMotion, setReduceMotionSetting } from './motion.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
 import { saveCircuit } from './document-session.js';
 import { editor } from './editor-state.js';
@@ -483,7 +483,7 @@ export function toggleTheme() {
   // Redraw too: what is drawn per theme (a peek bubble's picture) follows.
   const apply = () => { applyTheme(next); render(); };
   // Crossfade the whole window where the browser supports view transitions.
-  if (document.startViewTransition && !prefersReducedMotion()) document.startViewTransition(apply);
+  if (document.startViewTransition && !reducedMotion()) document.startViewTransition(apply);
   else apply();
 }
 
@@ -641,6 +641,13 @@ export function installToolbarUi() {
   });
 
   syncScrollSchemeButton();
+
+  reduceMotionButton?.addEventListener('click', () => {
+    setReduceMotionSetting(!reduceMotionSetting());
+    reduceMotionButton.setAttribute('aria-checked', String(reduceMotionSetting()));
+    hintLine(reduceMotionSetting() ? 'animations reduced' : reducedMotion() ? 'animations still reduced: the system asks for reduced motion' : 'animations on');
+  });
+  reduceMotionButton?.setAttribute('aria-checked', String(reduceMotionSetting()));
 
   // Persist the theme across reloads; default to light unless the system prefers dark.
   try {

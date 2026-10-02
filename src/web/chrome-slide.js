@@ -7,9 +7,10 @@
  * motion they simply go and come.
  */
 
+import { reducedMotion } from './motion.js';
+
 export const CHROME_SLIDE_MS = 180;
 
-const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** Slide the toolbars under `root` away (`away` true) or back. Resolves when
  *  they have arrived; at once when `animate` is false, with reduced motion,
