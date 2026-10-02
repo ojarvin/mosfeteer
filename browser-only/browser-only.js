@@ -56493,9 +56493,11 @@ function applyTheme(dark) {
 
 function toggleTheme() {
   const next = !document.documentElement.classList.contains('dark');
+  // Redraw too: what is drawn per theme (a peek bubble's picture) follows.
+  const apply = () => { applyTheme(next); render(); };
   // Crossfade the whole window where the browser supports view transitions.
-  if (document.startViewTransition && !prefersReducedMotion()) document.startViewTransition(() => applyTheme(next));
-  else applyTheme(next);
+  if (document.startViewTransition && !prefersReducedMotion()) document.startViewTransition(apply);
+  else apply();
 }
 
 /** Turn the placement grid on/off; keeps the toolbar button and the '#'
