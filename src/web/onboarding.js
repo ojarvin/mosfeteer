@@ -218,4 +218,6 @@ export function installOnboarding() {
     render();
   });
   document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
+  const github = document.getElementById('btn-github');
+  github?.addEventListener('click', () => window.open(github.dataset.href, '_blank', 'noopener'));
 }

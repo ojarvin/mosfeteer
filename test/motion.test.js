@@ -45,4 +45,6 @@ test('the stylesheet keys reduced motion on the root attribute, and Settings off
   assert.match(css, /:root:not\(\[data-reduce-motion\]\) \.analysis-equation-value/);
   const settings = html.slice(html.indexOf('id="settings-menu"'), html.indexOf('</header>'));
   assert.match(settings, /id="btn-reduce-motion"[^>]*role="menuitemcheckbox"/);
+  // The project page closes the menu.
+  assert.match(settings.slice(settings.lastIndexOf('toolbar-menu-separator')), /id="btn-github"[^>]*data-href="https:\/\/github\.com\/ojarvin\/mosfeteer"/);
 });
