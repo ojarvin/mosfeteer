@@ -58,6 +58,7 @@ function isDocumentFileName(name) {
   return !String(name).startsWith('.') && /\.json$/i.test(name);
 }
 
+// The time leads, as the server's does (modified-time.js reads it back).
 function fileRevision(file) {
   return `${Number(file.lastModified || 0).toString(36)}-${Number(file.size || 0).toString(36)}`;
 }

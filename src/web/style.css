@@ -2657,6 +2657,11 @@ button.status-chip:hover {
   color: var(--text);
 }
 
+/* When the document last changed: there when wanted, never in the way. */
+.status-modified {
+  opacity: 0.75;
+}
+
 .status-check.issue {
   color: var(--danger);
   font-weight: 600;
@@ -3535,7 +3540,8 @@ button.off {
   }
 
   .status-cursor,
-  .status-selection {
+  .status-selection,
+  .status-modified {
     display: none;
   }
 }
@@ -3610,6 +3616,7 @@ button.off {
 /* A short window keeps only the mode, the message, the check result, and help
    in the status bar, and a smaller log drawer. */
 @media (max-height: 500px) {
+  .status-modified,
   .status-cursor,
   .status-selection,
   .status-zoom {

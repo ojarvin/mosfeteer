@@ -13,6 +13,7 @@ import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisFormStorageKey } from './analysis-state.js';
 import { circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } from './elements.js';
 import { dropTutorial } from './onboarding.js';
+import { formatModifiedTime, modifiedRefreshMs, revisionTime } from './modified-time.js';
 import { hintLine, logLine } from './status-bar-ui.js';
 import { carryDeskPlace } from './atlas-layout.js';
 import { resetCheckState } from './design-check-ui.js';
@@ -606,6 +607,7 @@ export function renderSaveState() {
   }
   const dirtyDot = document.getElementById('dirty-dot');
   if (dirtyDot) dirtyDot.hidden = !dirty;
+  renderModifiedTime(dirty);
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !editor.currentDocumentPath || editor.deleteInFlight;
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   const renameButton = document.getElementById('btn-rename-document');
@@ -620,6 +622,45 @@ export function renderSaveState() {
     saveButton.title = dirty
       ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
       : editor.currentDocumentPath ? `All changes saved to ${editor.currentDocumentPath}` : 'Nothing to save yet';
+  }
+}
+
+// ----- last modified ---------------------------------------------------------------
+
+// The model revision the last edit was seen at, and when.
+let editedRevision = null;
+let editedAt = null;
+let modifiedTimer = 0;
+
+/** When the document last changed: the latest edit while there are unsaved
+ *  ones, else the file's own time (the last save, from here or elsewhere). */
+function documentModifiedAt(dirty) {
+  if (!dirty) {
+    editedRevision = null;
+    editedAt = null;
+  } else if (editor.modelRevision !== editedRevision) {
+    editedRevision = editor.modelRevision;
+    editedAt = Date.now();
+  }
+  return dirty && editedAt !== null ? editedAt : revisionTime(editor.lastSeenRevision);
+}
+
+/** The status bar's quiet "modified … ago" chip, kept current by a timer. */
+function renderModifiedTime(dirty = hasUnsavedChanges({ cached: true })) {
+  const chip = document.getElementById('status-modified');
+  if (!chip) return;
+  const at = documentModifiedAt(dirty);
+  const text = at === null ? '' : `${dirty ? 'edited' : 'saved'} ${formatModifiedTime(at)}`;
+  if (chip.textContent !== text) {
+    chip.textContent = text;
+    chip.hidden = !text;
+    chip.title = at === null ? '' : `${dirty ? 'Last edit (not saved yet)' : 'Last saved'}: ${new Date(at).toLocaleString()}`;
+  }
+  if (at !== null && !modifiedTimer) {
+    modifiedTimer = setTimeout(() => {
+      modifiedTimer = 0;
+      renderModifiedTime();
+    }, modifiedRefreshMs(at));
   }
 }
 

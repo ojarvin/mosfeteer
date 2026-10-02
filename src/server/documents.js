@@ -41,6 +41,8 @@ export function isJsonFile(path) {
   return /\.json$/i.test(path);
 }
 
+/** A file's revision: its mtime in nanoseconds and its size, in base 36. The
+ *  editor reads the time back for its "saved … ago" chip (modified-time.js). */
 export async function fileRevision(path) {
   try {
     const info = await stat(path, { bigint: true });

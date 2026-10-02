@@ -38838,6 +38838,7 @@ let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDial
 let analysisFormStorageKey; __bind(() => { ({ analysisFormStorageKey } = __require("src/web/analysis-state.js")); });
 let circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm; __bind(() => { ({ circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } = __require("src/web/elements.js")); });
 let dropTutorial; __bind(() => { ({ dropTutorial } = __require("src/web/onboarding.js")); });
+let formatModifiedTime, modifiedRefreshMs, revisionTime; __bind(() => { ({ formatModifiedTime, modifiedRefreshMs, revisionTime } = __require("src/web/modified-time.js")); });
 let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
 let carryDeskPlace; __bind(() => { ({ carryDeskPlace } = __require("src/web/atlas-layout.js")); });
 let resetCheckState; __bind(() => { ({ resetCheckState } = __require("src/web/design-check-ui.js")); });
@@ -38852,6 +38853,7 @@ let applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render
  * the CLI's active document and reloading files changed on disk; and dropped
  * files. Storage itself is behind persistence.js.
  */
+
 
 
 
@@ -39454,6 +39456,7 @@ function renderSaveState() {
   }
   const dirtyDot = document.getElementById('dirty-dot');
   if (dirtyDot) dirtyDot.hidden = !dirty;
+  renderModifiedTime(dirty);
   if (deleteCircuitBtn) deleteCircuitBtn.disabled = !editor.currentDocumentPath || editor.deleteInFlight;
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   const renameButton = document.getElementById('btn-rename-document');
@@ -39468,6 +39471,45 @@ function renderSaveState() {
     saveButton.title = dirty
       ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
       : editor.currentDocumentPath ? `All changes saved to ${editor.currentDocumentPath}` : 'Nothing to save yet';
+  }
+}
+
+// ----- last modified ---------------------------------------------------------------
+
+// The model revision the last edit was seen at, and when.
+let editedRevision = null;
+let editedAt = null;
+let modifiedTimer = 0;
+
+/** When the document last changed: the latest edit while there are unsaved
+ *  ones, else the file's own time (the last save, from here or elsewhere). */
+function documentModifiedAt(dirty) {
+  if (!dirty) {
+    editedRevision = null;
+    editedAt = null;
+  } else if (editor.modelRevision !== editedRevision) {
+    editedRevision = editor.modelRevision;
+    editedAt = Date.now();
+  }
+  return dirty && editedAt !== null ? editedAt : revisionTime(editor.lastSeenRevision);
+}
+
+/** The status bar's quiet "modified … ago" chip, kept current by a timer. */
+function renderModifiedTime(dirty = hasUnsavedChanges({ cached: true })) {
+  const chip = document.getElementById('status-modified');
+  if (!chip) return;
+  const at = documentModifiedAt(dirty);
+  const text = at === null ? '' : `${dirty ? 'edited' : 'saved'} ${formatModifiedTime(at)}`;
+  if (chip.textContent !== text) {
+    chip.textContent = text;
+    chip.hidden = !text;
+    chip.title = at === null ? '' : `${dirty ? 'Last edit (not saved yet)' : 'Last saved'}: ${new Date(at).toLocaleString()}`;
+  }
+  if (at !== null && !modifiedTimer) {
+    modifiedTimer = setTimeout(() => {
+      modifiedTimer = 0;
+      renderModifiedTime();
+    }, modifiedRefreshMs(at));
   }
 }
 
@@ -53297,6 +53339,63 @@ function installModelFigure() {
 
 };
 
+__modules["src/web/modified-time.js"] = function (__require, __exports) {
+__exports.revisionTime = revisionTime;
+__exports.formatModifiedTime = formatModifiedTime;
+__exports.modifiedRefreshMs = modifiedRefreshMs;
+/**
+ * When the open document last changed, as the status bar says it: "12
+ * seconds ago", "5 minutes ago", "3 hours ago" the same day, "yesterday
+ * 14:05", then the date and time.
+ */
+
+/** The modification time (ms) a document revision records, or null. A
+ *  revision starts with the file's mtime in base 36: nanoseconds from the
+ *  server (documents.js fileRevision), milliseconds from browser-only files
+ *  (persistence.js fileRevision). */
+function revisionTime(revision) {
+  const head = String(revision || '').split('-')[0];
+  if (!/^[0-9a-z]+$/.test(head)) return null;
+  const value = parseInt(head, 36);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  // No millisecond time reaches 1e15 before the year 33000.
+  return value > 1e15 ? Math.round(value / 1e6) : value;
+}
+
+const plural = (count, unit) => `${count} ${unit}${count === 1 ? '' : 's'} ago`;
+
+function sameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/** `then` relative to `now` (both ms), in the locale's clock and date. */
+function formatModifiedTime(then, now = Date.now(), locale = undefined) {
+  const seconds = Math.max(0, Math.floor((now - then) / 1000));
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return plural(seconds, 'second');
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return plural(minutes, 'minute');
+  const at = new Date(then);
+  const today = new Date(now);
+  if (sameDay(at, today)) return plural(Math.floor(minutes / 60), 'hour');
+  const clock = at.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (sameDay(at, yesterday)) return `yesterday ${clock}`;
+  const date = at.toLocaleDateString(locale, {
+    day: 'numeric', month: 'short', ...(at.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }),
+  });
+  return `${date} ${clock}`;
+}
+
+/** How soon to read formatModifiedTime(then) again: each second while it
+ *  counts seconds, then a few times a minute. */
+function modifiedRefreshMs(then, now = Date.now()) {
+  return now - then < 60_000 ? 1_000 : 15_000;
+}
+
+};
+
 __modules["src/web/motion.js"] = function (__require, __exports) {
 __exports.reducedMotion = reducedMotion;
 __exports.reduceMotionSetting = reduceMotionSetting;
@@ -53943,6 +54042,7 @@ function isDocumentFileName(name) {
   return !String(name).startsWith('.') && /\.json$/i.test(name);
 }
 
+// The time leads, as the server's does (modified-time.js reads it back).
 function fileRevision(file) {
   return `${Number(file.lastModified || 0).toString(36)}-${Number(file.size || 0).toString(36)}`;
 }
