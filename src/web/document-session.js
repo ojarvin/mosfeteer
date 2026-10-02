@@ -454,8 +454,23 @@ function openUnsavedDocument(state, name) {
   logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
 }
 
-export function hasUnsavedChanges() {
-  return snapshot() !== editor.lastSavedSnapshot ||
+// The toolbar's dirty dot asks on every frame; serializing the document each
+// time cost most of a frame on a large drawing. The answer only changes with
+// the model (its revision, or a preview's), the document, or a save.
+let changedCache = null;
+
+/** Whether the document differs from what was last saved. `cached` reuses
+ *  the answer while nothing it depends on changed: for the per-frame dirty
+ *  dot, not for deciding whether work would be lost. */
+function documentChanged({ cached = false } = {}) {
+  const key = { revision: editor.modelRevision, preview: editor.previewRevision, circuit: editor.circuit, saved: editor.lastSavedSnapshot };
+  if (cached && changedCache && Object.keys(key).every((field) => changedCache.key[field] === key[field])) return changedCache.changed;
+  changedCache = { key, changed: snapshot() !== editor.lastSavedSnapshot };
+  return changedCache.changed;
+}
+
+export function hasUnsavedChanges({ cached = false } = {}) {
+  return documentChanged({ cached }) ||
     (!editor.currentDocumentPath && !!validDocumentName(circuitNameEl.value));
 }
 
@@ -580,7 +595,7 @@ function newDocumentDestination() {
 }
 
 export function renderSaveState() {
-  const dirty = hasUnsavedChanges();
+  const dirty = hasUnsavedChanges({ cached: true });
   // Fitting measures the toolbar at each compaction stage (a forced layout
   // apiece), so refit only when the title or dirty dot can change its width;
   // the toolbar's ResizeObserver covers everything else.

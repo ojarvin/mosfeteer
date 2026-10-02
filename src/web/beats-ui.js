@@ -4,17 +4,18 @@
  * presenter. The beat model is core/beats.js.
  */
 
+import { element } from './dom.js';
 import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
-import { canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } from './elements.js';
+import { canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } from './elements.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
-import { closeComponentContextMenu, appendContextItem } from './context-menu.js';
+import { closeComponentContextMenu, appendContextItem, openMenuAt } from './context-menu.js';
 import { editor } from './editor-state.js';
 import { appendMarkupText } from './side-panel.js';
-import { commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, snapshot } from './main.js';
+import { commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } from './main.js';
 import { noteTip } from './onboarding.js';
 
 export function activeBeatIndex() {
@@ -439,16 +440,8 @@ function startBeatRename(index, button) {
 }
 
 function openBeatMenu(index, x, y) {
-  if (!componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = beatLabel(index);
-  menu.appendChild(heading);
+  const menu = openMenuAt(x, y, beatLabel(index));
+  if (!menu) return;
   const group = document.createElement('div');
   group.className = 'context-menu-group';
   const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
@@ -520,16 +513,6 @@ export function openTimingDialog() {
   }
   // With no switch phases it opens empty: signals are added by name.
   const before = existingTimingDiagram(editor.circuit);
-  const make = (tag, props = {}, children = []) => {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (key === 'class') node.className = value;
-      else if (key === 'text') node.textContent = value;
-      else node.setAttribute(key, value);
-    }
-    node.append(...children);
-    return node;
-  };
   // The rows' own waves; a complement with none follows its phase inverted.
   // An older diagram's don't-care slots read as low.
   const rows = sources.map((row) => ({
@@ -564,9 +547,9 @@ export function openTimingDialog() {
     row.follows = false;
   };
 
-  const grid = make('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete removes it' });
-  const pairsBox = make('div', { class: 'timing-pairs' });
-  const status = make('p', { class: 'timing-dialog-status', role: 'status' });
+  const grid = element('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete removes it' });
+  const pairsBox = element('div', { class: 'timing-pairs' });
+  const status = element('p', { class: 'timing-dialog-status', role: 'status' });
 
   const redraw = () => {
     const bits = {};
@@ -613,13 +596,13 @@ export function openTimingDialog() {
     pairsBox.replaceChildren();
     const own = rows.filter((row) => row.baseKey === undefined);
     const active = activePairs();
-    const head = make('div', { class: 'timing-pairs-head' }, [make('span', { class: 'timing-pairs-title', text: 'Never overlap' })]);
-    const list = make('div', { class: 'timing-pairs-list' });
+    const head = element('div', { class: 'timing-pairs-head' }, [element('span', { class: 'timing-pairs-title', text: 'Never overlap' })]);
+    const list = element('div', { class: 'timing-pairs-list' });
     pairsBox.append(head, list);
     for (let a = 0; a < own.length; a += 1) {
       for (let b = a + 1; b < own.length; b += 1) {
         const pair = [own[a].key, own[b].key];
-        const box = make('input', { type: 'checkbox' });
+        const box = element('input', { type: 'checkbox' });
         box.checked = active.some((other) => samePair(other, pair));
         box.addEventListener('change', () => {
           const next = activePairs().filter((other) => !samePair(other, pair));
@@ -628,10 +611,10 @@ export function openTimingDialog() {
           renderPairs();
           redraw();
         });
-        list.append(make('label', {}, [box, make('span', { text: `${plainMarkup(own[a].source)} · ${plainMarkup(own[b].source)}` })]));
+        list.append(element('label', {}, [box, element('span', { text: `${plainMarkup(own[a].source)} · ${plainMarkup(own[b].source)}` })]));
       }
     }
-    const auto = make('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'automatic' : 'Automatic', title: 'Keep apart every two phases that are never high in the same slot' });
+    const auto = element('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'automatic' : 'Automatic', title: 'Keep apart every two phases that are never high in the same slot' });
     auto.disabled = state.gaps === 'auto';
     auto.addEventListener('click', () => { state.gaps = 'auto'; renderPairs(); redraw(); });
     head.append(auto);
@@ -642,14 +625,14 @@ export function openTimingDialog() {
     const n = length();
     state.cursor.slot = Math.min(state.cursor.slot, n);
     rows.forEach((row, r) => {
-      const name = make('span', { class: 'timing-grid-name' });
+      const name = element('span', { class: 'timing-grid-name' });
       if (/\\(?:overline|bar)\{/.test(row.source)) name.textContent = plainMarkup(row.source);
       else appendMarkupText(name, texToLabelMarkup(row.source));
       if (row.follows) name.title = `${plainMarkup(baseOf(row).source)} inverted; edit it to give it a wave of its own`;
-      const cells = make('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
+      const cells = element('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
       for (let slot = 0; slot < n; slot += 1) {
         const level = shown(row, slot);
-        const cell = make('span', { class: `timing-cell level-${level}${state.cursor.row === r && state.cursor.slot === slot ? ' cursor' : ''}`, role: 'gridcell' });
+        const cell = element('span', { class: `timing-cell level-${level}${state.cursor.row === r && state.cursor.slot === slot ? ' cursor' : ''}`, role: 'gridcell' });
         cell.addEventListener('mousedown', (event) => {
           event.preventDefault();
           state.cursor = { row: r, slot };
@@ -659,7 +642,7 @@ export function openTimingDialog() {
         cells.append(cell);
       }
       // After the last slot, an empty cell to type a new one into.
-      const add = make('span', { class: `timing-cell new${state.cursor.row === r && state.cursor.slot === n ? ' cursor' : ''}`, title: 'Type 1 or 0 here to add a slot' });
+      const add = element('span', { class: `timing-cell new${state.cursor.row === r && state.cursor.slot === n ? ' cursor' : ''}`, title: 'Type 1 or 0 here to add a slot' });
       add.addEventListener('mousedown', (event) => {
         event.preventDefault();
         state.cursor = { row: r, slot: n };
@@ -668,16 +651,16 @@ export function openTimingDialog() {
       });
       cells.append(add);
       const edge = (arrow, cells) => (cells ? `${arrow}${cells > 0 ? '+' : '−'}${Math.abs(cells)}` : '');
-      const shift = make('span', {
+      const shift = element('span', {
         class: 'timing-shift',
         text: [edge('↓', row.shift.fall), edge('↑', row.shift.rise)].filter(Boolean).join(' '),
         title: row.shift.fall || row.shift.rise
           ? `Falls ${Math.abs(row.shift.fall)} cell${Math.abs(row.shift.fall) === 1 ? '' : 's'} ${row.shift.fall < 0 ? 'early' : 'late'}, rises ${Math.abs(row.shift.rise)} ${row.shift.rise < 0 ? 'early' : 'late'} ([ ] and { } move them)`
           : 'Edges on the slot boundaries ([ ] move the falls, { } the rises)',
       });
-      grid.append(make('div', { class: 'timing-grid-line' }, [name, cells, shift]));
+      grid.append(element('div', { class: 'timing-grid-line' }, [name, cells, shift]));
     });
-    const count = make('div', { class: 'timing-grid-foot', text: !rows.length ? 'no rows yet: add a signal below'
+    const count = element('div', { class: 'timing-grid-foot', text: !rows.length ? 'no rows yet: add a signal below'
       : state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
     grid.append(count);
     removeRow.disabled = !rows[state.cursor.row]?.signal;
@@ -795,10 +778,10 @@ export function openTimingDialog() {
     event.preventDefault();
   });
 
-  const slotInput = make('input', { type: 'number', min: '1', max: '64', step: '1', value: String(state.slot), 'aria-label': 'Slot width in cells' });
+  const slotInput = element('input', { type: 'number', min: '1', max: '64', step: '1', value: String(state.slot), 'aria-label': 'Slot width in cells' });
   slotInput.addEventListener('change', () => { state.slot = Math.max(1, Math.round(Number(slotInput.value)) || DEFAULT_SLOT_CELLS); redraw(); });
   const button = (text, title, action) => {
-    const node = make('button', { type: 'button', text, title });
+    const node = element('button', { type: 'button', text, title });
     node.addEventListener('click', () => { action(); grid.focus(); });
     return node;
   };
@@ -821,7 +804,7 @@ export function openTimingDialog() {
   const makeBeats = button('Make beats', 'Add one beat per state of this timing diagram, after the beat on screen: phases high together close together', () => {
     addPhaseBeats();
   });
-  const signalInput = make('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
+  const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
   const addButton = button('Add signal', 'Add a row of your own, not tied to any switch (Enter in the field)', () => {
     if (addSignal(signalInput.value)) signalInput.value = '';
   });
@@ -840,40 +823,40 @@ export function openTimingDialog() {
     syncTimingToggle();
     if (focused) canvasEl.focus({ preventScroll: true });
   };
-  const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
-    make('h2', { text: 'Timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
+  const dialog = element('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
+    element('h2', { text: 'Timing diagram' }),
+    element('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
     grid,
-    make('div', { class: 'timing-dialog-options' }, [
+    element('div', { class: 'timing-dialog-options' }, [
       button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
       button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
       button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
-      make('label', {}, [make('span', { text: 'Slot' }), slotInput, make('span', { text: 'cells' })]),
+      element('label', {}, [element('span', { text: 'Slot' }), slotInput, element('span', { text: 'cells' })]),
     ]),
-    make('div', { class: 'timing-dialog-options timing-shift-controls' }, [
-      make('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
-      make('span', { class: 'timing-shift-pair' }, [
-        make('span', { text: 'Fall' }),
+    element('div', { class: 'timing-dialog-options timing-shift-controls' }, [
+      element('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
+      element('span', { class: 'timing-shift-pair' }, [
+        element('span', { text: 'Fall' }),
         button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
         button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
       ]),
-      make('span', { class: 'timing-shift-pair' }, [
-        make('span', { text: 'Rise' }),
+      element('span', { class: 'timing-shift-pair' }, [
+        element('span', { text: 'Rise' }),
         button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
         button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
       ]),
-      make('span', { class: 'timing-shift-pair' }, [
-        make('span', { text: 'Row' }),
+      element('span', { class: 'timing-shift-pair' }, [
+        element('span', { text: 'Row' }),
         button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
         button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
       ]),
     ]),
-    make('div', { class: 'timing-dialog-options timing-signal-controls' }, [
-      make('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
+    element('div', { class: 'timing-dialog-options timing-signal-controls' }, [
+      element('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
     ]),
     pairsBox,
     status,
-    make('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats, button('Close', 'Close (Escape)', close)]),
+    element('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats, button('Close', 'Close (Escape)', close)]),
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();

@@ -93,19 +93,27 @@ function singularResult(variables, pivotColumn, pivotRow, rhs, ops) {
   );
 }
 
+/** Bring the first row at or below `column` with a nonzero entry in that
+ *  column up to it (swapping its right-hand side too); false when there is
+ *  none, and the system is singular there. */
+function swapPivotRow(a, b, column, ops) {
+  const offset = a.slice(column).findIndex((row) => !ops.isZero(row[column]));
+  if (offset < 0) return false;
+  const actual = column + offset;
+  if (actual !== column) {
+    [a[column], a[actual]] = [a[actual], a[column]];
+    [b[column], b[actual]] = [b[actual], b[column]];
+  }
+  return true;
+}
+
 function solveNormalized(a, b, ops, variables, guard) {
   const n = a.length;
   const rhsCount = b[0]?.length || 0;
   for (let column = 0; column < n; column++) {
     const budgetError = budgetFailure(ops, 'normalized elimination');
     if (budgetError) return budgetError;
-    const pivotRow = a.slice(column).findIndex((row) => !ops.isZero(row[column]));
-    if (pivotRow < 0) return singularResult(variables, column, column, b, ops);
-    const actual = column + pivotRow;
-    if (actual !== column) {
-      [a[column], a[actual]] = [a[actual], a[column]];
-      [b[column], b[actual]] = [b[actual], b[column]];
-    }
+    if (!swapPivotRow(a, b, column, ops)) return singularResult(variables, column, column, b, ops);
     const pivot = a[column][column];
     if (ops.isZero(pivot)) return singularResult(variables, column, column, b, ops);
     for (let j = column; j < n; j++) {
@@ -150,13 +158,7 @@ function solveBareiss(a, b, ops, variables, guard) {
   for (let column = 0; column < n - 1; column++) {
     const budgetError = budgetFailure(ops, 'fraction-free elimination');
     if (budgetError) return budgetError;
-    const pivotRow = a.slice(column).findIndex((row) => !ops.isZero(row[column]));
-    if (pivotRow < 0) return singularResult(variables, column, column, b, ops);
-    const actual = column + pivotRow;
-    if (actual !== column) {
-      [a[column], a[actual]] = [a[actual], a[column]];
-      [b[column], b[actual]] = [b[actual], b[column]];
-    }
+    if (!swapPivotRow(a, b, column, ops)) return singularResult(variables, column, column, b, ops);
     const pivot = a[column][column];
     if (ops.isZero(pivot)) return singularResult(variables, column, column, b, ops);
     if (ops.isZero(previousPivot)) {

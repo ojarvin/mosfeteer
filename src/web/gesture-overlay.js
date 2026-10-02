@@ -12,7 +12,7 @@ import { logLine, hintLine } from './status-bar-ui.js';
 import { paneSize } from './canvas-view.js';
 import { netMarkerRefs } from './hover-preview.js';
 import { editor } from './editor-state.js';
-import { deleteSelection, keyToWire, nearestTerminal, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } from './main.js';
+import { deleteSelection, nearestTerminal, wireSegmentAt, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } from './main.js';
 
 /** A wire end that lands on a pin gets one small ripple at that pin; so does
  *  every pin of a part being placed, moved, or copied that will join a pin or
@@ -144,9 +144,8 @@ export function withGestureOverlay(svg, ghost) {
     const stroke = [...editor.drag.knife];
     const cut = knifeTargets(stroke);
     for (const key of cut.wires) {
-      const { netId, branch, segment } = keyToWire(key);
-      const pts = editor.circuit.nets.get(netId)?.paths()?.[branch];
-      if (pts?.[segment]) parts.push(`<line class="gesture-cut" x1="${pts[segment - 1].x}" y1="${pts[segment - 1].y}" x2="${pts[segment].x}" y2="${pts[segment].y}" vector-effect="non-scaling-stroke"/>`);
+      const segment = wireSegmentAt(key);
+      if (segment) parts.push(`<line class="gesture-cut" x1="${segment.a.x}" y1="${segment.a.y}" x2="${segment.b.x}" y2="${segment.b.y}" vector-effect="non-scaling-stroke"/>`);
     }
     for (const ref of cut.refs) {
       parts.push(`<g class="selection-glow gesture-cut-part" pointer-events="none">${componentShapeSvg(editor.circuit.components.get(ref))}</g>`);

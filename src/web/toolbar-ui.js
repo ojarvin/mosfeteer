@@ -8,12 +8,12 @@
 import { normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { minimalRevealScroll } from './toolbar.js';
 import { chooseToolbarStage, toolbarFits, toolbarStageTokens } from './toolbar-fit.js';
-import { canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
+import { canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } from './elements.js';
 import { ICON_PATHS, syncToolCursor } from './icons.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { runCheck } from './design-check-ui.js';
 import { prefersReducedMotion } from './canvas-view.js';
-import { closeComponentContextMenu, appendContextItem } from './context-menu.js';
+import { appendContextItem, openMenuAt } from './context-menu.js';
 import { saveCircuit } from './document-session.js';
 import { editor } from './editor-state.js';
 import { removeAllNetHighlights } from './annotation-tools.js';
@@ -56,17 +56,9 @@ export function scheduleToolbarFit() {
 
 /** Right-click on the highlight tool: its one bulk action. */
 function openHighlightToolMenu(x, y) {
-  if (!componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = 'Net highlight';
-  menu.appendChild(heading);
-  const highlighted = editor.circuit.toJSON().netHighlights;
+  const menu = openMenuAt(x, y, 'Net highlight');
+  if (!menu) return;
+  const highlighted = editor.circuit._netHighlightsJSON().netHighlights;
   appendContextItem(menu, 'Remove all highlights', removeAllNetHighlights, { disabled: !highlighted, shortcut: '8', danger: true });
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;

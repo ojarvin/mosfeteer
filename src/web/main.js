@@ -10,7 +10,8 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
+import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching as netsTouchingIn, rerouteTouchedNets as rerouteTouchedNetsIn } from '../core/part-moves.js';
+import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { pinJoinPoints } from './gestures.js';
 import { runCommand, evaluate } from '../core/commands.js';
@@ -62,7 +63,7 @@ import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatO
 import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
-import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts, sidePanelVisible, setSidePanelVisible } from './side-panel.js';
+import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts } from './side-panel.js';
 import { installFindReplace, openFind, openReplace, renderTextMatches } from './find-replace-ui.js';
 import { installTagsField, renderTagsField } from './tags-ui.js';
 import { installCommandLine } from './command-line-ui.js';
@@ -472,6 +473,7 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
     startSnapshot,
   };
   circuit = loadDocument(JSON.parse(startSnapshot));
+  circuit.adoptTextMetrics(previewTransaction.baseCircuit);
   previewRevision += 1;
   circuit.invalidateRoutingCache();
   return true;
@@ -574,7 +576,11 @@ export function applyJson(blob) {
   labelMode = null;
   annotationPoints = [];
   resetCheckState();
+  const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
+  // Labels whose text is unchanged keep their measured size, instead of
+  // every label being measured again (a forced layout each).
+  circuit.adoptTextMetrics(previous);
   // Loads, undo, and redo bring objects back; none of them is newly drawn.
   rememberBeatObjects();
   markModelChanged(); // wire geometry may have changed under any wholesale load
@@ -745,10 +751,34 @@ function namedNetGroupKey(net) {
  *  bit the bus (not the other bits). */
 export function namedGroupNets(net) {
   if (!net?.id) return referenceGroupNets(net);
-  const key = circuit.netGroupKey(net);
-  const bus = !!busBits(net.name);
-  return [...circuit.nets.values()].filter((candidate) => circuit.netGroupKey(candidate) === key
-    || (bus && netNamesConnect(candidate.name, net.name)));
+  let groups = netGroupIndex();
+  // A net made since the index was built (within one revision) rebuilds it.
+  if (!groups.keyOf.has(net)) {
+    netGroupCache = null;
+    groups = netGroupIndex();
+  }
+  const members = groups.keyOf.has(net) ? groups.byKey.get(groups.keyOf.get(net)) : [net];
+  if (!busBits(net.name)) return [...members];
+  return [...circuit.nets.values()].filter((candidate) => members.includes(candidate) || netNamesConnect(candidate.name, net.name));
+}
+
+// Every net's group, built once per model (or preview) revision: the net
+// list asks for each net's group, and keying every net for every row was
+// quadratic in the nets (and a label scan per key on top).
+let netGroupCache = null;
+function netGroupIndex() {
+  const revision = `${modelRevision}:${previewRevision}`;
+  if (netGroupCache?.revision === revision && netGroupCache.circuit === circuit) return netGroupCache;
+  const byKey = new Map();
+  const keyOf = new Map();
+  for (const candidate of circuit.nets.values()) {
+    const key = circuit.netGroupKey(candidate);
+    keyOf.set(candidate, key);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(candidate);
+  }
+  netGroupCache = { revision, circuit, byKey, keyOf };
+  return netGroupCache;
 }
 
 export function visibleNets() {
@@ -935,6 +965,15 @@ export function keyToWire(key) {
   return { netId, branch: Number(branch), segment: Number(segment) };
 }
 
+/** The segment a "netId:branch:segment" key names, as drawn now: { a, b }
+ *  (its ends) with the key's parts, or null when it no longer exists. */
+export function wireSegmentAt(key) {
+  const w = keyToWire(key);
+  const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
+  if (!path || !(w.segment > 0 && w.segment < path.length)) return null;
+  return { ...w, a: path[w.segment - 1], b: path[w.segment] };
+}
+
 /** Keep the primary segment pointer consistent with the selection set. */
 export function syncSelectedWire() {
   const first = selectedWires.values().next().value;
@@ -970,12 +1009,7 @@ export function applyEditorSelection(target, extend = false) {
 /** Drop segment keys whose net/branch/segment no longer exists.  Topology
  * edits, undo/load, and MST reduction can all invalidate branch indices. */
 export function validateSelectedWires() {
-  const valid = new Set();
-  for (const key of selectedWires) {
-    const w = keyToWire(key);
-    const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-    if (path && w.segment > 0 && w.segment < path.length) valid.add(key);
-  }
+  const valid = new Set([...selectedWires].filter((key) => wireSegmentAt(key)));
   selectedWires = valid;
   if (selectedWire) {
     const key = `${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`;
@@ -985,11 +1019,8 @@ export function validateSelectedWires() {
 }
 
 function isDiagonalWireKey(key) {
-  const w = keyToWire(key);
-  const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-  const a = path?.[w.segment - 1];
-  const b = path?.[w.segment];
-  return !!(a && b && a.x !== b.x && a.y !== b.y);
+  const segment = wireSegmentAt(key);
+  return !!segment && segment.a.x !== segment.b.x && segment.a.y !== segment.b.y;
 }
 
 /** Start a rigid drag of one diagonal segment (see Circuit#moveDiagonalSegment).
@@ -1488,42 +1519,11 @@ function singletonOrigin() {
  * transformed as one world-space set by transformMixedSelection.
  */
 function rotateSelectionAbout(deg) {
-  const inCopyGhost = drag?.mode === 'copyghost';
-  const inMoveGhost = moveGhostActive();
-  const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
   const turns = ((deg % 360) + 360) % 360;
-  const operation = turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate';
-  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
-    const changed = transformMixedSelection(
-      operation,
-      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot || singletonOrigin() },
-    );
-    if (changed && inCopyGhost) {
-      refreshCopyGhostBase({ operation, pivot });
-      cursor = pivot;
-    } else if (changed && inMoveGhost) {
-      cursor = pivot;
-      recordMoveGhostMutation();
-    }
-    return;
-  }
-  const refs = selectedComps().map((c) => c.refdes);
-  const beforeComponents = captureComponentTerminalPositions(refs);
-  const beforeTerminals = captureNetTerminalPositions(refs);
-  const apply = () => {
-    for (const c of selectedComps()) {
-      if (pivot) applySingletonWorldTransform(c, 'rotate', pivot);
-      else circuit.setTransform(c.refdes, { rotation: (((c.transform.rotation + deg) % 360) + 360) % 360 });
-    }
-    rerouteTouchedNets(refs, null, true, beforeTerminals, componentTerminalMoves(refs, beforeComponents));
-  };
-  if (inMoveGhost) {
-    apply();
-    cursor = pivot;
-    recordMoveGhostMutation();
-  } else {
-    commit(apply);
-  }
+  transformSelectionAbout(turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate', (c, pivot) => {
+    if (pivot) applySingletonWorldTransform(c, 'rotate', pivot);
+    else circuit.setTransform(c.refdes, { rotation: (((c.transform.rotation + deg) % 360) + 360) % 360 });
+  });
 }
 
 /**
@@ -1532,10 +1532,17 @@ function rotateSelectionAbout(deg) {
  * mirrored halves follow the same world-space operation.
  */
 function mirrorSelectionAbout(axis) {
+  transformSelectionAbout(axis === 'x' ? 'mirrorX' : 'mirrorY', (c, pivot) => applySingletonWorldMirror(c, axis, pivot));
+}
+
+/** Rotate or mirror the selection: a copy ghost, several parts, or a mixed
+ *  set as one world-space `operation`; parts alone each by `transformPart`
+ *  (c, pivot), their nets following. A pivot is the cursor while a copy or
+ *  move ghost is out. */
+function transformSelectionAbout(operation, transformPart) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
   if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
     const changed = transformMixedSelection(
       operation,
@@ -1551,11 +1558,11 @@ function mirrorSelectionAbout(axis) {
     return;
   }
   const refs = selectedComps().map((c) => c.refdes);
-  const beforeComponents = captureComponentTerminalPositions(refs);
-  const beforeTerminals = captureNetTerminalPositions(refs);
+  const beforeComponents = captureComponentTerminalPositions(circuit, refs);
+  const beforeTerminals = captureNetTerminalPositions(circuit, refs);
   const apply = () => {
-    for (const c of selectedComps()) applySingletonWorldMirror(c, axis, pivot);
-    rerouteTouchedNets(refs, null, true, beforeTerminals, componentTerminalMoves(refs, beforeComponents));
+    for (const c of selectedComps()) transformPart(c, pivot);
+    rerouteTouchedNets(refs, null, { fresh: true, beforeTerminals, terminalMoves: componentTerminalMoves(circuit, refs, beforeComponents) });
   };
   if (inMoveGhost) {
     apply();
@@ -1599,8 +1606,8 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
   }
   const refs = selectedComps().map((c) => c.refdes);
   const selectedRefSet = new Set(refs);
-  const beforeComponents = captureComponentTerminalPositions(refs);
-  const beforeTerminals = captureNetTerminalPositions(refs);
+  const beforeComponents = captureComponentTerminalPositions(circuit, refs);
+  const beforeTerminals = captureNetTerminalPositions(circuit, refs);
   const geometryNetIds = new Set(byNet.keys());
   const canTransformNet = (net) => !net.terminals.length || net.terminals.every((t) => selectedRefSet.has(t.comp));
   for (const id of selectedNets) {
@@ -1643,11 +1650,7 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
     const labels = savedSelection.selLabels.filter((id) => circuit.labels.has(id));
     setLabelSelection(labels, savedSelection.selLabel, true);
     selectedNets = new Set(savedSelection.selectedNets.filter((id) => circuit.nets.has(id)));
-    selectedWires = new Set(savedSelection.selectedWires.filter((key) => {
-      const w = keyToWire(key);
-      const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-      return !!path && w.segment > 0 && w.segment < path.length;
-    }));
+    selectedWires = new Set(savedSelection.selectedWires.filter((key) => wireSegmentAt(key)));
     selectedWire = savedSelection.selectedWire;
     validateSelectedWires();
     if (savedSelection.selectedWire && !selectedWire) syncSelectedWire();
@@ -1718,7 +1721,7 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
           || beforeTerminals.get(id) !== netTerminalPositionKey(circuit, net);
         const routeArg = net.routingMode === 'fixed'
           ? 'refresh'
-          : componentTerminalMoves(refs, beforeComponents);
+          : componentTerminalMoves(circuit, refs, beforeComponents);
         if (terminalsChanged && rerouteNet(net, routeArg) === false) {
           throw new Error(`unable to reroute net ${id} safely`);
         }
@@ -1773,54 +1776,11 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
   }
 }
 
-/** Re-route every net touching the given components (holistic, from terminals).
- *  `moved` (optional) is a Map of refdes -> {dx,dy} so drawn wire shapes are
- *  preserved instead of recomputed when a component is dragged. */
-function captureNetTerminalPositions(refs) {
-  const ids = netsTouching(refs);
-  return new Map([...ids].map((id) => {
-    const net = circuit.nets.get(id);
-    return [id, netTerminalPositionKey(circuit, net)];
-  }));
-}
-
-function captureComponentTerminalPositions(refs) {
-  return new Map(refs.map((refdes) => {
-    const component = circuit.components.get(refdes);
-    return [refdes, {
-      origin: component ? { x: component.transform.x, y: component.transform.y } : null,
-      terminals: new Map(component?.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]) || []),
-    }];
-  }));
-}
-
-function componentTerminalMoves(refs, before) {
-  return new Map(refs.map((refdes) => {
-    const component = circuit.components.get(refdes);
-    const previous = before.get(refdes);
-    const terminals = new Map(component?.worldTerminals().map((terminal) => [terminal.name, {
-      before: previous?.terminals.get(terminal.name) || { x: terminal.x, y: terminal.y },
-      after: { x: terminal.x, y: terminal.y },
-    }]) || []);
-    return [refdes, {
-      dx: component && previous?.origin ? component.transform.x - previous.origin.x : 0,
-      dy: component && previous?.origin ? component.transform.y - previous.origin.y : 0,
-      terminals,
-    }];
-  }));
-}
-
-function rerouteTouchedNets(refs, moved, fresh = false, beforeTerminals = null, terminalMoves = null) {
-  for (const id of netsTouching(refs)) {
-    const net = circuit.nets.get(id);
-    if (!net) continue;
-    const unchanged = fresh && beforeTerminals?.has(id)
-      && beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
-    const routeArg = unchanged ? null
-      : net.routingMode === 'fixed' ? (fresh ? 'refresh' : moved)
-        : terminalMoves || (fresh ? 'refresh' : moved);
-    if (rerouteNet(net, routeArg) === false) throw new Error(`unable to reroute net ${id} safely`);
-  }
+/** Reroute every net touching `refs` (part-moves.js), refusing the edit
+ *  when one cannot follow. */
+function rerouteTouchedNets(refs, moved, options = {}) {
+  const id = rerouteTouchedNetsIn(circuit, refs, moved, options);
+  if (id !== null) throw new Error(`unable to reroute net ${id} safely`);
 }
 
 /** Delete all selected objects together in one undo step.  Selected whole nets
@@ -2688,6 +2648,11 @@ function scheduleMeasuredLabelRender() {
   });
 }
 
+/** The ends ({ a, b }) of the segments `keys` name that still exist. */
+function segmentEnds(keys) {
+  return keys.map(wireSegmentAt).filter(Boolean).map(({ a, b }) => ({ a, b }));
+}
+
 export function renderCanvas(modelKey) {
   // Fixed-net editing preserves literal geometry.
   const directFrom = directWire?.source ? wireOrigin(directWire.source) : null;
@@ -2886,28 +2851,9 @@ export function renderCanvas(modelKey) {
     centerGuides: placementGuide?.guides.length || alignTool ? null : selectionCenterBounds(),
     layoutPreviewRects,
     placementGuide,
-    wireSegments: (() => {
-      if (!selectedWires.size && !selectedWire) return [];
-      const keys = selectedWires.size ? [...selectedWires] : [`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`];
-      const out = [];
-      for (const key of keys) {
-        const w = keyToWire(key);
-        const n = circuit.nets.get(w.netId);
-        const p = n?.paths()?.[w.branch];
-        if (p?.[w.segment]) out.push({ a: p[w.segment - 1], b: p[w.segment] });
-      }
-      return out;
-    })(),
-    previewWireSegments: (() => {
-      const keys = previewSelection?.wires || [];
-      const out = [];
-      for (const key of keys) {
-        const w = keyToWire(key);
-        const p = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-        if (p?.[w.segment]) out.push({ a: p[w.segment - 1], b: p[w.segment] });
-      }
-      return out;
-    })(),
+    wireSegments: segmentEnds(selectedWires.size ? [...selectedWires]
+      : selectedWire ? [`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`] : []),
+    previewWireSegments: segmentEnds(previewSelection?.wires || []),
     fixedDrag: drag && drag.mode === 'fixedwire'
       ? { x: cursor.x, y: cursor.y, junction: drag.junction >= 0 }
       : undefined,
@@ -3484,12 +3430,10 @@ function carriedJunctions(netIds) {
     const at = new Set(net.junctions.map((p) => `${p.x},${p.y}`));
     const keys = new Set();
     if (selectedNets.has(id)) for (const key of at) keys.add(key);
-    const paths = net.paths();
     for (const wireKey of selectedWires) {
-      const { netId, branch, segment } = keyToWire(wireKey);
-      if (netId !== id) continue;
-      for (const p of [paths[branch]?.[segment - 1], paths[branch]?.[segment]]) {
-        if (p && at.has(`${p.x},${p.y}`)) keys.add(`${p.x},${p.y}`);
+      const segment = keyToWire(wireKey).netId === id ? wireSegmentAt(wireKey) : null;
+      for (const p of segment ? [segment.a, segment.b] : []) {
+        if (at.has(`${p.x},${p.y}`)) keys.add(`${p.x},${p.y}`);
       }
     }
     if (keys.size) carry.set(id, keys);
@@ -3499,16 +3443,7 @@ function carriedJunctions(netIds) {
 
 /** Ids of every net that touches any of the given components. */
 export function netsTouching(refs) {
-  const touched = new Set();
-  for (const r of refs) {
-    const c = circuit.components.get(r);
-    if (!c) continue;
-    for (const t of c.terminalDefs) {
-      const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
-      if (net) touched.add(net.id);
-    }
-  }
-  return touched;
+  return netsTouchingIn(circuit, refs);
 }
 
 /** Identify the kind of endpoint at a managed path boundary.  Terminal
@@ -4068,84 +4003,78 @@ function joinWireToNet(wireHit, selectedTarget = null) {
   logLine(`joined into net ${net.id} at (${P.x},${P.y})`);
 }
 
-function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
-  // A diagonal segment moves rigidly on its own; orthogonal runs keep the
-  // sideways run drag below and never carry selected diagonal segments.
-  if (diagonalSegmentDragAt(wireHit, startWorld, startClient, ev, { modal })) return true;
-  const startSnapshot = snapshot();
-  const sourceNetId = wireHit.net.id;
-  const key = `${sourceNetId}:${wireHit.branch}:${wireHit.seg}`;
-  const moveKeys = ev.shiftKey || selectedWires.has(key)
-    ? new Set([...selectedWires, key])
-    : new Set([key]);
-  for (const selectedKey of [...moveKeys]) if (isDiagonalWireKey(selectedKey)) moveKeys.delete(selectedKey);
+/**
+ * The runs a wire segment drag moves: each selected segment's bounded run,
+ * once, with what its ends are joined to. The pressed segment's run is read
+ * from `hit` ({ netId, branch, pts }) when given (the preview's path).
+ */
+function collectWireRuns(moveKeys, hit = null) {
   const runs = [];
-  beginPreviewTransaction(startSnapshot);
-  const net = circuit.nets.get(sourceNetId);
-  if (!net) {
-    cancelPreviewTransaction();
-    return false;
-  }
-  const previewPath = net.paths()[wireHit.branch] || net.paths()[0];
-  wireHit = { ...wireHit, net, pts: previewPath };
   const seenRun = new Set();
   for (const k of moveKeys) {
-    const selected = keyToWire(k);
-    const currentNet = circuit.nets.get(selected.netId);
-    if (!currentNet) continue;
-    let pts = currentNet.branches && currentNet.branches[selected.branch] && currentNet.branches[selected.branch].length >= 2
-      ? currentNet.branches[selected.branch]
-      : currentNet.route && currentNet.route.length >= 2 ? currentNet.route : currentNet.points().slice();
-    const breaks = managedWireBreaks(currentNet);
-    const selectedPath = selected.netId === net.id && selected.branch === wireHit.branch ? wireHit.pts : pts;
-    const selectedRun = wireRunAt(selectedPath, selected.segment, breaks);
-    const editable = editableManagedPath(currentNet, selected.branch, pts);
+    const w = keyToWire(k);
+    const n = circuit.nets.get(w.netId);
+    if (!n) continue;
+    let pts = n.branches && n.branches[w.branch] && n.branches[w.branch].length >= 2
+      ? n.branches[w.branch]
+      : n.route && n.route.length >= 2 ? n.route : n.points().slice();
+    const breaks = managedWireBreaks(n);
+    const selectedPath = hit && w.netId === hit.netId && w.branch === hit.branch ? hit.pts : pts;
+    const selectedRun = wireRunAt(selectedPath, w.segment, breaks);
+    const editable = editableManagedPath(n, w.branch, pts);
     pts = editable.path;
     const run = editable.interiorRun
       ? { orient: selectedRun.orient, val: selectedRun.val }
-      : wireRunAt(pts, selected.segment, breaks);
+      : wireRunAt(pts, w.segment, breaks);
     const runBounds = editable.interiorRun
       ? { lo: 1, hi: pts.length - 2 }
       : { lo: run.lo, hi: run.hi };
-    const runKey = `${currentNet.id}:${selected.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
-    if (seenRun.has(runKey)) continue;
+    const runKey = `${n.id}:${w.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
+    if (seenRun.has(runKey)) continue; // same bounded run, don't move twice
     seenRun.add(runKey);
     const endpointMeta = {
-      start: managedEndpointMeta(currentNet, pts[runBounds.lo]),
-      end: managedEndpointMeta(currentNet, pts[runBounds.hi]),
-      segment: selected.segment,
+      start: managedEndpointMeta(n, pts[runBounds.lo]),
+      end: managedEndpointMeta(n, pts[runBounds.hi]),
+      segment: w.segment,
       breaks,
       runBounds,
       interiorRun: editable.interiorRun,
+      // This is a reversible preview.  The pointer must be able to carry
+      // the run through intermediate overlaps; the final geometry is
+      // checked when the gesture is released.
       allowPastNeighbors: true,
       preserveDiagonalNeighbors: true,
     };
     runs.push({
-      net: currentNet,
-      branch: selected.branch,
-      seg: selected.segment,
+      net: n,
+      branch: w.branch,
+      seg: w.segment,
       pts,
       orig: pts.map((p) => ({ ...p })),
       orient: run.orient,
       line: run.val,
       startLine: run.val,
-      hadRoute: !!(currentNet.route && currentNet.route.length >= 2),
+      hadRoute: !!(n.route && n.route.length >= 2),
       endpointMeta,
-      junctionBridge: pts.length === 2 &&
-        endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
+      junctionBridge: pts.length === 2 && endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
     });
   }
+  return runs;
+}
+
+/** Arm a wire segment drag of `runs` from the pressed one. Only runs
+ *  perpendicular to the drag direction can move together (a drag shifts a
+ *  run sideways): same-orientation runs move as a group, and selected runs
+ *  of the other orientation stay put (still selected, still deletable).
+ *  `extra` adds drag fields. Returns false when there is no run. */
+function beginWireSegDrag(runs, net, wireHit, { startWorld, startClient, ev, key, startSnapshot, extra = {} }) {
   const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
-  if (!primary) {
-    cancelPreviewTransaction();
-    return false;
-  }
+  if (!primary) return false;
   const dragRuns = runs.filter((r) => r.orient === primary.orient);
   const netSnapshots = captureRunNetGeometry(dragRuns);
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
   drag = {
     mode: 'wireseg',
-    modal,
     net,
     branch: primary.branch,
     seg: primary.seg,
@@ -4165,8 +4094,36 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
     rubber: null,
     startSnapshot,
     netSnapshots,
+    ...extra,
   };
   render();
+  return true;
+}
+
+function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
+  // A diagonal segment moves rigidly on its own; orthogonal runs keep the
+  // sideways run drag below and never carry selected diagonal segments.
+  if (diagonalSegmentDragAt(wireHit, startWorld, startClient, ev, { modal })) return true;
+  const startSnapshot = snapshot();
+  const sourceNetId = wireHit.net.id;
+  const key = `${sourceNetId}:${wireHit.branch}:${wireHit.seg}`;
+  const moveKeys = ev.shiftKey || selectedWires.has(key)
+    ? new Set([...selectedWires, key])
+    : new Set([key]);
+  for (const selectedKey of [...moveKeys]) if (isDiagonalWireKey(selectedKey)) moveKeys.delete(selectedKey);
+  beginPreviewTransaction(startSnapshot);
+  const net = circuit.nets.get(sourceNetId);
+  if (!net) {
+    cancelPreviewTransaction();
+    return false;
+  }
+  const previewPath = net.paths()[wireHit.branch] || net.paths()[0];
+  wireHit = { ...wireHit, net, pts: previewPath };
+  const runs = collectWireRuns(moveKeys, { netId: net.id, branch: wireHit.branch, pts: wireHit.pts });
+  if (!beginWireSegDrag(runs, net, wireHit, { startWorld, startClient, ev, key, startSnapshot, extra: { modal } })) {
+    cancelPreviewTransaction();
+    return false;
+  }
   return true;
 }
 
@@ -4228,7 +4185,6 @@ function beginBranchWire(segDrag, w) {
   render();
 }
 
-/** Ctrl/Cmd-drag on an object drags a copy; a plain Ctrl/Cmd-click still toggles selection. */
 /** Ctrl/Cmd on a label arms a copy, as it does on a part: dragging copies
  * the label (with the rest of the selection it belongs to), and a click
  * without a drag toggles it in the selection. An owned label copies its part. */
@@ -4941,88 +4897,15 @@ function canvasMouseDown(ev) {
       render();
       return;
     }
-    const runs = [];
-    const seenRun = new Set();
-    for (const k of moveKeys) {
-      const w = keyToWire(k);
-      const n = circuit.nets.get(w.netId);
-      if (!n) continue;
-      let pts = n.branches && n.branches[w.branch] && n.branches[w.branch].length >= 2
-        ? n.branches[w.branch]
-        : n.route && n.route.length >= 2 ? n.route : n.points().slice();
-      const breaks = managedWireBreaks(n);
-      const selectedRun = wireRunAt(pts, w.segment, breaks);
-      const editable = editableManagedPath(n, w.branch, pts);
-      pts = editable.path;
-      const run = editable.interiorRun
-        ? { orient: selectedRun.orient, val: selectedRun.val }
-        : wireRunAt(pts, w.segment, breaks);
-      const runBounds = editable.interiorRun
-        ? { lo: 1, hi: pts.length - 2 }
-        : { lo: run.lo, hi: run.hi };
-      const runKey = `${n.id}:${w.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
-      if (seenRun.has(runKey)) continue; // same bounded run, don't move twice
-      seenRun.add(runKey);
-      const endpointMeta = {
-        start: managedEndpointMeta(n, pts[runBounds.lo]),
-        end: managedEndpointMeta(n, pts[runBounds.hi]),
-        segment: w.segment,
-        breaks,
-        runBounds,
-        interiorRun: editable.interiorRun,
-        // This is a reversible preview.  The pointer must be able to carry
-        // the run through intermediate overlaps; the final geometry is
-        // checked when the gesture is released.
-        allowPastNeighbors: true,
-        preserveDiagonalNeighbors: true,
-      };
-      runs.push({
-        net: n,
-        branch: w.branch,
-        seg: w.segment,
-        pts,
-        orig: pts.map((p) => ({ ...p })),
-        orient: run.orient,
-        line: run.val,
-        startLine: run.val,
-        hadRoute: !!(n.route && n.route.length >= 2),
-        endpointMeta,
-        junctionBridge: pts.length === 2 && endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
-      });
-    }
-    const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
-    // Only runs perpendicular to the drag direction can move together (a drag
-    // shifts a run sideways). Same-orientation runs move as a group; selected
-    // runs of the other orientation stay put (still selected, still deletable).
-    const dragRuns = runs.filter((r) => r.orient === primary.orient);
-    const netSnapshots = captureRunNetGeometry(dragRuns);
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-    drag = {
-      mode: 'wireseg',
-      net,
-      branch: primary.branch,
-      seg: primary.seg,
-      pts: primary.pts,
-      orig: primary.orig,
-      runs: dragRuns,
-      orient: primary.orient,
-      line: primary.line,
-      startAxis: primary.orient === 'h' ? startWorld.y : startWorld.x,
-      startLine: primary.startLine,
-      startClient,
-      startWorld,
-      shift: ev.shiftKey,
-      key,
-      moved: false,
-      committed: false,
-      rubber: null,
-      startSnapshot: snapshot(),
-      netSnapshots,
-      doubleWireClick,
-      // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
-      branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
-    };
-    render();
+    const runs = collectWireRuns(moveKeys);
+    beginWireSegDrag(runs, net, wireHit, {
+      startWorld, startClient, ev, key, startSnapshot: snapshot(),
+      extra: {
+        doubleWireClick,
+        // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
+        branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
+      },
+    });
     return;
   }
 

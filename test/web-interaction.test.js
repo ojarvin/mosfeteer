@@ -641,8 +641,9 @@ test('wire previews exclude the destination net and transformed nets keep termin
   assert.match(preview, /const excludedNets = new Set\(sourceNetId && !isOpenEnd\(endpoints\[0\], sourceNetId\) \? \[sourceNetId\] : \[\]\)/);
   assert.match(preview, /circuit\._netEnv\(excludedNets\)/);
   const transform = main.slice(main.indexOf('function transformMixedSelection('), main.indexOf('/** Re-route every net', main.indexOf('function transformMixedSelection(')));
-  assert.match(transform, /componentTerminalMoves\(refs, beforeComponents\)/);
-  assert.match(main, /net\.routingMode === 'fixed' \? \(fresh \? 'refresh' : moved\)/);
+  assert.match(transform, /componentTerminalMoves\(circuit, refs, beforeComponents\)/);
+  // The editor and the commands reroute through one helper (core/part-moves.js).
+  assert.match(readFileSync(new URL('../src/core/part-moves.js', import.meta.url), 'utf8'), /net\.routingMode === 'fixed' \? \(fresh \? 'refresh' : moved\)/);
 });
 
 test('startup paints before listing documents and restoring the requested document', () => {
@@ -869,7 +870,7 @@ test('rejected actions do not create history entries and use the shared note', (
   assert.match(commit, /const before = snapshot\(\);/);
   assert.match(commit, /if \(snapshot\(\) === before\) return result;/);
   assert.match(commit, /noteActionPrevented\(error\)/);
-  assert.match(main, /if \(rerouteNet\(net, routeArg\) === false\) throw new Error\(`unable to reroute net \$\{id\} safely`\)/);
+  assert.match(main, /if \(id !== null\) throw new Error\(`unable to reroute net \$\{id\} safely`\)/);
   assert.match(main, /function noteActionPrevented\(error\)/);
 });
 test('the placement guides are a view toggle beside the grid', () => {
@@ -1065,12 +1066,12 @@ test('terminal commits preserve the routed preview without manual waypoints', ()
 
 test('wire previews can cross neighbours but validate the final drop, and canvas menus do not promise rename by double-click', () => {
   const main = editorSource();
-  const drag = functionSource('managedWireDragAt', main);
-  assert.match(drag, /allowPastNeighbors: true/);
-  assert.match(drag, /preserveDiagonalNeighbors: true/);
-  const canvasDown = functionSource('canvasMouseDown', main);
-  assert.match(canvasDown, /allowPastNeighbors: true/);
-  assert.match(canvasDown, /preserveDiagonalNeighbors: true/);
+  // The keyboard and the pointer drag gather their runs the same way.
+  const runs = functionSource('collectWireRuns', main);
+  assert.match(runs, /allowPastNeighbors: true/);
+  assert.match(runs, /preserveDiagonalNeighbors: true/);
+  assert.match(functionSource('managedWireDragAt', main), /collectWireRuns\(moveKeys, \{/);
+  assert.match(functionSource('canvasMouseDown', main), /collectWireRuns\(moveKeys\)/);
   const upStart = main.indexOf('function canvasMouseUp(');
   const mouseup = main.slice(upStart, main.indexOf("\ncanvasEl.addEventListener('mousedown'", upStart));
   assert.match(mouseup, /newWireBodyViolation\(drag\.startSnapshot, touchedNets\)/);
@@ -1114,7 +1115,8 @@ test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
   const refresh = main.slice(main.indexOf('function mirroredCopyGhostOperation('), main.indexOf('function refreshCopyGhostBase('));
   assert.match(refresh, /transformMixedSelection\(mirroredCopyGhostOperation\(operation\),/);
   assert.match(refresh, /const mirrorPivot = transformWorldPoints\(\[pivot\], symmetry\.pin, symmetry\.operation\)\[0\];/);
-  assert.match(main, /const operation = axis === 'x' \? 'mirrorX' : 'mirrorY';[\s\S]*refreshCopyGhostBase\(\{ operation, pivot \}\)/);
+  assert.match(main, /transformSelectionAbout\(axis === 'x' \? 'mirrorX' : 'mirrorY',/);
+  assert.match(main, /function transformSelectionAbout\(operation, transformPart\)[\s\S]*refreshCopyGhostBase\(\{ operation, pivot \}\)/);
   assert.match(main, /function rotateSelectionAbout\([\s\S]*?if \(inCopyGhost \|\| multi\.size > 1/);
   assert.match(main, /function mirrorSelectionAbout\([\s\S]*?if \(inCopyGhost \|\| multi\.size > 1/);
   assert.doesNotMatch(main, /copyPivot/);

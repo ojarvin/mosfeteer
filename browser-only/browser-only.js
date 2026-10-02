@@ -450,28 +450,9 @@ function intrinsicProductReduction(current, records, global, options) {
     const terms = value.terms.map(reduce);
     const powers = terms.map(monomialTerms);
     return add(terms.filter((_, i) => !powers.some((higherTerms, j) => {
-      const lowerTerms = powers[i];
-      if (i === j || !higherTerms || !lowerTerms) return false;
-      const usedHere = new Set();
-      const dominated = lowerTerms.every((lower) => higherTerms.some((higher) => {
-        const ratio = new Map(higher);
-        for (const [name, exponent] of lower) {
-          if ((ratio.get(name) || 0) < exponent) return false;
-          ratio.set(name, ratio.get(name) - exponent);
-        }
-        const devices = [];
-        for (const pair of pairs) {
-          const count = Math.min(ratio.get(pair.gm) || 0, ratio.get(pair.ro) || 0);
-          if (!count) continue;
-          ratio.set(pair.gm, ratio.get(pair.gm) - count);
-          ratio.set(pair.ro, ratio.get(pair.ro) - count);
-          devices.push(pair.device);
-        }
-        if (!devices.length || [...ratio.values()].some((exponent) => exponent !== 0)) return false;
-        devices.forEach((id) => usedHere.add(id));
-        return true;
-      }));
-      if (dominated) usedHere.forEach((id) => used.add(id));
+      if (i === j) return false;
+      const { dominated, devices } = dominates(higherTerms, powers[i], pairs);
+      devices.forEach((id) => used.add(id));
       return dominated;
     })));
   }
@@ -2523,7 +2504,7 @@ let buildExactAnalysisPipeline, transferFunctionList; __bind(() => { ({ buildExa
 let presentDiagnostics; __bind(() => { ({ presentDiagnostics } = __require("src/core/analysis/diagnostics.js")); });
 let describeSmallSignalNetlist; __bind(() => { ({ describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js")); });
 let analyzeResponse; __bind(() => { ({ analyzeResponse } = __require("src/core/analysis/response.js")); });
-let approximateTopology, buildTopologyIdentities; __bind(() => { ({ approximateTopology, buildTopologyIdentities } = __require("src/core/analysis/topology.js")); });
+let approximateTopology, buildTopologyIdentities, carriesSum; __bind(() => { ({ approximateTopology, buildTopologyIdentities, carriesSum } = __require("src/core/analysis/topology.js")); });
 let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
 let buildNoiseReport, noiseProvenancePrimitives, noiseRequest; __bind(() => { ({ buildNoiseReport, noiseProvenancePrimitives, noiseRequest } = __require("src/core/analysis/noise.js")); });
 let infinity, integer, rational, rationalFunction, substituteRational; __bind(() => { ({ infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js")); });
@@ -2991,21 +2972,6 @@ function rootRows(transfer, options) {
     ...transfer.poles.map((root) => ({ ...root, equation: renderRoot(root, 'p', root.index, options) })),
     ...transfer.zeros.map((root) => ({ ...root, equation: renderRoot(root, 'z', root.index, options) })),
   ];
-}
-
-/**
- * Whether an expression carries a sum. A product is worth showing factored
- * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
- * better than the ratio it expands to -- but two monomials multiplied are
- * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`.
- */
-function carriesSum(value) {
-  if (!value || typeof value !== 'object') return false;
-  if (value.kind === 'add') return true;
-  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
-  if (value.kind === 'multiply') return value.factors.some(carriesSum);
-  if (value.kind === 'power') return carriesSum(value.base);
-  return false;
 }
 
 /**
@@ -9186,29 +9152,17 @@ function limitAtZero(numeratorInfo, denominatorInfo) {
   const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.valuation);
   const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.valuation);
   const order = denominatorInfo.valuation - numeratorInfo.valuation;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
+  return limitOfOrder(order, numeratorCoefficient, denominatorCoefficient);
+}
+
+/** A limit from its order -- the power of s (or 1/s) the ratio grows by:
+ *  a pole when it grows, a zero when it shrinks, else the finite ratio of
+ *  the leading coefficients. */
+function limitOfOrder(order, numeratorCoefficient, denominatorCoefficient) {
+  const coefficient = quotient(numeratorCoefficient, denominatorCoefficient);
+  if (order > 0) return Object.freeze({ kind: 'pole', value: null, order, coefficient });
+  if (order < 0) return Object.freeze({ kind: 'zero', value: ZERO, order: -order, coefficient });
+  return Object.freeze({ kind: coefficient === ZERO ? 'zero' : 'finite', value: coefficient, order: 0, coefficient });
 }
 
 function limitAtInfinity(numeratorInfo, denominatorInfo) {
@@ -9225,29 +9179,7 @@ function limitAtInfinity(numeratorInfo, denominatorInfo) {
   const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.degree);
   const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.degree);
   const order = numeratorInfo.degree - denominatorInfo.degree;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
+  return limitOfOrder(order, numeratorCoefficient, denominatorCoefficient);
 }
 
 function polynomialExpression(coefficients, variable) {
@@ -9546,19 +9478,27 @@ function singularResult(variables, pivotColumn, pivotRow, rhs, ops) {
   );
 }
 
+/** Bring the first row at or below `column` with a nonzero entry in that
+ *  column up to it (swapping its right-hand side too); false when there is
+ *  none, and the system is singular there. */
+function swapPivotRow(a, b, column, ops) {
+  const offset = a.slice(column).findIndex((row) => !ops.isZero(row[column]));
+  if (offset < 0) return false;
+  const actual = column + offset;
+  if (actual !== column) {
+    [a[column], a[actual]] = [a[actual], a[column]];
+    [b[column], b[actual]] = [b[actual], b[column]];
+  }
+  return true;
+}
+
 function solveNormalized(a, b, ops, variables, guard) {
   const n = a.length;
   const rhsCount = b[0]?.length || 0;
   for (let column = 0; column < n; column++) {
     const budgetError = budgetFailure(ops, 'normalized elimination');
     if (budgetError) return budgetError;
-    const pivotRow = a.slice(column).findIndex((row) => !ops.isZero(row[column]));
-    if (pivotRow < 0) return singularResult(variables, column, column, b, ops);
-    const actual = column + pivotRow;
-    if (actual !== column) {
-      [a[column], a[actual]] = [a[actual], a[column]];
-      [b[column], b[actual]] = [b[actual], b[column]];
-    }
+    if (!swapPivotRow(a, b, column, ops)) return singularResult(variables, column, column, b, ops);
     const pivot = a[column][column];
     if (ops.isZero(pivot)) return singularResult(variables, column, column, b, ops);
     for (let j = column; j < n; j++) {
@@ -9603,13 +9543,7 @@ function solveBareiss(a, b, ops, variables, guard) {
   for (let column = 0; column < n - 1; column++) {
     const budgetError = budgetFailure(ops, 'fraction-free elimination');
     if (budgetError) return budgetError;
-    const pivotRow = a.slice(column).findIndex((row) => !ops.isZero(row[column]));
-    if (pivotRow < 0) return singularResult(variables, column, column, b, ops);
-    const actual = column + pivotRow;
-    if (actual !== column) {
-      [a[column], a[actual]] = [a[actual], a[column]];
-      [b[column], b[actual]] = [b[actual], b[column]];
-    }
+    if (!swapPivotRow(a, b, column, ops)) return singularResult(variables, column, column, b, ops);
     const pivot = a[column][column];
     if (ops.isZero(pivot)) return singularResult(variables, column, column, b, ops);
     if (ops.isZero(previousPivot)) {
@@ -9877,6 +9811,7 @@ function solveByTopology(system, excitations, context, ops, options = {}) {
 
 __modules["src/core/analysis/topology.js"] = function (__require, __exports) {
 __exports.findSignalCuts = findSignalCuts;
+__exports.carriesSum = carriesSum;
 __exports.approximateTopology = approximateTopology;
 __exports.buildTopologyIdentities = buildTopologyIdentities;
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
@@ -9973,7 +9908,6 @@ function shortCircuitTransadmittance(pipeline, index, previous, graph, ops) {
   ), rhs(index)), ops);
 }
 
-/** Apply the selected assumptions to each physical stage before recombining. */
 /**
  * Whether an expression carries a sum. A product is worth showing factored
  * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
@@ -11589,10 +11523,11 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
-let Circuit, canonicalNetName, netTerminalPositionKey, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, netTerminalPositionKey, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
+let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
+let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets } = __require("src/core/part-moves.js")); });
 let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
 let GRID, onGrid, snap, ceilGrid; __bind(() => { ({ GRID, onGrid, snap, ceilGrid } = __require("src/core/grid.js")); });
-let applyDir, applyTransform, fmt, rectsOverlap; __bind(() => { ({ applyDir, applyTransform, fmt, rectsOverlap } = __require("src/core/geometry.js")); });
+let applyTransform, fmt, rectsOverlap; __bind(() => { ({ applyTransform, fmt, rectsOverlap } = __require("src/core/geometry.js")); });
 let balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute; __bind(() => { ({ balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRoute } = __require("src/core/router.js")); });
 let crossNetOverlaps; __bind(() => { ({ crossNetOverlaps } = __require("src/core/wiring.js")); });
 let plainTexText, svgString; __bind(() => { ({ plainTexText, svgString } = __require("src/core/render.js")); });
@@ -11628,6 +11563,7 @@ let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabe
 
 
 
+
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
  *  with mid-wire junctions are walked through every anchor in order.
@@ -11637,91 +11573,20 @@ function routeNet(circuit, net) {
   if (circuit.rerouteNet(net, 'refresh') === false) throw new Error('unable to route wire safely');
 }
 
-/** Re-route every net that touches any of the given component refdes.
- *  `moved` (optional) is a Map of refdes -> {dx,dy} so hand-drawn wire shapes
- *  are preserved (slid / re-anchored) instead of recomputed. */
-function captureNetTerminalPositions(circuit, refs) {
-  const ids = new Set();
-  for (const refdes of refs) {
-    const component = circuit.components.get(refdes);
-    if (!component) continue;
-    for (const terminal of component.terminalDefs) {
-      const net = circuit.netOfTerminal({ comp: refdes, term: terminal.name });
-      if (net) ids.add(net.id);
-    }
-  }
-  return new Map([...ids].map((id) => [id, netTerminalPositionKey(circuit, circuit.nets.get(id))]));
+/** Reroute every net touching `refs` (part-moves.js rerouteTouchedNets),
+ *  refusing the edit when one cannot follow. */
+function rerouteNetsFor(circuit, refs, moved, options = {}) {
+  if (rerouteTouchedNets(circuit, refs, moved, options) !== null) throw new Error('unable to route wire safely');
 }
 
-function captureComponentTerminalPositions(circuit, refs) {
-  return new Map(refs.map((refdes) => {
-    const component = circuit.components.get(refdes);
-    return [refdes, {
-      origin: component ? { x: component.transform.x, y: component.transform.y } : null,
-      terminals: new Map(component?.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]) || []),
-    }];
-  }));
-}
-
-function componentTerminalMoves(circuit, refs, before) {
-  return new Map(refs.map((refdes) => {
-    const component = circuit.components.get(refdes);
-    const previous = before.get(refdes);
-    const terminals = new Map(component?.worldTerminals().map((terminal) => [terminal.name, {
-      before: previous?.terminals.get(terminal.name) || { x: terminal.x, y: terminal.y },
-      after: { x: terminal.x, y: terminal.y },
-    }]) || []);
-    return [refdes, {
-      dx: component && previous?.origin ? component.transform.x - previous.origin.x : 0,
-      dy: component && previous?.origin ? component.transform.y - previous.origin.y : 0,
-      terminals,
-    }];
-  }));
-}
-
-function rerouteNetsFor(circuit, refs, moved, fresh = false, beforeTerminals = null, terminalMoves = null) {
-  const touched = new Set();
-  for (const r of refs) {
-    const c = circuit.components.get(r);
-    if (!c) continue;
-    for (const t of c.terminalDefs) {
-      const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
-      if (net) touched.add(net.id);
-    }
-  }
-  for (const id of touched) {
-    const net = circuit.nets.get(id);
-    if (!net) continue;
-    const unchanged = fresh && beforeTerminals?.has(id)
-      && beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
-    const routeArg = unchanged ? null
-      : net.routingMode === 'fixed' ? (fresh ? 'refresh' : moved)
-        : terminalMoves || (fresh ? 'refresh' : moved);
-    if (circuit.rerouteNet(net, routeArg) === false) {
-      throw new Error('unable to route wire safely');
-    }
-  }
-}
-
-/** Outward direction from a component body toward a world terminal pin.
- *  Honors the terminal's explicit local direction (via the transform) first,
- *  matching the editor's pinDir, then falls back to the bbox-centre heuristic. */
+/** Outward direction from a component body toward a world terminal pin
+ *  (Circuit#_pinDir, by the pin at that point). */
 function pinDir(c, wx, wy) {
   const t = c.terminalDefs.find((term) => {
     const p = applyTransform(c.transform, term.x, term.y);
     return p.x === wx && p.y === wy;
   });
-  if (t && t.dir) {
-    const d = applyDir(c.transform, t.dir.x, t.dir.y);
-    if (d.x !== 0 || d.y !== 0) return d;
-  }
-  const r = c.bboxWorld();
-  const cx = r.x + r.w / 2;
-  const cy = r.y + r.h / 2;
-  const ndx = r.w === 0 ? 0 : (wx - cx) / (r.w / 2);
-  const ndy = r.h === 0 ? 0 : (wy - cy) / (r.h / 2);
-  if (Math.abs(ndx) >= Math.abs(ndy)) return { x: Math.sign(ndx), y: 0 };
-  return { x: 0, y: Math.sign(ndy) };
+  return c.circuit._pinDir(c, t || {}, wx, wy);
 }
 
 const FLAG_ARITY = {
@@ -12389,8 +12254,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const beforeComponents = captureComponentTerminalPositions(circuit, [c.refdes]);
     const beforeTerminals = captureNetTerminalPositions(circuit, [c.refdes]);
     circuit.setTransform(c.refdes, { rotation: c.transform.rotation + deg });
-    rerouteNetsFor(circuit, [c.refdes], null, true, beforeTerminals,
-      componentTerminalMoves(circuit, [c.refdes], beforeComponents));
+    rerouteNetsFor(circuit, [c.refdes], null, { fresh: true, beforeTerminals, terminalMoves: componentTerminalMoves(circuit, [c.refdes], beforeComponents) });
     circuit.reconnectCoincidentNets();
     return result(`rotated ${c.refdes} to ${c.transform.rotation}°`, { refdes: c.refdes, rotation: c.transform.rotation }, true);
   }
@@ -12411,8 +12275,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       mirrorX: next.mirrorX,
       mirrorY: next.mirrorY,
     });
-    rerouteNetsFor(circuit, [c.refdes], null, true, beforeTerminals,
-      componentTerminalMoves(circuit, [c.refdes], beforeComponents));
+    rerouteNetsFor(circuit, [c.refdes], null, { fresh: true, beforeTerminals, terminalMoves: componentTerminalMoves(circuit, [c.refdes], beforeComponents) });
     circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
     return result(`mirrored ${c.refdes} along ${axis}`, { refdes: c.refdes, axis }, true);
@@ -16157,9 +16020,13 @@ function referenceMarkerGlobalNames(typeOrInfo) {
   return [info.globalName, ...(REFERENCE_MARKER_LEGACY_GLOBAL_NAMES[type] || [])];
 }
 
+// Each marker type's rail names, as railNameKey compares them.
+const globalNameKeys = new Map();
+
 function isReferenceMarkerGlobalName(typeOrInfo, name) {
-  const key = railNameKey(name);
-  return referenceMarkerGlobalNames(typeOrInfo).some((global) => railNameKey(global) === key);
+  const info = typeof typeOrInfo === 'string' ? referenceMarkerInfo(typeOrInfo) : typeOrInfo;
+  if (!globalNameKeys.has(info)) globalNameKeys.set(info, new Set(referenceMarkerGlobalNames(info).map(railNameKey)));
+  return globalNameKeys.get(info).has(railNameKey(name));
 }
 
 function isReferenceMarker(component) {
@@ -17231,6 +17098,13 @@ class LabelInstance {
     return true;
   }
 
+  /** What a text measurement depends on: the same text in the same face
+   *  measures the same. */
+  textMetricsKey() {
+    const { width, bold, italic, mono } = this.style;
+    return `${this.kind}|${this.math ? 'math' : 'text'}|${width}|${bold}|${italic}|${!!mono}|${this.text}`;
+  }
+
   /** Drop only the runtime browser measurement and keep the persisted math
    * footprint. A label that must measure again (the math font has just
    * arrived, say) still reports the saved box until it does, so the position
@@ -18180,7 +18054,44 @@ function wirePointsConnected(net, from, to, circuit, targetPathIndex = null) {
   return false;
 }
 
+/** The circuit's labels: a Map that counts its changes, so an index over
+ *  it (Circuit#labelOf) knows when to rebuild. */
+class LabelMap extends Map {
+  constructor(entries = []) {
+    super();
+    this.version = 0;
+    for (const [key, value] of entries) super.set(key, value);
+  }
+
+  set(key, value) {
+    this.version += 1;
+    return super.set(key, value);
+  }
+
+  delete(key) {
+    const removed = super.delete(key);
+    if (removed) this.version += 1;
+    return removed;
+  }
+
+  clear() {
+    this.version += 1;
+    super.clear();
+  }
+}
+
 class Circuit {
+  /** Any Map assigned (a selection's subset, a reloaded set) is kept as a
+   *  LabelMap. */
+  get labels() {
+    return this._labels;
+  }
+
+  set labels(map) {
+    this._labels = map instanceof LabelMap ? map : new LabelMap(map);
+    this._ownerIndex = null;
+  }
+
   constructor() {
     this.components = new Map();
     this.nets = new Map();
@@ -18369,6 +18280,8 @@ class Circuit {
       }
     }
     renameBeatObject(this, current, next);
+    // The owner index cannot see owners change hands.
+    this._ownerIndex = null;
     for (const label of ownedLabels) {
       label.owner = next;
       // Reference-marker labels can be local rail names, so preserve those
@@ -19566,10 +19479,40 @@ class Circuit {
     this.renameNet(net, info.globalName);
   }
 
-  /** The instance label owned by a component, if any. */
+  /** Take over the browser's text measurements from `previous` (the
+   *  circuit this one replaces: an undo, a redo, a reload) for every label
+   *  with the same id whose text and face are unchanged, so they need not
+   *  all be measured again. Returns how many were kept. */
+  adoptTextMetrics(previous) {
+    let kept = 0;
+    for (const label of this.labels.values()) {
+      const before = previous?.labels.get(label.id);
+      if (!before?._renderedTextBounds || before.textMetricsKey() !== label.textMetricsKey()) continue;
+      label._renderedTextBounds = { ...before._renderedTextBounds };
+      kept += 1;
+    }
+    if (kept) this.invalidateRoutingCache();
+    return kept;
+  }
+
+  /** The instance label owned by a component, if any. Looked up in an index
+   *  of owners, rebuilt when the labels change; a hit whose label has since
+   *  changed hands rebuilds it too. Scanning every label here made grouping
+   *  the nets quadratic in the labels. */
   labelOf(refdes) {
-    for (const l of this.labels.values()) if (l.owner === refdes && !l.role) return l;
-    return null;
+    let index = this._ownerIndex;
+    if (index?.labels !== this._labels || index.version !== this._labels.version) index = this._indexLabelOwners();
+    let label = index.owners.get(refdes);
+    if (label && (label.owner !== refdes || label.role || this._labels.get(label.id) !== label)) label = this._indexLabelOwners().owners.get(refdes);
+    return label || null;
+  }
+
+  /** Index the labels by owner (the first one, as a scan would find it). */
+  _indexLabelOwners() {
+    const owners = new Map();
+    for (const label of this._labels.values()) if (label.owner && !label.role && !owners.has(label.owner)) owners.set(label.owner, label);
+    this._ownerIndex = { labels: this._labels, version: this._labels.version, owners };
+    return this._ownerIndex;
   }
 
   // ----- connectivity -------------------------------------------------
@@ -19611,6 +19554,11 @@ class Circuit {
     const pinRects = new Map();
     const gateCandidates = [];
     const gateCounts = new Map();
+    // Each pin's net, looked up once rather than a scan of every net per gate.
+    const netOfPin = new Map();
+    for (const n of this.nets.values()) {
+      for (const t of n.terminals) if (!netOfPin.has(`${t.comp}.${t.term}`)) netOfPin.set(`${t.comp}.${t.term}`, n);
+    }
     for (const c of this.components.values()) {
       if (c.type === 'solder') continue;
       const body = c.bboxWorld();
@@ -19625,7 +19573,7 @@ class Circuit {
       const gate = c.terminalDefs.find((t) => t.direction === 'gate');
       if (gate) {
         const point = c.terminalWorld(gate.name);
-        const gateNet = this.netOfTerminal({ comp: c.refdes, term: gate.name });
+        const gateNet = netOfPin.get(`${c.refdes}.${gate.name}`);
         const netId = gateNet?.id || null;
         if (netId) gateCounts.set(netId, (gateCounts.get(netId) || 0) + 1);
         gateCandidates.push({ netId, rect: body, point, dir: this._pinDir(c, gate, point.x, point.y) });
@@ -23156,6 +23104,104 @@ function circuitPageGuideFrame(circuit, guide, padding = GRID) {
 __exports.PAGE_GUIDES = PAGE_GUIDES;
 };
 
+__modules["src/core/part-moves.js"] = function (__require, __exports) {
+__exports.netsTouching = netsTouching;
+__exports.captureNetTerminalPositions = captureNetTerminalPositions;
+__exports.captureComponentTerminalPositions = captureComponentTerminalPositions;
+__exports.componentTerminalMoves = componentTerminalMoves;
+__exports.rerouteTouchedNets = rerouteTouchedNets;
+let netTerminalPositionKey; __bind(() => { ({ netTerminalPositionKey } = __require("src/core/model.js")); });
+/**
+ * Following parts with their wires: which nets a set of parts touches, where
+ * their pins were before a transform, and rerouting those nets after it.
+ * Shared by the command language and the editor, so a scripted rotate and a
+ * keyboard one reroute the same way.
+ */
+
+
+
+/** Ids of every net touching any of `refs`, in the parts' and their pins'
+ *  order (reroutes run in it). Each pin's net comes from one pass over the
+ *  nets: a scan per pin was quadratic when everything moves. */
+function netsTouching(circuit, refs) {
+  const wanted = new Set(refs);
+  const netOfPin = new Map();
+  for (const net of circuit.nets.values()) {
+    for (const t of net.terminals) {
+      if (wanted.has(t.comp) && !netOfPin.has(`${t.comp}.${t.term}`)) netOfPin.set(`${t.comp}.${t.term}`, net);
+    }
+  }
+  const touched = new Set();
+  for (const refdes of refs) {
+    const component = circuit.components.get(refdes);
+    if (!component) continue;
+    for (const terminal of component.terminalDefs) {
+      const net = netOfPin.get(`${refdes}.${terminal.name}`);
+      if (net) touched.add(net.id);
+    }
+  }
+  return touched;
+}
+
+/** Each touched net's pin positions (netTerminalPositionKey), before a
+ *  transform: a net whose pins all stay put need not reroute. */
+function captureNetTerminalPositions(circuit, refs) {
+  return new Map([...netsTouching(circuit, refs)].map((id) => [id, netTerminalPositionKey(circuit, circuit.nets.get(id))]));
+}
+
+/** Each part's origin and pin positions, before a transform. */
+function captureComponentTerminalPositions(circuit, refs) {
+  return new Map(refs.map((refdes) => {
+    const component = circuit.components.get(refdes);
+    return [refdes, {
+      origin: component ? { x: component.transform.x, y: component.transform.y } : null,
+      terminals: new Map(component?.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]) || []),
+    }];
+  }));
+}
+
+/** How each part moved since `before` (captureComponentTerminalPositions):
+ *  its origin's { dx, dy } and every pin's { before, after }, the form
+ *  Circuit#rerouteNet takes. */
+function componentTerminalMoves(circuit, refs, before) {
+  return new Map(refs.map((refdes) => {
+    const component = circuit.components.get(refdes);
+    const previous = before.get(refdes);
+    const terminals = new Map(component?.worldTerminals().map((terminal) => [terminal.name, {
+      before: previous?.terminals.get(terminal.name) || { x: terminal.x, y: terminal.y },
+      after: { x: terminal.x, y: terminal.y },
+    }]) || []);
+    return [refdes, {
+      dx: component && previous?.origin ? component.transform.x - previous.origin.x : 0,
+      dy: component && previous?.origin ? component.transform.y - previous.origin.y : 0,
+      terminals,
+    }];
+  }));
+}
+
+/**
+ * Reroute every net touching `refs`. `moved` (refdes -> { dx, dy }) keeps
+ * drawn shapes, slid or re-anchored; `fresh` lays a transformed part's nets
+ * out again, except those whose pins `beforeTerminals` shows unmoved, and
+ * `terminalMoves` (componentTerminalMoves) lets a managed net follow its
+ * pins instead. Returns the id of a net that could not follow, else null.
+ */
+function rerouteTouchedNets(circuit, refs, moved, { fresh = false, beforeTerminals = null, terminalMoves = null } = {}) {
+  for (const id of netsTouching(circuit, refs)) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    const unchanged = fresh && beforeTerminals?.has(id)
+      && beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
+    const routeArg = unchanged ? null
+      : net.routingMode === 'fixed' ? (fresh ? 'refresh' : moved)
+        : terminalMoves || (fresh ? 'refresh' : moved);
+    if (circuit.rerouteNet(net, routeArg) === false) return id;
+  }
+  return null;
+}
+
+};
+
 __modules["src/core/pin-rails.js"] = function (__require, __exports) {
 __exports.pinRailPoint = pinRailPoint;
 __exports.addPinRail = addPinRail;
@@ -23324,8 +23370,17 @@ const ALIASES = new Map(Object.values(RAIL_NAMES).map((name) => [plainName(name)
  *  name as written. */
 function railNameKey(name) {
   const text = String(name ?? '').trim();
-  return ALIASES.get(plainName(text)) || text;
+  let key = railKeys.get(text);
+  if (key === undefined) {
+    // Every net is keyed on every redraw, from a handful of distinct names.
+    if (railKeys.size >= 4096) railKeys.clear();
+    key = ALIASES.get(plainName(text)) || text;
+    railKeys.set(text, key);
+  }
+  return key;
 }
+
+const railKeys = new Map();
 
 __exports.RAIL_NAMES = RAIL_NAMES;
 };
@@ -23421,23 +23476,28 @@ function strokeWidthOf(style, base = 'symbol') {
 
 /** These terminals land on the centerline of a stroked body outline. Pull a
  * filled arrowhead out by half that outline so its tip meets the visible edge
- * rather than disappearing into the body. */
-function terminalBodyInset(circuit, point) {
+ * rather than disappearing into the body. The insets by pin ("x,y"), built
+ * once per drawing, and only for a wire that has an arrowhead at all. */
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply']);
+
+function bodyEdgePinInsets(circuit) {
+  const insets = new Map();
   for (const component of circuit.components.values()) {
-    if (!['block', 'signal_sum', 'signal_multiply'].includes(component.type)) continue;
-    if (component.terminalDefs.some((terminal) => {
+    if (!BODY_EDGE_PIN_TYPES.has(component.type)) continue;
+    const inset = strokeWidthOf(component.style, 'emph') / 2;
+    for (const terminal of component.terminalDefs) {
       const world = component.terminalWorld(terminal.name);
-      return world.x === point.x && world.y === point.y;
-    })) return strokeWidthOf(component.style, 'emph') / 2;
+      const key = `${world.x},${world.y}`;
+      if (!insets.has(key)) insets.set(key, inset);
+    }
   }
-  return 0;
+  return insets;
 }
 
-function wireArrowheadOptions(circuit, points) {
-  return {
-    startInset: terminalBodyInset(circuit, points[0]),
-    endInset: terminalBodyInset(circuit, points.at(-1)),
-  };
+function wireArrowheadOptions(insets, points, arrowhead) {
+  if (!arrowhead || arrowhead === 'none') return {};
+  const at = (point) => insets().get(`${point.x},${point.y}`) || 0;
+  return { startInset: at(points[0]), endInset: at(points.at(-1)) };
 }
 
 // One shared miter limit keeps merged wires and sharp resistor leads in one
@@ -24300,6 +24360,8 @@ function svgString(circuit, opts = {}) {
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
+  let pinInsetMap = null;
+  const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
   for (const net of nets) {
     // A beat draws only the wire that joins what it shows (see beats.js).
     const shown = beat?.wires.get(net.id) ?? 'all';
@@ -24344,7 +24406,7 @@ function svgString(circuit, opts = {}) {
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
         const inked = !opacity && solidStyle(netStyle);
-        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(circuit, pts));
+        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(pinInsets, pts, netStyle?.arrowhead));
         if (inked) addInk(inkAttrs(netStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, netStyle?.color, opacity));
@@ -24355,7 +24417,7 @@ function svgString(circuit, opts = {}) {
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, shown !== 'all' ? FADE_INK : highlight);
         const inked = !opacity && solidStyle(segmentStyle);
-        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
+        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(pinInsets, [a, b], segmentStyle.arrowhead));
         // Solid wires are painted by the shared ink path below, but dashed
         // and ghosted wires paint their own element. Use the same shortened
         // shaft for those visible strokes so a dash cannot run underneath an
@@ -24455,6 +24517,7 @@ function svgString(circuit, opts = {}) {
     }
   }
 
+  const labelOwners = new Set(labels.map((label) => label.owner).filter(Boolean));
   // Top layer: components, instance labels, free labels, and net labels draw
   // above the middle wires. Component drawOrder only changes stacking within
   // this layer, so a pushed-back component remains above every wire.
@@ -24470,7 +24533,7 @@ function svgString(circuit, opts = {}) {
         `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
       );
     }
-    const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
+    const hasOwnedMarkerLabel = isReferenceMarker(c) && labelOwners.has(c.refdes);
     // A switch's value is its phase, which its owned label already shows.
     if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel && !switchState(c)) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
@@ -33886,23 +33949,25 @@ __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
+let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
 let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
 let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
-let canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl; __bind(() => { ({ canvasEl, componentContextMenuEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } = __require("src/web/elements.js")); });
+let canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl; __bind(() => { ({ canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } = __require("src/web/elements.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
-let closeComponentContextMenu, appendContextItem; __bind(() => { ({ closeComponentContextMenu, appendContextItem } = __require("src/web/context-menu.js")); });
+let closeComponentContextMenu, appendContextItem, openMenuAt; __bind(() => { ({ closeComponentContextMenu, appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/side-panel.js")); });
-let commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, snapshot; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, setLabelSelection, setSelection, snapshot } = __require("src/web/main.js")); });
+let commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } = __require("src/web/main.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 /**
  * Beats in the editor: the beat strip, stepping and editing beats, hiding
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
 
 
 
@@ -34339,16 +34404,8 @@ function startBeatRename(index, button) {
 }
 
 function openBeatMenu(index, x, y) {
-  if (!componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = beatLabel(index);
-  menu.appendChild(heading);
+  const menu = openMenuAt(x, y, beatLabel(index));
+  if (!menu) return;
   const group = document.createElement('div');
   group.className = 'context-menu-group';
   const chip = () => beatListEl.querySelector(`[data-beat-index="${index}"]`);
@@ -34420,16 +34477,6 @@ function openTimingDialog() {
   }
   // With no switch phases it opens empty: signals are added by name.
   const before = existingTimingDiagram(editor.circuit);
-  const make = (tag, props = {}, children = []) => {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (key === 'class') node.className = value;
-      else if (key === 'text') node.textContent = value;
-      else node.setAttribute(key, value);
-    }
-    node.append(...children);
-    return node;
-  };
   // The rows' own waves; a complement with none follows its phase inverted.
   // An older diagram's don't-care slots read as low.
   const rows = sources.map((row) => ({
@@ -34464,9 +34511,9 @@ function openTimingDialog() {
     row.follows = false;
   };
 
-  const grid = make('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete removes it' });
-  const pairsBox = make('div', { class: 'timing-pairs' });
-  const status = make('p', { class: 'timing-dialog-status', role: 'status' });
+  const grid = element('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete removes it' });
+  const pairsBox = element('div', { class: 'timing-pairs' });
+  const status = element('p', { class: 'timing-dialog-status', role: 'status' });
 
   const redraw = () => {
     const bits = {};
@@ -34513,13 +34560,13 @@ function openTimingDialog() {
     pairsBox.replaceChildren();
     const own = rows.filter((row) => row.baseKey === undefined);
     const active = activePairs();
-    const head = make('div', { class: 'timing-pairs-head' }, [make('span', { class: 'timing-pairs-title', text: 'Never overlap' })]);
-    const list = make('div', { class: 'timing-pairs-list' });
+    const head = element('div', { class: 'timing-pairs-head' }, [element('span', { class: 'timing-pairs-title', text: 'Never overlap' })]);
+    const list = element('div', { class: 'timing-pairs-list' });
     pairsBox.append(head, list);
     for (let a = 0; a < own.length; a += 1) {
       for (let b = a + 1; b < own.length; b += 1) {
         const pair = [own[a].key, own[b].key];
-        const box = make('input', { type: 'checkbox' });
+        const box = element('input', { type: 'checkbox' });
         box.checked = active.some((other) => samePair(other, pair));
         box.addEventListener('change', () => {
           const next = activePairs().filter((other) => !samePair(other, pair));
@@ -34528,10 +34575,10 @@ function openTimingDialog() {
           renderPairs();
           redraw();
         });
-        list.append(make('label', {}, [box, make('span', { text: `${plainMarkup(own[a].source)} · ${plainMarkup(own[b].source)}` })]));
+        list.append(element('label', {}, [box, element('span', { text: `${plainMarkup(own[a].source)} · ${plainMarkup(own[b].source)}` })]));
       }
     }
-    const auto = make('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'automatic' : 'Automatic', title: 'Keep apart every two phases that are never high in the same slot' });
+    const auto = element('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'automatic' : 'Automatic', title: 'Keep apart every two phases that are never high in the same slot' });
     auto.disabled = state.gaps === 'auto';
     auto.addEventListener('click', () => { state.gaps = 'auto'; renderPairs(); redraw(); });
     head.append(auto);
@@ -34542,14 +34589,14 @@ function openTimingDialog() {
     const n = length();
     state.cursor.slot = Math.min(state.cursor.slot, n);
     rows.forEach((row, r) => {
-      const name = make('span', { class: 'timing-grid-name' });
+      const name = element('span', { class: 'timing-grid-name' });
       if (/\\(?:overline|bar)\{/.test(row.source)) name.textContent = plainMarkup(row.source);
       else appendMarkupText(name, texToLabelMarkup(row.source));
       if (row.follows) name.title = `${plainMarkup(baseOf(row).source)} inverted; edit it to give it a wave of its own`;
-      const cells = make('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
+      const cells = element('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
       for (let slot = 0; slot < n; slot += 1) {
         const level = shown(row, slot);
-        const cell = make('span', { class: `timing-cell level-${level}${state.cursor.row === r && state.cursor.slot === slot ? ' cursor' : ''}`, role: 'gridcell' });
+        const cell = element('span', { class: `timing-cell level-${level}${state.cursor.row === r && state.cursor.slot === slot ? ' cursor' : ''}`, role: 'gridcell' });
         cell.addEventListener('mousedown', (event) => {
           event.preventDefault();
           state.cursor = { row: r, slot };
@@ -34559,7 +34606,7 @@ function openTimingDialog() {
         cells.append(cell);
       }
       // After the last slot, an empty cell to type a new one into.
-      const add = make('span', { class: `timing-cell new${state.cursor.row === r && state.cursor.slot === n ? ' cursor' : ''}`, title: 'Type 1 or 0 here to add a slot' });
+      const add = element('span', { class: `timing-cell new${state.cursor.row === r && state.cursor.slot === n ? ' cursor' : ''}`, title: 'Type 1 or 0 here to add a slot' });
       add.addEventListener('mousedown', (event) => {
         event.preventDefault();
         state.cursor = { row: r, slot: n };
@@ -34568,16 +34615,16 @@ function openTimingDialog() {
       });
       cells.append(add);
       const edge = (arrow, cells) => (cells ? `${arrow}${cells > 0 ? '+' : '−'}${Math.abs(cells)}` : '');
-      const shift = make('span', {
+      const shift = element('span', {
         class: 'timing-shift',
         text: [edge('↓', row.shift.fall), edge('↑', row.shift.rise)].filter(Boolean).join(' '),
         title: row.shift.fall || row.shift.rise
           ? `Falls ${Math.abs(row.shift.fall)} cell${Math.abs(row.shift.fall) === 1 ? '' : 's'} ${row.shift.fall < 0 ? 'early' : 'late'}, rises ${Math.abs(row.shift.rise)} ${row.shift.rise < 0 ? 'early' : 'late'} ([ ] and { } move them)`
           : 'Edges on the slot boundaries ([ ] move the falls, { } the rises)',
       });
-      grid.append(make('div', { class: 'timing-grid-line' }, [name, cells, shift]));
+      grid.append(element('div', { class: 'timing-grid-line' }, [name, cells, shift]));
     });
-    const count = make('div', { class: 'timing-grid-foot', text: !rows.length ? 'no rows yet: add a signal below'
+    const count = element('div', { class: 'timing-grid-foot', text: !rows.length ? 'no rows yet: add a signal below'
       : state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
     grid.append(count);
     removeRow.disabled = !rows[state.cursor.row]?.signal;
@@ -34695,10 +34742,10 @@ function openTimingDialog() {
     event.preventDefault();
   });
 
-  const slotInput = make('input', { type: 'number', min: '1', max: '64', step: '1', value: String(state.slot), 'aria-label': 'Slot width in cells' });
+  const slotInput = element('input', { type: 'number', min: '1', max: '64', step: '1', value: String(state.slot), 'aria-label': 'Slot width in cells' });
   slotInput.addEventListener('change', () => { state.slot = Math.max(1, Math.round(Number(slotInput.value)) || DEFAULT_SLOT_CELLS); redraw(); });
   const button = (text, title, action) => {
-    const node = make('button', { type: 'button', text, title });
+    const node = element('button', { type: 'button', text, title });
     node.addEventListener('click', () => { action(); grid.focus(); });
     return node;
   };
@@ -34721,7 +34768,7 @@ function openTimingDialog() {
   const makeBeats = button('Make beats', 'Add one beat per state of this timing diagram, after the beat on screen: phases high together close together', () => {
     addPhaseBeats();
   });
-  const signalInput = make('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
+  const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
   const addButton = button('Add signal', 'Add a row of your own, not tied to any switch (Enter in the field)', () => {
     if (addSignal(signalInput.value)) signalInput.value = '';
   });
@@ -34740,40 +34787,40 @@ function openTimingDialog() {
     syncTimingToggle();
     if (focused) canvasEl.focus({ preventScroll: true });
   };
-  const dialog = make('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
-    make('h2', { text: 'Timing diagram' }),
-    make('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
+  const dialog = element('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
+    element('h2', { text: 'Timing diagram' }),
+    element('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
     grid,
-    make('div', { class: 'timing-dialog-options' }, [
+    element('div', { class: 'timing-dialog-options' }, [
       button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
       button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
       button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
-      make('label', {}, [make('span', { text: 'Slot' }), slotInput, make('span', { text: 'cells' })]),
+      element('label', {}, [element('span', { text: 'Slot' }), slotInput, element('span', { text: 'cells' })]),
     ]),
-    make('div', { class: 'timing-dialog-options timing-shift-controls' }, [
-      make('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
-      make('span', { class: 'timing-shift-pair' }, [
-        make('span', { text: 'Fall' }),
+    element('div', { class: 'timing-dialog-options timing-shift-controls' }, [
+      element('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
+      element('span', { class: 'timing-shift-pair' }, [
+        element('span', { text: 'Fall' }),
         button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
         button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
       ]),
-      make('span', { class: 'timing-shift-pair' }, [
-        make('span', { text: 'Rise' }),
+      element('span', { class: 'timing-shift-pair' }, [
+        element('span', { text: 'Rise' }),
         button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
         button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
       ]),
-      make('span', { class: 'timing-shift-pair' }, [
-        make('span', { text: 'Row' }),
+      element('span', { class: 'timing-shift-pair' }, [
+        element('span', { text: 'Row' }),
         button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
         button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
       ]),
     ]),
-    make('div', { class: 'timing-dialog-options timing-signal-controls' }, [
-      make('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
+    element('div', { class: 'timing-dialog-options timing-signal-controls' }, [
+      element('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
     ]),
     pairsBox,
     status,
-    make('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats, button('Close', 'Close (Escape)', close)]),
+    element('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats, button('Close', 'Close (Escape)', close)]),
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
@@ -36729,6 +36776,7 @@ __modules["src/web/context-menu.js"] = function (__require, __exports) {
 __exports.closeComponentContextMenu = closeComponentContextMenu;
 __exports.appendContextItem = appendContextItem;
 __exports.appendContextSubmenu = appendContextSubmenu;
+__exports.openMenuAt = openMenuAt;
 __exports.openComponentContextMenu = openComponentContextMenu;
 __exports.selectContextTarget = selectContextTarget;
 __exports.openContextMenuAt = openContextMenuAt;
@@ -37224,6 +37272,22 @@ function appendContextStyleStrip(menu) {
   strip.addEventListener('click', (ev) => handleStyleControlClick(strip, ev));
   syncStyleControls(strip, state);
   menu.appendChild(strip);
+}
+
+/** Open the shared context menu at (x, y), kept on screen, under
+ *  `heading`; returns the menu to fill, or null when the page has none. */
+function openMenuAt(x, y, heading) {
+  if (!componentContextMenuEl) return null;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const title = document.createElement('div');
+  title.className = 'context-menu-heading';
+  title.textContent = heading;
+  menu.appendChild(title);
+  return menu;
 }
 
 function openComponentContextMenu(target, x, y) {
@@ -39049,8 +39113,23 @@ function openUnsavedDocument(state, name) {
   logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
 }
 
-function hasUnsavedChanges() {
-  return snapshot() !== editor.lastSavedSnapshot ||
+// The toolbar's dirty dot asks on every frame; serializing the document each
+// time cost most of a frame on a large drawing. The answer only changes with
+// the model (its revision, or a preview's), the document, or a save.
+let changedCache = null;
+
+/** Whether the document differs from what was last saved. `cached` reuses
+ *  the answer while nothing it depends on changed: for the per-frame dirty
+ *  dot, not for deciding whether work would be lost. */
+function documentChanged({ cached = false } = {}) {
+  const key = { revision: editor.modelRevision, preview: editor.previewRevision, circuit: editor.circuit, saved: editor.lastSavedSnapshot };
+  if (cached && changedCache && Object.keys(key).every((field) => changedCache.key[field] === key[field])) return changedCache.changed;
+  changedCache = { key, changed: snapshot() !== editor.lastSavedSnapshot };
+  return changedCache.changed;
+}
+
+function hasUnsavedChanges({ cached = false } = {}) {
+  return documentChanged({ cached }) ||
     (!editor.currentDocumentPath && !!validDocumentName(circuitNameEl.value));
 }
 
@@ -39175,7 +39254,7 @@ function newDocumentDestination() {
 }
 
 function renderSaveState() {
-  const dirty = hasUnsavedChanges();
+  const dirty = hasUnsavedChanges({ cached: true });
   // Fitting measures the toolbar at each compaction stage (a forced layout
   // apiece), so refit only when the title or dirty dot can change its width;
   // the toolbar's ResizeObserver covers everything else.
@@ -39758,6 +39837,28 @@ function installDocumentSession() {
 }
 
 __exports.persistence = persistence;
+};
+
+__modules["src/web/dom.js"] = function (__require, __exports) {
+__exports.element = element;
+/**
+ * A DOM element in one call: `props` sets `class`, `text`, `html`, `on…`
+ * listeners, and attributes (true as a bare attribute; false, null, and
+ * undefined left off), and `children` are appended.
+ */
+function element(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'class') node.className = value;
+    else if (key === 'html') node.innerHTML = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (value !== undefined && value !== null && value !== false) node.setAttribute(key, value === true ? '' : value);
+  }
+  node.append(...children);
+  return node;
+}
+
 };
 
 __modules["src/web/drawing-export.js"] = function (__require, __exports) {
@@ -40554,11 +40655,14 @@ function installExportUi() {
 __modules["src/web/file-dialog.js"] = function (__require, __exports) {
 __exports.showFileDialog = showFileDialog;
 __exports.confirmChoice = confirmChoice;
+let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
 /**
  * In-app file browser for Open, Save as, and choosing the workspace folder.
  * The local server reads the file system, so documents keep a real path and
  * can be saved back in place (a browser file input only yields contents).
  */
+
+
 
 const DOCUMENT_EXTENSION = '.json';
 
@@ -40574,19 +40678,6 @@ const ICONS = {
 
 function svgIcon(name) {
   return `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name]}</svg>`;
-}
-
-function element(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'html') node.innerHTML = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== undefined && value !== null && value !== false) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
 }
 
 const TITLES = {
@@ -41037,7 +41128,7 @@ let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/we
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
 let netMarkerRefs; __bind(() => { ({ netMarkerRefs } = __require("src/web/hover-preview.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let deleteSelection, keyToWire, nearestTerminal, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire; __bind(() => { ({ deleteSelection, keyToWire, nearestTerminal, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } = __require("src/web/main.js")); });
+let deleteSelection, nearestTerminal, wireSegmentAt, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire; __bind(() => { ({ deleteSelection, nearestTerminal, wireSegmentAt, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } = __require("src/web/main.js")); });
 /**
  * The canvas's gesture layer: pin handles, the snap pulse on the terminal a
  * wire will land on, and the Delete tool's knife stroke with the cuts it
@@ -41184,9 +41275,8 @@ function withGestureOverlay(svg, ghost) {
     const stroke = [...editor.drag.knife];
     const cut = knifeTargets(stroke);
     for (const key of cut.wires) {
-      const { netId, branch, segment } = keyToWire(key);
-      const pts = editor.circuit.nets.get(netId)?.paths()?.[branch];
-      if (pts?.[segment]) parts.push(`<line class="gesture-cut" x1="${pts[segment - 1].x}" y1="${pts[segment - 1].y}" x2="${pts[segment].x}" y2="${pts[segment].y}" vector-effect="non-scaling-stroke"/>`);
+      const segment = wireSegmentAt(key);
+      if (segment) parts.push(`<line class="gesture-cut" x1="${segment.a.x}" y1="${segment.a.y}" x2="${segment.b.x}" y2="${segment.b.y}" vector-effect="non-scaling-stroke"/>`);
     }
     for (const ref of cut.refs) {
       parts.push(`<g class="selection-glow gesture-cut-part" pointer-events="none">${componentShapeSvg(editor.circuit.components.get(ref))}</g>`);
@@ -41688,8 +41778,7 @@ let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDar
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let animateViewTo, fitTarget, fitView; __bind(() => { ({ animateViewTo, fitTarget, fitView } = __require("src/web/canvas-view.js")); });
 let viewFitting; __bind(() => { ({ viewFitting } = __require("src/web/atlas-layout.js")); });
-let componentContextMenuEl; __bind(() => { ({ componentContextMenuEl } = __require("src/web/elements.js")); });
-let appendContextItem, appendContextSubmenu, closeComponentContextMenu; __bind(() => { ({ appendContextItem, appendContextSubmenu, closeComponentContextMenu } = __require("src/web/context-menu.js")); });
+let appendContextItem, appendContextSubmenu, openMenuAt; __bind(() => { ({ appendContextItem, appendContextSubmenu, openMenuAt } = __require("src/web/context-menu.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
 let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, render, selectedComps, setSelection } = __require("src/web/main.js")); });
@@ -41710,7 +41799,6 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
  * in this browser; they are never saved in the document or undone. Parts
  * linked to one design share one bubble, a connector to each.
  */
-
 
 
 
@@ -42425,19 +42513,12 @@ function appendDesignPicker(group, scope, current) {
 /** The menu of a bubble: open, hide, or relink its part. */
 function openLinkBubbleMenu(refdes, x, y) {
   const component = editor.circuit.components.get(refdes);
-  if (!component || !componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  if (!component) return;
   // A shared bubble is every part linked to its design.
   const ids = layoutEntry(refdes)?.ids || [refdes];
   const parts = ids.map((id) => editor.circuit.components.get(id)).filter(Boolean);
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = `${component.link} · linked from ${ids.join(', ')}`;
-  menu.appendChild(heading);
+  const menu = openMenuAt(x, y, `${component.link} · linked from ${ids.join(', ')}`);
+  if (!menu) return;
   const group = document.createElement('div');
   group.className = 'context-menu-group';
   appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });
@@ -44602,6 +44683,7 @@ __exports.setSelection = setSelection;
 __exports.setLabelSelection = setLabelSelection;
 __exports.vertexSelection = vertexSelection;
 __exports.keyToWire = keyToWire;
+__exports.wireSegmentAt = wireSegmentAt;
 __exports.syncSelectedWire = syncSelectedWire;
 __exports.applyEditorSelection = applyEditorSelection;
 __exports.validateSelectedWires = validateSelectedWires;
@@ -44678,7 +44760,8 @@ __exports.activateMove = activateMove;
 __exports.activateCopy = activateCopy;
 __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
-let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, isReferenceMarkerGlobalName, netTerminalPositionKey, referenceMarkerIsLocal, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
+let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouchingIn, rerouteTouchedNetsIn; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching: netsTouchingIn, rerouteTouchedNets: rerouteTouchedNetsIn } = __require("src/core/part-moves.js")); });
+let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
 let pinJoinPoints; __bind(() => { ({ pinJoinPoints } = __require("src/web/gestures.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
@@ -44722,7 +44805,7 @@ let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObject
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
-let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts, sidePanelVisible, setSidePanelVisible; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts, sidePanelVisible, setSidePanelVisible } = __require("src/web/side-panel.js")); });
+let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts } = __require("src/web/side-panel.js")); });
 let installFindReplace, openFind, openReplace, renderTextMatches; __bind(() => { ({ installFindReplace, openFind, openReplace, renderTextMatches } = __require("src/web/find-replace-ui.js")); });
 let installTagsField, renderTagsField; __bind(() => { ({ installTagsField, renderTagsField } = __require("src/web/tags-ui.js")); });
 let installCommandLine; __bind(() => { ({ installCommandLine } = __require("src/web/command-line-ui.js")); });
@@ -44749,6 +44832,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -45204,6 +45288,7 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
     startSnapshot,
   };
   circuit = loadDocument(JSON.parse(startSnapshot));
+  circuit.adoptTextMetrics(previewTransaction.baseCircuit);
   previewRevision += 1;
   circuit.invalidateRoutingCache();
   return true;
@@ -45306,7 +45391,11 @@ function applyJson(blob) {
   labelMode = null;
   annotationPoints = [];
   resetCheckState();
+  const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
+  // Labels whose text is unchanged keep their measured size, instead of
+  // every label being measured again (a forced layout each).
+  circuit.adoptTextMetrics(previous);
   // Loads, undo, and redo bring objects back; none of them is newly drawn.
   rememberBeatObjects();
   markModelChanged(); // wire geometry may have changed under any wholesale load
@@ -45477,10 +45566,34 @@ function namedNetGroupKey(net) {
  *  bit the bus (not the other bits). */
 function namedGroupNets(net) {
   if (!net?.id) return referenceGroupNets(net);
-  const key = circuit.netGroupKey(net);
-  const bus = !!busBits(net.name);
-  return [...circuit.nets.values()].filter((candidate) => circuit.netGroupKey(candidate) === key
-    || (bus && netNamesConnect(candidate.name, net.name)));
+  let groups = netGroupIndex();
+  // A net made since the index was built (within one revision) rebuilds it.
+  if (!groups.keyOf.has(net)) {
+    netGroupCache = null;
+    groups = netGroupIndex();
+  }
+  const members = groups.keyOf.has(net) ? groups.byKey.get(groups.keyOf.get(net)) : [net];
+  if (!busBits(net.name)) return [...members];
+  return [...circuit.nets.values()].filter((candidate) => members.includes(candidate) || netNamesConnect(candidate.name, net.name));
+}
+
+// Every net's group, built once per model (or preview) revision: the net
+// list asks for each net's group, and keying every net for every row was
+// quadratic in the nets (and a label scan per key on top).
+let netGroupCache = null;
+function netGroupIndex() {
+  const revision = `${modelRevision}:${previewRevision}`;
+  if (netGroupCache?.revision === revision && netGroupCache.circuit === circuit) return netGroupCache;
+  const byKey = new Map();
+  const keyOf = new Map();
+  for (const candidate of circuit.nets.values()) {
+    const key = circuit.netGroupKey(candidate);
+    keyOf.set(candidate, key);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(candidate);
+  }
+  netGroupCache = { revision, circuit, byKey, keyOf };
+  return netGroupCache;
 }
 
 function visibleNets() {
@@ -45667,6 +45780,15 @@ function keyToWire(key) {
   return { netId, branch: Number(branch), segment: Number(segment) };
 }
 
+/** The segment a "netId:branch:segment" key names, as drawn now: { a, b }
+ *  (its ends) with the key's parts, or null when it no longer exists. */
+function wireSegmentAt(key) {
+  const w = keyToWire(key);
+  const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
+  if (!path || !(w.segment > 0 && w.segment < path.length)) return null;
+  return { ...w, a: path[w.segment - 1], b: path[w.segment] };
+}
+
 /** Keep the primary segment pointer consistent with the selection set. */
 function syncSelectedWire() {
   const first = selectedWires.values().next().value;
@@ -45702,12 +45824,7 @@ function applyEditorSelection(target, extend = false) {
 /** Drop segment keys whose net/branch/segment no longer exists.  Topology
  * edits, undo/load, and MST reduction can all invalidate branch indices. */
 function validateSelectedWires() {
-  const valid = new Set();
-  for (const key of selectedWires) {
-    const w = keyToWire(key);
-    const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-    if (path && w.segment > 0 && w.segment < path.length) valid.add(key);
-  }
+  const valid = new Set([...selectedWires].filter((key) => wireSegmentAt(key)));
   selectedWires = valid;
   if (selectedWire) {
     const key = `${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`;
@@ -45717,11 +45834,8 @@ function validateSelectedWires() {
 }
 
 function isDiagonalWireKey(key) {
-  const w = keyToWire(key);
-  const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-  const a = path?.[w.segment - 1];
-  const b = path?.[w.segment];
-  return !!(a && b && a.x !== b.x && a.y !== b.y);
+  const segment = wireSegmentAt(key);
+  return !!segment && segment.a.x !== segment.b.x && segment.a.y !== segment.b.y;
 }
 
 /** Start a rigid drag of one diagonal segment (see Circuit#moveDiagonalSegment).
@@ -46220,42 +46334,11 @@ function singletonOrigin() {
  * transformed as one world-space set by transformMixedSelection.
  */
 function rotateSelectionAbout(deg) {
-  const inCopyGhost = drag?.mode === 'copyghost';
-  const inMoveGhost = moveGhostActive();
-  const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
   const turns = ((deg % 360) + 360) % 360;
-  const operation = turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate';
-  if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
-    const changed = transformMixedSelection(
-      operation,
-      { recordHistory: !(inCopyGhost || inMoveGhost), center: pivot || singletonOrigin() },
-    );
-    if (changed && inCopyGhost) {
-      refreshCopyGhostBase({ operation, pivot });
-      cursor = pivot;
-    } else if (changed && inMoveGhost) {
-      cursor = pivot;
-      recordMoveGhostMutation();
-    }
-    return;
-  }
-  const refs = selectedComps().map((c) => c.refdes);
-  const beforeComponents = captureComponentTerminalPositions(refs);
-  const beforeTerminals = captureNetTerminalPositions(refs);
-  const apply = () => {
-    for (const c of selectedComps()) {
-      if (pivot) applySingletonWorldTransform(c, 'rotate', pivot);
-      else circuit.setTransform(c.refdes, { rotation: (((c.transform.rotation + deg) % 360) + 360) % 360 });
-    }
-    rerouteTouchedNets(refs, null, true, beforeTerminals, componentTerminalMoves(refs, beforeComponents));
-  };
-  if (inMoveGhost) {
-    apply();
-    cursor = pivot;
-    recordMoveGhostMutation();
-  } else {
-    commit(apply);
-  }
+  transformSelectionAbout(turns === 180 ? 'rotate180' : turns === 270 ? 'rotateCCW' : 'rotate', (c, pivot) => {
+    if (pivot) applySingletonWorldTransform(c, 'rotate', pivot);
+    else circuit.setTransform(c.refdes, { rotation: (((c.transform.rotation + deg) % 360) + 360) % 360 });
+  });
 }
 
 /**
@@ -46264,10 +46347,17 @@ function rotateSelectionAbout(deg) {
  * mirrored halves follow the same world-space operation.
  */
 function mirrorSelectionAbout(axis) {
+  transformSelectionAbout(axis === 'x' ? 'mirrorX' : 'mirrorY', (c, pivot) => applySingletonWorldMirror(c, axis, pivot));
+}
+
+/** Rotate or mirror the selection: a copy ghost, several parts, or a mixed
+ *  set as one world-space `operation`; parts alone each by `transformPart`
+ *  (c, pivot), their nets following. A pivot is the cursor while a copy or
+ *  move ghost is out. */
+function transformSelectionAbout(operation, transformPart) {
   const inCopyGhost = drag?.mode === 'copyghost';
   const inMoveGhost = moveGhostActive();
   const pivot = inCopyGhost || inMoveGhost ? { x: snap(cursor.x), y: snap(cursor.y) } : null;
-  const operation = axis === 'x' ? 'mirrorX' : 'mirrorY';
   if (inCopyGhost || multi.size > 1 || selectedWires.size || selectedWire || selectedNets.size || selectedLabels().some((l) => !l.owner) || carriesOwnWires()) {
     const changed = transformMixedSelection(
       operation,
@@ -46283,11 +46373,11 @@ function mirrorSelectionAbout(axis) {
     return;
   }
   const refs = selectedComps().map((c) => c.refdes);
-  const beforeComponents = captureComponentTerminalPositions(refs);
-  const beforeTerminals = captureNetTerminalPositions(refs);
+  const beforeComponents = captureComponentTerminalPositions(circuit, refs);
+  const beforeTerminals = captureNetTerminalPositions(circuit, refs);
   const apply = () => {
-    for (const c of selectedComps()) applySingletonWorldMirror(c, axis, pivot);
-    rerouteTouchedNets(refs, null, true, beforeTerminals, componentTerminalMoves(refs, beforeComponents));
+    for (const c of selectedComps()) transformPart(c, pivot);
+    rerouteTouchedNets(refs, null, { fresh: true, beforeTerminals, terminalMoves: componentTerminalMoves(circuit, refs, beforeComponents) });
   };
   if (inMoveGhost) {
     apply();
@@ -46331,8 +46421,8 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
   }
   const refs = selectedComps().map((c) => c.refdes);
   const selectedRefSet = new Set(refs);
-  const beforeComponents = captureComponentTerminalPositions(refs);
-  const beforeTerminals = captureNetTerminalPositions(refs);
+  const beforeComponents = captureComponentTerminalPositions(circuit, refs);
+  const beforeTerminals = captureNetTerminalPositions(circuit, refs);
   const geometryNetIds = new Set(byNet.keys());
   const canTransformNet = (net) => !net.terminals.length || net.terminals.every((t) => selectedRefSet.has(t.comp));
   for (const id of selectedNets) {
@@ -46375,11 +46465,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
     const labels = savedSelection.selLabels.filter((id) => circuit.labels.has(id));
     setLabelSelection(labels, savedSelection.selLabel, true);
     selectedNets = new Set(savedSelection.selectedNets.filter((id) => circuit.nets.has(id)));
-    selectedWires = new Set(savedSelection.selectedWires.filter((key) => {
-      const w = keyToWire(key);
-      const path = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-      return !!path && w.segment > 0 && w.segment < path.length;
-    }));
+    selectedWires = new Set(savedSelection.selectedWires.filter((key) => wireSegmentAt(key)));
     selectedWire = savedSelection.selectedWire;
     validateSelectedWires();
     if (savedSelection.selectedWire && !selectedWire) syncSelectedWire();
@@ -46450,7 +46536,7 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
           || beforeTerminals.get(id) !== netTerminalPositionKey(circuit, net);
         const routeArg = net.routingMode === 'fixed'
           ? 'refresh'
-          : componentTerminalMoves(refs, beforeComponents);
+          : componentTerminalMoves(circuit, refs, beforeComponents);
         if (terminalsChanged && rerouteNet(net, routeArg) === false) {
           throw new Error(`unable to reroute net ${id} safely`);
         }
@@ -46505,54 +46591,11 @@ function transformMixedSelection(operation, { recordHistory = true, center: pivo
   }
 }
 
-/** Re-route every net touching the given components (holistic, from terminals).
- *  `moved` (optional) is a Map of refdes -> {dx,dy} so drawn wire shapes are
- *  preserved instead of recomputed when a component is dragged. */
-function captureNetTerminalPositions(refs) {
-  const ids = netsTouching(refs);
-  return new Map([...ids].map((id) => {
-    const net = circuit.nets.get(id);
-    return [id, netTerminalPositionKey(circuit, net)];
-  }));
-}
-
-function captureComponentTerminalPositions(refs) {
-  return new Map(refs.map((refdes) => {
-    const component = circuit.components.get(refdes);
-    return [refdes, {
-      origin: component ? { x: component.transform.x, y: component.transform.y } : null,
-      terminals: new Map(component?.worldTerminals().map((terminal) => [terminal.name, { x: terminal.x, y: terminal.y }]) || []),
-    }];
-  }));
-}
-
-function componentTerminalMoves(refs, before) {
-  return new Map(refs.map((refdes) => {
-    const component = circuit.components.get(refdes);
-    const previous = before.get(refdes);
-    const terminals = new Map(component?.worldTerminals().map((terminal) => [terminal.name, {
-      before: previous?.terminals.get(terminal.name) || { x: terminal.x, y: terminal.y },
-      after: { x: terminal.x, y: terminal.y },
-    }]) || []);
-    return [refdes, {
-      dx: component && previous?.origin ? component.transform.x - previous.origin.x : 0,
-      dy: component && previous?.origin ? component.transform.y - previous.origin.y : 0,
-      terminals,
-    }];
-  }));
-}
-
-function rerouteTouchedNets(refs, moved, fresh = false, beforeTerminals = null, terminalMoves = null) {
-  for (const id of netsTouching(refs)) {
-    const net = circuit.nets.get(id);
-    if (!net) continue;
-    const unchanged = fresh && beforeTerminals?.has(id)
-      && beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
-    const routeArg = unchanged ? null
-      : net.routingMode === 'fixed' ? (fresh ? 'refresh' : moved)
-        : terminalMoves || (fresh ? 'refresh' : moved);
-    if (rerouteNet(net, routeArg) === false) throw new Error(`unable to reroute net ${id} safely`);
-  }
+/** Reroute every net touching `refs` (part-moves.js), refusing the edit
+ *  when one cannot follow. */
+function rerouteTouchedNets(refs, moved, options = {}) {
+  const id = rerouteTouchedNetsIn(circuit, refs, moved, options);
+  if (id !== null) throw new Error(`unable to reroute net ${id} safely`);
 }
 
 /** Delete all selected objects together in one undo step.  Selected whole nets
@@ -47420,6 +47463,11 @@ function scheduleMeasuredLabelRender() {
   });
 }
 
+/** The ends ({ a, b }) of the segments `keys` name that still exist. */
+function segmentEnds(keys) {
+  return keys.map(wireSegmentAt).filter(Boolean).map(({ a, b }) => ({ a, b }));
+}
+
 function renderCanvas(modelKey) {
   // Fixed-net editing preserves literal geometry.
   const directFrom = directWire?.source ? wireOrigin(directWire.source) : null;
@@ -47618,28 +47666,9 @@ function renderCanvas(modelKey) {
     centerGuides: placementGuide?.guides.length || alignTool ? null : selectionCenterBounds(),
     layoutPreviewRects,
     placementGuide,
-    wireSegments: (() => {
-      if (!selectedWires.size && !selectedWire) return [];
-      const keys = selectedWires.size ? [...selectedWires] : [`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`];
-      const out = [];
-      for (const key of keys) {
-        const w = keyToWire(key);
-        const n = circuit.nets.get(w.netId);
-        const p = n?.paths()?.[w.branch];
-        if (p?.[w.segment]) out.push({ a: p[w.segment - 1], b: p[w.segment] });
-      }
-      return out;
-    })(),
-    previewWireSegments: (() => {
-      const keys = previewSelection?.wires || [];
-      const out = [];
-      for (const key of keys) {
-        const w = keyToWire(key);
-        const p = circuit.nets.get(w.netId)?.paths()?.[w.branch];
-        if (p?.[w.segment]) out.push({ a: p[w.segment - 1], b: p[w.segment] });
-      }
-      return out;
-    })(),
+    wireSegments: segmentEnds(selectedWires.size ? [...selectedWires]
+      : selectedWire ? [`${selectedWire.netId}:${selectedWire.branch}:${selectedWire.segment}`] : []),
+    previewWireSegments: segmentEnds(previewSelection?.wires || []),
     fixedDrag: drag && drag.mode === 'fixedwire'
       ? { x: cursor.x, y: cursor.y, junction: drag.junction >= 0 }
       : undefined,
@@ -48216,12 +48245,10 @@ function carriedJunctions(netIds) {
     const at = new Set(net.junctions.map((p) => `${p.x},${p.y}`));
     const keys = new Set();
     if (selectedNets.has(id)) for (const key of at) keys.add(key);
-    const paths = net.paths();
     for (const wireKey of selectedWires) {
-      const { netId, branch, segment } = keyToWire(wireKey);
-      if (netId !== id) continue;
-      for (const p of [paths[branch]?.[segment - 1], paths[branch]?.[segment]]) {
-        if (p && at.has(`${p.x},${p.y}`)) keys.add(`${p.x},${p.y}`);
+      const segment = keyToWire(wireKey).netId === id ? wireSegmentAt(wireKey) : null;
+      for (const p of segment ? [segment.a, segment.b] : []) {
+        if (at.has(`${p.x},${p.y}`)) keys.add(`${p.x},${p.y}`);
       }
     }
     if (keys.size) carry.set(id, keys);
@@ -48231,16 +48258,7 @@ function carriedJunctions(netIds) {
 
 /** Ids of every net that touches any of the given components. */
 function netsTouching(refs) {
-  const touched = new Set();
-  for (const r of refs) {
-    const c = circuit.components.get(r);
-    if (!c) continue;
-    for (const t of c.terminalDefs) {
-      const net = circuit.netOfTerminal({ comp: c.refdes, term: t.name });
-      if (net) touched.add(net.id);
-    }
-  }
-  return touched;
+  return netsTouchingIn(circuit, refs);
 }
 
 /** Identify the kind of endpoint at a managed path boundary.  Terminal
@@ -48800,84 +48818,78 @@ function joinWireToNet(wireHit, selectedTarget = null) {
   logLine(`joined into net ${net.id} at (${P.x},${P.y})`);
 }
 
-function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
-  // A diagonal segment moves rigidly on its own; orthogonal runs keep the
-  // sideways run drag below and never carry selected diagonal segments.
-  if (diagonalSegmentDragAt(wireHit, startWorld, startClient, ev, { modal })) return true;
-  const startSnapshot = snapshot();
-  const sourceNetId = wireHit.net.id;
-  const key = `${sourceNetId}:${wireHit.branch}:${wireHit.seg}`;
-  const moveKeys = ev.shiftKey || selectedWires.has(key)
-    ? new Set([...selectedWires, key])
-    : new Set([key]);
-  for (const selectedKey of [...moveKeys]) if (isDiagonalWireKey(selectedKey)) moveKeys.delete(selectedKey);
+/**
+ * The runs a wire segment drag moves: each selected segment's bounded run,
+ * once, with what its ends are joined to. The pressed segment's run is read
+ * from `hit` ({ netId, branch, pts }) when given (the preview's path).
+ */
+function collectWireRuns(moveKeys, hit = null) {
   const runs = [];
-  beginPreviewTransaction(startSnapshot);
-  const net = circuit.nets.get(sourceNetId);
-  if (!net) {
-    cancelPreviewTransaction();
-    return false;
-  }
-  const previewPath = net.paths()[wireHit.branch] || net.paths()[0];
-  wireHit = { ...wireHit, net, pts: previewPath };
   const seenRun = new Set();
   for (const k of moveKeys) {
-    const selected = keyToWire(k);
-    const currentNet = circuit.nets.get(selected.netId);
-    if (!currentNet) continue;
-    let pts = currentNet.branches && currentNet.branches[selected.branch] && currentNet.branches[selected.branch].length >= 2
-      ? currentNet.branches[selected.branch]
-      : currentNet.route && currentNet.route.length >= 2 ? currentNet.route : currentNet.points().slice();
-    const breaks = managedWireBreaks(currentNet);
-    const selectedPath = selected.netId === net.id && selected.branch === wireHit.branch ? wireHit.pts : pts;
-    const selectedRun = wireRunAt(selectedPath, selected.segment, breaks);
-    const editable = editableManagedPath(currentNet, selected.branch, pts);
+    const w = keyToWire(k);
+    const n = circuit.nets.get(w.netId);
+    if (!n) continue;
+    let pts = n.branches && n.branches[w.branch] && n.branches[w.branch].length >= 2
+      ? n.branches[w.branch]
+      : n.route && n.route.length >= 2 ? n.route : n.points().slice();
+    const breaks = managedWireBreaks(n);
+    const selectedPath = hit && w.netId === hit.netId && w.branch === hit.branch ? hit.pts : pts;
+    const selectedRun = wireRunAt(selectedPath, w.segment, breaks);
+    const editable = editableManagedPath(n, w.branch, pts);
     pts = editable.path;
     const run = editable.interiorRun
       ? { orient: selectedRun.orient, val: selectedRun.val }
-      : wireRunAt(pts, selected.segment, breaks);
+      : wireRunAt(pts, w.segment, breaks);
     const runBounds = editable.interiorRun
       ? { lo: 1, hi: pts.length - 2 }
       : { lo: run.lo, hi: run.hi };
-    const runKey = `${currentNet.id}:${selected.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
-    if (seenRun.has(runKey)) continue;
+    const runKey = `${n.id}:${w.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
+    if (seenRun.has(runKey)) continue; // same bounded run, don't move twice
     seenRun.add(runKey);
     const endpointMeta = {
-      start: managedEndpointMeta(currentNet, pts[runBounds.lo]),
-      end: managedEndpointMeta(currentNet, pts[runBounds.hi]),
-      segment: selected.segment,
+      start: managedEndpointMeta(n, pts[runBounds.lo]),
+      end: managedEndpointMeta(n, pts[runBounds.hi]),
+      segment: w.segment,
       breaks,
       runBounds,
       interiorRun: editable.interiorRun,
+      // This is a reversible preview.  The pointer must be able to carry
+      // the run through intermediate overlaps; the final geometry is
+      // checked when the gesture is released.
       allowPastNeighbors: true,
       preserveDiagonalNeighbors: true,
     };
     runs.push({
-      net: currentNet,
-      branch: selected.branch,
-      seg: selected.segment,
+      net: n,
+      branch: w.branch,
+      seg: w.segment,
       pts,
       orig: pts.map((p) => ({ ...p })),
       orient: run.orient,
       line: run.val,
       startLine: run.val,
-      hadRoute: !!(currentNet.route && currentNet.route.length >= 2),
+      hadRoute: !!(n.route && n.route.length >= 2),
       endpointMeta,
-      junctionBridge: pts.length === 2 &&
-        endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
+      junctionBridge: pts.length === 2 && endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
     });
   }
+  return runs;
+}
+
+/** Arm a wire segment drag of `runs` from the pressed one. Only runs
+ *  perpendicular to the drag direction can move together (a drag shifts a
+ *  run sideways): same-orientation runs move as a group, and selected runs
+ *  of the other orientation stay put (still selected, still deletable).
+ *  `extra` adds drag fields. Returns false when there is no run. */
+function beginWireSegDrag(runs, net, wireHit, { startWorld, startClient, ev, key, startSnapshot, extra = {} }) {
   const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
-  if (!primary) {
-    cancelPreviewTransaction();
-    return false;
-  }
+  if (!primary) return false;
   const dragRuns = runs.filter((r) => r.orient === primary.orient);
   const netSnapshots = captureRunNetGeometry(dragRuns);
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
   drag = {
     mode: 'wireseg',
-    modal,
     net,
     branch: primary.branch,
     seg: primary.seg,
@@ -48897,8 +48909,36 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
     rubber: null,
     startSnapshot,
     netSnapshots,
+    ...extra,
   };
   render();
+  return true;
+}
+
+function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) {
+  // A diagonal segment moves rigidly on its own; orthogonal runs keep the
+  // sideways run drag below and never carry selected diagonal segments.
+  if (diagonalSegmentDragAt(wireHit, startWorld, startClient, ev, { modal })) return true;
+  const startSnapshot = snapshot();
+  const sourceNetId = wireHit.net.id;
+  const key = `${sourceNetId}:${wireHit.branch}:${wireHit.seg}`;
+  const moveKeys = ev.shiftKey || selectedWires.has(key)
+    ? new Set([...selectedWires, key])
+    : new Set([key]);
+  for (const selectedKey of [...moveKeys]) if (isDiagonalWireKey(selectedKey)) moveKeys.delete(selectedKey);
+  beginPreviewTransaction(startSnapshot);
+  const net = circuit.nets.get(sourceNetId);
+  if (!net) {
+    cancelPreviewTransaction();
+    return false;
+  }
+  const previewPath = net.paths()[wireHit.branch] || net.paths()[0];
+  wireHit = { ...wireHit, net, pts: previewPath };
+  const runs = collectWireRuns(moveKeys, { netId: net.id, branch: wireHit.branch, pts: wireHit.pts });
+  if (!beginWireSegDrag(runs, net, wireHit, { startWorld, startClient, ev, key, startSnapshot, extra: { modal } })) {
+    cancelPreviewTransaction();
+    return false;
+  }
   return true;
 }
 
@@ -48960,7 +49000,6 @@ function beginBranchWire(segDrag, w) {
   render();
 }
 
-/** Ctrl/Cmd-drag on an object drags a copy; a plain Ctrl/Cmd-click still toggles selection. */
 /** Ctrl/Cmd on a label arms a copy, as it does on a part: dragging copies
  * the label (with the rest of the selection it belongs to), and a click
  * without a drag toggles it in the selection. An owned label copies its part. */
@@ -49673,88 +49712,15 @@ function canvasMouseDown(ev) {
       render();
       return;
     }
-    const runs = [];
-    const seenRun = new Set();
-    for (const k of moveKeys) {
-      const w = keyToWire(k);
-      const n = circuit.nets.get(w.netId);
-      if (!n) continue;
-      let pts = n.branches && n.branches[w.branch] && n.branches[w.branch].length >= 2
-        ? n.branches[w.branch]
-        : n.route && n.route.length >= 2 ? n.route : n.points().slice();
-      const breaks = managedWireBreaks(n);
-      const selectedRun = wireRunAt(pts, w.segment, breaks);
-      const editable = editableManagedPath(n, w.branch, pts);
-      pts = editable.path;
-      const run = editable.interiorRun
-        ? { orient: selectedRun.orient, val: selectedRun.val }
-        : wireRunAt(pts, w.segment, breaks);
-      const runBounds = editable.interiorRun
-        ? { lo: 1, hi: pts.length - 2 }
-        : { lo: run.lo, hi: run.hi };
-      const runKey = `${n.id}:${w.branch}:${run.orient}:${run.val}:${runBounds.lo}:${runBounds.hi}`;
-      if (seenRun.has(runKey)) continue; // same bounded run, don't move twice
-      seenRun.add(runKey);
-      const endpointMeta = {
-        start: managedEndpointMeta(n, pts[runBounds.lo]),
-        end: managedEndpointMeta(n, pts[runBounds.hi]),
-        segment: w.segment,
-        breaks,
-        runBounds,
-        interiorRun: editable.interiorRun,
-        // This is a reversible preview.  The pointer must be able to carry
-        // the run through intermediate overlaps; the final geometry is
-        // checked when the gesture is released.
-        allowPastNeighbors: true,
-        preserveDiagonalNeighbors: true,
-      };
-      runs.push({
-        net: n,
-        branch: w.branch,
-        seg: w.segment,
-        pts,
-        orig: pts.map((p) => ({ ...p })),
-        orient: run.orient,
-        line: run.val,
-        startLine: run.val,
-        hadRoute: !!(n.route && n.route.length >= 2),
-        endpointMeta,
-        junctionBridge: pts.length === 2 && endpointMeta.start.type === 'junction' && endpointMeta.end.type === 'junction',
-      });
-    }
-    const primary = runs.find((r) => r.net === net && r.branch === wireHit.branch && r.seg === wireHit.seg) || runs[0];
-    // Only runs perpendicular to the drag direction can move together (a drag
-    // shifts a run sideways). Same-orientation runs move as a group; selected
-    // runs of the other orientation stay put (still selected, still deletable).
-    const dragRuns = runs.filter((r) => r.orient === primary.orient);
-    const netSnapshots = captureRunNetGeometry(dragRuns);
-    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-    drag = {
-      mode: 'wireseg',
-      net,
-      branch: primary.branch,
-      seg: primary.seg,
-      pts: primary.pts,
-      orig: primary.orig,
-      runs: dragRuns,
-      orient: primary.orient,
-      line: primary.line,
-      startAxis: primary.orient === 'h' ? startWorld.y : startWorld.x,
-      startLine: primary.startLine,
-      startClient,
-      startWorld,
-      shift: ev.shiftKey,
-      key,
-      moved: false,
-      committed: false,
-      rubber: null,
-      startSnapshot: snapshot(),
-      netSnapshots,
-      doubleWireClick,
-      // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
-      branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
-    };
-    render();
+    const runs = collectWireRuns(moveKeys);
+    beginWireSegDrag(runs, net, wireHit, {
+      startWorld, startClient, ev, key, startSnapshot: snapshot(),
+      extra: {
+        doubleWireClick,
+        // Ctrl/Cmd-drag grows a new branch from this point instead of moving the run.
+        branchGrab: (ev.ctrlKey || ev.metaKey) && !ev.shiftKey,
+      },
+    });
     return;
   }
 
@@ -54615,6 +54581,7 @@ function finishRadialMenu(radial, client) {
 __modules["src/web/renumber-ui.js"] = function (__require, __exports) {
 __exports.openRenumberDialog = openRenumberDialog;
 __exports.installRenumberUi = installRenumberUi;
+let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
 let RENUMBER_ORDERS, renumberParts; __bind(() => { ({ RENUMBER_ORDERS, renumberParts } = __require("src/core/renumber.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -54633,19 +54600,10 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
 
 
 
+
 function openRenumberDialog() {
   const selected = selectedComps().map((c) => c.refdes);
-  const make = (tag, props = {}, children = []) => {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (key === 'class') node.className = value;
-      else if (key === 'text') node.textContent = value;
-      else node.setAttribute(key, value);
-    }
-    node.append(...children);
-    return node;
-  };
-  const dialog = make('dialog', { class: 'confirm-dialog renumber-dialog', 'aria-label': 'Renumber parts' });
+  const dialog = element('dialog', { class: 'confirm-dialog renumber-dialog', 'aria-label': 'Renumber parts' });
   const choose = (order) => {
     dialog.close();
     let renames = [];
@@ -54661,24 +54619,24 @@ function openRenumberDialog() {
     render();
   };
   // Rows first (reading order and its mirrors), then columns.
-  const grid = make('div', { class: 'renumber-grid', role: 'group', 'aria-label': 'Numbering order' },
+  const grid = element('div', { class: 'renumber-grid', role: 'group', 'aria-label': 'Numbering order' },
     ['right-down', 'left-down', 'right-up', 'left-up', 'down-right', 'up-right', 'down-left', 'up-left'].map((order) => {
       const { arrow, text } = RENUMBER_ORDERS[order];
-      const button = make('button', { type: 'button', title: `Number ${text}`, 'aria-label': `Number ${text}` }, [
-        make('span', { class: 'renumber-arrow', text: arrow, 'aria-hidden': 'true' }), make('span', { text }),
+      const button = element('button', { type: 'button', title: `Number ${text}`, 'aria-label': `Number ${text}` }, [
+        element('span', { class: 'renumber-arrow', text: arrow, 'aria-hidden': 'true' }), element('span', { text }),
       ]);
       button.addEventListener('click', () => choose(order));
       return button;
     }));
   dialog.append(
-    make('h2', { text: 'Renumber parts' }),
-    make('p', {
+    element('h2', { text: 'Renumber parts' }),
+    element('p', {
       text: selected.length
         ? `The ${selected.length} selected parts that are named automatically (M1, R2, …) trade the numbers they hold, in the order picked.`
         : 'Parts named automatically (M1, R2, …) are numbered again, each letter on its own: along each row (or column), then row by row. Nearly level parts share a row. Parts named by hand keep their names.',
     }),
     grid,
-    make('div', { class: 'dialog-actions' }, [make('button', { type: 'button', value: 'cancel', text: 'Cancel' })]),
+    element('div', { class: 'dialog-actions' }, [element('button', { type: 'button', value: 'cancel', text: 'Cancel' })]),
   );
   dialog.querySelector('[value="cancel"]').addEventListener('click', () => dialog.close());
   dialog.addEventListener('keydown', (event) => event.stopPropagation());
@@ -55624,7 +55582,7 @@ __exports.announce = announce;
 __exports.noteActionPrevented = noteActionPrevented;
 __exports.renderStatus = renderStatus;
 __exports.installStatusBar = installStatusBar;
-let LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
+let contextKeyHints, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ contextKeyHints, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
 let statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
@@ -56665,12 +56623,12 @@ __exports.installToolbarUi = installToolbarUi;
 let normalizePageGuide, pageGuideCaption; __bind(() => { ({ normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let minimalRevealScroll; __bind(() => { ({ minimalRevealScroll } = __require("src/web/toolbar.js")); });
 let chooseToolbarStage, toolbarFits, toolbarStageTokens; __bind(() => { ({ chooseToolbarStage, toolbarFits, toolbarStageTokens } = __require("src/web/toolbar-fit.js")); });
-let canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, componentContextMenuEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
+let canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn; __bind(() => { ({ canvasEl, circuitNameEl, modeToolbarEl, toolbarEl, railFlyoutProxyEl, railFlyoutEl, scrollSchemeButton, themeButtons, gridBtn, crosshairBtn, guidesBtn } = __require("src/web/elements.js")); });
 let ICON_PATHS, syncToolCursor; __bind(() => { ({ ICON_PATHS, syncToolCursor } = __require("src/web/icons.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let runCheck; __bind(() => { ({ runCheck } = __require("src/web/design-check-ui.js")); });
 let prefersReducedMotion; __bind(() => { ({ prefersReducedMotion } = __require("src/web/canvas-view.js")); });
-let closeComponentContextMenu, appendContextItem; __bind(() => { ({ closeComponentContextMenu, appendContextItem } = __require("src/web/context-menu.js")); });
+let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let saveCircuit; __bind(() => { ({ saveCircuit } = __require("src/web/document-session.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let removeAllNetHighlights; __bind(() => { ({ removeAllNetHighlights } = __require("src/web/annotation-tools.js")); });
@@ -56733,17 +56691,9 @@ function scheduleToolbarFit() {
 
 /** Right-click on the highlight tool: its one bulk action. */
 function openHighlightToolMenu(x, y) {
-  if (!componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = 'Net highlight';
-  menu.appendChild(heading);
-  const highlighted = editor.circuit.toJSON().netHighlights;
+  const menu = openMenuAt(x, y, 'Net highlight');
+  if (!menu) return;
+  const highlighted = editor.circuit._netHighlightsJSON().netHighlights;
   appendContextItem(menu, 'Remove all highlights', removeAllNetHighlights, { disabled: !highlighted, shortcut: '8', danger: true });
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;

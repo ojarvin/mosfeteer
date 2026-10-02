@@ -65,23 +65,28 @@ function strokeWidthOf(style, base = 'symbol') {
 
 /** These terminals land on the centerline of a stroked body outline. Pull a
  * filled arrowhead out by half that outline so its tip meets the visible edge
- * rather than disappearing into the body. */
-function terminalBodyInset(circuit, point) {
+ * rather than disappearing into the body. The insets by pin ("x,y"), built
+ * once per drawing, and only for a wire that has an arrowhead at all. */
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply']);
+
+function bodyEdgePinInsets(circuit) {
+  const insets = new Map();
   for (const component of circuit.components.values()) {
-    if (!['block', 'signal_sum', 'signal_multiply'].includes(component.type)) continue;
-    if (component.terminalDefs.some((terminal) => {
+    if (!BODY_EDGE_PIN_TYPES.has(component.type)) continue;
+    const inset = strokeWidthOf(component.style, 'emph') / 2;
+    for (const terminal of component.terminalDefs) {
       const world = component.terminalWorld(terminal.name);
-      return world.x === point.x && world.y === point.y;
-    })) return strokeWidthOf(component.style, 'emph') / 2;
+      const key = `${world.x},${world.y}`;
+      if (!insets.has(key)) insets.set(key, inset);
+    }
   }
-  return 0;
+  return insets;
 }
 
-function wireArrowheadOptions(circuit, points) {
-  return {
-    startInset: terminalBodyInset(circuit, points[0]),
-    endInset: terminalBodyInset(circuit, points.at(-1)),
-  };
+function wireArrowheadOptions(insets, points, arrowhead) {
+  if (!arrowhead || arrowhead === 'none') return {};
+  const at = (point) => insets().get(`${point.x},${point.y}`) || 0;
+  return { startInset: at(points[0]), endInset: at(points.at(-1)) };
 }
 
 // One shared miter limit keeps merged wires and sharp resistor leads in one
@@ -944,6 +949,8 @@ export function svgString(circuit, opts = {}) {
     }
   }
   const UNPAINTED = ' stroke-opacity="0"';
+  let pinInsetMap = null;
+  const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
   for (const net of nets) {
     // A beat draws only the wire that joins what it shows (see beats.js).
     const shown = beat?.wires.get(net.id) ?? 'all';
@@ -988,7 +995,7 @@ export function svgString(circuit, opts = {}) {
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
         const inked = !opacity && solidStyle(netStyle);
-        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(circuit, pts));
+        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(pinInsets, pts, netStyle?.arrowhead));
         if (inked) addInk(inkAttrs(netStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, netStyle?.color, opacity));
@@ -999,7 +1006,7 @@ export function svgString(circuit, opts = {}) {
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, shown !== 'all' ? FADE_INK : highlight);
         const inked = !opacity && solidStyle(segmentStyle);
-        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(circuit, [a, b]));
+        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(pinInsets, [a, b], segmentStyle.arrowhead));
         // Solid wires are painted by the shared ink path below, but dashed
         // and ghosted wires paint their own element. Use the same shortened
         // shaft for those visible strokes so a dash cannot run underneath an
@@ -1099,6 +1106,7 @@ export function svgString(circuit, opts = {}) {
     }
   }
 
+  const labelOwners = new Set(labels.map((label) => label.owner).filter(Boolean));
   // Top layer: components, instance labels, free labels, and net labels draw
   // above the middle wires. Component drawOrder only changes stacking within
   // this layer, so a pushed-back component remains above every wire.
@@ -1114,7 +1122,7 @@ export function svgString(circuit, opts = {}) {
         `<text x="${fmt(p.x)}" y="${fmt(p.y)}" text-anchor="${def.refPos.anchor || 'middle'}" font-family="sans-serif" ${fontAttrs('instance')} stroke="none"${opacity}>${escapeSvg(c.refdes)}</text>`,
       );
     }
-    const hasOwnedMarkerLabel = isReferenceMarker(c) && labels.some((label) => label.owner === c.refdes);
+    const hasOwnedMarkerLabel = isReferenceMarker(c) && labelOwners.has(c.refdes);
     // A switch's value is its phase, which its owned label already shows.
     if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel && !switchState(c)) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);

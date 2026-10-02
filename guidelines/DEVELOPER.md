@@ -39,6 +39,8 @@ src/
 │   ├── router.js       smartRoute candidates; pin escapes; clearance.
 │   ├── wiring.js       Wire geometry, branch joining, normalizePath.
 │   ├── wireedit.js     Wire drag/edit primitives.
+│   ├── part-moves.js   Nets a set of parts touches; rerouting them after a
+│   │                   move or transform (shared by commands and the editor).
 │   ├── render.js       SVG renderer (svgString, editorOverlay).
 │   ├── components/
 │   │   ├── index.js    Symbol registry: getSymbol(type), symbolTypeNames.
@@ -62,6 +64,7 @@ src/
 │   │                   input, selection, transforms, wire tools, boot.
 │   ├── editor-state.js The `editor` accessor split-out modules read state through.
 │   ├── elements.js     The page's fixed elements.
+│   ├── dom.js          `element(tag, props, children)`: one-call DOM building.
 │   ├── *-ui.js, …      Features split out of main.js: document-session, analysis-ui,
 │   │                   context-menu, side-panel, toolbar-ui, beats-ui, export-ui,
 │   │                   copy-paste, insert-menu, label-editor, style-controls, …
@@ -153,6 +156,10 @@ repository over HTTP before opening it. `render()` runs on every pointer frame:
 helpers it calls must write the DOM only when a value actually changes (a
 same-value write still invalidates style or fires observers), and pan/zoom must
 stay on the viewport-only path in `renderCanvas` rather than rebuilding the SVG.
+Nothing on that path may serialize the document (`snapshot()`) or scan every
+net or label per object: cache by `modelRevision` (and `previewRevision`
+during a drag) instead, as the dirty dot and the net groups do. To find what
+a large drawing pays for, profile it in headless Chromium (CDP `Profiler`).
 
 Add a test for any new behavior, any new command, any new symbol, and any
 edge case in `Circuit` that you touch. If a test would be slow, factor the

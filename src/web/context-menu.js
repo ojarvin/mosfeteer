@@ -471,6 +471,22 @@ function appendContextStyleStrip(menu) {
   menu.appendChild(strip);
 }
 
+/** Open the shared context menu at (x, y), kept on screen, under
+ *  `heading`; returns the menu to fill, or null when the page has none. */
+export function openMenuAt(x, y, heading) {
+  if (!componentContextMenuEl) return null;
+  closeComponentContextMenu();
+  const menu = componentContextMenuEl;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  const title = document.createElement('div');
+  title.className = 'context-menu-heading';
+  title.textContent = heading;
+  menu.appendChild(title);
+  return menu;
+}
+
 export function openComponentContextMenu(target, x, y) {
   if (!componentContextMenuEl || !target) return;
   closeComponentContextMenu();

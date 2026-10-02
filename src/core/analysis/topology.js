@@ -88,7 +88,6 @@ function shortCircuitTransadmittance(pipeline, index, previous, graph, ops) {
   ), rhs(index)), ops);
 }
 
-/** Apply the selected assumptions to each physical stage before recombining. */
 /**
  * Whether an expression carries a sum. A product is worth showing factored
  * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
@@ -96,7 +95,7 @@ function shortCircuitTransadmittance(pipeline, index, previous, graph, ops) {
  * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`, and
  * `g_m (1/g_m)` is 1.
  */
-function carriesSum(value) {
+export function carriesSum(value) {
   if (!value || typeof value !== 'object') return false;
   if (value.kind === 'add') return true;
   if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);

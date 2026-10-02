@@ -65,29 +65,17 @@ function limitAtZero(numeratorInfo, denominatorInfo) {
   const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.valuation);
   const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.valuation);
   const order = denominatorInfo.valuation - numeratorInfo.valuation;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
+  return limitOfOrder(order, numeratorCoefficient, denominatorCoefficient);
+}
+
+/** A limit from its order -- the power of s (or 1/s) the ratio grows by:
+ *  a pole when it grows, a zero when it shrinks, else the finite ratio of
+ *  the leading coefficients. */
+function limitOfOrder(order, numeratorCoefficient, denominatorCoefficient) {
+  const coefficient = quotient(numeratorCoefficient, denominatorCoefficient);
+  if (order > 0) return Object.freeze({ kind: 'pole', value: null, order, coefficient });
+  if (order < 0) return Object.freeze({ kind: 'zero', value: ZERO, order: -order, coefficient });
+  return Object.freeze({ kind: coefficient === ZERO ? 'zero' : 'finite', value: coefficient, order: 0, coefficient });
 }
 
 function limitAtInfinity(numeratorInfo, denominatorInfo) {
@@ -104,29 +92,7 @@ function limitAtInfinity(numeratorInfo, denominatorInfo) {
   const numeratorCoefficient = coefficientAt(numeratorInfo.coefficients, numeratorInfo.degree);
   const denominatorCoefficient = coefficientAt(denominatorInfo.coefficients, denominatorInfo.degree);
   const order = numeratorInfo.degree - denominatorInfo.degree;
-  if (order > 0) {
-    return Object.freeze({
-      kind: 'pole',
-      value: null,
-      order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  if (order < 0) {
-    return Object.freeze({
-      kind: 'zero',
-      value: ZERO,
-      order: -order,
-      coefficient: quotient(numeratorCoefficient, denominatorCoefficient),
-    });
-  }
-  const value = quotient(numeratorCoefficient, denominatorCoefficient);
-  return Object.freeze({
-    kind: value === ZERO ? 'zero' : 'finite',
-    value,
-    order: 0,
-    coefficient: value,
-  });
+  return limitOfOrder(order, numeratorCoefficient, denominatorCoefficient);
 }
 
 function polynomialExpression(coefficients, variable) {

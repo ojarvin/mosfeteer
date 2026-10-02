@@ -4,6 +4,8 @@
  * can be saved back in place (a browser file input only yields contents).
  */
 
+import { element } from './dom.js';
+
 const DOCUMENT_EXTENSION = '.json';
 
 const ICONS = {
@@ -18,19 +20,6 @@ const ICONS = {
 
 function svgIcon(name) {
   return `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name]}</svg>`;
-}
-
-function element(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'html') node.innerHTML = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== undefined && value !== null && value !== false) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
 }
 
 const TITLES = {

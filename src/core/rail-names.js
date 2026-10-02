@@ -17,5 +17,14 @@ const ALIASES = new Map(Object.values(RAIL_NAMES).map((name) => [plainName(name)
  *  name as written. */
 export function railNameKey(name) {
   const text = String(name ?? '').trim();
-  return ALIASES.get(plainName(text)) || text;
+  let key = railKeys.get(text);
+  if (key === undefined) {
+    // Every net is keyed on every redraw, from a handful of distinct names.
+    if (railKeys.size >= 4096) railKeys.clear();
+    key = ALIASES.get(plainName(text)) || text;
+    railKeys.set(text, key);
+  }
+  return key;
 }
+
+const railKeys = new Map();

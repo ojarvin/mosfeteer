@@ -129,9 +129,13 @@ export function referenceMarkerGlobalNames(typeOrInfo) {
   return [info.globalName, ...(REFERENCE_MARKER_LEGACY_GLOBAL_NAMES[type] || [])];
 }
 
+// Each marker type's rail names, as railNameKey compares them.
+const globalNameKeys = new Map();
+
 export function isReferenceMarkerGlobalName(typeOrInfo, name) {
-  const key = railNameKey(name);
-  return referenceMarkerGlobalNames(typeOrInfo).some((global) => railNameKey(global) === key);
+  const info = typeof typeOrInfo === 'string' ? referenceMarkerInfo(typeOrInfo) : typeOrInfo;
+  if (!globalNameKeys.has(info)) globalNameKeys.set(info, new Set(referenceMarkerGlobalNames(info).map(railNameKey)));
+  return globalNameKeys.get(info).has(railNameKey(name));
 }
 
 export function isReferenceMarker(component) {
@@ -1203,6 +1207,13 @@ export class LabelInstance {
     return true;
   }
 
+  /** What a text measurement depends on: the same text in the same face
+   *  measures the same. */
+  textMetricsKey() {
+    const { width, bold, italic, mono } = this.style;
+    return `${this.kind}|${this.math ? 'math' : 'text'}|${width}|${bold}|${italic}|${!!mono}|${this.text}`;
+  }
+
   /** Drop only the runtime browser measurement and keep the persisted math
    * footprint. A label that must measure again (the math font has just
    * arrived, say) still reports the saved box until it does, so the position
@@ -2152,7 +2163,44 @@ function wirePointsConnected(net, from, to, circuit, targetPathIndex = null) {
   return false;
 }
 
+/** The circuit's labels: a Map that counts its changes, so an index over
+ *  it (Circuit#labelOf) knows when to rebuild. */
+class LabelMap extends Map {
+  constructor(entries = []) {
+    super();
+    this.version = 0;
+    for (const [key, value] of entries) super.set(key, value);
+  }
+
+  set(key, value) {
+    this.version += 1;
+    return super.set(key, value);
+  }
+
+  delete(key) {
+    const removed = super.delete(key);
+    if (removed) this.version += 1;
+    return removed;
+  }
+
+  clear() {
+    this.version += 1;
+    super.clear();
+  }
+}
+
 export class Circuit {
+  /** Any Map assigned (a selection's subset, a reloaded set) is kept as a
+   *  LabelMap. */
+  get labels() {
+    return this._labels;
+  }
+
+  set labels(map) {
+    this._labels = map instanceof LabelMap ? map : new LabelMap(map);
+    this._ownerIndex = null;
+  }
+
   constructor() {
     this.components = new Map();
     this.nets = new Map();
@@ -2341,6 +2389,8 @@ export class Circuit {
       }
     }
     renameBeatObject(this, current, next);
+    // The owner index cannot see owners change hands.
+    this._ownerIndex = null;
     for (const label of ownedLabels) {
       label.owner = next;
       // Reference-marker labels can be local rail names, so preserve those
@@ -3538,10 +3588,40 @@ export class Circuit {
     this.renameNet(net, info.globalName);
   }
 
-  /** The instance label owned by a component, if any. */
+  /** Take over the browser's text measurements from `previous` (the
+   *  circuit this one replaces: an undo, a redo, a reload) for every label
+   *  with the same id whose text and face are unchanged, so they need not
+   *  all be measured again. Returns how many were kept. */
+  adoptTextMetrics(previous) {
+    let kept = 0;
+    for (const label of this.labels.values()) {
+      const before = previous?.labels.get(label.id);
+      if (!before?._renderedTextBounds || before.textMetricsKey() !== label.textMetricsKey()) continue;
+      label._renderedTextBounds = { ...before._renderedTextBounds };
+      kept += 1;
+    }
+    if (kept) this.invalidateRoutingCache();
+    return kept;
+  }
+
+  /** The instance label owned by a component, if any. Looked up in an index
+   *  of owners, rebuilt when the labels change; a hit whose label has since
+   *  changed hands rebuilds it too. Scanning every label here made grouping
+   *  the nets quadratic in the labels. */
   labelOf(refdes) {
-    for (const l of this.labels.values()) if (l.owner === refdes && !l.role) return l;
-    return null;
+    let index = this._ownerIndex;
+    if (index?.labels !== this._labels || index.version !== this._labels.version) index = this._indexLabelOwners();
+    let label = index.owners.get(refdes);
+    if (label && (label.owner !== refdes || label.role || this._labels.get(label.id) !== label)) label = this._indexLabelOwners().owners.get(refdes);
+    return label || null;
+  }
+
+  /** Index the labels by owner (the first one, as a scan would find it). */
+  _indexLabelOwners() {
+    const owners = new Map();
+    for (const label of this._labels.values()) if (label.owner && !label.role && !owners.has(label.owner)) owners.set(label.owner, label);
+    this._ownerIndex = { labels: this._labels, version: this._labels.version, owners };
+    return this._ownerIndex;
   }
 
   // ----- connectivity -------------------------------------------------
@@ -3583,6 +3663,11 @@ export class Circuit {
     const pinRects = new Map();
     const gateCandidates = [];
     const gateCounts = new Map();
+    // Each pin's net, looked up once rather than a scan of every net per gate.
+    const netOfPin = new Map();
+    for (const n of this.nets.values()) {
+      for (const t of n.terminals) if (!netOfPin.has(`${t.comp}.${t.term}`)) netOfPin.set(`${t.comp}.${t.term}`, n);
+    }
     for (const c of this.components.values()) {
       if (c.type === 'solder') continue;
       const body = c.bboxWorld();
@@ -3597,7 +3682,7 @@ export class Circuit {
       const gate = c.terminalDefs.find((t) => t.direction === 'gate');
       if (gate) {
         const point = c.terminalWorld(gate.name);
-        const gateNet = this.netOfTerminal({ comp: c.refdes, term: gate.name });
+        const gateNet = netOfPin.get(`${c.refdes}.${gate.name}`);
         const netId = gateNet?.id || null;
         if (netId) gateCounts.set(netId, (gateCounts.get(netId) || 0) + 1);
         gateCandidates.push({ netId, rect: body, point, dir: this._pinDir(c, gate, point.x, point.y) });

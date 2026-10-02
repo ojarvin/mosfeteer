@@ -4101,3 +4101,24 @@ test('indentText indents at the caret to the next stop, and whole lines of a sel
   assert.deepEqual(indentText('    a\n  b\nc', 0, 8, true), { text: 'a\nb\nc', selStart: 0, selEnd: 2 });
   assert.deepEqual(indentText('x\n    a', 4, 4, true), { text: 'x\na', selStart: 2, selEnd: 2 });
 });
+
+test('a replacing circuit adopts text measurements for labels whose text and face are unchanged', () => {
+  const before = new Circuit();
+  before.addLabel({ text: 'same', x: 0, y: 0 });
+  before.addLabel({ text: 'old', x: 0, y: 200 });
+  const [same, edited] = [...before.labels.values()];
+  same.setRenderedTextBounds(123, 45);
+  edited.setRenderedTextBounds(80, 45);
+  const after = Circuit.fromJSON(before.toJSON());
+  after.labels.get(edited.id).setText('new text');
+  after.labels.get(edited.id).clearRenderedTextBounds();
+  assert.equal(after.adoptTextMetrics(before), 1);
+  assert.equal(after.labels.get(same.id).textWidth(), 123);
+  // An edited text is measured afresh.
+  assert.equal(after.labels.get(edited.id)._renderedTextBounds, null);
+  // A different face too.
+  const bolder = Circuit.fromJSON(before.toJSON());
+  bolder.labels.get(same.id).style.mono = true;
+  assert.equal(bolder.adoptTextMetrics(before), 1);
+  assert.equal(bolder.labels.get(same.id)._renderedTextBounds, null);
+});

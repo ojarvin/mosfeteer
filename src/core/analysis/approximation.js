@@ -307,28 +307,9 @@ function intrinsicProductReduction(current, records, global, options) {
     const terms = value.terms.map(reduce);
     const powers = terms.map(monomialTerms);
     return add(terms.filter((_, i) => !powers.some((higherTerms, j) => {
-      const lowerTerms = powers[i];
-      if (i === j || !higherTerms || !lowerTerms) return false;
-      const usedHere = new Set();
-      const dominated = lowerTerms.every((lower) => higherTerms.some((higher) => {
-        const ratio = new Map(higher);
-        for (const [name, exponent] of lower) {
-          if ((ratio.get(name) || 0) < exponent) return false;
-          ratio.set(name, ratio.get(name) - exponent);
-        }
-        const devices = [];
-        for (const pair of pairs) {
-          const count = Math.min(ratio.get(pair.gm) || 0, ratio.get(pair.ro) || 0);
-          if (!count) continue;
-          ratio.set(pair.gm, ratio.get(pair.gm) - count);
-          ratio.set(pair.ro, ratio.get(pair.ro) - count);
-          devices.push(pair.device);
-        }
-        if (!devices.length || [...ratio.values()].some((exponent) => exponent !== 0)) return false;
-        devices.forEach((id) => usedHere.add(id));
-        return true;
-      }));
-      if (dominated) usedHere.forEach((id) => used.add(id));
+      if (i === j) return false;
+      const { dominated, devices } = dominates(higherTerms, powers[i], pairs);
+      devices.forEach((id) => used.add(id));
       return dominated;
     })));
   }

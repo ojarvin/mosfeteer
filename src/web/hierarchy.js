@@ -26,8 +26,7 @@ import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js'
 import { logLine, hintLine } from './status-bar-ui.js';
 import { animateViewTo, fitTarget, fitView } from './canvas-view.js';
 import { viewFitting } from './atlas-layout.js';
-import { componentContextMenuEl } from './elements.js';
-import { appendContextItem, appendContextSubmenu, closeComponentContextMenu } from './context-menu.js';
+import { appendContextItem, appendContextSubmenu, openMenuAt } from './context-menu.js';
 import { editor } from './editor-state.js';
 import { persistence, openDocumentPath } from './document-session.js';
 import { commit, render, selectedComps, setSelection } from './main.js';
@@ -730,19 +729,12 @@ function appendDesignPicker(group, scope, current) {
 /** The menu of a bubble: open, hide, or relink its part. */
 export function openLinkBubbleMenu(refdes, x, y) {
   const component = editor.circuit.components.get(refdes);
-  if (!component || !componentContextMenuEl) return;
-  closeComponentContextMenu();
-  const menu = componentContextMenuEl;
-  menu.hidden = false;
-  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  if (!component) return;
   // A shared bubble is every part linked to its design.
   const ids = layoutEntry(refdes)?.ids || [refdes];
   const parts = ids.map((id) => editor.circuit.components.get(id)).filter(Boolean);
-  const heading = document.createElement('div');
-  heading.className = 'context-menu-heading';
-  heading.textContent = `${component.link} · linked from ${ids.join(', ')}`;
-  menu.appendChild(heading);
+  const menu = openMenuAt(x, y, `${component.link} · linked from ${ids.join(', ')}`);
+  if (!menu) return;
   const group = document.createElement('div');
   group.className = 'context-menu-group';
   appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });

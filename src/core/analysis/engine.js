@@ -7,7 +7,7 @@ import { buildExactAnalysisPipeline, transferFunctionList } from './pipeline.js'
 import { presentDiagnostics } from './diagnostics.js';
 import { describeSmallSignalNetlist } from './netlist.js';
 import { analyzeResponse } from './response.js';
-import { approximateTopology, buildTopologyIdentities } from './topology.js';
+import { approximateTopology, buildTopologyIdentities, carriesSum } from './topology.js';
 import { compactRational } from './compact.js';
 import { buildNoiseReport, noiseProvenancePrimitives, noiseRequest } from './noise.js';
 import {
@@ -475,21 +475,6 @@ function rootRows(transfer, options) {
     ...transfer.poles.map((root) => ({ ...root, equation: renderRoot(root, 'p', root.index, options) })),
     ...transfer.zeros.map((root) => ({ ...root, equation: renderRoot(root, 'z', root.index, options) })),
   ];
-}
-
-/**
- * Whether an expression carries a sum. A product is worth showing factored
- * while one of its factors is a combination -- `g_m (r_o || R_D)` reads far
- * better than the ratio it expands to -- but two monomials multiplied are
- * always shorter multiplied out: `g_{m1} (1/g_{m2})` is `g_{m1}/g_{m2}`.
- */
-function carriesSum(value) {
-  if (!value || typeof value !== 'object') return false;
-  if (value.kind === 'add') return true;
-  if (value.kind === 'rational') return carriesSum(value.numerator) || carriesSum(value.denominator);
-  if (value.kind === 'multiply') return value.factors.some(carriesSum);
-  if (value.kind === 'power') return carriesSum(value.base);
-  return false;
 }
 
 /**

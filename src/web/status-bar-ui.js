@@ -4,7 +4,7 @@
  * in status-bar.js.
  */
 
-import { LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
+import { contextKeyHints, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { paneSize } from './canvas-view.js';
