@@ -27,6 +27,16 @@
           <option value="">Open document…</option>
         </select>
       </div>
+      <!-- The document's tags, by its name: the Atlas finds designs by them. -->
+      <div class="toolbar-popover tags-popover">
+        <button id="btn-tags" type="button" class="tags-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tags-pop" title="This document's tags: find designs by them in the Atlas (#tag)">#</button>
+        <div id="tags-pop" class="toolbar-menu tags-menu" role="dialog" aria-label="Tags" hidden>
+          <label for="panel-tags" class="toolbar-menu-heading">Tags</label>
+          <input id="panel-tags" type="text" placeholder="ota bias …" aria-label="This document's tags, separated by spaces" autocomplete="off" spellcheck="false" />
+          <p class="toolbar-menu-note">Words separated by spaces; Enter sets them. In the Atlas, #tag finds the designs that carry it.</p>
+        </div>
+      </div>
+      <button id="btn-atlas" type="button" class="atlas-button" data-icon="atlas" aria-keyshortcuts="Shift+Backspace" title="Atlas: every design in the workspace at its real size; find, arrange, and open them (Shift+Backspace)">Atlas</button>
     </div>
 
     <div class="toolbar-cluster file-cluster" role="group" aria-label="File actions">
@@ -291,7 +301,6 @@
         <button type="button" data-empty-action="learn"><kbd>?</kbd><span class="empty-state-text">Learn: a 5-minute tutorial, keys, symbols</span></button>
       </div>
       <!-- The canvas corner holds the toggles for the panels that dock on the right. -->
-      <button id="hierarchy-up" type="button" class="hierarchy-up glass" data-editor-edge="top" hidden>↑</button>
       <div class="canvas-panel-toggles" role="group" aria-label="Panels" data-editor-edge="right">
         <button id="btn-side-panel" type="button" class="canvas-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>
       </div>
@@ -451,10 +460,6 @@
           <button type="button" id="panel-replace-case" class="text-toggle" aria-pressed="false" aria-label="Match case" title="Match case">Aa</button>
           <button type="button" id="panel-replace-regex" class="text-toggle" aria-pressed="false" aria-label="Regular expression" title="Regular expression: match the text as written; $1 in the replacement is the first group">.*</button>
           <button type="button" id="panel-replace-all" title="Replace every match shown under Text (Enter)">Replace all</button>
-        </div>
-        <div class="panel-filter-row panel-tags">
-          <label for="panel-tags" class="panel-tags-label">Tags</label>
-          <input id="panel-tags" type="text" placeholder="ota bias …  (find designs by them in the Atlas)" aria-label="This document's tags, separated by spaces" autocomplete="off" spellcheck="false" />
         </div>
       </div>
 

@@ -31,6 +31,7 @@ import { editor } from './editor-state.js';
 import { persistence, openDocumentPath } from './document-session.js';
 import { commit, render, selectedComps, setSelection } from './main.js';
 import { reducedMotion } from './motion.js';
+import { openAtlas } from './atlas.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const OPEN_KEY = 'mosfeteer.linkBubbles:';
@@ -602,17 +603,8 @@ export async function leaveLinkedDesign(levels = 1) {
 function renderTrail() {
   const nav = document.getElementById('hierarchy-trail');
   const pane = document.querySelector('.canvas-pane');
-  const up = document.getElementById('hierarchy-up');
   const key = trail.map((entry) => `${entry.path}\n${entry.name}`).join('\n\n');
   pane?.classList.toggle('inside-link', trail.length > 0);
-  if (up) {
-    up.hidden = !trail.length;
-    if (trail.length) {
-      const text = `↑ ${trail.at(-1).name}`;
-      if (up.textContent !== text) up.textContent = text;
-      up.title = `Back up to ${trail.at(-1).name}, where ${trail.at(-1).refdes} links to this design (Alt+↑)`;
-    }
-  }
   if (!nav || nav.dataset.key === key) return;
   nav.dataset.key = key;
   nav.hidden = !trail.length;
@@ -654,13 +646,22 @@ function setLinks(components, name) {
   render();
 }
 
-/** A part's link items: show, open, and pick the design. */
+/** The three things a link does, in the same words everywhere: peek at the
+ *  design beside the drawing, open it (a trail leads back), or find it among
+ *  the others in the Atlas. */
+function appendLinkVerbs(group, component, parts) {
+  const missing = !linkedDocument(component.link);
+  appendContextItem(group, bubbles.has(component.refdes) ? `Stop peeking at ${component.link}` : `Peek at ${component.link}`, () => toggleLinkBubbles(parts), { shortcut: 'o' });
+  appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓', disabled: missing });
+  appendContextItem(group, `Show ${component.link} in the Atlas`, () => void openAtlas({ focus: component.link }), { shortcut: 'Shift+⌫', disabled: missing });
+}
+
+/** A part's link items: peek, open, find, and pick the design. */
 export function appendLinkContextItems(group, component) {
   if (!component || component.type === 'solder') return;
   const scope = selectedComps().includes(component) ? selectedComps().filter((c) => c.type !== 'solder') : [component];
   if (component.link) {
-    appendContextItem(group, bubbles.has(component.refdes) ? 'Hide linked design' : 'Show linked design', () => toggleLinkBubbles([component]), { shortcut: 'o' });
-    appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓', disabled: !linkedDocument(component.link) });
+    appendLinkVerbs(group, component, [component]);
   }
   appendDesignPicker(group, scope, component.link);
 }
@@ -728,8 +729,7 @@ export function openLinkBubbleMenu(refdes, x, y) {
   if (!menu) return;
   const group = document.createElement('div');
   group.className = 'context-menu-group';
-  appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });
-  appendContextItem(group, 'Hide linked design', () => toggleLinkBubbles(parts), { shortcut: 'o' });
+  appendLinkVerbs(group, component, parts);
   if (ids.some((id) => spots.has(id))) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
   appendDesignPicker(group, parts, component.link);
   menu.appendChild(group);
@@ -737,5 +737,4 @@ export function openLinkBubbleMenu(refdes, x, y) {
 }
 
 export function installHierarchy() {
-  document.getElementById('hierarchy-up')?.addEventListener('click', () => void leaveLinkedDesign(1));
 }

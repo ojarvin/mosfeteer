@@ -490,6 +490,52 @@ button:focus-visible {
   transition: border-color 140ms ease, background-color 140ms ease;
 }
 
+/* Tags and the Atlas sit by the name: what this design is, and where the
+   others are. */
+.tags-button {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 7px;
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+  font: 600 0.8125rem/1 ui-monospace, Menlo, Consolas, monospace;
+}
+
+.tags-button:hover,
+.tags-button[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.tags-button.has-tags {
+  color: var(--accent);
+}
+
+.tags-menu {
+  width: 18rem;
+  padding: 10px 12px;
+}
+
+.tags-menu input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  margin: 2px 0 6px;
+}
+
+.atlas-button {
+  height: 28px;
+}
+
+.toolbar[data-compact~="new"] .atlas-button {
+  width: 30px;
+  padding: 0 !important;
+  justify-content: center;
+  gap: 0 !important;
+  font-size: 0 !important;
+}
+
 .circuit-picker:hover,
 .circuit-picker:focus-within {
   border-color: var(--border);
@@ -5041,22 +5087,6 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 
 .panel-filter-row[hidden] { display: none; }
 
-/* Tags describe the document, not the search: set apart below find/replace. */
-.panel-tags {
-  margin-top: 4px;
-}
-
-.panel-tags-label {
-  flex: none;
-  color: var(--text-dim);
-  font-size: 0.75rem;
-}
-
-#panel-tags {
-  height: 24px;
-  font-size: 0.75rem;
-}
-
 .panel-filter-row input {
   flex: 1 1 auto;
   min-width: 0;
@@ -5285,28 +5315,6 @@ circle.bode-corner {
   border: 2px solid var(--accent);
   border-radius: 2px;
   pointer-events: none;
-}
-
-.hierarchy-up {
-  position: absolute;
-  z-index: 5;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 50%;
-  padding: 5px 12px;
-  overflow: hidden;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  color: var(--text);
-  font: inherit;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.hierarchy-up[hidden] {
-  display: none;
 }
 
 /* Drawing units, as a dashed box annotation (link-bubble.js), so a

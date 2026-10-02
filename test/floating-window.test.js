@@ -56,3 +56,16 @@ test('the timing editor says each way to and from the beats once, in plain words
   assert.match(beats, /class: 'timing-chip', 'aria-pressed'/);
   assert.match(html, />Make beats from phases<\/button>/);
 });
+
+test('the workspace reads as one: an Atlas button and tags by the name, one set of link verbs', async () => {
+  const doc = html.slice(html.indexOf('class="toolbar-cluster document-cluster"'), html.indexOf('class="toolbar-cluster file-cluster"'));
+  assert.match(doc, /id="btn-tags"[\s\S]*id="panel-tags"[\s\S]*id="btn-atlas"[^>]*>Atlas<\/button>/);
+  const panel = html.slice(html.indexOf('<aside class="side-panel"'), html.indexOf('</aside>'));
+  assert.doesNotMatch(panel, /panel-tags/);
+  assert.doesNotMatch(html, /id="hierarchy-up"/);
+  const hierarchy = readFileSync(new URL('../src/web/hierarchy.js', import.meta.url), 'utf8');
+  assert.match(hierarchy, /`Peek at \$\{component\.link\}`[\s\S]*`Open \$\{component\.link\}`[\s\S]*`Show \$\{component\.link\} in the Atlas`, \(\) => void openAtlas\(\{ focus: component\.link \}\)/);
+  assert.equal((hierarchy.match(/ appendLinkVerbs\(group, component, (\[component\]|parts)\);/g) || []).length, 2);
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  assert.match(atlas, /function focusNamed\(generation, name\)/);
+});

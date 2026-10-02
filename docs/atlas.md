@@ -99,7 +99,8 @@ found in it. The search stays for the session, so the next match is one
 Shift+Backspace away.
 
 Tags are the document's own (`tags` in its JSON) and show after the
-design's name. Set them in the side panel's Tags field for the open design,
+design's name. Set them from the **#** by the open design's name in the
+toolbar (it shows how many there are),
 with `#` on a picked design in the Atlas (Enter saves; another design's file
 is rewritten with only its tags changed), or with `:tag add NAME`, `tag rm`,
 and `tag set`. The index behind

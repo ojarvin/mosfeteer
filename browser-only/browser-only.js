@@ -33490,7 +33490,7 @@ async function openOntoDesk(kind) {
 }
 
 /** Shift+Backspace: step back from the drawing to the whole workspace. */
-async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
+async function openAtlas({ source = 'workspace', animate = true, startup = false, focus = null } = {}) {
   if (state || !rootEl) return;
   const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
   state = deskState(generation, source, startup);
@@ -33548,6 +33548,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   if (reduced && !startup) {
     try {
       await openDesk(generation, source, false, false);
+      focusNamed(generation, focus);
       // The designs appear together, not one by one as they decode, and the
       // desk's own fade stands in for the others' reveal around the open one.
       if (state?.generation === generation && state.tiles.length) await warmSmallImages(generation, 400);
@@ -33561,6 +33562,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   try {
     await openDesk(generation, source, animate, startup);
     if (state?.generation !== generation) return;
+    focusNamed(generation, focus);
     // Landed: the names and the pick come back with the toolbars.
     state.quiet = false;
     requestDraw();
@@ -33568,6 +33570,15 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   } finally {
     if (state?.generation === generation) state.entering = false;
   }
+}
+
+/** Pick the design called `name` and zoom to it (a linked part's "Show in
+ *  the Atlas"). */
+function focusNamed(generation, name) {
+  if (!name || state?.generation !== generation) return;
+  const key = String(name).toLowerCase();
+  const tile = state.tiles.find((candidate) => state.entries.get(candidate.id)?.name?.toLowerCase() === key);
+  if (tile) focusTile(tile, { zoom: true });
 }
 
 /** Lay out the desk just opened and bring it into view. */
@@ -34036,6 +34047,7 @@ function installAtlas() {
   backEl?.addEventListener('click', () => void closeAtlas());
   document.getElementById('atlas-mark')?.addEventListener('click', () => void closeAtlas());
   document.getElementById('app-mark')?.addEventListener('click', () => void openAtlas());
+  document.getElementById('btn-atlas')?.addEventListener('click', () => void openAtlas());
   exportEl?.addEventListener('click', exportDesk);
   // A click on a header button leaves the keys with the desk (and a dialog
   // it opens hands them back there); Tab still reaches the buttons.
@@ -42292,6 +42304,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
 let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, render, selectedComps, setSelection } = __require("src/web/main.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
+let openAtlas; __bind(() => { ({ openAtlas } = __require("src/web/atlas.js")); });
 /**
  * A loose design hierarchy in the editor (docs/hierarchy.md). A part may link
  * to another design of the workspace (ComponentInstance#link) to show what
@@ -42309,6 +42322,7 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
  * in this browser; they are never saved in the document or undone. Parts
  * linked to one design share one bubble, a connector to each.
  */
+
 
 
 
@@ -42896,17 +42910,8 @@ async function leaveLinkedDesign(levels = 1) {
 function renderTrail() {
   const nav = document.getElementById('hierarchy-trail');
   const pane = document.querySelector('.canvas-pane');
-  const up = document.getElementById('hierarchy-up');
   const key = trail.map((entry) => `${entry.path}\n${entry.name}`).join('\n\n');
   pane?.classList.toggle('inside-link', trail.length > 0);
-  if (up) {
-    up.hidden = !trail.length;
-    if (trail.length) {
-      const text = `↑ ${trail.at(-1).name}`;
-      if (up.textContent !== text) up.textContent = text;
-      up.title = `Back up to ${trail.at(-1).name}, where ${trail.at(-1).refdes} links to this design (Alt+↑)`;
-    }
-  }
   if (!nav || nav.dataset.key === key) return;
   nav.dataset.key = key;
   nav.hidden = !trail.length;
@@ -42948,13 +42953,22 @@ function setLinks(components, name) {
   render();
 }
 
-/** A part's link items: show, open, and pick the design. */
+/** The three things a link does, in the same words everywhere: peek at the
+ *  design beside the drawing, open it (a trail leads back), or find it among
+ *  the others in the Atlas. */
+function appendLinkVerbs(group, component, parts) {
+  const missing = !linkedDocument(component.link);
+  appendContextItem(group, bubbles.has(component.refdes) ? `Stop peeking at ${component.link}` : `Peek at ${component.link}`, () => toggleLinkBubbles(parts), { shortcut: 'o' });
+  appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓', disabled: missing });
+  appendContextItem(group, `Show ${component.link} in the Atlas`, () => void openAtlas({ focus: component.link }), { shortcut: 'Shift+⌫', disabled: missing });
+}
+
+/** A part's link items: peek, open, find, and pick the design. */
 function appendLinkContextItems(group, component) {
   if (!component || component.type === 'solder') return;
   const scope = selectedComps().includes(component) ? selectedComps().filter((c) => c.type !== 'solder') : [component];
   if (component.link) {
-    appendContextItem(group, bubbles.has(component.refdes) ? 'Hide linked design' : 'Show linked design', () => toggleLinkBubbles([component]), { shortcut: 'o' });
-    appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓', disabled: !linkedDocument(component.link) });
+    appendLinkVerbs(group, component, [component]);
   }
   appendDesignPicker(group, scope, component.link);
 }
@@ -43022,8 +43036,7 @@ function openLinkBubbleMenu(refdes, x, y) {
   if (!menu) return;
   const group = document.createElement('div');
   group.className = 'context-menu-group';
-  appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });
-  appendContextItem(group, 'Hide linked design', () => toggleLinkBubbles(parts), { shortcut: 'o' });
+  appendLinkVerbs(group, component, parts);
   if (ids.some((id) => spots.has(id))) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
   appendDesignPicker(group, parts, component.link);
   menu.appendChild(group);
@@ -43031,7 +43044,6 @@ function openLinkBubbleMenu(refdes, x, y) {
 }
 
 function installHierarchy() {
-  document.getElementById('hierarchy-up')?.addEventListener('click', () => void leaveLinkedDesign(1));
 }
 
 };
@@ -43182,6 +43194,7 @@ const ICON_PATHS = {
   guides: '<path d="M5 4v16M12 4v16M19 4v16" stroke-dasharray="3 2.4"/><path d="M5 12h7M12 12h7"/><path d="M5 9.5v5M12 9.5v5M19 9.5v5"/>',
   external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v6H4V6h6"/>',
   add: '<path d="M12 5v14M5 12h14"/>',
+  atlas: '<rect x="3" y="4" width="8" height="7" rx="1"/><rect x="13" y="4" width="8" height="7" rx="1"/><rect x="3" y="13" width="8" height="7" rx="1"/><rect x="13" y="13" width="8" height="7" rx="1"/>',
   minus: '<path d="M5 12h14"/>',
   repeat: '<path d="M4 11V9a3 3 0 0 1 3-3h12m0 0-3-3m3 3-3 3M20 13v2a3 3 0 0 1-3 3H5m0 0 3 3m-3-3 3-3"/>',
   'chevron-left': '<path d="m14 6-6 6 6 6"/>',
@@ -57268,10 +57281,11 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let commit, render; __bind(() => { ({ commit, render } = __require("src/web/main.js")); });
 /**
- * The open document's tags, in the side panel: a text field of
- * space-separated words. Enter or leaving the field sets them (one undo
- * entry, saved with the document); Escape puts the field back. The Atlas
- * finds designs by them (`#tag`); docs/atlas.md.
+ * The open document's tags, in a popover from the # by its name: a text
+ * field of space-separated words. Enter or leaving the field sets them (one
+ * undo entry, saved with the document); Escape puts the field back. The #
+ * shows how many there are. The Atlas finds designs by them (`#tag`);
+ * docs/atlas.md.
  */
 
 
@@ -57281,6 +57295,18 @@ let commit, render; __bind(() => { ({ commit, render } = __require("src/web/main
 
 
 const fieldEl = document.getElementById('panel-tags');
+const buttonEl = document.getElementById('btn-tags');
+const popEl = document.getElementById('tags-pop');
+
+function setOpen(open) {
+  if (!popEl || popEl.hidden === !open) return;
+  popEl.hidden = !open;
+  buttonEl?.setAttribute('aria-expanded', String(open));
+  if (open) {
+    fieldEl.focus();
+    fieldEl.select();
+  }
+}
 
 /** Set the open document's tags from typed text; returns whether they changed. */
 function setDocumentTags(text) {
@@ -57293,8 +57319,19 @@ function setDocumentTags(text) {
 
 /** Show the document's tags, unless they are being typed. */
 function renderTagsField() {
-  if (!fieldEl || document.activeElement === fieldEl) return;
   const text = tagsText(editor.circuit.tags);
+  if (buttonEl) {
+    const count = editor.circuit.tags?.length || 0;
+    const label = count ? `# ${count}` : '#';
+    if (buttonEl.textContent !== label) {
+      buttonEl.textContent = label;
+      buttonEl.classList.toggle('has-tags', count > 0);
+      buttonEl.title = count
+        ? `Tags: ${editor.circuit.tags.map((tag) => `#${tag}`).join(' ')} (the Atlas finds designs by them)`
+        : "This document's tags: find designs by them in the Atlas (#tag)";
+    }
+  }
+  if (!fieldEl || document.activeElement === fieldEl) return;
   if (fieldEl.value !== text) fieldEl.value = text;
 }
 
@@ -57305,14 +57342,20 @@ function installTagsField() {
     ev.stopPropagation();
     if (ev.key === 'Enter') {
       ev.preventDefault();
+      setOpen(false);
       canvasEl.focus({ preventScroll: true });
     } else if (ev.key === 'Escape') {
       ev.preventDefault();
       cancelled = true;
       fieldEl.value = tagsText(editor.circuit.tags);
+      setOpen(false);
       canvasEl.focus({ preventScroll: true });
     }
   });
+  buttonEl?.addEventListener('click', () => setOpen(popEl.hidden));
+  window.addEventListener('pointerdown', (ev) => {
+    if (!popEl?.hidden && !popEl.contains(ev.target) && !buttonEl.contains(ev.target)) setOpen(false);
+  }, true);
   fieldEl.addEventListener('blur', () => {
     if (!cancelled) setDocumentTags(fieldEl.value);
     cancelled = false;

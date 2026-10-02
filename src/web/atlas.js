@@ -1244,7 +1244,7 @@ async function openOntoDesk(kind) {
 }
 
 /** Shift+Backspace: step back from the drawing to the whole workspace. */
-export async function openAtlas({ source = 'workspace', animate = true, startup = false } = {}) {
+export async function openAtlas({ source = 'workspace', animate = true, startup = false, focus = null } = {}) {
   if (state || !rootEl) return;
   const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
   state = deskState(generation, source, startup);
@@ -1302,6 +1302,7 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   if (reduced && !startup) {
     try {
       await openDesk(generation, source, false, false);
+      focusNamed(generation, focus);
       // The designs appear together, not one by one as they decode, and the
       // desk's own fade stands in for the others' reveal around the open one.
       if (state?.generation === generation && state.tiles.length) await warmSmallImages(generation, 400);
@@ -1315,6 +1316,7 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   try {
     await openDesk(generation, source, animate, startup);
     if (state?.generation !== generation) return;
+    focusNamed(generation, focus);
     // Landed: the names and the pick come back with the toolbars.
     state.quiet = false;
     requestDraw();
@@ -1322,6 +1324,15 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   } finally {
     if (state?.generation === generation) state.entering = false;
   }
+}
+
+/** Pick the design called `name` and zoom to it (a linked part's "Show in
+ *  the Atlas"). */
+function focusNamed(generation, name) {
+  if (!name || state?.generation !== generation) return;
+  const key = String(name).toLowerCase();
+  const tile = state.tiles.find((candidate) => state.entries.get(candidate.id)?.name?.toLowerCase() === key);
+  if (tile) focusTile(tile, { zoom: true });
 }
 
 /** Lay out the desk just opened and bring it into view. */
@@ -1790,6 +1801,7 @@ export function installAtlas() {
   backEl?.addEventListener('click', () => void closeAtlas());
   document.getElementById('atlas-mark')?.addEventListener('click', () => void closeAtlas());
   document.getElementById('app-mark')?.addEventListener('click', () => void openAtlas());
+  document.getElementById('btn-atlas')?.addEventListener('click', () => void openAtlas());
   exportEl?.addEventListener('click', exportDesk);
   // A click on a header button leaves the keys with the desk (and a dialog
   // it opens hands them back there); Tab still reaches the buttons.

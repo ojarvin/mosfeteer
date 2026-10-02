@@ -27,7 +27,7 @@ together.
 
 ## Peeking
 
-`o` (or the menu's **Show linked design**) shows the selected parts' linked
+`o` (or the menu's **Peek at …**) shows the selected parts' linked
 designs beside the drawing, each in a bubble: the design drawn as a picture at
 its real size, framed by a dashed box with its name, and joined to its part by
 a connector (the design itself: its free equations, pasted pictures, and Bode sketches are left out, for clarity). A bubble appears once its picture is ready, growing out of its
@@ -49,7 +49,7 @@ the view to it, and hiding bubbles that were on screen fits the view back in,
 unless it is zoomed in past the whole drawing.
 
 `Shift+O` shows every linked part's design at once, or hides them all when
-they all show. `o` again (or **Hide linked design**, or the bubble's own
+they all show. `o` again (or **Stop peeking at …**, or the bubble's own
 right-click menu) closes one. A click on a bubble picks its parts. Which bubbles are open, and
 where any was dragged, is remembered per document in this browser; they are
 never saved in the document or undone.
@@ -64,10 +64,11 @@ nests designs). A broken link's bubble is not exported.
 ## Entering
 
 `Alt+↓` (the menu's **Open …**, or a double-click on the bubble) opens the
-linked design in the editor, zooming into its bubble first when one is open.
+linked design in the editor (**Show … in the Atlas** instead finds it among the
+others there, picked and zoomed to), zooming into its bubble first when one is open.
 The toolbar then shows the trail of designs it was opened from before its
-name, the canvas wears an accent frame, and a **↑ parent** chip sits at its
-top. `Alt+↑`, the chip, or a step of the trail goes back up, to the view the
+name, and the canvas wears an accent frame. `Alt+↑` or a step of the trail
+goes back up, to the view the
 parent was left in, its linked part selected: the design just left shrinks
 into its bubble there as the view pulls back. Opening another design any
 other way leaves the trail. The usual unsaved-changes check applies, and the
