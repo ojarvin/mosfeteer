@@ -5,9 +5,9 @@ import { readFileSync } from 'node:fs';
 import { Circuit, LABEL_FONT_SIZE } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { editorOverlay, svgString } from '../src/core/render.js';
-import { DRAWING_EXPORT_OPTIONS } from '../src/core/selection-drawing.js';
+import { DRAWING_EXPORT_OPTIONS, selectionDrawing } from '../src/core/selection-drawing.js';
 import {
-  circuitPageGuideFrame, normalizePageGuide, pageGuideFrame, pageGuideTextSize, pageGuideWidth,
+  circuitPageGuideFrame, normalizePageGuide, pageGuideCaption, pageGuideFrame, pageGuideTextSize, pageGuideWidth,
 } from '../src/core/page-guide.js';
 
 const single = normalizePageGuide('ieee-1col');
@@ -75,7 +75,7 @@ test('settings hold the page guide and preferences; More holds document actions'
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-settings"[^>]*aria-haspopup="menu"/);
   const settings = html.slice(html.indexOf('id="settings-menu"'), html.indexOf('</header>'));
-  assert.match(settings, /toolbar-menu-note[\s\S]*data-page-guide="ieee-1col"[\s\S]*data-page-guide="ieee-2col"/);
+  assert.match(settings, /toolbar-menu-note[\s\S]*data-page-guide="ieee-1col"[\s\S]*data-page-guide="ieee-2col"[\s\S]*data-page-guide="a4"/);
   for (const id of ['btn-scroll-scheme', 'btn-tips', 'btn-tutorial']) assert.match(settings, new RegExp(`id="${id}"`));
   // The settings button is not in the view cluster, so a folded toolbar keeps it.
   const view = html.slice(html.indexOf('class="toolbar-cluster view-cluster"'), html.indexOf('class="toolbar-cluster settings-cluster"'));
@@ -84,4 +84,25 @@ test('settings hold the page guide and preferences; More holds document actions'
   for (const id of ['btn-scroll-scheme', 'btn-tips', 'btn-tutorial', 'data-page-guide']) assert.doesNotMatch(more, new RegExp(id));
   const main = editorSource();
   assert.match(main, /renderDocument\(drawing, \{\s*\.\.\.DRAWING_EXPORT_OPTIONS,\s*grid,\s*pageGuide,/);
+});
+
+test('the A4 guide sets base label text at 10 pt across a 16 cm text width', () => {
+  const a4 = normalizePageGuide('a4');
+  assert.equal(a4.textPt, 10);
+  // The target is the label's base text (LABEL_FONT_SIZE), not its subscripts.
+  assert.ok(Math.abs((LABEL_FONT_SIZE * 453.54) / pageGuideWidth(a4) - 10) < 1e-9);
+  assert.match(pageGuideCaption(a4), /A4 page \(16 cm\) · 10 pt text with \\includegraphics\[width=\\textwidth\]/);
+  assert.match(pageGuideCaption(single), /width=\\columnwidth/);
+  assert.match(pageGuideCaption(double), /width=\\textwidth/);
+});
+
+test('a copied selection image is padded to the guide, centred on the selection', () => {
+  const circuit = new Circuit();
+  runCommand(circuit, 'add resistor R1 --at 0 0');
+  runCommand(circuit, 'add resistor R2 --at 2000 0');
+  const svg = selectionDrawing(circuit, { refs: ['R2'] }, { pageGuide: single });
+  const [x, , w] = svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
+  assert.ok(Math.abs(w - pageGuideWidth(single)) < 0.01);
+  assert.ok(Math.abs(x + w / 2 - 2000) < 0.01, 'centred on R2, not on the drawing');
+  assert.doesNotMatch(svg, /data-ref="R1"/);
 });

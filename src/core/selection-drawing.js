@@ -3,6 +3,7 @@ import { renderDocument } from './document.js';
 import { resolveCopySelection } from './selection.js';
 import { GRID } from './grid.js';
 import { junctionPoints, pointOnPath } from './wiring.js';
+import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 
 export const DRAWING_EXPORT_OPTIONS = Object.freeze({
   grid: false, terminals: false, junctions: false, background: true, netNames: true,
@@ -103,5 +104,13 @@ export function selectionDrawing(document, selection = {}, options = {}) {
     x: bounds.x - padding, y: bounds.y - padding,
     w: Math.max(1, bounds.w + padding * 2), h: Math.max(1, bounds.h + padding * 2),
   };
+  // A page guide pads the picture to the guide's width, centred on what was
+  // drawn, wherever that sat on the canvas (as the export dialog's file does).
+  const guide = normalizePageGuide(options.pageGuide);
+  if (guide) {
+    const frame = pageGuideFrame(guide, viewport.x, viewport.x + viewport.w);
+    viewport.x = frame.x;
+    viewport.w = frame.width;
+  }
   return renderDocument(drawing, { ...DRAWING_EXPORT_OPTIONS, ...options, viewport, emptyHint: false });
 }

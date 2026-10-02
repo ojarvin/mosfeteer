@@ -6,7 +6,9 @@ import { LABEL_FONT_SIZE } from './model.js';
 // alone. The guide shows the drawing width at which label text lands at the
 // template's text size, and export pads the figure to exactly that width.
 //
-// Normal-weight labels are LABEL_FONT_SIZE world units tall. A figure W units
+// Normal-weight labels are LABEL_FONT_SIZE world units tall. That is the
+// base text: subscripts and superscripts are set smaller around it, as they
+// are in the page's own body text, so they never set the target. A figure W units
 // wide set at a column of C points scales text to LABEL_FONT_SIZE * C / W
 // points, so the width for T-point text is W = LABEL_FONT_SIZE * C / T.
 
@@ -14,9 +16,12 @@ export const PAGE_GUIDES = Object.freeze({
   // IEEEtran journal: 3.5 in columns and 7.16 in text width. Figure text at
   // 8 pt matches the captions and leaves a usable width (10 pt body-size text
   // would allow only about 24 grid cells across a column).
-  'ieee-1col': { name: 'IEEE single column', widthPt: 252, widthLabel: '3.5 in', textPt: 8 },
-  'ieee-2col': { name: 'IEEE double column', widthPt: 516, widthLabel: '7.16 in', textPt: 8 },
+  'ieee-1col': { name: 'IEEE single column', widthPt: 252, widthLabel: '3.5 in', textPt: 8, latexWidth: '\\columnwidth' },
+  'ieee-2col': { name: 'IEEE double column', widthPt: 516, widthLabel: '7.16 in', textPt: 8, latexWidth: '\\textwidth' },
+  // An A4 page with 25 mm margins (16 cm of text), at 10 pt body text.
+  a4: { name: 'A4 page', widthPt: 453.54, widthLabel: '16 cm', textPt: 10, latexWidth: '\\textwidth' },
 });
+
 
 /** A stored guide choice, normalized; null when no guide is on. */
 export function normalizePageGuide(value) {
@@ -61,8 +66,7 @@ export function pageGuideFrame(guide, x0, x1) {
 /** One line naming what the guide is for, e.g. for the canvas caption. */
 export function pageGuideCaption(guide) {
   const preset = PAGE_GUIDES[guide.preset];
-  const width = guide.preset === 'ieee-2col' ? '\\textwidth' : '\\columnwidth';
-  return `${preset.name} (${preset.widthLabel}) · ${guide.textPt} pt text with \\includegraphics[width=${width}]`;
+  return `${preset.name} (${preset.widthLabel}) · ${guide.textPt} pt text with \\includegraphics[width=${preset.latexWidth}]`;
 }
 
 /** The frame an export of `circuit` would get, with the same bounds and

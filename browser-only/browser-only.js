@@ -23044,7 +23044,9 @@ let LABEL_FONT_SIZE; __bind(() => { ({ LABEL_FONT_SIZE } = __require("src/core/m
 // alone. The guide shows the drawing width at which label text lands at the
 // template's text size, and export pads the figure to exactly that width.
 //
-// Normal-weight labels are LABEL_FONT_SIZE world units tall. A figure W units
+// Normal-weight labels are LABEL_FONT_SIZE world units tall. That is the
+// base text: subscripts and superscripts are set smaller around it, as they
+// are in the page's own body text, so they never set the target. A figure W units
 // wide set at a column of C points scales text to LABEL_FONT_SIZE * C / W
 // points, so the width for T-point text is W = LABEL_FONT_SIZE * C / T.
 
@@ -23052,9 +23054,12 @@ const PAGE_GUIDES = Object.freeze({
   // IEEEtran journal: 3.5 in columns and 7.16 in text width. Figure text at
   // 8 pt matches the captions and leaves a usable width (10 pt body-size text
   // would allow only about 24 grid cells across a column).
-  'ieee-1col': { name: 'IEEE single column', widthPt: 252, widthLabel: '3.5 in', textPt: 8 },
-  'ieee-2col': { name: 'IEEE double column', widthPt: 516, widthLabel: '7.16 in', textPt: 8 },
+  'ieee-1col': { name: 'IEEE single column', widthPt: 252, widthLabel: '3.5 in', textPt: 8, latexWidth: '\\columnwidth' },
+  'ieee-2col': { name: 'IEEE double column', widthPt: 516, widthLabel: '7.16 in', textPt: 8, latexWidth: '\\textwidth' },
+  // An A4 page with 25 mm margins (16 cm of text), at 10 pt body text.
+  a4: { name: 'A4 page', widthPt: 453.54, widthLabel: '16 cm', textPt: 10, latexWidth: '\\textwidth' },
 });
+
 
 /** A stored guide choice, normalized; null when no guide is on. */
 function normalizePageGuide(value) {
@@ -23099,8 +23104,7 @@ function pageGuideFrame(guide, x0, x1) {
 /** One line naming what the guide is for, e.g. for the canvas caption. */
 function pageGuideCaption(guide) {
   const preset = PAGE_GUIDES[guide.preset];
-  const width = guide.preset === 'ieee-2col' ? '\\textwidth' : '\\columnwidth';
-  return `${preset.name} (${preset.widthLabel}) · ${guide.textPt} pt text with \\includegraphics[width=${width}]`;
+  return `${preset.name} (${preset.widthLabel}) · ${guide.textPt} pt text with \\includegraphics[width=${preset.latexWidth}]`;
 }
 
 /** The frame an export of `circuit` would get, with the same bounds and
@@ -26433,6 +26437,8 @@ let renderDocument; __bind(() => { ({ renderDocument } = __require("src/core/doc
 let resolveCopySelection; __bind(() => { ({ resolveCopySelection } = __require("src/core/selection.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let junctionPoints, pointOnPath; __bind(() => { ({ junctionPoints, pointOnPath } = __require("src/core/wiring.js")); });
+let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
+
 
 
 
@@ -26538,6 +26544,14 @@ function selectionDrawing(document, selection = {}, options = {}) {
     x: bounds.x - padding, y: bounds.y - padding,
     w: Math.max(1, bounds.w + padding * 2), h: Math.max(1, bounds.h + padding * 2),
   };
+  // A page guide pads the picture to the guide's width, centred on what was
+  // drawn, wherever that sat on the canvas (as the export dialog's file does).
+  const guide = normalizePageGuide(options.pageGuide);
+  if (guide) {
+    const frame = pageGuideFrame(guide, viewport.x, viewport.x + viewport.w);
+    viewport.x = frame.x;
+    viewport.w = frame.width;
+  }
   return renderDocument(drawing, { ...DRAWING_EXPORT_OPTIONS, ...options, viewport, emptyHint: false });
 }
 
@@ -36284,7 +36298,7 @@ const EDITOR_COMMANDS = [
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beat strip (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
-  { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col'], help: 'frame the drawing for a page: none, ieee-1col, or ieee-2col' },
+  { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
   { name: 'atlas', aliases: ['atlas-view', 'collage', 'overview', 'gallery', 'all-designs'], help: 'every design in the workspace at its real size (Shift+Backspace)' },
   { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'every symbol, drawn from the registry (Settings → Symbols)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
@@ -40401,7 +40415,7 @@ async function copyAsImage() {
     // payloads let the write start within this same user gesture.
     const source = copySelectionSource();
     const extras = linkBubbleExtras(selectionSubset(editor.circuit, source));
-    const svg = selectionDrawing(editor.circuit, source, extras ? { extras } : {});
+    const svg = selectionDrawing(editor.circuit, source, { pageGuide: editor.pageGuide, ...(extras ? { extras } : {}) });
     const dpi = exportPngDpi();
     const write = writeDrawingToClipboard(svg, { dpi, scale: exportPngScale(dpi) });
     reportImageCopy('Copying image…');

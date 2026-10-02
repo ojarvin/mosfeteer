@@ -71,7 +71,7 @@ export async function copyAsImage() {
     // payloads let the write start within this same user gesture.
     const source = copySelectionSource();
     const extras = linkBubbleExtras(selectionSubset(editor.circuit, source));
-    const svg = selectionDrawing(editor.circuit, source, extras ? { extras } : {});
+    const svg = selectionDrawing(editor.circuit, source, { pageGuide: editor.pageGuide, ...(extras ? { extras } : {}) });
     const dpi = exportPngDpi();
     const write = writeDrawingToClipboard(svg, { dpi, scale: exportPngScale(dpi) });
     reportImageCopy('Copying image…');

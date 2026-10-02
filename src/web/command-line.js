@@ -30,7 +30,7 @@ export const EDITOR_COMMANDS = [
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beat strip (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
-  { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col'], help: 'frame the drawing for a page: none, ieee-1col, or ieee-2col' },
+  { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
   { name: 'atlas', aliases: ['atlas-view', 'collage', 'overview', 'gallery', 'all-designs'], help: 'every design in the workspace at its real size (Shift+Backspace)' },
   { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'every symbol, drawn from the registry (Settings → Symbols)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
