@@ -525,8 +525,10 @@ test('an explicit new document is protected from active-document auto-loads', ()
 test('small-signal analysis exposes the canonical v2 controls', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="btn-analysis"/);
-  // Analyze toggles its docked panel from the canvas corner, beside the side-panel toggle.
-  assert.match(html, /class="canvas-panel-toggles"[^>]*>\s*<button id="btn-analysis"[^>]+data-doc-kind="schematic"[^>]+aria-controls="analysis-dialog"[^>]*>[^<]*<\/button>\s*<button id="btn-side-panel"/);
+  // Analyze toggles its floating window from the toolbar's window group; the
+  // canvas corner keeps only the docked side panel's toggle.
+  assert.match(html, /class="toolbar-cluster window-cluster"[\s\S]*?<button id="btn-analysis"[^>]+data-doc-kind="schematic"[^>]+aria-controls="analysis-dialog"/);
+  assert.match(html, /class="canvas-panel-toggles"[^>]*>\s*<button id="btn-side-panel"/);
   assert.match(html, /id="analysis-dialog"/);
   assert.match(html, /id="analysis-input-field"[^>]*>Input node/);
   assert.match(html, /for="analysis-target">Output node/);
@@ -570,12 +572,12 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
   assert.doesNotMatch(html, /current-source|cascode|Analyze DC topology only/i);
   assert.match(html, /<div class="analysis-scroll">[\s\S]*id="analysis-result"[\s\S]*<\/div>\s*<div class="dialog-actions">/);
   const style = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  assert.match(html, /<section id="analysis-dialog" class="analysis-dock"[^>]*hidden/);
+  assert.match(html, /<section id="analysis-dialog" class="analysis-dock floating-window"[^>]*hidden/);
   assert.doesNotMatch(html, /<dialog id="analysis-dialog"/);
   assert.match(html, /data-analysis-pick="analysis-input"/);
   assert.match(html, /data-analysis-pick="analysis-target"/);
-  assert.match(style, /\.analysis-dock\s*\{[\s\S]*width: var\(--analysis-dock-width\)/);
-  assert.match(style, /\.analysis-dock\s*\{[\s\S]*overflow: hidden/);
+  assert.match(style, /\.analysis-dock \{[^}]*resize: both/);
+  assert.match(style, /\.floating-window \{[^}]*overflow: hidden/);
   assert.match(style, /\.analysis-scroll\s*\{[\s\S]*overflow: auto/);
   assert.match(style, /\.analysis-dock \.dialog-actions\s*\{[\s\S]*flex: 0 0 auto/);
   assert.match(style, /\.analysis-tabs\s*\{[\s\S]*border-bottom/);

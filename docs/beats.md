@@ -170,8 +170,8 @@ renaming a part renames its references.
 
 ## Where beats appear
 
-- **Editor.** The beat strip starts closed, showing the whole drawing;
-  `Shift+B` (or More → Beats) shows it, and `+` adds a
+- **Editor.** The beats window starts closed, showing the whole drawing;
+  `Shift+B` (or its toolbar button, or More → Beats) shows it, and `+` adds a
   beat after the one on screen. `Alt+→`/`Alt+←` or PageDown/PageUp step
   through them, stopping at either end; before the first is the whole
   drawing. The beat on screen draws what it dims faint and what it hides

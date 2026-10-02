@@ -21,6 +21,7 @@ import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, visibleNets } from './main.js';
+import { floatingWindow } from './floating-window.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
 
@@ -761,7 +762,7 @@ export function toggleAnalysisDock({ focus = true } = {}) {
 
 function syncAnalysisButton(open) {
   analysisButton?.setAttribute('aria-pressed', String(open));
-  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis panel (Shift+S)`;
+  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis window (Shift+S)`;
 }
 
 function analysisAnnotationAssumptions(report) {
@@ -792,11 +793,15 @@ function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (context && (analysisAcGrounds?.value || analysisDeviceRegions?.value)) context.open = true;
   analysisDockRevision = editor.modelRevision;
   analysisDialog.hidden = false;
+  analysisWindow?.place();
   syncAnalysisButton(true);
   if (focus) analysisInput?.focus();
 }
 
 let analysisInputPrevious = '';
+
+// The analysis floats over the drawing, resizable from its corner.
+let analysisWindow = null;
 
 /**
  * A stage is driven from one port; every other input port is held at AC
@@ -1177,6 +1182,8 @@ export function installAnalysisUi() {
   for (const control of [analysisNoiseThermal, analysisNoiseFlicker]) control?.addEventListener('change', syncNoiseSourcesVisibility);
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
+
+  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true });
 
   analysisButton?.addEventListener('click', () => toggleAnalysisDock());
 

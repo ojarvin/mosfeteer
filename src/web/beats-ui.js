@@ -18,6 +18,7 @@ import { appendMarkupText } from './side-panel.js';
 import { commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } from './main.js';
 import { noteTip } from './onboarding.js';
 import { chooseAction } from './file-dialog.js';
+import { PLACE, floatingWindow } from './floating-window.js';
 import { reducedMotion } from './motion.js';
 
 export function activeBeatIndex() {
@@ -345,9 +346,12 @@ export function renderBeatStrip() {
     return;
   }
   editor.beatStripKey = key;
+  const opening = visible && beatStripEl.hidden;
   beatStripEl.hidden = !visible;
   document.getElementById('btn-beats')?.setAttribute('aria-checked', String(visible));
+  document.getElementById('btn-window-beats')?.setAttribute('aria-pressed', String(visible));
   if (!visible) return;
+  if (opening) beatWindow?.place();
   const views = ids.length ? allBeatViews() : [];
   const chips = [];
   const all = document.createElement('button');
@@ -506,7 +510,11 @@ const EMPTY_SIGNAL_SLOTS = 4;
 
 function syncTimingToggle() {
   document.getElementById('btn-timing-diagram')?.setAttribute('aria-checked', String(!!timingEditor));
+  document.getElementById('btn-window-timing')?.setAttribute('aria-pressed', String(!!timingEditor));
 }
+
+// The beats float over the drawing, at the bottom until moved.
+let beatWindow = null;
 
 /** Shift+K and the menu item open the editor, or close it when it is open,
  * as the other panels' keys do. */
@@ -834,46 +842,53 @@ export function openTimingDialog() {
   const removeRow = button('Remove row', 'Remove the cursor row: a signal added here (a switch phase\'s row comes from its switches)', removeSignal);
   const close = () => {
     const focused = dialog.contains(document.activeElement);
-    timingEditor?.dialog.close();
+    timingEditor?.window.dispose();
     timingEditor?.dialog.remove();
     timingEditor = null;
     syncTimingToggle();
     if (focused) canvasEl.focus({ preventScroll: true });
   };
-  const dialog = element('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
-    element('h2', { text: 'Timing diagram' }),
-    element('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
-    grid,
-    element('div', { class: 'timing-dialog-options' }, [
-      button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
-      button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
-      button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
-      element('label', {}, [element('span', { text: 'Slot' }), slotInput, element('span', { text: 'cells' })]),
+  // A floating window over the drawing (floating-window.js), not a modal:
+  // the diagram stays in view as it is edited.
+  const dialog = element('section', { class: 'floating-window timing-dialog', 'data-editor-edge': 'right', 'aria-labelledby': 'timing-window-title' }, [
+    element('header', { class: 'floating-window-header' }, [
+      element('h2', { id: 'timing-window-title', class: 'floating-window-title', text: 'Timing diagram' }),
+      element('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the timing diagram', title: 'Close (Esc or Shift+K)', text: '×' }),
     ]),
-    element('div', { class: 'timing-dialog-options timing-shift-controls' }, [
-      element('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
-      element('span', { class: 'timing-shift-pair' }, [
-        element('span', { text: 'Fall' }),
-        button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
-        button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
+    element('div', { class: 'timing-dialog-body' }, [
+      element('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
+      grid,
+      element('div', { class: 'timing-dialog-options' }, [
+        button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
+        button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
+        button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
+        element('label', {}, [element('span', { text: 'Slot' }), slotInput, element('span', { text: 'cells' })]),
       ]),
-      element('span', { class: 'timing-shift-pair' }, [
-        element('span', { text: 'Rise' }),
-        button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
-        button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
+      element('div', { class: 'timing-dialog-options timing-shift-controls' }, [
+        element('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
+        element('span', { class: 'timing-shift-pair' }, [
+          element('span', { text: 'Fall' }),
+          button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
+          button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
+        ]),
+        element('span', { class: 'timing-shift-pair' }, [
+          element('span', { text: 'Rise' }),
+          button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
+          button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
+        ]),
+        element('span', { class: 'timing-shift-pair' }, [
+          element('span', { text: 'Row' }),
+          button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
+          button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
+        ]),
       ]),
-      element('span', { class: 'timing-shift-pair' }, [
-        element('span', { text: 'Row' }),
-        button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
-        button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
+      element('div', { class: 'timing-dialog-options timing-signal-controls' }, [
+        element('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
       ]),
+      pairsBox,
+      status,
+      element('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats]),
     ]),
-    element('div', { class: 'timing-dialog-options timing-signal-controls' }, [
-      element('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
-    ]),
-    pairsBox,
-    status,
-    element('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats, button('Close', 'Close (Escape)', close)]),
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
@@ -885,11 +900,10 @@ export function openTimingDialog() {
   });
   renderGrid();
   renderPairs();
-  document.body.append(dialog);
-  timingEditor = { dialog, grid, close };
+  canvasEl.closest('.canvas-pane').append(dialog);
+  timingEditor = { dialog, grid, close, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
+  timingEditor.window.place();
   syncTimingToggle();
-  // Not modal: the diagram stays in view as it is edited.
-  dialog.show();
   grid.focus();
   // Opening it draws the diagram, so what the grid shows is on the page.
   redraw();
@@ -1017,4 +1031,7 @@ export function installBeatsUi() {
     setActiveBeat(null);
   });
   document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
+  document.getElementById('btn-window-beats')?.addEventListener('click', toggleBeatStrip);
+  document.getElementById('btn-window-timing')?.addEventListener('click', toggleTimingDialog);
+  if (beatStripEl) beatWindow = floatingWindow(beatStripEl, { key: 'beats', place: PLACE.bottomCenter });
 }

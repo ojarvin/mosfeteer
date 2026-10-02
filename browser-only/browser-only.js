@@ -29914,12 +29914,14 @@ let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, visibleNets; __bind(() => { ({ commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, visibleNets } = __require("src/web/main.js")); });
+let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 /**
  * The small-signal analysis dock: its form and remembered settings, running
  * the analysis, the equations, log, netlist, and model tabs, picking a
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -30677,7 +30679,7 @@ function toggleAnalysisDock({ focus = true } = {}) {
 
 function syncAnalysisButton(open) {
   analysisButton?.setAttribute('aria-pressed', String(open));
-  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis panel (Shift+S)`;
+  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis window (Shift+S)`;
 }
 
 function analysisAnnotationAssumptions(report) {
@@ -30708,11 +30710,15 @@ function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (context && (analysisAcGrounds?.value || analysisDeviceRegions?.value)) context.open = true;
   analysisDockRevision = editor.modelRevision;
   analysisDialog.hidden = false;
+  analysisWindow?.place();
   syncAnalysisButton(true);
   if (focus) analysisInput?.focus();
 }
 
 let analysisInputPrevious = '';
+
+// The analysis floats over the drawing, resizable from its corner.
+let analysisWindow = null;
 
 /**
  * A stage is driven from one port; every other input port is held at AC
@@ -31093,6 +31099,8 @@ function installAnalysisUi() {
   for (const control of [analysisNoiseThermal, analysisNoiseFlicker]) control?.addEventListener('change', syncNoiseSourcesVisibility);
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
+
+  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true });
 
   analysisButton?.addEventListener('click', () => toggleAnalysisDock());
 
@@ -34097,12 +34105,14 @@ let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/
 let commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } = __require("src/web/main.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let chooseAction; __bind(() => { ({ chooseAction } = __require("src/web/file-dialog.js")); });
+let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * Beats in the editor: the beat strip, stepping and editing beats, hiding
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
 
 
 
@@ -34445,9 +34455,12 @@ function renderBeatStrip() {
     return;
   }
   editor.beatStripKey = key;
+  const opening = visible && beatStripEl.hidden;
   beatStripEl.hidden = !visible;
   document.getElementById('btn-beats')?.setAttribute('aria-checked', String(visible));
+  document.getElementById('btn-window-beats')?.setAttribute('aria-pressed', String(visible));
   if (!visible) return;
+  if (opening) beatWindow?.place();
   const views = ids.length ? allBeatViews() : [];
   const chips = [];
   const all = document.createElement('button');
@@ -34606,7 +34619,11 @@ const EMPTY_SIGNAL_SLOTS = 4;
 
 function syncTimingToggle() {
   document.getElementById('btn-timing-diagram')?.setAttribute('aria-checked', String(!!timingEditor));
+  document.getElementById('btn-window-timing')?.setAttribute('aria-pressed', String(!!timingEditor));
 }
+
+// The beats float over the drawing, at the bottom until moved.
+let beatWindow = null;
 
 /** Shift+K and the menu item open the editor, or close it when it is open,
  * as the other panels' keys do. */
@@ -34934,46 +34951,53 @@ function openTimingDialog() {
   const removeRow = button('Remove row', 'Remove the cursor row: a signal added here (a switch phase\'s row comes from its switches)', removeSignal);
   const close = () => {
     const focused = dialog.contains(document.activeElement);
-    timingEditor?.dialog.close();
+    timingEditor?.window.dispose();
     timingEditor?.dialog.remove();
     timingEditor = null;
     syncTimingToggle();
     if (focused) canvasEl.focus({ preventScroll: true });
   };
-  const dialog = element('dialog', { class: 'confirm-dialog timing-dialog', 'aria-label': 'Timing diagram' }, [
-    element('h2', { text: 'Timing diagram' }),
-    element('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
-    grid,
-    element('div', { class: 'timing-dialog-options' }, [
-      button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
-      button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
-      button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
-      element('label', {}, [element('span', { text: 'Slot' }), slotInput, element('span', { text: 'cells' })]),
+  // A floating window over the drawing (floating-window.js), not a modal:
+  // the diagram stays in view as it is edited.
+  const dialog = element('section', { class: 'floating-window timing-dialog', 'data-editor-edge': 'right', 'aria-labelledby': 'timing-window-title' }, [
+    element('header', { class: 'floating-window-header' }, [
+      element('h2', { id: 'timing-window-title', class: 'floating-window-title', text: 'Timing diagram' }),
+      element('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the timing diagram', title: 'Close (Esc or Shift+K)', text: '×' }),
     ]),
-    element('div', { class: 'timing-dialog-options timing-shift-controls' }, [
-      element('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
-      element('span', { class: 'timing-shift-pair' }, [
-        element('span', { text: 'Fall' }),
-        button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
-        button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
+    element('div', { class: 'timing-dialog-body' }, [
+      element('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
+      grid,
+      element('div', { class: 'timing-dialog-options' }, [
+        button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
+        button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
+        button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
+        element('label', {}, [element('span', { text: 'Slot' }), slotInput, element('span', { text: 'cells' })]),
       ]),
-      element('span', { class: 'timing-shift-pair' }, [
-        element('span', { text: 'Rise' }),
-        button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
-        button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
+      element('div', { class: 'timing-dialog-options timing-shift-controls' }, [
+        element('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
+        element('span', { class: 'timing-shift-pair' }, [
+          element('span', { text: 'Fall' }),
+          button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
+          button('▸', 'Fall a cell later (])', () => shiftEdge('fall', 1)),
+        ]),
+        element('span', { class: 'timing-shift-pair' }, [
+          element('span', { text: 'Rise' }),
+          button('◂', 'Rise a cell earlier ({)', () => shiftEdge('rise', -1)),
+          button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
+        ]),
+        element('span', { class: 'timing-shift-pair' }, [
+          element('span', { text: 'Row' }),
+          button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
+          button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
+        ]),
       ]),
-      element('span', { class: 'timing-shift-pair' }, [
-        element('span', { text: 'Row' }),
-        button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
-        button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
+      element('div', { class: 'timing-dialog-options timing-signal-controls' }, [
+        element('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
       ]),
+      pairsBox,
+      status,
+      element('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats]),
     ]),
-    element('div', { class: 'timing-dialog-options timing-signal-controls' }, [
-      element('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
-    ]),
-    pairsBox,
-    status,
-    element('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats, button('Close', 'Close (Escape)', close)]),
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
@@ -34985,11 +35009,10 @@ function openTimingDialog() {
   });
   renderGrid();
   renderPairs();
-  document.body.append(dialog);
-  timingEditor = { dialog, grid, close };
+  canvasEl.closest('.canvas-pane').append(dialog);
+  timingEditor = { dialog, grid, close, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
+  timingEditor.window.place();
   syncTimingToggle();
-  // Not modal: the diagram stays in view as it is edited.
-  dialog.show();
   grid.focus();
   // Opening it draws the diagram, so what the grid shows is on the page.
   redraw();
@@ -35117,6 +35140,9 @@ function installBeatsUi() {
     setActiveBeat(null);
   });
   document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
+  document.getElementById('btn-window-beats')?.addEventListener('click', toggleBeatStrip);
+  document.getElementById('btn-window-timing')?.addEventListener('click', toggleTimingDialog);
+  if (beatStripEl) beatWindow = floatingWindow(beatStripEl, { key: 'beats', place: PLACE.bottomCenter });
 }
 
 __exports.plainMarkup = plainMarkup;
@@ -36340,12 +36366,12 @@ const TOGGLE_VALUES = {
 const EDITOR_COMMANDS = [
   { name: 'settings', aliases: ['preferences', 'prefs', 'options', 'config'], help: 'open the settings menu' },
   { name: 'panel', aliases: ['sidebar', 'side-panel', 'sidepanel', 'inspector'], toggle: true, help: 'show or hide the components, nets, and selection panel (Shift+P)' },
-  { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis panel (Shift+S)' },
+  { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
   { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },
   { name: 'crosshair', aliases: ['cursor'], toggle: true, help: 'show or hide the crosshair (Shift+C)' },
   { name: 'dark', aliases: ['theme', 'dark-mode', 'darkmode', 'night', 'light'], toggle: true, help: 'switch the dark theme on or off (Shift+D)' },
-  { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beat strip (Shift+B)' },
+  { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beats window (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'reduce-motion', aliases: ['reduce-animations', 'reduced-motion'], toggle: true, help: 'reduce animations: no zooms, slides, or flashes (Settings)' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
@@ -41358,6 +41384,132 @@ function installFindReplace() {
   }, { capture: true });
 }
 
+};
+
+__modules["src/web/floating-window.js"] = function (__require, __exports) {
+__exports.floatingWindowPosition = floatingWindowPosition;
+__exports.floatingWindow = floatingWindow;
+/**
+ * Floating windows: the beats, the timing diagram editor, and the
+ * small-signal analysis float over the drawing, where the side panel docks
+ * beside it. Each is a `.floating-window` in the canvas pane with one title
+ * bar: the title to drag it by, then a close × at the right. A window stays
+ * where it was put (per window, in this browser) and inside the pane.
+ */
+
+const PLACE_KEY = (key) => `mosfeteer.window.${key}`;
+const MARGIN = 8;
+
+
+/** Where a window of `size` ({ w, h }) goes in a pane of `pane` ({ w, h }):
+ *  `stored` ({ x, y }) when there is one, else `place`'s default, clamped so
+ *  the whole window stays in the pane (or its top-left, when it cannot). */
+function floatingWindowPosition(pane, size, stored, place) {
+  const at = stored && Number.isFinite(stored.x) && Number.isFinite(stored.y) ? stored : place(pane, size);
+  const x = Math.min(Math.max(MARGIN, at.x), Math.max(MARGIN, pane.w - size.w - MARGIN));
+  const y = Math.min(Math.max(MARGIN, at.y), Math.max(MARGIN, pane.h - size.h - MARGIN));
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+/** Default placements. */
+const PLACE = Object.freeze({
+  topRight: (pane, size) => ({ x: pane.w - size.w - 52, y: MARGIN }),
+  topCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: 56 }),
+  bottomCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: pane.h - size.h - 12 }),
+});
+
+function readPlace(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(PLACE_KEY(key)) || 'null');
+    return value && typeof value === 'object' ? value : null;
+  } catch { return null; }
+}
+
+function writePlace(key, value) {
+  try { localStorage.setItem(PLACE_KEY(key), JSON.stringify(value)); } catch { /* per-session only */ }
+}
+
+/**
+ * Make `el` a floating window. `onClose` runs for its ×; `place` gives its
+ * default position; `resizable` keeps the size the user drags its corner to.
+ * Returns { place() }, to call after showing it (it also comes to the
+ * front), and dispose(), for a window that is removed rather than hidden.
+ */
+function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = false }) {
+  const pane = el.closest('.canvas-pane') || el.parentElement;
+  const header = el.querySelector('.floating-window-header');
+  el.querySelector('.floating-window-close')?.addEventListener('click', () => onClose?.());
+  let stored = readPlace(key);
+  if (resizable && stored?.w && stored?.h) {
+    el.style.width = `${stored.w}px`;
+    el.style.height = `${stored.h}px`;
+  }
+
+  const paneSize = () => ({ w: pane.clientWidth, h: pane.clientHeight });
+  const apply = () => {
+    if (el.hidden) return;
+    const size = { w: el.offsetWidth, h: el.offsetHeight };
+    const at = floatingWindowPosition(paneSize(), size, stored, place);
+    el.style.left = `${at.x}px`;
+    el.style.top = `${at.y}px`;
+  };
+
+  // The window last opened or pressed comes to the front of the others.
+  const raise = () => {
+    if (el.classList.contains('front')) return;
+    for (const other of document.querySelectorAll('.floating-window.front')) other.classList.remove('front');
+    el.classList.add('front');
+  };
+  el.addEventListener('pointerdown', raise, true);
+
+  header?.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 || ev.target.closest('button, input, select, textarea, a')) return;
+    ev.preventDefault();
+    const start = { x: ev.clientX, y: ev.clientY, left: el.offsetLeft, top: el.offsetTop };
+    header.setPointerCapture(ev.pointerId);
+    el.classList.add('dragging');
+    const move = (e) => {
+      stored = { ...stored, x: start.left + e.clientX - start.x, y: start.top + e.clientY - start.y };
+      apply();
+    };
+    const end = () => {
+      header.removeEventListener('pointermove', move);
+      el.classList.remove('dragging');
+      stored = { ...stored, x: el.offsetLeft, y: el.offsetTop };
+      writePlace(key, stored);
+    };
+    header.addEventListener('pointermove', move);
+    header.addEventListener('pointerup', end, { once: true });
+    header.addEventListener('pointercancel', end, { once: true });
+  });
+  // Double-clicking the title bar puts the window back in its default place.
+  header?.addEventListener('dblclick', (ev) => {
+    if (ev.target.closest('button, input, select, textarea, a')) return;
+    stored = resizable && stored?.w ? { w: stored.w, h: stored.h } : null;
+    writePlace(key, stored);
+    apply();
+  });
+
+  // A smaller pane (a docked side panel, a narrower window) pulls it back in;
+  // its own new size (content, or the corner grip) may push it out too.
+  const observers = typeof ResizeObserver === 'function'
+    ? [new ResizeObserver(apply), new ResizeObserver(() => {
+      if (resizable && !el.hidden && el.style.width) {
+        stored = { ...stored, w: el.offsetWidth, h: el.offsetHeight };
+        writePlace(key, stored);
+      }
+      apply();
+    })]
+    : [];
+  observers[0]?.observe(pane);
+  observers[1]?.observe(el);
+  return {
+    place: () => { raise(); apply(); },
+    dispose: () => observers.forEach((observer) => observer.disconnect()),
+  };
+}
+
+__exports.PLACE = PLACE;
 };
 
 __modules["src/web/gesture-overlay.js"] = function (__require, __exports) {
@@ -55182,7 +55334,7 @@ let switchPhase; __bind(() => { ({ switchPhase } = __require("src/core/beats.js"
 let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let componentPaletteItems; __bind(() => { ({ componentPaletteItems } = __require("src/web/toolbar.js")); });
-let canvasEl, componentsListEl, netsListEl, detailEl, analysisDialog, panelFilterEl, sidePanelEl, sidePanelToggleEl; __bind(() => { ({ canvasEl, componentsListEl, netsListEl, detailEl, analysisDialog, panelFilterEl, sidePanelEl, sidePanelToggleEl } = __require("src/web/elements.js")); });
+let canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl; __bind(() => { ({ canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl } = __require("src/web/elements.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let clearDiagnosticFocus; __bind(() => { ({ clearDiagnosticFocus } = __require("src/web/design-check-ui.js")); });
 let openComponentContextMenu, selectContextTarget; __bind(() => { ({ openComponentContextMenu, selectContextTarget } = __require("src/web/context-menu.js")); });
@@ -55884,8 +56036,6 @@ function installSidePanel() {
   });
 
   bindPanelResizer(document.getElementById('side-panel'), document.getElementById('side-panel-resizer'), PANEL_WIDTH_KEY, '--side-panel-width', 180);
-
-  bindPanelResizer(analysisDialog, document.getElementById('analysis-dock-resizer'), 'mosfeteer:analysis-width', '--analysis-dock-width', 300);
 
   try {
     document.body.classList.toggle('side-panel-collapsed', localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) === '1');
@@ -57953,13 +58103,13 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+G', 'toggle the spacing and alignment guides'],
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
-    ['Shift+S', 'show or hide the small-signal analysis panel'],
+    ['Shift+S', 'show or hide the small-signal analysis window'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],
   ['beats', [
-    ['Shift+B', 'show or hide the beat strip (hiding it shows the whole drawing)'],
+    ['Shift+B', 'show or hide the beats window (closing it shows the whole drawing)'],
     ['+', 'add a beat after the one on screen; it starts out looking the same'],
     ['Alt+→ / Alt+←', 'next / previous beat (also PageDown / PageUp); before the first is the whole drawing'],
     ['h (on a beat)', 'hide the selection from this beat on, or show it when hidden'],

@@ -54,8 +54,9 @@
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-renumber" type="button" role="menuitem" data-icon="renumber" title="Number the automatically named parts (M1, R2, …) again in the order picked (along each row or column, then row by row); with parts selected, only those (:renumber)">Renumber parts…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Show the beat strip: steps that build the drawing up for a talk or a paper (Shift+B; + adds a beat)">Beats <kbd>Shift+B</kbd></button>
+          <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Show the beats window: steps that build the drawing up for a talk or a paper (Shift+B; + adds a beat)">Beats <kbd>Shift+B</kbd></button>
           <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats" title="Add one beat per state of the timing diagram (phases high together close together), or without a diagram one per switch phase: what still works shown, open switches and cut-off parts dimmed">Beats from phases / timing</button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="analysis" data-proxy-for="btn-analysis" title="Derive transfer functions, impedances, poles and zeros, and noise of the drawing (Shift+S)">Small-signal analysis <kbd>Shift+S</kbd></button>
           <button id="btn-timing-diagram" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="timing" title="Draw a timing diagram under the drawing, one wave per switch phase plus any signals you add (no switches needed): a grid of high and low slots, or taken from the beats; opened again, it edits the waves">Timing diagram… <kbd>Shift+K</kbd></button>
           <button id="btn-present" type="button" role="menuitem" data-icon="play" title="Present the beats full screen, from the current one (Shift+F5)">Present <kbd>Shift+F5</kbd></button>
           <span class="toolbar-menu-separator" role="separator"></span>
@@ -65,6 +66,14 @@
     </div>
 
     <div class="toolbar-spacer" aria-hidden="true"></div>
+
+    <!-- The floating windows over the drawing (floating-window.js); the
+         side panel's own toggle stays in the canvas corner. -->
+    <div class="toolbar-cluster window-cluster" role="group" aria-label="Windows">
+      <button id="btn-window-beats" class="icon-button" data-icon="beats" aria-pressed="false" aria-controls="beat-strip" aria-label="Beats" title="Show or hide the beats window (Shift+B)">Beats</button>
+      <button id="btn-window-timing" class="icon-button" data-icon="timing" aria-pressed="false" aria-label="Timing diagram" title="Show or hide the timing diagram editor (Shift+K)">Timing</button>
+      <button id="btn-analysis" class="icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Small-signal analysis" title="Show the small-signal analysis window (Shift+S)">Analyze</button>
+    </div>
 
     <div class="toolbar-cluster view-cluster" role="group" aria-label="View">
       <button id="btn-grid" class="icon-button" data-icon="grid" aria-pressed="true" aria-label="Grid" title="Show or hide the placement grid (#)">Grid</button>
@@ -264,7 +273,6 @@
       <!-- The canvas corner holds the toggles for the panels that dock on the right. -->
       <button id="hierarchy-up" type="button" class="hierarchy-up glass" data-editor-edge="top" hidden>↑</button>
       <div class="canvas-panel-toggles" role="group" aria-label="Panels" data-editor-edge="right">
-        <button id="btn-analysis" type="button" class="canvas-panel-toggle glass icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Small-signal analysis" title="Show the small-signal analysis panel (Shift+S)">Analyze</button>
         <button id="btn-side-panel" type="button" class="canvas-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>
       </div>
       <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
@@ -283,14 +291,16 @@
           <button type="button" id="tutorial-skip" title="Move on without finishing this step">Skip step</button>
         </div>
       </section>
-      <nav id="beat-strip" class="beat-strip glass" data-editor-edge="bottom" aria-label="Beats" hidden>
+      <nav id="beat-strip" class="beat-strip floating-window" data-editor-edge="bottom" aria-labelledby="beat-strip-title" hidden>
+        <header class="floating-window-header">
+          <h2 id="beat-strip-title" class="floating-window-title">Beats</h2>
+          <button type="button" id="beat-strip-close" class="floating-window-close" title="Close the beats and show the whole drawing (Shift+B)" aria-label="Close the beats">×</button>
+        </header>
         <p id="beat-hint" class="beat-hint"></p>
         <div class="beat-strip-row">
-          <span class="beat-strip-title">Beats</span>
           <div id="beat-list" class="beat-list" role="toolbar" aria-label="Beats"></div>
           <button type="button" id="beat-add" class="beat-strip-button" data-icon="plus" title="Add a beat after this one; it starts out looking the same (+)" aria-label="Add a beat">Add</button>
           <button type="button" id="beat-present" class="beat-strip-button" data-icon="play" title="Present full screen from this beat (Shift+F5)" aria-label="Present">Present</button>
-          <button type="button" id="beat-strip-close" class="beat-strip-button icon-button" data-icon="x-circle" title="Hide the beat strip and show the whole drawing" aria-label="Hide the beat strip">Close</button>
         </div>
       </nav>
       <div id="tip-card" class="tip-card glass" role="status" aria-live="polite" hidden>
@@ -301,112 +311,111 @@
           <button type="button" id="tip-card-close" class="tip-card-close" title="Got it — do not show this tip again">Got it</button>
         </div>
       </div>
-    </section>
-
-    <section id="analysis-dialog" class="analysis-dock" data-editor-edge="right" aria-labelledby="analysis-dialog-title" hidden>
-      <div class="analysis-dock-resizer" id="analysis-dock-resizer" role="separator" aria-orientation="vertical" aria-controls="analysis-dialog" aria-label="Resize analysis panel" tabindex="0" title="Drag to resize; double-click to reset"></div>
-      <form id="analysis-form">
-        <header class="analysis-dock-header">
-          <h2 id="analysis-dialog-title">Small-signal analysis</h2>
-          <button id="analysis-cancel" type="button" class="icon-button" data-icon="x-circle" aria-label="Close analysis panel" title="Close (Esc)">Close</button>
-        </header>
-        <div class="analysis-scroll">
-          <p class="analysis-intro">Pick the input and output nets, then derive the selected transfer functions and the impedances. Poles and zeros appear when reactive components matter.</p>
-          <div class="analysis-grid">
-            <div class="analysis-node" id="analysis-input-row">
-              <label id="analysis-input-field" for="analysis-input">Input node</label>
-              <div class="analysis-node-control">
-                <select id="analysis-input" name="input"></select>
-                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-input" aria-pressed="false" aria-label="Pick input node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
+      <!-- Floating windows (floating-window.js): a title bar to drag, a close × at its right. -->
+      <section id="analysis-dialog" class="analysis-dock floating-window" data-editor-edge="right" aria-labelledby="analysis-dialog-title" hidden>
+        <form id="analysis-form">
+          <header class="floating-window-header">
+            <h2 id="analysis-dialog-title" class="floating-window-title">Small-signal analysis</h2>
+            <button id="analysis-cancel" type="button" class="floating-window-close" aria-label="Close the analysis window" title="Close (Esc)">×</button>
+          </header>
+          <div class="analysis-scroll">
+            <p class="analysis-intro">Pick the input and output nets, then derive the selected transfer functions and the impedances. Poles and zeros appear when reactive components matter.</p>
+            <div class="analysis-grid">
+              <div class="analysis-node" id="analysis-input-row">
+                <label id="analysis-input-field" for="analysis-input">Input node</label>
+                <div class="analysis-node-control">
+                  <select id="analysis-input" name="input"></select>
+                  <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-input" aria-pressed="false" aria-label="Pick input node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
+                </div>
+              </div>
+              <div class="analysis-node" id="analysis-target-row">
+                <label id="analysis-target-field" for="analysis-target">Output node</label>
+                <div class="analysis-node-control">
+                  <select id="analysis-target" name="target" required></select>
+                  <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-target" aria-pressed="false" aria-label="Pick output node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
+                </div>
+              </div>
+              <div class="analysis-node" id="analysis-ac-grounds-row">
+                <label id="analysis-ac-grounds-field" for="analysis-ac-grounds">More AC grounds (0&nbsp;V)</label>
+                <div class="analysis-node-control">
+                  <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" aria-describedby="analysis-ac-grounds-hint" />
+                  <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-ac-grounds" aria-pressed="false" aria-label="Pick an AC-ground net on the canvas" title="Pick on the canvas: click a wire or pin to add its net (Esc cancels)">Pick</button>
+                </div>
+                <p class="field-hint" id="analysis-ac-grounds-hint">Supplies, grounds, and other DC rails already are. Add bias nets (named, by net ID, or as a pin like M5.g); every AC ground is the same 0&nbsp;V reference.</p>
               </div>
             </div>
-            <div class="analysis-node" id="analysis-target-row">
-              <label id="analysis-target-field" for="analysis-target">Output node</label>
-              <div class="analysis-node-control">
-                <select id="analysis-target" name="target" required></select>
-                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-target" aria-pressed="false" aria-label="Pick output node on the canvas" title="Pick on the canvas: click a wire or pin (Esc cancels)">Pick</button>
-              </div>
+            <fieldset class="analysis-approximations" id="analysis-transfer-functions">
+              <legend>Transfer functions</legend>
+              <label><input id="analysis-tf-av" name="transferAv" type="checkbox" data-transfer-function="Av" checked /> <span><span class="math-inline">v<sub>out</sub>/v<sub>in</sub></span>, voltage gain <span class="math-inline">A<sub>v</sub></span></span></label>
+              <label><input id="analysis-tf-zm" name="transferZm" type="checkbox" data-transfer-function="Zm" /> <span><span class="math-inline">v<sub>out</sub>/i<sub>in</sub></span>, transimpedance <span class="math-inline">Z<sub>m</sub></span></span></label>
+              <label><input id="analysis-tf-gm" name="transferGm" type="checkbox" data-transfer-function="Gm" /> <span><span class="math-inline">i<sub>out</sub>/v<sub>in</sub></span>, transconductance <span class="math-inline">G<sub>m</sub></span></span></label>
+              <label><input id="analysis-tf-ai" name="transferAi" type="checkbox" data-transfer-function="Ai" /> <span><span class="math-inline">i<sub>out</sub>/i<sub>in</sub></span>, current gain <span class="math-inline">A<sub>i</sub></span></span></label>
+              <p class="field-hint">A current input drives the input node; a current output flows into the shorted output node, as in <span class="math-inline">Z<sub>out</sub></span>. Input and output impedances are always derived.</p>
+            </fieldset>
+            <fieldset class="analysis-approximations">
+              <legend>Model simplifications</legend>
+              <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> <span>Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</span></label>
+              <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> <span>Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</span></label>
+              <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Miller approximation for gate–drain feedback</label>
+              <label><input id="analysis-parasitics" name="parasitics" type="checkbox" /> <span>Include MOS device capacitances (<span class="math-inline">C<sub>gs</sub></span>, <span class="math-inline">C<sub>gd</sub></span>)</span></label>
+              <p class="field-hint">These change the model before it is solved: the branch is left out, so the small-signal netlist and the Model tab show what was actually solved.</p>
+            </fieldset>
+            <fieldset class="analysis-approximations">
+              <legend>Equation approximations</legend>
+              <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> <span>Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></span></label>
+              <label><input id="analysis-approx-dominant-pole" name="approxDominantPole" type="checkbox" /> Use dominant-pole approximation when multiple AC poles are present</label>
+              <label><input id="analysis-name-subexpressions" name="nameSubexpressions" type="checkbox" checked /> Name large or repeated sub-expressions, defined under “Where”</label>
+              <p class="field-hint">These simplify the displayed equations only. Exact equations remain in the Log tab.</p>
+            </fieldset>
+            <fieldset class="analysis-approximations" id="analysis-noise">
+              <legend>Noise</legend>
+              <label><input id="analysis-noise-thermal" name="noiseThermal" type="checkbox" /> <span>Thermal noise (<span class="math-inline">4kT</span>)</span></label>
+              <label><input id="analysis-noise-flicker" name="noiseFlicker" type="checkbox" /> <span>Flicker noise (<span class="math-inline">1/f</span>)</span></label>
+              <label id="analysis-noise-output-row" hidden><input id="analysis-noise-output" name="noiseOutput" type="checkbox" /> <span>Output noise as well as input-referred</span></label>
+              <div id="analysis-noise-sources" class="analysis-noise-sources" role="group" aria-label="Noise sources" hidden></div>
+              <p class="field-hint">Low-frequency densities, referred to the input and to the output. Each checked MOS device and resistor adds one generator; uncheck the ones that do not matter.</p>
+            </fieldset>
+            <details class="analysis-context" id="analysis-bias-context">
+              <summary>Small-signal context</summary>
+              <label for="analysis-device-regions">Triode-region devices</label>
+              <input id="analysis-device-regions" name="deviceRegions" type="text" placeholder="M2=triode" autocomplete="off" spellcheck="false" />
+              <p class="field-hint">Use <code>REF=triode</code> to replace a MOS device with its symbolic <span class="math-inline">r<sub>ds</sub></span>.</p>
+            </details>
+            <p id="analysis-stale" class="analysis-stale" hidden>The circuit changed since these equations were derived.</p>
+            <div id="analysis-result" class="analysis-result" aria-live="polite" hidden>
+            <div class="analysis-tabs" role="tablist" aria-label="Analysis output">
+              <button id="analysis-tab-equations" type="button" role="tab" aria-selected="true" aria-controls="analysis-panel-equations" data-analysis-tab="equations">Equations</button>
+              <button id="analysis-tab-log" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-log" data-analysis-tab="log">Log</button>
+              <button id="analysis-tab-netlist" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-netlist" data-analysis-tab="netlist">Small-signal netlist</button>
+              <button id="analysis-tab-model" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-model" data-analysis-tab="model">Model</button>
+              <button id="analysis-tab-bode" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-bode" data-analysis-tab="bode">Bode</button>
             </div>
-            <div class="analysis-node" id="analysis-ac-grounds-row">
-              <label id="analysis-ac-grounds-field" for="analysis-ac-grounds">More AC grounds (0&nbsp;V)</label>
-              <div class="analysis-node-control">
-                <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" aria-describedby="analysis-ac-grounds-hint" />
-                <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-ac-grounds" aria-pressed="false" aria-label="Pick an AC-ground net on the canvas" title="Pick on the canvas: click a wire or pin to add its net (Esc cancels)">Pick</button>
-              </div>
-              <p class="field-hint" id="analysis-ac-grounds-hint">Supplies, grounds, and other DC rails already are. Add bias nets (named, by net ID, or as a pin like M5.g); every AC ground is the same 0&nbsp;V reference.</p>
+            <div class="analysis-tab-panels">
+              <section id="analysis-panel-equations" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-equations">
+                <div id="analysis-equation" class="analysis-equation"></div>
+              </section>
+              <section id="analysis-panel-log" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-log" hidden>
+                <pre id="analysis-details" class="analysis-details"></pre>
+              </section>
+              <section id="analysis-panel-netlist" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-netlist" hidden>
+                <pre id="analysis-netlist" class="analysis-netlist"></pre>
+              </section>
+              <section id="analysis-panel-bode" class="analysis-tab-panel analysis-bode" role="tabpanel" aria-labelledby="analysis-tab-bode" hidden></section>
+              <section id="analysis-panel-model" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-model" hidden>
+                <div id="analysis-model" class="analysis-model"></div>
+                <div class="dialog-actions analysis-model-actions">
+                  <button id="analysis-model-open" type="button" data-icon="analysis">Open full size</button>
+                </div>
+              </section>
             </div>
           </div>
-          <fieldset class="analysis-approximations" id="analysis-transfer-functions">
-            <legend>Transfer functions</legend>
-            <label><input id="analysis-tf-av" name="transferAv" type="checkbox" data-transfer-function="Av" checked /> <span><span class="math-inline">v<sub>out</sub>/v<sub>in</sub></span>, voltage gain <span class="math-inline">A<sub>v</sub></span></span></label>
-            <label><input id="analysis-tf-zm" name="transferZm" type="checkbox" data-transfer-function="Zm" /> <span><span class="math-inline">v<sub>out</sub>/i<sub>in</sub></span>, transimpedance <span class="math-inline">Z<sub>m</sub></span></span></label>
-            <label><input id="analysis-tf-gm" name="transferGm" type="checkbox" data-transfer-function="Gm" /> <span><span class="math-inline">i<sub>out</sub>/v<sub>in</sub></span>, transconductance <span class="math-inline">G<sub>m</sub></span></span></label>
-            <label><input id="analysis-tf-ai" name="transferAi" type="checkbox" data-transfer-function="Ai" /> <span><span class="math-inline">i<sub>out</sub>/i<sub>in</sub></span>, current gain <span class="math-inline">A<sub>i</sub></span></span></label>
-            <p class="field-hint">A current input drives the input node; a current output flows into the shorted output node, as in <span class="math-inline">Z<sub>out</sub></span>. Input and output impedances are always derived.</p>
-          </fieldset>
-          <fieldset class="analysis-approximations">
-            <legend>Model simplifications</legend>
-            <label><input id="analysis-approx-body" name="approxIgnoreBody" type="checkbox" checked /> <span>Ignore body effect (<span class="math-inline">g<sub>mb</sub> = 0</span>)</span></label>
-            <label><input id="analysis-approx-ro" name="approxIgnoreRo" type="checkbox" /> <span>Ignore channel-length modulation for MOS devices (<span class="math-inline">r<sub>o</sub> → ∞</span>)</span></label>
-            <label><input id="analysis-approx-miller" name="approxMiller" type="checkbox" checked /> Miller approximation for gate–drain feedback</label>
-            <label><input id="analysis-parasitics" name="parasitics" type="checkbox" /> <span>Include MOS device capacitances (<span class="math-inline">C<sub>gs</sub></span>, <span class="math-inline">C<sub>gd</sub></span>)</span></label>
-            <p class="field-hint">These change the model before it is solved: the branch is left out, so the small-signal netlist and the Model tab show what was actually solved.</p>
-          </fieldset>
-          <fieldset class="analysis-approximations">
-            <legend>Equation approximations</legend>
-            <label><input id="analysis-approx-gmro" name="approxGmRo" type="checkbox" checked /> <span>Assume <span class="math-inline">g<sub>m</sub>r<sub>o</sub> ≫ 1</span></span></label>
-            <label><input id="analysis-approx-dominant-pole" name="approxDominantPole" type="checkbox" /> Use dominant-pole approximation when multiple AC poles are present</label>
-            <label><input id="analysis-name-subexpressions" name="nameSubexpressions" type="checkbox" checked /> Name large or repeated sub-expressions, defined under “Where”</label>
-            <p class="field-hint">These simplify the displayed equations only. Exact equations remain in the Log tab.</p>
-          </fieldset>
-          <fieldset class="analysis-approximations" id="analysis-noise">
-            <legend>Noise</legend>
-            <label><input id="analysis-noise-thermal" name="noiseThermal" type="checkbox" /> <span>Thermal noise (<span class="math-inline">4kT</span>)</span></label>
-            <label><input id="analysis-noise-flicker" name="noiseFlicker" type="checkbox" /> <span>Flicker noise (<span class="math-inline">1/f</span>)</span></label>
-            <label id="analysis-noise-output-row" hidden><input id="analysis-noise-output" name="noiseOutput" type="checkbox" /> <span>Output noise as well as input-referred</span></label>
-            <div id="analysis-noise-sources" class="analysis-noise-sources" role="group" aria-label="Noise sources" hidden></div>
-            <p class="field-hint">Low-frequency densities, referred to the input and to the output. Each checked MOS device and resistor adds one generator; uncheck the ones that do not matter.</p>
-          </fieldset>
-          <details class="analysis-context" id="analysis-bias-context">
-            <summary>Small-signal context</summary>
-            <label for="analysis-device-regions">Triode-region devices</label>
-            <input id="analysis-device-regions" name="deviceRegions" type="text" placeholder="M2=triode" autocomplete="off" spellcheck="false" />
-            <p class="field-hint">Use <code>REF=triode</code> to replace a MOS device with its symbolic <span class="math-inline">r<sub>ds</sub></span>.</p>
-          </details>
-          <p id="analysis-stale" class="analysis-stale" hidden>The circuit changed since these equations were derived.</p>
-          <div id="analysis-result" class="analysis-result" aria-live="polite" hidden>
-          <div class="analysis-tabs" role="tablist" aria-label="Analysis output">
-            <button id="analysis-tab-equations" type="button" role="tab" aria-selected="true" aria-controls="analysis-panel-equations" data-analysis-tab="equations">Equations</button>
-            <button id="analysis-tab-log" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-log" data-analysis-tab="log">Log</button>
-            <button id="analysis-tab-netlist" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-netlist" data-analysis-tab="netlist">Small-signal netlist</button>
-            <button id="analysis-tab-model" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-model" data-analysis-tab="model">Model</button>
-            <button id="analysis-tab-bode" type="button" role="tab" aria-selected="false" aria-controls="analysis-panel-bode" data-analysis-tab="bode">Bode</button>
           </div>
-          <div class="analysis-tab-panels">
-            <section id="analysis-panel-equations" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-equations">
-              <div id="analysis-equation" class="analysis-equation"></div>
-            </section>
-            <section id="analysis-panel-log" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-log" hidden>
-              <pre id="analysis-details" class="analysis-details"></pre>
-            </section>
-            <section id="analysis-panel-netlist" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-netlist" hidden>
-              <pre id="analysis-netlist" class="analysis-netlist"></pre>
-            </section>
-            <section id="analysis-panel-bode" class="analysis-tab-panel analysis-bode" role="tabpanel" aria-labelledby="analysis-tab-bode" hidden></section>
-            <section id="analysis-panel-model" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-model" hidden>
-              <div id="analysis-model" class="analysis-model"></div>
-              <div class="dialog-actions analysis-model-actions">
-                <button id="analysis-model-open" type="button" data-icon="analysis">Open full size</button>
-              </div>
-            </section>
+          <div class="dialog-actions">
+            <button id="analysis-annotate" type="button" data-icon="text" hidden>Annotate schematic</button>
+            <button id="analysis-submit" type="submit" data-icon="check" class="primary-action">Derive all equations</button>
           </div>
-        </div>
-        </div>
-        <div class="dialog-actions">
-          <button id="analysis-annotate" type="button" data-icon="text" hidden>Annotate schematic</button>
-          <button id="analysis-submit" type="submit" data-icon="check" class="primary-action">Derive all equations</button>
-        </div>
-      </form>
+        </form>
+      </section>
     </section>
 
     <aside class="side-panel" id="side-panel" data-editor-edge="right">

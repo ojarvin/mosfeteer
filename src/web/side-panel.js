@@ -9,7 +9,7 @@ import { switchPhase } from '../core/beats.js';
 import { resolveColor } from '../core/style.js';
 import { GRID } from '../core/grid.js';
 import { componentPaletteItems } from './toolbar.js';
-import { canvasEl, componentsListEl, netsListEl, detailEl, analysisDialog, panelFilterEl, sidePanelEl, sidePanelToggleEl } from './elements.js';
+import { canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl } from './elements.js';
 import { logLine } from './status-bar-ui.js';
 import { clearDiagnosticFocus } from './design-check-ui.js';
 import { openComponentContextMenu, selectContextTarget } from './context-menu.js';
@@ -689,8 +689,6 @@ export function installSidePanel() {
   });
 
   bindPanelResizer(document.getElementById('side-panel'), document.getElementById('side-panel-resizer'), PANEL_WIDTH_KEY, '--side-panel-width', 180);
-
-  bindPanelResizer(analysisDialog, document.getElementById('analysis-dock-resizer'), 'mosfeteer:analysis-width', '--analysis-dock-width', 300);
 
   try {
     document.body.classList.toggle('side-panel-collapsed', localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) === '1');
