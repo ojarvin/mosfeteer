@@ -1080,7 +1080,7 @@ function setView(view) {
  *  (gestures.js zoomView) rather than easing each edge; `retargetView`
  *  can move the destination while it flies. */
 function animateView(target, duration = 320, { camera = false, scatter = null } = {}) {
-  if (state.animation) cancelAnimationFrame(state.animation.frame);
+  stopAnimation();
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced || duration <= 0) {
     setView(target);
@@ -1094,6 +1094,8 @@ function animateView(target, duration = 320, { camera = false, scatter = null } 
   // flies, reaching as far as the view at the close end of the flight.
   if (scatter) partDesk(scatter.tile, scatter.outward, scatter.outward ? target : from, animation);
   return new Promise((resolve) => {
+    // One cut short (another flight, a wheel) still lets its waiter go on.
+    animation.resolve = resolve;
     const step = (now) => {
       if (!state) { resolve(); return; }
       const t = Math.min(1, (now - start) / duration);
@@ -1148,9 +1150,15 @@ function retargetView(target) {
 function stopAnimation() {
   if (state?.animation) {
     cancelAnimationFrame(state.animation.frame);
+    state.animation.resolve?.();
     state.animation = null;
   }
 }
+
+/** On the way out -- flying back into the editor, or into a design -- the
+ *  desk takes no more input: a key or a scroll then would cut the flight
+ *  short and leave the desk parted. */
+const leaving = () => !!(state?.closing || state?.opening);
 
 function zoomAbout(factor, clientX, clientY) {
   stopAnimation();
@@ -1385,7 +1393,8 @@ function showOpenDesign() {
 
 /** Leave for the editor. The open design zooms back into place. */
 export async function closeAtlas({ animate = true } = {}) {
-  if (!state) return;
+  if (!state || state.closing) return;
+  state.closing = true;
   clearTimeout(state.arrangeTimer);
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
   // With reduced motion the desk just fades from where it is.
@@ -1515,6 +1524,10 @@ export function onAtlasKey(ev) {
   // A header button keeps focus after a click (or a dialog it opened hands
   // it back): it takes the keys that press or leave it, the desk the rest.
   if (ev.target.closest?.('.atlas-head button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
+  if (leaving()) {
+    ev.preventDefault();
+    return;
+  }
   const key = ev.key;
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
@@ -1551,7 +1564,7 @@ export function onAtlasKey(ev) {
 
 function onWheel(ev) {
   ev.preventDefault();
-  if (!state) return;
+  if (!state || leaving()) return;
   stopAnimation();
   const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 400 : 1;
   if (wheelIntent(ev, editor.scrollScheme) === 'pan') {
@@ -1568,7 +1581,7 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || ev.target.closest?.('.atlas-head, .atlas-tags')) return;
+  if (!state || leaving() || ev.target.closest?.('.atlas-head, .atlas-tags')) return;
   if (ev.button === 2) {
     ev.preventDefault();
     stopAnimation();
@@ -1688,7 +1701,7 @@ function onPointerUp(ev) {
 }
 
 function onDoubleClick(ev) {
-  if (!state) return;
+  if (!state || leaving()) return;
   const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
   if (hit) void openTile(hit);
 }

@@ -1289,3 +1289,16 @@ test('linked-design bubbles live in a kept layer and dive keys go through hierar
   assert.match(main, /if \(key === 'O'\) \{\s*toggleAllLinkBubbles\(\);/);
   assert.match(main, /if \(ev\.detail >= 2\) void enterLinkedDesign\(circuit\.components\.get\(bubble\.refdes\)\);/);
 });
+
+test('the Atlas finishes its flight out: no key, scroll, or click on the way cuts it short', () => {
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  // A cut-short flight used to leave closeAtlas waiting forever, the desk
+  // parted (Shift+Backspace, then Shift+T at once): a stopped animation
+  // now lets its waiter go on, and the desk takes no input while leaving.
+  assert.match(functionSource('stopAnimation', atlas), /state\.animation\.resolve\?\.\(\);/);
+  assert.match(functionSource('animateView', atlas), /animation\.resolve = resolve;/);
+  assert.match(functionSource('closeAtlas', atlas), /if \(!state \|\| state\.closing\) return;\s*state\.closing = true;/);
+  for (const handler of ['onAtlasKey', 'onWheel', 'onPointerDown', 'onDoubleClick']) {
+    assert.match(functionSource(handler, atlas), /leaving\(\)/, `${handler} ignores input while leaving`);
+  }
+});
