@@ -12,7 +12,8 @@
  * A link to a design that is not in the workspace is simply broken: the side
  * panel marks the part with a red dot, and its bubble and menu say so. Which
  * bubbles are open, and where any was dragged to, is remembered per document
- * in this browser; they are never saved in the document or undone.
+ * in this browser; they are never saved in the document or undone. Parts
+ * linked to one design share one bubble, a connector to each.
  */
 
 import { loadDocument } from '../core/document.js';
@@ -20,7 +21,7 @@ import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { searchKey } from '../core/design-index.js';
-import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, layoutBubbles } from '../core/link-bubble.js';
+import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { animateViewTo, fitTarget, fitView } from './canvas-view.js';
@@ -44,7 +45,7 @@ let layoutCache = { key: '', layout: [] };
 const angles = new Map(); // refdes -> the angle its bubble last took
 const spots = new Map(); // refdes -> { dx, dy }: a dragged bubble's corner from its part's centre
 let layerEl = null;
-const nodes = new Map(); // refdes -> its drawn bubble
+const nodes = new Map(); // design name -> its drawn bubble
 const pictures = new Map(); // path -> { revision, box, href }: drawn once per revision
 
 // The way back up: [{ path, name, view, refdes, childPath }], outermost first.
@@ -203,8 +204,7 @@ function linkTargets() {
   const selected = selectedComps().filter((c) => c.link);
   if (selected.length) return selected;
   const bubble = bubbleAt(currentLayout(), editor.cursor);
-  const component = bubble ? editor.circuit.components.get(bubble.id) : null;
-  return component ? [component] : [];
+  return bubble ? bubble.ids.map((refdes) => editor.circuit.components.get(refdes)).filter(Boolean) : [];
 }
 
 /** Shift+O: show every linked part's design, or hide them all when they
@@ -269,10 +269,36 @@ export function linkBubbleOpen(refdes) {
   return bubbles.has(refdes);
 }
 
-/** The part whose bubble is at a world point: { refdes } or null. */
+/** The parts whose bubble is at a world point: { refdes, refdeses } (the
+ *  first, and every part sharing it) or null. */
 export function linkBubbleAt(point) {
   const hit = bubbleAt(currentLayout(), point);
-  return hit ? { refdes: hit.id } : null;
+  return hit ? { refdes: hit.id, refdeses: hit.ids } : null;
+}
+
+/** The laid-out bubble a part's connector joins, or undefined. */
+const layoutEntry = (refdes) => currentLayout().find((entry) => entry.ids.includes(refdes));
+
+/** Layout requests for `entries` ([refdes, bubble]) of `circuit`: one per
+ *  design, shared by the parts linked to it. A dragged spot is kept from
+ *  the part it was dragged beside, which then goes first. */
+function bubbleRequests(circuit, entries, size = (bubble) => bubble.box) {
+  const groups = new Map();
+  for (const [refdes, bubble] of entries) {
+    if (!groups.has(bubble.name)) groups.set(bubble.name, []);
+    groups.get(bubble.name).push(refdes);
+  }
+  return [...groups.values()].map((group) => {
+    const pinned = group.find((refdes) => spots.has(refdes));
+    const ids = pinned ? [pinned, ...group.filter((refdes) => refdes !== pinned)] : group;
+    return {
+      id: ids[0],
+      ids,
+      parts: ids.map((refdes) => circuit.components.get(refdes).bboxWorld()),
+      size: size(bubbles.get(ids[0])),
+      offset: spots.get(ids[0]),
+    };
+  });
 }
 
 /**
@@ -287,9 +313,7 @@ export function linkBubbleExtras(drawing = editor.circuit) {
   if (!ready.length) return null;
   const layout = whole
     ? currentLayout().filter((entry) => bubbles.get(entry.id)?.status === 'ready')
-    : layoutBubbles(drawing.inkBounds(), ready.map(([refdes, bubble]) => ({
-      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box, offset: spots.get(refdes),
-    })), { obstacles: obstacles(drawing), previous: angles });
+    : layoutBubbles(drawing.inkBounds(), bubbleRequests(drawing, ready), { obstacles: obstacles(drawing), previous: angles });
   return bubbleExtras(layout.map((entry) => {
     const bubble = bubbles.get(entry.id);
     return { ...entry, name: bubble.name, svg: bubble.svg, box: bubble.box };
@@ -302,6 +326,8 @@ export function linkBubbleExtras(drawing = editor.circuit) {
 export function moveLinkBubble(refdes, at, { remember = true } = {}) {
   const component = editor.circuit.components.get(refdes);
   if (!component || !bubbles.has(refdes)) return;
+  // A shared bubble keeps one spot, from the part it is dragged by.
+  for (const other of layoutEntry(refdes)?.ids || []) spots.delete(other);
   spots.set(refdes, bubbleOffset(component.bboxWorld(), at));
   if (remember) rememberSpots();
   render();
@@ -309,12 +335,13 @@ export function moveLinkBubble(refdes, at, { remember = true } = {}) {
 
 /** The frame a bubble is drawn in now, or null. */
 export function linkBubbleFrame(refdes) {
-  return currentLayout().find((entry) => entry.id === refdes)?.frame || null;
+  return layoutEntry(refdes)?.frame || null;
 }
 
 /** Put a dragged bubble back where the layout would place it. */
 export function resetLinkBubble(refdes) {
-  if (!spots.delete(refdes)) return;
+  const ids = layoutEntry(refdes)?.ids || [refdes];
+  if (!ids.map((id) => spots.delete(id)).some(Boolean)) return;
   rememberSpots();
   render();
 }
@@ -366,12 +393,7 @@ function currentLayout() {
   // A broken link's box fits its message (24-unit italic, about half an em
   // a character).
   const messageSize = (bubble) => ({ w: Math.max(12 * GRID, messageText(bubble).length * 13), h: 2 * GRID });
-  const layout = shown.length ? layoutBubbles(circuit.inkBounds(), shown.map(([refdes, bubble]) => ({
-    id: refdes,
-    part: circuit.components.get(refdes).bboxWorld(),
-    size: bubble.status === 'ready' ? bubble.box : messageSize(bubble),
-    offset: spots.get(refdes),
-  })), { obstacles: obstacles(circuit), previous: angles }) : [];
+  const layout = shown.length ? layoutBubbles(circuit.inkBounds(), bubbleRequests(circuit, shown, (bubble) => (bubble.status === 'ready' ? bubble.box : messageSize(bubble))), { obstacles: obstacles(circuit), previous: angles }) : [];
   for (const entry of layout) angles.set(entry.id, entry.angle);
   layoutCache = { key, layout };
   return layout;
@@ -416,28 +438,29 @@ export function syncLinkBubbles() {
   const live = new Set();
   for (const entry of layout) {
     const bubble = bubbles.get(entry.id);
-    live.add(entry.id);
-    let node = nodes.get(entry.id);
+    const key = bubble.name;
+    live.add(key);
+    let node = nodes.get(key);
     if (node?.closing) {
       node.group.remove();
-      nodes.delete(entry.id);
+      nodes.delete(key);
       node = null;
     }
-    const [from, to] = entry.connector;
+    const [from] = entry.connector;
     if (!node) {
       const group = svgEl('g', { class: 'link-bubble' });
       node = {
         group,
         connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none' }),
-        dot: svgEl('circle', { class: 'link-bubble-dot', r: BUBBLE_DOT }),
+        dots: svgEl('g'),
         // Rounded corners set the bubble apart from box annotations.
         frame: svgEl('rect', { class: 'link-bubble-frame', rx: BUBBLE_RADIUS }),
         caption: svgEl('text', { class: 'link-bubble-caption' }),
         image: svgEl('image', { preserveAspectRatio: 'xMidYMid meet' }),
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
       };
-      group.append(node.connector, node.frame, node.dot, node.caption, node.image, node.message);
-      nodes.set(entry.id, node);
+      group.append(node.connector, node.frame, node.dots, node.caption, node.image, node.message);
+      nodes.set(key, node);
       if (!reducedMotion()) {
         // Grow out of the part. The class goes once it has played, so the
         // canvas redrawing under it never plays it again.
@@ -446,8 +469,11 @@ export function syncLinkBubbles() {
         group.addEventListener('animationend', () => group.classList.remove('entering'), { once: true });
       }
     }
-    setAttrs(node.connector, { d: `M ${from.x} ${from.y} L ${to.x} ${to.y}` });
-    setAttrs(node.dot, { cx: from.x, cy: from.y });
+    setAttrs(node.connector, { d: connectorPath(entry.connectors) });
+    // A dot where each connector leaves its part.
+    while (node.dots.childElementCount < entry.connectors.length) node.dots.append(svgEl('circle', { class: 'link-bubble-dot', r: BUBBLE_DOT }));
+    while (node.dots.childElementCount > entry.connectors.length) node.dots.lastElementChild.remove();
+    entry.connectors.forEach(([start], index) => setAttrs(node.dots.children[index], { cx: start.x, cy: start.y }));
     setAttrs(node.frame, { x: entry.frame.x, y: entry.frame.y, width: entry.frame.w, height: entry.frame.h });
     setAttrs(node.caption, captionAnchor(entry.frame));
     if (node.caption.textContent !== bubble.name) node.caption.textContent = bubble.name;
@@ -466,11 +492,11 @@ export function syncLinkBubbles() {
     }
     if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
   }
-  for (const [refdes, node] of [...nodes]) {
-    if (live.has(refdes) || node.closing) continue;
+  for (const [key, node] of [...nodes]) {
+    if (live.has(key) || node.closing) continue;
     if (reducedMotion() || !node.group.isConnected) {
       node.group.remove();
-      nodes.delete(refdes);
+      nodes.delete(key);
       continue;
     }
     node.closing = true;
@@ -478,9 +504,9 @@ export function syncLinkBubbles() {
     node.group.style.transformOrigin = `${node.from.x}px ${node.from.y}px`;
     node.group.classList.add('leaving');
     setTimeout(() => {
-      if (nodes.get(refdes) !== node) return;
+      if (nodes.get(key) !== node) return;
       node.group.remove();
-      nodes.delete(refdes);
+      nodes.delete(key);
     }, CLOSE_MS);
   }
 }
@@ -516,7 +542,7 @@ export async function enterLinkedDesign(component = linkTargets()[0]) {
   const entry = { path: editor.currentDocumentPath, name: editor.currentCircuitName, view: { ...editor.view }, refdes: component.refdes, childPath: doc.path };
   // With its bubble open, zoom into the picture first: the child then opens
   // where it was seen.
-  const bubble = currentLayout().find((item) => item.id === component.refdes);
+  const bubble = layoutEntry(component.refdes);
   const pane = paneRect();
   if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane) {
     animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 240);
@@ -567,7 +593,7 @@ export async function leaveLinkedDesign(levels = 1) {
     followDocument();
     bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', svg: picture.svg, box: picture.box, href: picture.href });
     rememberOpen();
-    const bubble = currentLayout().find((item) => item.id === target.refdes);
+    const bubble = layoutEntry(target.refdes);
     if (bubble && !reducedMotion()) {
       Object.assign(editor.view, viewFitting(bubble.image, pane.width, pane.height, 0.05));
       render();
@@ -710,16 +736,19 @@ export function openLinkBubbleMenu(refdes, x, y) {
   menu.hidden = false;
   menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  // A shared bubble is every part linked to its design.
+  const ids = layoutEntry(refdes)?.ids || [refdes];
+  const parts = ids.map((id) => editor.circuit.components.get(id)).filter(Boolean);
   const heading = document.createElement('div');
   heading.className = 'context-menu-heading';
-  heading.textContent = `${component.link} · linked from ${component.refdes}`;
+  heading.textContent = `${component.link} · linked from ${ids.join(', ')}`;
   menu.appendChild(heading);
   const group = document.createElement('div');
   group.className = 'context-menu-group';
   appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });
-  appendContextItem(group, 'Hide linked design', () => closeLinkBubble(refdes), { shortcut: 'o' });
-  if (spots.has(refdes)) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
-  appendDesignPicker(group, [component], component.link);
+  appendContextItem(group, 'Hide linked design', () => toggleLinkBubbles(parts), { shortcut: 'o' });
+  if (ids.some((id) => spots.has(id))) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
+  appendDesignPicker(group, parts, component.link);
   menu.appendChild(group);
   menu.querySelector('button:not(:disabled)')?.focus();
 }

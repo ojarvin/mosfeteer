@@ -126,3 +126,22 @@ test('a renamed design\'s links follow it in a saved document', async () => {
   assert.equal(relinkDocumentState(state, 'missing', 'x'), 0);
   assert.equal(relinkDocumentState(state, 'ota', 'ota'), 0);
 });
+
+test('parts linked to one design share a bubble, a connector from each', async () => {
+  const { bubbleExtras } = await import('../src/core/link-bubble.js');
+  const parts = [{ x: 200, y: 360, w: 80, h: 80 }, { x: 1320, y: 360, w: 80, h: 80 }];
+  const [shared, ...rest] = layoutBubbles(drawing, [{ id: 'X1', ids: ['X1', 'X2'], parts, size: { w: 400, h: 300 } }]);
+  assert.equal(rest.length, 0);
+  assert.deepEqual(shared.ids, ['X1', 'X2']);
+  assert.equal(shared.connectors.length, 2);
+  assert.deepEqual(shared.connector, shared.connectors[0]);
+  shared.connectors.forEach(([from, to], index) => {
+    const part = parts[index];
+    assert.ok(from.x >= part.x && from.x <= part.x + part.w && from.y >= part.y && from.y <= part.y + part.h, 'leaves its own part');
+    const f = shared.frame;
+    assert.ok(to.x === f.x || to.x === f.x + f.w || to.y === f.y || to.y === f.y + f.h, 'ends on the frame');
+  });
+  const extras = bubbleExtras([{ ...shared, name: 'amp', svg: '<svg viewBox="0 0 400 300"></svg>', box: { x: 0, y: 0, w: 400, h: 300 } }]);
+  assert.equal((extras.svg.match(/<circle/g) || []).length, 2, 'a dot at each part');
+  assert.equal((extras.svg.match(/ L /g) || []).length, 2, 'a line to each part');
+});

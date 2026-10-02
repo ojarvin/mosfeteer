@@ -19,14 +19,18 @@ const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap &
 /**
  * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h }, offset? }]
  * (the child drawing's size; `offset` pins the frame's top-left corner at
- * that displacement from the part's centre, where the user dragged it). Returns [{ id, angle, frame, image, connector:
- * [from, to] }]: `frame` is the box around the child with room for its
- * caption, `image` where the child is drawn.
+ * that displacement from the part's centre, where the user dragged it).
+ * Several parts linked to one design share a bubble: `parts` [rect, ...] in
+ * place of `part`, each with its own connector; `offset` is then from the
+ * first one's centre. Returns [{ id, angle, frame, image, connectors:
+ * [[from, to], ...], connector }]: `frame` is the box around the child with
+ * room for its caption, `image` where the child is drawn, `connector` the
+ * first part's.
  *
  * Bubbles sit on a ring around the drawing, never over it. Each tries angles
- * all round the ring and takes the spot whose connector reads best: running
- * diagonally, so it stands apart from the orthogonal wiring; short; and
- * crossing as little of the drawing as it can (`obstacles`: parts' and
+ * all round the ring and takes the spot whose connectors read best: running
+ * diagonally, so they stand apart from the orthogonal wiring; short; and
+ * crossing as little of the drawing as they can (`obstacles`: parts' and
  * labels' `rects`, wire `segments`; running along a wire is worst). It never
  * overlaps another bubble, and `previous` (id -> angle) keeps a bubble where
  * it was while that spot is about as good.
@@ -41,18 +45,27 @@ export function layoutBubbles(drawing, requests, {
   const connectors = [];
   const out = [];
   const centre = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
+  const partsOf = (request) => request.parts || [request.part];
   // Pinned bubbles go first, where they were put; the rest keep clear of them.
-  const sorted = [...requests].sort((a, b) => (!!b.offset - !!a.offset) || (a.part.y - b.part.y) || (a.part.x - b.part.x));
-  for (const { id, part, size, offset } of sorted) {
+  const sorted = [...requests].sort((a, b) => (!!b.offset - !!a.offset) || (partsOf(a)[0].y - partsOf(b)[0].y) || (partsOf(a)[0].x - partsOf(b)[0].x));
+  for (const request of sorted) {
+    const { id, size, offset } = request;
+    const parts = partsOf(request);
     const w = ceilCell(size.w + 2 * pad);
     const h = ceilCell(size.h + 2 * pad + caption);
-    const pc = { x: part.x + part.w / 2, y: part.y + part.h / 2 };
-    const others = rects.filter((r) => !sameRect(r, part) && !contains(part, r));
+    const others = rects.filter((r) => !parts.some((part) => sameRect(r, part) || contains(part, r)));
+    // Each part's connector to a frame: from where it leaves the part to the
+    // nearest point of the frame.
+    const reach = (frame) => parts.map((part) => {
+      const pc = centreOf(part);
+      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
+      return [exitPoint(part, pc, to), to];
+    });
     let best = null;
     if (offset) {
+      const pc = centreOf(parts[0]);
       const frame = { x: snap(pc.x + offset.dx), y: snap(pc.y + offset.dy), w, h };
-      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
-      best = { angle: previous?.get(id) ?? 0, frame, from: exitPoint(part, pc, to), to };
+      best = { angle: previous?.get(id) ?? 0, frame, lines: reach(frame) };
     }
     for (let step = 0; !offset && step < RING_STEPS; step++) {
       const angle = (360 / RING_STEPS) * step;
@@ -70,19 +83,18 @@ export function layoutBubbles(drawing, requests, {
         }
       }
       if (!frame) continue;
-      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
-      const from = exitPoint(part, pc, to);
-      const cost = connectorCost(from, to, others, segments, connectors, placed)
+      const lines = reach(frame);
+      const cost = lines.reduce((sum, [from, to]) => sum + connectorCost(from, to, others, segments, connectors, placed), 0)
         + connectors.filter(([a, b]) => segThroughInterior(a, b, frame)).length * 60
         - (previous?.get(id) === angle ? STAY_BONUS : 0);
-      if (!best || cost < best.cost) best = { cost, angle, frame, from, to };
+      if (!best || cost < best.cost) best = { cost, angle, frame, lines };
     }
     if (!best) continue;
-    const { frame, angle, from, to } = best;
+    const { frame, angle, lines } = best;
     placed.push(frame);
-    connectors.push([from, to]);
+    connectors.push(...lines);
     const image = { x: frame.x + (w - size.w) / 2, y: frame.y + caption + pad + (h - caption - 2 * pad - size.h) / 2, w: size.w, h: size.h };
-    out.push({ id, angle, frame, image, connector: [from, to] });
+    out.push({ id, ...(request.ids ? { ids: request.ids } : {}), angle, frame, image, connectors: lines, connector: lines[0] });
   }
   return out;
 }
@@ -92,6 +104,7 @@ const STAY_BONUS = 6;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+const centreOf = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const contains = (outer, inner) => inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
 
 /** Where the line from the part's centre toward `to` leaves the part. */
@@ -170,6 +183,11 @@ export function captionAnchor(frame) {
 const fmt = (value) => String(Math.round(value * 100) / 100);
 const escapeText = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** A bubble's connectors as one path's data: a line from each part. */
+export function connectorPath(connectors) {
+  return connectors.map(([from, to]) => `M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}`).join(' ');
+}
+
 /** A drawing's own SVG, nested whole at `rect` and drawn from its `box`:
  *  vector, exactly as its own export draws it. */
 export function nestedSvg(svg, rect, box) {
@@ -187,12 +205,12 @@ export function nestedSvg(svg, rect, box) {
  */
 export function bubbleExtras(bubbles) {
   const parts = [];
-  for (const { frame, image, connector: [from, to], name, svg, box } of bubbles) {
+  for (const { frame, image, connector, connectors = [connector], name, svg, box } of bubbles) {
     const stroke = `stroke="${BUBBLE_COLOR}" stroke-width="${BUBBLE_STROKE}" stroke-dasharray="${BUBBLE_DASH}" stroke-linecap="round" fill="none"`;
     parts.push(`<g class="link-bubble">`
-      + `<path d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" ${stroke}/>`
+      + `<path d="${connectorPath(connectors)}" ${stroke}/>`
       + `<rect x="${fmt(frame.x)}" y="${fmt(frame.y)}" width="${fmt(frame.w)}" height="${fmt(frame.h)}" rx="${BUBBLE_RADIUS}" ${stroke}/>`
-      + `<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="${BUBBLE_DOT}" fill="${BUBBLE_COLOR}"/>`
+      + connectors.map(([from]) => `<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="${BUBBLE_DOT}" fill="${BUBBLE_COLOR}"/>`).join('')
       + `<text x="${fmt(captionAnchor(frame).x)}" y="${fmt(captionAnchor(frame).y)}" font-family="system-ui, sans-serif" font-size="${BUBBLE_CAPTION_SIZE}" font-weight="600" fill="${BUBBLE_COLOR}">${escapeText(name)}</text>`
       + nestedSvg(svg, image, box)
       + `</g>`);

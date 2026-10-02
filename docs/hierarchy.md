@@ -31,7 +31,9 @@ together.
 designs beside the drawing, each in a bubble: the design drawn as a picture at
 its real size, framed by a dashed box with its name, and joined to its part by
 a connector (the design itself: its free equations and pasted images are left out, for clarity). A bubble appears once its picture is ready, growing out of its
-part (the editor's pop-in motion); closing it shrinks it back.
+part (the editor's pop-in motion); closing it shrinks it back. Parts linked
+to the same design share one bubble, joined to each of them by its own
+connector; its placement weighs every connector.
 
 Bubbles sit on a ring around the drawing, never over it
 (`src/core/link-bubble.js`). Each tries angles all round and takes the one
@@ -48,7 +50,7 @@ unless it is zoomed in past the whole drawing.
 
 `Shift+O` shows every linked part's design at once, or hides them all when
 they all show. `o` again (or **Hide linked design**, or the bubble's own
-right-click menu) closes one. A click on a bubble picks its part. Which bubbles are open, and
+right-click menu) closes one. A click on a bubble picks its parts. Which bubbles are open, and
 where any was dragged, is remembered per document in this browser; they are
 never saved in the document or undone.
 

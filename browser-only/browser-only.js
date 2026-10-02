@@ -15578,6 +15578,7 @@ __exports.layoutBubbles = layoutBubbles;
 __exports.bubbleOffset = bubbleOffset;
 __exports.bubbleAt = bubbleAt;
 __exports.captionAnchor = captionAnchor;
+__exports.connectorPath = connectorPath;
 __exports.nestedSvg = nestedSvg;
 __exports.bubbleExtras = bubbleExtras;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -15603,14 +15604,18 @@ const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap &
 /**
  * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h }, offset? }]
  * (the child drawing's size; `offset` pins the frame's top-left corner at
- * that displacement from the part's centre, where the user dragged it). Returns [{ id, angle, frame, image, connector:
- * [from, to] }]: `frame` is the box around the child with room for its
- * caption, `image` where the child is drawn.
+ * that displacement from the part's centre, where the user dragged it).
+ * Several parts linked to one design share a bubble: `parts` [rect, ...] in
+ * place of `part`, each with its own connector; `offset` is then from the
+ * first one's centre. Returns [{ id, angle, frame, image, connectors:
+ * [[from, to], ...], connector }]: `frame` is the box around the child with
+ * room for its caption, `image` where the child is drawn, `connector` the
+ * first part's.
  *
  * Bubbles sit on a ring around the drawing, never over it. Each tries angles
- * all round the ring and takes the spot whose connector reads best: running
- * diagonally, so it stands apart from the orthogonal wiring; short; and
- * crossing as little of the drawing as it can (`obstacles`: parts' and
+ * all round the ring and takes the spot whose connectors read best: running
+ * diagonally, so they stand apart from the orthogonal wiring; short; and
+ * crossing as little of the drawing as they can (`obstacles`: parts' and
  * labels' `rects`, wire `segments`; running along a wire is worst). It never
  * overlaps another bubble, and `previous` (id -> angle) keeps a bubble where
  * it was while that spot is about as good.
@@ -15625,18 +15630,27 @@ function layoutBubbles(drawing, requests, {
   const connectors = [];
   const out = [];
   const centre = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
+  const partsOf = (request) => request.parts || [request.part];
   // Pinned bubbles go first, where they were put; the rest keep clear of them.
-  const sorted = [...requests].sort((a, b) => (!!b.offset - !!a.offset) || (a.part.y - b.part.y) || (a.part.x - b.part.x));
-  for (const { id, part, size, offset } of sorted) {
+  const sorted = [...requests].sort((a, b) => (!!b.offset - !!a.offset) || (partsOf(a)[0].y - partsOf(b)[0].y) || (partsOf(a)[0].x - partsOf(b)[0].x));
+  for (const request of sorted) {
+    const { id, size, offset } = request;
+    const parts = partsOf(request);
     const w = ceilCell(size.w + 2 * pad);
     const h = ceilCell(size.h + 2 * pad + caption);
-    const pc = { x: part.x + part.w / 2, y: part.y + part.h / 2 };
-    const others = rects.filter((r) => !sameRect(r, part) && !contains(part, r));
+    const others = rects.filter((r) => !parts.some((part) => sameRect(r, part) || contains(part, r)));
+    // Each part's connector to a frame: from where it leaves the part to the
+    // nearest point of the frame.
+    const reach = (frame) => parts.map((part) => {
+      const pc = centreOf(part);
+      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
+      return [exitPoint(part, pc, to), to];
+    });
     let best = null;
     if (offset) {
+      const pc = centreOf(parts[0]);
       const frame = { x: snap(pc.x + offset.dx), y: snap(pc.y + offset.dy), w, h };
-      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
-      best = { angle: previous?.get(id) ?? 0, frame, from: exitPoint(part, pc, to), to };
+      best = { angle: previous?.get(id) ?? 0, frame, lines: reach(frame) };
     }
     for (let step = 0; !offset && step < RING_STEPS; step++) {
       const angle = (360 / RING_STEPS) * step;
@@ -15654,19 +15668,18 @@ function layoutBubbles(drawing, requests, {
         }
       }
       if (!frame) continue;
-      const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
-      const from = exitPoint(part, pc, to);
-      const cost = connectorCost(from, to, others, segments, connectors, placed)
+      const lines = reach(frame);
+      const cost = lines.reduce((sum, [from, to]) => sum + connectorCost(from, to, others, segments, connectors, placed), 0)
         + connectors.filter(([a, b]) => segThroughInterior(a, b, frame)).length * 60
         - (previous?.get(id) === angle ? STAY_BONUS : 0);
-      if (!best || cost < best.cost) best = { cost, angle, frame, from, to };
+      if (!best || cost < best.cost) best = { cost, angle, frame, lines };
     }
     if (!best) continue;
-    const { frame, angle, from, to } = best;
+    const { frame, angle, lines } = best;
     placed.push(frame);
-    connectors.push([from, to]);
+    connectors.push(...lines);
     const image = { x: frame.x + (w - size.w) / 2, y: frame.y + caption + pad + (h - caption - 2 * pad - size.h) / 2, w: size.w, h: size.h };
-    out.push({ id, angle, frame, image, connector: [from, to] });
+    out.push({ id, ...(request.ids ? { ids: request.ids } : {}), angle, frame, image, connectors: lines, connector: lines[0] });
   }
   return out;
 }
@@ -15676,6 +15689,7 @@ const STAY_BONUS = 6;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+const centreOf = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const contains = (outer, inner) => inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
 
 /** Where the line from the part's centre toward `to` leaves the part. */
@@ -15754,6 +15768,11 @@ function captionAnchor(frame) {
 const fmt = (value) => String(Math.round(value * 100) / 100);
 const escapeText = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** A bubble's connectors as one path's data: a line from each part. */
+function connectorPath(connectors) {
+  return connectors.map(([from, to]) => `M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}`).join(' ');
+}
+
 /** A drawing's own SVG, nested whole at `rect` and drawn from its `box`:
  *  vector, exactly as its own export draws it. */
 function nestedSvg(svg, rect, box) {
@@ -15771,12 +15790,12 @@ function nestedSvg(svg, rect, box) {
  */
 function bubbleExtras(bubbles) {
   const parts = [];
-  for (const { frame, image, connector: [from, to], name, svg, box } of bubbles) {
+  for (const { frame, image, connector, connectors = [connector], name, svg, box } of bubbles) {
     const stroke = `stroke="${BUBBLE_COLOR}" stroke-width="${BUBBLE_STROKE}" stroke-dasharray="${BUBBLE_DASH}" stroke-linecap="round" fill="none"`;
     parts.push(`<g class="link-bubble">`
-      + `<path d="M ${fmt(from.x)} ${fmt(from.y)} L ${fmt(to.x)} ${fmt(to.y)}" ${stroke}/>`
+      + `<path d="${connectorPath(connectors)}" ${stroke}/>`
       + `<rect x="${fmt(frame.x)}" y="${fmt(frame.y)}" width="${fmt(frame.w)}" height="${fmt(frame.h)}" rx="${BUBBLE_RADIUS}" ${stroke}/>`
-      + `<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="${BUBBLE_DOT}" fill="${BUBBLE_COLOR}"/>`
+      + connectors.map(([from]) => `<circle cx="${fmt(from.x)}" cy="${fmt(from.y)}" r="${BUBBLE_DOT}" fill="${BUBBLE_COLOR}"/>`).join('')
       + `<text x="${fmt(captionAnchor(frame).x)}" y="${fmt(captionAnchor(frame).y)}" font-family="system-ui, sans-serif" font-size="${BUBBLE_CAPTION_SIZE}" font-weight="600" fill="${BUBBLE_COLOR}">${escapeText(name)}</text>`
       + nestedSvg(svg, image, box)
       + `</g>`);
@@ -41181,7 +41200,7 @@ let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js"));
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
-let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, layoutBubbles } = __require("src/core/link-bubble.js")); });
+let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let animateViewTo, fitTarget, fitView; __bind(() => { ({ animateViewTo, fitTarget, fitView } = __require("src/web/canvas-view.js")); });
@@ -41205,7 +41224,8 @@ let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, rende
  * A link to a design that is not in the workspace is simply broken: the side
  * panel marks the part with a red dot, and its bubble and menu say so. Which
  * bubbles are open, and where any was dragged to, is remembered per document
- * in this browser; they are never saved in the document or undone.
+ * in this browser; they are never saved in the document or undone. Parts
+ * linked to one design share one bubble, a connector to each.
  */
 
 
@@ -41237,7 +41257,7 @@ let layoutCache = { key: '', layout: [] };
 const angles = new Map(); // refdes -> the angle its bubble last took
 const spots = new Map(); // refdes -> { dx, dy }: a dragged bubble's corner from its part's centre
 let layerEl = null;
-const nodes = new Map(); // refdes -> its drawn bubble
+const nodes = new Map(); // design name -> its drawn bubble
 const pictures = new Map(); // path -> { revision, box, href }: drawn once per revision
 
 // The way back up: [{ path, name, view, refdes, childPath }], outermost first.
@@ -41396,8 +41416,7 @@ function linkTargets() {
   const selected = selectedComps().filter((c) => c.link);
   if (selected.length) return selected;
   const bubble = bubbleAt(currentLayout(), editor.cursor);
-  const component = bubble ? editor.circuit.components.get(bubble.id) : null;
-  return component ? [component] : [];
+  return bubble ? bubble.ids.map((refdes) => editor.circuit.components.get(refdes)).filter(Boolean) : [];
 }
 
 /** Shift+O: show every linked part's design, or hide them all when they
@@ -41462,10 +41481,36 @@ function linkBubbleOpen(refdes) {
   return bubbles.has(refdes);
 }
 
-/** The part whose bubble is at a world point: { refdes } or null. */
+/** The parts whose bubble is at a world point: { refdes, refdeses } (the
+ *  first, and every part sharing it) or null. */
 function linkBubbleAt(point) {
   const hit = bubbleAt(currentLayout(), point);
-  return hit ? { refdes: hit.id } : null;
+  return hit ? { refdes: hit.id, refdeses: hit.ids } : null;
+}
+
+/** The laid-out bubble a part's connector joins, or undefined. */
+const layoutEntry = (refdes) => currentLayout().find((entry) => entry.ids.includes(refdes));
+
+/** Layout requests for `entries` ([refdes, bubble]) of `circuit`: one per
+ *  design, shared by the parts linked to it. A dragged spot is kept from
+ *  the part it was dragged beside, which then goes first. */
+function bubbleRequests(circuit, entries, size = (bubble) => bubble.box) {
+  const groups = new Map();
+  for (const [refdes, bubble] of entries) {
+    if (!groups.has(bubble.name)) groups.set(bubble.name, []);
+    groups.get(bubble.name).push(refdes);
+  }
+  return [...groups.values()].map((group) => {
+    const pinned = group.find((refdes) => spots.has(refdes));
+    const ids = pinned ? [pinned, ...group.filter((refdes) => refdes !== pinned)] : group;
+    return {
+      id: ids[0],
+      ids,
+      parts: ids.map((refdes) => circuit.components.get(refdes).bboxWorld()),
+      size: size(bubbles.get(ids[0])),
+      offset: spots.get(ids[0]),
+    };
+  });
 }
 
 /**
@@ -41480,9 +41525,7 @@ function linkBubbleExtras(drawing = editor.circuit) {
   if (!ready.length) return null;
   const layout = whole
     ? currentLayout().filter((entry) => bubbles.get(entry.id)?.status === 'ready')
-    : layoutBubbles(drawing.inkBounds(), ready.map(([refdes, bubble]) => ({
-      id: refdes, part: drawing.components.get(refdes).bboxWorld(), size: bubble.box, offset: spots.get(refdes),
-    })), { obstacles: obstacles(drawing), previous: angles });
+    : layoutBubbles(drawing.inkBounds(), bubbleRequests(drawing, ready), { obstacles: obstacles(drawing), previous: angles });
   return bubbleExtras(layout.map((entry) => {
     const bubble = bubbles.get(entry.id);
     return { ...entry, name: bubble.name, svg: bubble.svg, box: bubble.box };
@@ -41495,6 +41538,8 @@ function linkBubbleExtras(drawing = editor.circuit) {
 function moveLinkBubble(refdes, at, { remember = true } = {}) {
   const component = editor.circuit.components.get(refdes);
   if (!component || !bubbles.has(refdes)) return;
+  // A shared bubble keeps one spot, from the part it is dragged by.
+  for (const other of layoutEntry(refdes)?.ids || []) spots.delete(other);
   spots.set(refdes, bubbleOffset(component.bboxWorld(), at));
   if (remember) rememberSpots();
   render();
@@ -41502,12 +41547,13 @@ function moveLinkBubble(refdes, at, { remember = true } = {}) {
 
 /** The frame a bubble is drawn in now, or null. */
 function linkBubbleFrame(refdes) {
-  return currentLayout().find((entry) => entry.id === refdes)?.frame || null;
+  return layoutEntry(refdes)?.frame || null;
 }
 
 /** Put a dragged bubble back where the layout would place it. */
 function resetLinkBubble(refdes) {
-  if (!spots.delete(refdes)) return;
+  const ids = layoutEntry(refdes)?.ids || [refdes];
+  if (!ids.map((id) => spots.delete(id)).some(Boolean)) return;
   rememberSpots();
   render();
 }
@@ -41559,12 +41605,7 @@ function currentLayout() {
   // A broken link's box fits its message (24-unit italic, about half an em
   // a character).
   const messageSize = (bubble) => ({ w: Math.max(12 * GRID, messageText(bubble).length * 13), h: 2 * GRID });
-  const layout = shown.length ? layoutBubbles(circuit.inkBounds(), shown.map(([refdes, bubble]) => ({
-    id: refdes,
-    part: circuit.components.get(refdes).bboxWorld(),
-    size: bubble.status === 'ready' ? bubble.box : messageSize(bubble),
-    offset: spots.get(refdes),
-  })), { obstacles: obstacles(circuit), previous: angles }) : [];
+  const layout = shown.length ? layoutBubbles(circuit.inkBounds(), bubbleRequests(circuit, shown, (bubble) => (bubble.status === 'ready' ? bubble.box : messageSize(bubble))), { obstacles: obstacles(circuit), previous: angles }) : [];
   for (const entry of layout) angles.set(entry.id, entry.angle);
   layoutCache = { key, layout };
   return layout;
@@ -41609,28 +41650,29 @@ function syncLinkBubbles() {
   const live = new Set();
   for (const entry of layout) {
     const bubble = bubbles.get(entry.id);
-    live.add(entry.id);
-    let node = nodes.get(entry.id);
+    const key = bubble.name;
+    live.add(key);
+    let node = nodes.get(key);
     if (node?.closing) {
       node.group.remove();
-      nodes.delete(entry.id);
+      nodes.delete(key);
       node = null;
     }
-    const [from, to] = entry.connector;
+    const [from] = entry.connector;
     if (!node) {
       const group = svgEl('g', { class: 'link-bubble' });
       node = {
         group,
         connector: svgEl('path', { class: 'link-bubble-connector', fill: 'none' }),
-        dot: svgEl('circle', { class: 'link-bubble-dot', r: BUBBLE_DOT }),
+        dots: svgEl('g'),
         // Rounded corners set the bubble apart from box annotations.
         frame: svgEl('rect', { class: 'link-bubble-frame', rx: BUBBLE_RADIUS }),
         caption: svgEl('text', { class: 'link-bubble-caption' }),
         image: svgEl('image', { preserveAspectRatio: 'xMidYMid meet' }),
         message: svgEl('text', { class: 'link-bubble-message', 'text-anchor': 'middle', 'dominant-baseline': 'central' }),
       };
-      group.append(node.connector, node.frame, node.dot, node.caption, node.image, node.message);
-      nodes.set(entry.id, node);
+      group.append(node.connector, node.frame, node.dots, node.caption, node.image, node.message);
+      nodes.set(key, node);
       if (!reducedMotion()) {
         // Grow out of the part. The class goes once it has played, so the
         // canvas redrawing under it never plays it again.
@@ -41639,8 +41681,11 @@ function syncLinkBubbles() {
         group.addEventListener('animationend', () => group.classList.remove('entering'), { once: true });
       }
     }
-    setAttrs(node.connector, { d: `M ${from.x} ${from.y} L ${to.x} ${to.y}` });
-    setAttrs(node.dot, { cx: from.x, cy: from.y });
+    setAttrs(node.connector, { d: connectorPath(entry.connectors) });
+    // A dot where each connector leaves its part.
+    while (node.dots.childElementCount < entry.connectors.length) node.dots.append(svgEl('circle', { class: 'link-bubble-dot', r: BUBBLE_DOT }));
+    while (node.dots.childElementCount > entry.connectors.length) node.dots.lastElementChild.remove();
+    entry.connectors.forEach(([start], index) => setAttrs(node.dots.children[index], { cx: start.x, cy: start.y }));
     setAttrs(node.frame, { x: entry.frame.x, y: entry.frame.y, width: entry.frame.w, height: entry.frame.h });
     setAttrs(node.caption, captionAnchor(entry.frame));
     if (node.caption.textContent !== bubble.name) node.caption.textContent = bubble.name;
@@ -41659,11 +41704,11 @@ function syncLinkBubbles() {
     }
     if (node.group.parentNode !== layerEl) layerEl.appendChild(node.group);
   }
-  for (const [refdes, node] of [...nodes]) {
-    if (live.has(refdes) || node.closing) continue;
+  for (const [key, node] of [...nodes]) {
+    if (live.has(key) || node.closing) continue;
     if (reducedMotion() || !node.group.isConnected) {
       node.group.remove();
-      nodes.delete(refdes);
+      nodes.delete(key);
       continue;
     }
     node.closing = true;
@@ -41671,9 +41716,9 @@ function syncLinkBubbles() {
     node.group.style.transformOrigin = `${node.from.x}px ${node.from.y}px`;
     node.group.classList.add('leaving');
     setTimeout(() => {
-      if (nodes.get(refdes) !== node) return;
+      if (nodes.get(key) !== node) return;
       node.group.remove();
-      nodes.delete(refdes);
+      nodes.delete(key);
     }, CLOSE_MS);
   }
 }
@@ -41709,7 +41754,7 @@ async function enterLinkedDesign(component = linkTargets()[0]) {
   const entry = { path: editor.currentDocumentPath, name: editor.currentCircuitName, view: { ...editor.view }, refdes: component.refdes, childPath: doc.path };
   // With its bubble open, zoom into the picture first: the child then opens
   // where it was seen.
-  const bubble = currentLayout().find((item) => item.id === component.refdes);
+  const bubble = layoutEntry(component.refdes);
   const pane = paneRect();
   if (bubble && bubbles.get(component.refdes)?.status === 'ready' && pane) {
     animateViewTo(viewFitting(bubble.image, pane.width, pane.height, 0.05), 240);
@@ -41760,7 +41805,7 @@ async function leaveLinkedDesign(levels = 1) {
     followDocument();
     bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', svg: picture.svg, box: picture.box, href: picture.href });
     rememberOpen();
-    const bubble = currentLayout().find((item) => item.id === target.refdes);
+    const bubble = layoutEntry(target.refdes);
     if (bubble && !reducedMotion()) {
       Object.assign(editor.view, viewFitting(bubble.image, pane.width, pane.height, 0.05));
       render();
@@ -41903,16 +41948,19 @@ function openLinkBubbleMenu(refdes, x, y) {
   menu.hidden = false;
   menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - 250))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - 120))}px`;
+  // A shared bubble is every part linked to its design.
+  const ids = layoutEntry(refdes)?.ids || [refdes];
+  const parts = ids.map((id) => editor.circuit.components.get(id)).filter(Boolean);
   const heading = document.createElement('div');
   heading.className = 'context-menu-heading';
-  heading.textContent = `${component.link} · linked from ${component.refdes}`;
+  heading.textContent = `${component.link} · linked from ${ids.join(', ')}`;
   menu.appendChild(heading);
   const group = document.createElement('div');
   group.className = 'context-menu-group';
   appendContextItem(group, `Open ${component.link}`, () => void enterLinkedDesign(component), { shortcut: 'Alt+↓ / dbl-click', disabled: !linkedDocument(component.link) });
-  appendContextItem(group, 'Hide linked design', () => closeLinkBubble(refdes), { shortcut: 'o' });
-  if (spots.has(refdes)) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
-  appendDesignPicker(group, [component], component.link);
+  appendContextItem(group, 'Hide linked design', () => toggleLinkBubbles(parts), { shortcut: 'o' });
+  if (ids.some((id) => spots.has(id))) appendContextItem(group, 'Put back beside the drawing', () => resetLinkBubble(refdes));
+  appendDesignPicker(group, parts, component.link);
   menu.appendChild(group);
   menu.querySelector('button:not(:disabled)')?.focus();
 }
@@ -48560,14 +48608,14 @@ function canvasMouseDown(ev) {
     }
   }
 
-  // A linked design's bubble is a picture: a click picks its part, a drag
+  // A linked design's bubble is a picture: a click picks its parts, a drag
   // moves the bubble, a double-click opens the design.
   if (mode === 'normal' && !labelMode && !wire && !directWire && !moveMode && !copyMode && !deleteMode && !pickAt(startWorld)) {
     const bubble = linkBubbleAt(startWorld);
     if (bubble) {
       if (ev.detail >= 2) void enterLinkedDesign(circuit.components.get(bubble.refdes));
       else {
-        setSelection([bubble.refdes]);
+        setSelection(bubble.refdeses);
         drag = { mode: 'bubblemove', refdes: bubble.refdes, frame: linkBubbleFrame(bubble.refdes), startWorld, startClient, moved: false };
         try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
         render();

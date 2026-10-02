@@ -4377,14 +4377,14 @@ function canvasMouseDown(ev) {
     }
   }
 
-  // A linked design's bubble is a picture: a click picks its part, a drag
+  // A linked design's bubble is a picture: a click picks its parts, a drag
   // moves the bubble, a double-click opens the design.
   if (mode === 'normal' && !labelMode && !wire && !directWire && !moveMode && !copyMode && !deleteMode && !pickAt(startWorld)) {
     const bubble = linkBubbleAt(startWorld);
     if (bubble) {
       if (ev.detail >= 2) void enterLinkedDesign(circuit.components.get(bubble.refdes));
       else {
-        setSelection([bubble.refdes]);
+        setSelection(bubble.refdeses);
         drag = { mode: 'bubblemove', refdes: bubble.refdes, frame: linkBubbleFrame(bubble.refdes), startWorld, startClient, moved: false };
         try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
         render();
