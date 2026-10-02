@@ -234,7 +234,7 @@ beat rm|rename|move N ...      remove, name, or reorder a beat (1-based)
 beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF|PHASE open|closed
                                set a switch (its whole phase) from beat N on
-beat phases [--after N]        add a beat per switch phase: what still works shown, open switches and cut-off parts dimmed
+beat phases [--after N|--replace]  add a beat per switch phase (--replace: instead of the existing beats): what still works shown, open switches and cut-off parts dimmed
 timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...]
                                draw (or redraw in place) a timing diagram under the drawing, one wave
                                per switch phase; WAVE: one character per slot, 1 high, 0 low; waves

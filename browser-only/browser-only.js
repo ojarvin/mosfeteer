@@ -10758,11 +10758,16 @@ function setSwitchAt(circuit, index, key, state) {
  * switches closed and every other phase's open (a barred phase closed
  * wherever the phase it complements is open), what still works in that phase
  * shown and the rest -- open switches included -- dimmed (phaseLive). Only
- * phases some switch is on make beats. Returns how many beats.
+ * phases some switch is on make beats. With `replace`, they replace every
+ * existing beat instead. Returns how many beats.
  */
-function phaseBeats(circuit, { index = circuit.beats.length, states = null } = {}) {
+function phaseBeats(circuit, { index = circuit.beats.length, states = null, replace = false } = {}) {
   const phases = switchPhases(circuit);
   if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+  if (replace) {
+    circuit.beats.splice(0);
+    index = 0;
+  }
   // One phase closed at a time, unless `states` ([{ name, closed: Set of
   // phase keys }], a timing diagram's) says which close together.
   const steps = states || phases.map(({ key, source }) => ({
@@ -11626,6 +11631,7 @@ const FLAG_ARITY = {
   rise: 1,
   order: 1,
   place: 0,
+  replace: 0,
   add: 1,
   rm: 1,
 };
@@ -12038,7 +12044,7 @@ function commandHelp() {
     '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
-    '  beat phases [--after N]        - add a beat per state of the timing diagram (phases high together close together),',
+    '  beat phases [--after N|--replace] - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
     '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
     '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
@@ -12758,11 +12764,13 @@ function beatCommand(circuit, pos, flags, result) {
     return result(`${{ show: 'shown', dim: 'dimmed', hide: 'hidden' }[sub]} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
   }
   if (sub === 'phases') {
-    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
+    const replace = !!flags.replace;
+    if (replace && flags.after) throw new Error('beat phases: --replace and --after do not go together');
+    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : replace ? 0 : circuit.beats.length;
     // With a timing diagram drawn, its states are the beats; else one per phase.
     const states = timingStates(circuit);
-    const count = phaseBeats(circuit, { index, states });
-    return result(`added beats ${index + 1}..${index + count}, ${states ? 'one per state of the timing diagram' : 'one per switch phase'}`, { index: index + 1, count }, true);
+    const count = phaseBeats(circuit, { index, states, replace });
+    return result(`${replace ? 'replaced the beats with' : 'added'} beats ${index + 1}..${index + count}, ${states ? 'one per state of the timing diagram' : 'one per switch phase'}`, { index: index + 1, count }, true);
   }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);
@@ -34054,7 +34062,7 @@ __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
 let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
 let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
-let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey } = __require("src/core/beats.js")); });
+let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl; __bind(() => { ({ canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } = __require("src/web/elements.js")); });
@@ -34065,11 +34073,13 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/side-panel.js")); });
 let commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } = __require("src/web/main.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
+let chooseAction; __bind(() => { ({ chooseAction } = __require("src/web/file-dialog.js")); });
 /**
  * Beats in the editor: the beat strip, stepping and editing beats, hiding
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
 
 
 
@@ -34527,21 +34537,36 @@ function openBeatMenu(index, x, y) {
 }
 
 /** One beat per state of the timing diagram, or without one per switch
- * phase, after the beat on screen: what still works shown, the rest dimmed
- * (core/beats.js phaseBeats). */
-function addPhaseBeats() {
+ * phase: what still works shown, the rest dimmed (core/beats.js
+ * phaseBeats). With beats already there, asks whether the new ones replace
+ * them or follow the beat on screen. */
+async function addPhaseBeats() {
+  const existing = editor.circuit.beats.length;
+  let replace = false;
+  // Without phases there is nothing to ask about: phaseBeats says so.
+  if (existing && switchPhases(editor.circuit).length) {
+    const after = activeBeatIndex() === null ? 'at the end' : 'after the beat on screen';
+    const choice = await chooseAction({
+      title: 'Beats already exist',
+      message: `The drawing has ${existing} beat${existing === 1 ? '' : 's'}. Replace ${existing === 1 ? 'it' : 'them'} with the new beats, or add the new ones ${after}?`,
+      choices: [{ value: 'replace', label: 'Replace', danger: true }, { value: 'append', label: 'Append' }],
+    });
+    if (!choice) return;
+    replace = choice === 'replace';
+  }
   const current = activeBeatIndex();
-  const index = current === null ? editor.circuit.beats.length : current + 1;
+  const index = replace ? 0 : current === null ? editor.circuit.beats.length : current + 1;
   let count = 0;
   // A drawn timing diagram says which phases close together: one beat per
   // state it steps through. Without one, a beat per phase.
   const states = timingStates(editor.circuit);
-  commit(() => { count = phaseBeats(editor.circuit, { index, states }); });
+  commit(() => { count = phaseBeats(editor.circuit, { index, states, replace }); });
   if (!count) return;
   noteTip('phase-beats');
+  const what = replace ? `replaced the beats with ${count}` : `added ${count}`;
   logLine(states
-    ? `added ${count} beats, one per state of the timing diagram: phases high together close together, and what they cut off is dimmed`
-    : `added ${count} phase beats: each dims its open switches and whatever they cut off (draw a timing diagram to close phases together)`);
+    ? `${what} beats, one per state of the timing diagram: phases high together close together, and what they cut off is dimmed`
+    : `${what} phase beats: each dims its open switches and whatever they cut off (draw a timing diagram to close phases together)`);
   setActiveBeat(index);
 }
 
@@ -40793,6 +40818,7 @@ function installExportUi() {
 __modules["src/web/file-dialog.js"] = function (__require, __exports) {
 __exports.showFileDialog = showFileDialog;
 __exports.confirmChoice = confirmChoice;
+__exports.chooseAction = chooseAction;
 let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
 /**
  * In-app file browser for Open, Save as, and choosing the workspace folder.
@@ -41014,14 +41040,24 @@ function showFileDialog(persistence, { mode = 'open', dir = '', name = '', title
 }
 
 /** Small promise-based confirmation, styled like the other editor dialogs. */
-function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
+async function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
+  return await chooseAction({ title, message, cancelLabel, choices: [{ value: 'confirm', label: confirmLabel, danger }] }) === 'confirm';
+}
+
+/** Ask which of several `choices` ({ value, label, danger }) to take, the
+ *  last one the default. Resolves to its value, or null on Cancel/Escape. */
+function chooseAction({ title, message, choices, cancelLabel = 'Cancel' }) {
   const dialog = element('dialog', { class: 'confirm-dialog', 'aria-label': title }, [
     element('form', { method: 'dialog' }, [
       element('h2', { text: title }),
       element('p', { text: message }),
       element('div', { class: 'dialog-actions' }, [
         element('button', { value: 'cancel', text: cancelLabel }),
-        element('button', { value: 'confirm', class: danger ? 'danger-action' : 'confirm-action', text: confirmLabel }),
+        ...choices.map((choice, index) => element('button', {
+          value: `choice:${index}`,
+          class: choice.danger ? 'danger-action' : index === choices.length - 1 ? 'confirm-action' : '',
+          text: choice.label,
+        })),
       ]),
     ]),
   ]);
@@ -41031,7 +41067,8 @@ function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Can
   return new Promise((resolve) => {
     dialog.addEventListener('close', () => {
       dialog.remove();
-      resolve(dialog.returnValue === 'confirm');
+      const picked = /^choice:(\d+)$/.exec(dialog.returnValue || '');
+      resolve(picked ? choices[Number(picked[1])].value : null);
     }, { once: true });
   });
 }

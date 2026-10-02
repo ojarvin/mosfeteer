@@ -81,6 +81,7 @@ const FLAG_ARITY = {
   rise: 1,
   order: 1,
   place: 0,
+  replace: 0,
   add: 1,
   rm: 1,
 };
@@ -493,7 +494,7 @@ export function commandHelp() {
     '  beat merge N M ...             - merge beats into one at the first: most visible look, switches closed in any, first highlight',
     '  beat show|dim|hide N ID ...    - show, dim, or hide parts and labels from beat N on',
     '  beat switch N REF|PHASE open|closed - set a switch (its whole phase) from beat N on',
-    '  beat phases [--after N]        - add a beat per state of the timing diagram (phases high together close together),',
+    '  beat phases [--after N|--replace] - add a beat per state of the timing diagram (phases high together close together),',
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
     '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
     '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
@@ -1213,11 +1214,13 @@ function beatCommand(circuit, pos, flags, result) {
     return result(`${{ show: 'shown', dim: 'dimmed', hide: 'hidden' }[sub]} from beat ${index + 1}: ${listed.join(' ')}`, null, true);
   }
   if (sub === 'phases') {
-    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : circuit.beats.length;
+    const replace = !!flags.replace;
+    if (replace && flags.after) throw new Error('beat phases: --replace and --after do not go together');
+    const index = flags.after ? beatIndex(circuit, flags.after[0]) + 1 : replace ? 0 : circuit.beats.length;
     // With a timing diagram drawn, its states are the beats; else one per phase.
     const states = timingStates(circuit);
-    const count = phaseBeats(circuit, { index, states });
-    return result(`added beats ${index + 1}..${index + count}, ${states ? 'one per state of the timing diagram' : 'one per switch phase'}`, { index: index + 1, count }, true);
+    const count = phaseBeats(circuit, { index, states, replace });
+    return result(`${replace ? 'replaced the beats with' : 'added'} beats ${index + 1}..${index + count}, ${states ? 'one per state of the timing diagram' : 'one per switch phase'}`, { index: index + 1, count }, true);
   }
   if (sub === 'switch') {
     const index = beatIndex(circuit, pos[1]);

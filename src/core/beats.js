@@ -673,11 +673,16 @@ function setSwitchAt(circuit, index, key, state) {
  * switches closed and every other phase's open (a barred phase closed
  * wherever the phase it complements is open), what still works in that phase
  * shown and the rest -- open switches included -- dimmed (phaseLive). Only
- * phases some switch is on make beats. Returns how many beats.
+ * phases some switch is on make beats. With `replace`, they replace every
+ * existing beat instead. Returns how many beats.
  */
-export function phaseBeats(circuit, { index = circuit.beats.length, states = null } = {}) {
+export function phaseBeats(circuit, { index = circuit.beats.length, states = null, replace = false } = {}) {
   const phases = switchPhases(circuit);
   if (!phases.length) throw new Error('no switch has a phase yet: label switches with the signal that controls them');
+  if (replace) {
+    circuit.beats.splice(0);
+    index = 0;
+  }
   // One phase closed at a time, unless `states` ([{ name, closed: Set of
   // phase keys }], a timing diagram's) says which close together.
   const steps = states || phases.map(({ key, source }) => ({

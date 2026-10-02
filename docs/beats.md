@@ -64,7 +64,9 @@ switch as drawn -- all open, say -- until one is flipped there.
 **Beats from phases / timing** (More menu, or the timing editor's **Make
 beats**; `beat phases`) follows one flow: switches name their phases, a timing
 diagram (when one is drawn) says which phases are high when, and the beats
-step through that. With a diagram, it adds one beat per state the diagram
+step through that. When the drawing already has beats, the editor asks
+whether the new beats replace them or are added after the beat on screen
+(`beat phases --replace` or `--after N`). With a diagram, it adds one beat per state the diagram
 steps through -- a run of slots with the same phases high -- named after the
 phases high in it, so overlapping phases close together; a wave that ends as
 it starts goes round, its last state being its first. Without a diagram, it

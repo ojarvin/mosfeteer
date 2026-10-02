@@ -6,7 +6,7 @@
 
 import { element } from './dom.js';
 import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources } from '../core/timing-diagram.js';
-import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey } from '../core/beats.js';
+import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { canvasEl, beatStripEl, beatListEl, beatHintEl, presenterEl, presenterStageEl, presenterCountEl } from './elements.js';
@@ -17,6 +17,7 @@ import { editor } from './editor-state.js';
 import { appendMarkupText } from './side-panel.js';
 import { commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } from './main.js';
 import { noteTip } from './onboarding.js';
+import { chooseAction } from './file-dialog.js';
 
 export function activeBeatIndex() {
   if (!editor.activeBeatId) return null;
@@ -460,21 +461,36 @@ function openBeatMenu(index, x, y) {
 }
 
 /** One beat per state of the timing diagram, or without one per switch
- * phase, after the beat on screen: what still works shown, the rest dimmed
- * (core/beats.js phaseBeats). */
-function addPhaseBeats() {
+ * phase: what still works shown, the rest dimmed (core/beats.js
+ * phaseBeats). With beats already there, asks whether the new ones replace
+ * them or follow the beat on screen. */
+async function addPhaseBeats() {
+  const existing = editor.circuit.beats.length;
+  let replace = false;
+  // Without phases there is nothing to ask about: phaseBeats says so.
+  if (existing && switchPhases(editor.circuit).length) {
+    const after = activeBeatIndex() === null ? 'at the end' : 'after the beat on screen';
+    const choice = await chooseAction({
+      title: 'Beats already exist',
+      message: `The drawing has ${existing} beat${existing === 1 ? '' : 's'}. Replace ${existing === 1 ? 'it' : 'them'} with the new beats, or add the new ones ${after}?`,
+      choices: [{ value: 'replace', label: 'Replace', danger: true }, { value: 'append', label: 'Append' }],
+    });
+    if (!choice) return;
+    replace = choice === 'replace';
+  }
   const current = activeBeatIndex();
-  const index = current === null ? editor.circuit.beats.length : current + 1;
+  const index = replace ? 0 : current === null ? editor.circuit.beats.length : current + 1;
   let count = 0;
   // A drawn timing diagram says which phases close together: one beat per
   // state it steps through. Without one, a beat per phase.
   const states = timingStates(editor.circuit);
-  commit(() => { count = phaseBeats(editor.circuit, { index, states }); });
+  commit(() => { count = phaseBeats(editor.circuit, { index, states, replace }); });
   if (!count) return;
   noteTip('phase-beats');
+  const what = replace ? `replaced the beats with ${count}` : `added ${count}`;
   logLine(states
-    ? `added ${count} beats, one per state of the timing diagram: phases high together close together, and what they cut off is dimmed`
-    : `added ${count} phase beats: each dims its open switches and whatever they cut off (draw a timing diagram to close phases together)`);
+    ? `${what} beats, one per state of the timing diagram: phases high together close together, and what they cut off is dimmed`
+    : `${what} phase beats: each dims its open switches and whatever they cut off (draw a timing diagram to close phases together)`);
   setActiveBeat(index);
 }
 

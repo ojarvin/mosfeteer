@@ -916,6 +916,10 @@ test('beat commands add, edit, list, and draw presentation steps', () => {
   runCommand(circuit, 'value S1 $\\phi_1$');
   assert.deepEqual(runCommand(circuit, 'beat phases --after 1').json, { index: 2, count: 1 });
   assert.equal(circuit.beats[1].name, '$\\phi_1$');
+  // --replace makes the phase beats the only beats.
+  assert.deepEqual(runCommand(circuit, 'beat phases --replace').json, { index: 1, count: 1 });
+  assert.deepEqual(circuit.beats.map((beat) => beat.name), ['$\\phi_1$']);
+  assert.throws(() => runCommand(circuit, 'beat phases --replace --after 1'), /do not go together/);
   runCommand(circuit, 'value S1 S1');
   runCommand(circuit, 'switch S1 closed');
   assert.equal(circuit.components.get('S1').type, 'switch_closed');

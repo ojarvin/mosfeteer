@@ -218,14 +218,24 @@ export function showFileDialog(persistence, { mode = 'open', dir = '', name = ''
 }
 
 /** Small promise-based confirmation, styled like the other editor dialogs. */
-export function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
+export async function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
+  return await chooseAction({ title, message, cancelLabel, choices: [{ value: 'confirm', label: confirmLabel, danger }] }) === 'confirm';
+}
+
+/** Ask which of several `choices` ({ value, label, danger }) to take, the
+ *  last one the default. Resolves to its value, or null on Cancel/Escape. */
+export function chooseAction({ title, message, choices, cancelLabel = 'Cancel' }) {
   const dialog = element('dialog', { class: 'confirm-dialog', 'aria-label': title }, [
     element('form', { method: 'dialog' }, [
       element('h2', { text: title }),
       element('p', { text: message }),
       element('div', { class: 'dialog-actions' }, [
         element('button', { value: 'cancel', text: cancelLabel }),
-        element('button', { value: 'confirm', class: danger ? 'danger-action' : 'confirm-action', text: confirmLabel }),
+        ...choices.map((choice, index) => element('button', {
+          value: `choice:${index}`,
+          class: choice.danger ? 'danger-action' : index === choices.length - 1 ? 'confirm-action' : '',
+          text: choice.label,
+        })),
       ]),
     ]),
   ]);
@@ -235,7 +245,8 @@ export function confirmChoice({ title, message, confirmLabel = 'OK', cancelLabel
   return new Promise((resolve) => {
     dialog.addEventListener('close', () => {
       dialog.remove();
-      resolve(dialog.returnValue === 'confirm');
+      const picked = /^choice:(\d+)$/.exec(dialog.returnValue || '');
+      resolve(picked ? choices[Number(picked[1])].value : null);
     }, { once: true });
   });
 }
