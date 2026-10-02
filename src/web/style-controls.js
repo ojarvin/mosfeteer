@@ -44,7 +44,7 @@ function setSelectedLabelFont(field, on) {
     for (const label of labels) {
       if (field === 'mono' && !on) delete label.style.mono;
       else label.style[field] = on;
-      label.clearRenderedTextBounds();
+      label.clearRenderedTextBounds({ restyle: true });
     }
   });
   render();

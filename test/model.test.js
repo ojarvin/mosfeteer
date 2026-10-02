@@ -4122,3 +4122,27 @@ test('a replacing circuit adopts text measurements for labels whose text and fac
   assert.equal(bolder.adoptTextMetrics(before), 1);
   assert.equal(bolder.labels.get(same.id)._renderedTextBounds, null);
 });
+
+test('a restyled label keeps its last measured box as the edge to hold, not the estimate', () => {
+  const circuit = new Circuit();
+  const label = circuit.addLabel({ text: '$\\frac{g_m}{C_L}$', x: 200, y: 200, math: true });
+  label.setAlign('left');
+  label.setRenderedTextBounds(150, 90);
+  const measured = label.bbox();
+  label.clearRenderedTextBounds({ restyle: true });
+  assert.deepEqual(label._boxBeforeEdit, measured);
+  assert.equal(label._restyled, true);
+  // New text measures against the placement estimate, as before.
+  label.setRenderedTextBounds(150, 90);
+  label.setText('$x$');
+  assert.equal(label._restyled, false);
+});
+
+test('the editor measures a restyled label against its previous box (no creep on toggles)', async () => {
+  const { functionSource, editorSource } = await import('./helpers/editor-source.js');
+  const sync = functionSource('syncRenderedLabelMetrics', editorSource());
+  assert.match(sync, /const before = \(\(label\.parent \|\| label\._restyled\) && label\._boxBeforeEdit\) \|\| label\.bbox\(\);/);
+  const { readFileSync } = await import('node:fs');
+  const controls = readFileSync(new URL('../src/web/style-controls.js', import.meta.url), 'utf8');
+  assert.match(controls, /label\.clearRenderedTextBounds\(\{ restyle: true \}\)/);
+});

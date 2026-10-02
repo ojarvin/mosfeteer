@@ -17140,11 +17140,17 @@ class LabelInstance {
     return true;
   }
 
-  clearRenderedTextBounds() {
+  /** Drop every measurement, for new text or a new face. `restyle` (the
+   *  same text in another face) makes the last measured box, not the
+   *  placement estimate, the one whose aligned edge the new measurement
+   *  keeps: the estimate differs from it, so the label would creep a step
+   *  each time the face is toggled. */
+  clearRenderedTextBounds({ restyle = false } = {}) {
     if (!this._renderedTextBounds && !this._mathBox) return false;
     // The last measured box, so the editor can keep an edge that was flush
     // against a parent arrow or box when the new text is measured.
     this._boxBeforeEdit = this.bbox();
+    this._restyled = restyle;
     this._renderedTextBounds = null;
     this._mathBox = null;
     this.circuit.invalidateRoutingCache();
@@ -47659,9 +47665,11 @@ function syncRenderedLabelMetrics() {
     if (!bounds) continue;
     // A caption's edge against its parent was set by the box it had before
     // this text: the placement estimate for new text, the last measurement
-    // after an edit.
-    const before = (label.parent && label._boxBeforeEdit) || label.bbox();
+    // after an edit. A new face on the same text keeps the last measured
+    // edge for any label (clearRenderedTextBounds `restyle`).
+    const before = ((label.parent || label._restyled) && label._boxBeforeEdit) || label.bbox();
     label._boxBeforeEdit = null;
+    label._restyled = false;
     if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
     keepAlignedEdge(label, before);
     changed = true;
@@ -56304,7 +56312,7 @@ function setSelectedLabelFont(field, on) {
     for (const label of labels) {
       if (field === 'mono' && !on) delete label.style.mono;
       else label.style[field] = on;
-      label.clearRenderedTextBounds();
+      label.clearRenderedTextBounds({ restyle: true });
     }
   });
   render();

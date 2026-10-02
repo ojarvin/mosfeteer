@@ -2654,9 +2654,11 @@ export function syncRenderedLabelMetrics() {
     if (!bounds) continue;
     // A caption's edge against its parent was set by the box it had before
     // this text: the placement estimate for new text, the last measurement
-    // after an edit.
-    const before = (label.parent && label._boxBeforeEdit) || label.bbox();
+    // after an edit. A new face on the same text keeps the last measured
+    // edge for any label (clearRenderedTextBounds `restyle`).
+    const before = ((label.parent || label._restyled) && label._boxBeforeEdit) || label.bbox();
     label._boxBeforeEdit = null;
+    label._restyled = false;
     if (!label.setRenderedTextBounds(bounds.w, bounds.h)) continue;
     keepAlignedEdge(label, before);
     changed = true;

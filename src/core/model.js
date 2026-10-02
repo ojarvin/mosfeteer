@@ -1229,11 +1229,17 @@ export class LabelInstance {
     return true;
   }
 
-  clearRenderedTextBounds() {
+  /** Drop every measurement, for new text or a new face. `restyle` (the
+   *  same text in another face) makes the last measured box, not the
+   *  placement estimate, the one whose aligned edge the new measurement
+   *  keeps: the estimate differs from it, so the label would creep a step
+   *  each time the face is toggled. */
+  clearRenderedTextBounds({ restyle = false } = {}) {
     if (!this._renderedTextBounds && !this._mathBox) return false;
     // The last measured box, so the editor can keep an edge that was flush
     // against a parent arrow or box when the new text is measured.
     this._boxBeforeEdit = this.bbox();
+    this._restyled = restyle;
     this._renderedTextBounds = null;
     this._mathBox = null;
     this.circuit.invalidateRoutingCache();
