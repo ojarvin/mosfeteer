@@ -185,7 +185,8 @@ bits under their bus, and hovering a bus glows all its bits (a bit, the bus).
 The renderer draws a one-cell 45-degree slash on a multi-bit net at each
 pin, whole cells clear of the drawn part along the pin (`busTerminalMarks`: at
 an ADC's terminal, a cell out from a port, two from a pin on a body's edge
-such as a sum or block, for an arrowhead). A bus net's right-click "Show bit
+such as a sum or block, for an arrowhead; two pins close together on one
+plain wire share one slash mid-way). A bus net's right-click "Show bit
 count" (`net <id> bitcount on|off`, `net.busCount`) puts its width beside each
 slash; each count drags on its own, keeping its offset from its slash. A port named that way folds the range into its
 identity (`D_{OUT}[3:0]` is `DOUT_3_0`) and keeps it in its label and net

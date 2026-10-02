@@ -11355,8 +11355,9 @@ let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js
  * meets the drawn part, in whole cells -- at the terminal when the symbol's
  * lead is that long already (an ADC's), one cell out along the wire from a
  * port's short lead, and two from a pin right on the body's edge (a sum, a
- * block), leaving room for an arrowhead. A bus net with no pins marks each branch
- * mid-way instead (busMarkPoints).
+ * block), leaving room for an arrowhead. Two pins joined by a short plain
+ * wire share one slash, mid-way between them. A bus net with no pins marks
+ * each branch mid-way instead (busMarkPoints).
  */
 
 
@@ -11536,8 +11537,18 @@ function busTerminalMarks(circuit, net, paths, avoid = []) {
       .find((p) => paths.some((path) => pointOnPath(p, path) && pointOnPath(at, path))) || at;
     marks.push({ ...point, horizontal: dir.y === 0, key: `${comp}.${term}` });
   }
+  // Two pins close together on one plain wire need one slash, between them;
+  // a junction, or a longer run, keeps one at each pin.
+  if (marks.length === 2 && paths.length === 1 && !(net.junctions || []).length
+    && Math.abs(marks[0].x - marks[1].x) + Math.abs(marks[0].y - marks[1].y) <= CLOSE_PINS) {
+    const [middle] = busMarkPoints(paths, avoid);
+    if (middle) return [{ ...middle, key: marks.map((mark) => mark.key).join('|') }];
+  }
   return marks.length ? marks : busMarkPoints(paths, avoid).map((mark, i) => ({ ...mark, key: `branch:${i}` }));
 }
+
+/** How near two pins' slashes come before they are drawn as one. */
+const CLOSE_PINS = 4 * GRID;
 
 /** Text size of a bit count: smaller than a label, like a pin annotation. */
 const BUS_COUNT_SIZE = 30;

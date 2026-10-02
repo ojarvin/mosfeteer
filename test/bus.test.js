@@ -187,3 +187,22 @@ test('typed label names spell a bus out bit by bit, in written order', () => {
   assert.deepEqual(expandLabelNames('D[3] V_{a,b}  RST'), ['D[3]', 'V_{a,b}', 'RST']);
   assert.deepEqual(expandLabelNames('  '), []);
 });
+
+test('two pins close together on one wire share a slash, mid-way; a junction keeps one each', () => {
+  const circuit = new Circuit();
+  for (const line of ['add block B1 --at 0 0', 'add block B2 --at 400 0', 'connect B1.T10 B2.T12 --name D[3:0]']) runCommand(circuit, line);
+  const net = circuit.netOfTerminal({ comp: 'B1', term: 'T10' });
+  const marks = busTerminalMarks(circuit, net, net.paths());
+  assert.deepEqual(marks, [{ x: 200, y: 0, horizontal: true, key: 'B1.T10|B2.T12' }]);
+  assert.equal((svgString(circuit).match(/class="bus-mark"/g) || []).length, 1);
+  // Far apart, each pin keeps its own.
+  const far = new Circuit();
+  for (const line of ['add block B1 --at 0 0', 'add block B2 --at 1200 0', 'connect B1.T10 B2.T12 --name D[3:0]']) runCommand(far, line);
+  const long = far.netOfTerminal({ comp: 'B1', term: 'T10' });
+  assert.equal(busTerminalMarks(far, long, long.paths()).length, 2);
+  // A third pin on the net: one at each.
+  runCommand(circuit, 'add block B3 --at 200 400');
+  runCommand(circuit, 'connect B3.T9 B1.T10');
+  const three = circuit.netOfTerminal({ comp: 'B1', term: 'T10' });
+  assert.equal(busTerminalMarks(circuit, three, three.paths()).length, 3);
+});
