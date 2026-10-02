@@ -1002,3 +1002,12 @@ test('multiline text keeps its blank lines, its spacing, and a monospace face', 
   label.setText('plain\ntext');
   assert.doesNotMatch(svgString(circuit), /xml:space/);
 });
+
+test('an italic letter before an upright one gets its TeX italic correction', () => {
+  // C_{P0}: P leans into the 0 without it, as TeX never sets it.
+  assert.match(texToMathML('$C_{P0}$'), /<mi>P<\/mi><mspace width="0.139em"\/><mn>0<\/mn>/);
+  // Italic beside italic, or a letter that barely leans, is left as it is.
+  assert.doesNotMatch(texToMathML('$V_{DD}$'), /mspace/);
+  assert.doesNotMatch(texToMathML('$g_{m2}$'), /mspace/);
+  assert.doesNotMatch(texToMathML('$R_{1}$'), /mspace/);
+});

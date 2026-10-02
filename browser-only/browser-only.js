@@ -23572,6 +23572,26 @@ function mathMlDelimiter(value, stretchy = true) {
 // higher than the ASCII hyphen.
 const MATH_SIGNS = { '-': '\u2212', '+': '+' };
 
+// TeX adds a math-italic letter's italic correction after it, so its lean
+// clears an upright neighbour: the P of `C_{P0}` does not overhang the 0.
+// MathML renderers leave it out between atoms, so it is added here, in em,
+// from Computer Modern's math italic (cmmi10); letters that barely lean
+// have none.
+const ITALIC_CORRECTION = {
+  B: 0.05, C: 0.072, D: 0.028, E: 0.058, F: 0.139, H: 0.081, I: 0.078, J: 0.096, K: 0.072,
+  M: 0.109, N: 0.109, O: 0.028, P: 0.139, S: 0.058, T: 0.139, U: 0.109, V: 0.222, W: 0.139,
+  X: 0.078, Y: 0.222, Z: 0.072,
+  f: 0.108, j: 0.057, q: 0.036, r: 0.028, v: 0.036, w: 0.027, y: 0.036, z: 0.044,
+};
+
+/** The gap after an italic letter atom `before` when `after` stands
+ *  upright (a digit, an upright letter, text), else 0. */
+function italicCorrection(before, after) {
+  const letter = /^<mi>([A-Za-z])<\/mi>$/.exec(before || '')?.[1];
+  if (!letter || !/^<(?:mn|mtext|mi mathvariant="normal")\b/.test(after || '')) return 0;
+  return ITALIC_CORRECTION[letter] || 0;
+}
+
 // TeX sets lowercase Greek in math italic (an <mi> default) and uppercase
 // Greek upright, which needs the explicit variant.
 const GREEK_LOWER = {
@@ -23723,7 +23743,10 @@ function texToMathML(source) {
           : `<msup>${mathMlNucleus(base, 'height')}${script}</msup>`);
         continue;
       }
-      atoms.push(parseAtom(atoms[atoms.length - 1]));
+      const atom = parseAtom(atoms[atoms.length - 1]);
+      const gap = italicCorrection(atoms[atoms.length - 1], atom);
+      if (gap) atoms.push(`<mspace width="${gap}em"/>`);
+      atoms.push(atom);
     }
     return atoms.join('');
   };
