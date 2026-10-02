@@ -70,7 +70,7 @@ test('passive, macro, and logic labels default above their bodies', () => {
   for (const type of ['resistor', 'capacitor', 'inductor', 'diode', 'variable_resistor', 'variable_capacitor', 'variable_inductor']) {
     assert.deepEqual(getSymbol(type).labelOffset, { x: 0, y: -80 }, `${type} label offset`);
   }
-  for (const type of ['opamp', 'opamp_diff', 'adc', 'dac']) {
+  for (const type of ['opamp', 'opamp_diff', 'gm', 'adc', 'dac', 'adc_diff', 'dac_diff']) {
     assert.deepEqual(getSymbol(type).labelOffset, { x: 0, y: -160 }, `${type} label offset`);
   }
   for (const type of ['inverter', 'buffer', 'and2_gate', 'nand2_gate', 'or2_gate', 'nor2_gate', 'xor2_gate', 'xnor2_gate']) {
@@ -312,6 +312,37 @@ test('ADC and DAC symbols expose single-bit-bus terminals and centered labels', 
   }
 });
 
+test('differential ADC and DAC put + over - on the pointed analog side', () => {
+  const pins = (type) => getSymbol(type).terminals.map(({ name, x, y }) => ({ name, x, y }));
+  assert.deepEqual(pins('adc_diff'), [
+    { name: 'aip', x: -200, y: -40 }, { name: 'aim', x: -200, y: 40 }, { name: 'd', x: 200, y: 0 },
+  ]);
+  assert.deepEqual(pins('dac_diff'), [
+    { name: 'd', x: -200, y: 0 }, { name: 'aop', x: 200, y: -40 }, { name: 'aom', x: 200, y: 40 },
+  ]);
+  for (const [type, side] of [['adc_diff', -1], ['dac_diff', 1]]) {
+    const def = getSymbol(type);
+    assert.deepEqual(def.bbox, { x: -200, y: -120, w: 400, h: 240 });
+    // Each analog lead stops on the pointed end's slant (x=+-88 at y=+-40).
+    for (const y of [-40, 40]) {
+      assert.ok(def.graphics.some((g) => g.d === `M ${side * 200} ${y} L ${side * 88} ${y}`), `${type} lead at ${y}`);
+    }
+    // + on the top pin, - on the bottom one.
+    assert.ok(def.graphics.some((g) => g.d === `M ${side * 58} -54 L ${side * 58} -26`), `${type} plus`);
+    assert.ok(def.graphics.some((g) => g.d === `M ${side * 58 - 14} 40 L ${side * 58 + 14} 40`), `${type} minus`);
+  }
+});
+
+test('the Gm cell is the differential op-amp\'s pins and marks on a blunt body', () => {
+  const def = getSymbol('gm');
+  const diff = getSymbol('opamp_diff');
+  assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), diff.terminals.map(({ name, x, y }) => ({ name, x, y })));
+  assert.deepEqual(def.bbox, diff.bbox);
+  assert.ok(def.graphics.some((g) => g.d === 'M -107.19 100 L -107.19 -100 L 52.81 -60 L 52.81 60 Z' && g.style === 'emph'));
+  assert.deepEqual(def.graphics.at(-1), { kind: 'text', x: -26, y: 0, text: 'gm', anchor: 'middle', font: 'label', keepUpright: true });
+  assert.equal(def.refPrefix, 'G');
+});
+
 test('D flip-flop variants expose optional reset, clock polarity, and outputs', () => {
   const variants = [
     ['dff', ['D', 'CLK', 'Q'], false, false],
@@ -482,6 +513,9 @@ test('refdes prefixes by component type', () => {
     mux2: 'U',
     adc: 'U',
     dac: 'U',
+    adc_diff: 'U',
+    dac_diff: 'U',
+    gm: 'G',
     dff: 'U',
     dff_qb: 'U',
     dff_clkb: 'U',

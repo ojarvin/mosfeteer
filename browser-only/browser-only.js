@@ -13060,7 +13060,7 @@ const SYMBOL_CATEGORY_RULES = [
   ['Switches', /^switch_/],
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
-  ['Macros', /^(opamp|opamp_diff|comparator|comparator_clocked|adc|dac)$/],
+  ['Macros', /^(opamp|opamp_diff|gm|comparator|comparator_clocked|adc|dac|adc_diff|dac_diff)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Blocks / shells', /^block$/],
@@ -13096,7 +13096,21 @@ let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/compone
 const ADC_BODY = 'M 120 -100 L -40 -100 L -120 0 L -40 100 L 120 100 Z';
 const DAC_BODY = 'M -120 -100 L 40 -100 L 120 0 L 40 100 L -120 100 Z';
 
-function converter(type, description, text, terminals, body) {
+// A differential analog side keeps the single-ended body: its two pins at
+// y=-40 and y=40 meet the pointed end, marked + (top) and - (bottom) as the
+// op-amp's inputs are.
+// The pointed end runs from its tip at x=+-120 back to x=+-40 at y=+-100.
+const leadEnd = (x, y) => Math.sign(x) * (120 - 0.8 * Math.abs(y));
+
+function polarityMarks(x) {
+  return [
+    { kind: 'path', d: `M ${x} -54 L ${x} -26`, style: 'symbol' },
+    { kind: 'path', d: `M ${x - 14} -40 L ${x + 14} -40`, style: 'symbol' },
+    { kind: 'path', d: `M ${x - 14} 40 L ${x + 14} 40`, style: 'symbol' },
+  ];
+}
+
+function converter(type, description, text, terminals, body, { analogSide = 0, textX = type.startsWith('adc') ? 20 : -20 } = {}) {
   return defineSymbol({
     type,
     description,
@@ -13106,11 +13120,13 @@ function converter(type, description, text, terminals, body) {
     graphics: [
       ...terminals.map(({ x, y }) => ({
         kind: 'path',
-        d: `M ${x} ${y} L ${x < 0 ? -120 : 120} ${y}`,
+        // A pin off the pointed end's tip stops where it meets its slant.
+        d: `M ${x} ${y} L ${Math.sign(x) === analogSide && y ? leadEnd(x, y) : x < 0 ? -120 : 120} ${y}`,
         style: 'symbol',
       })),
       { kind: 'path', d: body, style: 'emph' },
-      { kind: 'text', x: type === 'adc' ? 20 : -20, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
+      ...(analogSide ? polarityMarks(analogSide * 58) : []),
+      { kind: 'text', x: textX, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
     ],
     textPos: null,
     refPos: null,
@@ -13137,8 +13153,32 @@ const dac = converter(
   DAC_BODY,
 );
 
+const adcDiff = converter(
+  'adc_diff',
+  'Analog-to-Digital Converter, differential input',
+  'ADC',
+  [{ name: 'aip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'aim', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'd', x: 200, y: 0, direction: 'output', dir: { x: 1, y: 0 } }],
+  ADC_BODY,
+  { analogSide: -1, textX: 40 },
+);
+
+const dacDiff = converter(
+  'dac_diff',
+  'Digital-to-Analog Converter, differential output',
+  'DAC',
+  [{ name: 'd', x: -200, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'aop', x: 200, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
+    { name: 'aom', x: 200, y: 40, direction: 'output', dir: { x: 1, y: 0 } }],
+  DAC_BODY,
+  { analogSide: 1, textX: -40 },
+);
+
 __exports.adc = adc;
 __exports.dac = dac;
+__exports.adcDiff = adcDiff;
+__exports.dacDiff = dacDiff;
 };
 
 __modules["src/core/components/current.js"] = function (__require, __exports) {
@@ -13484,8 +13524,8 @@ let portInput, portOutput, portInputOutput, port; __bind(() => { ({ portInput, p
 let current_source, voltage_source; __bind(() => { ({ current_source, voltage_source } = __require("src/core/components/current.js")); });
 let vccs, vcvs; __bind(() => { ({ vccs, vcvs } = __require("src/core/components/vccs.js")); });
 let impedance; __bind(() => { ({ impedance } = __require("src/core/components/impedance.js")); });
-let opamp, opampDiff, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate; __bind(() => { ({ opamp, opampDiff, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js")); });
-let adc, dac; __bind(() => { ({ adc, dac } = __require("src/core/components/converter.js")); });
+let opamp, opampDiff, gm, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate; __bind(() => { ({ opamp, opampDiff, gm, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer, and2_gate, nand2_gate, or2_gate, nor2_gate, xor2_gate, xnor2_gate, and3_gate, nand3_gate, or3_gate, nor3_gate, xor3_gate, xnor3_gate } = __require("src/core/components/logic.js")); });
+let adc, dac, adcDiff, dacDiff; __bind(() => { ({ adc, dac, adcDiff, dacDiff } = __require("src/core/components/converter.js")); });
 let dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb; __bind(() => { ({ dff, dff_qb, dff_clkb, dff_clkb_qb, dff_rst, dff_rst_qb, dff_clkb_rst, dff_clkb_rst_qb, dff_rstb, dff_rstb_qb, dff_clkb_rstb, dff_clkb_rstb_qb, latch, latch_qb, latch_enb, latch_enb_qb, latch_rst, latch_rst_qb, latch_enb_rst, latch_enb_rst_qb, latch_rstb, latch_rstb_qb, latch_enb_rstb, latch_enb_rstb_qb } = __require("src/core/components/flipflop.js")); });
 let variable_resistor, variable_capacitor, variable_inductor; __bind(() => { ({ variable_resistor, variable_capacitor, variable_inductor } = __require("src/core/components/variable.js")); });
 let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.js")); });
@@ -13546,6 +13586,7 @@ const symbolTypes = {
   vcvs,
   opamp,
   opamp_diff: opampDiff,
+  gm,
   comparator,
   comparator_clocked: comparatorClocked,
   inverter,
@@ -13567,6 +13608,8 @@ const symbolTypes = {
   xnor3_gate,
   adc,
   dac,
+  adc_diff: adcDiff,
+  dac_diff: dacDiff,
   dff,
   dff_qb,
   dff_clkb,
@@ -13723,6 +13766,44 @@ const opampDiff = defineSymbol({
     { kind: 'path', d: 'M -38 26 L -38 54', style: 'symbol' },
     { kind: 'path', d: 'M -52 40 L -24 40', style: 'symbol' },
     { kind: 'path', d: 'M -52 -40 L -24 -40', style: 'symbol' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: { x: 0, y: -160 },
+  defaultValue: '',
+});
+
+/**
+ * Transconductor (G_m cell): the fully differential op-amp's size, pins, and
+ * polarity marks on a blunt body -- the triangle cut off by a vertical edge
+ * where the outputs leave it, a trapezoid -- with "gm" inside.
+ */
+const gm = defineSymbol({
+  type: 'gm',
+  description: 'Transconductor (Gm cell), differential',
+  refPrefix: 'G',
+  terminals: [
+    { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'op', x: 160, y: 40, direction: 'output', dir: { x: 1, y: 0 } },
+    { name: 'om', x: 160, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -200, y: -120, w: 360, h: 240 },
+  graphics: [
+    { kind: 'path', d: 'M -200 40 L -107.19 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
+    { kind: 'path', d: 'M 52.81 40 L 160 40', style: 'symbol' },
+    { kind: 'path', d: 'M 52.81 -40 L 160 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -107.19 100 L -107.19 -100 L 52.81 -60 L 52.81 60 Z', style: 'emph' },
+    // The op-amp's marks: ip (+) top, im (-) bottom; the outputs crossed as
+    // on opamp_diff, om (-) top, op (+) bottom, near the blunt edge.
+    { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
+    { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    { kind: 'path', d: 'M 24 26 L 24 54', style: 'symbol' },
+    { kind: 'path', d: 'M 10 40 L 38 40', style: 'symbol' },
+    { kind: 'path', d: 'M 10 -40 L 38 -40', style: 'symbol' },
+    { kind: 'text', x: -26, y: 0, text: 'gm', anchor: 'middle', font: 'label', keepUpright: true },
   ],
   textPos: null,
   refPos: null,
@@ -13918,6 +13999,7 @@ const xnor3_gate = gate('xnor3_gate', '3-input XNOR Gate', [...XOR_BODY, ...XOR_
 
 __exports.opamp = opamp;
 __exports.opampDiff = opampDiff;
+__exports.gm = gm;
 __exports.comparator = comparator;
 __exports.comparatorClocked = comparatorClocked;
 __exports.inverter = inverter;
@@ -26778,7 +26860,7 @@ const BJT_TO_MOS = { b: 'g', c: 'd', e: 's' };
 // The usual reason to swap: the complementary part comes first.
 const PARTNERS = new Map([
   ['nmos', 'pmos'], ['nmosb', 'pmosb'], ['npn', 'pnp'], ['ground', 'supply'],
-  ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'],
+  ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
   ['signal_sum', 'signal_multiply'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
@@ -56780,10 +56862,10 @@ const PLACEMENT_LABELS = {
   current_source: 'Current source', voltage_source: 'Voltage source',
   vccs: 'VCCS (voltage-controlled current source)',
   vcvs: 'VCVS (voltage-controlled voltage source)',
-  opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', inverter: 'Inverter', buffer: 'Buffer',
+  opamp: 'Operational amplifier', opamp_diff: 'Differential op-amp', gm: 'Gm cell (transconductor)', inverter: 'Inverter', buffer: 'Buffer',
   tristate_inverter: 'Tri-state inverter', tristate_buffer: 'Tri-state buffer',
   mux2: '2:1 multiplexer',
-  adc: 'ADC', dac: 'DAC',
+  adc: 'ADC', dac: 'DAC', adc_diff: 'Differential ADC', dac_diff: 'Differential DAC',
   dff: 'D flip-flop (CLK, Q)', dff_qb: 'D flip-flop (CLK, Q, QB)',
   dff_clkb: 'D flip-flop (CLKB, Q)', dff_clkb_qb: 'D flip-flop (CLKB, Q, QB)',
   dff_rst: 'D flip-flop (CLK, RST)', dff_rst_qb: 'D flip-flop (CLK, RST, Q, QB)',
@@ -56816,6 +56898,8 @@ const PLACEMENT_ALIASES = {
   vccs: ['transconductance', 'controlled current', 'gm'],
   vcvs: ['controlled voltage', 'voltage gain'],
   opamp: ['op amp'], opamp_diff: ['fully differential', 'diff'],
+  gm: ['transconductor', 'ota', 'gm cell', 'transconductance', 'differential'],
+  adc_diff: ['converter', 'differential', 'diff'], dac_diff: ['converter', 'differential', 'diff'],
   tristate_inverter: ['tri-state', 'tristate', 'three-state', 'enable'],
   tristate_buffer: ['tri-state', 'tristate', 'three-state', 'enable'],
   mux2: ['mux', 'multiplexer', 'select', 'two input'],

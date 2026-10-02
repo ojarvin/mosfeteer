@@ -22,7 +22,7 @@ const BJT_TO_MOS = { b: 'g', c: 'd', e: 's' };
 // The usual reason to swap: the complementary part comes first.
 const PARTNERS = new Map([
   ['nmos', 'pmos'], ['nmosb', 'pmosb'], ['npn', 'pnp'], ['ground', 'supply'],
-  ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'],
+  ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
   ['signal_sum', 'signal_multiply'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],

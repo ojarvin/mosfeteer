@@ -71,6 +71,44 @@ const opampDiff = defineSymbol({
 });
 
 /**
+ * Transconductor (G_m cell): the fully differential op-amp's size, pins, and
+ * polarity marks on a blunt body -- the triangle cut off by a vertical edge
+ * where the outputs leave it, a trapezoid -- with "gm" inside.
+ */
+const gm = defineSymbol({
+  type: 'gm',
+  description: 'Transconductor (Gm cell), differential',
+  refPrefix: 'G',
+  terminals: [
+    { name: 'ip', x: -200, y: -40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'im', x: -200, y: 40, direction: 'input', dir: { x: -1, y: 0 } },
+    { name: 'op', x: 160, y: 40, direction: 'output', dir: { x: 1, y: 0 } },
+    { name: 'om', x: 160, y: -40, direction: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -200, y: -120, w: 360, h: 240 },
+  graphics: [
+    { kind: 'path', d: 'M -200 40 L -107.19 40', style: 'symbol' },
+    { kind: 'path', d: 'M -200 -40 L -107.19 -40', style: 'symbol' },
+    { kind: 'path', d: 'M 52.81 40 L 160 40', style: 'symbol' },
+    { kind: 'path', d: 'M 52.81 -40 L 160 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -107.19 100 L -107.19 -100 L 52.81 -60 L 52.81 60 Z', style: 'emph' },
+    // The op-amp's marks: ip (+) top, im (-) bottom; the outputs crossed as
+    // on opamp_diff, om (-) top, op (+) bottom, near the blunt edge.
+    { kind: 'path', d: 'M -76 -54 L -76 -26', style: 'symbol' },
+    { kind: 'path', d: 'M -90 -40 L -62 -40', style: 'symbol' },
+    { kind: 'path', d: 'M -90 40 L -62 40', style: 'symbol' },
+    { kind: 'path', d: 'M 24 26 L 24 54', style: 'symbol' },
+    { kind: 'path', d: 'M 10 40 L 38 40', style: 'symbol' },
+    { kind: 'path', d: 'M 10 -40 L 38 -40', style: 'symbol' },
+    { kind: 'text', x: -26, y: 0, text: 'gm', anchor: 'middle', font: 'label', keepUpright: true },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: { x: 0, y: -160 },
+  defaultValue: '',
+});
+
+/**
  * Comparators: the single-ended op-amp's body and inputs with a comparator
  * mark in the middle -- a rising edge (low, a step up, high) crossed by a
  * horizontal threshold line. The clocked comparator adds a clock input on
@@ -254,4 +292,4 @@ export const nor3_gate = gate('nor3_gate', '3-input NOR Gate', OR_BODY, { inputs
 export const xor3_gate = gate('xor3_gate', '3-input XOR Gate', [...XOR_BODY, ...XOR_FRONT], { inputs: [-120, -120, -120], inputNames: ['a', 'b', 'c'], inputLeadEnds: [-76.88, -67, -76.88], output: 160, outputLead: 72.55, width: 280 });
 export const xnor3_gate = gate('xnor3_gate', '3-input XNOR Gate', [...XOR_BODY, ...XOR_FRONT], { inputs: [-120, -120, -120], inputNames: ['a', 'b', 'c'], inputLeadEnds: [-76.88, -67, -76.88], output: 160, outputLead: 102.87, bubbleAt: [89.37, 0], width: 280 });
 
-export { opamp, opampDiff, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer };
+export { opamp, opampDiff, gm, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer };

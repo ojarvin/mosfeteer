@@ -276,6 +276,9 @@ supply:       p
 sources:      a b
 adc:          ain d
 dac:          d aout
+adc_diff:     aip aim d
+dac_diff:     d aop aom
+gm:           ip im op om
 ```
 Bulk MOS variants place `b` at the channel center `(0,0)` and route it
 outward to the right in the local frame (`dir:{x:1,y:0}`); the symbol includes
