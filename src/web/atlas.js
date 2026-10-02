@@ -1157,10 +1157,10 @@ function stopAnimation() {
   }
 }
 
-/** On the way out -- flying back into the editor, or into a design -- the
- *  desk takes no more input: a key or a scroll then would cut the flight
- *  short and leave the desk parted. */
-const leaving = () => !!(state?.closing || state?.opening);
+/** In a transition -- zooming out of the editor, flying back into it, or
+ *  into a design -- the desk takes no input: a key or a scroll then would
+ *  cut the flight short and leave the desk parted. */
+const inTransition = () => !!(state?.entering || state?.closing || state?.opening);
 
 function zoomAbout(factor, clientX, clientY) {
   stopAnimation();
@@ -1247,6 +1247,8 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   if (state || !rootEl) return;
   const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
   state = deskState(generation, source, startup);
+  // Until it has landed and its toolbars are back (inTransition).
+  state.entering = true;
   if (hintEl) hintEl.textContent = HINTS[source];
   if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
   if (openFolderEl) {
@@ -1305,15 +1307,20 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
       if (state?.generation === generation) state.revealAt = 0;
     } finally {
       requestAnimationFrame(() => rootEl.classList.remove('preparing'));
+      if (state?.generation === generation) state.entering = false;
     }
     return;
   }
-  await openDesk(generation, source, animate, startup);
-  if (state?.generation !== generation) return;
-  // Landed: the names and the pick come back with the toolbars.
-  state.quiet = false;
-  requestDraw();
-  await slideChrome(rootEl, false);
+  try {
+    await openDesk(generation, source, animate, startup);
+    if (state?.generation !== generation) return;
+    // Landed: the names and the pick come back with the toolbars.
+    state.quiet = false;
+    requestDraw();
+    await slideChrome(rootEl, false);
+  } finally {
+    if (state?.generation === generation) state.entering = false;
+  }
 }
 
 /** Lay out the desk just opened and bring it into view. */
@@ -1576,7 +1583,7 @@ export function onAtlasKey(ev) {
   // A header button keeps focus after a click (or a dialog it opened hands
   // it back): it takes the keys that press or leave it, the desk the rest.
   if (ev.target.closest?.('.atlas-head button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
-  if (leaving()) {
+  if (inTransition()) {
     ev.preventDefault();
     return;
   }
@@ -1616,7 +1623,7 @@ export function onAtlasKey(ev) {
 
 function onWheel(ev) {
   ev.preventDefault();
-  if (!state || leaving()) return;
+  if (!state || inTransition()) return;
   stopAnimation();
   const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 400 : 1;
   if (wheelIntent(ev, editor.scrollScheme) === 'pan') {
@@ -1633,7 +1640,7 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || leaving() || ev.target.closest?.('.atlas-head, .atlas-tags')) return;
+  if (!state || inTransition() || ev.target.closest?.('.atlas-head, .atlas-tags')) return;
   if (ev.button === 2) {
     ev.preventDefault();
     stopAnimation();
@@ -1753,7 +1760,7 @@ function onPointerUp(ev) {
 }
 
 function onDoubleClick(ev) {
-  if (!state || leaving()) return;
+  if (!state || inTransition()) return;
   const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
   if (hit) void openTile(hit);
 }

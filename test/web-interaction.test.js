@@ -1299,7 +1299,10 @@ test('the Atlas finishes its flight out: no key, scroll, or click on the way cut
   assert.match(functionSource('stopAnimation', atlas), /state\.animation\.resolve\?\.\(\);/);
   assert.match(functionSource('animateView', atlas), /animation\.resolve = resolve;/);
   assert.match(functionSource('closeAtlas', atlas), /if \(!state \|\| state\.closing\) return;\s*state\.closing = true;/);
+  // The way in too: from the moment it is asked for until it has landed.
+  assert.match(atlas, /const inTransition = \(\) => !!\(state\?\.entering \|\| state\?\.closing \|\| state\?\.opening\);/);
+  assert.match(functionSource('openAtlas', atlas), /state\.entering = true;[\s\S]*finally \{\s*if \(state\?\.generation === generation\) state\.entering = false;/);
   for (const handler of ['onAtlasKey', 'onWheel', 'onPointerDown', 'onDoubleClick']) {
-    assert.match(functionSource(handler, atlas), /leaving\(\)/, `${handler} ignores input while leaving`);
+    assert.match(functionSource(handler, atlas), /inTransition\(\)/, `${handler} ignores input in a transition`);
   }
 });
