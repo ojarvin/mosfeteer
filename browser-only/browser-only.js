@@ -11592,10 +11592,12 @@ let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat
 let addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
+let RENUMBER_DIRECTIONS, renumberParts; __bind(() => { ({ RENUMBER_DIRECTIONS, renumberParts } = __require("src/core/renumber.js")); });
 let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -11739,6 +11741,7 @@ const FLAG_ARITY = {
   case: 0,
   regex: 0,
   text: 1,
+  dir: 1,
   slot: 1,
   beats: 0,
   gaps: 1,
@@ -12108,6 +12111,7 @@ function commandHelp() {
     '  value <refdes> <V>             - set value/label text',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  rename <refdes> <new>          - rename a component',
+    '  renumber [--dir se|sw|ne|nw] [refdes ...] - renumber automatically named parts (M1, R2) so numbers grow diagonally (se: from the top left); named parts reuse their own numbers',
     '  rm <refdes>                    - remove a component',
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbours (visual only)',
     '  supplybar name <NAME|-> <refdes> ... - name every supply of a bar at once (- clears)',
@@ -12551,6 +12555,16 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const added = stubs.map((stub) => `${stub.ref} ${stub.name}`).join(', ');
     const message = `${stubs.length} stub${stubs.length === 1 ? '' : 's'}${added ? `: ${added}` : ''}${skipped.length ? `; skipped (would short) ${skipped.join(', ')}` : ''}`;
     return result(message, { stubs, skipped }, stubs.length > 0);
+  }
+  if (cmd === 'renumber') {
+    const direction = flags.dir?.[0] || 'se';
+    for (const ref of pos) circuit.getComponent(ref);
+    const renames = renumberParts(circuit, { direction, refs: pos.length ? pos : null });
+    const step = RENUMBER_DIRECTIONS[direction];
+    const text = renames.length
+      ? `renumbered ${step.arrow} ${step.text}: ${renames.map(({ from, to }) => `${from}->${to}`).join(', ')}`
+      : `already numbered ${step.arrow} ${step.text}`;
+    return result(text, { renames }, renames.length > 0);
   }
   if (cmd === 'box') {
     if (!pos.length) throw new Error('usage: box ID... [--text TEXT]');
@@ -25000,6 +25014,101 @@ __exports.BEAT_DIM_INK = BEAT_DIM_INK;
 __exports.BEAT_FADE_INK = BEAT_FADE_INK;
 };
 
+__modules["src/core/renumber.js"] = function (__require, __exports) {
+__exports.renumberPlan = renumberPlan;
+__exports.renumberParts = renumberParts;
+let INTERFACE_PIN_TYPES, isReferenceMarker; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker } = __require("src/core/model.js")); });
+/**
+ * Renumbering automatically named parts (M1, R3, U2: the symbol's refdes
+ * prefix and a number) so the numbers grow across the drawing in one
+ * diagonal direction. Parts named by hand keep their names, as do ports
+ * (their names are net names) and rail markers. Each prefix is numbered on
+ * its own; nmos and pmos share `M`, so they share one sequence.
+ */
+
+
+
+/** The directions numbers can grow in: the unit step on screen (y down). */
+const RENUMBER_DIRECTIONS = Object.freeze({
+  se: Object.freeze({ x: 1, y: 1, arrow: '↘', text: 'from the top left' }),
+  sw: Object.freeze({ x: -1, y: 1, arrow: '↙', text: 'from the top right' }),
+  ne: Object.freeze({ x: 1, y: -1, arrow: '↗', text: 'from the bottom left' }),
+  nw: Object.freeze({ x: -1, y: -1, arrow: '↖', text: 'from the bottom right' }),
+});
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The number in an automatic name, or null for a part named otherwise. */
+function autoNumber(component) {
+  const prefix = component.def?.refPrefix;
+  if (!prefix || INTERFACE_PIN_TYPES.has(component.type) || isReferenceMarker(component)) return null;
+  const match = component.refdes.match(new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`));
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * The renames that number `refs` (default: every automatically named part)
+ * along `direction` (RENUMBER_DIRECTIONS key), as [{ from, to }] for the
+ * parts whose name changes. A part's place is its body's centre, taken
+ * along the diagonal first, then down (or up) the rows. All parts of a
+ * prefix are numbered 1, 2, ...; a chosen subset reuses the numbers it
+ * holds, so the rest keep theirs.
+ */
+function renumberPlan(circuit, { direction = 'se', refs = null } = {}) {
+  const step = RENUMBER_DIRECTIONS[direction];
+  if (!step) throw new Error(`unknown direction "${direction}" (use ${Object.keys(RENUMBER_DIRECTIONS).join(', ')})`);
+  const chosen = refs ? new Set(refs) : null;
+  const groups = new Map();
+  for (const component of circuit.components.values()) {
+    if (chosen && !chosen.has(component.refdes)) continue;
+    const number = autoNumber(component);
+    if (number === null) continue;
+    const prefix = component.def.refPrefix;
+    if (!groups.has(prefix)) groups.set(prefix, []);
+    const box = component.bboxWorld();
+    groups.get(prefix).push({ component, number, x: box.x + box.w / 2, y: box.y + box.h / 2 });
+  }
+  const renames = [];
+  for (const [prefix, parts] of groups) {
+    const numbers = chosen ? parts.map((part) => part.number).sort((a, b) => a - b) : parts.map((_, index) => index + 1);
+    const along = (part) => step.x * part.x + step.y * part.y;
+    parts.sort((a, b) => along(a) - along(b) || step.y * (a.y - b.y) || step.x * (a.x - b.x));
+    parts.forEach((part, index) => {
+      const to = `${prefix}${numbers[index]}`;
+      if (to !== part.component.refdes) renames.push({ from: part.component.refdes, to });
+    });
+  }
+  return renames;
+}
+
+/** Apply renumberPlan; returns the renames made. Names are swapped through
+ *  temporary ones, so two parts can trade numbers. */
+function renumberParts(circuit, options = {}) {
+  const renames = renumberPlan(circuit, options);
+  const taken = (name) => circuit.components.has(name) || circuit.labels.has(name);
+  // Refuse before renaming anything: a target held by something that keeps
+  // its name.
+  const freed = new Set(renames.map(({ from }) => from));
+  const blocked = renames.find(({ to }) => taken(to) && !freed.has(to));
+  if (blocked) throw new Error(`cannot renumber ${blocked.from} to ${blocked.to}: the name is in use`);
+  let counter = 0;
+  const temporary = () => {
+    let name;
+    do name = `RENUMBER${counter++}x`; while (taken(name));
+    return name;
+  };
+  const staged = renames.map(({ from, to }) => {
+    const via = temporary();
+    circuit.renameComponent(from, via);
+    return { via, to };
+  });
+  for (const { via, to } of staged) circuit.renameComponent(via, to);
+  return renames;
+}
+
+__exports.RENUMBER_DIRECTIONS = RENUMBER_DIRECTIONS;
+};
+
 __modules["src/core/router.js"] = function (__require, __exports) {
 __exports.snapP = snapP;
 __exports.compressElbow = compressElbow;
@@ -35850,6 +35959,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
+  { name: 'renumber', aliases: ['number', 'renumber-parts'], help: 'renumber [--dir se|sw|ne|nw] [refdes ...] (numbers grow diagonally; se: from the top left)' },
   { name: 'rm', aliases: ['remove', 'delete'], help: 'rm <refdes>' },
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
   { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labelled wire stubs)' },
@@ -42286,6 +42396,7 @@ const ICON_PATHS = {
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
   timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
+  renumber: '<path d="M4 4h3v6M4 10h6"/><path d="M11 11l8 8m0-5v5h-5"/>',
   stub: '<path d="M4.5 12h6"/><circle cx="4" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M11 8.5h6.5l3 3.5-3 3.5H11z" fill="currentColor" fill-opacity=".16"/>',
   align: '<path d="M4 3v18"/><rect x="7" y="6" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/><path d="m20 12-2-2m2 2-2 2"/>',
   play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor" fill-opacity=".18"/>',
@@ -44368,6 +44479,7 @@ let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind((
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
+let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
@@ -44384,6 +44496,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -50920,6 +51033,7 @@ canvasEl.addEventListener('mouseleave', () => {
 let suppressContextMenuUntil = 0;
 installContextMenu();
 installHierarchy();
+installRenumberUi();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
 // Releasing Alt drops the mirrored ghost or terminal-snap aid; so does losing the window, since no
@@ -54212,6 +54326,91 @@ function finishRadialMenu(radial, client) {
   const sector = radialSector(client.x - radial.startClient.x, client.y - radial.startClient.y, RADIAL_ITEMS.length, 22);
   if (sector >= 0) RADIAL_ITEMS[sector].run(radial, { client: { ...client }, world: clientToWorld(client.x, client.y) });
   render();
+}
+
+};
+
+__modules["src/web/renumber-ui.js"] = function (__require, __exports) {
+__exports.openRenumberDialog = openRenumberDialog;
+__exports.installRenumberUi = installRenumberUi;
+let RENUMBER_DIRECTIONS, renumberParts; __bind(() => { ({ RENUMBER_DIRECTIONS, renumberParts } = __require("src/core/renumber.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, render, selectedComps, setSelection } = __require("src/web/main.js")); });
+/**
+ * Renumber parts (More menu, `:renumber`): pick the corner the numbers grow
+ * from, and the automatically named parts (M1, R2, ...) are numbered along
+ * that diagonal (core/renumber.js). With parts selected, only they are
+ * renumbered, among the numbers they already hold. One undo entry.
+ */
+
+
+
+
+
+
+
+function openRenumberDialog() {
+  const selected = selectedComps().map((c) => c.refdes);
+  const make = (tag, props = {}, children = []) => {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (key === 'class') node.className = value;
+      else if (key === 'text') node.textContent = value;
+      else node.setAttribute(key, value);
+    }
+    node.append(...children);
+    return node;
+  };
+  const dialog = make('dialog', { class: 'confirm-dialog renumber-dialog', 'aria-label': 'Renumber parts' });
+  const choose = (direction) => {
+    dialog.close();
+    let renames = [];
+    commit(() => { renames = renumberParts(editor.circuit, { direction, refs: selected.length ? selected : null }); });
+    const step = RENUMBER_DIRECTIONS[direction];
+    if (!renames.length) {
+      logLine(`already numbered ${step.arrow} ${step.text}`);
+      return;
+    }
+    const to = new Map(renames.map(({ from, to: name }) => [from, name]));
+    if (selected.length) setSelection(selected.map((ref) => to.get(ref) || ref));
+    logLine(`renumbered ${step.arrow} ${step.text}: ${renames.map(({ from, to: name }) => `${from}→${name}`).join(', ')}`);
+    render();
+  };
+  // The arrows stand in the corners they start from.
+  const grid = make('div', { class: 'renumber-grid', role: 'group', 'aria-label': 'Numbers grow from' },
+    ['se', 'sw', 'ne', 'nw'].map((direction) => {
+      const { arrow, text } = RENUMBER_DIRECTIONS[direction];
+      const button = make('button', { type: 'button', title: `Number ${text}`, 'aria-label': `Number ${text}` }, [
+        make('span', { class: 'renumber-arrow', text: arrow, 'aria-hidden': 'true' }), make('span', { text }),
+      ]);
+      button.addEventListener('click', () => choose(direction));
+      return button;
+    }));
+  dialog.append(
+    make('h2', { text: 'Renumber parts' }),
+    make('p', {
+      text: selected.length
+        ? `The ${selected.length} selected parts that are named automatically (M1, R2, …) trade the numbers they hold, growing from the corner picked.`
+        : 'Parts named automatically (M1, R2, …) are numbered again, each letter on its own, growing from the corner picked. Parts named by hand keep their names.',
+    }),
+    grid,
+    make('div', { class: 'dialog-actions' }, [make('button', { type: 'button', value: 'cancel', text: 'Cancel' })]),
+  );
+  dialog.querySelector('[value="cancel"]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('keydown', (event) => event.stopPropagation());
+  dialog.addEventListener('close', () => {
+    dialog.remove();
+    canvasEl.focus({ preventScroll: true });
+  }, { once: true });
+  document.body.append(dialog);
+  dialog.showModal();
+  grid.querySelector('button')?.focus();
+}
+
+function installRenumberUi() {
+  document.getElementById('btn-renumber')?.addEventListener('click', openRenumberDialog);
 }
 
 };

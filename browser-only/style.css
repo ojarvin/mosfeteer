@@ -5165,6 +5165,28 @@ circle.bode-corner {
   width: min(26rem, calc(100vw - 32px));
 }
 
+/* The four corners the numbers can grow from, each arrow in its corner. */
+.renumber-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+
+.renumber-grid button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.renumber-grid .renumber-arrow {
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--accent);
+}
+
 /* Not modal: it stands beside the drawing while the diagram is redrawn. */
 .timing-dialog:not(:modal) {
   position: fixed;

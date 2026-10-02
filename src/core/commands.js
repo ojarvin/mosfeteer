@@ -12,6 +12,7 @@ import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renam
 import { addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { addBoxAround } from './wrap-box.js';
+import { RENUMBER_DIRECTIONS, renumberParts } from './renumber.js';
 import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
@@ -141,6 +142,7 @@ const FLAG_ARITY = {
   case: 0,
   regex: 0,
   text: 1,
+  dir: 1,
   slot: 1,
   beats: 0,
   gaps: 1,
@@ -510,6 +512,7 @@ export function commandHelp() {
     '  value <refdes> <V>             - set value/label text',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  rename <refdes> <new>          - rename a component',
+    '  renumber [--dir se|sw|ne|nw] [refdes ...] - renumber automatically named parts (M1, R2) so numbers grow diagonally (se: from the top left); named parts reuse their own numbers',
     '  rm <refdes>                    - remove a component',
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbours (visual only)',
     '  supplybar name <NAME|-> <refdes> ... - name every supply of a bar at once (- clears)',
@@ -953,6 +956,16 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const added = stubs.map((stub) => `${stub.ref} ${stub.name}`).join(', ');
     const message = `${stubs.length} stub${stubs.length === 1 ? '' : 's'}${added ? `: ${added}` : ''}${skipped.length ? `; skipped (would short) ${skipped.join(', ')}` : ''}`;
     return result(message, { stubs, skipped }, stubs.length > 0);
+  }
+  if (cmd === 'renumber') {
+    const direction = flags.dir?.[0] || 'se';
+    for (const ref of pos) circuit.getComponent(ref);
+    const renames = renumberParts(circuit, { direction, refs: pos.length ? pos : null });
+    const step = RENUMBER_DIRECTIONS[direction];
+    const text = renames.length
+      ? `renumbered ${step.arrow} ${step.text}: ${renames.map(({ from, to }) => `${from}->${to}`).join(', ')}`
+      : `already numbered ${step.arrow} ${step.text}`;
+    return result(text, { renames }, renames.length > 0);
   }
   if (cmd === 'box') {
     if (!pos.length) throw new Error('usage: box ID... [--text TEXT]');
