@@ -530,7 +530,8 @@ export async function enterLinkedDesign(component = linkTargets()[0]) {
     logLine('Save this design first, so there is a way back up to it.', 'error');
     return false;
   }
-  const entry = { path: editor.currentDocumentPath, name: editor.currentCircuitName, view: { ...editor.view }, refdes: component.refdes, childPath: doc.path };
+  // Whether its bubble was open, so coming back up leaves it as it was.
+  const entry = { path: editor.currentDocumentPath, name: editor.currentCircuitName, view: { ...editor.view }, refdes: component.refdes, childPath: doc.path, peeking: bubbles.has(component.refdes) };
   // With its bubble open, zoom into the picture first: the child then opens
   // where it was seen.
   const bubble = layoutEntry(component.refdes);
@@ -582,16 +583,25 @@ export async function leaveLinkedDesign(levels = 1) {
   if (picture && component?.link && pane) {
     pictures.set(childPath, { ...picture, revision: null });
     followDocument();
+    // The child shrinks back into a bubble as the view pulls out; a bubble
+    // that was closed when the child was opened closes again once it lands.
     bubbles.set(target.refdes, { name: component.link, path: childPath, status: 'ready', svg: picture.svg, box: picture.box, href: picture.href });
-    rememberOpen();
+    if (target.peeking) rememberOpen();
     const bubble = layoutEntry(target.refdes);
     if (bubble && !reducedMotion()) {
       Object.assign(editor.view, viewFitting(bubble.image, pane.width, pane.height, 0.05));
       render();
       animateViewTo(target.view, UP_MS);
       renderTrail();
+      if (!target.peeking) {
+        const path = editor.currentDocumentPath;
+        setTimeout(() => {
+          if (editor.currentDocumentPath === path) closeLinkBubble(target.refdes, { refit: false });
+        }, UP_MS + 60);
+      }
       return true;
     }
+    if (!target.peeking) bubbles.delete(target.refdes);
   }
   Object.assign(editor.view, target.view);
   renderTrail();

@@ -1316,3 +1316,13 @@ test('the Atlas finishes its flight out: no key, scroll, or click on the way cut
     assert.match(functionSource(handler, atlas), /inTransition\(\)/, `${handler} ignores input in a transition`);
   }
 });
+
+test('coming back up from a linked design leaves its peek bubble as it was', () => {
+  const hierarchy = readFileSync(new URL('../src/web/hierarchy.js', import.meta.url), 'utf8');
+  // Entering remembers whether the bubble was open...
+  assert.match(hierarchy, /peeking: bubbles\.has\(component\.refdes\)/);
+  // ...and leaving shrinks the child into a bubble, then closes one that was closed.
+  assert.match(hierarchy, /if \(target\.peeking\) rememberOpen\(\);/);
+  assert.match(hierarchy, /if \(!target\.peeking\) \{[\s\S]*?closeLinkBubble\(target\.refdes, \{ refit: false \}\)/);
+  assert.match(hierarchy, /if \(!target\.peeking\) bubbles\.delete\(target\.refdes\);/);
+});
