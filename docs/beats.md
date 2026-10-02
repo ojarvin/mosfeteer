@@ -108,7 +108,7 @@ refills it). Click a slot to flip it, or move a cursor with the arrows and
 type `1` or `0`; the empty cell after the last slot adds one. `+` repeats
 the slot at the cursor in every row -- a state held one slot longer -- `*` (**Repeat period**) copies
 every wave once after itself, a second period to edit, and Delete removes
-a slot. The slot width is in cells, and **Non-overlap gaps** lists
+a slot. The slot width is in cells, and **Gaps** lists
 every pair of phases to keep apart (**Auto** returns to the default).
 A row's edges can also move off the slot boundaries by whole cells: `[` and
 `]` move the cursor row's falling edges a cell earlier or later, `{` and `}`

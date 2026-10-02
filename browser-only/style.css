@@ -5159,7 +5159,7 @@ circle.bode-corner {
 
 /* The timing diagram editor: a grid of slots beside the drawing. */
 .timing-dialog {
-  width: min(26rem, calc(100% - 16px));
+  width: min(28rem, calc(100% - 16px));
 }
 
 .renumber-dialog {
@@ -5273,42 +5273,82 @@ circle.bode-corner {
   text-align: right;
 }
 
-/* A titled row of controls: the title in a column of its own. */
+/* A titled row of controls: the title in a column of its own, the
+   controls as the style panel's (segmented icon groups). */
 .timing-section {
   display: grid;
-  grid-template-columns: 5.5rem 1fr;
-  align-items: baseline;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  align-items: center;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .timing-dialog .timing-dialog-options {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-}
-
-.timing-signal-controls input {
-  flex: 1 1 8rem;
+  gap: 6px 8px;
   min-width: 0;
 }
 
-.timing-dialog .timing-dialog-options label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.timing-dialog .segmented .icon-button {
+  width: 28px;
+  height: 24px;
 }
 
-.timing-shift-pair {
+.timing-dialog .segmented-label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-dim);
 }
 
-.timing-shift-pair button {
-  min-width: 1.8rem;
-  padding-inline: 4px;
+.timing-dialog .segmented-label .button-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.timing-width {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.timing-dialog .timing-width input {
+  width: 3.5rem;
+  height: 28px;
+  padding: 0 6px;
+}
+
+/* The name field and its add button read as one control. */
+.timing-signal-field {
+  display: flex;
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.timing-signal-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.timing-signal-field .icon-button {
+  height: 28px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+.timing-signal-controls > .timing-dialog-options > .icon-button,
+.timing-dialog .timing-dialog-options > button:not(.timing-chip) {
+  height: 28px;
 }
 
 .timing-shift {
@@ -5319,39 +5359,31 @@ circle.bode-corner {
   font-variant-numeric: tabular-nums;
 }
 
-/* The pairs kept apart: checkboxes on one aligned grid. */
-.timing-pairs {
-  margin-top: 10px;
-}
-
-.timing-pairs-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.timing-pairs-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
-  gap: 4px 12px;
-}
-
-.timing-pairs-list label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* Pairs kept apart, as toggle chips. */
+.timing-chip {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 
-.timing-dialog .timing-dialog-options input[type="number"] {
-  width: 4.5rem;
+.timing-chip[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.timing-pairs-none {
+  color: var(--text-dim);
+  font-size: 0.75rem;
 }
 
 .timing-pairs-title {
-  min-width: 5.5rem;
   color: var(--text-dim);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 
 .timing-keys {
@@ -5370,15 +5402,30 @@ circle.bode-corner {
 
 /* The way to and from the beats closes the window. */
 .timing-beats {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--border);
 }
 
 .timing-beats-note {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   color: var(--text-dim);
   font-size: 0.75rem;
+}
+
+.timing-beats-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.timing-beats-spacer {
+  flex: 1 1 auto;
+}
+
+.timing-dialog .timing-dialog-status:empty {
+  display: none;
 }
 
 .timing-dialog .timing-dialog-status {

@@ -26,6 +26,15 @@ export const ICON_PATHS = {
   crosshair: '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
   guides: '<path d="M5 4v16M12 4v16M19 4v16" stroke-dasharray="3 2.4"/><path d="M5 12h7M12 12h7"/><path d="M5 9.5v5M12 9.5v5M19 9.5v5"/>',
   external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v6H4V6h6"/>',
+  add: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  repeat: '<path d="M4 11V9a3 3 0 0 1 3-3h12m0 0-3-3m3 3-3 3M20 13v2a3 3 0 0 1-3 3H5m0 0 3 3m-3-3 3-3"/>',
+  'chevron-left': '<path d="m14 6-6 6 6 6"/>',
+  'chevron-right': '<path d="m10 6 6 6-6 6"/>',
+  'chevron-up': '<path d="m6 14 6-6 6 6"/>',
+  'chevron-down': '<path d="m6 10 6 6 6-6"/>',
+  'edge-fall': '<path d="M3 7h8v10h10"/>',
+  'edge-rise': '<path d="M3 17h8V7h10"/>',
   motion: '<path d="M3 8h7M5 12h6M3 16h7"/><circle cx="16" cy="12" r="4"/>',
   moon: '<path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -169,17 +178,21 @@ function preloadToolCursors() {
   }
 }
 
+/** One line icon (ICON_PATHS) as an inline SVG, for a button built in code. */
+export function buttonIcon(name) {
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.classList.add('button-icon');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+  icon.innerHTML = ICON_PATHS[name] || '';
+  return icon;
+}
+
 function installButtonIcons() {
   for (const button of document.querySelectorAll('button[data-icon], .tip-card-mark[data-icon]')) {
-    const path = ICON_PATHS[button.dataset.icon];
-    if (!path || button.querySelector('.button-icon')) continue;
-    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    icon.classList.add('button-icon');
-    icon.setAttribute('viewBox', '0 0 24 24');
-    icon.setAttribute('aria-hidden', 'true');
-    icon.setAttribute('focusable', 'false');
-    icon.innerHTML = path;
-    button.prepend(icon);
+    if (!ICON_PATHS[button.dataset.icon] || button.querySelector('.button-icon')) continue;
+    button.prepend(buttonIcon(button.dataset.icon));
   }
 }
 

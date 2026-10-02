@@ -47,9 +47,12 @@ test('the toolbar groups the windows, and More lists them too', () => {
 });
 
 test('the timing editor says each way to and from the beats once, in plain words', () => {
-  for (const name of ["'Read the beats'", "'Make beats'", "'Move under drawing'", "'Non-overlap gaps'", "section('Slots'", "section('Cursor row'", "section('Signals'"]) {
+  for (const name of ["'Read beats'", "'Make beats'", "'Move under drawing'", "text: 'Gaps'", "section('Slots'", "section('Cursor row'", "section('Signals'"]) {
     assert.ok(beats.includes(name), name);
   }
   for (const old of ["'From beats'", "'Re-place'", "'Never overlap'", "'Repeat all'"]) assert.ok(!beats.includes(old), old);
+  // Its controls are the style panel's: segmented icon groups and toggle chips.
+  assert.match(beats, /segmented\('Falling edges', \[/);
+  assert.match(beats, /class: 'timing-chip', 'aria-pressed'/);
   assert.match(html, />Make beats from phases<\/button>/);
 });
