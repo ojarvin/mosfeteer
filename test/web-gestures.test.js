@@ -255,8 +255,10 @@ test('right-hold menus fit what is under the press', async () => {
   assert.match(main, /drag\.kind === 'paper' && Math\.hypot\(dx, dy\) > 10\) \{[\s\S]*?mode: 'zoom'/);
   // The paper palette keeps its places; each sector has variants.
   const palette = radial.slice(radial.indexOf('const PALETTE = ['), radial.indexOf('];', radial.indexOf('const PALETTE = [')));
-  for (const type of ['nmos', 'resistor', 'capacitor', 'current_source', 'ground', 'port', 'opamp', 'pmos']) assert.match(palette, new RegExp(`part\\('${type}'`));
+  for (const type of ['nmos', 'resistor', 'capacitor', 'current_source', 'ground', 'supply', 'vcm', 'port', 'opamp', 'pmos']) assert.match(palette, new RegExp(`part\\('${type}'`));
   assert.equal((palette.match(/children:/g) || []).length, 8);
+  // A pick arms a placement ghost rather than dropping the part at once.
+  assert.match(radial, /run: \(\) => beginPlacing\(type\)/);
   // A pin: rails, a port, a labelled stub, a wire.
   for (const label of ['Supply', 'Stub \\+ label', 'Port', 'VCM', 'Ground', 'Wire']) assert.match(radial, new RegExp(`label: '${label}'|'${label}'\\)`));
   // A part swaps as q does, every candidate previewed in place.

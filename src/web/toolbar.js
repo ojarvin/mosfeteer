@@ -1,4 +1,21 @@
 /** Display names and extra search words for the insert menu, keyed by symbol type. */
+/** A part's name short enough for a radial tile: the parenthetical and the
+ *  words every sibling shares go (the full name stays in the tooltip). */
+export function shortPlacementLabel(type) {
+  const label = PLACEMENT_LABELS[type] || String(type).replace(/_/g, ' ');
+  const sequential = label.match(/^(D flip-flop|L latch) \((.*)\)$/);
+  if (sequential) return `${sequential[1] === 'L latch' ? 'Latch' : 'DFF'} ${sequential[2].replace(/, /g, ' ')}`;
+  return label
+    .replace(/ \(.*\)$/, '')
+    .replace(/^Operational amplifier$/, 'Op-amp')
+    .replace(/ transistor/, '')
+    .replace(/ with bulk$/, ' bulk')
+    .replace(/^Differential /, 'Diff. ')
+    .replace(/^Variable /, 'Var. ')
+    .replace(/^Input\/output port$/, 'In/out port')
+    .replace(/^(\d)-input (\w+) gate$/, '$2$1');
+}
+
 export const PLACEMENT_LABELS = {
   resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', impedance: 'Impedance', diode: 'Diode',
   nmos: 'NMOS transistor', pmos: 'PMOS transistor',
@@ -33,6 +50,7 @@ export const PLACEMENT_LABELS = {
   variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
   solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
+  comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
 };
 
@@ -189,7 +207,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
     ['q', 'change the type of the selected (or pointed-at) parts: nmos to pmos, R to C, ...; wiring stays where the pins carry over'],
-    ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor'],
+    ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor, pointing the way the pin leads'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['o', 'show or hide the selected (or pointed-at) part\'s linked design beside the drawing; link a part from its right-click menu'],
     ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],

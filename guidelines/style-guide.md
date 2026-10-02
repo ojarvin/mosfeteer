@@ -227,7 +227,10 @@ Notes:
 - **Ground** attaches with `gnd` on its top edge (place it below the net,
   hanging down off the wire). **Supply** attaches `p` on its bottom edge
   (drop it onto the rail above the net). Ports face their `p` into the
-  circuit.
+  circuit. A rail marker wired straight onto a pin (`g`/`v`, `rail`, the pin
+  ring, or a marker dropped on a pin) hangs the way that pin leads out, so a
+  ground on a drain points up off the part; a swap between rail kinds keeps
+  the direction.
 - **Schematic blocks** mix functional abstraction into a transistor-level
   drawing. Double-click the body or its component-row entry to edit the
   centered caption. Their perimeter pins use ordinary schematic wires, and

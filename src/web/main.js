@@ -17,7 +17,7 @@ import { pinJoinPoints } from './gestures.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
 import { addTerminalStubs, stubLabelPlacement } from '../core/stubs.js';
-import { addPinRail } from '../core/pin-rails.js';
+import { PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation } from '../core/pin-rails.js';
 import { tidySelection } from '../core/tidy.js';
 import { addBoxAround } from '../core/wrap-box.js';
 import { busBits, busWidth, netNamesConnect } from '../core/bus.js';
@@ -1976,6 +1976,16 @@ function pendingTransform() {
   if (pendingPlace?.kind !== 'component') return null;
   let def;
   try { def = getSymbol(pendingPlace.type); } catch { return null; }
+  // A rail marker dropped on a pin hangs the way the pin leads out, as one
+  // wired to a pin does, until it is turned by hand.
+  const untouched = !pendingPlace.rotation && pendingPlace.mirrorX === null && pendingPlace.mirrorY === null;
+  if (untouched && PIN_RAIL_TYPES.includes(pendingPlace.type)) {
+    const hit = matchAt(cursor.x, cursor.y);
+    if (hit?.term) {
+      const { dir } = pinEscape(circuit, { comp: hit.refdes, term: hit.term });
+      return { x: cursor.x, y: cursor.y, rotation: railRotation(pendingPlace.type, dir), mirrorX: false, mirrorY: false };
+    }
+  }
   return {
     x: cursor.x,
     y: cursor.y,
@@ -2802,14 +2812,7 @@ export function renderCanvas(modelKey) {
         : (() => {
             try {
               const def = getSymbol(pendingPlace.type);
-              return {
-                def,
-                x: cursor.x,
-                y: cursor.y,
-                rotation: pendingPlace.rotation || 0,
-                mirrorX: pendingPlace.mirrorX !== null ? pendingPlace.mirrorX : !!def.defaultMirrorX,
-                mirrorY: pendingPlace.mirrorY !== null ? pendingPlace.mirrorY : !!def.defaultMirrorY,
-              };
+              return { def, ...pendingTransform() };
             } catch {
               return undefined;
             }

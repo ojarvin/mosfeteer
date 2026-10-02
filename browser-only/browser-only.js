@@ -23246,60 +23246,77 @@ function rerouteTouchedNets(circuit, refs, moved, { fresh = false, beforeTermina
 };
 
 __modules["src/core/pin-rails.js"] = function (__require, __exports) {
+__exports.railRotation = railRotation;
+__exports.railHang = railHang;
+__exports.pinEscape = pinEscape;
 __exports.pinRailPoint = pinRailPoint;
 __exports.addPinRail = addPinRail;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
 let referenceMarkerInfo; __bind(() => { ({ referenceMarkerInfo } = __require("src/core/model.js")); });
 /**
- * A rail marker on a pin in one step: a ground, supply, or VCM one cell out along
- * the pin's escape direction, wired to it. A pin facing the way the marker
- * hangs (a source down to ground) gets a straight one-cell lead; a sideways pin
- * (a gate) gets that lead plus one cell turning toward the rail; a pin facing
- * against it (a drain up to ground) steps out one cell and two cells aside,
- * away from its part's body, so the marker never hangs over its own lead.
+ * A rail marker on a pin in one step: a ground, supply, or VCM one cell out
+ * along the pin's escape direction, wired to it by a straight lead, and
+ * turned to hang that way too -- a ground on a drain points up, off the top
+ * of the transistor, as one on a source points down. The same rule turns a
+ * marker placed onto a pin, and one swapped for another kind.
  */
 
 
 
 
-/** Which way each rail's symbol hangs from its pin. */
+
+/** Which way each rail's symbol hangs from its pin, unturned. */
 const HANG = { ground: { x: 0, y: 1 }, supply: { x: 0, y: -1 }, vcm: { x: 0, y: 1 } };
 
 const PIN_RAIL_TYPES = Object.freeze(Object.keys(HANG));
 
-/** The world point the marker's pin lands on for terminal `ref` ({comp, term}). */
-function pinRailPoint(circuit, ref, type) {
+/** The rotation that turns a `type` marker to hang along `dir` (unit, axis
+ *  aligned); 0 when it cannot. */
+function railRotation(type, dir) {
   const hang = HANG[type];
-  if (!hang) throw new Error(`a pin rail is ${PIN_RAIL_TYPES.join(' or ')}`);
+  if (!hang || !dir) return 0;
+  for (const rotation of [0, 90, 180, 270]) {
+    const turned = applyTransform({ x: 0, y: 0, rotation }, hang.x, hang.y);
+    if (turned.x === Math.sign(dir.x) && turned.y === Math.sign(dir.y)) return rotation;
+  }
+  return 0;
+}
+
+/** The way a placed rail marker hangs in the drawing, or null. */
+function railHang(component) {
+  const hang = HANG[component?.type];
+  if (!hang) return null;
+  const t = component.transform;
+  return applyTransform({ x: 0, y: 0, rotation: t.rotation, mirrorX: t.mirrorX, mirrorY: t.mirrorY }, hang.x, hang.y);
+}
+
+/** Where terminal `ref` ({comp, term}) leads out: its point and direction. */
+function pinEscape(circuit, ref) {
   const component = circuit.getComponent(ref.comp);
   const def = component.terminalDefs.find((terminal) => terminal.name === ref.term);
   if (!def) throw new Error(`${ref.comp} has no terminal "${ref.term}"`);
   const pin = component.terminalWorld(ref.term);
-  const dir = circuit._pinDir(component, def, pin.x, pin.y);
-  const out = { x: pin.x + dir.x * GRID, y: pin.y + dir.y * GRID };
-  const along = dir.x * hang.x + dir.y * hang.y;
-  if (along > 0) return out;
-  // A marker's own pin is reached against its hang, so a sideways lead turns
-  // one cell toward the rail at its end.
-  if (along === 0) return { x: out.x + hang.x * GRID, y: out.y + hang.y * GRID };
-  // Against the hang: step aside, away from the body's centre (right by default).
-  const box = component.bboxWorld();
-  const side = { x: -dir.y, y: dir.x };
-  const centre = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
-  const towardBody = (centre.x - pin.x) * side.x + (centre.y - pin.y) * side.y;
-  const sign = towardBody > 0 ? -1 : 1;
-  return { x: out.x + sign * side.x * 2 * GRID, y: out.y + sign * side.y * 2 * GRID };
+  return { pin, dir: circuit._pinDir(component, def, pin.x, pin.y) };
+}
+
+/** The world point the marker's pin lands on for terminal `ref`: one cell out. */
+function pinRailPoint(circuit, ref, type) {
+  if (!HANG[type]) throw new Error(`a pin rail is ${PIN_RAIL_TYPES.join(' or ')}`);
+  const { pin, dir } = pinEscape(circuit, ref);
+  return { x: pin.x + dir.x * GRID, y: pin.y + dir.y * GRID };
 }
 
 /**
- * Add a `type` rail marker wired to terminal `ref`. The terminal must be
- * unconnected. Returns the marker; throws, leaving the circuit unchanged, when
- * the lead cannot be routed.
+ * Add a `type` rail marker wired to terminal `ref`, hanging the way the pin
+ * leads out. The terminal must be unconnected. Returns the marker; throws,
+ * leaving the circuit unchanged, when the lead cannot be routed.
  */
 function addPinRail(circuit, ref, type) {
   if (circuit.netOfTerminal(ref)) throw new Error(`${ref.comp}.${ref.term} is already wired`);
   const point = pinRailPoint(circuit, ref, type);
-  const marker = circuit.addComponent(type, { x: point.x, y: point.y });
+  const { dir } = pinEscape(circuit, ref);
+  const marker = circuit.addComponent(type, { x: point.x, y: point.y, rotation: railRotation(type, dir), mirrorX: false, mirrorY: false });
   try {
     circuit.connect(`${ref.comp}.${ref.term}`, `${marker.refdes}.${referenceMarkerInfo(type).terminal}`);
   } catch (err) {
@@ -27252,6 +27269,7 @@ let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } =
 let SYMBOL_CATEGORY_RULES; __bind(() => { ({ SYMBOL_CATEGORY_RULES } = __require("src/core/components/categories.js")); });
 let ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
+let PIN_RAIL_TYPES, railHang, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, railHang, railRotation } = __require("src/core/pin-rails.js")); });
 /**
  * Swapping a placed part for another type in place: nmos for pmos, a resistor
  * for a capacitor, a DFF for its reset variant. The part keeps its position,
@@ -27260,6 +27278,7 @@ let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js"
  * a terminal of the same role; the rest detach. Wires follow only the pins
  * that moved, so a swap between same-footprint types leaves the drawing as is.
  */
+
 
 
 
@@ -27376,6 +27395,7 @@ function swapComponentType(circuit, refdes, type) {
     analysis: component.analysis,
     negativeInputs: component.negativeInputs,
     joinBar: component.joinBar,
+    transform: { ...component.transform },
     topology: circuit._snapshotNetTopology(),
   };
   const rollback = () => {
@@ -27383,6 +27403,7 @@ function swapComponentType(circuit, refdes, type) {
       type: saved.type, def: saved.def, value: saved.value, analysis: saved.analysis,
       negativeInputs: saved.negativeInputs, joinBar: saved.joinBar,
     });
+    Object.assign(component.transform, saved.transform);
     circuit._restoreNetTopology(saved.topology);
     circuit.invalidateRoutingCache();
   };
@@ -27417,8 +27438,14 @@ function swapComponentType(circuit, refdes, type) {
     }
 
     const fresh = new ComponentInstance(circuit, type, { refdes: component.refdes });
+    // A rail marker swapped for another kind keeps pointing the same way: a
+    // ground hanging down becomes a supply hanging down, off the same pin.
+    const hang = railHang(component);
     component.type = type;
     component.def = toDef;
+    if (hang && PIN_RAIL_TYPES.includes(type)) {
+      Object.assign(component.transform, { rotation: railRotation(type, hang), mirrorX: false, mirrorY: false });
+    }
     if (component.value === fromDef.defaultValue) component.value = toDef.defaultValue;
     const sameFamily = (MOS_ANALYSIS_TYPES.has(fromType) && MOS_ANALYSIS_TYPES.has(type)) || categoryOf(fromType) === categoryOf(type);
     if (!sameFamily) component.analysis = fresh.analysis;
@@ -45307,7 +45334,7 @@ let pinJoinPoints; __bind(() => { ({ pinJoinPoints } = __require("src/web/gestur
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let addTerminalStubs, stubLabelPlacement; __bind(() => { ({ addTerminalStubs, stubLabelPlacement } = __require("src/core/stubs.js")); });
-let addPinRail; __bind(() => { ({ addPinRail } = __require("src/core/pin-rails.js")); });
+let PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation } = __require("src/core/pin-rails.js")); });
 let tidySelection; __bind(() => { ({ tidySelection } = __require("src/core/tidy.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
 let busBits, busWidth, netNamesConnect; __bind(() => { ({ busBits, busWidth, netNamesConnect } = __require("src/core/bus.js")); });
@@ -47332,6 +47359,16 @@ function pendingTransform() {
   if (pendingPlace?.kind !== 'component') return null;
   let def;
   try { def = getSymbol(pendingPlace.type); } catch { return null; }
+  // A rail marker dropped on a pin hangs the way the pin leads out, as one
+  // wired to a pin does, until it is turned by hand.
+  const untouched = !pendingPlace.rotation && pendingPlace.mirrorX === null && pendingPlace.mirrorY === null;
+  if (untouched && PIN_RAIL_TYPES.includes(pendingPlace.type)) {
+    const hit = matchAt(cursor.x, cursor.y);
+    if (hit?.term) {
+      const { dir } = pinEscape(circuit, { comp: hit.refdes, term: hit.term });
+      return { x: cursor.x, y: cursor.y, rotation: railRotation(pendingPlace.type, dir), mirrorX: false, mirrorY: false };
+    }
+  }
   return {
     x: cursor.x,
     y: cursor.y,
@@ -48158,14 +48195,7 @@ function renderCanvas(modelKey) {
         : (() => {
             try {
               const def = getSymbol(pendingPlace.type);
-              return {
-                def,
-                x: cursor.x,
-                y: cursor.y,
-                rotation: pendingPlace.rotation || 0,
-                mirrorX: pendingPlace.mirrorX !== null ? pendingPlace.mirrorX : !!def.defaultMirrorX,
-                mirrorY: pendingPlace.mirrorY !== null ? pendingPlace.mirrorY : !!def.defaultMirrorY,
-              };
+              return { def, ...pendingTransform() };
             } catch {
               return undefined;
             }
@@ -55121,18 +55151,19 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
 let selectContextTarget; __bind(() => { ({ selectContextTarget } = __require("src/web/context-menu.js")); });
-let PLACEMENT_LABELS; __bind(() => { ({ PLACEMENT_LABELS } = __require("src/web/toolbar.js")); });
-let rememberInsertType, swapParts, symbolPreviewSvg; __bind(() => { ({ rememberInsertType, swapParts, symbolPreviewSvg } = __require("src/web/insert-menu.js")); });
+let PLACEMENT_LABELS, shortPlacementLabel; __bind(() => { ({ PLACEMENT_LABELS, shortPlacementLabel } = __require("src/web/toolbar.js")); });
+let beginPlacing, swapParts, symbolPreviewSvg; __bind(() => { ({ beginPlacing, swapParts, symbolPreviewSvg } = __require("src/web/insert-menu.js")); });
 let placeNetLabelAt; __bind(() => { ({ placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
 let activeBeatIndex; __bind(() => { ({ activeBeatIndex } = __require("src/web/beats-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, setSelection, snapshot, startWireFromPoint, stubSelection, tidyNow; __bind(() => { ({ activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, setSelection, snapshot, startWireFromPoint, stubSelection, tidyNow } = __require("src/web/main.js")); });
+let activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow; __bind(() => { ({ activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow } = __require("src/web/main.js")); });
 /**
  * The radial (marking) menus a right-hold or right-flick opens. Each asks
  * what is under the press and offers what fits it:
  *
- *   paper  a part palette: flick to drop a part there (hold a sector for its
- *          variants: NMOS → bulk NMOS, NPN; R → variable R, impedance, ...)
+ *   paper  a part palette: flick to pick a part, then click to put it down
+ *          (hold a sector for its variants: NMOS → bulk NMOS, NPN; rails →
+ *          ground, supply, VCM; ...)
  *   pin    connect it: ground, supply, VCM, a port, a labelled stub, a wire
  *   part   swap it for a related type (as q), each one previewed in place
  *   wire   its net: name it, label it here, tidy it, delete the run, or pick
@@ -55180,28 +55211,13 @@ const DWELL_MS = 380;
 
 // ----- what each ring offers --------------------------------------------------
 
-/** A part placed with its origin at `point`, joined to what it lands on. */
-function addPart(circuit, type, point) {
-  const placement = quickAddPlacement(getSymbol(type), point);
-  const component = circuit.addComponent(type, {
-    x: snap(point.x), y: snap(point.y),
-    rotation: placement.rotation, mirrorX: placement.mirrorX, mirrorY: placement.mirrorY,
-  });
-  circuit.connectCoincident(component.refdes);
-  return component;
-}
-
-const part = (type, label = PLACEMENT_LABELS[type] || type) => ({
+// A pick arms the part as a placement ghost under the pointer, to be put
+// down with a click (r and the mirrors turn it first), as from the insert menu.
+const part = (type, label = shortPlacementLabel(type)) => ({
   label,
+  title: PLACEMENT_LABELS[type] || label,
   symbol: type,
-  preview: (circuit, radial) => addPart(circuit, type, radial.point),
-  run: (radial) => {
-    const component = edit(() => addPart(editor.circuit, type, radial.point));
-    if (!component) return;
-    rememberInsertType(type);
-    setSelection([component.refdes]);
-    logLine(`placed ${component.refdes} (${label})`);
-  },
+  run: () => beginPlacing(type),
 });
 
 // The palette keeps its places, so a flick learned once stays right.
@@ -55210,7 +55226,7 @@ const PALETTE = [
   { ...part('resistor', 'R'), children: [part('resistor', 'R'), part('variable_resistor', 'Var. R'), part('impedance', 'Z')] },
   { ...part('capacitor', 'C'), children: [part('capacitor', 'C'), part('variable_capacitor', 'Var. C'), part('inductor', 'L')] },
   { ...part('current_source', 'I source'), children: [part('current_source', 'I'), part('voltage_source', 'V'), part('vccs', 'VCCS'), part('vcvs', 'VCVS')] },
-  { ...part('ground', 'Ground'), children: [part('ground', 'Ground'), part('vcm', 'VCM')] },
+  { ...part('ground', 'Rails'), children: [part('ground', 'Ground'), part('supply', 'Supply'), part('vcm', 'VCM')] },
   { ...part('port', 'Port'), children: [part('input', 'In'), part('output', 'Out'), part('inputoutput', 'In/out'), part('port', 'Port')] },
   { ...part('opamp', 'Op-amp'), children: [part('opamp', 'Op-amp'), part('opamp_diff', 'Diff'), part('gm', 'Gm'), part('comparator', 'Comp.')] },
   { ...part('pmos', 'PMOS'), children: [part('pmos', 'PMOS'), part('pmosb', 'PMOS bulk'), part('pnp', 'PNP')] },
@@ -55274,7 +55290,8 @@ function partRing(radial) {
   const swaps = component ? swapCandidates(component.type).slice(0, 8) : [];
   if (!swaps.length) return LEGACY_PART_RING;
   return swaps.map((type) => ({
-    label: PLACEMENT_LABELS[type] || type,
+    label: shortPlacementLabel(type),
+    title: PLACEMENT_LABELS[type] || type,
     symbol: type,
     preview: (circuit) => swapComponentType(circuit, radial.refdes, type),
     run: () => swapParts([radial.refdes], type),
@@ -55322,7 +55339,7 @@ const WIRE_RING = [
     applyEditorSelection({ kind: 'wire', id: radial.wireKey });
     editSelectionText();
   } },
-  { label: 'Net label', icon: 'net-label', run: (radial) => {
+  { label: 'Net label', icon: 'tag', run: (radial) => {
     placeNetLabelAt(radial.point);
     render();
   } },
@@ -55370,7 +55387,7 @@ function itemEl(item, index, count, enabled) {
   } else {
     el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
   }
-  el.title = item.label;
+  el.title = item.title || item.label;
   const text = document.createElement('span');
   text.className = 'radial-label';
   text.textContent = item.label;
@@ -58282,6 +58299,7 @@ __exports.toolbarMenus = toolbarMenus;
 };
 
 __modules["src/web/toolbar.js"] = function (__require, __exports) {
+__exports.shortPlacementLabel = shortPlacementLabel;
 __exports.fuzzyScore = fuzzyScore;
 __exports.placementSearchScore = placementSearchScore;
 __exports.withRecentType = withRecentType;
@@ -58292,6 +58310,23 @@ __exports.editorKeymapText = editorKeymapText;
 __exports.layerActionForKey = layerActionForKey;
 __exports.layoutAlignKey = layoutAlignKey;
 /** Display names and extra search words for the insert menu, keyed by symbol type. */
+/** A part's name short enough for a radial tile: the parenthetical and the
+ *  words every sibling shares go (the full name stays in the tooltip). */
+function shortPlacementLabel(type) {
+  const label = PLACEMENT_LABELS[type] || String(type).replace(/_/g, ' ');
+  const sequential = label.match(/^(D flip-flop|L latch) \((.*)\)$/);
+  if (sequential) return `${sequential[1] === 'L latch' ? 'Latch' : 'DFF'} ${sequential[2].replace(/, /g, ' ')}`;
+  return label
+    .replace(/ \(.*\)$/, '')
+    .replace(/^Operational amplifier$/, 'Op-amp')
+    .replace(/ transistor/, '')
+    .replace(/ with bulk$/, ' bulk')
+    .replace(/^Differential /, 'Diff. ')
+    .replace(/^Variable /, 'Var. ')
+    .replace(/^Input\/output port$/, 'In/out port')
+    .replace(/^(\d)-input (\w+) gate$/, '$2$1');
+}
+
 const PLACEMENT_LABELS = {
   resistor: 'Resistor', capacitor: 'Capacitor', inductor: 'Inductor', impedance: 'Impedance', diode: 'Diode',
   nmos: 'NMOS transistor', pmos: 'PMOS transistor',
@@ -58326,6 +58361,7 @@ const PLACEMENT_LABELS = {
   variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
   solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
+  comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
 };
 
@@ -58482,7 +58518,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
     ['q', 'change the type of the selected (or pointed-at) parts: nmos to pmos, R to C, ...; wiring stays where the pins carry over'],
-    ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor'],
+    ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor, pointing the way the pin leads'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['o', 'show or hide the selected (or pointed-at) part\'s linked design beside the drawing; link a part from its right-click menu'],
     ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],

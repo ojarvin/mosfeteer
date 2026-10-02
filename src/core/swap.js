@@ -11,6 +11,7 @@ import { getSymbol, symbolTypeNames } from './components/index.js';
 import { SYMBOL_CATEGORY_RULES } from './components/categories.js';
 import { ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } from './model.js';
 import { switchState } from './beats.js';
+import { PIN_RAIL_TYPES, railHang, railRotation } from './pin-rails.js';
 
 const BJT_TYPES = new Set(['npn', 'pnp']);
 const UNSWAPPABLE = new Set(['solder', 'block']);
@@ -122,6 +123,7 @@ export function swapComponentType(circuit, refdes, type) {
     analysis: component.analysis,
     negativeInputs: component.negativeInputs,
     joinBar: component.joinBar,
+    transform: { ...component.transform },
     topology: circuit._snapshotNetTopology(),
   };
   const rollback = () => {
@@ -129,6 +131,7 @@ export function swapComponentType(circuit, refdes, type) {
       type: saved.type, def: saved.def, value: saved.value, analysis: saved.analysis,
       negativeInputs: saved.negativeInputs, joinBar: saved.joinBar,
     });
+    Object.assign(component.transform, saved.transform);
     circuit._restoreNetTopology(saved.topology);
     circuit.invalidateRoutingCache();
   };
@@ -163,8 +166,14 @@ export function swapComponentType(circuit, refdes, type) {
     }
 
     const fresh = new ComponentInstance(circuit, type, { refdes: component.refdes });
+    // A rail marker swapped for another kind keeps pointing the same way: a
+    // ground hanging down becomes a supply hanging down, off the same pin.
+    const hang = railHang(component);
     component.type = type;
     component.def = toDef;
+    if (hang && PIN_RAIL_TYPES.includes(type)) {
+      Object.assign(component.transform, { rotation: railRotation(type, hang), mirrorX: false, mirrorY: false });
+    }
     if (component.value === fromDef.defaultValue) component.value = toDef.defaultValue;
     const sameFamily = (MOS_ANALYSIS_TYPES.has(fromType) && MOS_ANALYSIS_TYPES.has(type)) || categoryOf(fromType) === categoryOf(type);
     if (!sameFamily) component.analysis = fresh.analysis;

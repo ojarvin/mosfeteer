@@ -3139,7 +3139,14 @@ button.status-chip:hover {
   overflow: visible;
 }
 
-.insert-menu-preview svg [fill="#fff"] { fill: none; }
+/* Symbol previews (insert menu, Learn, radial tiles) drop the paper and take
+   the theme's ink. */
+:is(.insert-menu-preview, .help-symbol-art, .radial-symbol) svg [fill="#fff"] { fill: none; }
+
+:is(.help-symbol-art, .radial-symbol) svg {
+  color: var(--svg-ink);
+  overflow: visible;
+}
 
 /* The Enter hint marks the entry Enter would pick, so it follows the highlight. */
 .insert-menu-item kbd {
@@ -4179,8 +4186,14 @@ button.off {
   height: 18px;
 }
 
-.radial-item span {
-  max-width: calc(var(--radial-tile) - 10px);
+.radial-item .radial-label {
+  display: -webkit-box;
+  max-width: calc(var(--radial-tile) - 6px);
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 0.5625rem;
+  letter-spacing: -0.01em;
 }
 
 .radial-item.active {
@@ -4206,7 +4219,6 @@ button.off {
 .radial-item .radial-symbol svg {
   width: 100%;
   height: 100%;
-  --svg-ink: currentColor;
 }
 
 .radial-item .radial-swatch {

@@ -170,3 +170,13 @@ test('beat shortcuts are discoverable in the editor keymap', () => {
   assert.match(help, /-- beats --/);
   for (const key of ['Shift+B', 'Alt+→ / Alt+←', 'h (on a beat)', 'Shift+H (on a beat)', 'Shift+F5']) assert.ok(help.includes(key), key);
 });
+
+test('radial tiles use short part names that fit, the full name kept for the tooltip', async () => {
+  const { shortPlacementLabel, PLACEMENT_LABELS } = await import('../src/web/toolbar.js');
+  assert.equal(shortPlacementLabel('gm'), 'Gm cell');
+  assert.equal(shortPlacementLabel('nmosb'), 'NMOS bulk');
+  assert.equal(shortPlacementLabel('opamp_diff'), 'Diff. op-amp');
+  assert.equal(shortPlacementLabel('nand3_gate'), 'NAND3');
+  assert.equal(shortPlacementLabel('dff_qb'), 'DFF CLK Q QB');
+  assert.equal(PLACEMENT_LABELS.comparator_clocked, 'Clocked comparator');
+});

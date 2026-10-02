@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { evaluate, runCommand } from '../src/core/commands.js';
-import { addPinRail } from '../src/core/pin-rails.js';
+import { addPinRail, railHang, railRotation } from '../src/core/pin-rails.js';
+import { swapComponentType } from '../src/core/swap.js';
 
 const leadOf = (circuit, comp, term) => circuit.netOfTerminal({ comp, term }).paths();
 
@@ -19,19 +20,28 @@ test('a pin facing the way the rail hangs gets a straight one-cell lead', () => 
   assert.equal(circuit.netOfTerminal({ comp: 'M2', term: 's' }).name, 'V_{DD}');
 });
 
-test('a sideways pin turns one cell toward the rail', () => {
+test('a marker hangs the way its pin leads out, on a straight one-cell lead', () => {
   const circuit = new Circuit();
   runCommand(circuit, 'add nmos M1 --at 0 0');
-  addPinRail(circuit, { comp: 'M1', term: 'g' }, 'supply');
-  assert.deepEqual(leadOf(circuit, 'M1', 'g'), [[{ x: -120, y: 0 }, { x: -160, y: 0 }, { x: -160, y: -40 }]]);
+  // A gate leads left: the supply lies on its side, pointing left.
+  const supply = addPinRail(circuit, { comp: 'M1', term: 'g' }, 'supply');
+  assert.deepEqual(leadOf(circuit, 'M1', 'g'), [[{ x: -120, y: 0 }, { x: -160, y: 0 }]]);
+  assert.deepEqual(railHang(supply), { x: -1, y: 0 });
+  // A drain leads up: a ground on it points up, off the top of the part.
+  const ground = addPinRail(circuit, { comp: 'M1', term: 'd' }, 'ground');
+  assert.deepEqual([ground.transform.x, ground.transform.y, ground.transform.rotation], [0, -120, 180]);
+  assert.deepEqual(railHang(ground), { x: 0, y: -1 });
+  assert.deepEqual(evaluate(circuit).issues.filter((issue) => issue.kind !== 'unconnected-terminal'), []);
 });
 
-test('a pin facing against the rail steps aside, away from its body', () => {
+test('a rail marker swapped for another kind keeps pointing the same way', () => {
   const circuit = new Circuit();
   runCommand(circuit, 'add nmos M1 --at 0 0');
-  const ground = addPinRail(circuit, { comp: 'M1', term: 'd' }, 'ground');
-  assert.deepEqual([ground.transform.x, ground.transform.y], [80, -120]);
-  assert.deepEqual(evaluate(circuit).issues.filter((issue) => issue.kind !== 'unconnected-terminal'), []);
+  const ground = addPinRail(circuit, { comp: 'M1', term: 's' }, 'ground');
+  const supply = swapComponentType(circuit, ground.refdes, 'supply');
+  assert.deepEqual(railHang(supply), { x: 0, y: 1 });
+  assert.equal(supply.transform.rotation, 180);
+  assert.deepEqual(railRotation('vcm', { x: 1, y: 0 }), 270);
 });
 
 test('a wired pin is refused and nothing is added', () => {

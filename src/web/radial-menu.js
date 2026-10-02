@@ -2,8 +2,9 @@
  * The radial (marking) menus a right-hold or right-flick opens. Each asks
  * what is under the press and offers what fits it:
  *
- *   paper  a part palette: flick to drop a part there (hold a sector for its
- *          variants: NMOS → bulk NMOS, NPN; R → variable R, impedance, ...)
+ *   paper  a part palette: flick to pick a part, then click to put it down
+ *          (hold a sector for its variants: NMOS → bulk NMOS, NPN; rails →
+ *          ground, supply, VCM; ...)
  *   pin    connect it: ground, supply, VCM, a port, a labelled stub, a wire
  *   part   swap it for a related type (as q), each one previewed in place
  *   wire   its net: name it, label it here, tidy it, delete the run, or pick
@@ -29,14 +30,14 @@ import { noteTip } from './onboarding.js';
 import { editor } from './editor-state.js';
 import { clientToWorld } from './canvas-view.js';
 import { selectContextTarget } from './context-menu.js';
-import { PLACEMENT_LABELS } from './toolbar.js';
-import { rememberInsertType, swapParts, symbolPreviewSvg } from './insert-menu.js';
+import { PLACEMENT_LABELS, shortPlacementLabel } from './toolbar.js';
+import { beginPlacing, swapParts, symbolPreviewSvg } from './insert-menu.js';
 import { placeNetLabelAt } from './annotation-tools.js';
 import { activeBeatIndex } from './beats-ui.js';
 import { logLine } from './status-bar-ui.js';
 import {
   activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection,
-  editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, setSelection, snapshot, startWireFromPoint, stubSelection, tidyNow,
+  editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow,
 } from './main.js';
 
 const TILE = 64;
@@ -54,28 +55,13 @@ const DWELL_MS = 380;
 
 // ----- what each ring offers --------------------------------------------------
 
-/** A part placed with its origin at `point`, joined to what it lands on. */
-function addPart(circuit, type, point) {
-  const placement = quickAddPlacement(getSymbol(type), point);
-  const component = circuit.addComponent(type, {
-    x: snap(point.x), y: snap(point.y),
-    rotation: placement.rotation, mirrorX: placement.mirrorX, mirrorY: placement.mirrorY,
-  });
-  circuit.connectCoincident(component.refdes);
-  return component;
-}
-
-const part = (type, label = PLACEMENT_LABELS[type] || type) => ({
+// A pick arms the part as a placement ghost under the pointer, to be put
+// down with a click (r and the mirrors turn it first), as from the insert menu.
+const part = (type, label = shortPlacementLabel(type)) => ({
   label,
+  title: PLACEMENT_LABELS[type] || label,
   symbol: type,
-  preview: (circuit, radial) => addPart(circuit, type, radial.point),
-  run: (radial) => {
-    const component = edit(() => addPart(editor.circuit, type, radial.point));
-    if (!component) return;
-    rememberInsertType(type);
-    setSelection([component.refdes]);
-    logLine(`placed ${component.refdes} (${label})`);
-  },
+  run: () => beginPlacing(type),
 });
 
 // The palette keeps its places, so a flick learned once stays right.
@@ -84,7 +70,7 @@ const PALETTE = [
   { ...part('resistor', 'R'), children: [part('resistor', 'R'), part('variable_resistor', 'Var. R'), part('impedance', 'Z')] },
   { ...part('capacitor', 'C'), children: [part('capacitor', 'C'), part('variable_capacitor', 'Var. C'), part('inductor', 'L')] },
   { ...part('current_source', 'I source'), children: [part('current_source', 'I'), part('voltage_source', 'V'), part('vccs', 'VCCS'), part('vcvs', 'VCVS')] },
-  { ...part('ground', 'Ground'), children: [part('ground', 'Ground'), part('vcm', 'VCM')] },
+  { ...part('ground', 'Rails'), children: [part('ground', 'Ground'), part('supply', 'Supply'), part('vcm', 'VCM')] },
   { ...part('port', 'Port'), children: [part('input', 'In'), part('output', 'Out'), part('inputoutput', 'In/out'), part('port', 'Port')] },
   { ...part('opamp', 'Op-amp'), children: [part('opamp', 'Op-amp'), part('opamp_diff', 'Diff'), part('gm', 'Gm'), part('comparator', 'Comp.')] },
   { ...part('pmos', 'PMOS'), children: [part('pmos', 'PMOS'), part('pmosb', 'PMOS bulk'), part('pnp', 'PNP')] },
@@ -148,7 +134,8 @@ function partRing(radial) {
   const swaps = component ? swapCandidates(component.type).slice(0, 8) : [];
   if (!swaps.length) return LEGACY_PART_RING;
   return swaps.map((type) => ({
-    label: PLACEMENT_LABELS[type] || type,
+    label: shortPlacementLabel(type),
+    title: PLACEMENT_LABELS[type] || type,
     symbol: type,
     preview: (circuit) => swapComponentType(circuit, radial.refdes, type),
     run: () => swapParts([radial.refdes], type),
@@ -196,7 +183,7 @@ const WIRE_RING = [
     applyEditorSelection({ kind: 'wire', id: radial.wireKey });
     editSelectionText();
   } },
-  { label: 'Net label', icon: 'net-label', run: (radial) => {
+  { label: 'Net label', icon: 'tag', run: (radial) => {
     placeNetLabelAt(radial.point);
     render();
   } },
@@ -244,7 +231,7 @@ function itemEl(item, index, count, enabled) {
   } else {
     el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
   }
-  el.title = item.label;
+  el.title = item.title || item.label;
   const text = document.createElement('span');
   text.className = 'radial-label';
   text.textContent = item.label;
