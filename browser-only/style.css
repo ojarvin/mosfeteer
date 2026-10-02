@@ -5418,6 +5418,31 @@ body.chrome-away [data-editor-edge="bottom"],
   translate: 0 calc(100% + 24px);
 }
 
+/* Over the Atlas (body.chrome-over, from the moment it is asked for until
+   the editor is back): the editor's toolbars and panels stand above the
+   desk, so they slide off over its paper and grid, not over the empty page;
+   and the drawing shows nothing but itself -- no focus hairline, frame,
+   selection, or pointer marks -- so the desk can replace it unseen. */
+/* Each is positioned or a flex item already, so z-index alone lifts it. */
+body.chrome-over [data-editor-edge] {
+  z-index: 95;
+}
+
+body.chrome-over .canvas:focus-visible {
+  outline: none;
+}
+
+body.chrome-over .canvas svg {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+body.chrome-over .canvas .editor-overlay,
+body.chrome-over .canvas .snap-layer,
+body.chrome-over .canvas .gesture-overlay {
+  visibility: hidden;
+}
+
 body.chrome-away [data-editor-edge="left"] {
   translate: calc(-100% - 24px) 0;
 }

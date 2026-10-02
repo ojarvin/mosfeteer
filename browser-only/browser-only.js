@@ -33125,7 +33125,8 @@ function drawZoomBox(ctx, palette) {
 }
 
 function drawCaption(ctx, tile, entry, rect, palette) {
-  if (state.source === 'symbols') return;
+  // In a transition the desk shows only the drawings (state.quiet).
+  if (state.source === 'symbols' || state.quiet) return;
   const selected = state.selected === tile.id || !!state.picked?.has(tile.id);
   const hovered = state.hover === tile.id;
   // The pick is a bracket at each of the design's corners, the
@@ -33455,9 +33456,18 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   // slide away, the camera moves, the Atlas's slide in (chrome-slide.js).
   // On startup the editor's are simply not there yet.
   const choreographed = !reduced && !startup && animate;
-  await slideChrome(document.body, true, { animate: choreographed });
+  // From here until the editor is back, its toolbars and panels stand above
+  // the desk and its drawing shows only itself (style.css body.chrome-over):
+  // the focus hairline and selection go first.
+  document.body.classList.add('chrome-over');
+  // Zooming out of the open design, the desk takes the drawing's place
+  // unseen and the toolbars slide off over it (openDesk); otherwise they go
+  // before the desk shows.
+  const overDesk = choreographed && source === 'workspace';
+  if (!overDesk) await slideChrome(document.body, true, { animate: choreographed });
   if (state?.generation !== generation) return;
   void slideChrome(rootEl, choreographed, { animate: false });
+  state.quiet = choreographed;
   if (reduced && !startup) rootEl.classList.add('preparing');
   // Zooming out of the open design, the desk shows only once it has drawn
   // that design: fading in over the editor without it, the design would
@@ -33483,7 +33493,11 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
     return;
   }
   await openDesk(generation, source, animate, startup);
-  if (state?.generation === generation) await slideChrome(rootEl, false);
+  if (state?.generation !== generation) return;
+  // Landed: the names and the pick come back with the toolbars.
+  state.quiet = false;
+  requestDraw();
+  await slideChrome(rootEl, false);
 }
 
 /** Lay out the desk just opened and bring it into view. */
@@ -33496,6 +33510,8 @@ async function openDesk(generation, source, animate, startup) {
     rootEl.classList.remove('preparing');
     rootEl.style.animation = '';
     draw();
+    // The editor's toolbars slide off over it; the zoom waits for them.
+    state.editorAway = slideChrome(document.body, true);
   }
   let ready = false;
   try {
@@ -33540,7 +33556,7 @@ async function openDesk(generation, source, animate, startup) {
     draw();
     // Decode the small images first, while the view still matches the
     // editor: decoding in the middle of the zoom would stall its frames.
-    await warmSmallImages(generation, 400);
+    await Promise.all([warmSmallImages(generation, 400), state.editorAway]);
     if (!state || state.generation !== generation) return;
     // The other designs gather in from beyond the edges as the camera pulls back.
     await animateView(clampView(fitAllView()), ENTER_MS, { camera: true, scatter: openTile ? { tile: openTile, outward: false } : null });
@@ -33594,6 +33610,8 @@ async function closeAtlas({ animate = true } = {}) {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const back = animate && !reduced && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
   if (back) {
+    state.quiet = true;
+    requestDraw();
     await slideChrome(rootEl, true);
     if (!state) return;
     await animateView(back, flightMs(state.view, back), { camera: true, scatter: { tile: currentTile, outward: true } });
@@ -33605,22 +33623,27 @@ async function closeAtlas({ animate = true } = {}) {
  *  `animate`). */
 function finishClose({ animate = true } = {}) {
   if (!state) return;
-  void slideChrome(document.body, false, { animate });
   stopAnimation();
   clearTimeout(state.arrangeTimer);
   for (const bitmap of state.bitmaps.values()) bitmap.close?.();
   state = null;
   overlayEl.replaceChildren();
-  rootEl.classList.add('leaving');
-  // A short fade covers what differs between a tile and the live canvas
-  // (the grid, pin dots): the drawing itself stays where it is. With
-  // reduced motion it is the whole transition, so it runs there too.
-  const hide = () => {
-    rootEl.hidden = true;
-    rootEl.classList.remove('leaving');
-  };
-  setTimeout(hide, LEAVE_MS);
   canvasEl.focus({ preventScroll: true });
+  // The editor's toolbars slide back in over the desk; then the desk gives
+  // way to the editor beneath, the same drawing in the same place. A short
+  // fade covers what differs between a tile and the live canvas (the grid,
+  // pin dots); with reduced motion it is the whole transition. Reopened
+  // meanwhile, the Atlas keeps its desk.
+  void slideChrome(document.body, false, { animate }).then(() => {
+    if (state) return;
+    rootEl.classList.add('leaving');
+    setTimeout(() => {
+      if (state) return;
+      rootEl.hidden = true;
+      rootEl.classList.remove('leaving');
+      document.body.classList.remove('chrome-over');
+    }, LEAVE_MS);
+  });
 }
 
 function toggleAtlas() {
@@ -33665,6 +33688,8 @@ async function openTile(tile) {
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
       if (exact) {
+        state.quiet = true;
+        requestDraw();
         await slideChrome(rootEl, true);
         await animateView(exact, flightMs(state.view, exact), { camera: true, scatter: { tile, outward: true } });
       }
@@ -33683,6 +33708,8 @@ async function openTile(tile) {
       x: entry.box.x + pad, y: entry.box.y + pad, w: entry.box.w - 2 * pad, h: entry.box.h - 2 * pad,
     }));
     if (predicted) {
+      state.quiet = true;
+      requestDraw();
       await slideChrome(rootEl, true);
       await animateView(predicted, flightMs(state.view, predicted), { camera: true, scatter: { tile, outward: true } });
     }
@@ -33700,7 +33727,8 @@ async function openTile(tile) {
   if (!landed()) return;
   state.opening = false;
   if (!opened) {
-    // Staying on the desk: its toolbars come back.
+    // Staying on the desk: its names and toolbars come back.
+    state.quiet = false;
     void slideChrome(rootEl, false);
     requestDraw();
     return;

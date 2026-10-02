@@ -262,7 +262,7 @@
       </div>
       <div class="canvas" id="canvas" tabindex="0" role="application" aria-label="Editor canvas. Tab to focus objects; Enter or Space selects the focused object; arrow keys nudge selection."></div>
       <div id="component-context-menu" class="component-context-menu" hidden role="menu" aria-label="Context actions"></div>
-      <section id="tutorial-card" class="tutorial-card glass" aria-labelledby="tutorial-title" hidden>
+      <section id="tutorial-card" class="tutorial-card glass" data-editor-edge="bottom" aria-labelledby="tutorial-title" hidden>
         <header class="tutorial-head">
           <span id="tutorial-title" class="tutorial-title">Tutorial · 5T OTA</span>
           <span id="tutorial-count" class="tutorial-count"></span>
@@ -296,7 +296,7 @@
       </div>
     </section>
 
-    <section id="analysis-dialog" class="analysis-dock" aria-labelledby="analysis-dialog-title" hidden>
+    <section id="analysis-dialog" class="analysis-dock" data-editor-edge="right" aria-labelledby="analysis-dialog-title" hidden>
       <div class="analysis-dock-resizer" id="analysis-dock-resizer" role="separator" aria-orientation="vertical" aria-controls="analysis-dialog" aria-label="Resize analysis panel" tabindex="0" title="Drag to resize; double-click to reset"></div>
       <form id="analysis-form">
         <header class="analysis-dock-header">
@@ -402,7 +402,7 @@
       </form>
     </section>
 
-    <aside class="side-panel" id="side-panel">
+    <aside class="side-panel" id="side-panel" data-editor-edge="right">
       <div class="side-panel-resizer" id="side-panel-resizer" role="separator" aria-orientation="vertical" aria-controls="side-panel" aria-label="Resize side panel" tabindex="0" title="Drag to resize; double-click to reset"></div>
 
       <div class="panel-filter" data-doc-kind="schematic">
