@@ -621,7 +621,7 @@ export function openTimingDialog() {
     pairsBox.replaceChildren();
     const own = rows.filter((row) => row.baseKey === undefined);
     const active = activePairs();
-    const head = element('div', { class: 'timing-pairs-head' }, [element('span', { class: 'timing-pairs-title', text: 'Never overlap' })]);
+    const head = element('div', { class: 'timing-pairs-head' }, [element('span', { class: 'timing-pairs-title', text: 'Non-overlap gaps', title: 'Ticked pairs get a one-cell gap where one falls as the other rises, as non-overlapping clocks have' })]);
     const list = element('div', { class: 'timing-pairs-list' });
     pairsBox.append(head, list);
     for (let a = 0; a < own.length; a += 1) {
@@ -639,7 +639,7 @@ export function openTimingDialog() {
         list.append(element('label', {}, [box, element('span', { text: `${plainMarkup(own[a].source)} · ${plainMarkup(own[b].source)}` })]));
       }
     }
-    const auto = element('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'automatic' : 'Automatic', title: 'Keep apart every two phases that are never high in the same slot' });
+    const auto = element('button', { type: 'button', class: 'timing-pairs-auto', text: state.gaps === 'auto' ? 'Auto (on)' : 'Auto', title: 'Gap every two phases that are never high in the same slot' });
     auto.disabled = state.gaps === 'auto';
     auto.addEventListener('click', () => { state.gaps = 'auto'; renderPairs(); redraw(); });
     head.append(auto);
@@ -810,7 +810,7 @@ export function openTimingDialog() {
     node.addEventListener('click', () => { action(); grid.focus(); });
     return node;
   };
-  const fromBeats = button('From beats', 'One slot per beat: high where the phase\'s switches are closed', () => {
+  const fromBeats = button('Read the beats', 'Set the waves from the beats: one slot per beat, high where the phase\'s switches are closed', () => {
     rows.forEach((row) => {
       // A signal of the diagram's own has no switches to read.
       if (row.signal) return;
@@ -821,12 +821,12 @@ export function openTimingDialog() {
   if (!editor.circuit.beats.length) fromBeats.disabled = true;
   // The diagram stays where it stands; Re-place puts it where the drawing
   // has room again (after the drawing grew into it, say).
-  const replace = button('Re-place', 'Put the diagram back under the drawing, as high as the drawing leaves room', () => {
+  const replace = button('Move under drawing', 'Put the diagram back under the drawing, as high as the drawing leaves room (it otherwise stays where you dragged it)', () => {
     state.place = true;
     redraw();
   });
   // The timing is where the beats come from: one beat per state.
-  const makeBeats = button('Make beats', 'Add one beat per state of this timing diagram, after the beat on screen: phases high together close together', () => {
+  const makeBeats = button('Make beats', 'Write the timing into the beats: one beat per state of this diagram, its high phases\' switches closed', () => {
     addPhaseBeats();
   });
   const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
@@ -839,6 +839,11 @@ export function openTimingDialog() {
     if (addSignal(signalInput.value)) signalInput.value = '';
     grid.focus();
   });
+  // One titled group of controls.
+  const section = (title, children, className = '') => element('div', { class: `timing-section ${className}`.trim() }, [
+    element('span', { class: 'timing-pairs-title', text: title }),
+    element('div', { class: 'timing-dialog-options' }, children),
+  ]);
   const removeRow = button('Remove row', 'Remove the cursor row: a signal added here (a switch phase\'s row comes from its switches)', removeSignal);
   const close = () => {
     const focused = dialog.contains(document.activeElement);
@@ -856,16 +861,19 @@ export function openTimingDialog() {
       element('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the timing diagram', title: 'Close (Esc or Shift+K)', text: '×' }),
     ]),
     element('div', { class: 'timing-dialog-body' }, [
-      element('p', { class: 'timing-dialog-legend', text: 'Click a slot to flip it, or move with the arrows and type 1 or 0. + repeats the slot at the cursor in every row (a state held one slot longer); Delete removes it; * repeats the whole sequence. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. Signals add rows of your own, not tied to a switch. Make beats steps through the states the switch phases go through.' }),
+      element('p', { class: 'timing-dialog-legend', text: 'A row per switch phase (and any signal you add), a column per slot. Click a slot to flip it.' }),
       grid,
-      element('div', { class: 'timing-dialog-options' }, [
+      element('details', { class: 'timing-keys' }, [
+        element('summary', { text: 'Keyboard' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole period. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row.' }),
+      ]),
+      section('Slots', [
         button('+ slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot),
         button('− slot', 'Remove the slot at the cursor (Delete)', removeSlot),
-        button('Repeat all', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
-        element('label', {}, [element('span', { text: 'Slot' }), slotInput, element('span', { text: 'cells' })]),
+        button('Repeat period', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence),
+        element('label', {}, [element('span', { text: 'Width' }), slotInput, element('span', { text: 'cells' })]),
       ]),
-      element('div', { class: 'timing-dialog-options timing-shift-controls' }, [
-        element('span', { class: 'timing-pairs-title', text: 'Cursor row' }),
+      section('Cursor row', [
         element('span', { class: 'timing-shift-pair' }, [
           element('span', { text: 'Fall' }),
           button('◂', 'Fall a cell earlier ([)', () => shiftEdge('fall', -1)),
@@ -877,17 +885,20 @@ export function openTimingDialog() {
           button('▸', 'Rise a cell later (})', () => shiftEdge('rise', 1)),
         ]),
         element('span', { class: 'timing-shift-pair' }, [
-          element('span', { text: 'Row' }),
+          element('span', { text: 'Move' }),
           button('▴', 'Move the row up (Alt+↑)', () => moveRow(-1)),
           button('▾', 'Move the row down (Alt+↓)', () => moveRow(1)),
         ]),
       ]),
-      element('div', { class: 'timing-dialog-options timing-signal-controls' }, [
-        element('span', { class: 'timing-pairs-title', text: 'Signals' }), signalInput, addButton, removeRow,
-      ]),
+      section('Signals', [signalInput, addButton, removeRow], 'timing-signal-controls'),
       pairsBox,
       status,
-      element('div', { class: 'dialog-actions' }, [fromBeats, replace, makeBeats]),
+      // The two ways between the timing and the beats, and where the
+      // diagram sits, each said once.
+      element('div', { class: 'timing-beats' }, [
+        element('p', { class: 'timing-beats-note', text: 'Beats step the drawing through this timing: each beat closes the switches whose phase is high.' }),
+        element('div', { class: 'dialog-actions' }, [replace, fromBeats, makeBeats]),
+      ]),
     ]),
   ]);
   dialog.addEventListener('keydown', (event) => {

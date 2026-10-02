@@ -61,7 +61,7 @@ phase's: flipping either on a beat flips both, and a complement's first switch
 takes the phase's beats the other way round. The drawing itself keeps every
 switch as drawn -- all open, say -- until one is flipped there.
 
-**Beats from phases / timing** (More menu, or the timing editor's **Make
+**Make beats from phases** (More menu, or the timing editor's **Make
 beats**; `beat phases`) follows one flow: switches name their phases, a timing
 diagram (when one is drawn) says which phases are high when, and the beats
 step through that. When the drawing already has beats, the editor asks
@@ -103,13 +103,13 @@ gap opens. A complement is its phase inverted, high in the gaps.
 
 The menu item opens an editor beside the drawing: a grid with a row of slots
 per phase, started from the diagram already drawn, else from the beats (one
-slot per beat, high where the phase's switches are closed; **From beats**
+slot per beat, high where the phase's switches are closed; **Read the beats**
 refills it). Click a slot to flip it, or move a cursor with the arrows and
 type `1` or `0`; the empty cell after the last slot adds one. `+` repeats
-the slot at the cursor in every row -- a state held one slot longer -- `*` (**Repeat all**) copies
+the slot at the cursor in every row -- a state held one slot longer -- `*` (**Repeat period**) copies
 every wave once after itself, a second period to edit, and Delete removes
-a slot. The slot width is in cells, and **Never overlap** lists
-every pair of phases to keep apart (**Automatic** returns to the default).
+a slot. The slot width is in cells, and **Non-overlap gaps** lists
+every pair of phases to keep apart (**Auto** returns to the default).
 A row's edges can also move off the slot boundaries by whole cells: `[` and
 `]` move the cursor row's falling edges a cell earlier or later, `{` and `}`
 its rising edges (or the **Fall** and **Rise** buttons) -- a bottom plate's
@@ -139,8 +139,8 @@ A new diagram is placed with its waves centred on the drawing's width, as
 high as the drawing leaves room for it -- floating up into an empty part of
 the drawing -- else below everything. After that it stays where it stands:
 drag it anywhere, and redraws keep it there. It does not move out of the way
-of later drawing; **Re-place** (`timing --place`) puts it where the drawing
-has room again. Rows move up and down with Alt+↑/↓ (or the **Row** buttons;
+of later drawing; **Move under drawing** (`timing --place`) puts it where the drawing
+has room again. Rows move up and down with Alt+↑/↓ (or the **Move** buttons;
 `timing --order φ2,φ1`), and keep that order.
 
 The diagram's annotations remember their phase and wave, so drawing it again

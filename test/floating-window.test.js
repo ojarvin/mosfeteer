@@ -45,3 +45,11 @@ test('the toolbar groups the windows, and More lists them too', () => {
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
   assert.match(css, /data-compact~="fold"\] :is\([^)]*\.window-cluster/);
 });
+
+test('the timing editor says each way to and from the beats once, in plain words', () => {
+  for (const name of ["'Read the beats'", "'Make beats'", "'Move under drawing'", "'Non-overlap gaps'", "section('Slots'", "section('Cursor row'", "section('Signals'"]) {
+    assert.ok(beats.includes(name), name);
+  }
+  for (const old of ["'From beats'", "'Re-place'", "'Never overlap'", "'Repeat all'"]) assert.ok(!beats.includes(old), old);
+  assert.match(html, />Make beats from phases<\/button>/);
+});

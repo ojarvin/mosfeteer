@@ -67,7 +67,7 @@ export const TIPS = Object.freeze([
     trigger: 'timing-drawn',
     after: 2,
     retiredBy: 'phase-beats',
-    text: 'Make beats in the timing editor steps the drawing through the timing, one beat per state.',
+    text: 'Make beats in the timing editor writes the timing into the beats: one beat per state, its high phases closed.',
   },
 ]);
 

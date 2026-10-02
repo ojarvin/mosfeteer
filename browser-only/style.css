@@ -5273,12 +5273,20 @@ circle.bode-corner {
   text-align: right;
 }
 
+/* A titled row of controls: the title in a column of its own. */
+.timing-section {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .timing-dialog .timing-dialog-options {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
-  margin-top: 8px;
+  gap: 6px 10px;
 }
 
 .timing-signal-controls input {
@@ -5341,8 +5349,36 @@ circle.bode-corner {
 }
 
 .timing-pairs-title {
+  min-width: 5.5rem;
   color: var(--text-dim);
   font-size: 0.8rem;
+}
+
+.timing-keys {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.timing-keys summary {
+  cursor: pointer;
+}
+
+.timing-keys p {
+  margin: 4px 0 0;
+}
+
+/* The way to and from the beats closes the window. */
+.timing-beats {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.timing-beats-note {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
 }
 
 .timing-dialog .timing-dialog-status {
