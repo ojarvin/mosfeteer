@@ -84,3 +84,16 @@ export function netLabelPasteKind(net, name) {
   if (!net.name) return 'name';
   return canonicalNetName(net.name) === canonicalNetName(name) ? 'same' : 'rename';
 }
+
+/** The vertices of lines and arrows that a selection box (`{ x0, y0, x1,
+ *  y1 }`) catches only some of: a Map of label id to the indices inside. A
+ *  line with every vertex inside is a whole object for the box instead. */
+export function partialVertexPicks(labels, box) {
+  const picks = new Map();
+  for (const label of labels) {
+    if (!label.points || label.selectable === false) continue;
+    const inside = label.points.flatMap((p, i) => (p.x >= box.x0 && p.x <= box.x1 && p.y >= box.y0 && p.y <= box.y1 ? [i] : []));
+    if (inside.length && inside.length < label.points.length) picks.set(label.id, inside);
+  }
+  return picks;
+}

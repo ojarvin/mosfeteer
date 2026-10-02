@@ -24966,7 +24966,7 @@ function editorOverlay(circuit, opts = {}) {
       if (label.points && !opts.alignTool) {
         parts.push(vertexHandles(label, true));
         // Picked vertices (for a group drag or Delete) wear a ring.
-        const picked = opts.selectedVertices?.labelId === label.id ? opts.selectedVertices.indices : [];
+        const picked = opts.selectedVertices?.[label.id] || [];
         for (const index of picked) {
           const p = label.points[index];
           if (p) parts.push(`<circle class="annotation-vertex-picked" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(10 * unit)}" fill="none" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
@@ -26570,6 +26570,7 @@ __modules["src/core/selection.js"] = function (__require, __exports) {
 __exports.copySelectionParts = copySelectionParts;
 __exports.resolveCopySelection = resolveCopySelection;
 __exports.netLabelPasteKind = netLabelPasteKind;
+__exports.partialVertexPicks = partialVertexPicks;
 let canonicalNetName, extractWireFragments; __bind(() => { ({ canonicalNetName, extractWireFragments } = __require("src/core/model.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
 
@@ -26657,6 +26658,19 @@ function resolveCopySelection(circuit, { refs = [], labels = [], netIds = [], wi
 function netLabelPasteKind(net, name) {
   if (!net.name) return 'name';
   return canonicalNetName(net.name) === canonicalNetName(name) ? 'same' : 'rename';
+}
+
+/** The vertices of lines and arrows that a selection box (`{ x0, y0, x1,
+ *  y1 }`) catches only some of: a Map of label id to the indices inside. A
+ *  line with every vertex inside is a whole object for the box instead. */
+function partialVertexPicks(labels, box) {
+  const picks = new Map();
+  for (const label of labels) {
+    if (!label.points || label.selectable === false) continue;
+    const inside = label.points.flatMap((p, i) => (p.x >= box.x0 && p.x <= box.x1 && p.y >= box.y0 && p.y <= box.y1 ? [i] : []));
+    if (inside.length && inside.length < label.points.length) picks.set(label.id, inside);
+  }
+  return picks;
 }
 
 };
@@ -44961,6 +44975,7 @@ let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch,
 let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
+let partialVertexPicks; __bind(() => { ({ partialVertexPicks } = __require("src/core/selection.js")); });
 let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
@@ -44997,6 +45012,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -45899,6 +45915,7 @@ function setSelection(refs, primary = refs[0], preserveMixed = false) {
     selectedNets.clear();
   }
   multi = new Set(refs);
+  selectedVertices = null;
   selected = refs.length ? (refs.includes(primary) ? primary : refs[0]) : null;
   if (selected && !circuit.components.has(selected)) selected = null;
 }
@@ -45915,28 +45932,48 @@ function setLabelSelection(ids, primary = ids[0], preserveMixed = false) {
     selectedNets.clear();
   }
   selLabels = new Set(selectableIds);
+  selectedVertices = null;
   selLabel = selectableIds.length
     ? (selectableIds.includes(primary) ? primary : selectableIds[0])
     : null;
 }
 
-/** The picked vertices, while their line or arrow is the whole selection:
- *  { label, indices } with indices in path order, or null. */
+/** The picked vertices, while their lines and arrows are the whole
+ *  selection: [{ label, indices }] with indices in path order, or null. */
 function vertexSelection() {
-  if (!selectedVertices || multi.size || selectedNets.size || selectedWires.size || selLabels.size !== 1) return null;
-  const label = circuit.labels.get(selectedVertices.labelId);
-  if (!label?.points || !selLabels.has(label.id)) return null;
-  const indices = [...selectedVertices.indices].filter((i) => i < label.points.length).sort((a, b) => a - b);
-  return indices.length ? { label, indices } : null;
+  if (!selectedVertices || multi.size || selectedNets.size || selectedWires.size) return null;
+  if ([...selLabels].some((id) => !selectedVertices.has(id))) return null;
+  const picks = [];
+  for (const [id, set] of selectedVertices) {
+    const label = circuit.labels.get(id);
+    if (!label?.points || !selLabels.has(id)) continue;
+    const indices = [...set].filter((i) => i < label.points.length).sort((a, b) => a - b);
+    if (indices.length) picks.push({ label, indices });
+  }
+  return picks.length ? picks : null;
 }
 
-/** Pick vertex `index` of `label` (alone, or toggled into the picks). */
+const vertexCount = (picks) => picks.reduce((sum, { indices }) => sum + indices.length, 0);
+
+/** Select the lines `picks` (Map of label id to indices) name, with those
+ *  vertices picked. */
+function setVertexSelection(picks) {
+  setSelection([]);
+  setLabelSelection([...picks.keys()]);
+  selectedVertices = picks.size ? new Map([...picks].map(([id, indices]) => [id, new Set(indices)])) : null;
+}
+
+/** Pick vertex `index` of `label` alone, or toggle it into the picks, which
+ *  may span several lines. A line whose last pick goes stays selected. */
 function pickVertex(label, index, toggle = false) {
-  const current = vertexSelection();
-  const indices = new Set(toggle && current?.label === label ? current.indices : []);
-  if (toggle && indices.has(index)) indices.delete(index);
-  else indices.add(index);
-  selectedVertices = indices.size ? { labelId: label.id, indices } : null;
+  const picks = new Map(toggle ? (vertexSelection() || []).map((pick) => [pick.label.id, new Set(pick.indices)]) : []);
+  const set = picks.get(label.id) || new Set();
+  if (toggle && set.has(index)) set.delete(index);
+  else set.add(index);
+  if (set.size) picks.set(label.id, set);
+  else picks.delete(label.id);
+  if (picks.size) setVertexSelection(picks);
+  else setLabelSelection([label.id]);
 }
 
 /** Deserialize a "netId:branch:segment" key into {netId, branch, segment}. */
@@ -46766,19 +46803,23 @@ function rerouteTouchedNets(refs, moved, options = {}) {
 /** Delete all selected objects together in one undo step.  Selected whole nets
  *  are removed before segment cuts, so selecting both cannot leave fragments;
  *  touched-but-unselected nets are rerouted afterward. */
-/** A box around part of the one selected line or arrow picks the vertices
- *  in it (Shift adds to the picks). A box holding all or none of them is an
- *  ordinary selection box. */
-function pickVerticesInBox(lineId, box, add) {
-  const label = lineId ? circuit.labels.get(lineId) : null;
-  if (!label?.points) return false;
-  const inside = label.points.flatMap((p, i) => (p.x >= box.x0 && p.x <= box.x1 && p.y >= box.y0 && p.y <= box.y1 ? [i] : []));
-  if (!inside.length || inside.length === label.points.length) return false;
+/** A box that catches only some vertices of lines or arrows, and no whole
+ *  object, picks those vertices, of any number of lines; Shift adds to the
+ *  picks. Anything else is an ordinary selection box. */
+function pickVerticesInBox(box, add) {
+  const caught = boxSelectionContents(box.x0, box.y0, box.x1, box.y1);
+  if (caught.refs.length || caught.labels.length || caught.nets.length || caught.wires.length) return false;
+  const found = partialVertexPicks(circuit.labels.values(), box);
+  if (!found.size) return false;
   const current = add ? vertexSelection() : null;
-  setSelection([]);
-  setLabelSelection([label.id]);
-  selectedVertices = { labelId: label.id, indices: new Set([...(current?.indices || []), ...inside]) };
-  hintLine(`${selectedVertices.indices.size} vertices picked — drag one to move them together · Delete removes them`);
+  // Shift keeps what was selected; vertices do not mix with whole objects,
+  // except lines and arrows, whose vertices the picks then stand for.
+  if (add && !current && (multi.size || selectedNets.size || selectedWires.size || [...selLabels].some((id) => !circuit.labels.get(id)?.points))) return false;
+  const picks = new Map((current || []).map((pick) => [pick.label.id, new Set(pick.indices)]));
+  for (const [id, indices] of found) picks.set(id, new Set([...(picks.get(id) || []), ...indices]));
+  setVertexSelection(picks);
+  const count = vertexCount(vertexSelection() || []);
+  hintLine(`${count} ${count === 1 ? 'vertex' : 'vertices'} picked${picks.size > 1 ? ` on ${picks.size} lines` : ''} — drag one to move them together · Delete removes them · Shift+box adds more`);
   return true;
 }
 
@@ -46786,13 +46827,15 @@ function deleteSelection() {
   // Picked vertices go on their own; the line keeps the rest.
   const vertices = vertexSelection();
   if (vertices) {
-    if (!vertices.label.canRemoveVertices(vertices.indices)) {
-      hintLine(`a ${vertices.label.kind} keeps at least two points — Escape, then Delete removes the whole ${vertices.label.kind}`);
+    const stuck = vertices.find(({ label, indices }) => !label.canRemoveVertices(indices));
+    if (stuck) {
+      hintLine(`a ${stuck.label.kind} keeps at least two points — Escape, then Delete removes the whole ${stuck.label.kind}`);
       return false;
     }
-    commit(() => vertices.label.removeVertices(vertices.indices));
+    commit(() => { for (const { label, indices } of vertices) label.removeVertices(indices); });
     selectedVertices = null;
-    logLine(`removed ${vertices.indices.length} ${vertices.indices.length === 1 ? 'vertex' : 'vertices'}`);
+    const count = vertexCount(vertices);
+    logLine(`removed ${count} ${count === 1 ? 'vertex' : 'vertices'}`);
     render();
     return true;
   }
@@ -47823,7 +47866,7 @@ function renderCanvas(modelKey) {
     hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
     selectedVertices: (() => {
       const picked = vertexSelection();
-      return picked ? { labelId: picked.label.id, indices: picked.indices } : null;
+      return picked ? Object.fromEntries(picked.map(({ label, indices }) => [label.id, indices])) : null;
     })(),
     handleScale: worldPerPixel(),
     ghostTwin,
@@ -48093,13 +48136,9 @@ function boxSelectionContents(x0, y0, x1, y1) {
 
 function beginMarqueeSelection(startWorld, startClient, ev) {
   cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
-  // A line or arrow selected alone may have its vertices picked by the box.
-  const soleLine = !multi.size && !selectedNets.size && !selectedWires.size && selLabels.size === 1
-    && circuit.labels.get([...selLabels][0])?.points ? [...selLabels][0] : null;
   if (!ev.shiftKey) setSelection([]);
   drag = {
     mode: 'marquee',
-    soleLine,
     startClient,
     startWorld,
     startSelection: new Set(multi),
@@ -49590,19 +49629,21 @@ function canvasMouseDown(ev) {
   const annotationSegment = endpointHit ? null : annotationSegmentAt(startWorld);
   const pickedLine = endpointHit?.label || annotationSegment?.label;
   const vertexIndex = endpointHit?.endpoint.startsWith('vertex:') ? Number(endpointHit.endpoint.slice(7)) : -1;
-  // Shift or Ctrl/Cmd on a vertex of the line already selected picks that
-  // vertex too (or lets it go), for a group drag or Delete.
-  if (vertexIndex >= 0 && isSelectionModifier(ev) && selLabels.size === 1 && selLabels.has(endpointHit.label.id) && !multi.size) {
+  // Shift or Ctrl/Cmd on a vertex of the line already selected, or of any
+  // line while vertices are picked, picks that vertex too (or lets it go),
+  // for a group drag or Delete.
+  const picked = vertexSelection();
+  if (vertexIndex >= 0 && isSelectionModifier(ev) && (picked || (selLabels.size === 1 && selLabels.has(endpointHit.label.id) && !multi.size))) {
     pickVertex(endpointHit.label, vertexIndex, true);
     render();
     return;
   }
   // A press on one of several picked vertices drags them all.
-  const picked = vertexSelection();
-  if (vertexIndex >= 0 && !isSelectionModifier(ev) && picked?.label === endpointHit.label && picked.indices.length > 1 && picked.indices.includes(vertexIndex)) {
+  if (vertexIndex >= 0 && !isSelectionModifier(ev) && picked && vertexCount(picked) > 1
+    && picked.some(({ label, indices }) => label === endpointHit.label && indices.includes(vertexIndex))) {
     drag = {
-      mode: 'annotationvertices', label: picked.label, indices: picked.indices,
-      startPoints: picked.label.points.map((point) => ({ ...point })),
+      mode: 'annotationvertices',
+      picks: picked.map(({ label, indices }) => ({ label, indices, startPoints: label.points.map((point) => ({ ...point })) })),
       startClient, startWorld, startSnapshot: snapshot(), moved: false,
     };
     return;
@@ -50554,8 +50595,10 @@ function canvasMouseMove(ev) {
     if (drag.moved) {
       const dx = snap(movedWorld.x) - snap(drag.startWorld.x);
       const dy = snap(movedWorld.y) - snap(drag.startWorld.y);
-      drag.label.points = drag.startPoints.map((point) => ({ ...point }));
-      drag.label.moveVertices(drag.indices, dx, dy);
+      for (const { label, indices, startPoints } of drag.picks) {
+        label.points = startPoints.map((point) => ({ ...point }));
+        label.moveVertices(indices, dx, dy);
+      }
       cursor = snappedWorld(movedWorld);
       markModelChanged(false);
       scheduleInteractionRender();
@@ -51287,7 +51330,7 @@ function finishCanvasMouseUp(ev) {
   } else if (drag.mode === 'marquee' || drag.mode === 'deletemarquee') {
     if (drag.moved) {
       const box = worldRect(drag.startWorld, w);
-      if (drag.mode !== 'marquee' || !pickVerticesInBox(drag.soleLine, box, drag.shift)) applyBoxSelection(box.x0, box.y0, box.x1, box.y1, drag.shift);
+      if (drag.mode !== 'marquee' || !pickVerticesInBox(box, drag.shift)) applyBoxSelection(box.x0, box.y0, box.x1, box.y1, drag.shift);
       if (drag.mode === 'deletemarquee' && copySelectionExists()) deleteSelection();
     } else if (drag.mode === 'deletemarquee') {
       if (copySelectionExists()) deleteSelection();
@@ -57706,7 +57749,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['Shift+K', 'timing diagram of the switch phases and signals you add: edit its slots in a grid beside the drawing; Make beats steps through the phases'],
-    ['Shift/Ctrl-click a vertex', 'on a selected line or arrow, pick vertices (a box over part of it picks those inside); drag one to move them together, Delete removes them, Escape lets go'],
+    ['Box over vertices', 'a box catching only some vertices of lines or arrows picks them, on any number of lines; Shift+box or Shift/Ctrl-click a vertex adds more; drag one to move them together, Delete removes them, Escape lets go'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],

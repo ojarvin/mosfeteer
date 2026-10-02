@@ -1201,16 +1201,20 @@ test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () =>
     assert.ok(arm < toggle, `${target} copies before it toggles`);
   }
   // The one exception: Shift or Ctrl/Cmd on a vertex of the line already
-  // selected picks that vertex instead.
+  // selected, or while vertices are picked, picks that vertex instead.
   assert.ok(down.indexOf('pickVertex(endpointHit.label, vertexIndex, true)') < down.indexOf('armLabelCopyGrab(pickedLine'));
 });
 
 test('picked line vertices drag together, fall to a partial box, and go with Delete', () => {
   const main = editorSource();
-  assert.match(main, /drag\.label\.moveVertices\(drag\.indices, dx, dy\);/);
-  assert.match(main, /if \(drag\.mode !== 'marquee' \|\| !pickVerticesInBox\(drag\.soleLine, box, drag\.shift\)\) applyBoxSelection/);
-  assert.match(functionSource('deleteSelection', main), /commit\(\(\) => vertices\.label\.removeVertices\(vertices\.indices\)\)/);
-  assert.match(functionSource('pickVerticesInBox', main), /if \(!inside\.length \|\| inside\.length === label\.points\.length\) return false;/);
+  assert.match(main, /for \(const \{ label, indices, startPoints \} of drag\.picks\) \{[\s\S]*?label\.moveVertices\(indices, dx, dy\);/);
+  assert.match(main, /if \(drag\.mode !== 'marquee' \|\| !pickVerticesInBox\(box, drag\.shift\)\) applyBoxSelection/);
+  assert.match(functionSource('deleteSelection', main), /commit\(\(\) => \{ for \(const \{ label, indices \} of vertices\) label\.removeVertices\(indices\); \}\)/);
+  // No line needs selecting first: a box catching only some vertices, and
+  // no whole object, picks them, on any number of lines.
+  const box = functionSource('pickVerticesInBox', main);
+  assert.match(box, /caught\.refs\.length \|\| caught\.labels\.length \|\| caught\.nets\.length \|\| caught\.wires\.length\) return false;/);
+  assert.match(box, /partialVertexPicks\(circuit\.labels\.values\(\), box\)/);
 });
 
 test('a still click on a selected object cycles to the next one stacked under it, and a press drags the selected one', () => {

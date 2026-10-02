@@ -172,3 +172,18 @@ test('a press on a selected component keeps the whole mixed selection', () => {
   });
   assert.deepEqual(press, { refs: ['R1', 'R2'], labelIds: ['L1'], keepMixed: true });
 });
+
+test('a box picks the vertices of lines it catches only partly, on any number of lines', async () => {
+  const { partialVertexPicks } = await import('../src/core/selection.js');
+  const line = (id, points, extra = {}) => ({ id, points, ...extra });
+  const labels = [
+    line('L1', [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 400 }]),
+    line('L2', [{ x: 0, y: 80 }, { x: 400, y: 80 }]),
+    line('inside', [{ x: 40, y: 40 }, { x: 80, y: 40 }]),
+    line('locked', [{ x: 0, y: 0 }, { x: 800, y: 0 }], { selectable: false }),
+    { id: 'text', points: null },
+  ];
+  const picks = partialVertexPicks(labels, { x0: -40, y0: -40, x1: 120, y1: 120 });
+  assert.deepEqual([...picks], [['L1', [0]], ['L2', [0]]]);
+  assert.equal(partialVertexPicks(labels, { x0: 1000, y0: 1000, x1: 1200, y1: 1200 }).size, 0);
+});

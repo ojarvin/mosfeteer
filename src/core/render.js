@@ -1527,7 +1527,7 @@ export function editorOverlay(circuit, opts = {}) {
       if (label.points && !opts.alignTool) {
         parts.push(vertexHandles(label, true));
         // Picked vertices (for a group drag or Delete) wear a ring.
-        const picked = opts.selectedVertices?.labelId === label.id ? opts.selectedVertices.indices : [];
+        const picked = opts.selectedVertices?.[label.id] || [];
         for (const index of picked) {
           const p = label.points[index];
           if (p) parts.push(`<circle class="annotation-vertex-picked" cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="${fmt(10 * unit)}" fill="none" stroke="${SELECT}" stroke-width="2" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
