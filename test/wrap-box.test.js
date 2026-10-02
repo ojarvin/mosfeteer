@@ -45,3 +45,15 @@ test('box wraps named objects in a captioned dashed box', () => {
   assert.throws(() => runCommand(circuit, 'box NOPE'), /"NOPE" is not a part, net, or label/);
   assert.throws(() => runCommand(circuit, 'box'), /usage: box/);
 });
+
+test('a selected wire segment boxes only itself, not the rest of its net', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add resistor R1 --at 0 0', 'add resistor R2 --at 1200 1200', 'connect R1.b R2.a');
+  const net = circuit.netOfTerminal({ comp: 'R1', term: 'b' });
+  // The segment nearest R1, as a marquee around R1 picks it.
+  const segments = net.paths().flatMap((path, branch) => path.slice(1).map((p, i) => ({ branch, segment: i + 1, a: path[i], b: p })));
+  const near = segments.reduce((best, s) => (Math.max(s.a.x + s.a.y, s.b.x + s.b.y) < Math.max(best.a.x + best.a.y, best.b.x + best.b.y) ? s : best));
+  const rect = boxAroundRect(circuit, { refs: ['R1'], wires: [{ netId: net.id, branch: near.branch, segment: near.segment }] });
+  for (const p of [near.a, near.b]) assert.ok(p.x > rect.x && p.x < rect.x + rect.w && p.y > rect.y && p.y < rect.y + rect.h, 'frames the segment');
+  assert.ok(rect.x + rect.w < 1200 && rect.y + rect.h < 1200, `not R2's end of the net (${JSON.stringify(rect)})`);
+});

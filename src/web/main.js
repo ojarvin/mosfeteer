@@ -7471,17 +7471,16 @@ export function activateShapeAnnotation(kind) {
   activateLabelPlacement(kind);
 }
 
-/** The selection as parts, labels, and nets (a selected wire stands for its net). */
+/** The selection as parts, labels, whole nets, and single wire segments: a
+ *  marquee picks the segments of a net that runs on outside it, and only
+ *  those are boxed. */
 function boxableSelection() {
-  const netIds = new Set([...selectedNets].filter((id) => circuit.nets.has(id)));
-  for (const key of selectedWires) {
-    const { netId } = keyToWire(key);
-    if (circuit.nets.has(netId)) netIds.add(netId);
-  }
+  const netIds = [...selectedNets].filter((id) => circuit.nets.has(id));
   return {
     refs: [...multi].filter((ref) => circuit.components.has(ref)),
     labelIds: [...selLabels].filter((id) => circuit.labels.has(id)),
-    netIds: [...netIds],
+    netIds,
+    wires: [...selectedWires].map(keyToWire).filter(({ netId }) => circuit.nets.has(netId) && !netIds.includes(netId)),
   };
 }
 
@@ -7490,7 +7489,7 @@ function boxableSelection() {
 function wrapSelectionInBox() {
   if (mode !== 'normal' || drag || annotationStart) return false;
   const selection = boxableSelection();
-  if (!selection.refs.length && !selection.labelIds.length && !selection.netIds.length) return false;
+  if (!selection.refs.length && !selection.labelIds.length && !selection.netIds.length && !selection.wires.length) return false;
   let box = null;
   commit(() => { box = addBoxAround(circuit, selection, { text: 'label' }); });
   if (!box) return false;

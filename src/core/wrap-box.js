@@ -9,8 +9,11 @@
 import { GRID } from './grid.js';
 
 /** The grid rectangle around what everything in `selection` draws
- *  ({ refs, labelIds, netIds }), or null when it names nothing drawn. */
-export function boxAroundRect(circuit, { refs = [], labelIds = [], netIds = [] } = {}) {
+ *  ({ refs, labelIds, netIds, wires }), or null when it names nothing drawn.
+ *  A whole net brings its wires and net labels; `wires` ({ netId, branch,
+ *  segment }) are single segments, as a marquee picks them from a net that
+ *  runs on outside it -- the rest of that net stays out of the box. */
+export function boxAroundRect(circuit, { refs = [], labelIds = [], netIds = [], wires = [] } = {}) {
   const rects = [];
   const labels = new Set(labelIds);
   for (const ref of refs) {
@@ -24,6 +27,10 @@ export function boxAroundRect(circuit, { refs = [], labelIds = [], netIds = [] }
     if (!net) continue;
     for (const path of net.paths()) for (const p of path) rects.push({ x: p.x, y: p.y, w: 0, h: 0 });
     for (const label of circuit.labels.values()) if (label.netId === id) labels.add(label.id);
+  }
+  for (const { netId, branch, segment } of wires) {
+    const path = circuit.nets.get(netId)?.paths()[branch];
+    for (const p of [path?.[segment - 1], path?.[segment]]) if (p) rects.push({ x: p.x, y: p.y, w: 0, h: 0 });
   }
   for (const id of labels) {
     const label = circuit.labels.get(id);

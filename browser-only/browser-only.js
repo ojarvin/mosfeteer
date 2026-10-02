@@ -28775,8 +28775,11 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 
 
 /** The grid rectangle around what everything in `selection` draws
- *  ({ refs, labelIds, netIds }), or null when it names nothing drawn. */
-function boxAroundRect(circuit, { refs = [], labelIds = [], netIds = [] } = {}) {
+ *  ({ refs, labelIds, netIds, wires }), or null when it names nothing drawn.
+ *  A whole net brings its wires and net labels; `wires` ({ netId, branch,
+ *  segment }) are single segments, as a marquee picks them from a net that
+ *  runs on outside it -- the rest of that net stays out of the box. */
+function boxAroundRect(circuit, { refs = [], labelIds = [], netIds = [], wires = [] } = {}) {
   const rects = [];
   const labels = new Set(labelIds);
   for (const ref of refs) {
@@ -28790,6 +28793,10 @@ function boxAroundRect(circuit, { refs = [], labelIds = [], netIds = [] } = {}) 
     if (!net) continue;
     for (const path of net.paths()) for (const p of path) rects.push({ x: p.x, y: p.y, w: 0, h: 0 });
     for (const label of circuit.labels.values()) if (label.netId === id) labels.add(label.id);
+  }
+  for (const { netId, branch, segment } of wires) {
+    const path = circuit.nets.get(netId)?.paths()[branch];
+    for (const p of [path?.[segment - 1], path?.[segment]]) if (p) rects.push({ x: p.x, y: p.y, w: 0, h: 0 });
   }
   for (const id of labels) {
     const label = circuit.labels.get(id);
@@ -51831,17 +51838,16 @@ function activateShapeAnnotation(kind) {
   activateLabelPlacement(kind);
 }
 
-/** The selection as parts, labels, and nets (a selected wire stands for its net). */
+/** The selection as parts, labels, whole nets, and single wire segments: a
+ *  marquee picks the segments of a net that runs on outside it, and only
+ *  those are boxed. */
 function boxableSelection() {
-  const netIds = new Set([...selectedNets].filter((id) => circuit.nets.has(id)));
-  for (const key of selectedWires) {
-    const { netId } = keyToWire(key);
-    if (circuit.nets.has(netId)) netIds.add(netId);
-  }
+  const netIds = [...selectedNets].filter((id) => circuit.nets.has(id));
   return {
     refs: [...multi].filter((ref) => circuit.components.has(ref)),
     labelIds: [...selLabels].filter((id) => circuit.labels.has(id)),
-    netIds: [...netIds],
+    netIds,
+    wires: [...selectedWires].map(keyToWire).filter(({ netId }) => circuit.nets.has(netId) && !netIds.includes(netId)),
   };
 }
 
@@ -51850,7 +51856,7 @@ function boxableSelection() {
 function wrapSelectionInBox() {
   if (mode !== 'normal' || drag || annotationStart) return false;
   const selection = boxableSelection();
-  if (!selection.refs.length && !selection.labelIds.length && !selection.netIds.length) return false;
+  if (!selection.refs.length && !selection.labelIds.length && !selection.netIds.length && !selection.wires.length) return false;
   let box = null;
   commit(() => { box = addBoxAround(circuit, selection, { text: 'label' }); });
   if (!box) return false;
