@@ -11603,7 +11603,7 @@ let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat
 let addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingOrder, timingPhaseNamed, timingStates } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
-let RENUMBER_DIRECTIONS, renumberParts; __bind(() => { ({ RENUMBER_DIRECTIONS, renumberParts } = __require("src/core/renumber.js")); });
+let RENUMBER_ORDERS, renumberParts; __bind(() => { ({ RENUMBER_ORDERS, renumberParts } = __require("src/core/renumber.js")); });
 let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
@@ -11752,7 +11752,7 @@ const FLAG_ARITY = {
   case: 0,
   regex: 0,
   text: 1,
-  dir: 1,
+  order: 1,
   slot: 1,
   beats: 0,
   gaps: 1,
@@ -12122,7 +12122,7 @@ function commandHelp() {
     '  value <refdes> <V>             - set value/label text',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  rename <refdes> <new>          - rename a component',
-    '  renumber [--dir se|sw|ne|nw] [refdes ...] - renumber automatically named parts (M1, R2) so numbers grow diagonally (se: from the top left); named parts reuse their own numbers',
+    '  renumber [--order ALONG-THEN] [refdes ...] - renumber automatically named parts (M1, R2): along each row/column, then row by row; ALONG and THEN are right|left|up|down, crosswise (default right-down, reading order; up-right: each column bottom up, columns left to right); listed parts trade only their own numbers',
     '  rm <refdes>                    - remove a component',
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbours (visual only)',
     '  supplybar name <NAME|-> <refdes> ... - name every supply of a bar at once (- clears)',
@@ -12568,13 +12568,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(message, { stubs, skipped }, stubs.length > 0);
   }
   if (cmd === 'renumber') {
-    const direction = flags.dir?.[0] || 'se';
+    const order = flags.order?.[0] || 'right-down';
     for (const ref of pos) circuit.getComponent(ref);
-    const renames = renumberParts(circuit, { direction, refs: pos.length ? pos : null });
-    const step = RENUMBER_DIRECTIONS[direction];
+    const renames = renumberParts(circuit, { order, refs: pos.length ? pos : null });
+    const step = RENUMBER_ORDERS[order];
     const text = renames.length
-      ? `renumbered ${step.arrow} ${step.text}: ${renames.map(({ from, to }) => `${from}->${to}`).join(', ')}`
-      : `already numbered ${step.arrow} ${step.text}`;
+      ? `renumbered ${step.text}: ${renames.map(({ from, to }) => `${from}->${to}`).join(', ')}`
+      : `already numbered ${step.text}`;
     return result(text, { renames }, renames.length > 0);
   }
   if (cmd === 'box') {
@@ -25028,24 +25028,35 @@ __exports.BEAT_FADE_INK = BEAT_FADE_INK;
 __modules["src/core/renumber.js"] = function (__require, __exports) {
 __exports.renumberPlan = renumberPlan;
 __exports.renumberParts = renumberParts;
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let INTERFACE_PIN_TYPES, isReferenceMarker; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker } = __require("src/core/model.js")); });
 /**
  * Renumbering automatically named parts (M1, R3, U2: the symbol's refdes
- * prefix and a number) so the numbers grow across the drawing in one
- * diagonal direction. Parts named by hand keep their names, as do ports
+ * prefix and a number) so the numbers follow the drawing in a chosen order:
+ * along each row (or column), then row by row. Parts named by hand keep their names, as do ports
  * (their names are net names) and rail markers. Each prefix is numbered on
  * its own; nmos and pmos share `M`, so they share one sequence.
  */
 
 
 
-/** The directions numbers can grow in: the unit step on screen (y down). */
-const RENUMBER_DIRECTIONS = Object.freeze({
-  se: Object.freeze({ x: 1, y: 1, arrow: '↘', text: 'from the top left' }),
-  sw: Object.freeze({ x: -1, y: 1, arrow: '↙', text: 'from the top right' }),
-  ne: Object.freeze({ x: 1, y: -1, arrow: '↗', text: 'from the bottom left' }),
-  nw: Object.freeze({ x: -1, y: -1, arrow: '↖', text: 'from the bottom right' }),
+
+const AXES = Object.freeze({
+  right: Object.freeze({ axis: 'x', sign: 1, arrow: '→', text: 'left to right' }),
+  left: Object.freeze({ axis: 'x', sign: -1, arrow: '←', text: 'right to left' }),
+  down: Object.freeze({ axis: 'y', sign: 1, arrow: '↓', text: 'top to bottom' }),
+  up: Object.freeze({ axis: 'y', sign: -1, arrow: '↑', text: 'bottom to top' }),
 });
+
+/** The orders numbers can grow in, `<along>-<then>`: along a row or column
+ *  first, then row by row (column by column). `right-down` is reading
+ *  order; `up-right` numbers each column bottom to top, columns left to
+ *  right. */
+const RENUMBER_ORDERS = Object.freeze(Object.fromEntries(
+  Object.entries(AXES).flatMap(([along, a]) => Object.entries(AXES)
+    .filter(([, b]) => b.axis !== a.axis)
+    .map(([then, b]) => [`${along}-${then}`, Object.freeze({ along: a, then: b, arrow: `${a.arrow}${b.arrow}`, text: `${a.text}, then ${b.text}` })])),
+));
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -25057,17 +25068,22 @@ function autoNumber(component) {
   return match ? Number(match[1]) : null;
 }
 
+// Parts whose centres differ by less than this across the rows stand in one
+// row (or column): a resistor and a transistor beside it are not exactly level.
+const SAME_LINE = 2 * GRID;
+
 /**
  * The renames that number `refs` (default: every automatically named part)
- * along `direction` (RENUMBER_DIRECTIONS key), as [{ from, to }] for the
- * parts whose name changes. A part's place is its body's centre, taken
- * along the diagonal first, then down (or up) the rows. All parts of a
- * prefix are numbered 1, 2, ...; a chosen subset reuses the numbers it
- * holds, so the rest keep theirs.
+ * in `order` (RENUMBER_ORDERS key), as [{ from, to }] for the parts whose
+ * name changes. A part's place is its body's centre. Parts are gathered
+ * into rows (or columns) across `then`, nearly level ones together; the
+ * rows are taken in `then` order and each is numbered along `along`. All
+ * parts of a prefix are numbered 1, 2, ...; a chosen subset reuses the
+ * numbers it holds, so the rest keep theirs.
  */
-function renumberPlan(circuit, { direction = 'se', refs = null } = {}) {
-  const step = RENUMBER_DIRECTIONS[direction];
-  if (!step) throw new Error(`unknown direction "${direction}" (use ${Object.keys(RENUMBER_DIRECTIONS).join(', ')})`);
+function renumberPlan(circuit, { order = 'right-down', refs = null } = {}) {
+  const step = RENUMBER_ORDERS[order];
+  if (!step) throw new Error(`unknown order "${order}" (use ${Object.keys(RENUMBER_ORDERS).join(', ')})`);
   const chosen = refs ? new Set(refs) : null;
   const groups = new Map();
   for (const component of circuit.components.values()) {
@@ -25079,12 +25095,21 @@ function renumberPlan(circuit, { direction = 'se', refs = null } = {}) {
     const box = component.bboxWorld();
     groups.get(prefix).push({ component, number, x: box.x + box.w / 2, y: box.y + box.h / 2 });
   }
+  const { along, then } = step;
   const renames = [];
   for (const [prefix, parts] of groups) {
     const numbers = chosen ? parts.map((part) => part.number).sort((a, b) => a - b) : parts.map((_, index) => index + 1);
-    const along = (part) => step.x * part.x + step.y * part.y;
-    parts.sort((a, b) => along(a) - along(b) || step.y * (a.y - b.y) || step.x * (a.x - b.x));
-    parts.forEach((part, index) => {
+    // Rows across `then`: a new one wherever the next part is clearly further on.
+    const across = (part) => then.sign * part[then.axis];
+    parts.sort((a, b) => across(a) - across(b));
+    const lines = [];
+    for (const part of parts) {
+      const line = lines.at(-1);
+      if (line && across(part) - across(line[0]) < SAME_LINE) line.push(part);
+      else lines.push([part]);
+    }
+    const ordered = lines.flatMap((line) => line.sort((a, b) => along.sign * (a[along.axis] - b[along.axis]) || across(a) - across(b)));
+    ordered.forEach((part, index) => {
       const to = `${prefix}${numbers[index]}`;
       if (to !== part.component.refdes) renames.push({ from: part.component.refdes, to });
     });
@@ -25117,7 +25142,7 @@ function renumberParts(circuit, options = {}) {
   return renames;
 }
 
-__exports.RENUMBER_DIRECTIONS = RENUMBER_DIRECTIONS;
+__exports.RENUMBER_ORDERS = RENUMBER_ORDERS;
 };
 
 __modules["src/core/router.js"] = function (__require, __exports) {
@@ -35970,7 +35995,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
-  { name: 'renumber', aliases: ['number', 'renumber-parts'], help: 'renumber [--dir se|sw|ne|nw] [refdes ...] (numbers grow diagonally; se: from the top left)' },
+  { name: 'renumber', aliases: ['number', 'renumber-parts'], help: 'renumber [--order right-down|up-right|...] [refdes ...] (along each row or column, then row by row)' },
   { name: 'rm', aliases: ['remove', 'delete'], help: 'rm <refdes>' },
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
   { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labelled wire stubs)' },
@@ -54344,15 +54369,15 @@ function finishRadialMenu(radial, client) {
 __modules["src/web/renumber-ui.js"] = function (__require, __exports) {
 __exports.openRenumberDialog = openRenumberDialog;
 __exports.installRenumberUi = installRenumberUi;
-let RENUMBER_DIRECTIONS, renumberParts; __bind(() => { ({ RENUMBER_DIRECTIONS, renumberParts } = __require("src/core/renumber.js")); });
+let RENUMBER_ORDERS, renumberParts; __bind(() => { ({ RENUMBER_ORDERS, renumberParts } = __require("src/core/renumber.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let commit, render, selectedComps, setSelection; __bind(() => { ({ commit, render, selectedComps, setSelection } = __require("src/web/main.js")); });
 /**
- * Renumber parts (More menu, `:renumber`): pick the corner the numbers grow
- * from, and the automatically named parts (M1, R2, ...) are numbered along
- * that diagonal (core/renumber.js). With parts selected, only they are
+ * Renumber parts (More menu, `:renumber`): pick the order -- along each row
+ * or column, then row by row -- and the automatically named parts (M1, R2,
+ * ...) are numbered in it (core/renumber.js). With parts selected, only they are
  * renumbered, among the numbers they already hold. One undo entry.
  */
 
@@ -54375,36 +54400,36 @@ function openRenumberDialog() {
     return node;
   };
   const dialog = make('dialog', { class: 'confirm-dialog renumber-dialog', 'aria-label': 'Renumber parts' });
-  const choose = (direction) => {
+  const choose = (order) => {
     dialog.close();
     let renames = [];
-    commit(() => { renames = renumberParts(editor.circuit, { direction, refs: selected.length ? selected : null }); });
-    const step = RENUMBER_DIRECTIONS[direction];
+    commit(() => { renames = renumberParts(editor.circuit, { order, refs: selected.length ? selected : null }); });
+    const step = RENUMBER_ORDERS[order];
     if (!renames.length) {
-      logLine(`already numbered ${step.arrow} ${step.text}`);
+      logLine(`already numbered ${step.text}`);
       return;
     }
     const to = new Map(renames.map(({ from, to: name }) => [from, name]));
     if (selected.length) setSelection(selected.map((ref) => to.get(ref) || ref));
-    logLine(`renumbered ${step.arrow} ${step.text}: ${renames.map(({ from, to: name }) => `${from}→${name}`).join(', ')}`);
+    logLine(`renumbered ${step.text}: ${renames.map(({ from, to: name }) => `${from}→${name}`).join(', ')}`);
     render();
   };
-  // The arrows stand in the corners they start from.
-  const grid = make('div', { class: 'renumber-grid', role: 'group', 'aria-label': 'Numbers grow from' },
-    ['se', 'sw', 'ne', 'nw'].map((direction) => {
-      const { arrow, text } = RENUMBER_DIRECTIONS[direction];
+  // Rows first (reading order and its mirrors), then columns.
+  const grid = make('div', { class: 'renumber-grid', role: 'group', 'aria-label': 'Numbering order' },
+    ['right-down', 'left-down', 'right-up', 'left-up', 'down-right', 'up-right', 'down-left', 'up-left'].map((order) => {
+      const { arrow, text } = RENUMBER_ORDERS[order];
       const button = make('button', { type: 'button', title: `Number ${text}`, 'aria-label': `Number ${text}` }, [
         make('span', { class: 'renumber-arrow', text: arrow, 'aria-hidden': 'true' }), make('span', { text }),
       ]);
-      button.addEventListener('click', () => choose(direction));
+      button.addEventListener('click', () => choose(order));
       return button;
     }));
   dialog.append(
     make('h2', { text: 'Renumber parts' }),
     make('p', {
       text: selected.length
-        ? `The ${selected.length} selected parts that are named automatically (M1, R2, …) trade the numbers they hold, growing from the corner picked.`
-        : 'Parts named automatically (M1, R2, …) are numbered again, each letter on its own, growing from the corner picked. Parts named by hand keep their names.',
+        ? `The ${selected.length} selected parts that are named automatically (M1, R2, …) trade the numbers they hold, in the order picked.`
+        : 'Parts named automatically (M1, R2, …) are numbered again, each letter on its own: along each row (or column), then row by row. Nearly level parts share a row. Parts named by hand keep their names.',
     }),
     grid,
     make('div', { class: 'dialog-actions' }, [make('button', { type: 'button', value: 'cancel', text: 'Cancel' })]),

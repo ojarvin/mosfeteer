@@ -15,25 +15,35 @@ function drawing() {
   return circuit;
 }
 
-test('renumber grows the numbers diagonally, per prefix, and keeps hand-made names', () => {
+test('renumber numbers along each row, then row by row, per prefix, and keeps hand-made names', () => {
   const circuit = drawing();
   const named = ['Rload', 'VIN'];
+  // Reading order: the top row left to right, then the next.
   const { json } = runCommand(circuit, 'renumber');
   assert.deepEqual(json.renames, [{ from: 'M2', to: 'M1' }, { from: 'M3', to: 'M2' }, { from: 'M1', to: 'M3' }]);
-  assert.deepEqual(at(circuit)['0,0'], 'M1');
-  assert.deepEqual(at(circuit)['400,0'], 'M2');
-  assert.deepEqual(at(circuit)['400,400'], 'M3');
+  assert.equal(at(circuit)['0,0'], 'M1');
+  assert.equal(at(circuit)['400,0'], 'M2');
+  assert.equal(at(circuit)['400,400'], 'M3');
   for (const name of named) assert.ok(circuit.components.has(name), `${name} kept`);
-  // The labels follow, subscripts and all; the nets keep their parts.
+  // The labels follow, subscripts and all.
   assert.equal(circuit.labelOf('M1').text, 'M_{1}');
-  // From the bottom right instead.
-  run(circuit, 'renumber --dir nw');
-  assert.equal(at(circuit)['400,400'], 'M1');
-  assert.equal(at(circuit)['0,0'], 'M3');
+  // Each column bottom up, the columns left to right.
+  run(circuit, 'renumber --order up-right');
+  assert.equal(at(circuit)['0,0'], 'M1');
+  assert.equal(at(circuit)['400,400'], 'M2');
+  assert.equal(at(circuit)['400,0'], 'M3');
   // Done already: nothing changes.
-  const again = runCommand(circuit, 'renumber --dir nw');
+  const again = runCommand(circuit, 'renumber --order up-right');
   assert.equal(again.mutated, false);
-  assert.match(again.text, /already numbered/);
+  assert.match(again.text, /already numbered bottom to top, then left to right/);
+});
+
+test('nearly level parts share a row', () => {
+  const circuit = new Circuit();
+  // A transistor and a resistor beside it, a cell apart in height, and one below.
+  run(circuit, 'add resistor --at 800 40', 'add resistor --at 0 400', 'add resistor --at 400 0');
+  run(circuit, 'renumber');
+  assert.deepEqual([at(circuit)['400,0'], at(circuit)['800,40'], at(circuit)['0,400']], ['R1', 'R2', 'R3']);
 });
 
 test('renumber keeps connections, and a chosen few reuse their own numbers', () => {
@@ -50,7 +60,7 @@ test('renumber keeps connections, and a chosen few reuse their own numbers', () 
 test('renumber refuses an unknown direction or part, changing nothing', () => {
   const circuit = drawing();
   const before = JSON.stringify(circuit.toJSON());
-  assert.throws(() => runCommand(circuit, 'renumber --dir up'), /unknown direction "up"/);
+  assert.throws(() => runCommand(circuit, 'renumber --order up-down'), /unknown order "up-down"/);
   assert.throws(() => runCommand(circuit, 'renumber M9'), /unknown component "M9"/);
   assert.equal(JSON.stringify(circuit.toJSON()), before);
 });

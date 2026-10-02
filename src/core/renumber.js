@@ -1,20 +1,30 @@
 /**
  * Renumbering automatically named parts (M1, R3, U2: the symbol's refdes
- * prefix and a number) so the numbers grow across the drawing in one
- * diagonal direction. Parts named by hand keep their names, as do ports
+ * prefix and a number) so the numbers follow the drawing in a chosen order:
+ * along each row (or column), then row by row. Parts named by hand keep their names, as do ports
  * (their names are net names) and rail markers. Each prefix is numbered on
  * its own; nmos and pmos share `M`, so they share one sequence.
  */
 
+import { GRID } from './grid.js';
 import { INTERFACE_PIN_TYPES, isReferenceMarker } from './model.js';
 
-/** The directions numbers can grow in: the unit step on screen (y down). */
-export const RENUMBER_DIRECTIONS = Object.freeze({
-  se: Object.freeze({ x: 1, y: 1, arrow: '↘', text: 'from the top left' }),
-  sw: Object.freeze({ x: -1, y: 1, arrow: '↙', text: 'from the top right' }),
-  ne: Object.freeze({ x: 1, y: -1, arrow: '↗', text: 'from the bottom left' }),
-  nw: Object.freeze({ x: -1, y: -1, arrow: '↖', text: 'from the bottom right' }),
+const AXES = Object.freeze({
+  right: Object.freeze({ axis: 'x', sign: 1, arrow: '→', text: 'left to right' }),
+  left: Object.freeze({ axis: 'x', sign: -1, arrow: '←', text: 'right to left' }),
+  down: Object.freeze({ axis: 'y', sign: 1, arrow: '↓', text: 'top to bottom' }),
+  up: Object.freeze({ axis: 'y', sign: -1, arrow: '↑', text: 'bottom to top' }),
 });
+
+/** The orders numbers can grow in, `<along>-<then>`: along a row or column
+ *  first, then row by row (column by column). `right-down` is reading
+ *  order; `up-right` numbers each column bottom to top, columns left to
+ *  right. */
+export const RENUMBER_ORDERS = Object.freeze(Object.fromEntries(
+  Object.entries(AXES).flatMap(([along, a]) => Object.entries(AXES)
+    .filter(([, b]) => b.axis !== a.axis)
+    .map(([then, b]) => [`${along}-${then}`, Object.freeze({ along: a, then: b, arrow: `${a.arrow}${b.arrow}`, text: `${a.text}, then ${b.text}` })])),
+));
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -26,17 +36,22 @@ function autoNumber(component) {
   return match ? Number(match[1]) : null;
 }
 
+// Parts whose centres differ by less than this across the rows stand in one
+// row (or column): a resistor and a transistor beside it are not exactly level.
+const SAME_LINE = 2 * GRID;
+
 /**
  * The renames that number `refs` (default: every automatically named part)
- * along `direction` (RENUMBER_DIRECTIONS key), as [{ from, to }] for the
- * parts whose name changes. A part's place is its body's centre, taken
- * along the diagonal first, then down (or up) the rows. All parts of a
- * prefix are numbered 1, 2, ...; a chosen subset reuses the numbers it
- * holds, so the rest keep theirs.
+ * in `order` (RENUMBER_ORDERS key), as [{ from, to }] for the parts whose
+ * name changes. A part's place is its body's centre. Parts are gathered
+ * into rows (or columns) across `then`, nearly level ones together; the
+ * rows are taken in `then` order and each is numbered along `along`. All
+ * parts of a prefix are numbered 1, 2, ...; a chosen subset reuses the
+ * numbers it holds, so the rest keep theirs.
  */
-export function renumberPlan(circuit, { direction = 'se', refs = null } = {}) {
-  const step = RENUMBER_DIRECTIONS[direction];
-  if (!step) throw new Error(`unknown direction "${direction}" (use ${Object.keys(RENUMBER_DIRECTIONS).join(', ')})`);
+export function renumberPlan(circuit, { order = 'right-down', refs = null } = {}) {
+  const step = RENUMBER_ORDERS[order];
+  if (!step) throw new Error(`unknown order "${order}" (use ${Object.keys(RENUMBER_ORDERS).join(', ')})`);
   const chosen = refs ? new Set(refs) : null;
   const groups = new Map();
   for (const component of circuit.components.values()) {
@@ -48,12 +63,21 @@ export function renumberPlan(circuit, { direction = 'se', refs = null } = {}) {
     const box = component.bboxWorld();
     groups.get(prefix).push({ component, number, x: box.x + box.w / 2, y: box.y + box.h / 2 });
   }
+  const { along, then } = step;
   const renames = [];
   for (const [prefix, parts] of groups) {
     const numbers = chosen ? parts.map((part) => part.number).sort((a, b) => a - b) : parts.map((_, index) => index + 1);
-    const along = (part) => step.x * part.x + step.y * part.y;
-    parts.sort((a, b) => along(a) - along(b) || step.y * (a.y - b.y) || step.x * (a.x - b.x));
-    parts.forEach((part, index) => {
+    // Rows across `then`: a new one wherever the next part is clearly further on.
+    const across = (part) => then.sign * part[then.axis];
+    parts.sort((a, b) => across(a) - across(b));
+    const lines = [];
+    for (const part of parts) {
+      const line = lines.at(-1);
+      if (line && across(part) - across(line[0]) < SAME_LINE) line.push(part);
+      else lines.push([part]);
+    }
+    const ordered = lines.flatMap((line) => line.sort((a, b) => along.sign * (a[along.axis] - b[along.axis]) || across(a) - across(b)));
+    ordered.forEach((part, index) => {
       const to = `${prefix}${numbers[index]}`;
       if (to !== part.component.refdes) renames.push({ from: part.component.refdes, to });
     });

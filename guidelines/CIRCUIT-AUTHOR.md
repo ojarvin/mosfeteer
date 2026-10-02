@@ -193,7 +193,7 @@ rotate <refdes> [deg=90]       rotate by multiples of 90
 mirror <refdes> <x|y>          flip along an axis
 value <refdes> <V>             set value text
 rename <refdes> <new>          rename a component (updates its instance label)
-renumber [--dir se|sw|ne|nw] [refdes ...]  renumber automatically named parts (M1, R2) so the numbers grow diagonally (se: from the top left); listed parts trade only their own numbers (also More → Renumber parts…)
+renumber [--order ALONG-THEN] [refdes ...]  renumber automatically named parts (M1, R2) along each row or column, then row by row: ALONG/THEN are right|left|up|down, crosswise (default right-down, reading order; up-right numbers each column bottom up, columns left to right); nearly level parts share a row; listed parts trade only their own numbers (also More → Renumber parts…)
 rm <refdes>                    remove a component
 find TEXT [--case] [--regex]   list labels (net names, part names, switch phases,
                                rails, annotations, equations), block captions, and net

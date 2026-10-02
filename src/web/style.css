@@ -5165,7 +5165,11 @@ circle.bode-corner {
   width: min(26rem, calc(100vw - 32px));
 }
 
-/* The four corners the numbers can grow from, each arrow in its corner. */
+.renumber-dialog {
+  width: min(38rem, calc(100vw - 32px));
+}
+
+/* The orders: along rows first, then along columns. */
 .renumber-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5177,8 +5181,10 @@ circle.bode-corner {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   padding: 10px 12px;
   text-align: left;
+  white-space: normal;
 }
 
 .renumber-grid .renumber-arrow {
