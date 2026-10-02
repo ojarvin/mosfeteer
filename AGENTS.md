@@ -78,6 +78,7 @@ The routing-sensitive symbol contract is:
 | ports | `p=(0,0)` | `port` is open-circle; boxed ports use `VI`/`VO`/`VIO` prefixes |
 | block | `T1`…`T12` around the perimeter | default bbox `{-80,-80,160,160}`, resizable in even cell counts |
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at `(0,-40)`, `(0,40)`, `(-40,0)`, `(40,0)` | bbox `{-40,-40,80,80}`, 40-unit-radius circle with plus or multiply mark; unused terminals do not fail Design Check; optional negative inputs are owned sign labels |
+| filter blocks | `in=(-80,0)`, `out=(80,0)` | `filter_lpf`/`hpf`/`bpf`/`notch`: bbox `{-80,-80,160,160}`, a box with the response sketched inside |
 
 All symbol linework is textbook style: butt-ended normal symbol strokes,
 mitered geometry, filled polygon bars/arrows/slabs, and one-cell terminal

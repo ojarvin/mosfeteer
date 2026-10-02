@@ -33,6 +33,7 @@ export const PLACEMENT_LABELS = {
   variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
   solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
+  filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
 };
 
 export const PLACEMENT_ALIASES = {
@@ -92,6 +93,10 @@ export const PLACEMENT_ALIASES = {
   label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
   signal_sum: ['sum', 'summer', 'signal flow', 'junction'],
   signal_multiply: ['multiply', 'multiplier', 'signal flow', 'junction'],
+  filter_lpf: ['lpf', 'lowpass', 'low pass', 'filter', 'signal flow'],
+  filter_hpf: ['hpf', 'highpass', 'high pass', 'filter', 'signal flow'],
+  filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
+  filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
 };
 
 /** Rank a name against a query: prefix beats substring beats subsequence, and

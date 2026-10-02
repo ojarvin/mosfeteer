@@ -20,7 +20,7 @@ export const SYMBOL_CATEGORY_RULES = [
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Blocks / shells', /^block$/],
-  ['Signal flow', /^signal_(sum|multiply)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|filter_(lpf|hpf|bpf|notch))$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each

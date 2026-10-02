@@ -41,3 +41,42 @@ export const signal_multiply = signalOperator('signal_multiply', 'Signal-flow mu
   { kind: 'path', d: 'M -20 -20 L 20 20', style: 'symbol' },
   { kind: 'path', d: 'M -20 20 L 20 -20', style: 'symbol' },
 ]);
+
+/**
+ * Filter blocks: a block diagram's box with the filter's magnitude response
+ * sketched inside in straight lines -- flat where it passes, a slope where
+ * it rolls off -- for the input on the left and the output on the right.
+ */
+const FILTER_SHAPES = {
+  lpf: ['Low-pass filter', 'M -48 -24 L 4 -24 L 48 28'],
+  hpf: ['High-pass filter', 'M -48 28 L -4 -24 L 48 -24'],
+  bpf: ['Band-pass filter', 'M -48 28 L -16 -24 L 16 -24 L 48 28'],
+  notch: ['Notch (band-stop) filter', 'M -48 -24 L -20 -24 L 0 28 L 20 -24 L 48 -24'],
+};
+
+function filterBlock(kind) {
+  const [description, shape] = FILTER_SHAPES[kind];
+  return defineSymbol({
+    type: `filter_${kind}`,
+    description,
+    refPrefix: 'F',
+    terminals: [
+      { name: 'in', x: -80, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+      { name: 'out', x: 80, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
+    ],
+    bbox: { x: -80, y: -80, w: 160, h: 160 },
+    graphics: [
+      { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+      { kind: 'path', d: shape, style: 'symbol' },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -120 },
+    defaultValue: '',
+  });
+}
+
+export const filter_lpf = filterBlock('lpf');
+export const filter_hpf = filterBlock('hpf');
+export const filter_bpf = filterBlock('bpf');
+export const filter_notch = filterBlock('notch');

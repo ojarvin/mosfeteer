@@ -13064,7 +13064,7 @@ const SYMBOL_CATEGORY_RULES = [
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Blocks / shells', /^block$/],
-  ['Signal flow', /^signal_(sum|multiply)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|filter_(lpf|hpf|bpf|notch))$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each
@@ -13532,7 +13532,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply; __bind(() => { ({ signal_sum, signal_multiply } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -13643,6 +13643,10 @@ const symbolTypes = {
   block,
   signal_sum,
   signal_multiply,
+  filter_lpf,
+  filter_hpf,
+  filter_bpf,
+  filter_notch,
 };
 
 /** Ordered list of type names (for palettes / docs). */
@@ -14376,8 +14380,51 @@ const signal_multiply = signalOperator('signal_multiply', 'Signal-flow multiply'
   { kind: 'path', d: 'M -20 20 L 20 -20', style: 'symbol' },
 ]);
 
+/**
+ * Filter blocks: a block diagram's box with the filter's magnitude response
+ * sketched inside in straight lines -- flat where it passes, a slope where
+ * it rolls off -- for the input on the left and the output on the right.
+ */
+const FILTER_SHAPES = {
+  lpf: ['Low-pass filter', 'M -48 -24 L 4 -24 L 48 28'],
+  hpf: ['High-pass filter', 'M -48 28 L -4 -24 L 48 -24'],
+  bpf: ['Band-pass filter', 'M -48 28 L -16 -24 L 16 -24 L 48 28'],
+  notch: ['Notch (band-stop) filter', 'M -48 -24 L -20 -24 L 0 28 L 20 -24 L 48 -24'],
+};
+
+function filterBlock(kind) {
+  const [description, shape] = FILTER_SHAPES[kind];
+  return defineSymbol({
+    type: `filter_${kind}`,
+    description,
+    refPrefix: 'F',
+    terminals: [
+      { name: 'in', x: -80, y: 0, direction: 'input', dir: { x: -1, y: 0 } },
+      { name: 'out', x: 80, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
+    ],
+    bbox: { x: -80, y: -80, w: 160, h: 160 },
+    graphics: [
+      { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+      { kind: 'path', d: shape, style: 'symbol' },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: { x: 0, y: -120 },
+    defaultValue: '',
+  });
+}
+
+const filter_lpf = filterBlock('lpf');
+const filter_hpf = filterBlock('hpf');
+const filter_bpf = filterBlock('bpf');
+const filter_notch = filterBlock('notch');
+
 __exports.signal_sum = signal_sum;
 __exports.signal_multiply = signal_multiply;
+__exports.filter_lpf = filter_lpf;
+__exports.filter_hpf = filter_hpf;
+__exports.filter_bpf = filter_bpf;
+__exports.filter_notch = filter_notch;
 };
 
 __modules["src/core/components/solder.js"] = function (__require, __exports) {
@@ -26863,7 +26910,7 @@ const PARTNERS = new Map([
   ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
-  ['signal_sum', 'signal_multiply'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
+  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
   ...['and', 'or', 'xor'].flatMap((gate) => [2, 3].map((n) => [`${gate}${n}_gate`, `n${gate}${n}_gate`])),
 ].flatMap(([a, b]) => [[a, b], [b, a]]));
 
@@ -56885,6 +56932,7 @@ const PLACEMENT_LABELS = {
   variable_resistor: 'Variable resistor', variable_capacitor: 'Variable capacitor', variable_inductor: 'Variable inductor',
   solder: 'Solder dot', switch_open: 'Switch, open', switch_closed: 'Switch, closed', label: 'Annotation', block: 'Block',
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
+  filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
 };
 
 const PLACEMENT_ALIASES = {
@@ -56944,6 +56992,10 @@ const PLACEMENT_ALIASES = {
   label: ['annotation', 'text'], block: ['block', 'rectangle', 'node'],
   signal_sum: ['sum', 'summer', 'signal flow', 'junction'],
   signal_multiply: ['multiply', 'multiplier', 'signal flow', 'junction'],
+  filter_lpf: ['lpf', 'lowpass', 'low pass', 'filter', 'signal flow'],
+  filter_hpf: ['hpf', 'highpass', 'high pass', 'filter', 'signal flow'],
+  filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
+  filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
 };
 
 /** Rank a name against a query: prefix beats substring beats subsequence, and

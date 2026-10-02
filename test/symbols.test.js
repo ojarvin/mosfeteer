@@ -594,3 +594,19 @@ test('comparators: the op-amp\'s inputs and output, a comparator mark, and a clo
   assert.ok(plain.graphics.some((g) => g.d === 'M -42 0 L -6 0'));
   assert.ok(symbolCategories().find((group) => group.title === 'Macros').types.includes('comparator_clocked'));
 });
+
+test('filter blocks are boxes with their response sketched inside, in on the left and out on the right', () => {
+  for (const [type, shape] of [
+    ['filter_lpf', 'M -48 -24 L 4 -24 L 48 28'],
+    ['filter_hpf', 'M -48 28 L -4 -24 L 48 -24'],
+    ['filter_bpf', 'M -48 28 L -16 -24 L 16 -24 L 48 28'],
+    ['filter_notch', 'M -48 -24 L -20 -24 L 0 28 L 20 -24 L 48 -24'],
+  ]) {
+    const def = getSymbol(type);
+    assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [{ name: 'in', x: -80, y: 0 }, { name: 'out', x: 80, y: 0 }], type);
+    assert.deepEqual(def.bbox, { x: -80, y: -80, w: 160, h: 160 });
+    assert.deepEqual(def.graphics[0], { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' });
+    assert.equal(def.graphics[1].d, shape);
+    assert.equal(def.refPrefix, 'F');
+  }
+});

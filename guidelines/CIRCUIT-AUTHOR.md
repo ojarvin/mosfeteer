@@ -279,6 +279,7 @@ dac:          d aout
 adc_diff:     aip aim d
 dac_diff:     d aop aom
 gm:           ip im op om
+filter_*:     in out          (filter_lpf, filter_hpf, filter_bpf, filter_notch)
 ```
 Bulk MOS variants place `b` at the channel center `(0,0)` and route it
 outward to the right in the local frame (`dir:{x:1,y:0}`); the symbol includes

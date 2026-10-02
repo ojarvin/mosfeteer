@@ -23,7 +23,7 @@ import { solder } from './solder.js';
 import { switch_open, switch_closed } from './switch.js';
 import { block } from './block.js';
 import { mux2 } from './mux.js';
-import { signal_sum, signal_multiply } from './signal-flow.js';
+import { signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch } from './signal-flow.js';
 
 /** All registered symbol definitions, keyed by type name. */
 export const symbolTypes = {
@@ -108,6 +108,10 @@ export const symbolTypes = {
   block,
   signal_sum,
   signal_multiply,
+  filter_lpf,
+  filter_hpf,
+  filter_bpf,
+  filter_notch,
 };
 
 /** Ordered list of type names (for palettes / docs). */
