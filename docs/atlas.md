@@ -122,7 +122,7 @@ exports the symbol sheet the same way.
 
 ## Symbols
 
-Settings → Symbols (or `:symbols`) opens the same viewer on the symbol
+Learn (`?`) → Symbols → *Open the full symbol sheet* (or `:symbols`) opens the same viewer on the symbol
 reference sheet (`src/core/symbol-sheet.js`): every placeable symbol, one
 row per category and family, built from the registry each time it opens, so
 it is never out of date and never a document. `GET /api/symbols.svg` serves

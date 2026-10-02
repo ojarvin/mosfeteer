@@ -87,7 +87,7 @@
          Outside the view cluster so a folded toolbar keeps it. -->
     <div class="toolbar-cluster settings-cluster" role="group" aria-label="Settings">
       <div class="toolbar-popover">
-        <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings: page guide, animations, scrolling, tips, and the tutorial">Settings</button>
+        <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings: page guide, animations, scrolling, and tips">Settings</button>
         <div id="settings-menu" class="toolbar-menu settings-menu" role="menu" aria-label="Settings" hidden>
           <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
           <p class="toolbar-menu-note">Shows the width at which an exported figure set to full column or text width gets 8 pt text, the size of IEEE figure captions (subscripts are set smaller). Export pads the figure, or the exported selection, to this width, centred.</p>
@@ -105,9 +105,7 @@
           <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Two-finger scroll pans and pinch zooms; off: the mouse wheel zooms">Trackpad scrolling</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Learning</p>
-          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb" title="Occasional one-line tips in the corner of the canvas about faster ways to draw">Tips</button>
-          <button id="btn-symbols" type="button" role="menuitem" data-icon="symbols" title="Every symbol, drawn from the symbol registry as it is now (:symbols)">Symbols</button>
-          <button id="btn-tutorial" type="button" role="menuitem" data-icon="graduation" title="An optional guided first drawing: a five-transistor OTA, step by step, in a new document">Tutorial: draw a 5T OTA</button>
+          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb" title="Occasional one-line tips in the corner of the canvas about faster ways to draw (all of them are in Learn, ?)">Show tips</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-github" type="button" role="menuitem" data-icon="external" data-href="https://github.com/ojarvin/mosfeteer" title="The project on GitHub: source, issues, and releases (opens in a new tab)">Mosfeteer on GitHub</button>
         </div>
@@ -199,14 +197,37 @@
     </form>
   </dialog>
 
+  <!-- Learn (?): the one place to learn the editor -- its keys, the
+       tutorial, the symbols, and every tip. Settings holds preferences only. -->
   <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
     <form method="dialog">
-      <h2 id="help-dialog-title">Keyboard and command help</h2>
-      <input id="help-search" type="search" placeholder="Search shortcuts and commands" aria-label="Search help" autocomplete="off" spellcheck="false" />
-      <div id="help-dialog-content" class="help-content"></div>
-      <div class="dialog-actions">
-        <button value="cancel" data-icon="x-circle">Close <kbd>Esc</kbd></button>
-      </div>
+      <header class="help-head">
+        <h2 id="help-dialog-title">Learn</h2>
+        <div class="segmented help-tabs" role="tablist" aria-label="Learn">
+          <button type="button" class="icon-label" role="tab" data-help-tab="keys" data-icon="help" aria-selected="true" aria-controls="help-panel-keys">Keys</button>
+          <button type="button" class="icon-label" role="tab" data-help-tab="tutorial" data-icon="graduation" aria-selected="false" aria-controls="help-panel-tutorial">Tutorial</button>
+          <button type="button" class="icon-label" role="tab" data-help-tab="symbols" data-icon="symbols" aria-selected="false" aria-controls="help-panel-symbols">Symbols</button>
+          <button type="button" class="icon-label" role="tab" data-help-tab="tips" data-icon="lightbulb" aria-selected="false" aria-controls="help-panel-tips">Tips</button>
+        </div>
+        <button value="cancel" class="floating-window-close" aria-label="Close" title="Close (Esc)">×</button>
+      </header>
+      <section id="help-panel-keys" class="help-panel" role="tabpanel" data-help-panel="keys">
+        <input id="help-search" type="search" placeholder="Search shortcuts and commands" aria-label="Search help" autocomplete="off" spellcheck="false" />
+        <div id="help-dialog-content" class="help-content"></div>
+      </section>
+      <section id="help-panel-tutorial" class="help-panel help-panel-text" role="tabpanel" data-help-panel="tutorial" hidden>
+        <h3>Draw a five-transistor OTA</h3>
+        <p>About five minutes, in a new document: place the transistors, wire them, add the rails and ports, and label the nets. A card at the bottom left walks you through it and marks where each part goes; close it any time and the drawing stays.</p>
+        <button id="btn-tutorial" type="button" class="confirm-action" data-icon="graduation">Start the tutorial</button>
+      </section>
+      <section id="help-panel-symbols" class="help-panel" role="tabpanel" data-help-panel="symbols" hidden>
+        <p class="help-panel-lead">Every part, drawn from the symbol registry. Click one to place it. <button id="btn-symbols" type="button" class="help-link" title="Every symbol at full size, with its pins (:symbols)">Open the full symbol sheet</button></p>
+        <div id="help-symbols" class="help-content help-symbols"></div>
+      </section>
+      <section id="help-panel-tips" class="help-panel" role="tabpanel" data-help-panel="tips" hidden>
+        <p class="help-panel-lead">Tips show up now and then in the corner, when there is a faster way to do what you are doing. Here are all of them.</p>
+        <ul id="help-tips" class="help-content help-tips"></ul>
+      </section>
     </form>
   </dialog>
 
@@ -267,8 +288,7 @@
         <button type="button" data-empty-action="place"><kbd>i</kbd><span class="empty-state-text">Insert a component</span></button>
         <button type="button" data-empty-action="wire"><kbd>w</kbd><span class="empty-state-text">Draw a wire</span></button>
         <button type="button" data-empty-action="open"><kbd>Ctrl/Cmd+O</kbd><span class="empty-state-text">Open a document</span></button>
-        <button type="button" data-empty-action="help"><kbd>?</kbd><span class="empty-state-text">All shortcuts</span></button>
-        <button type="button" data-empty-action="tutorial"><kbd>5 min</kbd><span class="empty-state-text">Learn by drawing a 5T OTA</span></button>
+        <button type="button" data-empty-action="learn"><kbd>?</kbd><span class="empty-state-text">Learn: a 5-minute tutorial, keys, symbols</span></button>
       </div>
       <!-- The canvas corner holds the toggles for the panels that dock on the right. -->
       <button id="hierarchy-up" type="button" class="hierarchy-up glass" data-editor-edge="top" hidden>↑</button>

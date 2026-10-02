@@ -48,7 +48,7 @@ import {
   paneEl,
 } from './elements.js';
 import { installIcons } from './icons.js';
-import { noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding } from './onboarding.js';
+import { noteTip, tutorialTargetRects, syncTutorial, installOnboarding } from './onboarding.js';
 import { ALIGN_SOURCE_HINT, worldPerPixel, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } from './align-tool.js';
 import { renderHelpSearch, showHelp, installHelp } from './help.js';
 import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } from './radial-menu.js';
@@ -7588,9 +7588,8 @@ document.getElementById('empty-state')?.addEventListener('click', (ev) => {
   if (action === 'place') activatePlace();
   else if (action === 'wire') activateWire();
   else if (action === 'open') openDocumentDialog();
-  else if (action === 'help') showHelp();
-  else if (action === 'tutorial') offerTutorial();
-  if (action && !['open', 'help', 'tutorial'].includes(action)) canvasEl.focus();
+  else if (action === 'learn') showHelp('tutorial');
+  if (action && !['open', 'learn'].includes(action)) canvasEl.focus();
 });
 
 document.getElementById('btn-help').addEventListener('click', () => {
@@ -7689,7 +7688,7 @@ window.addEventListener('keydown', (ev) => {
       helpDialog.close();
       return;
     }
-    if (ev.target !== helpSearch) {
+    if (ev.target !== helpSearch && !helpSearch?.closest('[hidden]')) {
       if (helpSearch && ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         helpSearch.focus();
         const start = helpSearch.selectionStart ?? helpSearch.value.length;

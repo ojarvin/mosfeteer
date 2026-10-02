@@ -18,7 +18,7 @@ import { hintLine, logLine } from './status-bar-ui.js';
 import { worldToClient } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { placeNetLabelAt } from './annotation-tools.js';
-import { applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } from './main.js';
+import { activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } from './main.js';
 
 const PLACEMENT = {
   r: 'resistor',
@@ -97,6 +97,13 @@ function pickInsertType(type) {
   if (editor.altHeld && editor.pendingPlace.kind === 'component') setSymmetry(true);
   editor.insertQuery = '';
   return true;
+}
+
+/** Insert mode with `type` already picked: its ghost follows the cursor. */
+export function beginPlacing(type) {
+  activatePlace();
+  pickInsertType(type);
+  render();
 }
 
 export function onInsertKey(key, shiftKey = false) {

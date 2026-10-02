@@ -67,8 +67,10 @@ test('step text marks keys, and the tutorial is offered, never pushed', () => {
     { key: false, text: 'Press ' }, { key: true, text: 'w' }, { key: false, text: ' now' },
   ]);
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="btn-tutorial"[^>]*role="menuitem"/);
-  assert.match(html, /data-empty-action="tutorial"/);
+  // Learn (?) holds it, and the empty drawing points there.
+  const learn = html.slice(html.indexOf('id="help-dialog"'), html.indexOf('</dialog>', html.indexOf('id="help-dialog"')));
+  assert.match(learn, /id="btn-tutorial"/);
+  assert.match(html, /data-empty-action="learn"/);
   const main = editorSource();
   // Nothing starts the tutorial except an explicit choice.
   assert.equal((main.match(/(?<!function )startTutorial\(\)/g) || []).length, 1);

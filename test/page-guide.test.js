@@ -76,7 +76,9 @@ test('settings hold the page guide and preferences; More holds document actions'
   assert.match(html, /id="btn-settings"[^>]*aria-haspopup="menu"/);
   const settings = html.slice(html.indexOf('id="settings-menu"'), html.indexOf('</header>'));
   assert.match(settings, /toolbar-menu-note[\s\S]*data-page-guide="ieee-1col"[\s\S]*data-page-guide="ieee-2col"[\s\S]*data-page-guide="a4"/);
-  for (const id of ['btn-scroll-scheme', 'btn-tips', 'btn-tutorial']) assert.match(settings, new RegExp(`id="${id}"`));
+  for (const id of ['btn-scroll-scheme', 'btn-tips']) assert.match(settings, new RegExp(`id="${id}"`));
+  // Learning lives in Learn (?); Settings keeps only the tips switch.
+  for (const id of ['btn-tutorial', 'btn-symbols']) assert.doesNotMatch(settings, new RegExp(`id="${id}"`));
   // The settings button is not in the view cluster, so a folded toolbar keeps it.
   const view = html.slice(html.indexOf('class="toolbar-cluster view-cluster"'), html.indexOf('class="toolbar-cluster settings-cluster"'));
   assert.doesNotMatch(view, /btn-settings/);

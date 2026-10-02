@@ -33721,7 +33721,7 @@ function toggleAtlas() {
   else void openAtlas();
 }
 
-/** Settings → Symbols (and `:symbols`): every symbol, in the Atlas viewer. */
+/** Learn → Symbols → full sheet (and `:symbols`): every symbol, in the Atlas viewer. */
 function toggleSymbolSheet() {
   if (state) void closeAtlas();
   else void openAtlas({ source: 'symbols' });
@@ -36406,7 +36406,7 @@ const EDITOR_COMMANDS = [
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
   { name: 'atlas', aliases: ['atlas-view', 'collage', 'overview', 'gallery', 'all-designs'], help: 'every design in the workspace at its real size (Shift+Backspace)' },
-  { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'every symbol, drawn from the registry (Settings → Symbols)' },
+  { name: 'symbols', aliases: ['symbol-sheet', 'symbol-reference', 'library', 'legend'], help: 'every symbol, drawn from the registry (Learn → Symbols)' },
   { name: 'fit', aliases: ['zoom-fit', 'zoom', 'fit-view'], help: 'fit the view to the drawing (f)' },
   { name: 'shortcuts', aliases: ['keys', 'keybindings', 'hotkeys', 'cheatsheet', 'keymap'], help: 'show every keyboard shortcut (?)' },
   { name: 'check', aliases: ['design-check', 'drc', 'lint', 'verify'], help: 'run Design Check (x)' },
@@ -42061,11 +42061,21 @@ __exports.renderHelpSearch = renderHelpSearch;
 __exports.showHelp = showHelp;
 __exports.installHelp = installHelp;
 let commandHelp; __bind(() => { ({ commandHelp } = __require("src/core/commands.js")); });
-let editorKeymap; __bind(() => { ({ editorKeymap } = __require("src/web/toolbar.js")); });
+let symbolTypeNames; __bind(() => { ({ symbolTypeNames } = __require("src/core/components/index.js")); });
+let symbolCategories; __bind(() => { ({ symbolCategories } = __require("src/core/components/categories.js")); });
+let PLACEMENT_LABELS, editorKeymap; __bind(() => { ({ PLACEMENT_LABELS, editorKeymap } = __require("src/web/toolbar.js")); });
 let helpDialog, helpDialogContent, helpSearch; __bind(() => { ({ helpDialog, helpDialogContent, helpSearch } = __require("src/web/elements.js")); });
+let beginPlacing, symbolPreviewSvg; __bind(() => { ({ beginPlacing, symbolPreviewSvg } = __require("src/web/insert-menu.js")); });
+let offerTutorial, tipStates, tipsOn; __bind(() => { ({ offerTutorial, tipStates, tipsOn } = __require("src/web/onboarding.js")); });
 /**
- * The keyboard help overlay (?): the keymap and command reference, searchable.
+ * Learn (?): the one place to learn the editor. Its tabs are the keymap and
+ * command reference (searchable), the tutorial, every symbol (click one to
+ * place it), and every tip. Settings holds preferences only.
  */
+
+
+
+
 
 
 
@@ -42148,7 +42158,74 @@ function renderHelpSearch() {
   }
 }
 
-function showHelp() {
+/** Every placeable symbol by category, each a button that places it. */
+function renderSymbols() {
+  const host = document.getElementById('help-symbols');
+  if (!host || host.childElementCount) return;
+  for (const { title, types } of symbolCategories(symbolTypeNames.filter((type) => type !== 'solder'))) {
+    const section = document.createElement('section');
+    section.className = 'help-symbol-group';
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    const grid = document.createElement('div');
+    grid.className = 'help-symbol-grid';
+    for (const type of types) {
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'help-symbol';
+      tile.title = `Place ${PLACEMENT_LABELS[type] || type}`;
+      tile.innerHTML = `<span class="help-symbol-art" aria-hidden="true">${symbolPreviewSvg(type)}</span>`;
+      const name = document.createElement('span');
+      name.textContent = PLACEMENT_LABELS[type] || type;
+      tile.append(name);
+      tile.addEventListener('click', () => {
+        helpDialog.close();
+        beginPlacing(type);
+      });
+      grid.append(tile);
+    }
+    section.append(heading, grid);
+    host.append(section);
+  }
+}
+
+function renderTips() {
+  const list = document.getElementById('help-tips');
+  if (!list) return;
+  list.replaceChildren(...tipStates().map((tip) => {
+    const item = document.createElement('li');
+    item.className = `help-tip${tip.retired ? ' retired' : ''}`;
+    const text = document.createElement('span');
+    text.textContent = tip.text;
+    const state = document.createElement('span');
+    state.className = 'help-tip-state';
+    state.textContent = tip.retired ? 'learned' : tip.shown ? 'seen' : 'new';
+    item.append(text, state);
+    return item;
+  }));
+  if (!tipsOn()) {
+    const off = document.createElement('li');
+    off.className = 'help-tip-off';
+    off.textContent = 'Tips are off: Settings → Show tips turns them back on.';
+    list.prepend(off);
+  }
+}
+
+function showTab(name) {
+  for (const tab of helpDialog.querySelectorAll('[data-help-tab]')) {
+    const on = tab.dataset.helpTab === name;
+    tab.setAttribute('aria-selected', String(on));
+    tab.setAttribute('aria-pressed', String(on));
+  }
+  for (const panel of helpDialog.querySelectorAll('[data-help-panel]')) panel.hidden = panel.dataset.helpPanel !== name;
+  if (name === 'symbols') renderSymbols();
+  if (name === 'tips') renderTips();
+  if (name === 'keys') helpSearch?.focus();
+  else helpDialog.querySelector(`[data-help-tab="${name}"]`)?.focus();
+}
+
+/** Open Learn on a tab: keys (the default), tutorial, symbols, or tips. */
+function showHelp(tab = 'keys') {
   if (!helpDialog) return;
   try {
     helpCommandText = commandHelp();
@@ -42158,7 +42235,7 @@ function showHelp() {
   if (helpSearch) helpSearch.value = '';
   renderHelpSearch();
   if (!helpDialog.open) helpDialog.showModal();
-  helpSearch?.focus();
+  showTab(tab);
 }
 
 function installHelp() {
@@ -42166,6 +42243,15 @@ function installHelp() {
   helpSearch?.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') ev.preventDefault();
   });
+  for (const tab of helpDialog?.querySelectorAll('[data-help-tab]') || []) {
+    tab.addEventListener('click', () => showTab(tab.dataset.helpTab));
+  }
+  // Starting something from Learn leaves it.
+  document.getElementById('btn-tutorial')?.addEventListener('click', () => {
+    helpDialog.close();
+    offerTutorial();
+  });
+  document.getElementById('btn-symbols')?.addEventListener('click', () => helpDialog.close(), true);
 }
 
 };
@@ -43274,6 +43360,7 @@ __exports.ICON_PATHS = ICON_PATHS;
 };
 
 __modules["src/web/insert-menu.js"] = function (__require, __exports) {
+__exports.beginPlacing = beginPlacing;
 __exports.onInsertKey = onInsertKey;
 __exports.rememberInsertType = rememberInsertType;
 __exports.symbolPreviewSvg = symbolPreviewSvg;
@@ -43296,7 +43383,7 @@ let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/we
 let worldToClient; __bind(() => { ({ worldToClient } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let placeNetLabelAt; __bind(() => { ({ placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
-let applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo; __bind(() => { ({ applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } = __require("src/web/main.js")); });
+let activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo; __bind(() => { ({ activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } = __require("src/web/main.js")); });
 /**
  * Choosing a part to place: the insert menu (i) with its fuzzy search,
  * categories, and recent placements, and the quick-add menu a pin drag or a
@@ -43396,6 +43483,13 @@ function pickInsertType(type) {
   if (editor.altHeld && editor.pendingPlace.kind === 'component') setSymmetry(true);
   editor.insertQuery = '';
   return true;
+}
+
+/** Insert mode with `type` already picked: its ghost follows the cursor. */
+function beginPlacing(type) {
+  activatePlace();
+  pickInsertType(type);
+  render();
 }
 
 function onInsertKey(key, shiftKey = false) {
@@ -45223,7 +45317,7 @@ let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, label
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let canvasEl, cmdInput, statusZoomEl, clearCheckButtonEl, helpDialog, helpSearch, paneEl; __bind(() => { ({ canvasEl, cmdInput, statusZoomEl, clearCheckButtonEl, helpDialog, helpSearch, paneEl } = __require("src/web/elements.js")); });
 let installIcons; __bind(() => { ({ installIcons } = __require("src/web/icons.js")); });
-let noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, offerTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
+let noteTip, tutorialTargetRects, syncTutorial, installOnboarding; __bind(() => { ({ noteTip, tutorialTargetRects, syncTutorial, installOnboarding } = __require("src/web/onboarding.js")); });
 let ALIGN_SOURCE_HINT, worldPerPixel, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel; __bind(() => { ({ ALIGN_SOURCE_HINT, worldPerPixel, alignOverlay, keptAlignSelection, alignMouseDown, installAlignPanel } = __require("src/web/align-tool.js")); });
 let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch, showHelp, installHelp } = __require("src/web/help.js")); });
 let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
@@ -52837,9 +52931,8 @@ document.getElementById('empty-state')?.addEventListener('click', (ev) => {
   if (action === 'place') activatePlace();
   else if (action === 'wire') activateWire();
   else if (action === 'open') openDocumentDialog();
-  else if (action === 'help') showHelp();
-  else if (action === 'tutorial') offerTutorial();
-  if (action && !['open', 'help', 'tutorial'].includes(action)) canvasEl.focus();
+  else if (action === 'learn') showHelp('tutorial');
+  if (action && !['open', 'learn'].includes(action)) canvasEl.focus();
 });
 
 document.getElementById('btn-help').addEventListener('click', () => {
@@ -52938,7 +53031,7 @@ window.addEventListener('keydown', (ev) => {
       helpDialog.close();
       return;
     }
-    if (ev.target !== helpSearch) {
+    if (ev.target !== helpSearch && !helpSearch?.closest('[hidden]')) {
       if (helpSearch && ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         helpSearch.focus();
         const start = helpSearch.selectionStart ?? helpSearch.value.length;
@@ -53880,13 +53973,15 @@ function openNetNameChoiceMenu() {
 
 __modules["src/web/onboarding.js"] = function (__require, __exports) {
 __exports.noteTip = noteTip;
+__exports.tipStates = tipStates;
+__exports.tipsOn = tipsOn;
 __exports.tutorialTargetRects = tutorialTargetRects;
 __exports.syncTutorial = syncTutorial;
 __exports.offerTutorial = offerTutorial;
 __exports.dropTutorial = dropTutorial;
 __exports.installOnboarding = installOnboarding;
 let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
-let TipBook; __bind(() => { ({ TipBook } = __require("src/web/tips.js")); });
+let TIPS, TipBook; __bind(() => { ({ TIPS, TipBook } = __require("src/web/tips.js")); });
 let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(() => { ({ TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
 let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geometry.js")); });
 let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl; __bind(() => { ({ canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } = __require("src/web/elements.js")); });
@@ -53947,12 +54042,28 @@ function noteTip(event) {
   tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS);
 }
 
+/** Every tip with where it stands for this user: retired (used or
+ *  dismissed) or still waiting, and how often it has been shown. */
+function tipStates() {
+  return TIPS.map((tip) => ({
+    id: tip.id,
+    text: tip.text,
+    retired: tipBook.state.retired.includes(tip.id),
+    shown: tipBook.state.shown[tip.id] || 0,
+  }));
+}
+
+/** Whether tips are on (Settings → Show tips). */
+function tipsOn() {
+  return !tipBook.state.off;
+}
+
 function syncTipsButton() {
   tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
 }
 
 // ----- first-drawing tutorial ------------------------------------------------
-// Optional and never offered by itself: it starts only from the More menu or
+// Optional and never offered by itself: it starts only from Learn (?) or
 // the empty-canvas card, and closing it leaves the drawing as it is. Steps are
 // checked from the drawing's structure in tutorial.js.
 let tutorialKey = '';
@@ -54088,7 +54199,7 @@ function installOnboarding() {
     saveTips();
     hideTip();
     syncTipsButton();
-    logLine('tips off — turn them back on from the More menu', 'status');
+    logLine('tips off — turn them back on in Settings; Learn (?) lists them all', 'status');
   });
   // Hovering keeps a tip up while it is being read.
   tipCardEl?.addEventListener('mouseenter', () => window.clearTimeout(tipHideTimer));
@@ -54114,7 +54225,6 @@ function installOnboarding() {
     if (current) editor.tutorial.skipped.add(current.id);
     render();
   });
-  document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
   const github = document.getElementById('btn-github');
   github?.addEventListener('click', () => window.open(github.dataset.href, '_blank', 'noopener'));
 }
@@ -57219,7 +57329,7 @@ __exports.loadTipState = loadTipState;
 // user is doing something a faster way exists for. They are deliberately
 // scarce. A tip waits until its situation has come up a few times, is retired
 // for good once the user uses the feature (or dismisses it), is shown at most
-// twice ever, and only a few tips appear per session, several minutes apart.
+// twice ever, and at most one an hour.
 // Everything here is pure; the editor supplies the clock and the storage.
 
 const TIPS = Object.freeze([
@@ -57288,7 +57398,7 @@ const TIPS = Object.freeze([
   },
 ]);
 
-const TIP_COOLDOWN_MS = 4 * 60 * 1000;
+const TIP_COOLDOWN_MS = 60 * 60 * 1000;
 const TIPS_PER_SESSION = 3;
 const TIP_MAX_SHOWS = 2;
 

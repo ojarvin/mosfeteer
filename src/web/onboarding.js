@@ -4,7 +4,7 @@
  */
 
 import { getSymbol } from '../core/components/index.js';
-import { TipBook } from './tips.js';
+import { TIPS, TipBook } from './tips.js';
 import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { transformRect } from '../core/geometry.js';
 import { canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } from './elements.js';
@@ -50,12 +50,28 @@ export function noteTip(event) {
   tipHideTimer = window.setTimeout(hideTip, TIP_VISIBLE_MS);
 }
 
+/** Every tip with where it stands for this user: retired (used or
+ *  dismissed) or still waiting, and how often it has been shown. */
+export function tipStates() {
+  return TIPS.map((tip) => ({
+    id: tip.id,
+    text: tip.text,
+    retired: tipBook.state.retired.includes(tip.id),
+    shown: tipBook.state.shown[tip.id] || 0,
+  }));
+}
+
+/** Whether tips are on (Settings → Show tips). */
+export function tipsOn() {
+  return !tipBook.state.off;
+}
+
 function syncTipsButton() {
   tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
 }
 
 // ----- first-drawing tutorial ------------------------------------------------
-// Optional and never offered by itself: it starts only from the More menu or
+// Optional and never offered by itself: it starts only from Learn (?) or
 // the empty-canvas card, and closing it leaves the drawing as it is. Steps are
 // checked from the drawing's structure in tutorial.js.
 let tutorialKey = '';
@@ -191,7 +207,7 @@ export function installOnboarding() {
     saveTips();
     hideTip();
     syncTipsButton();
-    logLine('tips off — turn them back on from the More menu', 'status');
+    logLine('tips off — turn them back on in Settings; Learn (?) lists them all', 'status');
   });
   // Hovering keeps a tip up while it is being read.
   tipCardEl?.addEventListener('mouseenter', () => window.clearTimeout(tipHideTimer));
@@ -217,7 +233,6 @@ export function installOnboarding() {
     if (current) editor.tutorial.skipped.add(current.id);
     render();
   });
-  document.getElementById('btn-tutorial')?.addEventListener('click', offerTutorial);
   const github = document.getElementById('btn-github');
   github?.addEventListener('click', () => window.open(github.dataset.href, '_blank', 'noopener'));
 }

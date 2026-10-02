@@ -1475,7 +1475,7 @@ export function toggleAtlas() {
   else void openAtlas();
 }
 
-/** Settings → Symbols (and `:symbols`): every symbol, in the Atlas viewer. */
+/** Learn → Symbols → full sheet (and `:symbols`): every symbol, in the Atlas viewer. */
 export function toggleSymbolSheet() {
   if (state) void closeAtlas();
   else void openAtlas({ source: 'symbols' });

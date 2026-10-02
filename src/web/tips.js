@@ -2,7 +2,7 @@
 // user is doing something a faster way exists for. They are deliberately
 // scarce. A tip waits until its situation has come up a few times, is retired
 // for good once the user uses the feature (or dismisses it), is shown at most
-// twice ever, and only a few tips appear per session, several minutes apart.
+// twice ever, and at most one an hour.
 // Everything here is pure; the editor supplies the clock and the storage.
 
 export const TIPS = Object.freeze([
@@ -71,7 +71,7 @@ export const TIPS = Object.freeze([
   },
 ]);
 
-export const TIP_COOLDOWN_MS = 4 * 60 * 1000;
+export const TIP_COOLDOWN_MS = 60 * 60 * 1000;
 export const TIPS_PER_SESSION = 3;
 export const TIP_MAX_SHOWS = 2;
 
