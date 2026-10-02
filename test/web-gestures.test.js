@@ -244,15 +244,29 @@ test('the knife deletes every object kind it cuts through one delete', async () 
   assert.match(main, /cutAlong\(\[\.\.\.drag\.knife, \{ x: releaseWorld\.x, y: releaseWorld\.y \}\]\);/);
 });
 
-test('radial menu tools act on their part at the release point', async () => {
+test('right-hold menus fit what is under the press', async () => {
   const main = editorSource();
-  const radial = main.slice(main.indexOf('const RADIAL_ITEMS = ['), main.indexOf('const RADIAL_RADIUS'));
-  for (const label of ['Rotate', 'Mirror H', 'Mirror V', 'Delete', 'Copy', 'Detach move', 'Move']) assert.match(radial, new RegExp(`label: '${label}'`));
-  assert.match(radial, /radialMove\(radial, at, 'detached'\)/);
-  assert.match(radial, /armModalMove\(\{ refdes: radial\.refdes \}, at\.world, at\.client\)/);
-  assert.match(radial, /if \(copyMode\) beginCopySource\(at\.world, at\.client\)/);
-  // Space's wire stubs, on the part the menu selected.
-  assert.match(radial, /label: 'Wire stubs', icon: 'stub', run: \(\) => stubSelection\(\)/);
+  const { readFileSync } = await import('node:fs');
+  const radial = readFileSync(new URL('../src/web/radial-menu.js', import.meta.url), 'utf8');
+  // A pin of a part with several, a part, a wire, else the paper.
+  const target = main.slice(main.indexOf('function radialTarget('), main.indexOf('\n}\n', main.indexOf('function radialTarget(')));
+  assert.match(target, /kind: 'pin'[\s\S]*kind: 'part'[\s\S]*kind: 'wire'[\s\S]*kind: 'paper'/);
+  // On the paper a drag before the hold is still a zoom box.
+  assert.match(main, /drag\.kind === 'paper' && Math\.hypot\(dx, dy\) > 10\) \{[\s\S]*?mode: 'zoom'/);
+  // The paper palette keeps its places; each sector has variants.
+  const palette = radial.slice(radial.indexOf('const PALETTE = ['), radial.indexOf('];', radial.indexOf('const PALETTE = [')));
+  for (const type of ['nmos', 'resistor', 'capacitor', 'current_source', 'ground', 'port', 'opamp', 'pmos']) assert.match(palette, new RegExp(`part\\('${type}'`));
+  assert.equal((palette.match(/children:/g) || []).length, 8);
+  // A pin: rails, a port, a labelled stub, a wire.
+  for (const label of ['Supply', 'Stub \\+ label', 'Port', 'VCM', 'Ground', 'Wire']) assert.match(radial, new RegExp(`label: '${label}'|'${label}'\\)`));
+  // A part swaps as q does, every candidate previewed in place.
+  assert.match(radial, /swapCandidates\(component\.type\)[\s\S]*preview: \(circuit\) => swapComponentType\(circuit, radial\.refdes, type\)/);
+  // A wire: its net, including a color wheel of highlights.
+  for (const label of ['Name net', 'Net label', 'Highlight', 'Tidy', 'Delete run']) assert.match(radial, new RegExp(`label: '${label}'`));
+  assert.match(radial, /NET_HIGHLIGHT_COLORS\.slice\(0, 7\)\.map\(highlightItem\)/);
+  // What a sector would do shows on a copy of the drawing until release.
+  assert.match(radial, /if \(item\?\.preview\) previewEdit\(\(circuit\) => item\.preview\(circuit, radial\)\);/);
+  assert.match(main, /export function previewEdit\(edit\) \{\s*endPreviewEdit\(\);\s*beginPreviewTransaction\(\);/);
   assert.match(main, /finishRadialMenu\(radial, \{ x: ev\.clientX, y: ev\.clientY \}\);/);
 });
 

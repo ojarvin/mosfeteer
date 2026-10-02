@@ -49,5 +49,6 @@ test('the rail command places a marker, or explains its usage', () => {
   const done = runCommand(circuit, 'rail M1.s gnd');
   assert.equal(done.mutated, true);
   assert.match(done.text, /GROUND1 \(ground\) on M1\.s/);
-  assert.throws(() => runCommand(circuit, 'rail M1.d vcm'), /usage: rail/);
+  assert.match(runCommand(circuit, 'rail M1.g vcm').text, /\(vcm\) on M1\.g/);
+  assert.throws(() => runCommand(circuit, 'rail M1.d bias'), /usage: rail/);
 });

@@ -12006,7 +12006,7 @@ function commandHelp() {
     '  tag [list] | tag add|rm|set NAME ... - the document\'s tags, for finding it in the Atlas (#NAME searches them)',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
-    '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
+    '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
     '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  find TEXT [--case] [--regex]   - list every label (nets, parts, switch phases, rails, annotations), block caption, and unlabelled net name containing TEXT;',
@@ -12428,7 +12428,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'rail') {
     const ref = pos[0] && parseTermRef(pos[0]);
     const type = { gnd: 'ground', vss: 'ground', vdd: 'supply' }[String(pos[1]).toLowerCase()] || pos[1];
-    if (!ref || !PIN_RAIL_TYPES.includes(type)) throw new Error('usage: rail REF.TERM ground|supply');
+    if (!ref || !PIN_RAIL_TYPES.includes(type)) throw new Error('usage: rail REF.TERM ground|supply|vcm');
     const marker = addPinRail(circuit, { comp: ref.comp, term: ref.term }, type);
     return result(`${marker.refdes} (${type}) on ${ref.comp}.${ref.term}`, { refdes: marker.refdes }, true);
   }
@@ -19093,6 +19093,14 @@ class Circuit {
     return next;
   }
 
+  /** Give a net's group the highlight `color` (a NET_HIGHLIGHT_COLORS token),
+   * or clear it with null. */
+  setNetHighlight(netOrId, color) {
+    if (color !== null && !NET_HIGHLIGHT_COLORS.includes(color)) throw new Error(`unknown highlight color "${color}"`);
+    applyNetProbe(this.netHighlights, this.netGroupKey(this._resolveNet(netOrId)), color);
+    return color;
+  }
+
   /** Remove every net highlight. Returns how many groups were highlighted. */
   clearNetHighlights() {
     const count = [...this.netHighlights.keys()].filter((key) => this._liveNetGroups().has(key)).length;
@@ -23243,7 +23251,7 @@ __exports.addPinRail = addPinRail;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let referenceMarkerInfo; __bind(() => { ({ referenceMarkerInfo } = __require("src/core/model.js")); });
 /**
- * A rail marker on a pin in one step: a ground or supply one cell out along
+ * A rail marker on a pin in one step: a ground, supply, or VCM one cell out along
  * the pin's escape direction, wired to it. A pin facing the way the marker
  * hangs (a source down to ground) gets a straight one-cell lead; a sideways pin
  * (a gate) gets that lead plus one cell turning toward the rail; a pin facing
@@ -23255,7 +23263,7 @@ let referenceMarkerInfo; __bind(() => { ({ referenceMarkerInfo } = __require("sr
 
 
 /** Which way each rail's symbol hangs from its pin. */
-const HANG = { ground: { x: 0, y: 1 }, supply: { x: 0, y: -1 } };
+const HANG = { ground: { x: 0, y: 1 }, supply: { x: 0, y: -1 }, vcm: { x: 0, y: 1 } };
 
 const PIN_RAIL_TYPES = Object.freeze(Object.keys(HANG));
 
@@ -26870,9 +26878,10 @@ function stubLabelPlacement(circuit, ref, end = null) {
  * Add a stub and a named net label to every unconnected terminal of the parts
  * `refdes`. A stub leaves its terminal along the terminal's outward direction,
  * STUB_CELLS long, with its label at stubLabelPlacement. A stub that would
- * join anything else is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
+ * join anything else is skipped. `terms` ("R1.a", ...) limits it to those
+ * terminals. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
  */
-function addTerminalStubs(circuit, refdes) {
+function addTerminalStubs(circuit, refdes, { terms = null } = {}) {
   const stubs = [];
   const skipped = [];
   const taken = takenNames(circuit);
@@ -26882,6 +26891,7 @@ function addTerminalStubs(circuit, refdes) {
     if (component.type === 'solder' || REFERENCE_MARKER_TYPES.includes(component.type) || INTERFACE_PIN_TYPES.has(component.type)) continue;
     for (const def of component.terminalDefs) {
       const termRef = `${component.refdes}.${def.name}`;
+      if (terms && !terms.includes(termRef)) continue;
       if (circuit.netOfTerminal({ comp: component.refdes, term: def.name })) continue;
       const from = component.terminalWorld(def.name);
       const dir = circuit._pinDir(component, def, from.x, from.y);
@@ -43266,6 +43276,7 @@ __exports.ICON_PATHS = ICON_PATHS;
 __modules["src/web/insert-menu.js"] = function (__require, __exports) {
 __exports.onInsertKey = onInsertKey;
 __exports.rememberInsertType = rememberInsertType;
+__exports.symbolPreviewSvg = symbolPreviewSvg;
 __exports.updateInsertMenu = updateInsertMenu;
 __exports.openQuickAdd = openQuickAdd;
 __exports.closeQuickAdd = closeQuickAdd;
@@ -45084,6 +45095,8 @@ __exports.markModelChanged = markModelChanged;
 __exports.commit = commit;
 __exports.snapshot = snapshot;
 __exports.cancelPreviewTransaction = cancelPreviewTransaction;
+__exports.previewEdit = previewEdit;
+__exports.endPreviewEdit = endPreviewEdit;
 __exports.recordHistoryEntry = recordHistoryEntry;
 __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.applyJson = applyJson;
@@ -45142,6 +45155,7 @@ __exports.supplyBarGroup = supplyBarGroup;
 __exports.supplyBarHit = supplyBarHit;
 __exports.pickWire = pickWire;
 __exports.netsTouching = netsTouching;
+__exports.startWireFromPoint = startWireFromPoint;
 __exports.commitWireAtCursor = commitWireAtCursor;
 __exports.connectWireToTerminal = connectWireToTerminal;
 __exports.endGestureWire = endGestureWire;
@@ -45734,6 +45748,27 @@ function cancelPreviewTransaction() {
   previewTransaction = null;
   previewRevision += 1;
   return true;
+}
+
+/** Show what `edit(circuit)` would do, on a throwaway copy of the drawing,
+ *  until endPreviewEdit() (or the next previewEdit) puts the drawing back.
+ *  The radial menus preview their choices with it. */
+function previewEdit(edit) {
+  endPreviewEdit();
+  beginPreviewTransaction();
+  try {
+    edit(circuit);
+  } catch {
+    cancelPreviewTransaction();
+  }
+  markModelChanged(false);
+  render();
+}
+
+function endPreviewEdit() {
+  if (!cancelPreviewTransaction()) return;
+  markModelChanged(false);
+  render();
 }
 
 const HISTORY_LIMIT = 200;
@@ -49070,6 +49105,13 @@ function noteWireToolStart() {
  *  draft; a point on an existing wire records that net as the origin (the
  *  junction + solder are materialized on commit so a cancelled wire leaves no
  *  orphan dot). */
+/** Wire mode with a wire starting at `w` (a pin, a wire, or a point). */
+function startWireFromPoint(w) {
+  activateWire();
+  startWireAt(w);
+  render();
+}
+
 function startWireAt(w) {
   const wireHit = pickWire(w);
   if (wireHit) {
@@ -49377,6 +49419,19 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 // ----- radial menu -------------------------------------------------------------
 let radialMenuEl = null;
 
+/** What a right press at `w` opens a radial menu for: a pin of a part with
+ *  several, a part, a wire, or the empty paper. */
+function radialTarget(w) {
+  const hit = pickAt(w);
+  const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
+  if (component && hit.term && isPinDragCandidate(component.def)) return { kind: 'pin', refdes: hit.refdes, term: hit.term };
+  if (component) return { kind: 'part', refdes: hit.refdes };
+  const wireHit = pickWire(w);
+  if (wireHit) return { kind: 'wire', netId: wireHit.net.id, wireKey: `${wireHit.net.id}:${wireHit.branch}:${wireHit.seg}` };
+  if (circuit.labels.size && pickLabel(snappedWorld(w))) return null;
+  return { kind: 'paper' };
+}
+
 // ----- pin-drag wiring --------------------------------------------------------
 // Dragging out of a pin draws a managed wire without entering Wire mode. The
 // draft is the ordinary `wire` draft, so preview, routing, and commits are the
@@ -49552,17 +49607,19 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b === 2) {
-    const hit = pickAt(startWorld);
-    if (hit?.refdes && circuit.components.has(hit.refdes) && !hasWireDraft() && !hasModalPlacement()) {
-      ev.preventDefault();
+    ev.preventDefault();
+    // A right press on a pin, part, wire, or the paper is a tap (the context
+    // menu, on release), a hold or flick (that target's radial menu), or --
+    // on the paper -- a drag (zoom to the box).
+    const target = !hasWireDraft() && !hasModalPlacement() ? radialTarget(startWorld) : null;
+    if (target) {
       closeComponentContextMenu();
-      drag = { mode: 'radialpending', refdes: hit.refdes, startClient, startWorld };
+      drag = { mode: 'radialpending', ...target, startClient, startWorld };
       drag.holdTimer = window.setTimeout(() => {
         if (drag?.mode === 'radialpending') openRadialMenu(drag);
-      }, 280);
+      }, target.kind === 'paper' ? 320 : 280);
       return;
     }
-    ev.preventDefault();
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
     return;
   }
@@ -50674,6 +50731,13 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'radialpending' || drag.mode === 'radial') {
     const dx = ev.clientX - drag.startClient.x;
     const dy = ev.clientY - drag.startClient.y;
+    // On the paper a drag before the hold is a zoom box, not a flick.
+    if (drag.mode === 'radialpending' && drag.kind === 'paper' && Math.hypot(dx, dy) > 10) {
+      window.clearTimeout(drag.holdTimer);
+      drag = { mode: 'zoom', startClient: drag.startClient, startWorld: drag.startWorld, moved: true, rubber: null };
+      canvasMouseMove(ev);
+      return;
+    }
     if (drag.mode === 'radialpending' && Math.hypot(dx, dy) > 10) openRadialMenu(drag);
     if (drag.mode === 'radial') highlightRadial(dx, dy);
     return;
@@ -54920,17 +54984,41 @@ __exports.openRadialMenu = openRadialMenu;
 __exports.highlightRadial = highlightRadial;
 __exports.closeRadialMenu = closeRadialMenu;
 __exports.finishRadialMenu = finishRadialMenu;
-let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
-let radialRingRadius, radialSector; __bind(() => { ({ radialRingRadius, radialSector } = __require("src/web/gestures.js")); });
+let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
+let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
+let NET_HIGHLIGHT_COLORS; __bind(() => { ({ NET_HIGHLIGHT_COLORS } = __require("src/core/model.js")); });
+let addPinRail; __bind(() => { ({ addPinRail } = __require("src/core/pin-rails.js")); });
+let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
+let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
+let setHighlightFrom; __bind(() => { ({ setHighlightFrom } = __require("src/core/beats.js")); });
+let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
+let radialRingRadius, radialSector, quickAddPlacement; __bind(() => { ({ radialRingRadius, radialSector, quickAddPlacement } = __require("src/web/gestures.js")); });
 let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icons.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
 let selectContextTarget; __bind(() => { ({ selectContextTarget } = __require("src/web/context-menu.js")); });
-let activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, deleteSelection, render, selectedTransform, stubSelection; __bind(() => { ({ activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, deleteSelection, render, selectedTransform, stubSelection } = __require("src/web/main.js")); });
+let PLACEMENT_LABELS; __bind(() => { ({ PLACEMENT_LABELS } = __require("src/web/toolbar.js")); });
+let rememberInsertType, swapParts, symbolPreviewSvg; __bind(() => { ({ rememberInsertType, swapParts, symbolPreviewSvg } = __require("src/web/insert-menu.js")); });
+let placeNetLabelAt; __bind(() => { ({ placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
+let activeBeatIndex; __bind(() => { ({ activeBeatIndex } = __require("src/web/beats-ui.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, setSelection, snapshot, startWireFromPoint, stubSelection, tidyNow; __bind(() => { ({ activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, setSelection, snapshot, startWireFromPoint, stubSelection, tidyNow } = __require("src/web/main.js")); });
 /**
- * The radial marking menu a right-drag or hold on a part opens. The ring
- * geometry is in gestures.js.
+ * The radial (marking) menus a right-hold or right-flick opens. Each asks
+ * what is under the press and offers what fits it:
+ *
+ *   paper  a part palette: flick to drop a part there (hold a sector for its
+ *          variants: NMOS → bulk NMOS, NPN; R → variable R, impedance, ...)
+ *   pin    connect it: ground, supply, VCM, a port, a labelled stub, a wire
+ *   part   swap it for a related type (as q), each one previewed in place
+ *   wire   its net: name it, label it here, tidy it, delete the run, or pick
+ *          its highlight color off a color wheel
+ *
+ * Sector 0 is up and indices run clockwise, so a practiced flick needs no
+ * reading; release in the centre cancels. While the pointer is in a sector
+ * the drawing shows what releasing there would do (a preview on a copy).
+ * The ring geometry is in gestures.js.
  */
 
 
@@ -54942,13 +55030,135 @@ let activateAlign, activateCopy, activateMove, armModalMove, beginCopySource, de
 
 
 
-// Right-drag (or hold) on a component opens a marking menu around the press.
-// Releasing in a sector runs it, so a practiced flick needs no reading; release
-// in the centre cancels. Sector 0 is up and indices run clockwise.
-// Every item acts on the part the menu was opened on: the tools pick it up at
-// the release point exactly as a click on it with that tool armed would, so
-// the part follows the pointer from where the flick ended.
-const RADIAL_ITEMS = [
+
+
+
+
+
+
+
+
+
+
+
+
+const TILE = 64;
+
+/** One undoable edit; a failed one leaves the drawing as it was. */
+function edit(fn) {
+  const before = snapshot();
+  const result = commit(fn);
+  if (result === false) applyJson(before);
+  return result || null;
+}
+const DEAD_ZONE = 22;
+// Resting this long on a sector with variants opens them as the ring.
+const DWELL_MS = 380;
+
+// ----- what each ring offers --------------------------------------------------
+
+/** A part placed with its origin at `point`, joined to what it lands on. */
+function addPart(circuit, type, point) {
+  const placement = quickAddPlacement(getSymbol(type), point);
+  const component = circuit.addComponent(type, {
+    x: snap(point.x), y: snap(point.y),
+    rotation: placement.rotation, mirrorX: placement.mirrorX, mirrorY: placement.mirrorY,
+  });
+  circuit.connectCoincident(component.refdes);
+  return component;
+}
+
+const part = (type, label = PLACEMENT_LABELS[type] || type) => ({
+  label,
+  symbol: type,
+  preview: (circuit, radial) => addPart(circuit, type, radial.point),
+  run: (radial) => {
+    const component = edit(() => addPart(editor.circuit, type, radial.point));
+    if (!component) return;
+    rememberInsertType(type);
+    setSelection([component.refdes]);
+    logLine(`placed ${component.refdes} (${label})`);
+  },
+});
+
+// The palette keeps its places, so a flick learned once stays right.
+const PALETTE = [
+  { ...part('nmos', 'NMOS'), children: [part('nmos', 'NMOS'), part('nmosb', 'NMOS bulk'), part('npn', 'NPN')] },
+  { ...part('resistor', 'R'), children: [part('resistor', 'R'), part('variable_resistor', 'Var. R'), part('impedance', 'Z')] },
+  { ...part('capacitor', 'C'), children: [part('capacitor', 'C'), part('variable_capacitor', 'Var. C'), part('inductor', 'L')] },
+  { ...part('current_source', 'I source'), children: [part('current_source', 'I'), part('voltage_source', 'V'), part('vccs', 'VCCS'), part('vcvs', 'VCVS')] },
+  { ...part('ground', 'Ground'), children: [part('ground', 'Ground'), part('vcm', 'VCM')] },
+  { ...part('port', 'Port'), children: [part('input', 'In'), part('output', 'Out'), part('inputoutput', 'In/out'), part('port', 'Port')] },
+  { ...part('opamp', 'Op-amp'), children: [part('opamp', 'Op-amp'), part('opamp_diff', 'Diff'), part('gm', 'Gm'), part('comparator', 'Comp.')] },
+  { ...part('pmos', 'PMOS'), children: [part('pmos', 'PMOS'), part('pmosb', 'PMOS bulk'), part('pnp', 'PNP')] },
+];
+
+function pinRail(type, label) {
+  return {
+    label,
+    symbol: type,
+    enabled: (radial) => !radial.connected,
+    preview: (circuit, radial) => addPinRail(circuit, radial.ref, type),
+    run: (radial) => {
+      const marker = edit(() => addPinRail(editor.circuit, radial.ref, type));
+      if (marker) logLine(`${marker.refdes} (${type}) on ${radial.refdes}.${radial.term}`);
+    },
+  };
+}
+
+/** A port two cells out along the pin, facing away from it, wired to it. */
+function addPinPort(circuit, radial, type) {
+  const component = circuit.getComponent(radial.refdes);
+  const def = component.terminalDefs.find((terminal) => terminal.name === radial.term);
+  const pin = component.terminalWorld(radial.term);
+  const dir = circuit._pinDir(component, def, pin.x, pin.y);
+  const point = { x: pin.x + dir.x * GRID * 2, y: pin.y + dir.y * GRID * 2 };
+  const placement = quickAddPlacement(getSymbol(type), point, dir);
+  const port = circuit.addComponent(type, { x: placement.x, y: placement.y, rotation: placement.rotation, mirrorX: placement.mirrorX, mirrorY: placement.mirrorY });
+  circuit.connect(`${radial.refdes}.${radial.term}`, `${port.refdes}.${placement.terminal}`);
+  return port;
+}
+
+const pinPort = (type, label) => ({
+  label,
+  symbol: type,
+  enabled: (radial) => !radial.connected,
+  preview: (circuit, radial) => addPinPort(circuit, radial, type),
+  run: (radial) => {
+    const port = edit(() => addPinPort(editor.circuit, radial, type));
+    if (port) logLine(`${port.refdes} on ${radial.refdes}.${radial.term}`);
+  },
+});
+
+const PIN_RING = [
+  pinRail('supply', 'Supply'),
+  { label: 'Stub + label', icon: 'stub', enabled: (radial) => !radial.connected,
+    preview: (circuit, radial) => addTerminalStubs(circuit, [radial.refdes], { terms: [`${radial.refdes}.${radial.term}`] }),
+    run: (radial) => {
+      const out = edit(() => addTerminalStubs(editor.circuit, [radial.refdes], { terms: [`${radial.refdes}.${radial.term}`] }));
+      if (out?.stubs.length) logLine(`${out.stubs[0].ref}: stub labelled ${out.stubs[0].name}`);
+      else if (out) logLine(`${radial.refdes}.${radial.term}: a stub there would short`, 'error');
+    } },
+  { ...pinPort('output', 'Port'), children: [pinPort('input', 'In'), pinPort('output', 'Out'), pinPort('inputoutput', 'In/out'), pinPort('port', 'Port')] },
+  pinRail('vcm', 'VCM'),
+  pinRail('ground', 'Ground'),
+  { label: 'Wire', icon: 'wire', run: (radial) => startWireFromPoint(radial.point) },
+];
+
+/** The ring that swaps a part, else (nothing to swap to) its old transforms. */
+function partRing(radial) {
+  const component = editor.circuit.components.get(radial.refdes);
+  const swaps = component ? swapCandidates(component.type).slice(0, 8) : [];
+  if (!swaps.length) return LEGACY_PART_RING;
+  return swaps.map((type) => ({
+    label: PLACEMENT_LABELS[type] || type,
+    symbol: type,
+    preview: (circuit) => swapComponentType(circuit, radial.refdes, type),
+    run: () => swapParts([radial.refdes], type),
+  }));
+}
+
+const LEGACY_PART_RING = [
   { label: 'Rotate', icon: 'rotate', run: () => selectedTransform('rotate') },
   { label: 'Mirror H', icon: 'mirror-x', run: () => selectedTransform('mirror-x') },
   { label: 'Mirror V', icon: 'mirror-y', run: () => selectedTransform('mirror-y') },
@@ -54957,76 +55167,205 @@ const RADIAL_ITEMS = [
     activateCopy();
     if (editor.copyMode) beginCopySource(at.world, at.client);
   } },
-  { label: 'Detach move', icon: 'detach', run: (radial, at) => radialMove(radial, at, 'detached') },
-  { label: 'Move', icon: 'move', run: (radial, at) => radialMove(radial, at, 'connected') },
-  // The part is selected; pick its edge or point to align, then the target's.
+  { label: 'Move', icon: 'move', run: (radial, at) => {
+    activateMove('connected');
+    if (!editor.moveMode || !editor.circuit.components.has(radial.refdes)) return;
+    editor.cursor = { x: snap(at.world.x), y: snap(at.world.y) };
+    armModalMove({ refdes: radial.refdes }, at.world, at.client);
+  } },
   { label: 'Align', icon: 'align', run: () => activateAlign() },
   { label: 'Wire stubs', icon: 'stub', run: () => stubSelection() },
 ];
 
-function radialMove(radial, at, kind) {
-  activateMove(kind);
-  if (!editor.moveMode || !editor.circuit.components.has(radial.refdes)) return;
-  editor.cursor = { x: snap(at.world.x), y: snap(at.world.y) };
-  armModalMove({ refdes: radial.refdes }, at.world, at.client);
+/** Set the highlight of the press's net (on the beat on screen, that beat's). */
+function setHighlight(circuit, netId, color) {
+  const net = circuit.nets.get(netId);
+  if (!net) return;
+  const beat = activeBeatIndex();
+  if (beat === null) circuit.setNetHighlight(net, color);
+  else setHighlightFrom(circuit, beat, circuit.netGroupKey(net), color);
 }
-// Round tiles of one size at equal angles, on a ring sized so every pair of
-// neighbours has the same gap.
-const RADIAL_TILE = 64;
-const RADIAL_RADIUS = radialRingRadius(RADIAL_ITEMS.length, RADIAL_TILE, 10);
+
+const highlightItem = (color) => ({
+  label: color || 'None',
+  swatch: color ? resolveColor(color) : null,
+  icon: color ? null : 'x-circle',
+  preview: (circuit, radial) => setHighlight(circuit, radial.netId, color),
+  run: (radial) => edit(() => setHighlight(editor.circuit, radial.netId, color)),
+});
+
+const WIRE_RING = [
+  { label: 'Name net', icon: 'text', run: (radial) => {
+    applyEditorSelection({ kind: 'wire', id: radial.wireKey });
+    editSelectionText();
+  } },
+  { label: 'Net label', icon: 'net-label', run: (radial) => {
+    placeNetLabelAt(radial.point);
+    render();
+  } },
+  { label: 'Highlight', icon: 'highlight', children: [...NET_HIGHLIGHT_COLORS.slice(0, 7).map(highlightItem), highlightItem(null)] },
+  { label: 'Tidy', icon: 'route-orthogonal', run: (radial) => {
+    applyEditorSelection({ kind: 'wire', id: radial.wireKey });
+    tidyNow();
+  } },
+  { label: 'Delete run', icon: 'trash', danger: true, run: (radial) => {
+    applyEditorSelection({ kind: 'wire', id: radial.wireKey });
+    deleteSelection();
+  } },
+  { label: 'Wire from', icon: 'wire', run: (radial) => startWireFromPoint(radial.point) },
+];
+
+/** The ring for a press (radial.kind), and the hub's caption. */
+function ringFor(radial) {
+  if (radial.kind === 'paper') return { items: PALETTE, hub: 'Place' };
+  if (radial.kind === 'pin') return { items: PIN_RING, hub: `${radial.refdes}.${radial.term}` };
+  if (radial.kind === 'wire') {
+    const net = editor.circuit.nets.get(radial.netId);
+    return { items: WIRE_RING, hub: net?.name ? net.name.replace(/[_^{}]/g, '') : 'net' };
+  }
+  return { items: partRing(radial), hub: radial.refdes };
+}
+
+// ----- the menu ----------------------------------------------------------------
+
+function itemEl(item, index, count, enabled) {
+  const el = document.createElement('div');
+  el.className = `radial-item glass${item.danger ? ' danger' : ''}${enabled ? '' : ' disabled'}${item.children ? ' has-children' : ''}`;
+  el.setAttribute('role', 'menuitem');
+  if (!enabled) el.setAttribute('aria-disabled', 'true');
+  // Placed by CSS from its angle, so the opening animation can sweep it
+  // around the hub and out to the ring.
+  el.style.setProperty('--radial-angle', `${(index / count) * 360}deg`);
+  el.style.setProperty('--radial-delay', `${index * 14}ms`);
+  if (item.swatch) {
+    el.classList.add('swatch-item');
+    el.style.setProperty('--radial-swatch', item.swatch);
+    el.innerHTML = '<span class="radial-swatch" aria-hidden="true"></span>';
+  } else if (item.symbol) {
+    el.classList.add('symbol-item');
+    el.innerHTML = `<span class="radial-symbol" aria-hidden="true">${symbolPreviewSvg(item.symbol)}</span>`;
+  } else {
+    el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
+  }
+  el.title = item.label;
+  const text = document.createElement('span');
+  text.className = 'radial-label';
+  text.textContent = item.label;
+  el.appendChild(text);
+  return el;
+}
+
+/** Lay out the ring for `items` (the top level, or a sector's variants). */
+function showRing(radial, items, hubText) {
+  const menu = editor.radialMenuEl;
+  radial.items = items;
+  radial.enabled = items.map((item) => !item.enabled || item.enabled(radial));
+  radial.active = -1;
+  menu.style.setProperty('--radial-radius', `${radialRingRadius(Math.max(items.length, 6), TILE, 10)}px`);
+  for (const el of menu.querySelectorAll('.radial-item')) el.remove();
+  menu.querySelector('.radial-hub').textContent = hubText;
+  menu.classList.toggle('nested', radial.stack.length > 0);
+  items.forEach((item, index) => menu.appendChild(itemEl(item, index, items.length, radial.enabled[index])));
+}
 
 function openRadialMenu(radial) {
   noteTip('radial');
   window.clearTimeout(radial.holdTimer);
   radial.mode = 'radial';
-  const comp = editor.circuit.components.get(radial.refdes);
-  if (comp) selectContextTarget({ kind: 'component', value: comp });
+  radial.point = { x: snap(radial.startWorld.x), y: snap(radial.startWorld.y) };
+  if (radial.kind === 'part' || radial.kind === 'pin') {
+    const comp = editor.circuit.components.get(radial.refdes);
+    if (comp) selectContextTarget({ kind: 'component', value: comp });
+  }
+  if (radial.kind === 'pin') {
+    radial.ref = { comp: radial.refdes, term: radial.term };
+    radial.connected = !!editor.circuit.netOfTerminal(radial.ref);
+    radial.point = editor.circuit.components.get(radial.refdes)?.terminalWorld(radial.term) || radial.point;
+  }
+  radial.stack = [];
   render();
   editor.radialMenuEl?.remove();
-  editor.radialMenuEl = document.createElement('div');
-  editor.radialMenuEl.className = 'radial-menu';
-  editor.radialMenuEl.setAttribute('role', 'menu');
-  editor.radialMenuEl.style.left = `${radial.startClient.x}px`;
-  editor.radialMenuEl.style.top = `${radial.startClient.y}px`;
-  editor.radialMenuEl.style.setProperty('--radial-radius', `${RADIAL_RADIUS}px`);
-  editor.radialMenuEl.style.setProperty('--radial-tile', `${RADIAL_TILE}px`);
+  const menu = document.createElement('div');
+  menu.className = `radial-menu radial-${radial.kind || 'part'}`;
+  menu.setAttribute('role', 'menu');
+  menu.style.left = `${radial.startClient.x}px`;
+  menu.style.top = `${radial.startClient.y}px`;
+  menu.style.setProperty('--radial-tile', `${TILE}px`);
+  // A trail from the press to the pointer: the flick drawn as it is made.
+  menu.innerHTML = '<svg class="radial-trail" aria-hidden="true"><line x1="0" y1="0" x2="0" y2="0"/></svg>';
   const hub = document.createElement('div');
   hub.className = 'radial-hub glass';
-  hub.textContent = radial.refdes;
-  editor.radialMenuEl.appendChild(hub);
-  RADIAL_ITEMS.forEach((item, index) => {
-    const el = document.createElement('div');
-    el.className = `radial-item glass${item.danger ? ' danger' : ''}`;
-    el.setAttribute('role', 'menuitem');
-    // Placed by CSS from its angle, so the opening animation can sweep it
-    // around the hub and out to the ring.
-    el.style.setProperty('--radial-angle', `${(index / RADIAL_ITEMS.length) * 360}deg`);
-    el.style.setProperty('--radial-delay', `${index * 14}ms`);
-    el.innerHTML = `<svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[item.icon] || ''}</svg>`;
-    el.title = item.label;
-    const text = document.createElement('span');
-    text.textContent = item.label;
-    el.appendChild(text);
-    editor.radialMenuEl.appendChild(el);
-  });
-  document.body.appendChild(editor.radialMenuEl);
+  menu.appendChild(hub);
+  editor.radialMenuEl = menu;
+  const ring = ringFor(radial);
+  radial.hub = ring.hub;
+  showRing(radial, ring.items, ring.hub);
+  document.body.appendChild(menu);
 }
 
+function sectorAt(radial, dx, dy) {
+  const sector = radialSector(dx, dy, radial.items.length, DEAD_ZONE);
+  return sector >= 0 && radial.enabled[sector] ? sector : -1;
+}
+
+/** Follow the pointer: light its sector, preview it, and after a rest open
+ *  its variants (or, back in the centre of variants, the ring before). */
 function highlightRadial(dx, dy) {
-  if (!editor.radialMenuEl) return;
-  const sector = radialSector(dx, dy, RADIAL_ITEMS.length, 22);
-  [...editor.radialMenuEl.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
+  const radial = editor.drag;
+  const menu = editor.radialMenuEl;
+  if (!menu || radial?.mode !== 'radial') return;
+  menu.querySelector('.radial-trail line')?.setAttribute('x2', String(dx));
+  menu.querySelector('.radial-trail line')?.setAttribute('y2', String(dy));
+  const sector = sectorAt(radial, dx, dy);
+  if (sector === radial.active) return;
+  radial.active = sector;
+  [...menu.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
+  window.clearTimeout(radial.dwellTimer);
+  const item = radial.items[sector];
+  if (item?.preview) previewEdit((circuit) => item.preview(circuit, radial));
+  else endPreviewEdit();
+  if (item?.children) {
+    radial.dwellTimer = window.setTimeout(() => {
+      if (editor.drag !== radial || radial.active !== sector) return;
+      radial.stack.push({ items: radial.items, hub: menu.querySelector('.radial-hub').textContent });
+      showRing(radial, item.children, item.label);
+      endPreviewEdit();
+    }, DWELL_MS);
+  } else if (sector < 0 && radial.stack.length) {
+    radial.dwellTimer = window.setTimeout(() => {
+      if (editor.drag !== radial || radial.active !== -1 || !radial.stack.length) return;
+      const back = radial.stack.pop();
+      showRing(radial, back.items, back.hub);
+    }, DWELL_MS);
+  }
 }
 
 function closeRadialMenu() {
+  window.clearTimeout(editor.drag?.dwellTimer);
+  endPreviewEdit();
   editor.radialMenuEl?.remove();
   editor.radialMenuEl = null;
 }
 
 function finishRadialMenu(radial, client) {
+  window.clearTimeout(radial.dwellTimer);
+  const sector = radial.items ? sectorAt(radial, client.x - radial.startClient.x, client.y - radial.startClient.y) : -1;
+  const item = radial.items?.[sector];
+  const flash = sector >= 0 ? editor.radialMenuEl?.querySelectorAll('.radial-item')[sector] : null;
+  // The chosen tile pulses as the menu goes.
+  if (flash) {
+    const ghost = editor.radialMenuEl.cloneNode(false);
+    ghost.classList.add('radial-chosen');
+    const copy = flash.cloneNode(true);
+    ghost.appendChild(copy);
+    document.body.appendChild(ghost);
+    copy.addEventListener('animationend', () => ghost.remove(), { once: true });
+    window.setTimeout(() => ghost.remove(), 400);
+  }
   closeRadialMenu();
-  const sector = radialSector(client.x - radial.startClient.x, client.y - radial.startClient.y, RADIAL_ITEMS.length, 22);
-  if (sector >= 0) RADIAL_ITEMS[sector].run(radial, { client: { ...client }, world: clientToWorld(client.x, client.y) });
+  // A sector with variants and none picked yet takes its first one.
+  const choice = item?.children && !item.run ? item.children[0] : item;
+  if (choice?.run) choice.run(radial, { client: { ...client }, world: clientToWorld(client.x, client.y) });
   render();
 }
 
@@ -56910,7 +57249,7 @@ const TIPS = Object.freeze([
     trigger: 'move-start',
     after: 3,
     retiredBy: 'radial',
-    text: 'Hold the right button on a part, or right-drag it, for a quick move, copy, and rotate menu.',
+    text: 'Right-hold the paper and flick to drop a part; on a pin, part, or wire the ring fits what is there.',
   },
   {
     id: 'knife',
@@ -58096,8 +58435,11 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+drag (Delete)', 'knife: cut every wire segment the stroke crosses'],
     ['double-click paper', 'open the insert menu at that point'],
     ['middle', 'drag to pan'],
-    ['right on a part', 'tap for the context menu; hold or drag for the radial menu (release on an action)'],
-    ['right on paper', 'drag to zoom box; click without dragging does nothing'],
+    ['right-hold paper', 'part palette: flick toward a part to drop it there; rest on a sector for its variants'],
+    ['right-hold a pin', 'connect it: ground, supply, VCM, a port, a labelled stub, or a wire'],
+    ['right-hold a part', 'swap it for a related type, each previewed in place'],
+    ['right-hold a wire', 'its net: name, label, highlight color, tidy, delete the run'],
+    ['right tap / drag', 'tap for the context menu; a drag on paper zooms to the box'],
     ['wheel', 'zoom about the pointer (with Trackpad scrolling: scroll pans, pinch zooms)'],
   ]],
 ]);

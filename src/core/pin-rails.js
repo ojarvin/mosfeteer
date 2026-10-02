@@ -1,5 +1,5 @@
 /**
- * A rail marker on a pin in one step: a ground or supply one cell out along
+ * A rail marker on a pin in one step: a ground, supply, or VCM one cell out along
  * the pin's escape direction, wired to it. A pin facing the way the marker
  * hangs (a source down to ground) gets a straight one-cell lead; a sideways pin
  * (a gate) gets that lead plus one cell turning toward the rail; a pin facing
@@ -11,7 +11,7 @@ import { GRID } from './grid.js';
 import { referenceMarkerInfo } from './model.js';
 
 /** Which way each rail's symbol hangs from its pin. */
-const HANG = { ground: { x: 0, y: 1 }, supply: { x: 0, y: -1 } };
+const HANG = { ground: { x: 0, y: 1 }, supply: { x: 0, y: -1 }, vcm: { x: 0, y: 1 } };
 
 export const PIN_RAIL_TYPES = Object.freeze(Object.keys(HANG));
 

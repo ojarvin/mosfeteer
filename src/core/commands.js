@@ -456,7 +456,7 @@ export function commandHelp() {
     '  tag [list] | tag add|rm|set NAME ... - the document\'s tags, for finding it in the Atlas (#NAME searches them)',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
-    '  rail REF.TERM ground|supply    - a ground or supply wired one cell out from an unconnected pin',
+    '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
     '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
     '  stubs <refdes> ...             - a labelled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
     '  find TEXT [--case] [--regex]   - list every label (nets, parts, switch phases, rails, annotations), block caption, and unlabelled net name containing TEXT;',
@@ -878,7 +878,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'rail') {
     const ref = pos[0] && parseTermRef(pos[0]);
     const type = { gnd: 'ground', vss: 'ground', vdd: 'supply' }[String(pos[1]).toLowerCase()] || pos[1];
-    if (!ref || !PIN_RAIL_TYPES.includes(type)) throw new Error('usage: rail REF.TERM ground|supply');
+    if (!ref || !PIN_RAIL_TYPES.includes(type)) throw new Error('usage: rail REF.TERM ground|supply|vcm');
     const marker = addPinRail(circuit, { comp: ref.comp, term: ref.term }, type);
     return result(`${marker.refdes} (${type}) on ${ref.comp}.${ref.term}`, { refdes: marker.refdes }, true);
   }

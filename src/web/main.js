@@ -501,6 +501,27 @@ export function cancelPreviewTransaction() {
   return true;
 }
 
+/** Show what `edit(circuit)` would do, on a throwaway copy of the drawing,
+ *  until endPreviewEdit() (or the next previewEdit) puts the drawing back.
+ *  The radial menus preview their choices with it. */
+export function previewEdit(edit) {
+  endPreviewEdit();
+  beginPreviewTransaction();
+  try {
+    edit(circuit);
+  } catch {
+    cancelPreviewTransaction();
+  }
+  markModelChanged(false);
+  render();
+}
+
+export function endPreviewEdit() {
+  if (!cancelPreviewTransaction()) return;
+  markModelChanged(false);
+  render();
+}
+
 const HISTORY_LIMIT = 200;
 
 function rememberHistory(state, trim = true) {
@@ -3835,6 +3856,13 @@ function noteWireToolStart() {
  *  draft; a point on an existing wire records that net as the origin (the
  *  junction + solder are materialized on commit so a cancelled wire leaves no
  *  orphan dot). */
+/** Wire mode with a wire starting at `w` (a pin, a wire, or a point). */
+export function startWireFromPoint(w) {
+  activateWire();
+  startWireAt(w);
+  render();
+}
+
 function startWireAt(w) {
   const wireHit = pickWire(w);
   if (wireHit) {
@@ -4142,6 +4170,19 @@ function managedWireDragAt(wireHit, startWorld, startClient, ev, modal = false) 
 // ----- radial menu -------------------------------------------------------------
 let radialMenuEl = null;
 
+/** What a right press at `w` opens a radial menu for: a pin of a part with
+ *  several, a part, a wire, or the empty paper. */
+function radialTarget(w) {
+  const hit = pickAt(w);
+  const component = hit?.refdes ? circuit.components.get(hit.refdes) : null;
+  if (component && hit.term && isPinDragCandidate(component.def)) return { kind: 'pin', refdes: hit.refdes, term: hit.term };
+  if (component) return { kind: 'part', refdes: hit.refdes };
+  const wireHit = pickWire(w);
+  if (wireHit) return { kind: 'wire', netId: wireHit.net.id, wireKey: `${wireHit.net.id}:${wireHit.branch}:${wireHit.seg}` };
+  if (circuit.labels.size && pickLabel(snappedWorld(w))) return null;
+  return { kind: 'paper' };
+}
+
 // ----- pin-drag wiring --------------------------------------------------------
 // Dragging out of a pin draws a managed wire without entering Wire mode. The
 // draft is the ordinary `wire` draft, so preview, routing, and commits are the
@@ -4317,17 +4358,19 @@ function canvasMouseDown(ev) {
     return;
   }
   if (b === 2) {
-    const hit = pickAt(startWorld);
-    if (hit?.refdes && circuit.components.has(hit.refdes) && !hasWireDraft() && !hasModalPlacement()) {
-      ev.preventDefault();
+    ev.preventDefault();
+    // A right press on a pin, part, wire, or the paper is a tap (the context
+    // menu, on release), a hold or flick (that target's radial menu), or --
+    // on the paper -- a drag (zoom to the box).
+    const target = !hasWireDraft() && !hasModalPlacement() ? radialTarget(startWorld) : null;
+    if (target) {
       closeComponentContextMenu();
-      drag = { mode: 'radialpending', refdes: hit.refdes, startClient, startWorld };
+      drag = { mode: 'radialpending', ...target, startClient, startWorld };
       drag.holdTimer = window.setTimeout(() => {
         if (drag?.mode === 'radialpending') openRadialMenu(drag);
-      }, 280);
+      }, target.kind === 'paper' ? 320 : 280);
       return;
     }
-    ev.preventDefault();
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
     return;
   }
@@ -5439,6 +5482,13 @@ export function canvasMouseMove(ev) {
   if (drag.mode === 'radialpending' || drag.mode === 'radial') {
     const dx = ev.clientX - drag.startClient.x;
     const dy = ev.clientY - drag.startClient.y;
+    // On the paper a drag before the hold is a zoom box, not a flick.
+    if (drag.mode === 'radialpending' && drag.kind === 'paper' && Math.hypot(dx, dy) > 10) {
+      window.clearTimeout(drag.holdTimer);
+      drag = { mode: 'zoom', startClient: drag.startClient, startWorld: drag.startWorld, moved: true, rubber: null };
+      canvasMouseMove(ev);
+      return;
+    }
     if (drag.mode === 'radialpending' && Math.hypot(dx, dy) > 10) openRadialMenu(drag);
     if (drag.mode === 'radial') highlightRadial(dx, dy);
     return;

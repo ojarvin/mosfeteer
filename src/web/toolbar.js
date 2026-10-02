@@ -295,8 +295,11 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift+drag (Delete)', 'knife: cut every wire segment the stroke crosses'],
     ['double-click paper', 'open the insert menu at that point'],
     ['middle', 'drag to pan'],
-    ['right on a part', 'tap for the context menu; hold or drag for the radial menu (release on an action)'],
-    ['right on paper', 'drag to zoom box; click without dragging does nothing'],
+    ['right-hold paper', 'part palette: flick toward a part to drop it there; rest on a sector for its variants'],
+    ['right-hold a pin', 'connect it: ground, supply, VCM, a port, a labelled stub, or a wire'],
+    ['right-hold a part', 'swap it for a related type, each previewed in place'],
+    ['right-hold a wire', 'its net: name, label, highlight color, tidy, delete the run'],
+    ['right tap / drag', 'tap for the context menu; a drag on paper zooms to the box'],
     ['wheel', 'zoom about the pointer (with Trackpad scrolling: scroll pans, pinch zooms)'],
   ]],
 ]);

@@ -113,9 +113,10 @@ export function stubLabelPlacement(circuit, ref, end = null) {
  * Add a stub and a named net label to every unconnected terminal of the parts
  * `refdes`. A stub leaves its terminal along the terminal's outward direction,
  * STUB_CELLS long, with its label at stubLabelPlacement. A stub that would
- * join anything else is skipped. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
+ * join anything else is skipped. `terms` ("R1.a", ...) limits it to those
+ * terminals. Returns { stubs: [{ ref, netId, name, labelId }], skipped: [ref] }.
  */
-export function addTerminalStubs(circuit, refdes) {
+export function addTerminalStubs(circuit, refdes, { terms = null } = {}) {
   const stubs = [];
   const skipped = [];
   const taken = takenNames(circuit);
@@ -125,6 +126,7 @@ export function addTerminalStubs(circuit, refdes) {
     if (component.type === 'solder' || REFERENCE_MARKER_TYPES.includes(component.type) || INTERFACE_PIN_TYPES.has(component.type)) continue;
     for (const def of component.terminalDefs) {
       const termRef = `${component.refdes}.${def.name}`;
+      if (terms && !terms.includes(termRef)) continue;
       if (circuit.netOfTerminal({ comp: component.refdes, term: def.name })) continue;
       const from = component.terminalWorld(def.name);
       const dir = circuit._pinDir(component, def, from.x, from.y);

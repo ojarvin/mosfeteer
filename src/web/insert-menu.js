@@ -230,7 +230,7 @@ function insertMenuGroups() {
 const symbolPreviewCache = new Map();
 
 /** Small cached drawing of a placeable type for the insert menu. */
-function symbolPreviewSvg(type) {
+export function symbolPreviewSvg(type) {
   if (symbolPreviewCache.has(type)) return symbolPreviewCache.get(type);
   let svg = '';
   if (type === 'label') {

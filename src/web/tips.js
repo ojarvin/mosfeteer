@@ -32,7 +32,7 @@ export const TIPS = Object.freeze([
     trigger: 'move-start',
     after: 3,
     retiredBy: 'radial',
-    text: 'Hold the right button on a part, or right-drag it, for a quick move, copy, and rotate menu.',
+    text: 'Right-hold the paper and flick to drop a part; on a pin, part, or wire the ring fits what is there.',
   },
   {
     id: 'knife',

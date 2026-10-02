@@ -3181,6 +3181,14 @@ export class Circuit {
     return next;
   }
 
+  /** Give a net's group the highlight `color` (a NET_HIGHLIGHT_COLORS token),
+   * or clear it with null. */
+  setNetHighlight(netOrId, color) {
+    if (color !== null && !NET_HIGHLIGHT_COLORS.includes(color)) throw new Error(`unknown highlight color "${color}"`);
+    applyNetProbe(this.netHighlights, this.netGroupKey(this._resolveNet(netOrId)), color);
+    return color;
+  }
+
   /** Remove every net highlight. Returns how many groups were highlighted. */
   clearNetHighlights() {
     const count = [...this.netHighlights.keys()].filter((key) => this._liveNetGroups().has(key)).length;

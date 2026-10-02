@@ -3981,6 +3981,93 @@ button.off {
   border-color: var(--danger);
 }
 
+/* Symbol tiles draw the part itself; swatch tiles are the color. */
+.radial-item .radial-symbol {
+  display: block;
+  width: 30px;
+  height: 22px;
+  margin-top: -4px;
+}
+
+.radial-item .radial-symbol svg {
+  width: 100%;
+  height: 100%;
+  --svg-ink: currentColor;
+}
+
+.radial-item .radial-swatch {
+  width: 22px;
+  height: 22px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--radial-swatch);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--radial-swatch) 35%, transparent);
+}
+
+.radial-item.swatch-item.active {
+  background: color-mix(in srgb, var(--radial-swatch) 30%, var(--bg-panel));
+  border-color: var(--radial-swatch);
+  color: var(--text);
+}
+
+.radial-item.disabled {
+  opacity: 0.35;
+}
+
+/* A sector with variants: a small arc on its rim says a rest opens them. */
+.radial-item.has-children::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  transform: rotate(var(--radial-angle));
+}
+
+.radial-item.has-children.active::after {
+  animation: radial-dwell 380ms linear both;
+  border-color: var(--accent);
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+}
+
+.radial-menu.nested .radial-hub {
+  color: var(--accent);
+}
+
+/* The flick, drawn from the press to the pointer. */
+.radial-trail {
+  position: absolute;
+  overflow: visible;
+  width: 1px;
+  height: 1px;
+}
+
+.radial-trail line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 2 5;
+  opacity: 0.7;
+}
+
+/* The tile picked pulses once as the menu goes. */
+.radial-chosen .radial-item {
+  animation: radial-chosen 260ms ease-out both;
+}
+
+@keyframes radial-chosen {
+  from { --radial-pop: 1.08; opacity: 1; }
+  to { --radial-pop: 1.5; opacity: 0; }
+}
+
+@keyframes radial-dwell {
+  from { transform: rotate(var(--radial-angle)); }
+  to { transform: rotate(calc(var(--radial-angle) + 360deg)); }
+}
+
 @keyframes radial-hub-in {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
 }
@@ -3999,8 +4086,13 @@ button.off {
 :root[data-reduce-motion] .radial-item,
 :root[data-reduce-motion] .quick-add,
 :root[data-reduce-motion] .rail-flyout,
-:root[data-reduce-motion] .log-drawer {
+:root[data-reduce-motion] .log-drawer,
+:root[data-reduce-motion] .radial-item.has-children.active::after {
   animation: none;
+}
+
+:root[data-reduce-motion] .radial-chosen {
+  display: none;
 }
 
 .gesture-knife {
