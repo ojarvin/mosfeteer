@@ -2061,6 +2061,10 @@ button.app-mark-button:active {
   font-style: italic;
 }
 
+.text-toggle-mono {
+  font-family: 'DejaVu Sans Mono', Menlo, Consolas, monospace;
+}
+
 .swatches {
   display: flex;
   flex-wrap: wrap;
@@ -3092,6 +3096,7 @@ button.status-chip:hover {
 
 .component-context-menu .context-style-strip .text-toggle-bold { font-weight: 800; }
 .component-context-menu .context-style-strip .text-toggle-italic { font-style: italic; }
+.component-context-menu .context-style-strip .text-toggle-mono { font-family: 'DejaVu Sans Mono', Menlo, Consolas, monospace; }
 
 .component-context-menu .context-style-strip .swatch,
 .component-context-menu .context-style-strip .swatch:hover,
@@ -3210,6 +3215,11 @@ button.status-chip:hover {
   font-style: italic;
   line-height: 1.2;
   pointer-events: none;
+}
+
+.label-inline-editor.mono,
+.label-inline-editor-measure.mono {
+  font-family: 'DejaVu Sans Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
 .label-inline-editor:focus {

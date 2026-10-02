@@ -162,7 +162,10 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
     .replace(/font-size="[^"]+"/, `font-size="${labelFontSize(width)}"`)
     .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
   if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
-  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
+  // Spaces that line text up (an indent, a truth table's columns) are kept,
+  // as the editor shows them; SVG would otherwise fold each run into one.
+  const spaced = runs.some((run) => /^ | {2}|\t|\n /.test(run.text));
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="${textStyle.mono ? MONO_FONT_FAMILY : 'sans-serif'}" ${font} stroke="none"${spaced ? ' xml:space="preserve" style="white-space:pre"' : ''}`;
   if (runs.length === 1 && !runs[0].sub && !runs[0].super && !runs[0].text.includes('\n')) {
     return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
   }
@@ -180,11 +183,24 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
       const size = r.sub || r.super ? ' font-size="0.62em"' : '';
       return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
     }).join('');
+  // An empty line draws nothing, and SVG drops the offset of a tspan with
+  // no text: its height goes to the next line instead, so a blank line
+  // keeps its place and the block stays centred where textPos put it.
+  let drawn = 0; // the line the text position is on: y is line 0's baseline
   const body = lineRuns.length === 1
     ? renderRuns(lineRuns[0])
-    : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
+    : lineRuns.map((line, lineIndex) => {
+      if (!line.length) return '';
+      const dy = (lineIndex - drawn) * LABEL_FONT_SIZE;
+      drawn = lineIndex;
+      return `<tspan x="${fmt(x)}" dy="${dy}">${renderRuns(line)}</tspan>`;
+    }).join('');
   return `<text ${attrs}>${body}</text>`;
 }
+
+/** A label's monospace face (style.mono): columns line up, for truth
+ *  tables and pin lists. */
+export const MONO_FONT_FAMILY = "'DejaVu Sans Mono','Menlo','Consolas','Liberation Mono',monospace";
 
 /** The solid greys a beat draws with: what it dims, and (in the editor) what
  * it hides -- ink at about 30% and 12% over white paper. The editor and the

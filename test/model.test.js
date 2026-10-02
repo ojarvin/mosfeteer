@@ -4092,3 +4092,12 @@ test('a part links loosely to another design by name, saved with it', () => {
   assert.equal(c.components.get('OA1').link, null);
   assert.equal('link' in c.components.get('OA1').toJSON(), false);
 });
+
+test('indentText indents at the caret to the next stop, and whole lines of a selection', async () => {
+  const { indentText } = await import('../src/core/model.js');
+  assert.deepEqual(indentText('ab', 1, 1), { text: 'a   b', selStart: 4, selEnd: 4 });
+  assert.deepEqual(indentText('a\nb\nc', 0, 3), { text: '    a\n    b\nc', selStart: 4, selEnd: 11 });
+  // Shift+Tab takes up to one indent off each line touched.
+  assert.deepEqual(indentText('    a\n  b\nc', 0, 8, true), { text: 'a\nb\nc', selStart: 0, selEnd: 2 });
+  assert.deepEqual(indentText('x\n    a', 4, 4, true), { text: 'x\na', selStart: 2, selEnd: 2 });
+});

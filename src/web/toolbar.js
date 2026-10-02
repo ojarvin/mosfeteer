@@ -208,6 +208,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['t / = / F2', 'edit the text of the selection (a label, a part\'s name, a net\'s label) or of what the cursor points at; with several switches or rails selected, the phase or rail name goes to all'],
     ['Ctrl/Cmd+I', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+B', 'toggle bold on selected labels'],
+    ['Shift+Enter / Tab', 'while editing text: a new line (blank lines too); in free text Tab indents and Shift+Tab unindents (the style panel\'s M sets a monospace face, for tables)'],
   ]],
   ['select', [
     ['Enter', 'select the label or component under the cursor'],

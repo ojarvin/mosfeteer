@@ -4,7 +4,7 @@
  * marker's value, and a schematic block's caption.
  */
 
-import { INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup } from '../core/model.js';
+import { INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup, indentText } from '../core/model.js';
 import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
@@ -206,10 +206,16 @@ export function inlineEditLabel(label, options = {}) {
   input.style.whiteSpace = 'pre-wrap';
   input.style.overflowWrap = 'anywhere';
   input.style.overflow = 'hidden';
+  // Free text is prose, a table, a pin list: Tab indents it, and its
+  // indentation and blank lines are kept (other labels name something, and
+  // Tab moves on to the next label).
+  const freeText = !label.owner && !label.netId && !label.math;
   // Measure the live editor text in the same face as the rendered label. The
   // The box grows from the actual text anchor while keeping alignment stable.
   const measure = document.createElement('span');
   measure.className = 'label-inline-editor-measure';
+  input.classList.toggle('mono', !!label.style?.mono);
+  measure.classList.toggle('mono', !!label.style?.mono);
   document.body.appendChild(measure);
   // The editor covers the text, not the label's grid box: the label's own
   // font at the current zoom, one line tall per line, centred where the text
@@ -258,7 +264,9 @@ export function inlineEditLabel(label, options = {}) {
   let prompting = false;
   const done = async (applyText) => {
     if (closed || prompting) return;
-    const v = input.value.trim();
+    // Free text keeps its first line's indent; only blank lines and trailing
+    // space around it go.
+    const v = freeText ? input.value.replace(/^(?:[ \t]*\n)+/, '').trimEnd() : input.value.trim();
     const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
     const namesNet = !!label.netId || !!(owner && INTERFACE_PIN_TYPES.has(owner.type));
     if (applyText && v && v !== label.text && namesNet) {
@@ -390,6 +398,14 @@ export function inlineEditLabel(label, options = {}) {
   };
   bindInlineEditorKeys(input, done, {
     extraKeys: (ev) => {
+      if (ev.key === 'Tab' && freeText && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault();
+        const res = indentText(input.value, input.selectionStart, input.selectionEnd, ev.shiftKey);
+        input.value = res.text;
+        input.setSelectionRange(res.selStart, res.selEnd);
+        input.dispatchEvent(new Event('input'));
+        return true;
+      }
       if (ev.key === 'Tab') {
         ev.preventDefault();
         done(true).then((committed) => {

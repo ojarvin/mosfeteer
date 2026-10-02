@@ -500,7 +500,9 @@ offset), persistent electrical net labels (`netId` = one physical net), and
 free annotations (`owner:null`, `netId:null`, independent text/anchor). Owned
 labels identify components; net labels name a physical wire; free annotations
 are independent text. Keep free annotations off component bodies and route
-paths; net labels belong on drawable wire paths.
+paths; net labels belong on drawable wire paths. Free text may run over
+several lines, blank ones and indents included; a table (a truth table, a
+pin list) reads best left-aligned in the monospace face (`style.mono`).
 
 Use the canonical `addNetLabel`, `renameNet`, and `renameNetLabel` APIs for
 electrical labels and net names. Net-label text follows the physical net name;

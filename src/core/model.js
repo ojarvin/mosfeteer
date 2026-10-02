@@ -464,6 +464,39 @@ export function symbolInkRect(def) {
  * aligns toward the wire. Above or below, the text is centered. */
 export const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
 
+/** Spaces one Tab indents free text by. */
+export const INDENT = '    ';
+
+/**
+ * Tab in a text field: indent (or with `outdent`, unindent) by INDENT. A
+ * caret alone indents where it is, by spaces up to the next tab stop; a
+ * selection indents every line it touches. Returns { text, selStart, selEnd }.
+ */
+export function indentText(text, s, e, outdent = false) {
+  const lineStart = text.lastIndexOf('\n', s - 1) + 1;
+  if (!outdent && s === e) {
+    const pad = ' '.repeat(INDENT.length - ((s - lineStart) % INDENT.length));
+    return { text: text.slice(0, s) + pad + text.slice(e), selStart: s + pad.length, selEnd: s + pad.length };
+  }
+  // The whole lines from the selection's first to its last.
+  const last = e > s && text[e - 1] === '\n' ? e - 1 : e;
+  const lineEnd = text.indexOf('\n', last) === -1 ? text.length : text.indexOf('\n', last);
+  const lines = text.slice(lineStart, lineEnd).split('\n');
+  let first = 0;
+  let total = 0;
+  const changed = lines.map((line, index) => {
+    const delta = outdent ? -Math.min(INDENT.length, line.match(/^ */)[0].length) : INDENT.length;
+    if (index === 0) first = delta;
+    total += delta;
+    return delta < 0 ? line.slice(-delta) : INDENT + line;
+  });
+  return {
+    text: text.slice(0, lineStart) + changed.join('\n') + text.slice(lineEnd),
+    selStart: Math.max(lineStart, s + first),
+    selEnd: Math.max(lineStart, e + total),
+  };
+}
+
 /**
  * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
  * raw label string (used by the inline label editor's Ctrl+, / Ctrl+. ).
@@ -988,6 +1021,8 @@ export class LabelInstance {
       width: opts.style?.width || 'normal',
       bold: opts.style?.bold !== false,
       italic: opts.style?.italic !== false,
+      // Monospace text is the exception, saved only when on.
+      ...(opts.style?.mono ? { mono: true } : {}),
       ...(['arrow', 'line'].includes(this.kind)
         ? { arrowhead: normalizeArrowhead(opts.style?.arrowhead, defaultArrowhead(this.kind)) }
         : {}),
@@ -1082,9 +1117,11 @@ export class LabelInstance {
   textWidth() {
     if (this._renderedTextBounds?.w > 0) return this._renderedTextBounds.w;
     const source = this.math ? mathTextForMetrics(this.text) : this.text;
+    // A monospace glyph is 0.6 em, whatever the character.
+    const glyph = this.style?.mono ? () => 0.6 * labelFontSize(this.style.width) : charWidth;
     return Math.max(...labelRunLines(source).map((line) => line.reduce((width, r) => {
       const scale = r.sub || r.super ? 0.62 : 1;
-      return width + [...r.text].reduce((sum, ch) => sum + charWidth(ch) * scale, 0);
+      return width + [...r.text].reduce((sum, ch) => sum + glyph(ch) * scale, 0);
     }, 0)), 0);
   }
 

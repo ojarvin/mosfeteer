@@ -1,6 +1,6 @@
 /**
  * The style controls for the selection: color, line dash and arrowheads,
- * width, text alignment, bold and italic. The side panel and the context
+ * width, text alignment, bold, italic, and monospace. The side panel and the context
  * menu's style strip share them; Ctrl+Shift+V pastes a copied style.
  */
 
@@ -29,16 +29,23 @@ function selectedTextTargets() {
   return { labels: [...labels.values()], blocks: [] };
 }
 
+// Bold and italic are on unless turned off; monospace is off unless on.
+const fontOn = (label, field) => (field === 'mono' ? label.style?.mono === true : label.style?.[field] !== false);
+
 function selectedFontState(field) {
   const { labels } = selectedTextTargets();
-  return labels.length > 0 && labels.every((label) => label.style?.[field] !== false);
+  return labels.length > 0 && labels.every((label) => fontOn(label, field));
 }
 
 function setSelectedLabelFont(field, on) {
   const { labels } = selectedTextTargets();
   if (!labels.length) return;
   commit(() => {
-    for (const label of labels) label.style[field] = on;
+    for (const label of labels) {
+      if (field === 'mono' && !on) delete label.style.mono;
+      else label.style[field] = on;
+      label.clearRenderedTextBounds();
+    }
   });
   render();
 }
@@ -278,6 +285,7 @@ export function selectionStyleState() {
       towardPart: labels.every((label) => label.owner || label.netId),
       bold: selectedFontState('bold'),
       italic: selectedFontState('italic'),
+      mono: selectedFontState('mono'),
     } : null,
   };
 }

@@ -15986,6 +15986,7 @@ __exports.parseLabelRuns = parseLabelRuns;
 __exports.labelRunLines = labelRunLines;
 __exports.symbolInkParts = symbolInkParts;
 __exports.symbolInkRect = symbolInkRect;
+__exports.indentText = indentText;
 __exports.applyMarkup = applyMarkup;
 __exports.containedWireSegments = containedWireSegments;
 __exports.extractWireIslands = extractWireIslands;
@@ -16482,6 +16483,39 @@ function symbolInkRect(def) {
  * part fixed however wide the text grows; a net label at the side of a wire
  * aligns toward the wire. Above or below, the text is centered. */
 const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
+
+/** Spaces one Tab indents free text by. */
+const INDENT = '    ';
+
+/**
+ * Tab in a text field: indent (or with `outdent`, unindent) by INDENT. A
+ * caret alone indents where it is, by spaces up to the next tab stop; a
+ * selection indents every line it touches. Returns { text, selStart, selEnd }.
+ */
+function indentText(text, s, e, outdent = false) {
+  const lineStart = text.lastIndexOf('\n', s - 1) + 1;
+  if (!outdent && s === e) {
+    const pad = ' '.repeat(INDENT.length - ((s - lineStart) % INDENT.length));
+    return { text: text.slice(0, s) + pad + text.slice(e), selStart: s + pad.length, selEnd: s + pad.length };
+  }
+  // The whole lines from the selection's first to its last.
+  const last = e > s && text[e - 1] === '\n' ? e - 1 : e;
+  const lineEnd = text.indexOf('\n', last) === -1 ? text.length : text.indexOf('\n', last);
+  const lines = text.slice(lineStart, lineEnd).split('\n');
+  let first = 0;
+  let total = 0;
+  const changed = lines.map((line, index) => {
+    const delta = outdent ? -Math.min(INDENT.length, line.match(/^ */)[0].length) : INDENT.length;
+    if (index === 0) first = delta;
+    total += delta;
+    return delta < 0 ? line.slice(-delta) : INDENT + line;
+  });
+  return {
+    text: text.slice(0, lineStart) + changed.join('\n') + text.slice(lineEnd),
+    selStart: Math.max(lineStart, s + first),
+    selEnd: Math.max(lineStart, e + total),
+  };
+}
 
 /**
  * Toggle subscript ('_') or superscript ('^') markup on the selected range of a
@@ -17007,6 +17041,8 @@ class LabelInstance {
       width: opts.style?.width || 'normal',
       bold: opts.style?.bold !== false,
       italic: opts.style?.italic !== false,
+      // Monospace text is the exception, saved only when on.
+      ...(opts.style?.mono ? { mono: true } : {}),
       ...(['arrow', 'line'].includes(this.kind)
         ? { arrowhead: normalizeArrowhead(opts.style?.arrowhead, defaultArrowhead(this.kind)) }
         : {}),
@@ -17101,9 +17137,11 @@ class LabelInstance {
   textWidth() {
     if (this._renderedTextBounds?.w > 0) return this._renderedTextBounds.w;
     const source = this.math ? mathTextForMetrics(this.text) : this.text;
+    // A monospace glyph is 0.6 em, whatever the character.
+    const glyph = this.style?.mono ? () => 0.6 * labelFontSize(this.style.width) : charWidth;
     return Math.max(...labelRunLines(source).map((line) => line.reduce((width, r) => {
       const scale = r.sub || r.super ? 0.62 : 1;
-      return width + [...r.text].reduce((sum, ch) => sum + charWidth(ch) * scale, 0);
+      return width + [...r.text].reduce((sum, ch) => sum + glyph(ch) * scale, 0);
     }, 0)), 0);
   }
 
@@ -22884,6 +22922,7 @@ __exports.LABEL_CAP_H = LABEL_CAP_H;
 __exports.LABEL_ALIGN_INSET = LABEL_ALIGN_INSET;
 __exports.MATH_LABEL_PAD = MATH_LABEL_PAD;
 __exports.LABEL_ALIGNS = LABEL_ALIGNS;
+__exports.INDENT = INDENT;
 __exports.INTERFACE_PIN_TYPES = INTERFACE_PIN_TYPES;
 __exports.MOS_ANALYSIS_TYPES = MOS_ANALYSIS_TYPES;
 __exports.MAX_IMAGE_DATA = MAX_IMAGE_DATA;
@@ -23466,7 +23505,10 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
     .replace(/font-size="[^"]+"/, `font-size="${labelFontSize(width)}"`)
     .replace(/font-weight="[^"]+"/, `font-weight="${textStyle.bold === false ? 'normal' : 'bold'}"`);
   if (textStyle.italic === false) font = font.replace(/ font-style="italic"/, '');
-  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="sans-serif" ${font} stroke="none"`;
+  // Spaces that line text up (an indent, a truth table's columns) are kept,
+  // as the editor shows them; SVG would otherwise fold each run into one.
+  const spaced = runs.some((run) => /^ | {2}|\t|\n /.test(run.text));
+  const attrs = `x="${fmt(x)}" y="${fmt(y)}" text-anchor="${anchor}" font-family="${textStyle.mono ? MONO_FONT_FAMILY : 'sans-serif'}" ${font} stroke="none"${spaced ? ' xml:space="preserve" style="white-space:pre"' : ''}`;
   if (runs.length === 1 && !runs[0].sub && !runs[0].super && !runs[0].text.includes('\n')) {
     return `<text ${attrs}>${escapeSvg(runs[0].text)}</text>`;
   }
@@ -23484,11 +23526,24 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
       const size = r.sub || r.super ? ' font-size="0.62em"' : '';
       return `<tspan ${shift}${size}>${escapeSvg(r.text)}</tspan>`;
     }).join('');
+  // An empty line draws nothing, and SVG drops the offset of a tspan with
+  // no text: its height goes to the next line instead, so a blank line
+  // keeps its place and the block stays centred where textPos put it.
+  let drawn = 0; // the line the text position is on: y is line 0's baseline
   const body = lineRuns.length === 1
     ? renderRuns(lineRuns[0])
-    : lineRuns.map((line, lineIndex) => `<tspan x="${fmt(x)}" dy="${lineIndex ? LABEL_FONT_SIZE : 0}">${renderRuns(line)}</tspan>`).join('');
+    : lineRuns.map((line, lineIndex) => {
+      if (!line.length) return '';
+      const dy = (lineIndex - drawn) * LABEL_FONT_SIZE;
+      drawn = lineIndex;
+      return `<tspan x="${fmt(x)}" dy="${dy}">${renderRuns(line)}</tspan>`;
+    }).join('');
   return `<text ${attrs}>${body}</text>`;
 }
+
+/** A label's monospace face (style.mono): columns line up, for truth
+ *  tables and pin lists. */
+const MONO_FONT_FAMILY = "'DejaVu Sans Mono','Menlo','Consolas','Liberation Mono',monospace";
 
 /** The solid greys a beat draws with: what it dims, and (in the editor) what
  * it hides -- ink at about 30% and 12% over white paper. The editor and the
@@ -25021,6 +25076,7 @@ function editorOverlay(circuit, opts = {}) {
   return parts.join('\n');
 }
 
+__exports.MONO_FONT_FAMILY = MONO_FONT_FAMILY;
 __exports.BEAT_DIM_INK = BEAT_DIM_INK;
 __exports.BEAT_FADE_INK = BEAT_FADE_INK;
 };
@@ -43391,7 +43447,7 @@ __exports.inlineEditSchematicBlock = inlineEditSchematicBlock;
 __exports.openComponentChildLabelEditor = openComponentChildLabelEditor;
 __exports.openReferenceMarkerEditor = openReferenceMarkerEditor;
 __exports.inlineEditLabel = inlineEditLabel;
-let INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup, indentText; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup, indentText } = __require("src/core/model.js")); });
 let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
@@ -43610,10 +43666,16 @@ function inlineEditLabel(label, options = {}) {
   input.style.whiteSpace = 'pre-wrap';
   input.style.overflowWrap = 'anywhere';
   input.style.overflow = 'hidden';
+  // Free text is prose, a table, a pin list: Tab indents it, and its
+  // indentation and blank lines are kept (other labels name something, and
+  // Tab moves on to the next label).
+  const freeText = !label.owner && !label.netId && !label.math;
   // Measure the live editor text in the same face as the rendered label. The
   // The box grows from the actual text anchor while keeping alignment stable.
   const measure = document.createElement('span');
   measure.className = 'label-inline-editor-measure';
+  input.classList.toggle('mono', !!label.style?.mono);
+  measure.classList.toggle('mono', !!label.style?.mono);
   document.body.appendChild(measure);
   // The editor covers the text, not the label's grid box: the label's own
   // font at the current zoom, one line tall per line, centred where the text
@@ -43662,7 +43724,9 @@ function inlineEditLabel(label, options = {}) {
   let prompting = false;
   const done = async (applyText) => {
     if (closed || prompting) return;
-    const v = input.value.trim();
+    // Free text keeps its first line's indent; only blank lines and trailing
+    // space around it go.
+    const v = freeText ? input.value.replace(/^(?:[ \t]*\n)+/, '').trimEnd() : input.value.trim();
     const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
     const namesNet = !!label.netId || !!(owner && INTERFACE_PIN_TYPES.has(owner.type));
     if (applyText && v && v !== label.text && namesNet) {
@@ -43794,6 +43858,14 @@ function inlineEditLabel(label, options = {}) {
   };
   bindInlineEditorKeys(input, done, {
     extraKeys: (ev) => {
+      if (ev.key === 'Tab' && freeText && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault();
+        const res = indentText(input.value, input.selectionStart, input.selectionEnd, ev.shiftKey);
+        input.value = res.text;
+        input.setSelectionRange(res.selStart, res.selEnd);
+        input.dispatchEvent(new Event('input'));
+        return true;
+      }
       if (ev.key === 'Tab') {
         ev.preventDefault();
         done(true).then((committed) => {
@@ -55789,7 +55861,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let commit, keyToWire, render, selectedComps, selectedLabels; __bind(() => { ({ commit, keyToWire, render, selectedComps, selectedLabels } = __require("src/web/main.js")); });
 /**
  * The style controls for the selection: color, line dash and arrowheads,
- * width, text alignment, bold and italic. The side panel and the context
+ * width, text alignment, bold, italic, and monospace. The side panel and the context
  * menu's style strip share them; Ctrl+Shift+V pastes a copied style.
  */
 
@@ -55818,16 +55890,23 @@ function selectedTextTargets() {
   return { labels: [...labels.values()], blocks: [] };
 }
 
+// Bold and italic are on unless turned off; monospace is off unless on.
+const fontOn = (label, field) => (field === 'mono' ? label.style?.mono === true : label.style?.[field] !== false);
+
 function selectedFontState(field) {
   const { labels } = selectedTextTargets();
-  return labels.length > 0 && labels.every((label) => label.style?.[field] !== false);
+  return labels.length > 0 && labels.every((label) => fontOn(label, field));
 }
 
 function setSelectedLabelFont(field, on) {
   const { labels } = selectedTextTargets();
   if (!labels.length) return;
   commit(() => {
-    for (const label of labels) label.style[field] = on;
+    for (const label of labels) {
+      if (field === 'mono' && !on) delete label.style.mono;
+      else label.style[field] = on;
+      label.clearRenderedTextBounds();
+    }
   });
   render();
 }
@@ -56067,6 +56146,7 @@ function selectionStyleState() {
       towardPart: labels.every((label) => label.owner || label.netId),
       bold: selectedFontState('bold'),
       italic: selectedFontState('italic'),
+      mono: selectedFontState('mono'),
     } : null,
   };
 }
@@ -57348,6 +57428,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['t / = / F2', 'edit the text of the selection (a label, a part\'s name, a net\'s label) or of what the cursor points at; with several switches or rails selected, the phase or rail name goes to all'],
     ['Ctrl/Cmd+I', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+B', 'toggle bold on selected labels'],
+    ['Shift+Enter / Tab', 'while editing text: a new line (blank lines too); in free text Tab indents and Shift+Tab unindents (the style panel\'s M sets a monospace face, for tables)'],
   ]],
   ['select', [
     ['Enter', 'select the label or component under the cursor'],

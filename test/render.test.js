@@ -976,3 +976,29 @@ test('math labels can be drawn apart from the drawing, and are not drawn twice',
   const lines = (svg) => svg.split('\n').sort();
   assert.deepEqual(lines(apart.replace('</svg>', `${sink[0]}\n</svg>`)), lines(whole));
 });
+
+test('multiline text keeps its blank lines, its spacing, and a monospace face', async () => {
+  const { runCommand } = await import('../src/core/commands.js');
+  const C = Circuit;
+  const circuit = new C();
+  runCommand(circuit, 'annotation add X 0 0');
+  const label = [...circuit.labels.values()][0];
+  label.setText('A B | Y\n\n0 0 | 1\n  indented');
+  let text = svgString(circuit).match(/<text[^>]*>.*?<\/text>/s)[0];
+  // The blank line's height goes to the line after it: four lines tall.
+  assert.deepEqual([...text.matchAll(/dy="(\d+)"/g)].map((m) => Number(m[1])), [0, 92, 46]);
+  assert.match(text, /xml:space="preserve"/);
+  assert.match(text, />  indented</);
+  assert.match(text, /font-family="sans-serif"/);
+  label.style.mono = true;
+  text = svgString(circuit).match(/<text[^>]*>.*?<\/text>/s)[0];
+  assert.match(text, /font-family="'DejaVu Sans Mono'[^"]*monospace"/);
+  // Saved only when on, and loaded back.
+  const saved = circuit.toJSON().labels.find((l) => l.id === label.id);
+  assert.equal(saved.style.mono, true);
+  assert.equal(C.fromJSON(circuit.toJSON()).labels.get(label.id).style.mono, true);
+  delete label.style.mono;
+  // A text without spacing to keep is drawn as before.
+  label.setText('plain\ntext');
+  assert.doesNotMatch(svgString(circuit), /xml:space/);
+});
