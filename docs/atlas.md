@@ -14,6 +14,9 @@ workspace: every design at its real size on one continuous sheet of the
 editor's paper and grid, to look around, compare, and open. It is a viewing mode with no tools; pan and zoom
 work as in the editor (wheel or trackpad scheme, drag, pinch), and the open
 design zooms out of, and back into, exactly where the editor shows it.
+Each such move runs in three steps (`src/web/chrome-slide.js`): the
+toolbars on screen slide off toward their edges, the camera moves, and the
+next view's toolbars slide in. The desk takes no input until it has left.
 
 The desk stays put between visits: this browser remembers where each design
 of a workspace sat, and a design keeps its spot while it still fits there. A

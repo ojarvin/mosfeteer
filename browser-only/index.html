@@ -16,7 +16,7 @@
   </div>
   </div>
 
-  <header class="toolbar">
+  <header class="toolbar" data-editor-edge="top">
     <div class="toolbar-cluster document-cluster" role="group" aria-label="Document">
       <button type="button" id="app-mark" class="app-mark app-mark-button" aria-label="Atlas: every design in the workspace" aria-keyshortcuts="Shift+Backspace" title="Mosfeteer — open the Atlas (Shift+Backspace)"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></button>
       <div class="circuit-picker" title="">
@@ -200,7 +200,7 @@
   <section id="atlas" class="atlas" tabindex="-1" role="dialog" aria-label="Atlas view" hidden>
     <canvas id="atlas-desk" class="atlas-desk" aria-hidden="true"></canvas>
     <div id="atlas-overlays" class="atlas-overlays" aria-hidden="true"></div>
-    <header class="atlas-head glass">
+    <header class="atlas-head glass" data-atlas-edge="top">
       <button type="button" id="atlas-mark" class="app-mark app-mark-button atlas-mark" aria-label="Back to the editor" title="Mosfeteer — back to the editor (Esc)"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -11 L 150 -8.5 L 184 0 L 150 8.5 L -56 11 Z" fill="var(--logo-blade)"/><path d="M -56 -11 L 150 -8.5 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></button>
       <span id="atlas-title" class="atlas-title">Workspace</span>
       <input id="atlas-search" class="atlas-search" type="search" placeholder="Find parts, nets, text, #tags  (/ or Ctrl+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
@@ -212,7 +212,7 @@
       <button id="atlas-theme" type="button" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (Shift+D)">Dark</button>
       <button id="atlas-close" type="button" class="atlas-close" title="Back to the editor (Esc)">Back to editor</button>
     </header>
-    <p id="atlas-hint" class="atlas-hint glass">Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · Z zooms to it · F fits all · Esc returns</p>
+    <p id="atlas-hint" class="atlas-hint glass" data-atlas-edge="bottom">Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · Z zooms to it · F fits all · Esc returns</p>
   </section>
   <div id="presenter" class="presenter" tabindex="-1" role="dialog" aria-label="Presenting beats" hidden>
     <div id="presenter-stage" class="presenter-stage"></div>
@@ -221,7 +221,7 @@
 
   <main class="layout">
     <section class="canvas-pane">
-      <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode">
+      <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode" data-editor-edge="left">
         <span class="toolbar-group-label" id="mode-heading">Edit tools</span>
         <button id="btn-mode-select" class="mode-control" data-icon="cursor" data-mode="select" aria-pressed="true" title="Select and edit objects (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
         <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" data-doc-kind="schematic" aria-pressed="false" title="Place a schematic component or label (i)" aria-label="Place a schematic component or label">Place <kbd>i</kbd></button>
@@ -237,11 +237,11 @@
         <button id="btn-mode-highlight" class="mode-control" data-icon="highlight" data-action="highlight" aria-pressed="false" aria-haspopup="menu" title="Highlight nets: each click cycles a net's color (9) · right-click to remove all (8)" aria-label="Highlight nets">Highlight <kbd>9</kbd></button>
         <button id="btn-rail-annotate" class="mode-control annotation-control rail-flyout-proxy" data-icon="text" data-flyout-proxy="annotate" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="rail-flyout" title="Annotation tools: text, arrow, box, line (hover or right-click for all)" aria-label="Annotation tools">Annotate</button>
       </div>
-      <div id="wire-flyout" class="rail-flyout glass" role="group" aria-label="Wire shape" hidden>
+      <div id="wire-flyout" class="rail-flyout glass" data-editor-edge="left" role="group" aria-label="Wire shape" hidden>
         <button id="btn-route-orthogonal" class="mode-control" data-icon="wire" data-route-mode="orthogonal" aria-pressed="false" title="Draw orthogonal wires (F3 toggles)" aria-label="Orthogonal wire">Orthogonal <kbd>F3</kbd></button>
         <button id="btn-route-diagonal" class="mode-control" data-icon="wire-diagonal" data-route-mode="diagonal" aria-pressed="false" title="Draw diagonal wires (F3 toggles)" aria-label="Diagonal wire">Diagonal <kbd>F3</kbd></button>
       </div>
-      <div id="rail-flyout" class="rail-flyout glass" role="group" aria-label="Annotation tools" hidden>
+      <div id="rail-flyout" class="rail-flyout glass" data-editor-edge="left" role="group" aria-label="Annotation tools" hidden>
         <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-icon="text" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Place free text that does not name or connect wires (Shift+N)" aria-label="Place annotation">Annotation <kbd>Shift+N</kbd></button>
         <button id="btn-mode-arrow" class="mode-control annotation-control" data-icon="arrow" data-action="arrow" aria-pressed="false" title="Draw a multi-point arrow; press Enter to commit (a)" aria-label="Draw multi-point arrow">Arrow <kbd>a</kbd></button>
         <button id="btn-mode-box" class="mode-control annotation-control" data-icon="rectangle" data-action="box" aria-pressed="false" title="Draw a two-point box, or box the selection (b)" aria-label="Draw box">Box <kbd>b</kbd></button>
@@ -256,8 +256,8 @@
         <button type="button" data-empty-action="tutorial"><kbd>5 min</kbd><span class="empty-state-text">Learn by drawing a 5T OTA</span></button>
       </div>
       <!-- The canvas corner holds the toggles for the panels that dock on the right. -->
-      <button id="hierarchy-up" type="button" class="hierarchy-up glass" hidden>↑</button>
-      <div class="canvas-panel-toggles" role="group" aria-label="Panels">
+      <button id="hierarchy-up" type="button" class="hierarchy-up glass" data-editor-edge="top" hidden>↑</button>
+      <div class="canvas-panel-toggles" role="group" aria-label="Panels" data-editor-edge="right">
         <button id="btn-analysis" type="button" class="canvas-panel-toggle glass icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Small-signal analysis" title="Show the small-signal analysis panel (Shift+S)">Analyze</button>
         <button id="btn-side-panel" type="button" class="canvas-panel-toggle glass icon-button" data-icon="sidebar" aria-controls="side-panel" aria-expanded="false" aria-label="Components, nets, and selection" title="Show the components, nets, and selection panel">Panel</button>
       </div>
@@ -277,7 +277,7 @@
           <button type="button" id="tutorial-skip" title="Move on without finishing this step">Skip step</button>
         </div>
       </section>
-      <nav id="beat-strip" class="beat-strip glass" aria-label="Beats" hidden>
+      <nav id="beat-strip" class="beat-strip glass" data-editor-edge="bottom" aria-label="Beats" hidden>
         <p id="beat-hint" class="beat-hint"></p>
         <div class="beat-strip-row">
           <span class="beat-strip-title">Beats</span>
@@ -554,7 +554,7 @@
     </aside>
   </main>
 
-  <footer class="statusbar" id="console-panel" role="region" aria-label="Status and command log">
+  <footer class="statusbar" id="console-panel" data-editor-edge="bottom" role="region" aria-label="Status and command log">
     <span id="status-mode" class="status-mode" aria-hidden="true">NORMAL</span>
     <div class="status" id="status" role="status" aria-live="polite"></div>
     <div class="status-keys" id="status-keys" aria-hidden="true"></div>

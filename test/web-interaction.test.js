@@ -412,7 +412,8 @@ test('opening a design from the Atlas flies once and loads without costing the f
   // where the editor will fit it; the header keeps its name until then.
   assert.match(open, /const loading = openDocumentPath\(entry\.path, \{ gate \}\);/);
   assert.match(open, /fittedView\(\{\s*x: entry\.box\.x \+ pad/);
-  assert.match(open, /await animateView\(predicted, flightMs\(state\.view, predicted\), \{ camera: true, scatter: \{ tile, outward: true \} \}\);\s*land\(\);/);
+  // The desk's toolbars slide away first; the design lands after the flight.
+  assert.match(open, /await slideChrome\(rootEl, true\);\s*await animateView\(predicted, flightMs\(state\.view, predicted\), \{ camera: true, scatter: \{ tile, outward: true \} \}\);\s*\}\s*land\(\);/);
   // The other designs part around it as it flies, and gather back on the way out.
   assert.match(atlas, /function scattered\(tile\) \{/);
   assert.match(atlas, /if \(openTile\) partDesk\(openTile, false, state\.view, \{ t: 0 \}\);/);

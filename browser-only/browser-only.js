@@ -32183,6 +32183,7 @@ let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startu
 let exportAtlasSheet; __bind(() => { ({ exportAtlasSheet } = __require("src/web/export-ui.js")); });
 let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption } = __require("src/web/atlas-sheet.js")); });
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
+let slideChrome; __bind(() => { ({ slideChrome } = __require("src/web/chrome-slide.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -32195,6 +32196,7 @@ let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __req
  * leaving zoom between the editor's view and the design's tile, which works
  * because a tile is the drawing at its real size.
  */
+
 
 
 
@@ -33449,6 +33451,13 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   // desk shows: focusing it restyles at once, and a visible first style
   // would fade out and back in.
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // A transition the user starts runs in three steps: the editor's toolbars
+  // slide away, the camera moves, the Atlas's slide in (chrome-slide.js).
+  // On startup the editor's are simply not there yet.
+  const choreographed = !reduced && !startup && animate;
+  await slideChrome(document.body, true, { animate: choreographed });
+  if (state?.generation !== generation) return;
+  void slideChrome(rootEl, choreographed, { animate: false });
   if (reduced && !startup) rootEl.classList.add('preparing');
   // Zooming out of the open design, the desk shows only once it has drawn
   // that design: fading in over the editor without it, the design would
@@ -33474,6 +33483,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
     return;
   }
   await openDesk(generation, source, animate, startup);
+  if (state?.generation === generation) await slideChrome(rootEl, false);
 }
 
 /** Lay out the desk just opened and bring it into view. */
@@ -33583,12 +33593,19 @@ async function closeAtlas({ animate = true } = {}) {
   // With reduced motion the desk just fades from where it is.
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const back = animate && !reduced && currentTile && editorEquivalentView(currentTile, state.entries.get(currentTile.id));
-  if (back) await animateView(back, flightMs(state.view, back), { camera: true, scatter: { tile: currentTile, outward: true } });
-  finishClose();
+  if (back) {
+    await slideChrome(rootEl, true);
+    if (!state) return;
+    await animateView(back, flightMs(state.view, back), { camera: true, scatter: { tile: currentTile, outward: true } });
+  }
+  finishClose({ animate: !!back });
 }
 
-function finishClose() {
+/** Hand back to the editor; its toolbars slide in (at once without
+ *  `animate`). */
+function finishClose({ animate = true } = {}) {
   if (!state) return;
+  void slideChrome(document.body, false, { animate });
   stopAnimation();
   clearTimeout(state.arrangeTimer);
   for (const bitmap of state.bitmaps.values()) bitmap.close?.();
@@ -33647,7 +33664,10 @@ async function openTile(tile) {
     if (opened) await nextFrames(2);
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
-      if (exact) await animateView(exact, flightMs(state.view, exact), { camera: true, scatter: { tile, outward: true } });
+      if (exact) {
+        await slideChrome(rootEl, true);
+        await animateView(exact, flightMs(state.view, exact), { camera: true, scatter: { tile, outward: true } });
+      }
     }
   } else {
     // Read the file while flying straight to where the editor will fit the
@@ -33662,7 +33682,10 @@ async function openTile(tile) {
     const predicted = editorEquivalentView(tile, entry, fittedView({
       x: entry.box.x + pad, y: entry.box.y + pad, w: entry.box.w - 2 * pad, h: entry.box.h - 2 * pad,
     }));
-    if (predicted) await animateView(predicted, flightMs(state.view, predicted), { camera: true, scatter: { tile, outward: true } });
+    if (predicted) {
+      await slideChrome(rootEl, true);
+      await animateView(predicted, flightMs(state.view, predicted), { camera: true, scatter: { tile, outward: true } });
+    }
     land();
     opened = await loading;
     // Let the editor measure its labels and fit to them before the last look.
@@ -33677,10 +33700,12 @@ async function openTile(tile) {
   if (!landed()) return;
   state.opening = false;
   if (!opened) {
+    // Staying on the desk: its toolbars come back.
+    void slideChrome(rootEl, false);
     requestDraw();
     return;
   }
-  finishClose();
+  finishClose({ animate: !reduced });
   selectHits(hits);
 }
 
@@ -35799,6 +35824,41 @@ function zoomToWorldRect(r) {
   animateViewTo({ x: (r.x0 + r.x1) / 2 - tw / 2, y: (r.y0 + r.y1) / 2 - th / 2, w: tw, h: th });
 }
 
+};
+
+__modules["src/web/chrome-slide.js"] = function (__require, __exports) {
+__exports.slideChrome = slideChrome;
+/**
+ * The toolbars step aside for a camera move: the ones on screen slide off
+ * toward their own edge of the window, the camera moves, and the next view's
+ * toolbars slide in. Each set is marked in the page by its edge
+ * (`data-editor-edge` for the editor's, `data-atlas-edge` for the Atlas's)
+ * and is away while its root carries `chrome-away` (style.css). With reduced
+ * motion they simply go and come.
+ */
+
+const CHROME_SLIDE_MS = 180;
+
+const reducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+/** Slide the toolbars under `root` away (`away` true) or back. Resolves when
+ *  they have arrived; at once when `animate` is false, with reduced motion,
+ *  or when they are already there. */
+function slideChrome(root, away, { animate = true } = {}) {
+  if (!root || root.classList.contains('chrome-away') === away) return Promise.resolve();
+  if (!animate || reducedMotion()) {
+    // No transition: the class change lands in one frame.
+    root.classList.add('chrome-instant');
+    root.classList.toggle('chrome-away', away);
+    void root.offsetWidth;
+    root.classList.remove('chrome-instant');
+    return Promise.resolve();
+  }
+  root.classList.toggle('chrome-away', away);
+  return new Promise((resolve) => setTimeout(resolve, CHROME_SLIDE_MS));
+}
+
+__exports.CHROME_SLIDE_MS = CHROME_SLIDE_MS;
 };
 
 __modules["src/web/clipboard.js"] = function (__require, __exports) {

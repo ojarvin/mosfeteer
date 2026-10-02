@@ -5387,3 +5387,41 @@ circle.bode-corner {
 .label-prompt input {
   font: inherit;
 }
+
+/* Toolbars step aside for a camera move (chrome-slide.js): away, each slides
+   off toward its own edge. The editor's go with body.chrome-away, the
+   Atlas's with .atlas.chrome-away. `translate` stacks on the centring
+   transforms some of them already have. */
+[data-editor-edge],
+[data-atlas-edge] {
+  transition: translate 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease;
+}
+
+body.chrome-instant [data-editor-edge],
+.atlas.chrome-instant [data-atlas-edge] {
+  transition: none;
+}
+
+body.chrome-away [data-editor-edge],
+.atlas.chrome-away [data-atlas-edge] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.chrome-away [data-editor-edge="top"],
+.atlas.chrome-away [data-atlas-edge="top"] {
+  translate: 0 calc(-100% - 24px);
+}
+
+body.chrome-away [data-editor-edge="bottom"],
+.atlas.chrome-away [data-atlas-edge="bottom"] {
+  translate: 0 calc(100% + 24px);
+}
+
+body.chrome-away [data-editor-edge="left"] {
+  translate: calc(-100% - 24px) 0;
+}
+
+body.chrome-away [data-editor-edge="right"] {
+  translate: calc(100% + 24px) 0;
+}
