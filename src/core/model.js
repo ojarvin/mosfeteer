@@ -956,6 +956,8 @@ export function normalizeTiming(timing) {
  * frequencies and the quantity's name. Plain numbers only; a malformed
  * plot is dropped rather than drawn wrong.
  */
+const MAX_PLOT_DECADES = 60;
+
 export function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
   const low = Number(plot.range?.low);
@@ -963,7 +965,9 @@ export function normalizePlot(plot) {
   const points = (Array.isArray(plot.points) ? plot.points : [])
     .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db) && finite(p?.phase))
     .map((p) => ({ w: round(p.w, 6), db: round(p.db), phase: round(p.phase) }));
-  if (!finite(low) || !finite(high) || high <= low || points.length < 2) return null;
+  // The range is in decades (log10 ω), drawn a tick per decade: a span far
+  // past any circuit's (a corrupt document) would draw without end.
+  if (!finite(low) || !finite(high) || high <= low || high - low > MAX_PLOT_DECADES || points.length < 2) return null;
   const asymptote = (Array.isArray(plot.asymptote) ? plot.asymptote : [])
     .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db))
     .map((p) => ({ w: round(p.w, 6), db: round(p.db) }));

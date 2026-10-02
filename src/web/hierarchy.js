@@ -21,7 +21,7 @@ import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { searchKey } from '../core/design-index.js';
-import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } from '../core/link-bubble.js';
+import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { animateViewTo, fitTarget, fitView } from './canvas-view.js';
@@ -81,8 +81,8 @@ export function linkableDesigns() {
 const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
 /** A design drawn as a bubble's picture, in both themes; null when empty.
- *  The bubble shows the design itself: free equations and pasted images, the
- *  document's commentary, are left out (peekPicture). */
+ *  The bubble shows the design itself: free equations, pasted pictures, and
+ *  Bode sketches, the document's commentary, are left out (peekPicture). */
 async function pictureOf(full) {
   const circuit = peekPicture(full);
   if (!circuit.components.size && !circuit.labels.size) return null;
@@ -93,15 +93,6 @@ async function pictureOf(full) {
   const [x, y, w, h] = match.slice(1).map(Number);
   // `svg` stays as drawn, for exports to nest as vector drawing.
   return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
-}
-
-/** A design without its free equations and images (labels owned by no part
- *  and naming no net), for a bubble's picture. */
-export function peekPicture(circuit) {
-  const commentary = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && (label.math || label.kind === 'image'));
-  if (!commentary.length) return circuit;
-  for (const label of commentary) circuit.removeLabel(label.id);
-  return circuit;
 }
 
 /** The document a link names, asking for the workspace's documents when

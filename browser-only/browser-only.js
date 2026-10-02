@@ -15601,6 +15601,7 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 __modules["src/core/link-bubble.js"] = function (__require, __exports) {
 __exports.layoutBubbles = layoutBubbles;
 __exports.bubbleOffset = bubbleOffset;
+__exports.peekPicture = peekPicture;
 __exports.bubbleAt = bubbleAt;
 __exports.captionAnchor = captionAnchor;
 __exports.connectorPath = connectorPath;
@@ -15768,6 +15769,17 @@ function connectorCost(from, to, rects, segments, connectors, frames) {
  *  top-left corner) beside a part: grid-aligned, as the layout keeps it. */
 function bubbleOffset(part, at) {
   return { dx: snap(at.x) - (part.x + part.w / 2), dy: snap(at.y) - (part.y + part.h / 2) };
+}
+
+/** A design without its commentary, for a bubble's picture: free equations,
+ *  pasted pictures (boxes drawing an image), and Bode sketches (boxes drawing
+ *  a plot), with their captions. Labels of parts and nets stay. Changes and
+ *  returns `circuit`. */
+function peekPicture(circuit) {
+  const commentary = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && !label.parent
+    && (label.math || label.image || label.plot));
+  for (const label of commentary) if (circuit.labels.has(label.id)) circuit.removeLabel(label.id);
+  return circuit;
 }
 
 /** The bubble whose frame holds `point`, if any. */
@@ -16847,6 +16859,8 @@ function normalizeTiming(timing) {
  * frequencies and the quantity's name. Plain numbers only; a malformed
  * plot is dropped rather than drawn wrong.
  */
+const MAX_PLOT_DECADES = 60;
+
 function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
   const low = Number(plot.range?.low);
@@ -16854,7 +16868,9 @@ function normalizePlot(plot) {
   const points = (Array.isArray(plot.points) ? plot.points : [])
     .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db) && finite(p?.phase))
     .map((p) => ({ w: round(p.w, 6), db: round(p.db), phase: round(p.phase) }));
-  if (!finite(low) || !finite(high) || high <= low || points.length < 2) return null;
+  // The range is in decades (log10 ω), drawn a tick per decade: a span far
+  // past any circuit's (a corrupt document) would draw without end.
+  if (!finite(low) || !finite(high) || high <= low || high - low > MAX_PLOT_DECADES || points.length < 2) return null;
   const asymptote = (Array.isArray(plot.asymptote) ? plot.asymptote : [])
     .filter((p) => finite(p?.w) && p.w > 0 && finite(p?.db))
     .map((p) => ({ w: round(p.w, 6), db: round(p.db) }));
@@ -41749,7 +41765,6 @@ function installHelp() {
 __modules["src/web/hierarchy.js"] = function (__require, __exports) {
 __exports.linkedDocument = linkedDocument;
 __exports.linkableDesigns = linkableDesigns;
-__exports.peekPicture = peekPicture;
 __exports.toggleAllLinkBubbles = toggleAllLinkBubbles;
 __exports.toggleLinkBubbles = toggleLinkBubbles;
 __exports.closeLinkBubble = closeLinkBubble;
@@ -41773,7 +41788,7 @@ let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js"));
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
-let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } = __require("src/core/link-bubble.js")); });
+let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let animateViewTo, fitTarget, fitView; __bind(() => { ({ animateViewTo, fitTarget, fitView } = __require("src/web/canvas-view.js")); });
@@ -41865,8 +41880,8 @@ function linkableDesigns() {
 const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
 /** A design drawn as a bubble's picture, in both themes; null when empty.
- *  The bubble shows the design itself: free equations and pasted images, the
- *  document's commentary, are left out (peekPicture). */
+ *  The bubble shows the design itself: free equations, pasted pictures, and
+ *  Bode sketches, the document's commentary, are left out (peekPicture). */
 async function pictureOf(full) {
   const circuit = peekPicture(full);
   if (!circuit.components.size && !circuit.labels.size) return null;
@@ -41877,15 +41892,6 @@ async function pictureOf(full) {
   const [x, y, w, h] = match.slice(1).map(Number);
   // `svg` stays as drawn, for exports to nest as vector drawing.
   return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(dark) } };
-}
-
-/** A design without its free equations and images (labels owned by no part
- *  and naming no net), for a bubble's picture. */
-function peekPicture(circuit) {
-  const commentary = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && (label.math || label.kind === 'image'));
-  if (!commentary.length) return circuit;
-  for (const label of commentary) circuit.removeLabel(label.id);
-  return circuit;
 }
 
 /** The document a link names, asking for the workspace's documents when

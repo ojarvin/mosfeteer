@@ -46,3 +46,26 @@ test('copying a plot copies its sketch', () => {
   const copy = circuit.addAnnotation('box', { x: 800, y: 0, end: { x: 1440, y: 400 }, plot: payload.plot });
   assert.deepEqual(copy.plot, box.plot);
 });
+
+test('a peek bubble leaves out Bode sketches, pasted pictures, and equations, with their captions', async () => {
+  const { peekPicture } = await import('../src/core/link-bubble.js');
+  const { runCommand } = await import('../src/core/commands.js');
+  const circuit = new Circuit();
+  runCommand(circuit, 'add resistor R1 --at 0 0');
+  runCommand(circuit, 'annotation add note 0 200');
+  circuit.addAnnotation('box', { x: 0, y: 400, end: { x: 640, y: 800 }, plot: plotData(), text: 'Bode' });
+  circuit.addAnnotation('box', { x: 800, y: 400, end: { x: 1200, y: 600 }, image: { src: 'data:image/png;base64,iVBORw0KGgo=', aspect: 2 } });
+  circuit.addLabel({ text: '$A_v = g_m R$', math: true, x: 0, y: 1000 });
+  peekPicture(circuit);
+  const left = [...circuit.labels.values()];
+  assert.ok(left.every((label) => !label.plot && !label.image && !label.math), 'commentary gone');
+  assert.ok(!left.some((label) => label.text === 'Bode'), 'the sketch\'s caption with it');
+  // The part's label and plain notes stay.
+  assert.deepEqual(left.map((label) => label.owner || label.text).sort(), ['R1', 'note']);
+});
+
+test('a plot whose range spans implausibly many decades is not kept', () => {
+  // The range is in decades; a corrupt one would draw a tick per decade forever.
+  assert.equal(normalizePlot({ ...plotData(), range: { low: 1, high: 1e6 } }), null);
+  assert.ok(normalizePlot({ ...plotData(), range: { low: -3, high: 9 } }));
+});
