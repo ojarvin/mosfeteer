@@ -18,8 +18,8 @@ export const PAGE_GUIDES = Object.freeze({
   // would allow only about 24 grid cells across a column).
   'ieee-1col': { name: 'IEEE single column', widthPt: 252, widthLabel: '3.5 in', textPt: 8, latexWidth: '\\columnwidth' },
   'ieee-2col': { name: 'IEEE double column', widthPt: 516, widthLabel: '7.16 in', textPt: 8, latexWidth: '\\textwidth' },
-  // An A4 page with 25 mm margins (16 cm of text), at 10 pt body text.
-  a4: { name: 'A4 page', widthPt: 453.54, widthLabel: '16 cm', textPt: 10, latexWidth: '\\textwidth' },
+  // An A4 page with 25 mm margins (16 cm of text), at the same 8 pt.
+  a4: { name: 'A4 page', widthPt: 453.54, widthLabel: '16 cm', textPt: 8, latexWidth: '\\textwidth' },
 });
 
 

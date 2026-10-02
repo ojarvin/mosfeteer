@@ -86,12 +86,12 @@ test('settings hold the page guide and preferences; More holds document actions'
   assert.match(main, /renderDocument\(drawing, \{\s*\.\.\.DRAWING_EXPORT_OPTIONS,\s*grid,\s*pageGuide,/);
 });
 
-test('the A4 guide sets base label text at 10 pt across a 16 cm text width', () => {
+test('the A4 guide sets base label text at 8 pt across a 16 cm text width', () => {
   const a4 = normalizePageGuide('a4');
-  assert.equal(a4.textPt, 10);
+  assert.equal(a4.textPt, 8);
   // The target is the label's base text (LABEL_FONT_SIZE), not its subscripts.
-  assert.ok(Math.abs((LABEL_FONT_SIZE * 453.54) / pageGuideWidth(a4) - 10) < 1e-9);
-  assert.match(pageGuideCaption(a4), /A4 page \(16 cm\) · 10 pt text with \\includegraphics\[width=\\textwidth\]/);
+  assert.ok(Math.abs((LABEL_FONT_SIZE * 453.54) / pageGuideWidth(a4) - 8) < 1e-9);
+  assert.match(pageGuideCaption(a4), /A4 page \(16 cm\) · 8 pt text with \\includegraphics\[width=\\textwidth\]/);
   assert.match(pageGuideCaption(single), /width=\\columnwidth/);
   assert.match(pageGuideCaption(double), /width=\\textwidth/);
 });
