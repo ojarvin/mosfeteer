@@ -4247,7 +4247,10 @@ export class Circuit {
         const after = { x: far.x + move.delta.dx, y: far.y + move.delta.dy };
         if (move.fresh || !stretchedLeg(fromTerminal, after)) rigid = false;
       }
-      if (arms >= 2 && consistent && delta && movedArms * 2 > arms && !rigid) {
+      // A junction on wire selected with the moved parts goes with them, even
+      // where its arms could have stretched (`moved.carry`: "x,y" keys).
+      const carried = moved.carry?.has(`${junction.x},${junction.y}`);
+      if (arms >= 2 && consistent && delta && (carried ? movedArms > 0 : movedArms * 2 > arms && !rigid)) {
         following.set(`${junction.x},${junction.y}`, { dx: delta.dx, dy: delta.dy });
       }
     }

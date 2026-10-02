@@ -269,7 +269,7 @@ The model is topological; geometry is a route, not connectivity.
   translate the net rigidly. Otherwise only the legs at moved terminals change;
   a pin's leg slides along itself or moves sideways by stretching the next
   segment, and a junction travels with the move only when a moved arm cannot
-  take it up that way. Detached moves split selected wire islands
+  take it up that way, or when it is on wire selected with the moved parts. Detached moves split selected wire islands
   without moving unselected islands.
 - Wire editing is transactional. A click without sufficient movement does not
   mutate the model; invalid overlaps restore the pre-drag document; mouseup or

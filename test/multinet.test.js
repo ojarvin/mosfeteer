@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
+import { runCommand } from '../src/core/commands.js';
 
 /** Assert the structural invariants the editor must preserve after any wiring
  *  and dragging: every branch is orthogonal, every branch endpoint is attached
@@ -322,4 +323,29 @@ test('a junction held by a moved device travels with it, not with the drawing', 
   // It rides the device rather than staying behind at the old position.
   assert.equal(leftEdge(), before + 120);
   assertNetClean(reloaded, net, 1);
+});
+
+test('a junction on wire selected with the moved parts goes with them, though its arms could stretch', () => {
+  const circuit = new Circuit();
+  for (const line of ['add pmos M26 --at 0 -880', 'add nmos M25 --at 0 0', 'connect M25.d M26.d', 'connect M25.g M25.d']) runCommand(circuit, line);
+  // The diode loop tees into the drain wire a cell above the drain.
+  const P = (text) => text.split(' ').map((q) => { const [x, y] = q.split(',').map(Number); return { x, y }; });
+  const drawn = circuit.netOfTerminal({ comp: 'M25', term: 'g' });
+  drawn.branches = [P('0,-800 0,-160'), P('0,-160 0,-80'), P('0,-160 -160,-160 -160,0 -120,0')];
+  drawn.route = drawn.branches[0];
+  drawn.junctions = [{ x: 0, y: -160 }];
+  const text = (net) => net.paths().map((path) => path.map((p) => `${p.x},${p.y}`).join(' '));
+  const move = (carry) => {
+    const copy = Circuit.fromJSON(circuit.toJSON());
+    const net = copy.netOfTerminal({ comp: 'M25', term: 'g' });
+    copy.components.get('M25').transform.y += 280;
+    const moved = new Map([['M25', { dx: 0, dy: 280 }]]);
+    if (carry) moved.carry = new Set(['0,-160']);
+    assert.equal(copy.rerouteNet(net, moved), true);
+    return text(net);
+  };
+  // Alone, the junction stays and the legs stretch down to the part.
+  assert.deepEqual(move(false), ['0,-800 0,-160', '0,-160 0,200', '0,-160 -160,-160 -160,280 -120,280']);
+  // Selected with it, the loop moves whole; only the wire up to M26 stretches.
+  assert.deepEqual(move(true), ['0,-800 0,120', '0,120 0,200', '0,120 -160,120 -160,280 -120,280']);
 });

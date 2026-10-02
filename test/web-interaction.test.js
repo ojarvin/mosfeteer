@@ -1270,7 +1270,9 @@ test('a set drag keeps net label sides and never shows a frame its nets cannot f
   assert.match(main, /if \(side\) label\.netSide = side;\s*if \(!moveLabelSafely\(label, point\.x, point\.y\)\)/);
   // A failed reroute rolls back only the parts, so the whole frame is redone
   // at the last delta that worked.
-  assert.match(main, /if \(rerouteNet\(net, moved\) === false\) ok = false;/);
+  assert.match(main, /if \(rerouteNet\(net, netMoved\) === false\) ok = false;/);
+  // Junctions on selected wire ride along (carriedJunctions).
+  assert.match(main, /const netMoved = carry \? Object\.assign\(new Map\(moved\), \{ carry \}\) : moved;/);
   assert.match(main, /if \(!applyDragStep\(delta\)\) \{\s*shown = drag\.goodDelta\?\.origins === drag\.origins \? drag\.goodDelta : \{ dx: 0, dy: 0 \};\s*applyDragStep\(shown\);/);
 });
 

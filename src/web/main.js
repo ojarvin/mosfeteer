@@ -3474,6 +3474,29 @@ function rerouteNet(net, moved) {
   return circuit.rerouteNet(net, moved);
 }
 
+/** The junctions a move carries, per net id: those at an end of a selected
+ *  wire segment, or every one of a selected whole net. */
+function carriedJunctions(netIds) {
+  const carry = new Map();
+  for (const id of netIds) {
+    const net = circuit.nets.get(id);
+    if (!net?.junctions.length) continue;
+    const at = new Set(net.junctions.map((p) => `${p.x},${p.y}`));
+    const keys = new Set();
+    if (selectedNets.has(id)) for (const key of at) keys.add(key);
+    const paths = net.paths();
+    for (const wireKey of selectedWires) {
+      const { netId, branch, segment } = keyToWire(wireKey);
+      if (netId !== id) continue;
+      for (const p of [paths[branch]?.[segment - 1], paths[branch]?.[segment]]) {
+        if (p && at.has(`${p.x},${p.y}`)) keys.add(`${p.x},${p.y}`);
+      }
+    }
+    if (keys.size) carry.set(id, keys);
+  }
+  return carry;
+}
+
 /** Ids of every net that touches any of the given components. */
 export function netsTouching(refs) {
   const touched = new Set();
@@ -5908,6 +5931,10 @@ export function canvasMouseMove(ev) {
           const net = circuit.nets.get(id);
           if (net) drag.netRoutes.set(id, captureNetGeometry(net));
         }
+        // Junctions on wire selected with the parts go with them (a diode
+        // loop boxed with its transistor), where on their own they would
+        // stay and let the arms stretch: per net, their "x,y" keys.
+        drag.carry = carriedJunctions(capturedNetIds);
         // A net whose every pin moves goes along rigidly, and so do its
         // labels, selected or not: left to themselves they would be put
         // back on the wire wherever is nearest.
@@ -5970,7 +5997,9 @@ export function canvasMouseMove(ev) {
           if (selectedOnly && !net.terminals.length) {
             translateNetGeometry(net, saved, delta.dx, delta.dy);
           } else {
-            if (rerouteNet(net, moved) === false) ok = false;
+            const carry = drag.carry?.get(id);
+            const netMoved = carry ? Object.assign(new Map(moved), { carry }) : moved;
+            if (rerouteNet(net, netMoved) === false) ok = false;
           }
         }
         for (const [id, saved] of drag.detachedWireRoutes || []) {
