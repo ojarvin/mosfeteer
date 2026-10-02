@@ -70,7 +70,6 @@ export const EDITOR_COMMANDS = [
   { name: 'paste', canvas: true, help: 'paste the copied objects at the cursor (p)' },
   { name: 'delete', aliases: ['erase', 'cut'], canvas: true, help: 'delete the selection (dd)' },
   { name: 'select-all', aliases: ['all'], canvas: true, help: 'select everything (Ctrl/Cmd+A)' },
-  { name: 'box-select', aliases: ['visual', 'marquee'], canvas: true, help: 'grow a selection box with the arrow keys (v)' },
   { name: 'net-label', aliases: ['name-net', 'label-wire'], canvas: true, help: 'place net labels on wires (Shift+L)' },
   { name: 'free-text', aliases: ['annotation-tool', 'comment'], canvas: true, help: 'place a free annotation (Shift+N)' },
   { name: 'equation', aliases: ['latex', 'math', 'formula'], canvas: true, help: 'place a LaTeX equation (e)' },

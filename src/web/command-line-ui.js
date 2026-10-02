@@ -19,7 +19,7 @@ import { runCheck } from './design-check-ui.js';
 import { openFind, openReplace } from './find-replace-ui.js';
 import { toggleAtlas, toggleSymbolSheet } from './atlas.js';
 import { activateAlign, activateAnnotation, activateCopy, activateEquation, activateHighlight, activateMove, activateNetLabel, activatePlace,
-  activateShapeAnnotation, activateVisual, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
+  activateShapeAnnotation, activateWire, applyLayoutPlan, deleteSelection, editSelectionText, layoutPlan, redo, render,
   repeatLastAction, restackSelected, runLine, selectAll, selectedTransform, stubSelection, swapTargets, tidyNow, undo } from './main.js';
 import { joinSelectedLines, removeAllNetHighlights } from './annotation-tools.js';
 import { enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
@@ -90,7 +90,6 @@ const ACTIONS = {
   paste: () => pasteClipboard(),
   delete: () => { if (!deleteSelection()) hintLine('delete: select something first'); },
   'select-all': () => selectAll(),
-  'box-select': () => activateVisual(),
   'net-label': () => activateNetLabel(),
   'free-text': () => activateAnnotation(),
   equation: () => activateEquation(),

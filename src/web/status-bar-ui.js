@@ -99,9 +99,6 @@ export function renderStatus() {
       : '';
   const parts = [];
   if (editor.analysisPick) parts.push('click a wire or pin for the analysis node · Esc cancel');
-  if (editor.visual) {
-    parts.push('box from cursor · arrows grow · Enter select · Esc cancel');
-  }
   if (editor.mode === 'insert') {
     parts.push(editor.pendingPlace ? `place ${editor.pendingPlace.kind === 'label' ? 'label' : editor.pendingPlace.type} @ click/Enter · arrows move · R/Shift+R/Ctrl+R · Alt symmetric · Esc cancel` : editor.insertQuery ? `~${editor.insertQuery} · Enter pick` : 'type or alias to filter · Esc exit');
   }
@@ -168,7 +165,7 @@ export function renderStatus() {
  *  has the space. Kept out of the live status region, which it would flood. */
 function renderKeyHints(show) {
   if (!statusKeysEl) return;
-  const busy = editor.mode !== 'normal' || editor.wire || editor.directWire || editor.visual || editor.labelMode
+  const busy = editor.mode !== 'normal' || editor.wire || editor.directWire || editor.labelMode
     || editor.alignTool || editor.analysisPick || editor.symmetry || editor.inlineInput || editor.quickAdd
     || (editor.drag && !editor.movePending && !editor.copyPending);
   const hints = show && !busy ? contextKeyHints({

@@ -90,7 +90,6 @@ const CURSOR_ARROW = 'M1.5 1 1.5 18.5 6.1 14.3 9 20.6 11.9 19.2 9.1 13.2 15 12.7
 const TOOL_CURSOR_ICONS = {
   normal: null,
   place: 'plus',
-  visual: 'box-select',
   move: 'move',
   'detached-move': 'detach',
   copy: 'copy',

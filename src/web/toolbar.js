@@ -156,7 +156,7 @@ export const naturalCompare = new Intl.Collator(undefined, { numeric: true, sens
 // the dialog. Keep this registry alongside the keyboard-facing toolbar.
 export const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
-    ['i / Shift+I', 'insert mode (fuzzy-search component and label placement)'],
+    ['i', 'insert mode (fuzzy-search component and label placement)'],
     ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal or free wire end; a click on a free wire end joins it; Enter commits'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['/ (wire)', 'flip which way the corner under the cursor turns'],
@@ -173,7 +173,7 @@ export const EDITOR_KEYMAP = Object.freeze([
   ['edit', [
     ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
     ['Shift+U / Ctrl/Cmd+Y', 'redo'],
-    ['Arrow keys', 'nudge selected objects or move the cursor (counts apply)'],
+    ['Arrow keys', 'nudge selected objects or move the cursor'],
     ['r', 'rotate selected objects 90° clockwise'],
     ['Shift+R', 'mirror selected horizontally'],
     ['Ctrl/Cmd+R', 'mirror selected vertically'],
@@ -181,11 +181,10 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['m', 'move selected objects with connectivity; stays armed'],
     ['Shift+M', 'move selected objects without connected nets; stays armed'],
     ['c', 'copy a selected object or set; stays armed'],
-    ['y / Ctrl/Cmd+C', 'copy the selected objects, also for another editor'],
+    ['Ctrl/Cmd+C', 'copy the selected objects, also for another editor'],
     ['copy a net label', 'copied alone it carries its name: paste (or Ctrl-drag) it onto a wire to give that net the name'],
     ['Ctrl/Cmd+Shift+C', 'copy selection (or whole drawing) as an image for other apps'],
     ['Ctrl/Cmd+V', 'paste objects copied here or in another editor at the cursor'],
-    ['p', 'paste this editor\'s last copied set at the cursor'],
     ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
@@ -198,7 +197,7 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['Shift+K', 'timing diagram of the switch phases and signals you add: edit its slots in a grid beside the drawing; Make beats steps through the phases'],
     ['Box over vertices', 'a box catching only some vertices of lines or arrows picks them, on any number of lines; Shift+box or Shift/Ctrl-click a vertex adds more; drag one to move them together, Delete removes them, Escape lets go'],
-    ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection (counts apply)'],
+    ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
     ['Shift+A', 'align to: click an edge or point of the selection, then a matching one of another object; the set moves as one'],
@@ -214,7 +213,6 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Enter', 'select the label or component under the cursor'],
     ['click a selected object', 'select the next object stacked at that point (pins, wires, dots, part boxes); a press there drags the selected one'],
     ['Ctrl/Cmd+A', 'select all components, labels, and non-empty nets'],
-    ['v', 'visual mode: arrow keys grow a box; Enter selects; Esc cancels (over a pin, v adds a supply)'],
     ['Tab / Shift+Tab (selection)', 'cycle a selected component or label forward / backward'],
     ['Tab / Shift+Tab (focus)', 'focus semantic canvas objects; Enter/Space selects one'],
     ['Esc', 'cancel the active interaction'],
@@ -325,7 +323,6 @@ export function layerActionForKey({
   mode = 'normal',
   wire = false,
   directWire = false,
-  visual = false,
   drag = false,
   moveMode = null,
   copyMode = false,
@@ -334,7 +331,7 @@ export function layerActionForKey({
   textEntry = false,
 } = {}) {
   if (textEntry || !shiftKey || ctrlKey || metaKey || altKey || mode !== 'normal'
-      || wire || directWire || visual || drag || moveMode || copyMode || deleteMode || labelMode) return null;
+      || wire || directWire || drag || moveMode || copyMode || deleteMode || labelMode) return null;
   if (key === 'ArrowUp') return 'bring-front';
   if (key === 'ArrowDown') return 'send-back';
   return null;
@@ -352,10 +349,10 @@ const LAYOUT_ALIGN_KEYS = {
  * aligned set centres that axis (`repeat`). Idle normal editor only. */
 export function layoutAlignKey({
   key, shiftKey = false, ctrlKey = false, metaKey = false, altKey = false,
-  mode = 'normal', wire = false, directWire = false, visual = false, drag = false,
+  mode = 'normal', wire = false, directWire = false, drag = false,
   moveMode = null, copyMode = false, deleteMode = false, labelMode = null, textEntry = false,
 } = {}) {
   if (textEntry || !shiftKey || !(ctrlKey || metaKey) || altKey || mode !== 'normal'
-      || wire || directWire || visual || drag || moveMode || copyMode || deleteMode || labelMode) return null;
+      || wire || directWire || drag || moveMode || copyMode || deleteMode || labelMode) return null;
   return LAYOUT_ALIGN_KEYS[key] || null;
 }

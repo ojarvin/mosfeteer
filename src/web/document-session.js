@@ -805,7 +805,6 @@ async function deleteSavedCircuit() {
     editor.alignTool = null;
     editor.movePending = false;
     editor.copyPending = false;
-    editor.visual = null;
     editor.pendingPlace = null;
     clearSymmetry();
     editor.labelMode = null;

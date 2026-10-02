@@ -519,7 +519,7 @@ async function pasteImage(file) {
 // The copy buffer also goes on the system clipboard as tagged JSON text, so
 // objects copied in one editor paste into another (another tab, window, or
 // workspace). Ctrl/Cmd+V reads it from the browser's paste event, which needs
-// no clipboard permission; `p` pastes this editor's own buffer.
+// no clipboard permission; without one it pastes this editor's own buffer.
 let objectClipboardText = null;
 
 let objectPaste = null;

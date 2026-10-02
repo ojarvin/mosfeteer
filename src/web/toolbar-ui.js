@@ -17,7 +17,7 @@ import { appendContextItem, openMenuAt } from './context-menu.js';
 import { saveCircuit } from './document-session.js';
 import { editor } from './editor-state.js';
 import { removeAllNetHighlights } from './annotation-tools.js';
-import { activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateVisual, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } from './main.js';
+import { activateAlign, activateAnnotation, activateCopy, activateDelete, activateHighlight, activateMove, activateNetLabel, activatePlace, activateSelect, activateShapeAnnotation, activateWire, hasWireDraft, interactionState, render, restackSelected, selectedTransform } from './main.js';
 
 // The top toolbar drops button text in stages as its row runs out of space (see
 // toolbar-fit.js). Refit when the bar resizes or the document title changes.
@@ -71,7 +71,6 @@ const TOOLBAR_IDS = {
   normal: ['btn-mode-select', 'btn-select', 'mode-select'],
   place: ['btn-place', 'btn-insert', 'btn-mode-place', 'tool-place', 'tool-insert', 'mode-place'],
   wire: ['btn-wire', 'btn-mode-wire', 'tool-wire', 'mode-wire'],
-  visual: ['btn-mode-visual', 'btn-box-select', 'tool-visual', 'mode-visual'],
   move: ['btn-move', 'btn-mode-move', 'tool-move', 'mode-move'],
   'move-detached': ['btn-move-detached', 'btn-detach-move', 'btn-mode-detach-move', 'btn-detached-move', 'tool-move-detached', 'mode-detached-move'],
   copy: ['btn-copy', 'btn-mode-copy', 'tool-copy', 'mode-copy'],
@@ -281,7 +280,7 @@ export function syncInteractionUI() {
   }
   // Toggle only real changes: rewriting the canvas class invalidates style
   // for the whole drawing, and this runs on every repaint.
-  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-visual', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-annotation']) {
+  for (const name of ['mode-normal', 'mode-place', 'mode-insert', 'mode-wire', 'mode-move', 'mode-detached-move', 'mode-copy', 'mode-delete', 'mode-net-label', 'mode-highlight', 'mode-annotation']) {
     canvasEl.classList.toggle(name, name === state.canvasClass);
   }
   canvasEl.classList.toggle(state.canvasClass, true);
@@ -374,7 +373,6 @@ function bindInteractionControls() {
     normal: activateSelect,
     place: activatePlace,
     wire: activateWire,
-    visual: activateVisual,
     move: () => activateMove('connected'),
     'move-detached': () => activateMove('detached'),
     'detach-move': () => activateMove('detached'),

@@ -187,7 +187,6 @@ Object.defineProperties(editor, {
   tutorial: { get: () => tutorial, set: (value) => { tutorial = value; } },
   view: { get: () => view, set: (value) => { view = value; } },
   viewPane: { get: () => viewPane, set: (value) => { viewPane = value; } },
-  visual: { get: () => visual, set: (value) => { visual = value; } },
   wire: { get: () => wire, set: (value) => { wire = value; } },
   workspaceState: { get: () => workspaceState, set: (value) => { workspaceState = value; } },
   zoom: { get: () => zoom, set: (value) => { zoom = value; } },
@@ -293,7 +292,6 @@ let guidesVisible = true;
 let pageGuide = (() => {
   try { return normalizePageGuide(localStorage.getItem('mosfeteer.pageGuide')); } catch { return null; }
 })();
-let visual = null; // visual mode: anchor grid point {x,y} the selection box starts from
 let insertQuery = ''; // insert-mode fuzzy-search string
 let wire = null; // { source: {refdes, term} | null, points: [{x,y}] } — a wire being drawn in segments
 let wirePreview = null;
@@ -309,7 +307,6 @@ let scrollScheme = (() => {
 })();
 let altHeld = false;
 let directWire = null; // protected direct wire: { source:{refdes,term}, points:[] }
-let counts = 0;
 let pendingKey = null; // { key, at } for dd chord
 let showGrid = true; // '#' toggles the placement grid
 let history = []; // undo stack (JSON blobs)
@@ -388,7 +385,7 @@ export function selectAllNetIds(model) {
     .map((net) => net.id);
 }
 
-export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, visual = null, moveMode = null, copyMode = false, deleteMode = false, alignMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
+export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, directWire = null, moveMode = null, copyMode = false, deleteMode = false, alignMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
   if (directWire) return {
     key: 'wire',
     canvasClass: 'direct-wire-mode',
@@ -401,7 +398,6 @@ export function deriveInteractionState({ mode = 'normal', labelMode = null, wire
     toolbar: 'wire',
     label: 'WIRE',
   };
-  if (visual) return { key: 'visual', canvasClass: 'mode-visual', toolbar: 'visual', label: 'VISUAL' };
   if (labelMode === 'net') return { key: 'net-label', canvasClass: 'mode-net-label', toolbar: 'net-label', label: 'NET LABEL' };
   if (labelMode === 'highlight') return { key: 'highlight', canvasClass: 'mode-highlight', toolbar: 'highlight', label: 'HIGHLIGHT' };
   if (labelMode === 'annotation') return { key: 'annotation', canvasClass: 'mode-annotation', toolbar: 'annotation', label: 'ANNOTATION' };
@@ -572,7 +568,6 @@ export function applyJson(blob) {
   if (alignTool) alignTool = { source: null, hover: null };
   movePending = false;
   copyPending = false;
-  visual = null;
   mode = 'normal';
   labelMode = null;
   annotationPoints = [];
@@ -622,7 +617,6 @@ function restoreToolState(state) {
   if (!state) return;
   labelMode = state.labelMode;
   annotationPoints = [];
-  visual = null;
   drag = null;
   copyMode = !!state.copyMode;
   moveMode = state.moveMode || null;
@@ -1892,7 +1886,7 @@ export function deleteSelection() {
 /** A tap of Space: a labelled wire stub on every unconnected terminal of the
  * selected parts, skipping any that would short (core/stubs.js). */
 export function stubSelection() {
-  if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode || visual) return;
+  if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode) return;
   const refs = selectedComps().map((c) => c.refdes);
   if (!refs.length) {
     hintLine('Space: select parts to add wire stubs to their unconnected terminals');
@@ -2841,11 +2835,7 @@ export function renderCanvas(modelKey) {
   activePlacementGuides = placementGuide?.guides || [];
   let previewSelection;
   const marqueeDrag = drag?.mode === 'marquee' || drag?.mode === 'deletemarquee';
-  const previewBox = visual
-    ? worldRect(visual, cursor)
-    : marqueeDrag && drag.rubber
-      ? drag.rubber
-      : null;
+  const previewBox = marqueeDrag && drag.rubber ? drag.rubber : null;
   if (previewBox) {
     const found = boxSelectionContents(previewBox.x0, previewBox.y0, previewBox.x1, previewBox.y1);
     previewSelection = {
@@ -2903,11 +2893,7 @@ export function renderCanvas(modelKey) {
           : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
         : undefined,
     warnOverlaps: netWarnings,
-    rubber: visual
-      ? { x0: Math.min(visual.x, cursor.x), y0: Math.min(visual.y, cursor.y), x1: Math.max(visual.x, cursor.x), y1: Math.max(visual.y, cursor.y) }
-      : drag && drag.rubber
-        ? drag.rubber
-        : undefined,
+    rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview: wire ? currentWirePreview() : null,
     directWirePreview: directPreview,
     wireMode: !!wire || !!directWire,
@@ -3101,7 +3087,7 @@ function cancelDrag() {
 
 /** Select everything COMPLETELY inside a world box (components by bbox, labels
  *  by bbox, nets by route). With `shift` the box adds to the current selection.
- *  Shared by the mouse marquee and visual-mode Enter. */
+ *  The mouse marquee's. */
 function applyBoxSelection(x0, y0, x1, y1, shift) {
   const found = boxSelectionContents(x0, y0, x1, y1);
   if (shift) {
@@ -3121,7 +3107,7 @@ function applyBoxSelection(x0, y0, x1, y1, shift) {
   selectedNets = shift ? new Set([...selectedNets, ...found.nets]) : new Set(found.nets);
 }
 
-/** Purely compute the objects a contained marquee/visual box would select. */
+/** Purely compute the objects a contained marquee box would select. */
 function boxSelectionContents(x0, y0, x1, y1) {
   const box = worldRect({ x: x0, y: y0 }, { x: x1, y: y1 });
   const refs = [];
@@ -6549,7 +6535,7 @@ canvasEl.addEventListener('dblclick', (ev) => {
       selectedWires.clear();
       selectedNets = new Set([wire.net.id]);
       render();
-    } else if (mode === 'normal' && !hasWireDraft() && !labelMode && !moveMode && !copyMode && !deleteMode && !visual
+    } else if (mode === 'normal' && !hasWireDraft() && !labelMode && !moveMode && !copyMode && !deleteMode
         && !hasSelectableObjectAt(w)) {
       // Double-clicking empty paper opens the insert menu right there.
       cursor = snappedWorld(w);
@@ -6694,32 +6680,6 @@ function viewKey(key, shiftKey = false) {
   return true;
 }
 
-function onVisualKey(key) {
-  const move = {
-    ArrowLeft: [-1, 0],
-    ArrowDown: [0, 1],
-    ArrowUp: [0, -1],
-    ArrowRight: [1, 0],
-  }[key];
-  if (move) {
-    moveCursor(move[0], move[1]);
-    render();
-    return;
-  }
-  if (key === 'Enter') {
-    applyBoxSelection(visual.x, visual.y, cursor.x, cursor.y, false);
-    visual = null;
-    if (deleteMode && copySelectionExists()) deleteSelection();
-    render();
-    return;
-  }
-  if (key === 'Escape' || key === 'v') {
-    visual = null;
-    render();
-    return;
-  }
-}
-
 // The last repeatable edit, for `.`: how to do it again to whatever is
 // selected (or pointed at) now. Session state; never part of a document.
 let lastAction = null; // { label, run }
@@ -6728,13 +6688,13 @@ export function rememberAction(label, run) {
   lastAction = { label, run };
 }
 
-export function repeatLastAction(count = 1) {
+export function repeatLastAction() {
   if (!lastAction) {
     logLine('. repeats the last rotate, mirror, swap, rail, stubs, or tidy; nothing to repeat yet');
     return;
   }
-  hintLine(`repeat: ${lastAction.label}${count > 1 ? ` ×${count}` : ''}`);
-  for (let i = 0; i < count; i++) lastAction.run();
+  hintLine(`repeat: ${lastAction.label}`);
+  lastAction.run();
 }
 
 /** t / = / F2: edit the text of what is selected -- a label, a part's name
@@ -6869,13 +6829,12 @@ function onNormalKey(key, shiftKey = false) {
     commitModalMove();
     return;
   }
-  // 9 arms net highlighting and 8 removes every highlight, unless they
-  // continue a count already being typed (e.g. 18 then an arrow).
-  if (key === '9' && !counts) {
+  // 9 arms net highlighting and 8 removes every highlight.
+  if (key === '9') {
     activateHighlight();
     return;
   }
-  if (key === '8' && !counts) {
+  if (key === '8') {
     removeAllNetHighlights();
     return;
   }
@@ -6895,13 +6854,6 @@ function onNormalKey(key, shiftKey = false) {
     addBeatHere();
     return;
   }
-  if (/^[0-9]$/.test(key)) {
-    counts = counts * 10 + Number(key);
-    return;
-  }
-  const count = counts || 1;
-  counts = 0;
-
   if (key === 'Enter' && labelMode === 'line') {
     commitLineAnnotation();
     return;
@@ -6957,7 +6909,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === '.') {
-    repeatLastAction(count);
+    repeatLastAction();
     return;
   }
 
@@ -6999,8 +6951,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // g and v over an unconnected pin wire a ground or supply to it; elsewhere
-  // v is visual mode.
+  // g and v over an unconnected pin wire a ground or supply to it.
   if (key === 'g' || (key === 'v' && pinUnderCursor())) {
     railAtPointedPin(key === 'g' ? 'ground' : 'supply');
     return;
@@ -7024,8 +6975,8 @@ function onNormalKey(key, shiftKey = false) {
     const labs = selectedLabels();
     const hasWireSelection = selectedWires.size > 0 || !!selectedWire || selectedNets.size > 0;
     if (comps.length || labs.length || hasWireSelection) {
-      const dx = nudgeKey[0] * count * GRID;
-      const dy = nudgeKey[1] * count * GRID;
+      const dx = nudgeKey[0] * GRID;
+      const dy = nudgeKey[1] * GRID;
       const changed = transformMixedSelection('translate', { translation: { dx, dy } });
       const primary = comps.find((c) => c.refdes === selected) || comps[0];
       const a = labs.length ? labs[0].anchorWorld() : null;
@@ -7034,7 +6985,7 @@ function onNormalKey(key, shiftKey = false) {
       if (changed && drag?.mode === 'copyghost') refreshCopyGhostBase({ translation: { dx, dy } });
       followCursor();
     } else {
-      moveCursor(nudgeKey[0] * count, nudgeKey[1] * count);
+      moveCursor(nudgeKey[0], nudgeKey[1]);
     }
     render();
     return;
@@ -7047,12 +6998,8 @@ function onNormalKey(key, shiftKey = false) {
     if (!selectedComps().length && !selectedLabels().length && !selectedWires.size && !selectedWire && !selectedNets.size) {
       logLine('nothing selected to rotate');
     } else {
-      const total = ((90 * count) % 360 + 360) % 360;
-      if (total) rotateSelectionAbout(total);
-      rememberAction(count > 1 ? `rotate ${count}×` : 'rotate', () => {
-        counts = count;
-        onNormalKey('r');
-      });
+      rotateSelectionAbout(90);
+      rememberAction('rotate', () => onNormalKey('r'));
       const primary = selectedComp() || selectedComps()[0];
       if (drag?.mode !== 'copyghost' && primary) cursor = { x: primary.transform.x, y: primary.transform.y };
       render();
@@ -7081,11 +7028,6 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === 'y') {
-    if (copySelection()) publishObjectClipboard();
-    return;
-  }
-
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
       if (deleteSelection()) render();
@@ -7097,24 +7039,12 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === 'p') {
-    pasteClipboard();
-    return;
-  }
-
   if (key === 'w') {
     activateWire();
     return;
   }
 
-  if (key === 'v') {
-    // Visual mode: the box grows from the cursor as you move with arrows;
-    // Enter commits the box selection (like a marquee), Esc cancels.
-    activateVisual();
-    return;
-  }
-
-  if (key === 'i' || key === 'I') {
+  if (key === 'i') {
     activatePlace();
     return;
   }
@@ -7272,7 +7202,7 @@ export function runLine(line) {
 // ----- status -------------------------------------------------------------
 
 export function interactionState() {
-  return deriveInteractionState({ mode, labelMode, wire, directWire, visual, moveMode, copyMode, deleteMode, alignMode: !!alignTool, movePending, copyPending, routeMode });
+  return deriveInteractionState({ mode, labelMode, wire, directWire, moveMode, copyMode, deleteMode, alignMode: !!alignTool, movePending, copyPending, routeMode });
 }
 
 let contextMenuDismiss = null;
@@ -7316,7 +7246,6 @@ function leaveActiveInteraction() {
   clearSymmetry();
   insertQuery = '';
   mode = 'normal';
-  visual = null;
   alignTool = null;
 }
 
@@ -7333,15 +7262,13 @@ function wireTerminalLetter(key) {
  *  every letter as query text, and in Wire mode a letter naming a terminal of
  *  the part being pointed at still picks that terminal. */
 function toolSwitchForKey(key, shiftKey = false) {
-  const inside = wire || directWire || (mode === 'insert' && pendingPlace) || visual;
+  const inside = wire || directWire || (mode === 'insert' && pendingPlace);
   if (!inside || (drag && !hasModalPlacement())) return null;
   if (key === 'w' && (wire || directWire)) return null;
-  if (key === 'v' && visual) return null;
   if (wire && wireTerminalLetter(key)) return null;
   if (key === 'N' && shiftKey) return activateAnnotation;
   const tools = {
     i: activatePlace,
-    I: activatePlace,
     w: activateWire,
     m: () => activateMove('connected'),
     M: () => activateMove('detached'),
@@ -7353,7 +7280,6 @@ function toolSwitchForKey(key, shiftKey = false) {
     l: () => activateShapeAnnotation('line'),
     L: activateNetLabel,
     e: activateEquation,
-    v: activateVisual,
   };
   return tools[key] || null;
 }
@@ -7366,7 +7292,6 @@ function activateLabelPlacement(kind) {
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
-  visual = null;
   moveMode = null;
   copyMode = false;
   deleteMode = false;
@@ -7454,7 +7379,6 @@ export function activatePlace() {
   deleteMode = false;
   movePending = false;
   copyPending = false;
-  visual = null;
   labelMode = null;
   annotationPoints = [];
   mode = 'insert';
@@ -7472,7 +7396,6 @@ export function activateSelect() {
   pendingPlace = null;
   clearSymmetry();
   insertQuery = '';
-  visual = null;
   labelMode = null;
   annotationPoints = [];
   moveMode = null;
@@ -7482,23 +7405,6 @@ export function activateSelect() {
   copyPending = false;
   render();
 }
-export function activateVisual() {
-  leaveActiveInteraction();
-  mode = 'normal';
-  terminalSnap = false;
-  moveMode = null;
-  copyMode = false;
-  // Keep Delete mode armed so a visual box can delete the selected set on
-  // Enter, matching the immediate-delete semantics of click selection.
-  movePending = false;
-  copyPending = false;
-  labelMode = null;
-  annotationPoints = [];
-  visual = { x: cursor.x, y: cursor.y };
-  selectedNets.clear();
-  render();
-}
-
 export function activateDelete() {
   leaveActiveInteraction();
   if (copySelectionExists()) {
@@ -7509,7 +7415,6 @@ export function activateDelete() {
   }
   mode = 'normal';
   terminalSnap = false;
-  visual = null;
   moveMode = null;
   copyMode = false;
   movePending = false;
@@ -7530,7 +7435,6 @@ export function activateWire() {
   deleteMode = false;
   movePending = false;
   copyPending = false;
-  visual = null;
   labelMode = null;
   annotationPoints = [];
   mode = 'normal';
@@ -7548,7 +7452,6 @@ export function activateMove(kind = 'connected') {
   noteTip('move-start');
   mode = 'normal';
   terminalSnap = false;
-  visual = null;
   copyMode = false;
   deleteMode = false;
   movePending = false;
@@ -7563,7 +7466,6 @@ export function activateCopy() {
   leaveActiveInteraction();
   mode = 'normal';
   terminalSnap = false;
-  visual = null;
   moveMode = null;
   deleteMode = false;
   movePending = false;
@@ -7802,7 +7704,7 @@ window.addEventListener('keydown', (ev) => {
   // mode timeout window. This also covers global commands such as Ctrl+A,
   // which are handled before onNormalKey below.
   const isDeleteContinuation = ev.key === 'd' && !ev.ctrlKey && !ev.metaKey && !ev.altKey
-    && mode === 'normal' && !visual && !wire && !directWire
+    && mode === 'normal' && !wire && !directWire
     && pendingKey?.key === 'd' && Date.now() - pendingKey.at < 800;
   // Symmetric placement is held down, so the keys that drive and commit the
   // ghost have to survive the modifier branch below, which otherwise swallows
@@ -7828,7 +7730,7 @@ window.addEventListener('keydown', (ev) => {
   // Ctrl/Cmd key.
   const alignKey = layoutAlignKey({
     key: ev.key, shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, altKey: ev.altKey,
-    mode, wire: !!wire, directWire: !!directWire, visual: !!visual, drag: !!drag,
+    mode, wire: !!wire, directWire: !!directWire, drag: !!drag,
     moveMode, copyMode, deleteMode, labelMode,
   });
   if (alignKey) {
@@ -7881,7 +7783,7 @@ window.addEventListener('keydown', (ev) => {
     toggleRouteMode();
     return;
   }
-  if (key === 'F2' && mode === 'normal' && !wire && !directWire && !visual && !labelMode && !drag) {
+  if (key === 'F2' && mode === 'normal' && !wire && !directWire && !labelMode && !drag) {
     ev.preventDefault();
     editSelectionText();
     return;
@@ -7915,7 +7817,7 @@ window.addEventListener('keydown', (ev) => {
   // keys available to active interactions and text controls.
   const layerAction = layerActionForKey({
     key, shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, altKey: ev.altKey,
-    mode, wire: !!wire, directWire: !!directWire, visual: !!visual, drag: !!drag,
+    mode, wire: !!wire, directWire: !!directWire, drag: !!drag,
     moveMode, copyMode, deleteMode, labelMode,
   });
   if (layerAction) {
@@ -7972,8 +7874,6 @@ window.addEventListener('keydown', (ev) => {
     onWireKey(key);
   } else if (mode === 'insert') {
     onInsertKey(key, ev.shiftKey);
-  } else if (visual) {
-    onVisualKey(key);
   } else {
     onNormalKey(key, ev.shiftKey);
   }

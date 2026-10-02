@@ -980,20 +980,20 @@ test('tools switch straight from inside another tool, dropping its uncommitted w
   const body = (name) => main.slice(main.indexOf(`function ${name}(`), main.indexOf('\n}\n', main.indexOf(`function ${name}(`)));
   // No tool refuses because another one is mid-interaction any more.
   assert.doesNotMatch(main, /finish (or cancel )?the active interaction/);
-  for (const name of ['activateLabelPlacement', 'activatePlace', 'activateSelect', 'activateVisual', 'activateDelete', 'activateMove', 'activateCopy']) {
+  for (const name of ['activateLabelPlacement', 'activatePlace', 'activateSelect', 'activateDelete', 'activateMove', 'activateCopy']) {
     assert.match(body(name), /^function \w+\([^)]*\) \{\s*leaveActiveInteraction\(\);/, name);
   }
   // Re-picking Wire keeps a half-drawn wire; anything else is dropped first.
   assert.match(body('activateWire'), /if \(hasWireDraft\(\)\) \{[^}]*return; \}\s*leaveActiveInteraction\(\);/);
   const leave = body('leaveActiveInteraction');
-  for (const part of [/cancelDrag\(\)/, /wire = null;/, /directWire = null;/, /pendingPlace = null;/, /mode = 'normal';/, /visual = null;/]) assert.match(leave, part);
+  for (const part of [/cancelDrag\(\)/, /wire = null;/, /directWire = null;/, /pendingPlace = null;/, /mode = 'normal';/]) assert.match(leave, part);
 
   const pick = vm.runInNewContext(`(${body('toolSwitchForKey')}\n})`, {
     get wire() { return state.wire; }, get directWire() { return null; }, get mode() { return state.mode; },
-    get pendingPlace() { return state.pendingPlace; }, get visual() { return null; }, get drag() { return null; },
+    get pendingPlace() { return state.pendingPlace; }, get drag() { return null; },
     hasModalPlacement: () => false, wireTerminalLetter: (key) => state.terminals.includes(key),
     activatePlace: 'place', activateWire: 'wire', activateMove: () => {}, activateCopy: 'copy', activateAlign: 'align', activateHighlight: 'hl',
-    activateShapeAnnotation: () => {}, activateNetLabel: 'netlabel', activateEquation: 'eq', activateVisual: 'visual', activateAnnotation: 'note',
+    activateShapeAnnotation: () => {}, activateNetLabel: 'netlabel', activateEquation: 'eq', activateAnnotation: 'note',
   });
   let state = { mode: 'insert', pendingPlace: null, wire: null, terminals: [] };
   assert.equal(pick('w'), null); // the insert search keeps its letters
@@ -1178,10 +1178,14 @@ test('a compatibility mousemove after the same mouse pointermove is skipped', ()
   assert.equal(skip(mouse), false);
 });
 
-test('9 arms net highlighting and 8 clears it unless they continue a count', () => {
+test('9 arms net highlighting and 8 clears it; digits are no repeat counts', () => {
   const main = editorSource();
-  assert.match(main, /if \(key === '9' && !counts\) \{\s*activateHighlight\(\);/);
-  assert.match(main, /if \(key === '8' && !counts\) \{\s*removeAllNetHighlights\(\);/);
+  assert.match(main, /if \(key === '9'\) \{\s*activateHighlight\(\);/);
+  assert.match(main, /if \(key === '8'\) \{\s*removeAllNetHighlights\(\);/);
+  assert.doesNotMatch(main, /counts = counts \* 10/);
+  // No vim visual mode either: the marquee is the box selection.
+  assert.doesNotMatch(main, /activateVisual|onVisualKey/);
+  assert.doesNotMatch(main, /key === 'i' \|\| key === 'I'/);
   // Clicks cycle through one undoable model edit (on a beat, the beat's own
   // highlight); the net list shows the color.
   assert.match(main, /commit\(\(\) => \{\s*color = beatIndex === null \? circuit\.cycleNetHighlight\(net\) : cycleBeatHighlight\(circuit, beatIndex, net, NET_HIGHLIGHT_COLORS\);\s*\}\);/);
