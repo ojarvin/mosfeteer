@@ -13029,7 +13029,8 @@ function converter(type, description, text, terminals, body, { analogSide = 0, t
         style: 'symbol',
       })),
       { kind: 'path', d: body, style: 'emph' },
-      ...(analogSide ? polarityMarks(analogSide * 58) : []),
+      // Set in from the slant as far as an op-amp's marks are from its back edge.
+      ...(analogSide ? polarityMarks(analogSide * 50) : []),
       { kind: 'text', x: textX, y: 0, text, anchor: 'middle', font: 'label', keepUpright: true },
     ],
     textPos: null,

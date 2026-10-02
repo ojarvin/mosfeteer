@@ -328,8 +328,13 @@ test('differential ADC and DAC put + over - on the pointed analog side', () => {
       assert.ok(def.graphics.some((g) => g.d === `M ${side * 200} ${y} L ${side * 88} ${y}`), `${type} lead at ${y}`);
     }
     // + on the top pin, - on the bottom one.
-    assert.ok(def.graphics.some((g) => g.d === `M ${side * 58} -54 L ${side * 58} -26`), `${type} plus`);
-    assert.ok(def.graphics.some((g) => g.d === `M ${side * 58 - 14} 40 L ${side * 58 + 14} 40`), `${type} minus`);
+    assert.ok(def.graphics.some((g) => g.d === `M ${side * 50} -54 L ${side * 50} -26`), `${type} plus`);
+    assert.ok(def.graphics.some((g) => g.d === `M ${side * 50 - 14} 40 L ${side * 50 + 14} 40`), `${type} minus`);
+    // At least as clear of the slant (x = 120 - 0.8|y|, outward) as the
+    // op-amp's marks are of its back edge (17 units, measured square to it).
+    const slantGap = (x, y) => ((120 - 0.8 * Math.abs(y)) - Math.abs(x)) * 100 / Math.hypot(80, 100);
+    assert.ok(slantGap(64, 40) >= 17, `${type} marks clear of the body`);
+    assert.ok(slantGap(50, 54) >= 17, `${type} plus bar clear of the body`);
   }
 });
 
