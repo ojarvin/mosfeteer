@@ -15081,11 +15081,12 @@ const tf_s = transferFunctionBlock('tf_s', 's');
 const tf_z = transferFunctionBlock('tf_z', 'z');
 
 /**
- * A gain: the block-diagram triangle, pointing the way the signal goes, with
- * its one coefficient (a number or a symbol, `k`, `a_1`, `2*g_m`) drawn
- * inside it as math when it fits, above it otherwise (Circuit
- * #_syncTransferFunctionLabel). Its shape already shows the direction, so its
- * input wire takes no automatic arrowhead.
+ * A gain: the block-diagram triangle, pointing the way the signal goes, its
+ * tip on the output pin and its centroid on the origin, so a coefficient
+ * centred on the part sits in the middle of the triangle at any rotation.
+ * A short coefficient (`k`, `b_1`, `0.5`) is drawn inside it, a longer one
+ * (`-c_1`, `2*g_m`) beside it (Circuit#_syncTransferFunctionLabel). Its shape
+ * already shows the direction, so its input wire takes no automatic arrowhead.
  */
 const gain = defineSymbol({
   type: 'gain',
@@ -15097,9 +15098,8 @@ const gain = defineSymbol({
   ],
   bbox: { x: -80, y: -80, w: 160, h: 160 },
   graphics: [
-    { kind: 'path', d: 'M -80 0 L -48 0', style: 'symbol', terminalLead: true },
-    { kind: 'path', d: 'M 52 0 L -48 -60 L -48 60 Z', style: 'emph' },
-    { kind: 'path', d: 'M 52 0 L 80 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M -80 0 L -40 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M 80 0 L -40 -60 L -40 60 Z', style: 'emph' },
   ],
   textPos: null,
   refPos: null,
@@ -16768,7 +16768,7 @@ let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_S
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
-let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
 
 
@@ -19494,16 +19494,28 @@ class Circuit {
     }
     if (!variable) return null;
     const text = `$${gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
-    // A gain's coefficient sits inside its triangle when it fits there (a
-    // symbol or a short number), else above it.
-    const offset = gain
-      ? (new LabelInstance(this, { text, math: true, align: 'center' }).textWidth() <= 1.6 * GRID ? { x: 0, y: 0 } : { x: 0, y: -3 * GRID })
-      : { x: 0, y: 0 };
+    // A gain's short coefficient sits inside its triangle (centred on its
+    // centroid, the part's origin); a longer one beside it, by one rule in
+    // world terms: above a triangle the signal crosses horizontally, to the
+    // right of one it runs up or down through. Re-placed on every transform.
+    let offset = { x: 0, y: 0 };
+    let align = 'center';
+    // Inside a triangle, every coefficient is set a size smaller, so a signed
+    // name (-g_1) clears the edges as a plain one (b_1) does.
+    const inside = gain && gainFitsInside(component.value);
+    const width = inside ? 'thin' : 'normal';
+    if (gain && !inside) {
+      const flow = applyDir(component.transform, 1, 0);
+      const world = Math.abs(flow.x) > 0 ? { x: 0, y: -3 * GRID } : { x: 3 * GRID, y: 0 };
+      const local = inverseTransform(component.transform, component.transform.x + world.x, component.transform.y + world.y);
+      offset = { x: snap(local.x), y: snap(local.y) };
+      align = world.x ? 'parent' : 'center';
+    }
     if (!label) {
       label = this.addLabel({
         text, math: true, owner: component.refdes, role: TRANSFER_FUNCTION_ROLE,
-        offset, align: 'center', selectable: false,
-        style: { color: component.style.color },
+        offset, align, selectable: false,
+        style: { color: component.style.color, width },
       });
     } else if (label._text !== text) {
       label._text = text;
@@ -19511,6 +19523,11 @@ class Circuit {
       label.clearRenderedTextBounds();
     }
     label.offset = offset;
+    label.align = align;
+    if (label.style.width !== width) {
+      label.style.width = width;
+      label.clearRenderedTextBounds();
+    }
     this.invalidateRoutingCache();
     return label;
   }
@@ -19732,6 +19749,8 @@ class Circuit {
       if (rotation !== undefined) c.transform.rotation = ((Math.round(rotation / 90) % 4) + 4) % 4 * 90;
       if (mirrorX !== undefined) c.transform.mirrorX = !!mirrorX;
       if (mirrorY !== undefined) c.transform.mirrorY = !!mirrorY;
+      // A gain's coefficient keeps its place in world terms (above, or right).
+      if (c.type === 'gain') this._syncTransferFunctionLabel(c);
       this.connectCoincident(refdes);
     } catch (err) {
       this._rollbackComponentEdit();
@@ -29589,6 +29608,7 @@ __modules["src/core/transfer-function.js"] = function (__require, __exports) {
 __exports.isTransferFunction = isTransferFunction;
 __exports.isSignalBlock = isSignalBlock;
 __exports.parseGain = parseGain;
+__exports.gainFitsInside = gainFitsInside;
 __exports.gainDisplay = gainDisplay;
 __exports.parseTransferFunction = parseTransferFunction;
 __exports.polynomialTex = polynomialTex;
@@ -29631,6 +29651,20 @@ function parseGain(text) {
   const tokens = coefficients(`[${String(text ?? '').trim()}]`, 'gain');
   if (tokens.length !== 1) throw new Error('a gain is one coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m)');
   return tokens[0];
+}
+
+/**
+ * Whether a gain's coefficient is short enough to sit inside its triangle:
+ * a plain name of up to two letters with a short subscript, signed or not
+ * (`k`, `b_1`, `-g_1`, `K_p`, `a_12`), a positive number of up to three
+ * characters (`2`, `10`, `0.5`), or a negative digit (`-2`). Anything else
+ * -- a product, a quotient, a longer number -- goes beside the triangle, so
+ * every gain in a diagram follows one rule.
+ */
+function gainFitsInside(text) {
+  let token;
+  try { token = parseGain(text); } catch { return false; }
+  return /^-?[A-Za-z]{1,2}(?:_\{?[A-Za-z0-9]{1,2}\}?)?$/.test(token) || /^(?:\d{1,2}|\d\.\d|-\d)$/.test(token);
 }
 
 /** A gain's value as TeX, or a plain mark when it does not read. */

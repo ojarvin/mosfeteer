@@ -237,3 +237,26 @@ test('the response graph fits its dB axis to the curves, in whole 20 dB steps', 
   const figure = responseFigure(plot);
   assert.deepEqual(figure.ranges.db, [-320, 20]);
 });
+
+test('a short gain coefficient sits in its triangle; a longer one beside it, by one rule at any rotation', async () => {
+  const { gainFitsInside } = await import('../src/core/transfer-function.js');
+  for (const inside of ['k', 'b_1', '-g_1', '-c_1', 'K_p', 'a_12', 'g_{m}', '0.5', '2', '10', '-2']) assert.equal(gainFitsInside(inside), true, inside);
+  for (const outside of ['2*g_m', '-2*g_m', 'g_m/C', '1.25e-3', 'abc', '100', '0.25', '-0.5']) assert.equal(gainFitsInside(outside), false, outside);
+  const circuit = new Circuit();
+  const place = (value, rotation) => {
+    const gain = circuit.addComponent('gain', { value, rotation });
+    return [...circuit.labels.values()].find((label) => label.owner === gain.refdes).anchorWorld();
+  };
+  // Inside: on the triangle's centroid, the part's origin.
+  assert.deepEqual(place('b_1', 90), { x: 0, y: 0 });
+  assert.deepEqual(place('-g_1', 180), { x: 0, y: 0 });
+  // Beside: above a horizontal triangle, right of a vertical one.
+  assert.deepEqual(place('2*g_m', 0), { x: 0, y: -120 });
+  assert.deepEqual(place('2*g_m', 180), { x: 0, y: -120 });
+  assert.deepEqual(place('g_m/C', 90), { x: 120, y: 0 });
+  assert.deepEqual(place('g_m/C', 270), { x: 120, y: 0 });
+  // Rotating a gain keeps that rule.
+  const gain = [...circuit.components.values()].at(-1);
+  circuit.setTransform(gain.refdes, { rotation: 0 });
+  assert.deepEqual([...circuit.labels.values()].find((label) => label.owner === gain.refdes).anchorWorld(), { x: 0, y: -120 });
+});

@@ -79,7 +79,7 @@ The routing-sensitive symbol contract is:
 | block | `T1`…`T12` around the perimeter | default bbox `{-80,-80,160,160}`, resizable in even cell counts |
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at `(0,-40)`, `(0,40)`, `(-40,0)`, `(40,0)` | bbox `{-40,-40,80,80}`, 40-unit-radius circle with plus or multiply mark; unused terminals do not fail Design Check; optional negative inputs are owned sign labels |
 | filter blocks | `in=(-80,0)`, `out=(80,0)` | `filter_lpf`/`hpf`/`bpf`/`notch`: bbox `{-80,-80,160,160}`, a box with the response sketched inside |
-| gain | `in=(-80,0)`, `out=(80,0)` | `gain`: bbox `{-80,-80,160,160}`, a triangle pointing at `out`; its value is one coefficient, drawn as an owned math label inside it (or above, when too wide) |
+| gain | `in=(-80,0)`, `out=(80,0)` | `gain`: bbox `{-80,-80,160,160}`, a triangle with its tip on `out` and its centroid on the origin; its value is one coefficient, an owned math label inside it when short (`gainFitsInside`), else above it (horizontal flow) or right of it (vertical), in world terms |
 | transfer function | `in=(-w/2,0)`, `out=(w/2,0)` | `tf_s`/`tf_z`: the value is a MATLAB-style `tf([num], [den])` or a gain, in `s` highest power first and in `z` ascending powers of z^-1 (`'Variable','z'` for descending powers of z, `src/core/transfer-function.js`) drawn as an owned math label; the box (`ComponentInstance#bodySize`, at least `160x160`, whole pairs of cells) fits the equation by the model's own estimate, and a new definition reroutes its wires (`setPartValue`) |
 
 All symbol linework is textbook style: butt-ended normal symbol strokes,

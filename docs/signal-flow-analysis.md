@@ -14,8 +14,13 @@ Each wire is one signal. The parts are:
   `y = H x`, from the block's MATLAB-style definition. Symbolic coefficients
   stay symbols in the result.
 - **Gains** `gain`: `y = k x`, the triangle pointing the way the signal
-  goes, its one coefficient (a number or a symbol: `k`, `0.5`, `a_1`,
-  `2*g_m`) drawn inside it when it fits, above it otherwise.
+  goes (its tip on the output pin, its centroid on the part's origin), its
+  one coefficient (`k`, `0.5`, `a_1`, `2*g_m`) placed by one rule: a short
+  one -- a name of up to two letters with a short subscript, signed or not,
+  a positive number of up to three characters, or a negative digit -- inside
+  the triangle, a label size smaller; any other (a product, a quotient, a longer number) beside it, above a
+  triangle the signal crosses horizontally and to the right of a vertical
+  one, kept so through rotations (`gainFitsInside`).
 - **Sum junctions** `signal_sum`: `e = ± n ± s ± w` over the connected
   inputs, the signs from the junction's negative inputs.
 - **Multiply junctions** `signal_multiply`: a gain. All inputs but one must

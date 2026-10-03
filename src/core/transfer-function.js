@@ -35,6 +35,20 @@ export function parseGain(text) {
   return tokens[0];
 }
 
+/**
+ * Whether a gain's coefficient is short enough to sit inside its triangle:
+ * a plain name of up to two letters with a short subscript, signed or not
+ * (`k`, `b_1`, `-g_1`, `K_p`, `a_12`), a positive number of up to three
+ * characters (`2`, `10`, `0.5`), or a negative digit (`-2`). Anything else
+ * -- a product, a quotient, a longer number -- goes beside the triangle, so
+ * every gain in a diagram follows one rule.
+ */
+export function gainFitsInside(text) {
+  let token;
+  try { token = parseGain(text); } catch { return false; }
+  return /^-?[A-Za-z]{1,2}(?:_\{?[A-Za-z0-9]{1,2}\}?)?$/.test(token) || /^(?:\d{1,2}|\d\.\d|-\d)$/.test(token);
+}
+
 /** A gain's value as TeX, or a plain mark when it does not read. */
 export function gainDisplay(text) {
   try {

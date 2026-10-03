@@ -9,7 +9,7 @@ import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
-import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -2722,16 +2722,28 @@ export class Circuit {
     }
     if (!variable) return null;
     const text = `$${gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
-    // A gain's coefficient sits inside its triangle when it fits there (a
-    // symbol or a short number), else above it.
-    const offset = gain
-      ? (new LabelInstance(this, { text, math: true, align: 'center' }).textWidth() <= 1.6 * GRID ? { x: 0, y: 0 } : { x: 0, y: -3 * GRID })
-      : { x: 0, y: 0 };
+    // A gain's short coefficient sits inside its triangle (centred on its
+    // centroid, the part's origin); a longer one beside it, by one rule in
+    // world terms: above a triangle the signal crosses horizontally, to the
+    // right of one it runs up or down through. Re-placed on every transform.
+    let offset = { x: 0, y: 0 };
+    let align = 'center';
+    // Inside a triangle, every coefficient is set a size smaller, so a signed
+    // name (-g_1) clears the edges as a plain one (b_1) does.
+    const inside = gain && gainFitsInside(component.value);
+    const width = inside ? 'thin' : 'normal';
+    if (gain && !inside) {
+      const flow = applyDir(component.transform, 1, 0);
+      const world = Math.abs(flow.x) > 0 ? { x: 0, y: -3 * GRID } : { x: 3 * GRID, y: 0 };
+      const local = inverseTransform(component.transform, component.transform.x + world.x, component.transform.y + world.y);
+      offset = { x: snap(local.x), y: snap(local.y) };
+      align = world.x ? 'parent' : 'center';
+    }
     if (!label) {
       label = this.addLabel({
         text, math: true, owner: component.refdes, role: TRANSFER_FUNCTION_ROLE,
-        offset, align: 'center', selectable: false,
-        style: { color: component.style.color },
+        offset, align, selectable: false,
+        style: { color: component.style.color, width },
       });
     } else if (label._text !== text) {
       label._text = text;
@@ -2739,6 +2751,11 @@ export class Circuit {
       label.clearRenderedTextBounds();
     }
     label.offset = offset;
+    label.align = align;
+    if (label.style.width !== width) {
+      label.style.width = width;
+      label.clearRenderedTextBounds();
+    }
     this.invalidateRoutingCache();
     return label;
   }
@@ -2960,6 +2977,8 @@ export class Circuit {
       if (rotation !== undefined) c.transform.rotation = ((Math.round(rotation / 90) % 4) + 4) % 4 * 90;
       if (mirrorX !== undefined) c.transform.mirrorX = !!mirrorX;
       if (mirrorY !== undefined) c.transform.mirrorY = !!mirrorY;
+      // A gain's coefficient keeps its place in world terms (above, or right).
+      if (c.type === 'gain') this._syncTransferFunctionLabel(c);
       this.connectCoincident(refdes);
     } catch (err) {
       this._rollbackComponentEdit();
