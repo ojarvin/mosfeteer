@@ -1005,15 +1005,22 @@ export function normalizeAnalysisValues(value) {
     for (const [name, number] of Object.entries(raw.multipliers || {})) if (typeof name === 'string' && name.length <= 60 && positive(number)) multipliers[name] = number;
     bode = { intrinsicGain: positive(raw.intrinsicGain), parasiticRatio: positive(raw.parasiticRatio), multipliers };
   }
-  return { coefficients, bode };
+  // The graph's frequency axis for s results: ω, or f/fs with s in units of 1/Ts.
+  const sAxis = value?.sAxis === 'normalized' ? 'normalized' : null;
+  return { coefficients, bode, ...(sAxis ? { sAxis } : {}) };
 }
 
 function analysisValuesJSON(values) {
   const coefficients = values?.coefficients || {};
   const bode = values?.bode;
   const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
-  if (!Object.keys(coefficients).length && !hasBode) return {};
-  return { analysisValues: { ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}), ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}) } };
+  const sAxis = values?.sAxis === 'normalized';
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis) return {};
+  return { analysisValues: {
+    ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
+    ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
+    ...(sAxis ? { sAxis: 'normalized' } : {}),
+  } };
 }
 
 /** A plot of several magnitude responses (signal-flow analysis): coloured

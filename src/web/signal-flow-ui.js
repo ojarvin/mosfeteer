@@ -245,12 +245,14 @@ function graphSvg(plot) {
   return svg;
 }
 
-const traceVariable = () => traces[0]?.variable || null;
+// The axis s results plot on: ω in the coefficients' units, or f/fs with s
+// in units of 1/Ts (saved with the document). A z result puts every trace on f/fs.
+const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
+const graphPlot = (list) => responsePlot(list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), 's', { sAxis: sAxisSetting() });
 const shownTraces = () => traces.filter((trace) => trace.on);
 
 /** Add an entry's response to the graph (a graph keeps one variable). */
 function addTrace(entry, variable, output) {
-  if (traceVariable() && traceVariable() !== variable) traces = [];
   const id = `${output.key}\n${entry.input}\n${entry.equation}`;
   if (traces.some((trace) => trace.id === id)) return;
   const used = new Set(traces.map((trace) => trace.color));
@@ -262,10 +264,30 @@ function addTrace(entry, variable, output) {
 function renderGraph() {
   const host = section.querySelector('.signal-flow-graph');
   host.replaceChildren();
-  const plot = traces.length ? responsePlot(shownTraces().map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), traceVariable()) : null;
+  const plot = traces.length ? graphPlot(shownTraces()) : null;
   host.hidden = !traces.length;
   if (!traces.length) return;
-  host.append(el('div', { class: 'analysis-equation-label', text: 'Magnitude' }));
+  const head = el('div', { class: 'signal-flow-graph-head' }, [el('div', { class: 'analysis-equation-label', text: 'Magnitude' })]);
+  // With an s result on it, the frequency axis is a choice: ω in the
+  // coefficients' units, or f/fs reading s in units of 1/Ts (as a
+  // continuous-time loop filter normalized to its sample rate is written).
+  if (traces.some((trace) => trace.variable === 's')) {
+    const forced = traces.some((trace) => trace.variable === 'z');
+    const choose = (value) => {
+      editor.circuit.analysisValues.sAxis = value === 'normalized' ? 'normalized' : undefined;
+      markSettingsChanged();
+      renderGraph();
+    };
+    const button = (value, text, title) => {
+      const pressed = forced ? value === 'normalized' : sAxisSetting() === value;
+      return el('button', { type: 'button', text, title, 'aria-pressed': String(pressed), disabled: forced && value !== 'normalized', onclick: () => choose(value) });
+    };
+    head.append(el('div', { class: 'segmented signal-flow-axis', role: 'group', 'aria-label': 'Frequency axis' }, [
+      button('omega', 'ω', 'ω in the units of the coefficients'),
+      button('normalized', 'f/fs', forced ? 'A z result is on the graph: everything plots over f/fs, s in units of 1/Ts' : 'f/fs, reading s in units of 1/Ts: f/fs = ω/2π, to ½'),
+    ]));
+  }
+  host.append(head);
   if (plot) host.append(graphSvg(plot));
   else host.append(el('p', { class: 'field-hint', text: 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
@@ -290,7 +312,7 @@ function renderGraph() {
  *  math label in its colour beside it (children of the box, moving with it). */
 function annotateGraph() {
   const shown = shownTraces();
-  const plot = responsePlot(shown.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), traceVariable());
+  const plot = graphPlot(shown);
   if (!plot) return;
   // The numbers the symbols were drawn with, under the legend.
   const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];

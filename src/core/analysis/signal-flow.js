@@ -490,25 +490,29 @@ function evaluate(dense, re, im) {
 
 /**
  * The magnitude (dB) and phase (degrees) of a numeric transfer function:
- * in s over relative frequency around its corners (bode.js); in z over
- * normalized frequency f/fs from 10^-4 to 1/2, z = e^{j 2 pi f}. Null when
- * a coefficient is symbolic.
+ * in s over ω in the coefficients' own units, around its corners (bode.js),
+ * or -- `sAxis: 'normalized'`, s taken in units of 1/Ts -- over f/fs like a
+ * z result, s = j 2 pi f; in z over normalized frequency f/fs from 10^-4 to
+ * 1/2, z = e^{j 2 pi f}. Null when a coefficient is symbolic.
  */
-export function responseCurve(value, variable, { pointsPerDecade = 40 } = {}) {
+export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega' } = {}) {
   const num = denseCoefficients(value.numerator, variable);
   const den = denseCoefficients(value.denominator, variable);
   if (!num || !den) return null;
-  if (variable === 's') {
+  if (variable === 's' && sAxis !== 'normalized') {
     const sketch = bodeSketch(num, den, { pointsPerDecade });
     return { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
   }
+  // Over f/fs: z on the unit circle, or s up the imaginary axis.
+  const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w), im: Math.sin(w) });
   const points = [];
   let previous = null;
   for (let i = 0; i <= Math.round(Math.log10(0.5 / 1e-4) * pointsPerDecade); i++) {
     const f = Math.min(0.5, 1e-4 * 10 ** (i / pointsPerDecade));
     const w = 2 * Math.PI * f;
-    const top = evaluate(num, Math.cos(w), Math.sin(w));
-    const bottom = evaluate(den, Math.cos(w), Math.sin(w));
+    const point = at(w);
+    const top = evaluate(num, point.re, point.im);
+    const bottom = evaluate(den, point.re, point.im);
     const d = bottom.re ** 2 + bottom.im ** 2;
     const h = { re: (top.re * bottom.re + top.im * bottom.im) / d, im: (top.im * bottom.re - top.re * bottom.im) / d };
     let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
@@ -530,22 +534,30 @@ export const TRACE_COLORS = Object.freeze(['#3b74e0', '#e0533b', '#2e9e5b', '#c9
 /**
  * A plot of several magnitude responses on one pair of axes, as a plot
  * annotation keeps it (model.js normalizePlot): `traces` are
- * `{ label (TeX), color, value (exact rational) }`, all in `variable`. The
- * frequency range covers every trace. Null when none can be plotted.
+ * `{ label (TeX), color, value (exact rational), variable? }` (`variable`
+ * the default). On f/fs (`sAxis: 'normalized'`, or any z trace) s and z
+ * results share the axis; on ω only s results plot. The frequency range
+ * covers every trace. Null when none can be plotted.
  */
-export function responsePlot(traces, variable) {
-  const curves = traces
-    .map((trace) => ({ trace, curve: responseCurve(trace.value, variable) }))
+export function plotAxis(traces, sAxis = 'omega') {
+  return traces.some((trace) => trace.variable === 'z') || sAxis === 'normalized' ? 'normalized' : 'omega';
+}
+
+export function responsePlot(traces, variable, { sAxis = 'omega' } = {}) {
+  const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
+  const axis = plotAxis(withVariable, sAxis);
+  const curves = withVariable
+    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
   if (!curves.length) return null;
   const all = curves.flatMap(({ curve }) => curve.points.map((point) => point.f));
-  const axis = curves[0].curve.axis;
+  const curveAxis = curves[0].curve.axis;
   const low = Math.floor(Math.log10(Math.min(...all)) + 1e-9);
   // A sampled system's frequencies end at f_s/2, where its curves do.
-  const high = axis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
+  const high = curveAxis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
   return {
     kind: 'response',
-    axis,
+    axis: curveAxis,
     range: { low, high: Math.max(high, low + 1) },
     traces: curves.map(({ trace, curve }) => ({
       label: trace.label,

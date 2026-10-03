@@ -272,3 +272,25 @@ test('resizing a graph keeps its legend together beside it', () => {
   // A caption above the box still follows its centre.
   assert.deepEqual(caption.anchor, { x: 520, y: -40 });
 });
+
+test('an s result can plot over f/fs, s in units of 1/Ts, beside z results', async () => {
+  const { responseCurve, responsePlot } = await import('../src/core/analysis/signal-flow.js');
+  const { rationalFunction, symbol, add, integer } = await import('../src/core/analysis/rational.js');
+  // 1/(s + 1): on ω its corner is at 1; on f/fs at 1/(2 pi), -3 dB there.
+  const lowpass = rationalFunction(integer(1), add(symbol('s'), integer(1)), { variable: 's' });
+  const curve = responseCurve(lowpass, 's', { sAxis: 'normalized' });
+  assert.equal(curve.axis, 'normalized');
+  assert.ok(Math.abs(curve.points.at(-1).f - 0.5) < 1e-12);
+  const near = curve.points.reduce((best, p) => (Math.abs(p.f - 1 / (2 * Math.PI)) < Math.abs(best.f - 1 / (2 * Math.PI)) ? p : best));
+  assert.ok(Math.abs(near.db + 3.01) < 0.3);
+  assert.equal(responseCurve(lowpass, 's').axis, 'relative');
+  // Mixed with a z trace, both go on f/fs.
+  const accumulator = rationalFunction(symbol('z'), add(symbol('z'), integer(-1)), { variable: 'z' });
+  const plot = responsePlot([{ label: 'a', color: '#3b74e0', value: lowpass, variable: 's' }, { label: 'b', color: '#e0533b', value: accumulator, variable: 'z' }], 's');
+  assert.equal(plot.axis, 'normalized');
+  assert.equal(plot.traces.length, 2);
+  // Kept with the document.
+  const circuit = new Circuit();
+  circuit.analysisValues.sAxis = 'normalized';
+  assert.equal(Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).analysisValues.sAxis, 'normalized');
+});

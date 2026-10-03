@@ -9389,6 +9389,7 @@ __exports.eliminateSignals = eliminateSignals;
 __exports.transferTex = transferTex;
 __exports.complexText = complexText;
 __exports.responseCurve = responseCurve;
+__exports.plotAxis = plotAxis;
 __exports.responsePlot = responsePlot;
 __exports.resultSymbols = resultSymbols;
 __exports.withCoefficients = withCoefficients;
@@ -9892,25 +9893,29 @@ function evaluate(dense, re, im) {
 
 /**
  * The magnitude (dB) and phase (degrees) of a numeric transfer function:
- * in s over relative frequency around its corners (bode.js); in z over
- * normalized frequency f/fs from 10^-4 to 1/2, z = e^{j 2 pi f}. Null when
- * a coefficient is symbolic.
+ * in s over ω in the coefficients' own units, around its corners (bode.js),
+ * or -- `sAxis: 'normalized'`, s taken in units of 1/Ts -- over f/fs like a
+ * z result, s = j 2 pi f; in z over normalized frequency f/fs from 10^-4 to
+ * 1/2, z = e^{j 2 pi f}. Null when a coefficient is symbolic.
  */
-function responseCurve(value, variable, { pointsPerDecade = 40 } = {}) {
+function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega' } = {}) {
   const num = denseCoefficients(value.numerator, variable);
   const den = denseCoefficients(value.denominator, variable);
   if (!num || !den) return null;
-  if (variable === 's') {
+  if (variable === 's' && sAxis !== 'normalized') {
     const sketch = bodeSketch(num, den, { pointsPerDecade });
     return { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
   }
+  // Over f/fs: z on the unit circle, or s up the imaginary axis.
+  const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w), im: Math.sin(w) });
   const points = [];
   let previous = null;
   for (let i = 0; i <= Math.round(Math.log10(0.5 / 1e-4) * pointsPerDecade); i++) {
     const f = Math.min(0.5, 1e-4 * 10 ** (i / pointsPerDecade));
     const w = 2 * Math.PI * f;
-    const top = evaluate(num, Math.cos(w), Math.sin(w));
-    const bottom = evaluate(den, Math.cos(w), Math.sin(w));
+    const point = at(w);
+    const top = evaluate(num, point.re, point.im);
+    const bottom = evaluate(den, point.re, point.im);
     const d = bottom.re ** 2 + bottom.im ** 2;
     const h = { re: (top.re * bottom.re + top.im * bottom.im) / d, im: (top.im * bottom.re - top.re * bottom.im) / d };
     let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
@@ -9932,22 +9937,30 @@ const TRACE_COLORS = Object.freeze(['#3b74e0', '#e0533b', '#2e9e5b', '#c98a12', 
 /**
  * A plot of several magnitude responses on one pair of axes, as a plot
  * annotation keeps it (model.js normalizePlot): `traces` are
- * `{ label (TeX), color, value (exact rational) }`, all in `variable`. The
- * frequency range covers every trace. Null when none can be plotted.
+ * `{ label (TeX), color, value (exact rational), variable? }` (`variable`
+ * the default). On f/fs (`sAxis: 'normalized'`, or any z trace) s and z
+ * results share the axis; on ω only s results plot. The frequency range
+ * covers every trace. Null when none can be plotted.
  */
-function responsePlot(traces, variable) {
-  const curves = traces
-    .map((trace) => ({ trace, curve: responseCurve(trace.value, variable) }))
+function plotAxis(traces, sAxis = 'omega') {
+  return traces.some((trace) => trace.variable === 'z') || sAxis === 'normalized' ? 'normalized' : 'omega';
+}
+
+function responsePlot(traces, variable, { sAxis = 'omega' } = {}) {
+  const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
+  const axis = plotAxis(withVariable, sAxis);
+  const curves = withVariable
+    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
   if (!curves.length) return null;
   const all = curves.flatMap(({ curve }) => curve.points.map((point) => point.f));
-  const axis = curves[0].curve.axis;
+  const curveAxis = curves[0].curve.axis;
   const low = Math.floor(Math.log10(Math.min(...all)) + 1e-9);
   // A sampled system's frequencies end at f_s/2, where its curves do.
-  const high = axis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
+  const high = curveAxis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
   return {
     kind: 'response',
-    axis,
+    axis: curveAxis,
     range: { low, high: Math.max(high, low + 1) },
     traces: curves.map(({ trace, curve }) => ({
       label: trace.label,
@@ -17777,15 +17790,22 @@ function normalizeAnalysisValues(value) {
     for (const [name, number] of Object.entries(raw.multipliers || {})) if (typeof name === 'string' && name.length <= 60 && positive(number)) multipliers[name] = number;
     bode = { intrinsicGain: positive(raw.intrinsicGain), parasiticRatio: positive(raw.parasiticRatio), multipliers };
   }
-  return { coefficients, bode };
+  // The graph's frequency axis for s results: ω, or f/fs with s in units of 1/Ts.
+  const sAxis = value?.sAxis === 'normalized' ? 'normalized' : null;
+  return { coefficients, bode, ...(sAxis ? { sAxis } : {}) };
 }
 
 function analysisValuesJSON(values) {
   const coefficients = values?.coefficients || {};
   const bode = values?.bode;
   const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
-  if (!Object.keys(coefficients).length && !hasBode) return {};
-  return { analysisValues: { ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}), ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}) } };
+  const sAxis = values?.sAxis === 'normalized';
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis) return {};
+  return { analysisValues: {
+    ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
+    ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
+    ...(sAxis ? { sAxis: 'normalized' } : {}),
+  } };
 }
 
 /** A plot of several magnitude responses (signal-flow analysis): coloured
@@ -25341,7 +25361,13 @@ function texToMathML(source) {
     }
     const char = text[index++];
     if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
-    if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
+    // A number is one atom, its decimal point an ordinary symbol, as TeX
+    // sets 0.5 -- not digits spaced around an operator.
+    if (/[0-9]/.test(char)) {
+      const number = text.slice(index - 1).match(/^\d+(?:\.\d+)?/)[0];
+      index += number.length - 1;
+      return mathMlAtom(number, 'mn');
+    }
     if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
     if ('()[]|'.includes(char)) return mathMlDelimiter(char);
     if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));
@@ -59509,12 +59535,14 @@ function graphSvg(plot) {
   return svg;
 }
 
-const traceVariable = () => traces[0]?.variable || null;
+// The axis s results plot on: ω in the coefficients' units, or f/fs with s
+// in units of 1/Ts (saved with the document). A z result puts every trace on f/fs.
+const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
+const graphPlot = (list) => responsePlot(list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), 's', { sAxis: sAxisSetting() });
 const shownTraces = () => traces.filter((trace) => trace.on);
 
 /** Add an entry's response to the graph (a graph keeps one variable). */
 function addTrace(entry, variable, output) {
-  if (traceVariable() && traceVariable() !== variable) traces = [];
   const id = `${output.key}\n${entry.input}\n${entry.equation}`;
   if (traces.some((trace) => trace.id === id)) return;
   const used = new Set(traces.map((trace) => trace.color));
@@ -59526,10 +59554,30 @@ function addTrace(entry, variable, output) {
 function renderGraph() {
   const host = section.querySelector('.signal-flow-graph');
   host.replaceChildren();
-  const plot = traces.length ? responsePlot(shownTraces().map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), traceVariable()) : null;
+  const plot = traces.length ? graphPlot(shownTraces()) : null;
   host.hidden = !traces.length;
   if (!traces.length) return;
-  host.append(el('div', { class: 'analysis-equation-label', text: 'Magnitude' }));
+  const head = el('div', { class: 'signal-flow-graph-head' }, [el('div', { class: 'analysis-equation-label', text: 'Magnitude' })]);
+  // With an s result on it, the frequency axis is a choice: ω in the
+  // coefficients' units, or f/fs reading s in units of 1/Ts (as a
+  // continuous-time loop filter normalized to its sample rate is written).
+  if (traces.some((trace) => trace.variable === 's')) {
+    const forced = traces.some((trace) => trace.variable === 'z');
+    const choose = (value) => {
+      editor.circuit.analysisValues.sAxis = value === 'normalized' ? 'normalized' : undefined;
+      markSettingsChanged();
+      renderGraph();
+    };
+    const button = (value, text, title) => {
+      const pressed = forced ? value === 'normalized' : sAxisSetting() === value;
+      return el('button', { type: 'button', text, title, 'aria-pressed': String(pressed), disabled: forced && value !== 'normalized', onclick: () => choose(value) });
+    };
+    head.append(el('div', { class: 'segmented signal-flow-axis', role: 'group', 'aria-label': 'Frequency axis' }, [
+      button('omega', 'ω', 'ω in the units of the coefficients'),
+      button('normalized', 'f/fs', forced ? 'A z result is on the graph: everything plots over f/fs, s in units of 1/Ts' : 'f/fs, reading s in units of 1/Ts: f/fs = ω/2π, to ½'),
+    ]));
+  }
+  host.append(head);
   if (plot) host.append(graphSvg(plot));
   else host.append(el('p', { class: 'field-hint', text: 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
@@ -59554,7 +59602,7 @@ function renderGraph() {
  *  math label in its colour beside it (children of the box, moving with it). */
 function annotateGraph() {
   const shown = shownTraces();
-  const plot = responsePlot(shown.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), traceVariable());
+  const plot = graphPlot(shown);
   if (!plot) return;
   // The numbers the symbols were drawn with, under the legend.
   const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];

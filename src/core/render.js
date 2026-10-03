@@ -593,7 +593,13 @@ export function texToMathML(source) {
     }
     const char = text[index++];
     if (/[A-Za-z]/.test(char)) return mathMlAtom(char, 'mi');
-    if (/[0-9]/.test(char)) return mathMlAtom(char, 'mn');
+    // A number is one atom, its decimal point an ordinary symbol, as TeX
+    // sets 0.5 -- not digits spaced around an operator.
+    if (/[0-9]/.test(char)) {
+      const number = text.slice(index - 1).match(/^\d+(?:\.\d+)?/)[0];
+      index += number.length - 1;
+      return mathMlAtom(number, 'mn');
+    }
     if (char === '(' || char === '[') return parseFenced(char, char === '(' ? ')' : ']');
     if ('()[]|'.includes(char)) return mathMlDelimiter(char);
     if (MATH_SIGNS[char]) return mathMlSign(char, !previous || /^<mo\b/.test(previous));

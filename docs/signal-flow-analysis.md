@@ -76,11 +76,15 @@ derived equations stale (main.js `markSettingsChanged`).
 
 Responses go onto one **graph** of magnitudes, a colour per trace
 named by its ratio (`OUT/IN`) in that colour, its dB axis fitted to the
-curves in whole 20 dB steps: over relative frequency in `s`,
-over `f/fs` from `10^-4` to `1/2` in `z`. Traces stay across derives, so
-responses from different settings or outputs can be compared; each can be
-hidden or removed, and **Add to graph** brings a removed one back. A graph
-holds one variable (an `s` result clears a `z` graph). **Annotate graph**
+curves in whole 20 dB steps. With an s result on it, the frequency axis
+is a choice: **ω** in the coefficients' own units, or **f/fs**, which reads
+s in units of 1/Ts (a continuous-time loop filter normalized to its sample
+rate: f/fs = ω/2π, to 1/2). On f/fs, s and z results share one graph; a z
+result puts the whole graph there. The choice is saved with the document
+(`analysisValues.sAxis`); `z` always plots over `f/fs` from `10^-4` to
+`1/2`. Traces stay across derives, so responses from different settings or
+outputs can be compared; each can be hidden or removed, and **Add to graph**
+brings a removed one back. **Annotate graph**
 puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
 traces' names as math labels in their colours beside it, children of its

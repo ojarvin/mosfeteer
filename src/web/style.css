@@ -6350,3 +6350,32 @@ body.chrome-away [data-editor-edge="right"] {
   width: 100%;
   font-variant-numeric: tabular-nums;
 }
+
+.signal-flow-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.signal-flow-axis button {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-dim);
+  background: transparent;
+  font: 0.75rem ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.signal-flow-axis button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.signal-flow-axis button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
