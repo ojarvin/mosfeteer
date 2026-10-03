@@ -11537,6 +11537,7 @@ let balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, smartRou
 let crossNetOverlaps; __bind(() => { ({ crossNetOverlaps } = __require("src/core/wiring.js")); });
 let plainTexText, svgString; __bind(() => { ({ plainTexText, svgString } = __require("src/core/render.js")); });
 let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
+let formatMosSize, sizeReplacedNameLabels; __bind(() => { ({ formatMosSize, sizeReplacedNameLabels } = __require("src/core/mos-size.js")); });
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
 let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
 let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
@@ -11548,6 +11549,7 @@ let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapCom
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -11811,7 +11813,9 @@ function evaluate(circuit) {
   }
   // A joined supply bar shows one of its supplies' labels; the hidden ones
   // are not drawn, so they cannot overlap anything.
+  // A size label standing in for a name hides it the same way.
   const barHidden = hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
   const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box', 'line'].includes(label.kind) && !barHidden.has(label.id));
   const labelComponentOverlaps = [];
   const labelOverlaps = [];
@@ -11994,6 +11998,8 @@ function commandHelp() {
     '  mirror <refdes> <x|y>          - flip along an axis',
     '  value <refdes> <V>             - set value/label text',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
+    '  size <refdes> [W/L] [xM] [replace|beside] - a transistor\'s sizing label, W/L = M·W/L (2u/400n x4; bare numbers are μm); replace puts it in place of',
+    '                                   the name label, beside under it; size <refdes> off removes it; no size prints it',
     '  rename <refdes> <new>          - rename a component',
     '  renumber [--order ALONG-THEN] [refdes ...] - renumber automatically named parts (M1, R2): along each row/column, then row by row; ALONG and THEN are right|left|up|down, crosswise (default right-down, reading order; up-right: each column bottom up, columns left to right); listed parts trade only their own numbers',
     '  rm <refdes>                    - remove a component',
@@ -12299,6 +12305,24 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (cmd === 'link' && !name) return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} links to no design`, { refdes: c.refdes, link: c.link });
     circuit.setLink(c.refdes, name);
     return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} unlinked`, { refdes: c.refdes, link: c.link }, true);
+  }
+  if (cmd === 'size') {
+    if (!pos[0]) throw new Error('usage: size <refdes> [W/L] [xM] [replace|beside] ; size <refdes> off');
+    const c = circuit.getComponent(pos[0]);
+    const words = pos.slice(1);
+    const mode = String(words.at(-1) || '').toLowerCase();
+    const replacesName = mode === 'replace' ? true : mode === 'beside' ? false : undefined;
+    if (replacesName !== undefined) words.pop();
+    const spec = words.join(' ');
+    const describe = () => (c.size
+      ? `${c.refdes} size ${formatMosSize(c.size)}${c.size.replacesName ? ' (in place of its name)' : ''}`
+      : `${c.refdes} has no size`);
+    if (!spec && replacesName === undefined) return result(describe(), { refdes: c.refdes, size: c.size });
+    if (spec.toLowerCase() === 'off') circuit.setComponentSize(c.refdes, null);
+    else if (spec) circuit.setComponentSize(c.refdes, spec, { replacesName });
+    else if (c.size) circuit.setComponentSize(c.refdes, c.size, { replacesName });
+    else throw new Error(`${c.refdes} has no size to place; give one, e.g. size ${c.refdes} 2u/400n`);
+    return result(describe(), { refdes: c.refdes, size: c.size }, true);
   }
   if (cmd === 'supplybar' && String(pos[0] || '').toLowerCase() === 'name') {
     if (pos.length < 3) throw new Error('usage: supplybar name <NAME|-> <refdes> [refdes...]');
@@ -15081,6 +15105,8 @@ __exports.findInLabels = findInLabels;
 __exports.replaceInLabels = replaceInLabels;
 let Circuit, INTERFACE_PIN_TYPES, canonicalNetName, isReferenceMarker; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, canonicalNetName, isReferenceMarker } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
+let MOS_SIZE_ROLE; __bind(() => { ({ MOS_SIZE_ROLE } = __require("src/core/mos-size.js")); });
+
 
 
 
@@ -15127,7 +15153,8 @@ function netNameShown(circuit, net) {
 function searchableTexts(circuit) {
   const texts = [];
   for (const label of circuit.labels.values()) {
-    if (label.role === 'signal-input-sign' || !label.text) continue;
+    // Generated text (input signs, a transistor's size) is not authored here.
+    if (label.role === 'signal-input-sign' || label.role === MOS_SIZE_ROLE || !label.text) continue;
     texts.push({ key: `label:${label.id}`, role: roleOf(circuit, label), text: label.text, label });
   }
   for (const component of circuit.components.values()) {
@@ -15910,6 +15937,8 @@ let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_S
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
+let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
+
 
 
 
@@ -17211,7 +17240,9 @@ class LabelInstance {
     if (!component) return null;
     const a = this.anchorWorld();
     const b = component.bboxWorld();
-    if (!(a.y > b.y && a.y < b.y + b.h)) return null;
+    // A size label sits under the name label, below the part's height, and
+    // still grows away from the part.
+    if (this.role !== MOS_SIZE_ROLE && !(a.y > b.y && a.y < b.y + b.h)) return null;
     if (a.x < b.x) return 'left';
     if (a.x > b.x + b.w) return 'right';
     return null;
@@ -17563,6 +17594,9 @@ class ComponentInstance {
     // that shows what this part is (an amplifier's transistors, say). It
     // carries no connectivity; a missing design is simply a broken link.
     this.link = normalizeDesignLink(opts.link);
+    // A transistor's optional W/L and multiplier (mos-size.js), drawn as an
+    // owned math label.
+    this.size = MOS_SIZE_TYPES.has(type) ? normalizeMosSize(opts.size) : null;
     // Schematic blocks are the one resizable symbol. Keep their geometry and
     // perimeter terminal slots on the instance rather than mutating the shared
     // symbol definition (which would resize every block in the document).
@@ -17751,6 +17785,7 @@ class ComponentInstance {
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
+      ...(this.size ? { size: { ...this.size } } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -18190,7 +18225,10 @@ class Circuit {
     // JSON load defers this until its authored labels have been read, while a
     // paste keeps the option in the component payload and reaches this path
     // with noLabel omitted.
-    if (!this._loading || !opts.noLabel) this._syncSignalInputLabels(inst);
+    if (!this._loading || !opts.noLabel) {
+      this._syncSignalInputLabels(inst);
+      this._syncSizeLabel(inst);
+    }
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
     // state is being loaded (fromJSON) so explicit nets are not pre-empted.
@@ -18291,6 +18329,7 @@ class Circuit {
           label.clearRenderedTextBounds();
         }
       }
+      this._syncSizeLabel(component);
       return component;
     }
     if (this.components.has(next)) throw new Error(`component name "${next}" is already in use`);
@@ -18347,6 +18386,7 @@ class Circuit {
       if (renamedNet && interfaceName && renamedNet.name !== interfaceName) this.renameNet(renamedNet, interfaceName);
     }
     this._ensureComponentInstanceLabel(component);
+    this._syncSizeLabel(component);
     return component;
   }
 
@@ -18480,6 +18520,75 @@ class Circuit {
     else component.negativeInputs.delete(terminal.name);
     this._syncSignalInputLabels(component);
     return component;
+  }
+
+  /** Set (or with null clear) a transistor's size: a compact string such as
+   * `2u/400n x4` or a `{ w, l, m }` object. `replacesName` (kept when
+   * omitted) makes the size label stand in for the name label. */
+  setComponentSize(refdes, size, { replacesName } = {}) {
+    const component = this.getComponent(refdes);
+    if (!MOS_SIZE_TYPES.has(component.type)) throw new Error(`${component.refdes} is not a transistor; only MOS parts take a size`);
+    const previous = component.size;
+    if (size === null || size === undefined || size === '') {
+      component.size = null;
+    } else {
+      const parsed = typeof size === 'string' ? parseMosSize(size) : normalizeMosSize(size);
+      if (!parsed) throw new Error('bad size');
+      const replace = replacesName ?? !!previous?.replacesName;
+      component.size = { w: parsed.w, l: parsed.l, m: parsed.m, ...(replace ? { replacesName: true } : {}) };
+    }
+    const sizeLabel = this.sizeLabelOf(component.refdes);
+    // Taking the name's place puts the size label where the name is drawn,
+    // and giving it back puts it under the name again.
+    if (sizeLabel && !!previous?.replacesName !== !!component.size?.replacesName) {
+      sizeLabel.offset = this._defaultSizeOffset(component);
+    }
+    this._syncSizeLabel(component);
+    return component;
+  }
+
+  /** A transistor's size label, or null. */
+  sizeLabelOf(refdes) {
+    for (const label of this.labels.values()) if (label.owner === refdes && label.role === MOS_SIZE_ROLE) return label;
+    return null;
+  }
+
+  _defaultSizeOffset(component) {
+    const name = this.labelOf(component.refdes);
+    return component.size?.replacesName
+      ? { ...(name?.offset || component.def.labelOffset) }
+      : { x: (name?.offset || component.def.labelOffset).x, y: (name?.offset || component.def.labelOffset).y + MOS_SIZE_OFFSET.y };
+  }
+
+  /** Keep a transistor's size label an idempotent projection of its size:
+   * one label, its TeX derived from the size and the part's name. */
+  _syncSizeLabel(component) {
+    if (!component) return null;
+    let label = null;
+    for (const candidate of [...this.labels.values()]) {
+      if (candidate.owner !== component.refdes || candidate.role !== MOS_SIZE_ROLE) continue;
+      if (label || !component.size) this.labels.delete(candidate.id);
+      else label = candidate;
+    }
+    if (!component.size) return null;
+    const text = mosSizeTex(component.size, sizeSubscript(this.labelOf(component.refdes)?._text, component.refdes));
+    if (!label) {
+      label = this.addLabel({
+        text,
+        math: true,
+        owner: component.refdes,
+        role: MOS_SIZE_ROLE,
+        offset: this._defaultSizeOffset(component),
+        align: 'parent',
+        style: { color: component.style.color },
+      });
+    } else if (label._text !== text) {
+      label._text = text;
+      label._mathBox = null;
+      label.clearRenderedTextBounds();
+    }
+    this.invalidateRoutingCache();
+    return label;
   }
 
 
@@ -19494,6 +19603,8 @@ class Circuit {
       if (removedLabel.role === SIGNAL_INPUT_SIGN_ROLE && isSignalFlowComponent(signalComponent)) {
         signalComponent.negativeInputs.delete(removedLabel.signalTerminal);
       }
+      // The size label is the size: deleting it unsizes the part.
+      if (removedLabel.role === MOS_SIZE_ROLE && signalComponent) signalComponent.size = null;
     }
     return removed;
   }
@@ -22765,6 +22876,7 @@ class Circuit {
         negativeInputs: c.negativeInputs,
         joinBar: c.joinBar,
         link: c.link,
+        size: c.size,
         style: c.style,
         analysis: migrateSerializedComponentAnalysis(c.analysis),
         drawOrder: c.drawOrder,
@@ -22878,7 +22990,10 @@ class Circuit {
       if (component.type !== 'port' || circuit.labelOf(component.refdes)) continue;
       try { circuit._ensureComponentInstanceLabel(component); } catch { /* label id in use */ }
     }
-    for (const component of circuit.components.values()) circuit._syncSignalInputLabels(component);
+    for (const component of circuit.components.values()) {
+      circuit._syncSignalInputLabels(component);
+      circuit._syncSizeLabel(component);
+    }
     // A switch's value is its phase, shown as its label.
     for (const component of circuit.components.values()) {
       if (switchState(component) && component.value) circuit._syncSwitchLabel(component.refdes, component.value);
@@ -22930,6 +23045,129 @@ __exports.LabelInstance = LabelInstance;
 __exports.ComponentInstance = ComponentInstance;
 __exports.Net = Net;
 __exports.Circuit = Circuit;
+};
+
+__modules["src/core/mos-size.js"] = function (__require, __exports) {
+__exports.parseMosSize = parseMosSize;
+__exports.normalizeMosSize = normalizeMosSize;
+__exports.formatMosSize = formatMosSize;
+__exports.sizeSubscript = sizeSubscript;
+__exports.mosSizeTex = mosSizeTex;
+__exports.sizeReplacedNameLabels = sizeReplacedNameLabels;
+/**
+ * Transistor sizing: a MOS part's optional W/L and multiplier, drawn as an
+ * owned math label, W_{1}/L_{1} = 4 · 2 μm / 400 nm. The size is authored
+ * compactly (`2u/400n x4`) and kept on the part (`ComponentInstance#size`);
+ * the label is a projection of it (`Circuit#_syncSizeLabel`). Its W and L
+ * take the part's name as their subscript, so the label can stand in for the
+ * name label (`replacesName`), which is then hidden.
+ */
+
+const MOS_SIZE_ROLE = 'mos-size';
+const MOS_SIZE_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
+/** Below the name label, beside the part's conduction column. */
+const MOS_SIZE_OFFSET = Object.freeze({ x: 40, y: 120 });
+
+// SI prefixes of a length in metres; a bare number is in micrometres, as
+// sizes are written on schematics (`2/0.18`).
+const PREFIXES = { f: 'f', p: 'p', n: 'n', u: 'u', 'µ': 'u', 'μ': 'u', m: 'm', '': 'u' };
+const PREFIX_TEX = { f: 'f', p: 'p', n: 'n', u: 'μ', m: 'm' };
+const LENGTH = /^(\d+(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?\s*([fpnuµμm]?)m?$/i;
+
+function parseLength(text, what) {
+  const match = String(text).trim().match(LENGTH);
+  if (!match) throw new Error(`bad ${what} "${text}" (e.g. 2u, 400n, 0.18um)`);
+  const number = match[2] ? String(Number(`${match[1]}e${match[2]}`)) : match[1].replace(/\.$/, '');
+  if (!(Number(number) > 0)) throw new Error(`${what} must be positive`);
+  return `${number}${PREFIXES[match[3].toLowerCase()] ?? PREFIXES[match[3]]}`;
+}
+
+function parseMultiplier(text) {
+  const m = Number(text);
+  if (!Number.isInteger(m) || m < 1) throw new Error(`bad multiplier "${text}" (a whole number from 1)`);
+  return m;
+}
+
+/** A size from its compact spelling: `W/L` with an optional multiplier as
+ * `x4`, `*4`, `×4`, or `m=4` after it (or `4x` before it); `W=2u L=400n M=4`
+ * also reads. Throws on anything else. */
+function parseMosSize(text) {
+  let source = String(text ?? '').trim().replace(/\s+/g, ' ');
+  if (!source) throw new Error('a size is W/L, e.g. 2u/400n x4');
+  let m = 1;
+  const keyed = source.match(/^w\s*=\s*(\S+)\s+l\s*=\s*(\S+)(?:\s+m\s*=\s*(\S+))?$/i);
+  if (keyed) {
+    return { w: parseLength(keyed[1], 'W'), l: parseLength(keyed[2], 'L'), m: keyed[3] ? parseMultiplier(keyed[3]) : 1 };
+  }
+  const before = source.match(/^(\d+)\s*[x*×·]\s*(?=\S)/i);
+  if (before) {
+    m = parseMultiplier(before[1]);
+    source = source.slice(before[0].length);
+  } else {
+    const after = source.match(/\s*(?:[x*×·]|m\s*=)\s*(\d+)$/i);
+    if (after) {
+      m = parseMultiplier(after[1]);
+      source = source.slice(0, after.index);
+    }
+  }
+  const parts = source.split('/');
+  if (parts.length !== 2) throw new Error(`a size is W/L, e.g. 2u/400n x4 (got "${text}")`);
+  return { w: parseLength(parts[0], 'W'), l: parseLength(parts[1], 'L'), m };
+}
+
+/** A stored size, checked; null for anything that is not one. */
+function normalizeMosSize(size) {
+  if (!size || typeof size !== 'object') return null;
+  try {
+    const parsed = parseMosSize(`${size.w}/${size.l} x${size.m ?? 1}`);
+    return size.replacesName ? { ...parsed, replacesName: true } : parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** The compact spelling a size is edited in: `2u/400n`, `2u/400n x4`. */
+function formatMosSize(size) {
+  if (!size) return '';
+  return `${size.w}/${size.l}${size.m > 1 ? ` x${size.m}` : ''}`;
+}
+
+function lengthTex(length) {
+  const [, number, prefix] = length.match(/^(.*?)([fpnum])$/);
+  return `\\mathrm{${number}\\,${PREFIX_TEX[prefix]}m}`;
+}
+
+/** The subscript W and L take from a part's name: `1` for M1 or M_{1},
+ * `in` for M_{in}; a name without the M prefix whole. */
+function sizeSubscript(nameText, refdes) {
+  const text = String(nameText || refdes || '').trim();
+  const script = text.match(/^[A-Za-z]+_\{([^{}]+)\}$/) || text.match(/^[A-Za-z]+_([A-Za-z0-9])$/);
+  if (script) return script[1];
+  const plain = String(refdes || text).match(/^M(\w+)$/);
+  return plain ? plain[1] : String(refdes || text);
+}
+
+/** The label's TeX: W/L, then the multiplier when it is not 1, then the size. */
+function mosSizeTex(size, subscript) {
+  const sub = subscript ? `_{${subscript}}` : '';
+  const multiplier = size.m > 1 ? `${size.m}\\cdot` : '';
+  return `$\\frac{W${sub}}{L${sub}} = ${multiplier}\\frac{${lengthTex(size.w)}}{${lengthTex(size.l)}}$`;
+}
+
+/** Name labels a size label stands in for, so nothing draws or picks them. */
+function sizeReplacedNameLabels(circuit) {
+  const hidden = new Set();
+  for (const component of circuit.components.values()) {
+    if (!component.size?.replacesName) continue;
+    const name = circuit.labelOf(component.refdes);
+    if (name) hidden.add(name.id);
+  }
+  return hidden;
+}
+
+__exports.MOS_SIZE_ROLE = MOS_SIZE_ROLE;
+__exports.MOS_SIZE_TYPES = MOS_SIZE_TYPES;
+__exports.MOS_SIZE_OFFSET = MOS_SIZE_OFFSET;
 };
 
 __modules["src/core/object-clipboard.js"] = function (__require, __exports) {
@@ -22990,6 +23228,7 @@ function componentProblem(comp) {
   if (!finite(comp.x) || !finite(comp.y) || !finite(comp.rotation)) return `part ${comp.origRef} has no position`;
   if (!optional(comp.negativeInputs, (inputs) => Array.isArray(inputs) && inputs.every(text))) return `part ${comp.origRef} has bad inputs`;
   if (!optional(comp.style, isObject)) return `part ${comp.origRef} has a bad style`;
+  if (!optional(comp.size, isObject)) return `part ${comp.origRef} has a bad size`;
   return null;
 }
 
@@ -23465,10 +23704,12 @@ let escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth,
 let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
 let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
+let sizeReplacedNameLabels; __bind(() => { ({ sizeReplacedNameLabels } = __require("src/core/mos-size.js")); });
 let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
 let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure.js")); });
+
 
 
 
@@ -24615,6 +24856,7 @@ function svgString(circuit, opts = {}) {
   const barHidden = beat
     ? new Set(bars.flatMap((bar) => bar.refs.map((ref) => circuit.labelOf(ref)).filter(Boolean).slice(1).map((label) => label.id)))
     : hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
   for (const label of labels
     .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent && !barHidden.has(candidate.id))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {
@@ -27270,6 +27512,7 @@ let SYMBOL_CATEGORY_RULES; __bind(() => { ({ SYMBOL_CATEGORY_RULES } = __require
 let ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let PIN_RAIL_TYPES, railHang, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, railHang, railRotation } = __require("src/core/pin-rails.js")); });
+let MOS_SIZE_OFFSET, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_TYPES } = __require("src/core/mos-size.js")); });
 /**
  * Swapping a placed part for another type in place: nmos for pmos, a resistor
  * for a capacitor, a DFF for its reset variant. The part keeps its position,
@@ -27278,6 +27521,7 @@ let PIN_RAIL_TYPES, railHang, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, ra
  * a terminal of the same role; the rest detach. Wires follow only the pins
  * that moved, so a swap between same-footprint types leaves the drawing as is.
  */
+
 
 
 
@@ -27502,6 +27746,15 @@ function swapComponentType(circuit, refdes, type) {
     circuit.renameComponent(component.refdes, circuit.nextRefdes(toPrefix, { reserveLabels: !!toDef.labelOffset }));
   }
   circuit._ensureComponentInstanceLabel(component);
+  // A size stays with a transistor swapped for another, under its name
+  // label's new slot unless it was moved; any other part drops it.
+  if (!MOS_SIZE_TYPES.has(type)) component.size = null;
+  const sizeLabel = circuit.sizeLabelOf(component.refdes);
+  if (sizeLabel && fromDef.labelOffset && toDef.labelOffset && component.size) {
+    const slot = (def) => (component.size.replacesName ? def.labelOffset : { x: def.labelOffset.x, y: def.labelOffset.y + MOS_SIZE_OFFSET.y });
+    if (samePoint(sizeLabel.offset, slot(fromDef))) sizeLabel.offset = { ...slot(toDef) };
+  }
+  circuit._syncSizeLabel(component);
   circuit.invalidateRoutingCache();
   return component;
 }
@@ -27603,6 +27856,7 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
 let applyTransform, rectsOverlap; __bind(() => { ({ applyTransform, rectsOverlap } = __require("src/core/geometry.js")); });
 let segThroughInterior; __bind(() => { ({ segThroughInterior } = __require("src/core/router.js")); });
 let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require("src/core/supply-bars.js")); });
+let sizeReplacedNameLabels; __bind(() => { ({ sizeReplacedNameLabels } = __require("src/core/mos-size.js")); });
 /**
  * Tidying: the safe repairs Design Check can offer for an issue, and the same
  * repairs applied to a selection (tidySelection). A net is re-laid out fresh
@@ -27617,11 +27871,13 @@ let hiddenSupplyBarLabels; __bind(() => { ({ hiddenSupplyBarLabels } = __require
 
 
 
+
 const SHAPES = new Set(['arrow', 'box', 'line']);
 
-/** Labels whose text can collide: not shapes, not hidden bar labels. */
+/** Labels whose text can collide: not shapes, not hidden bar or name labels. */
 function textLabels(circuit) {
   const hidden = hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) hidden.add(id);
   return [...circuit.labels.values()].filter((label) => !SHAPES.has(label.kind) && !hidden.has(label.id));
 }
 
@@ -36525,6 +36781,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
+  { name: 'size', aliases: ['sizing', 'wl', 'transistor-size'], help: 'size <refdes> [W/L] [xM] [replace|beside] (a transistor\'s W/L label; off removes it)' },
   { name: 'renumber', aliases: ['number', 'renumber-parts'], help: 'renumber [--order right-down|up-right|...] [refdes ...] (along each row or column, then row by row)' },
   { name: 'rm', aliases: ['remove', 'delete'], help: 'rm <refdes>' },
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
@@ -37071,7 +37328,8 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
 let SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis; __bind(() => { ({ SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } = __require("src/web/analysis-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let inlineEditLabel; __bind(() => { ({ inlineEditLabel } = __require("src/web/label-editor.js")); });
+let editComponentSize, inlineEditLabel; __bind(() => { ({ editComponentSize, inlineEditLabel } = __require("src/web/label-editor.js")); });
+let MOS_SIZE_ROLE, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_ROLE, MOS_SIZE_TYPES } = __require("src/core/mos-size.js")); });
 let joinSelectedLines, selectedLines; __bind(() => { ({ joinSelectedLines, selectedLines } = __require("src/web/annotation-tools.js")); });
 let appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu; __bind(() => { ({ appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } = __require("src/web/hierarchy.js")); });
 let appendBeatContextItems, plainMarkup; __bind(() => { ({ appendBeatContextItems, plainMarkup } = __require("src/web/beats-ui.js")); });
@@ -37088,6 +37346,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -37406,6 +37665,22 @@ function appendSwitchPhaseMenu(menu, target) {
   });
 }
 
+/** A transistor's W/L label: add or edit it, put it in place of the name,
+ *  or take it away. Offered on the part and on its size label. */
+function appendSizingMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value
+    : target.value?.role === MOS_SIZE_ROLE ? editor.circuit.components.get(target.value.owner) : null;
+  if (!component || !MOS_SIZE_TYPES.has(component.type)) return;
+  const { refdes, size } = component;
+  appendContextSubmenu(menu, 'Sizing', (submenu) => {
+    appendContextItem(submenu, size ? 'Edit W/L…' : 'Add W/L…', () => setTimeout(() => editComponentSize(editor.circuit.components.get(refdes)), 0));
+    appendContextItem(submenu, 'In place of the name', () => {
+      commit(() => editor.circuit.setComponentSize(refdes, size, { replacesName: !size.replacesName }));
+    }, { disabled: !size, active: !!size?.replacesName });
+    appendContextItem(submenu, 'Remove W/L', () => commit(() => editor.circuit.setComponentSize(refdes, null)), { disabled: !size });
+  });
+}
+
 function appendSignalFlowPolarityMenu(menu, target) {
   const component = target.kind === 'component' ? target.value : null;
   const inputs = component?.terminalDefs?.filter((terminal) => terminal.signalRole === 'input') || [];
@@ -37604,6 +37879,7 @@ function openComponentContextMenu(target, x, y) {
   appendContextSelectionMenu(menu, target);
   appendSignalFlowPolarityMenu(menu, target);
   appendSwitchPhaseMenu(menu, target);
+  appendSizingMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(menu, 'Close', closeComponentContextMenu);
@@ -38020,6 +38296,7 @@ function copySelection({ quiet = false } = {}) {
       negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
       joinBar: !!c.joinBar,
       ...(c.link ? { link: c.link } : {}),
+      ...(c.size ? { size: { ...c.size } } : {}),
       style: { ...(c.style || {}) },
       // The value: a resistance, a switch's phase.
       value: c.value,
@@ -38425,6 +38702,7 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           negativeInputs: c.negativeInputs,
           joinBar: c.joinBar,
           link: c.link,
+          size: c.size,
           style: c.style,
           value: c.value,
         });
@@ -44246,12 +44524,14 @@ __exports.boxState = boxState;
 __exports.restoreBoxState = restoreBoxState;
 __exports.inlineEditSchematicBlock = inlineEditSchematicBlock;
 __exports.openComponentChildLabelEditor = openComponentChildLabelEditor;
+__exports.editComponentSize = editComponentSize;
 __exports.openReferenceMarkerEditor = openReferenceMarkerEditor;
 __exports.inlineEditLabel = inlineEditLabel;
 let INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup, indentText; __bind(() => { ({ INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenceMarkerInfo, stripMathDelimiters, applyMarkup, indentText } = __require("src/core/model.js")); });
 let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
+let MOS_SIZE_ROLE, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -44264,6 +44544,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * a part's name and child labels, a supply bar's rail name, a reference
  * marker's value, and a schematic block's caption.
  */
+
 
 
 
@@ -44372,6 +44653,20 @@ function openComponentChildLabelEditor(component) {
   if (label) inlineEditLabel(label, { ownedLabelDraft: true, initialSnapshot: before });
 }
 
+/** Edit a transistor's size in its compact spelling (2u/400n x4). A part
+ *  without one gets a draft label that Escape or a blank edit takes away. */
+function editComponentSize(component) {
+  if (!component || editor.inlineInput) return;
+  const existing = editor.circuit.sizeLabelOf(component.refdes);
+  if (existing) {
+    inlineEditLabel(existing);
+    return;
+  }
+  const before = snapshot();
+  editor.circuit.setComponentSize(component.refdes, '1/1');
+  inlineEditLabel(editor.circuit.sizeLabelOf(component.refdes), { sizeDraft: true, initialSnapshot: before });
+}
+
 /** A joined supply bar has one label, shown over its first supply and
  *  centred on the bar; its name goes to every supply on the bar. */
 function openSupplyBarLabelEditor(refs) {
@@ -44471,6 +44766,9 @@ function inlineEditLabel(label, options = {}) {
   // indentation and blank lines are kept (other labels name something, and
   // Tab moves on to the next label).
   const freeText = !label.owner && !label.netId && !label.math;
+  // A size label shows TeX made from the size; it is edited as the size.
+  const sizeOwner = label.role === MOS_SIZE_ROLE ? editor.circuit.components.get(label.owner) : null;
+  if (sizeOwner) input.value = options.sizeDraft ? '' : formatMosSize(sizeOwner.size);
   // Measure the live editor text in the same face as the rendered label. The
   // The box grows from the actual text anchor while keeping alignment stable.
   const measure = document.createElement('span');
@@ -44528,6 +44826,16 @@ function inlineEditLabel(label, options = {}) {
     // Free text keeps its first line's indent; only blank lines and trailing
     // space around it go.
     const v = freeText ? input.value.replace(/^(?:[ \t]*\n)+/, '').trimEnd() : input.value.trim();
+    if (sizeOwner && applyText && v) {
+      try {
+        parseMosSize(v);
+      } catch (err) {
+        logLine(err.message, 'error');
+        input.focus({ preventScroll: true });
+        input.select();
+        return false;
+      }
+    }
     const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
     const namesNet = !!label.netId || !!(owner && INTERFACE_PIN_TYPES.has(owner.type));
     if (applyText && v && v !== label.text && namesNet) {
@@ -44558,7 +44866,22 @@ function inlineEditLabel(label, options = {}) {
     editor.inlineInput = null;
     measure.remove();
     input.remove();
-    if (provisional) {
+    if (sizeOwner) {
+      const refdes = sizeOwner.refdes;
+      if (options.sizeDraft) {
+        if (applyText && v) {
+          editor.circuit.setComponentSize(refdes, v);
+          recordHistoryEntry(initialSnapshot || snapshot());
+        } else {
+          editor.circuit.setComponentSize(refdes, null);
+        }
+        markModelChanged(false);
+      } else if (applyText && !v) {
+        commit(() => editor.circuit.setComponentSize(refdes, null));
+      } else if (applyText && v !== formatMosSize(sizeOwner.size)) {
+        commit(() => editor.circuit.setComponentSize(refdes, v));
+      }
+    } else if (provisional) {
       if (applyText && v) {
         try {
           renameLabelThroughModel(label, v);
@@ -44647,6 +44970,7 @@ function inlineEditLabel(label, options = {}) {
   // Ctrl+, / Ctrl+. are handled here, live (side-panel.js installMarkupShortcuts).
   input.dataset.markupKeys = 'own';
   const toggleMarkup = (mark) => {
+    if (sizeOwner) return;
     const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, mark);
     if (!res) return;
     input.value = res.text;
@@ -45239,8 +45563,6 @@ __exports.markModelChanged = markModelChanged;
 __exports.commit = commit;
 __exports.snapshot = snapshot;
 __exports.cancelPreviewTransaction = cancelPreviewTransaction;
-__exports.previewEdit = previewEdit;
-__exports.endPreviewEdit = endPreviewEdit;
 __exports.recordHistoryEntry = recordHistoryEntry;
 __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.applyJson = applyJson;
@@ -45343,6 +45665,7 @@ let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalN
 let pinJoinPoints; __bind(() => { ({ pinJoinPoints } = __require("src/web/gestures.js")); });
 let runCommand, evaluate; __bind(() => { ({ runCommand, evaluate } = __require("src/core/commands.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
+let sizeReplacedNameLabels; __bind(() => { ({ sizeReplacedNameLabels } = __require("src/core/mos-size.js")); });
 let addTerminalStubs, stubLabelPlacement; __bind(() => { ({ addTerminalStubs, stubLabelPlacement } = __require("src/core/stubs.js")); });
 let PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation } = __require("src/core/pin-rails.js")); });
 let tidySelection; __bind(() => { ({ tidySelection } = __require("src/core/tidy.js")); });
@@ -45410,6 +45733,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -45892,27 +46216,6 @@ function cancelPreviewTransaction() {
   previewTransaction = null;
   previewRevision += 1;
   return true;
-}
-
-/** Show what `edit(circuit)` would do, on a throwaway copy of the drawing,
- *  until endPreviewEdit() (or the next previewEdit) puts the drawing back.
- *  The radial menus preview their choices with it. */
-function previewEdit(edit) {
-  endPreviewEdit();
-  beginPreviewTransaction();
-  try {
-    edit(circuit);
-  } catch {
-    cancelPreviewTransaction();
-  }
-  markModelChanged(false);
-  render();
-}
-
-function endPreviewEdit() {
-  if (!cancelPreviewTransaction()) return;
-  markModelChanged(false);
-  render();
 }
 
 const HISTORY_LIMIT = 200;
@@ -46595,6 +46898,7 @@ function labelsAt(w) {
   const p = paneSize();
   const tol = 4 / (p ? view.w / p.w : 1);
   const barHidden = hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
   const onText = [];
   const inBox = [];
   for (const label of labels()) {
@@ -49756,15 +50060,15 @@ function canvasMouseDown(ev) {
   if (b === 2) {
     ev.preventDefault();
     // A right press on a pin, part, wire, or the paper is a tap (the context
-    // menu, on release), a hold or flick (that target's radial menu), or --
-    // on the paper -- a drag (zoom to the box).
+    // menu, on release), a hold (that target's radial menu), or a drag before
+    // the hold (zoom to the box).
     const target = !hasWireDraft() && !hasModalPlacement() ? radialTarget(startWorld) : null;
     if (target) {
       closeComponentContextMenu();
       drag = { mode: 'radialpending', ...target, startClient, startWorld };
       drag.holdTimer = window.setTimeout(() => {
         if (drag?.mode === 'radialpending') openRadialMenu(drag);
-      }, target.kind === 'paper' ? 320 : 280);
+      }, 320);
       return;
     }
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
@@ -50878,14 +51182,13 @@ function canvasMouseMove(ev) {
   if (drag.mode === 'radialpending' || drag.mode === 'radial') {
     const dx = ev.clientX - drag.startClient.x;
     const dy = ev.clientY - drag.startClient.y;
-    // On the paper a drag before the hold is a zoom box, not a flick.
-    if (drag.mode === 'radialpending' && drag.kind === 'paper' && Math.hypot(dx, dy) > 10) {
+    // A drag before the hold is a zoom box, whatever it started on.
+    if (drag.mode === 'radialpending' && Math.hypot(dx, dy) > 10) {
       window.clearTimeout(drag.holdTimer);
       drag = { mode: 'zoom', startClient: drag.startClient, startWorld: drag.startWorld, moved: true, rubber: null };
       canvasMouseMove(ev);
       return;
     }
-    if (drag.mode === 'radialpending' && Math.hypot(dx, dy) > 10) openRadialMenu(drag);
     if (drag.mode === 'radial') highlightRadial(dx, dy);
     return;
   }
@@ -55166,22 +55469,22 @@ let beginPlacing, swapParts, symbolPreviewSvg; __bind(() => { ({ beginPlacing, s
 let placeNetLabelAt; __bind(() => { ({ placeNetLabelAt } = __require("src/web/annotation-tools.js")); });
 let activeBeatIndex; __bind(() => { ({ activeBeatIndex } = __require("src/web/beats-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow; __bind(() => { ({ activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow } = __require("src/web/main.js")); });
+let activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow; __bind(() => { ({ activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection, editSelectionText, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow } = __require("src/web/main.js")); });
 /**
- * The radial (marking) menus a right-hold or right-flick opens. Each asks
+ * The radial (marking) menus a right-hold opens (a right-drag before it zooms instead). Each asks
  * what is under the press and offers what fits it:
  *
  *   paper  a part palette: flick to pick a part, then click to put it down
  *          (hold a sector for its variants: NMOS → bulk NMOS, NPN; rails →
  *          ground, supply, VCM; ...)
  *   pin    connect it: ground, supply, VCM, a port, a labelled stub, a wire
- *   part   swap it for a related type (as q), each one previewed in place
+ *   part   swap it for a related type (as q)
  *   wire   its net: name it, label it here, tidy it, delete the run, or pick
  *          its highlight color off a color wheel
  *
  * Sector 0 is up and indices run clockwise, so a practiced flick needs no
- * reading; release in the centre cancels. While the pointer is in a sector
- * the drawing shows what releasing there would do (a preview on a copy).
+ * reading; release in the centre cancels. Pointing only lights a sector:
+ * the drawing changes once, on release, so sweeping the ring costs nothing.
  * The ring geometry is in gestures.js.
  */
 
@@ -55247,7 +55550,6 @@ function pinRail(type, label) {
     label,
     symbol: type,
     enabled: (radial) => !radial.connected,
-    preview: (circuit, radial) => addPinRail(circuit, radial.ref, type),
     run: (radial) => {
       const marker = edit(() => addPinRail(editor.circuit, radial.ref, type));
       if (marker) logLine(`${marker.refdes} (${type}) on ${radial.refdes}.${radial.term}`);
@@ -55272,7 +55574,6 @@ const pinPort = (type, label) => ({
   label,
   symbol: type,
   enabled: (radial) => !radial.connected,
-  preview: (circuit, radial) => addPinPort(circuit, radial, type),
   run: (radial) => {
     const port = edit(() => addPinPort(editor.circuit, radial, type));
     if (port) logLine(`${port.refdes} on ${radial.refdes}.${radial.term}`);
@@ -55282,7 +55583,6 @@ const pinPort = (type, label) => ({
 const PIN_RING = [
   pinRail('supply', 'Supply'),
   { label: 'Stub + label', icon: 'stub', enabled: (radial) => !radial.connected,
-    preview: (circuit, radial) => addTerminalStubs(circuit, [radial.refdes], { terms: [`${radial.refdes}.${radial.term}`] }),
     run: (radial) => {
       const out = edit(() => addTerminalStubs(editor.circuit, [radial.refdes], { terms: [`${radial.refdes}.${radial.term}`] }));
       if (out?.stubs.length) logLine(`${out.stubs[0].ref}: stub labelled ${out.stubs[0].name}`);
@@ -55303,7 +55603,6 @@ function partRing(radial) {
     label: shortPlacementLabel(type),
     title: PLACEMENT_LABELS[type] || type,
     symbol: type,
-    preview: (circuit) => swapComponentType(circuit, radial.refdes, type),
     run: () => swapParts([radial.refdes], type),
   }));
 }
@@ -55340,7 +55639,6 @@ const highlightItem = (color) => ({
   label: color || 'None',
   swatch: color ? resolveColor(color) : null,
   icon: color ? null : 'x-circle',
-  preview: (circuit, radial) => setHighlight(circuit, radial.netId, color),
   run: (radial) => edit(() => setHighlight(editor.circuit, radial.netId, color)),
 });
 
@@ -55458,7 +55756,7 @@ function sectorAt(radial, dx, dy) {
   return sector >= 0 && radial.enabled[sector] ? sector : -1;
 }
 
-/** Follow the pointer: light its sector, preview it, and after a rest open
+/** Follow the pointer: light its sector, and after a rest open
  *  its variants (or, back in the centre of variants, the ring before). */
 function highlightRadial(dx, dy) {
   const radial = editor.drag;
@@ -55472,14 +55770,11 @@ function highlightRadial(dx, dy) {
   [...menu.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
   window.clearTimeout(radial.dwellTimer);
   const item = radial.items[sector];
-  if (item?.preview) previewEdit((circuit) => item.preview(circuit, radial));
-  else endPreviewEdit();
   if (item?.children) {
     radial.dwellTimer = window.setTimeout(() => {
       if (editor.drag !== radial || radial.active !== sector) return;
       radial.stack.push({ items: radial.items, hub: menu.querySelector('.radial-hub').textContent });
       showRing(radial, item.children, item.label);
-      endPreviewEdit();
     }, DWELL_MS);
   } else if (sector < 0 && radial.stack.length) {
     radial.dwellTimer = window.setTimeout(() => {
@@ -55492,7 +55787,6 @@ function highlightRadial(dx, dy) {
 
 function closeRadialMenu() {
   window.clearTimeout(editor.drag?.dwellTimer);
-  endPreviewEdit();
   editor.radialMenuEl?.remove();
   editor.radialMenuEl = null;
 }
@@ -58636,9 +58930,9 @@ const EDITOR_KEYMAP = Object.freeze([
     ['middle', 'drag to pan'],
     ['right-hold paper', 'part palette: flick toward a part to drop it there; rest on a sector for its variants'],
     ['right-hold a pin', 'connect it: ground, supply, VCM, a port, a labelled stub, or a wire'],
-    ['right-hold a part', 'swap it for a related type, each previewed in place'],
+    ['right-hold a part', 'swap it for a related type'],
     ['right-hold a wire', 'its net: name, label, highlight color, tidy, delete the run'],
-    ['right tap / drag', 'tap for the context menu; a drag on paper zooms to the box'],
+    ['right tap / drag', 'tap for the context menu; a drag zooms to the box, from paper or a part'],
     ['wheel', 'zoom about the pointer (with Trackpad scrolling: scroll pans, pinch zooms)'],
   ]],
 ]);

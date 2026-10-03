@@ -502,27 +502,6 @@ export function cancelPreviewTransaction() {
   return true;
 }
 
-/** Show what `edit(circuit)` would do, on a throwaway copy of the drawing,
- *  until endPreviewEdit() (or the next previewEdit) puts the drawing back.
- *  The radial menus preview their choices with it. */
-export function previewEdit(edit) {
-  endPreviewEdit();
-  beginPreviewTransaction();
-  try {
-    edit(circuit);
-  } catch {
-    cancelPreviewTransaction();
-  }
-  markModelChanged(false);
-  render();
-}
-
-export function endPreviewEdit() {
-  if (!cancelPreviewTransaction()) return;
-  markModelChanged(false);
-  render();
-}
-
 const HISTORY_LIMIT = 200;
 
 function rememberHistory(state, trim = true) {
@@ -4365,15 +4344,15 @@ function canvasMouseDown(ev) {
   if (b === 2) {
     ev.preventDefault();
     // A right press on a pin, part, wire, or the paper is a tap (the context
-    // menu, on release), a hold or flick (that target's radial menu), or --
-    // on the paper -- a drag (zoom to the box).
+    // menu, on release), a hold (that target's radial menu), or a drag before
+    // the hold (zoom to the box).
     const target = !hasWireDraft() && !hasModalPlacement() ? radialTarget(startWorld) : null;
     if (target) {
       closeComponentContextMenu();
       drag = { mode: 'radialpending', ...target, startClient, startWorld };
       drag.holdTimer = window.setTimeout(() => {
         if (drag?.mode === 'radialpending') openRadialMenu(drag);
-      }, target.kind === 'paper' ? 320 : 280);
+      }, 320);
       return;
     }
     drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
@@ -5487,14 +5466,13 @@ export function canvasMouseMove(ev) {
   if (drag.mode === 'radialpending' || drag.mode === 'radial') {
     const dx = ev.clientX - drag.startClient.x;
     const dy = ev.clientY - drag.startClient.y;
-    // On the paper a drag before the hold is a zoom box, not a flick.
-    if (drag.mode === 'radialpending' && drag.kind === 'paper' && Math.hypot(dx, dy) > 10) {
+    // A drag before the hold is a zoom box, whatever it started on.
+    if (drag.mode === 'radialpending' && Math.hypot(dx, dy) > 10) {
       window.clearTimeout(drag.holdTimer);
       drag = { mode: 'zoom', startClient: drag.startClient, startWorld: drag.startWorld, moved: true, rubber: null };
       canvasMouseMove(ev);
       return;
     }
-    if (drag.mode === 'radialpending' && Math.hypot(dx, dy) > 10) openRadialMenu(drag);
     if (drag.mode === 'radial') highlightRadial(dx, dy);
     return;
   }

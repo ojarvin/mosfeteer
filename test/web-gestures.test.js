@@ -251,8 +251,11 @@ test('right-hold menus fit what is under the press', async () => {
   // A pin of a part with several, a part, a wire, else the paper.
   const target = main.slice(main.indexOf('function radialTarget('), main.indexOf('\n}\n', main.indexOf('function radialTarget(')));
   assert.match(target, /kind: 'pin'[\s\S]*kind: 'part'[\s\S]*kind: 'wire'[\s\S]*kind: 'paper'/);
-  // On the paper a drag before the hold is still a zoom box.
-  assert.match(main, /drag\.kind === 'paper' && Math\.hypot\(dx, dy\) > 10\) \{[\s\S]*?mode: 'zoom'/);
+  // A drag before the hold is a zoom box on any target, and only the hold,
+  // the same everywhere, opens the menu.
+  assert.match(main, /drag\.mode === 'radialpending' && Math\.hypot\(dx, dy\) > 10\) \{[\s\S]*?mode: 'zoom'/);
+  assert.doesNotMatch(main, /radialpending' && Math\.hypot\(dx, dy\) > 10\) openRadialMenu/);
+  assert.match(main, /openRadialMenu\(drag\);\s*\}, 320\);/);
   // The paper palette keeps its places; each sector has variants.
   const palette = radial.slice(radial.indexOf('const PALETTE = ['), radial.indexOf('];', radial.indexOf('const PALETTE = [')));
   for (const type of ['nmos', 'resistor', 'capacitor', 'current_source', 'ground', 'supply', 'vcm', 'port', 'opamp', 'pmos']) assert.match(palette, new RegExp(`part\\('${type}'`));
@@ -261,14 +264,13 @@ test('right-hold menus fit what is under the press', async () => {
   assert.match(radial, /run: \(\) => beginPlacing\(type\)/);
   // A pin: rails, a port, a labelled stub, a wire.
   for (const label of ['Supply', 'Stub \\+ label', 'Port', 'VCM', 'Ground', 'Wire']) assert.match(radial, new RegExp(`label: '${label}'|'${label}'\\)`));
-  // A part swaps as q does, every candidate previewed in place.
-  assert.match(radial, /swapCandidates\(component\.type\)[\s\S]*preview: \(circuit\) => swapComponentType\(circuit, radial\.refdes, type\)/);
+  // A part swaps as q does.
+  assert.match(radial, /swapCandidates\(component\.type\)[\s\S]*run: \(\) => swapParts\(\[radial\.refdes\], type\)/);
   // A wire: its net, including a color wheel of highlights.
   for (const label of ['Name net', 'Net label', 'Highlight', 'Tidy', 'Delete run']) assert.match(radial, new RegExp(`label: '${label}'`));
   assert.match(radial, /NET_HIGHLIGHT_COLORS\.slice\(0, 7\)\.map\(highlightItem\)/);
-  // What a sector would do shows on a copy of the drawing until release.
-  assert.match(radial, /if \(item\?\.preview\) previewEdit\(\(circuit\) => item\.preview\(circuit, radial\)\);/);
-  assert.match(main, /export function previewEdit\(edit\) \{\s*endPreviewEdit\(\);\s*beginPreviewTransaction\(\);/);
+  // Pointing only lights a sector; the drawing changes once, on release.
+  assert.doesNotMatch(radial, /previewEdit|preview:/);
   assert.match(main, /finishRadialMenu\(radial, \{ x: ev\.clientX, y: ev\.clientY \}\);/);
 });
 

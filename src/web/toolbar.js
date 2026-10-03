@@ -315,9 +315,9 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['middle', 'drag to pan'],
     ['right-hold paper', 'part palette: flick toward a part to drop it there; rest on a sector for its variants'],
     ['right-hold a pin', 'connect it: ground, supply, VCM, a port, a labelled stub, or a wire'],
-    ['right-hold a part', 'swap it for a related type, each previewed in place'],
+    ['right-hold a part', 'swap it for a related type'],
     ['right-hold a wire', 'its net: name, label, highlight color, tidy, delete the run'],
-    ['right tap / drag', 'tap for the context menu; a drag on paper zooms to the box'],
+    ['right tap / drag', 'tap for the context menu; a drag zooms to the box, from paper or a part'],
     ['wheel', 'zoom about the pointer (with Trackpad scrolling: scroll pans, pinch zooms)'],
   ]],
 ]);

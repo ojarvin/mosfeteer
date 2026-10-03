@@ -1,18 +1,18 @@
 /**
- * The radial (marking) menus a right-hold or right-flick opens. Each asks
+ * The radial (marking) menus a right-hold opens (a right-drag before it zooms instead). Each asks
  * what is under the press and offers what fits it:
  *
  *   paper  a part palette: flick to pick a part, then click to put it down
  *          (hold a sector for its variants: NMOS → bulk NMOS, NPN; rails →
  *          ground, supply, VCM; ...)
  *   pin    connect it: ground, supply, VCM, a port, a labelled stub, a wire
- *   part   swap it for a related type (as q), each one previewed in place
+ *   part   swap it for a related type (as q)
  *   wire   its net: name it, label it here, tidy it, delete the run, or pick
  *          its highlight color off a color wheel
  *
  * Sector 0 is up and indices run clockwise, so a practiced flick needs no
- * reading; release in the centre cancels. While the pointer is in a sector
- * the drawing shows what releasing there would do (a preview on a copy).
+ * reading; release in the centre cancels. Pointing only lights a sector:
+ * the drawing changes once, on release, so sweeping the ring costs nothing.
  * The ring geometry is in gestures.js.
  */
 
@@ -37,7 +37,7 @@ import { activeBeatIndex } from './beats-ui.js';
 import { logLine } from './status-bar-ui.js';
 import {
   activateAlign, activateCopy, activateMove, applyEditorSelection, applyJson, armModalMove, beginCopySource, commit, deleteSelection,
-  editSelectionText, endPreviewEdit, previewEdit, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow,
+  editSelectionText, render, selectedTransform, snapshot, startWireFromPoint, stubSelection, tidyNow,
 } from './main.js';
 
 const TILE = 64;
@@ -81,7 +81,6 @@ function pinRail(type, label) {
     label,
     symbol: type,
     enabled: (radial) => !radial.connected,
-    preview: (circuit, radial) => addPinRail(circuit, radial.ref, type),
     run: (radial) => {
       const marker = edit(() => addPinRail(editor.circuit, radial.ref, type));
       if (marker) logLine(`${marker.refdes} (${type}) on ${radial.refdes}.${radial.term}`);
@@ -106,7 +105,6 @@ const pinPort = (type, label) => ({
   label,
   symbol: type,
   enabled: (radial) => !radial.connected,
-  preview: (circuit, radial) => addPinPort(circuit, radial, type),
   run: (radial) => {
     const port = edit(() => addPinPort(editor.circuit, radial, type));
     if (port) logLine(`${port.refdes} on ${radial.refdes}.${radial.term}`);
@@ -116,7 +114,6 @@ const pinPort = (type, label) => ({
 const PIN_RING = [
   pinRail('supply', 'Supply'),
   { label: 'Stub + label', icon: 'stub', enabled: (radial) => !radial.connected,
-    preview: (circuit, radial) => addTerminalStubs(circuit, [radial.refdes], { terms: [`${radial.refdes}.${radial.term}`] }),
     run: (radial) => {
       const out = edit(() => addTerminalStubs(editor.circuit, [radial.refdes], { terms: [`${radial.refdes}.${radial.term}`] }));
       if (out?.stubs.length) logLine(`${out.stubs[0].ref}: stub labelled ${out.stubs[0].name}`);
@@ -137,7 +134,6 @@ function partRing(radial) {
     label: shortPlacementLabel(type),
     title: PLACEMENT_LABELS[type] || type,
     symbol: type,
-    preview: (circuit) => swapComponentType(circuit, radial.refdes, type),
     run: () => swapParts([radial.refdes], type),
   }));
 }
@@ -174,7 +170,6 @@ const highlightItem = (color) => ({
   label: color || 'None',
   swatch: color ? resolveColor(color) : null,
   icon: color ? null : 'x-circle',
-  preview: (circuit, radial) => setHighlight(circuit, radial.netId, color),
   run: (radial) => edit(() => setHighlight(editor.circuit, radial.netId, color)),
 });
 
@@ -292,7 +287,7 @@ function sectorAt(radial, dx, dy) {
   return sector >= 0 && radial.enabled[sector] ? sector : -1;
 }
 
-/** Follow the pointer: light its sector, preview it, and after a rest open
+/** Follow the pointer: light its sector, and after a rest open
  *  its variants (or, back in the centre of variants, the ring before). */
 export function highlightRadial(dx, dy) {
   const radial = editor.drag;
@@ -306,14 +301,11 @@ export function highlightRadial(dx, dy) {
   [...menu.querySelectorAll('.radial-item')].forEach((el, index) => el.classList.toggle('active', index === sector));
   window.clearTimeout(radial.dwellTimer);
   const item = radial.items[sector];
-  if (item?.preview) previewEdit((circuit) => item.preview(circuit, radial));
-  else endPreviewEdit();
   if (item?.children) {
     radial.dwellTimer = window.setTimeout(() => {
       if (editor.drag !== radial || radial.active !== sector) return;
       radial.stack.push({ items: radial.items, hub: menu.querySelector('.radial-hub').textContent });
       showRing(radial, item.children, item.label);
-      endPreviewEdit();
     }, DWELL_MS);
   } else if (sector < 0 && radial.stack.length) {
     radial.dwellTimer = window.setTimeout(() => {
@@ -326,7 +318,6 @@ export function highlightRadial(dx, dy) {
 
 export function closeRadialMenu() {
   window.clearTimeout(editor.drag?.dwellTimer);
-  endPreviewEdit();
   editor.radialMenuEl?.remove();
   editor.radialMenuEl = null;
 }
