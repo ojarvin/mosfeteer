@@ -315,6 +315,9 @@ selected generator to that same solve. The main implementation is in
 - Opamps are VCVSs, ideal (a nullor, folded out of the system before the
   solve, `reduceNullors`) unless a part's model is finite gain `A` or a single
   pole `omega_t/s`; MNA stamps the inverse gain. A `gm` cell is a VCCS.
+- Loop gain is a return ratio at a picked opamp or transistor
+  (`loop-gain.js`): one more solve of the selected model, the element's
+  output from a unit test source and the input shorted, never Miller-split.
 - Three-terminal MOS bulk is implicitly tied to VSS/VDD; four-terminal MOS
   uses its actual bulk. Body effect may be omitted without reconnecting the
   bulk. `r_o → infinity` and infinite resistor attributes remove branches

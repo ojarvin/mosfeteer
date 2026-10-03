@@ -27,6 +27,7 @@ const QUANTITIES = [
   { key: 'transfer', label: 'Voltage gain', tex: 'A_{v}' },
   { key: 'output', label: 'Output impedance', tex: 'Z_{out}' },
   { key: 'input', label: 'Input impedance', tex: 'Z_{in}' },
+  { key: 'loop', label: 'Loop gain', tex: 'T' },
 ];
 
 const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance', 'other'];
@@ -134,7 +135,10 @@ function currentModel() {
       }
     }
   }
-  return { parameters, values, sketch, corners, quantity: QUANTITIES.find((q) => q.key === state.quantity) };
+  const found = QUANTITIES.find((q) => q.key === state.quantity);
+  // An ideal opamp's loop is its feedback factor (T = A beta, A infinite).
+  const quantity = found.key === 'loop' && report.reports.loop?.infinite ? { ...found, label: 'Feedback factor', tex: '\\beta' } : found;
+  return { parameters, values, sketch, corners, quantity };
 }
 
 // ----- drawing -----------------------------------------------------------------------
@@ -233,7 +237,7 @@ function drawSketch() {
     return;
   }
   const { sketch, corners, quantity } = model;
-  figureHost.appendChild(figureElement(bodeFigure(sketch, { width: 480, height: 300, corners, quantity: quantity.tex })));
+  figureHost.appendChild(figureElement(bodeFigure(sketch, { width: 480, height: 300, corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })));
   for (const corner of corners) {
     const item = document.createElement('li');
     const where = `${formatNumber(corner.w)}\\,g/C`;
@@ -248,6 +252,27 @@ function drawSketch() {
     const item = document.createElement('li');
     item.className = 'bode-cancelled';
     item.textContent = `${sketch.cancelled} pole–zero pair${sketch.cancelled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out`;
+    list.appendChild(item);
+  }
+  // A loop gain's crossover, and its phase margin there.
+  if (quantity.key === 'loop' && quantity.tex === 'T') {
+    const item = document.createElement('li');
+    if (sketch.unityGain) {
+      let phase = sketch.unityGain.phase % 360;
+      if (phase > 0) phase -= 360;
+      const margin = 180 + phase;
+      item.appendChild(mathElement(`\\omega_{c} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase margin } ${Math.round(margin)}\\text{°}`));
+      if (margin < 0) item.classList.add('analysis-error');
+    } else {
+      item.textContent = 'No crossover: |T| does not pass 1 at these ratios.';
+    }
+    list.appendChild(item);
+  }
+  // Too large for every symbol, the loop was solved at these ratios' numbers.
+  if (quantity.key === 'loop' && state.report.reports?.loop?.numeric) {
+    const item = document.createElement('li');
+    item.className = 'bode-cancelled';
+    item.textContent = 'Too large to solve with every symbol: T was solved at the sketch ratios as they were at the last Analyze; analyze again after moving a slider.';
     list.appendChild(item);
   }
   if (sketch.unityGain && quantity.key === 'transfer') {
@@ -384,7 +409,7 @@ export function currentPlotData() {
     points,
     asymptote: sketch.asymptote,
     corners: corners.map((corner) => ({ w: corner.w, text: corner.text })),
-    unityGain: quantity.key === 'transfer' ? sketch.unityGain : null,
+    unityGain: quantity.key === 'transfer' || quantity.key === 'loop' ? sketch.unityGain : null,
     quantity: quantity.tex,
     phase: state.withPhase,
   };

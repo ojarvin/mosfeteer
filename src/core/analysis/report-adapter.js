@@ -634,6 +634,7 @@ export const EQUATION_GROUPS = Object.freeze([
   ['ports', 'Ports'],
   ['impedances', 'Impedances'],
   ['transfers', 'Transfer functions'],
+  ['loop', 'Loop gain'],
   ['roots', 'Poles and zeros'],
   ['noise', 'Noise'],
   ['definitions', 'Where'],
@@ -665,6 +666,19 @@ function equationEntries(reports, report, presentation = {}) {
     const suffix = transfers.length > 1 ? ` (${name})` : '';
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
+  }
+  // The loop gain at the element picked (loop-gain.js): T, its DC value, an
+  // opamp's feedback factor; or why the loop would not break there.
+  const loop = report.loop;
+  if (loop?.ok) {
+    // Too large for every symbol: at the Bode sketch's relative values.
+    const at = ` at ${loop.element}${loop.numeric ? ' (numeric, at the Bode sketch\'s ratios)' : ''}`;
+    if (loop.ac?.equation) add(`AC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.ac.equation }, 'loop');
+    if (loop.dc?.equation) add(`DC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.dc.equation }, 'loop');
+    if (loop.infinite) add('Loop gain', { ok: true, equation: 'T = A \\beta \\to \\infty' }, 'loop');
+    if (loop.beta) add(`Feedback factor${at}`, { ok: true, equation: loop.beta.equation }, 'loop');
+  } else if (loop) {
+    add('Loop gain', { ok: true, equation: `\\text{${String(loop.error).replace(/[{}\\]/g, '')}}` }, 'loop');
   }
   for (const { title, result } of noiseEntries(report, presentation)) {
     if (result.table) entries.push({ title, group: 'noise', result });
@@ -797,6 +811,10 @@ function buildAdapted(report, presentation = {}) {
   const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
   const details = detailsFor(report, report);
   const reports = { ...cleaned };
+  // The loop gain, for the Bode tab: its exact coefficients and roots.
+  if (report.loop?.ok) {
+    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
+  }
   const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
   const context = report.context || {};

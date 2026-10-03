@@ -6271,15 +6271,28 @@ body.chrome-away [data-editor-edge="right"] {
   font-style: italic;
 }
 
-.signal-flow-graph {
+/* The plot area: one card, its view switch on top. */
+.signal-flow-plots {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
 }
 
-.signal-flow-graph[hidden] {
+.signal-flow-graph,
+.signal-flow-locus,
+.signal-flow-swing,
+.signal-flow-loop,
+.signal-flow-loop-body {
+  display: grid;
+  gap: 6px;
+}
+
+.signal-flow-graph[hidden],
+.signal-flow-locus[hidden],
+.signal-flow-swing[hidden],
+.signal-flow-loop[hidden] {
   display: none;
 }
 

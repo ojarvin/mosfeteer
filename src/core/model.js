@@ -1026,7 +1026,8 @@ export function normalizeAnalysisValues(value) {
     sources: Object.fromEntries(Object.entries(rawFlow.sources || {}).filter(([k, v]) => k.length <= 200 && (['input', 'zero'].includes(v) || (v && typeof v === 'object' && typeof v.constant === 'string'))).map(([k, v]) => [k, typeof v === 'object' ? { constant: v.constant.slice(0, 100) } : v])),
     swingInput: text(rawFlow.swingInput),
     swingFrequency: text(rawFlow.swingFrequency),
-    ...(['phase', 'step'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
+    ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
+    ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
     ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
   } : null;
   return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
@@ -1068,7 +1069,14 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}) };
+}
+
+/** A plot's marked frequencies: `{ f, label }`, a few. */
+function markersOf(plot) {
+  const markers = (Array.isArray(plot.markers) ? plot.markers : []).filter((m) => finite(m?.f) && m.f > 0).slice(0, 4)
+    .map((m) => ({ f: round(m.f, 6), label: typeof m.label === 'string' ? m.label.slice(0, 80) : '' }));
+  return markers.length ? { markers } : {};
 }
 
 /** A root-locus plot (signal-flow analysis): the swept poles, the current ones. */

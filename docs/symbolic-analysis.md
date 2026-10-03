@@ -93,6 +93,30 @@ component symbolic can still exceed the work limit; ideal ones scale. The
 audit netlist lists an opamp as `E out ref in+ in- gain` and the model
 drawing as a VCVS diamond.
 
+## Loop gain
+
+**Loop gain at** (the transfer-functions fieldset) picks an opamp or a
+transistor and derives the loop's return ratio there (`loop-gain.js`, Bode
+and Rosenstark): the element's output driven from a unit test source, the
+input shorted (every independent source at zero), and what returns to its
+control read. An opamp gives its feedback factor beta = -v_d/v_t and T = A
+beta -- A_1 beta for finite gain, omega_t1 beta / s for one pole, and beta
+alone for an ideal opamp, whose T is infinite; a transistor gives T =
+-g_m v_gs / i_t at its g_m. It is exact in the analysis's own model, with no
+loading to approximate, and solved without Miller splitting, which would
+remove the feedback being measured. T and its DC value, and an opamp's
+beta, list under Loop gain; the Bode tab sketches T (or beta) with its
+crossover omega_c and the phase margin there, at the sliders' relative
+values -- a phase margin needs no design values.
+
+The loop has an operation budget of its own, so a loop too large to solve
+never takes the port quantities down with it. Past that budget (a two-stage
+Miller OTA, whose plain A_v is already too large), it is solved again with
+the Bode sketch's relative values for every symbol (`sketchRatios`, the
+sliders as they were), leaving only s: a numeric T(s), titled so, still with
+its crossover and phase margin, and re-solved by the next Analyze after a
+slider moves.
+
 ## Exact and displayed results
 
 The exact solve is canonicalized before presentation:

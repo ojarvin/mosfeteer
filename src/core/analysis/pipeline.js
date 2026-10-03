@@ -678,6 +678,10 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
   const mnaBudget = budgetFailure(ops, 'MNA construction');
   if (mnaBudget) return failure('budget', mnaBudget.error, mnaBudget);
 
+  // The model alone, unsolved (a loop gain needs its primitives, not the closed loop's solution).
+  if (options.solve === false) {
+    return { ok: true, stage: 'model', context, conversion: converted, primitives: exactPrimitives, mnaPrimitives, coupled, selected, selectedExact, selectedMna, excitations, system };
+  }
   // A nullor-reduced system's rows do not pair with its unknowns: no structural solve.
   const solution = (options.topologicalSolve === false || system.nullorReduced ? null : solveByTopology(system, excitations, context, ops, {
     splitBranches: selectedMna.some((primitive) => ['vccs', 'opamp', 'opamp-cm'].includes(primitive.kind)),

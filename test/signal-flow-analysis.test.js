@@ -765,3 +765,38 @@ test('with a simulated spectrum the response graph is one plot in dBFS: noise le
   const figure = responseFigure(plot);
   for (const item of figure.items.filter((i) => i.type === 'path')) for (const p of item.points) assert.ok(p.x >= figure.pane.x - 1e-6, 'left of the axis');
 });
+
+import { loopBreakSignals, loopGain, loopMargins, transferTex } from '../src/core/analysis/signal-flow.js';
+
+test('the loop gain at a broken signal: T with NTF = 1/(1 + T), its crossover and phase margin', () => {
+  const dt = loopGain(quantizedModulator('dt'), { breakAt: 'V' });
+  assert.equal(dt.ok, true, dt.error);
+  assert.equal(transferTex(dt.value, 'z'), '\\frac{k_{2} z^{-1} + \\left(-k_{2} + k_{1}\\right) z^{-2}}{1 - 2 z^{-1} + z^{-2}}');
+  // The equivalent continuous-time loop (gains 1, 1.5, an NRZ DAC) samples to the same T.
+  const ct = loopGain(quantizedModulator('ct'), { breakAt: 'V', values: { T: 1, T_d: 0, k_1: 1, k_2: 1.5 } });
+  assert.equal(ct.ok, true, ct.error);
+  assert.equal(transferTex(ct.value.at({ T: 1, T_d: 0, k_1: 1, k_2: 1.5 }), 'z'), '\\frac{2 z^{-1} - z^{-2}}{1 - 2 z^{-1} + z^{-2}}');
+  const margins = loopMargins(responseCurve(withCoefficients(dt.value, { k_1: 1, k_2: 2 }), 'z'));
+  assert.ok(Math.abs(margins.crossover - 0.283) < 0.005, `${margins.crossover}`);
+  assert.ok(Math.abs(margins.phaseMargin - 23.9) < 0.5, `${margins.phaseMargin}`);
+  // A source is not in a loop.
+  assert.equal(loopGain(quantizedModulator('dt'), { breakAt: 'U' }).code, 'not-in-loop');
+  // A loop plot keeps its role and its crossover marker when annotated.
+  const circuit = new Circuit();
+  const plot = bandedPlot([{ label: 'T', color: '#3b74e0', value: withCoefficients(dt.value, { k_1: 1, k_2: 2 }), variable: 'z' }], 'z');
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, plot: { ...plot, role: 'loop', markers: [{ f: 0.283, label: 'PM 24°' }] } });
+  const again = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).labels.get(box.id).plot;
+  assert.equal(again.role, 'loop');
+  assert.deepEqual(again.markers, [{ f: 0.283, label: 'PM 24°' }]);
+  assert.ok(responseFigure(again).items.some((item) => item.text === 'PM 24°'));
+  assert.ok(responseFigure(again).items.some((item) => item.text === '|T| (dB)'));
+});
+
+test('a sampled loop breaks only at a sampled signal, a quantizer\'s output offered first', () => {
+  const circuit = quantizedModulator('ct');
+  const offered = loopBreakSignals(circuit).map((s) => s.display);
+  assert.equal(offered[0], 'V');
+  assert.ok(!offered.includes('N1') && offered.every((name) => name === 'V' || /^N/.test(name)));
+  const continuous = [...signalFlowGraph(circuit).signals.values()].find((s) => s.driver?.comp === 'H1');
+  assert.equal(loopGain(circuit, { breakAt: continuous.key, values: { T: 1, T_d: 0, k_1: 1, k_2: 1.5 } }).code, 'continuous-break');
+});

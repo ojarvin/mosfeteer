@@ -7,6 +7,7 @@
 
 import { INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } from '../core/model.js';
 import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
+import { LOOP_ELEMENT_TYPES } from '../core/analysis/loop-gain.js';
 import { EQUATION_GROUPS, adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { svgString, texToMathML } from '../core/render.js';
@@ -24,6 +25,7 @@ import { commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComp
 import { floatingWindow } from './floating-window.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
+const analysisLoopElement = document.getElementById('analysis-loop-element');
 
 const analysisTabButtons = [...document.querySelectorAll('[data-analysis-tab]')];
 
@@ -117,7 +119,20 @@ function fillAnalysisDialog(targetNetId) {
     if (defaults.input) analysisInput.value = defaults.input;
   }
   fillNoiseSources();
+  fillLoopElements();
   return defaults;
+}
+
+/** The opamps and transistors a loop can be broken at. */
+function fillLoopElements() {
+  if (!analysisLoopElement) return;
+  const kept = analysisLoopElement.value;
+  const parts = sortedComps().filter((component) => LOOP_ELEMENT_TYPES.has(component.type));
+  analysisLoopElement.replaceChildren(
+    Object.assign(document.createElement('option'), { value: '', textContent: 'no loop gain' }),
+    ...parts.map((component) => Object.assign(document.createElement('option'), { value: component.refdes, textContent: `${component.refdes} (${component.type.startsWith('opamp') ? 'opamp' : 'g_m'})` })),
+  );
+  if (parts.some((component) => component.refdes === kept)) analysisLoopElement.value = kept;
 }
 
 function parseAnalysisList(value) {
@@ -162,6 +177,7 @@ function analysisFormValues() {
     input: analysisInput?.value || '',
     output: analysisTarget?.value || '',
     acGrounds: analysisAcGrounds?.value || '',
+    loopElement: analysisLoopElement?.value || '',
     deviceRegions,
     options,
     annotationExcluded: [...annotationExcluded],
@@ -238,6 +254,7 @@ function restoreAnalysisForm(defaults = {}) {
   };
   setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
   setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
+  setSelect(analysisLoopElement, typeof saved.loopElement === 'string' ? saved.loopElement : '');
   if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
   if (analysisDeviceRegions) {
     analysisDeviceRegions.value = formatAnalysisDeviceRegions(pruneAnalysisDeviceRegions(
@@ -1135,9 +1152,11 @@ export function installAnalysisUi() {
     const formOptions = analysisFormOptions();
     const devices = analysisDeviceOptions();
     const noise = analysisNoiseRequest(formOptions);
+    const loopElement = analysisLoopElement?.value;
     const request = {
       ...formOptions,
       ...(noise ? { noise } : {}),
+      ...(loopElement ? { loopGain: { element: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
       ...(Object.keys(devices).length ? { devices } : {}),
       input,
       output,

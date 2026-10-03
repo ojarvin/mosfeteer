@@ -61,7 +61,7 @@ function clippedPaths(samples, x, y, low, high, role) {
  * figures on the axes, only the marked frequencies.
  */
 export function bodeFigure(sketch, {
-  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 180,
+  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 180, unityText = 'ω_{u}',
   fontSize = 11,
 } = {}) {
   const items = [];
@@ -74,7 +74,8 @@ export function bodeFigure(sketch, {
   // it -- in a second row where two would crowd each other.
   const marks = [];
   for (const corner of corners) if (corner.w > 0) marks.push({ w: corner.w, text: corner.text });
-  const unity = unityGain && sketch.unityGain ? { w: sketch.unityGain.w, text: 'ω_{u}', unity: true } : null;
+  // A loop gain's unity crossing is its crossover, ω_c.
+  const unity = unityGain && sketch.unityGain ? { w: sketch.unityGain.w, text: unityText, unity: true } : null;
   if (unity) marks.push(unity);
   const left = numbers ? 4.2 * em : 0.8 * em;
   const right = numbers ? 0.9 * em : 1.4 * em;
@@ -244,12 +245,24 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
+  // Marked frequencies (a loop's crossover), labelled at the top.
+  for (const marker of plot.markers || []) {
+    if (!(marker.f > 0) || Math.log10(marker.f) <= low || Math.log10(marker.f) >= high) continue;
+    items.push({ type: 'line', x1: x(marker.f), y1: pane.y, x2: x(marker.f), y2: pane.y + pane.h, role: 'marker' });
+    if (marker.label) {
+      const right = x(marker.f) > pane.x + pane.w / 2;
+      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
+    }
+  }
   // The signal band's edges.
   for (const f of plot.band || []) {
     if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
     items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
   }
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: phase ? '∠H (°)' : plot.units === 'dBFS' ? 'dBFS' : '|H| (dB)', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: (() => {
+    const name = plot.role === 'loop' ? 'T' : 'H';
+    return phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`;
+  })(), anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
 }

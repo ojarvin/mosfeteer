@@ -2697,10 +2697,12 @@ __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
 __exports.portDefinitions = portDefinitions;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 let MOS_TYPES, firstDefined; __bind(() => { ({ MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js")); });
+let returnRatio; __bind(() => { ({ returnRatio } = __require("src/core/analysis/loop-gain.js")); });
 let applyApproximations; __bind(() => { ({ applyApproximations } = __require("src/core/analysis/approximation.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let symbolProvenance; __bind(() => { ({ symbolProvenance } = __require("src/core/analysis/provenance.js")); });
+let sketchParameters, sketchValues; __bind(() => { ({ sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
 let buildExactAnalysisPipeline, transferFunctionList; __bind(() => { ({ buildExactAnalysisPipeline, transferFunctionList } = __require("src/core/analysis/pipeline.js")); });
 let presentDiagnostics; __bind(() => { ({ presentDiagnostics } = __require("src/core/analysis/diagnostics.js")); });
 let describeSmallSignalNetlist; __bind(() => { ({ describeSmallSignalNetlist } = __require("src/core/analysis/netlist.js")); });
@@ -2710,6 +2712,8 @@ let compactRational; __bind(() => { ({ compactRational } = __require("src/core/a
 let buildNoiseReport, noiseProvenancePrimitives, noiseRequest; __bind(() => { ({ buildNoiseReport, noiseProvenancePrimitives, noiseRequest } = __require("src/core/analysis/noise.js")); });
 let infinity, integer, rational, rationalFunction, substituteRational; __bind(() => { ({ infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js")); });
 let equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation; __bind(() => { ({ equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js")); });
+
+
 
 
 
@@ -3100,6 +3104,92 @@ function withCancelledRoots(response, value, options, approximationOptions) {
   };
 }
 
+/**
+ * The loop gain at `element` (loop-gain.js), presented as the port
+ * quantities are: T(s) and its DC value, or for an ideal opamp its feedback
+ * factor beta (T = A beta, A infinite). Solved without Miller splitting,
+ * which would remove the feedback being measured.
+ */
+function analyzeLoopGain(circuit, pipeline, pipelineOptions, element, mainOps, mainOptions, mainApproximationOptions, rawOptions = {}) {
+  // A budget of its own: a loop gain too large to solve must not take the
+  // port quantities down with it.
+  const ops = createRationalOps({ variable: mainApproximationOptions.variable || 's', maxOperations: rawOptions.loopGainOperations || LOOP_GAIN_OPERATIONS });
+  const options = { ...mainOptions, budget: ops.budget };
+  const approximationOptions = { ...mainApproximationOptions, budget: ops.budget, rational: { ...(mainApproximationOptions.rational || {}), budget: ops.budget } };
+  let exact;
+  try {
+    // Its own algebra too: the model rebuilt with it, symbols and all.
+    const loopPipelineOptions = { ...pipelineOptions, ops, s: ops.s(), valueOf: (value, primitive) => symbolicValue(value, primitive, rawOptions, ops) };
+    exact = loopGainReport(circuit, pipeline, loopPipelineOptions, element, ops, options, approximationOptions);
+  } catch (error) {
+    exact = { ok: false, element, tooLarge: /budget/i.test(error.message), error: `the loop gain at ${element} did not solve: ${error.message}` };
+  }
+  if (exact.ok || !exact.tooLarge) return exact;
+  // Too large to keep every symbol: solve it again with numbers for them --
+  // the Bode sketch's relative values (each g_m one unit, each r_o and
+  // resistor g_m r_o units, each capacitor one, loads ten), at the ratios
+  // the sketch was left at -- so only s is left: T(s) with numeric
+  // coefficients, its poles, and a sketch with its phase margin.
+  try {
+    const numericOps = createRationalOps({ variable: mainApproximationOptions.variable || 's', maxOperations: LOOP_GAIN_OPERATIONS });
+    const symbolicOptions = { ...pipelineOptions, ops: numericOps, s: numericOps.s(), valueOf: (value, primitive) => symbolicValue(value, primitive, rawOptions, numericOps) };
+    const model = buildExactAnalysisPipeline(circuit, { ...symbolicOptions, millerApproximation: false, solve: false });
+    if (!model.ok) return exact;
+    const provenance = symbolProvenance(model.primitives, model.conversion?.primitives, []);
+    const outputNode = model.context.output?.node;
+    const outputComponents = new Set([...circuit.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
+    const values = sketchValues(sketchParameters(new Set(Object.keys(provenance)), provenance, { outputComponents }), rawOptions.sketchRatios || {});
+    const numericPipelineOptions = { ...symbolicOptions, valueOf: (value, primitive) => symbolicValue(value, primitive, { ...rawOptions, values }, numericOps) };
+    const numericOptions = { ...mainOptions, budget: numericOps.budget };
+    const numericApproximation = { ...mainApproximationOptions, budget: numericOps.budget, rational: { ...(mainApproximationOptions.rational || {}), budget: numericOps.budget } };
+    const numeric = loopGainReport(circuit, pipeline, numericPipelineOptions, element, numericOps, numericOptions, numericApproximation);
+    return numeric.ok ? { ...numeric, numeric: true, values } : exact;
+  } catch {
+    return exact;
+  }
+}
+
+const LOOP_GAIN_OPERATIONS = 400000;
+
+function loopGainReport(circuit, pipeline, pipelineOptions, element, ops, options, approximationOptions) {
+  // The model without Miller splitting (it removes the feedback being
+  // measured), unsolved: only the broken loop is solved.
+  let loopPipeline = pipeline;
+  loopPipeline = buildExactAnalysisPipeline(circuit, { ...pipelineOptions, millerApproximation: false, solve: false });
+  if (!loopPipeline.ok) return { ok: false, element, error: loopPipeline.error, tooLarge: /budget/i.test(loopPipeline.error || '') };
+  const result = returnRatio(loopPipeline, element, ops);
+  if (!result.ok) return { ok: false, element, error: result.error, tooLarge: /budget/i.test(result.error || '') };
+  const tooLarge = () => ({ ok: false, element, tooLarge: true, error: `the loop gain at ${element} is too large to solve exactly; simplify the model (r_o -> infinity on bias devices, fewer capacitances) or break the loop at a smaller part of it` });
+  if (ops.budget?.exceeded) return tooLarge();
+  // No loop through it: its return ratio is exactly zero.
+  if (ops.isZero(result.loop ?? result.beta)) return { ok: false, element, error: `${element} is in no feedback loop: its return ratio is zero` };
+  const tidy = (value) => {
+    const cleanupOps = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+    const compact = compactRational(value, cleanupOps);
+    return cancelCommonPolynomialFactor(cleanupOps.budget.exceeded ? value : compact, { variable: approximationOptions.variable || 's', maxWork: EXACT_CANCELLATION_WORK });
+  };
+  const name = result.loop ? 'T' : 'beta';
+  const exact = canonicalResponseValue(tidy(result.loop || result.beta), options);
+  const approximation = applyApproximations(exact.expression, approximationOptions);
+  const displayed = displayResponse(name, exact.expression, approximation, options, approximationOptions);
+  let beta = null;
+  if (result.kind === 'opamp' && result.loop) {
+    const betaValue = canonicalResponseValue(tidy(result.beta), options);
+    beta = { expression: betaValue.expression, equation: renderQuantityEquation('beta', betaValue.hasFrequency ? 's' : null, betaValue.expression, options) };
+  }
+  if (ops.budget?.exceeded) return tooLarge();
+  return {
+    ok: true,
+    element,
+    kind: result.kind,
+    model: result.model,
+    infinite: !result.loop,
+    ...displayed,
+    ...(beta ? { beta } : {}),
+    equations: [...displayed.equations, ...(beta ? [beta.equation] : [])],
+  };
+}
+
 function displayResponse(name, exact, approximation, options, approximationOptions = null) {
   const selected = withCancelledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
   const exactResponse = canonicalResponseValue(exact, options);
@@ -3400,7 +3490,16 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       retainedOutputResistance = true;
     }
   }
-  if (!pipeline.ok) return failureReport(pipeline, normalized);
+  if (!pipeline.ok) {
+    // A loop gain asked for still gets its own solve: the closed loop may be
+    // too large where the broken one is not.
+    const report = failureReport(pipeline, normalized);
+    if (options.loopGain?.element && pipeline.selectedMna) {
+      const loopOptions = { ...analysisOptions, parameters: analysisOptions.parameters || {}, rational: { maxOperations: options.maxOperations } };
+      report.loop = analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain.element, ops, responseOptions(loopOptions), loopOptions, options);
+    }
+    return report;
+  }
   if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
 
   const queries = pipeline.queries;
@@ -3515,6 +3614,9 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
     : [];
   const noise = analyzeNoise(queries, values.Av, noiseRequest(options.noise), approximationOptions);
+  const loop = options.loopGain?.element
+    ? analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain.element, ops, withEquivalences(responseOptions(analysisOptions)), approximationOptions, options)
+    : null;
   const assumptions = unique([
     ...millerAssumptions,
     ...(noise?.assumptions || []),
@@ -3560,6 +3662,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       .map((name) => [DERIVED_TRANSFERS[name], displayed[DERIVED_TRANSFERS[name]]])),
     transferFunctions,
     ...(noise ? { noise } : {}),
+    ...(loop ? { loop } : {}),
     exact,
     approximate: approximations,
     dc: {
@@ -3582,6 +3685,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       ...displayed.output.equations,
       ...transferFunctions.flatMap((name) => displayed[name === 'Av' ? 'transfer' : DERIVED_TRANSFERS[name]].equations),
       ...roots.map(({ equation }) => equation),
+      ...(loop?.ok ? loop.equations : []),
     ],
     details: {
       topology,
@@ -4008,6 +4112,86 @@ function locusPlot(locus, { parameter, label, color = '#3b74e0' } = {}) {
   };
 }
 
+};
+
+__modules["src/core/analysis/loop-gain.js"] = function (__require, __exports) {
+__exports.returnRatio = returnRatio;
+let buildMNA; __bind(() => { ({ buildMNA } = __require("src/core/analysis/mna.js")); });
+let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
+let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
+/**
+ * Loop gain of a circuit as a return ratio (Bode, Rosenstark): break the
+ * loop at its active element -- an opamp, or a transistor's g_m -- by
+ * driving the element's output from a unit test source, every independent
+ * source at zero (the input shorted), and read what returns to the
+ * element's control:
+ *
+ *   opamp:      v_out = A v_d -> a test voltage at its output gives v_d;
+ *               beta = -v_d / v_t (the feedback factor), T = A beta.
+ *   transistor: i_d = g_m v_gs -> a test current in its place gives v_gs;
+ *               T = -g_m v_gs / i_t.
+ *
+ * Exact, in the analysis's own model, with no loading to approximate. An
+ * ideal opamp's T is infinite: its feedback factor stands in, T = A beta.
+ */
+
+
+
+
+
+/** The parts a circuit's loop can be broken at: opamps and transistors. */
+const LOOP_ELEMENT_TYPES = new Set(['opamp', 'opamp_diff', 'nmos', 'pmos', 'nmosb', 'pmosb']);
+
+/**
+ * `pipeline` a built exact pipeline (no Miller splitting: it removes the
+ * feedback being measured), `element` a refdes. Returns `{ ok, kind:
+ * 'opamp' | 'transistor', model, loop (T, or null when infinite), beta
+ * (an opamp's feedback factor) }` or a failure.
+ */
+function returnRatio(pipeline, element, ops) {
+  const primitives = pipeline.selectedMna || [];
+  const opamp = primitives.find((p) => p.kind === 'opamp' && p.metadata?.component === element);
+  const gm = primitives.find((p) => p.kind === 'vccs' && p.id === `${element}.gm`);
+  const target = opamp || gm;
+  if (!target) return { ok: false, code: 'not-in-loop', error: `${element} is not in the analysed circuit: pick an opamp or a transistor on the signal path` };
+  // The element's output from a unit test source; the input's source at zero.
+  const test = opamp
+    ? { kind: 'voltage-source', id: '@loop-test', terminals: target.terminals, value: ops.one }
+    : { kind: 'current-source', id: '@loop-test', terminals: target.terminals, value: ops.one };
+  const input = { ...pipeline.excitations.input, value: ops.zero };
+  const elements = [...primitives.filter((p) => p !== target), input, test];
+  let solution;
+  let system;
+  try {
+    system = buildMNA(elements, { ops, ground: AC_GROUND, grounds: [...pipeline.context.acGroundIds] });
+    solution = solveMNA(system, { ops });
+  } catch (error) {
+    return { ok: false, code: 'loop-solve', error: `the loop broken at ${element} does not solve: ${error.message}` };
+  }
+  if (!solution.ok) {
+    // A node left with no conduction once the element's own branch is gone.
+    if (/singular|pivot/i.test(solution.error || '')) {
+      return { ok: false, code: 'loop-floating', error: `breaking the loop at ${element} leaves a node with no path to AC ground (its only conduction was ${element} itself): break it at another device, or keep r_o finite` };
+    }
+    return { ok: false, code: 'loop-solve', error: solution.error || 'the broken loop does not solve' };
+  }
+  const voltage = (node) => {
+    if (node === undefined || node === null || node === AC_GROUND || pipeline.context.acGroundIds.has(node)) return ops.zero;
+    const index = solution.variables.indexOf(`V(${node})`);
+    return index < 0 ? ops.zero : solution.columns[0][index];
+  };
+  const control = ops.sub(voltage(target.control.a), voltage(target.control.b));
+  if (opamp) {
+    const beta = ops.neg(control);
+    const model = target.metadata?.opampModel || 'ideal';
+    // The MNA value is the inverse gain: T = A beta = beta / (1/A).
+    const loop = model === 'ideal' ? null : ops.div(beta, target.value);
+    return { ok: true, kind: 'opamp', model, loop, beta };
+  }
+  return { ok: true, kind: 'transistor', model: null, loop: ops.neg(ops.mul(target.value, control)), beta: null };
+}
+
+__exports.LOOP_ELEMENT_TYPES = LOOP_ELEMENT_TYPES;
 };
 
 __modules["src/core/analysis/miller.js"] = function (__require, __exports) {
@@ -6405,6 +6589,10 @@ function buildExactAnalysisPipeline(circuit, options = {}) {
   const mnaBudget = budgetFailure(ops, 'MNA construction');
   if (mnaBudget) return failure('budget', mnaBudget.error, mnaBudget);
 
+  // The model alone, unsolved (a loop gain needs its primitives, not the closed loop's solution).
+  if (options.solve === false) {
+    return { ok: true, stage: 'model', context, conversion: converted, primitives: exactPrimitives, mnaPrimitives, coupled, selected, selectedExact, selectedMna, excitations, system };
+  }
   // A nullor-reduced system's rows do not pair with its unknowns: no structural solve.
   const solution = (options.topologicalSolve === false || system.nullorReduced ? null : solveByTopology(system, excitations, context, ops, {
     splitBranches: selectedMna.some((primitive) => ['vccs', 'opamp', 'opamp-cm'].includes(primitive.kind)),
@@ -7554,6 +7742,8 @@ const QUANTITY_LABELS = Object.freeze({
   zm: 'Z_m',
   gm: 'G_m',
   ai: 'A_i',
+  t: 'T',
+  beta: '\\beta',
 });
 
 /** Return the standard analysis label for AC or DC quantities. */
@@ -9341,6 +9531,7 @@ const EQUATION_GROUPS = Object.freeze([
   ['ports', 'Ports'],
   ['impedances', 'Impedances'],
   ['transfers', 'Transfer functions'],
+  ['loop', 'Loop gain'],
   ['roots', 'Poles and zeros'],
   ['noise', 'Noise'],
   ['definitions', 'Where'],
@@ -9372,6 +9563,19 @@ function equationEntries(reports, report, presentation = {}) {
     const suffix = transfers.length > 1 ? ` (${name})` : '';
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
+  }
+  // The loop gain at the element picked (loop-gain.js): T, its DC value, an
+  // opamp's feedback factor; or why the loop would not break there.
+  const loop = report.loop;
+  if (loop?.ok) {
+    // Too large for every symbol: at the Bode sketch's relative values.
+    const at = ` at ${loop.element}${loop.numeric ? ' (numeric, at the Bode sketch\'s ratios)' : ''}`;
+    if (loop.ac?.equation) add(`AC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.ac.equation }, 'loop');
+    if (loop.dc?.equation) add(`DC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.dc.equation }, 'loop');
+    if (loop.infinite) add('Loop gain', { ok: true, equation: 'T = A \\beta \\to \\infty' }, 'loop');
+    if (loop.beta) add(`Feedback factor${at}`, { ok: true, equation: loop.beta.equation }, 'loop');
+  } else if (loop) {
+    add('Loop gain', { ok: true, equation: `\\text{${String(loop.error).replace(/[{}\\]/g, '')}}` }, 'loop');
   }
   for (const { title, result } of noiseEntries(report, presentation)) {
     if (result.table) entries.push({ title, group: 'noise', result });
@@ -9504,6 +9708,10 @@ function buildAdapted(report, presentation = {}) {
   const cleaned = Object.fromEntries(Object.entries(children).map(([key, child]) => [key, cleanChild(child)]));
   const details = detailsFor(report, report);
   const reports = { ...cleaned };
+  // The loop gain, for the Bode tab: its exact coefficients and roots.
+  if (report.loop?.ok) {
+    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
+  }
   const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
   const context = report.context || {};
@@ -10021,6 +10229,9 @@ __exports.delaySymbol = delaySymbol;
 __exports.hasDelays = hasDelays;
 __exports.blockTransferFunction = blockTransferFunction;
 __exports.analyzeSignalFlow = analyzeSignalFlow;
+__exports.loopBreakSignals = loopBreakSignals;
+__exports.loopGain = loopGain;
+__exports.loopMargins = loopMargins;
 __exports.signalDomains = signalDomains;
 __exports.delayTermsOf = delayTermsOf;
 __exports.sampledEquation = sampledEquation;
@@ -10284,8 +10495,8 @@ function failure(code, error, issues = []) {
  * sampler the result is in z and each `value` is a sampled result
  * (`sampledResult`), worked out again for each set of numbers.
  */
-function analyzeSignalFlow(circuit, options = {}) {
-  const { signals, sources, issues } = signalFlowGraph(circuit);
+function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph(circuit)) {
+  const { signals, sources, issues } = graph;
   if (issues.length) return failure(issues[0].code, issues[0].message, issues);
   const parts = [...circuit.components.values()].filter(isSignalPart);
 
@@ -10328,6 +10539,93 @@ function analyzeSignalFlow(circuit, options = {}) {
 
   const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
   return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+}
+
+/**
+ * The loop gain at a signal: the loop broken there, 1 injected into what
+ * reads it (every source at zero), and T = -(what its driver returns), the
+ * negative-feedback convention, so a quantizer's NTF is 1/(1 + T). `breakAt`
+ * names the signal (a key, a net name, a port); `values` as for
+ * analyzeSignalFlow. Returns `{ ok, variable, signal, value }` -- `value`
+ * T, an exact rational, or for a sampled loop a sampled result -- or a
+ * failure.
+ */
+/** The signals a loop can be broken at: driven ones, sampled ones only in
+ *  a diagram with a sampler; a quantizer's output first. */
+function loopBreakSignals(circuit) {
+  const graph = signalFlowGraph(circuit);
+  const domains = [...circuit.components.values()].some((c) => c.type === 'sampler') ? signalDomains({ circuit, signals: graph.signals }) : null;
+  const driven = [...graph.signals.values()].filter((s) => s.driver && !s.driver.source && (!domains?.ok || domains.domain.get(s.key) === 'z'));
+  const quantized = driven.filter((s) => circuit.components.get(s.driver.comp)?.type === 'quantizer');
+  return [...quantized, ...driven.filter((s) => !quantized.includes(s))];
+}
+
+function loopGain(circuit, { breakAt, values = {} } = {}) {
+  const graph = signalFlowGraph(circuit);
+  if (graph.issues.length) return failure(graph.issues[0].code, graph.issues[0].message, graph.issues);
+  const signal = resolveSignal(circuit, graph.signals, breakAt);
+  if (!signal) return failure('no-signal', breakAt ? `no signal "${breakAt}" to break the loop at` : 'pick a signal to break the loop at');
+  if (!signal.driver || signal.driver.source) return failure('not-in-loop', `${signal.display} is a source: break the loop at a signal a part drives`);
+  // The signal cut in two: an injected one its readers read, a returned one
+  // its driver drives; the injected one keeps the signal's domain.
+  const hasSampler = [...circuit.components.values()].some((c) => c.type === 'sampler');
+  const original = hasSampler ? signalDomains({ circuit, signals: graph.signals }) : null;
+  if (original && !original.ok) return original;
+  // A sampled loop is broken where it is sampled: a continuous signal in it
+  // carries no single return to inject against.
+  if (original && original.domain.get(signal.key) !== 'z') {
+    return failure('continuous-break', `${signal.display} is continuous: break a sampled loop at a sampled signal (the sampler's or the quantizer's output)`);
+  }
+  const injected = { ...signal, key: `${signal.key}\u0000in`, driver: { source: true, comp: '\u0000loop' }, readers: signal.readers, ...(original ? { domain: original.domain.get(signal.key) } : {}) };
+  const returned = { ...signal, key: `${signal.key}\u0000out`, readers: [] };
+  const signals = new Map([...graph.signals].filter(([key]) => key !== signal.key));
+  signals.set(injected.key, injected);
+  signals.set(returned.key, returned);
+  const source = { id: '\u0000loop', key: injected.key, name: signal.display };
+  const report = analyzeSignalFlow(circuit, { output: returned.key, sources: { [injected.key]: 'input' }, values }, { signals, sources: [source, ...graph.sources.filter((s) => s.key !== signal.key)], issues: [] });
+  if (!report.ok) return report;
+  const [entry] = report.entries;
+  const minusOne = rationalFunction(integer(-1), ONE, { variable: report.variable });
+  const negate = (value) => (value ? (value.kind === 'mixed' ? null : rationalMultiply(value, minusOne, { variable: value.variable })) : null);
+  const value = entry.value?.kind === 'sampled'
+    ? Object.freeze({ ...entry.value, at: (v) => negate(entry.value.at(v)) })
+    : negate(entry.value);
+  return { ok: true, variable: report.variable, signal: signal.display, key: signal.key, value, sampled: !!entry.sampled };
+}
+
+/**
+ * A loop gain's margins from its number-valued response: the crossover
+ * (|T| = 1, the last one), the phase margin there (180 degrees plus its
+ * phase, read in (-360, 0]), and the gain margin where the phase crosses
+ * -180 degrees. Frequencies as the curve gives them (f/fs, or omega).
+ */
+function loopMargins(curve) {
+  if (!curve?.points?.length) return null;
+  const pts = curve.points;
+  const wrap = (phase) => { let p = phase % 360; if (p > 0) p -= 360; return p; };
+  let crossover = null;
+  for (let i = 1; i < pts.length; i++) {
+    if ((pts[i - 1].db >= 0) !== (pts[i].db >= 0)) {
+      const t = pts[i - 1].db / (pts[i - 1].db - pts[i].db);
+      crossover = { f: pts[i - 1].f * (pts[i].f / pts[i - 1].f) ** t, phase: pts[i - 1].phase + t * (pts[i].phase - pts[i - 1].phase) };
+    }
+  }
+  let phaseCross = null;
+  for (let i = 1; i < pts.length; i++) {
+    const a = wrap(pts[i - 1].phase) + 180;
+    const b = wrap(pts[i].phase) + 180;
+    if (Math.abs(a - b) < 180 && (a >= 0) !== (b >= 0)) {
+      const t = a / (a - b);
+      phaseCross = { f: pts[i - 1].f * (pts[i].f / pts[i - 1].f) ** t, db: pts[i - 1].db + t * (pts[i].db - pts[i - 1].db) };
+      break;
+    }
+  }
+  return {
+    crossover: crossover && crossover.f,
+    phaseMargin: crossover ? 180 + wrap(crossover.phase) : null,
+    gainMargin: phaseCross ? -phaseCross.db : null,
+    phaseCrossover: phaseCross && phaseCross.f,
+  };
 }
 
 /**
@@ -10433,8 +10731,10 @@ function signalDomains({ circuit, signals }) {
   const readersOf = (signal) => signal.readers.map((reader) => ({ reader, component: circuit.components.get(reader.comp) }));
   const junctionInputs = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
   const outputOf = (component) => [...signals.values()].find((signal) => signal.driver?.comp === component.refdes && !signal.driver.source);
+  // A signal that says its domain keeps it (a broken loop's injected copy).
+  for (const signal of signals.values()) if (signal.domain) domain.set(signal.key, signal.domain);
   for (const signal of signals.values()) {
-    if (!signal.driver || signal.driver.source) continue;
+    if (!signal.driver || signal.driver.source || domain.has(signal.key)) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
     if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') domain.set(signal.key, 'z');
     else if (TRANSFER_FUNCTION_TYPES[type] === 's') domain.set(signal.key, 's');
@@ -14026,7 +14326,7 @@ function clippedPaths(samples, x, y, low, high, role) {
  * figures on the axes, only the marked frequencies.
  */
 function bodeFigure(sketch, {
-  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 180,
+  width = 480, height = 300, phase = true, numbers = true, corners = [], quantity = 'A_{v}', unityGain = true, maxSpanDb = 180, unityText = 'ω_{u}',
   fontSize = 11,
 } = {}) {
   const items = [];
@@ -14039,7 +14339,8 @@ function bodeFigure(sketch, {
   // it -- in a second row where two would crowd each other.
   const marks = [];
   for (const corner of corners) if (corner.w > 0) marks.push({ w: corner.w, text: corner.text });
-  const unity = unityGain && sketch.unityGain ? { w: sketch.unityGain.w, text: 'ω_{u}', unity: true } : null;
+  // A loop gain's unity crossing is its crossover, ω_c.
+  const unity = unityGain && sketch.unityGain ? { w: sketch.unityGain.w, text: unityText, unity: true } : null;
   if (unity) marks.push(unity);
   const left = numbers ? 4.2 * em : 0.8 * em;
   const right = numbers ? 0.9 * em : 1.4 * em;
@@ -14209,12 +14510,24 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
     const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
+  // Marked frequencies (a loop's crossover), labelled at the top.
+  for (const marker of plot.markers || []) {
+    if (!(marker.f > 0) || Math.log10(marker.f) <= low || Math.log10(marker.f) >= high) continue;
+    items.push({ type: 'line', x1: x(marker.f), y1: pane.y, x2: x(marker.f), y2: pane.y + pane.h, role: 'marker' });
+    if (marker.label) {
+      const right = x(marker.f) > pane.x + pane.w / 2;
+      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
+    }
+  }
   // The signal band's edges.
   for (const f of plot.band || []) {
     if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
     items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
   }
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: phase ? '∠H (°)' : plot.units === 'dBFS' ? 'dBFS' : '|H| (dB)', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: (() => {
+    const name = plot.role === 'loop' ? 'T' : 'H';
+    return phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`;
+  })(), anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
@@ -20429,7 +20742,8 @@ function normalizeAnalysisValues(value) {
     sources: Object.fromEntries(Object.entries(rawFlow.sources || {}).filter(([k, v]) => k.length <= 200 && (['input', 'zero'].includes(v) || (v && typeof v === 'object' && typeof v.constant === 'string'))).map(([k, v]) => [k, typeof v === 'object' ? { constant: v.constant.slice(0, 100) } : v])),
     swingInput: text(rawFlow.swingInput),
     swingFrequency: text(rawFlow.swingFrequency),
-    ...(['phase', 'step'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
+    ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
+    ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
     ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
   } : null;
   return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
@@ -20471,7 +20785,14 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}) };
+}
+
+/** A plot's marked frequencies: `{ f, label }`, a few. */
+function markersOf(plot) {
+  const markers = (Array.isArray(plot.markers) ? plot.markers : []).filter((m) => finite(m?.f) && m.f > 0).slice(0, 4)
+    .map((m) => ({ f: round(m.f, 6), label: typeof m.label === 'string' ? m.label.slice(0, 80) : '' }));
+  return markers.length ? { markers } : {};
 }
 
 /** A root-locus plot (signal-flow analysis): the swept poles, the current ones. */
@@ -34465,6 +34786,7 @@ __exports.applyNetAnalysis = applyNetAnalysis;
 __exports.installAnalysisUi = installAnalysisUi;
 let INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns; __bind(() => { ({ INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } = __require("src/core/model.js")); });
 let analyzeSmallSignalV2; __bind(() => { ({ analyzeSmallSignalV2 } = __require("src/core/analysis/engine.js")); });
+let LOOP_ELEMENT_TYPES; __bind(() => { ({ LOOP_ELEMENT_TYPES } = __require("src/core/analysis/loop-gain.js")); });
 let EQUATION_GROUPS, adaptCombinedReport; __bind(() => { ({ EQUATION_GROUPS, adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 let smallSignalSchematic; __bind(() => { ({ smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
 let svgString, texToMathML; __bind(() => { ({ svgString, texToMathML } = __require("src/core/render.js")); });
@@ -34505,7 +34827,9 @@ let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floa
 
 
 
+
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
+const analysisLoopElement = document.getElementById('analysis-loop-element');
 
 const analysisTabButtons = [...document.querySelectorAll('[data-analysis-tab]')];
 
@@ -34599,7 +34923,20 @@ function fillAnalysisDialog(targetNetId) {
     if (defaults.input) analysisInput.value = defaults.input;
   }
   fillNoiseSources();
+  fillLoopElements();
   return defaults;
+}
+
+/** The opamps and transistors a loop can be broken at. */
+function fillLoopElements() {
+  if (!analysisLoopElement) return;
+  const kept = analysisLoopElement.value;
+  const parts = sortedComps().filter((component) => LOOP_ELEMENT_TYPES.has(component.type));
+  analysisLoopElement.replaceChildren(
+    Object.assign(document.createElement('option'), { value: '', textContent: 'no loop gain' }),
+    ...parts.map((component) => Object.assign(document.createElement('option'), { value: component.refdes, textContent: `${component.refdes} (${component.type.startsWith('opamp') ? 'opamp' : 'g_m'})` })),
+  );
+  if (parts.some((component) => component.refdes === kept)) analysisLoopElement.value = kept;
 }
 
 function parseAnalysisList(value) {
@@ -34644,6 +34981,7 @@ function analysisFormValues() {
     input: analysisInput?.value || '',
     output: analysisTarget?.value || '',
     acGrounds: analysisAcGrounds?.value || '',
+    loopElement: analysisLoopElement?.value || '',
     deviceRegions,
     options,
     annotationExcluded: [...annotationExcluded],
@@ -34720,6 +35058,7 @@ function restoreAnalysisForm(defaults = {}) {
   };
   setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
   setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
+  setSelect(analysisLoopElement, typeof saved.loopElement === 'string' ? saved.loopElement : '');
   if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
   if (analysisDeviceRegions) {
     analysisDeviceRegions.value = formatAnalysisDeviceRegions(pruneAnalysisDeviceRegions(
@@ -35617,9 +35956,11 @@ function installAnalysisUi() {
     const formOptions = analysisFormOptions();
     const devices = analysisDeviceOptions();
     const noise = analysisNoiseRequest(formOptions);
+    const loopElement = analysisLoopElement?.value;
     const request = {
       ...formOptions,
       ...(noise ? { noise } : {}),
+      ...(loopElement ? { loopGain: { element: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
       ...(Object.keys(devices).length ? { devices } : {}),
       input,
       output,
@@ -39898,6 +40239,7 @@ const QUANTITIES = [
   { key: 'transfer', label: 'Voltage gain', tex: 'A_{v}' },
   { key: 'output', label: 'Output impedance', tex: 'Z_{out}' },
   { key: 'input', label: 'Input impedance', tex: 'Z_{in}' },
+  { key: 'loop', label: 'Loop gain', tex: 'T' },
 ];
 
 const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance', 'other'];
@@ -40005,7 +40347,10 @@ function currentModel() {
       }
     }
   }
-  return { parameters, values, sketch, corners, quantity: QUANTITIES.find((q) => q.key === state.quantity) };
+  const found = QUANTITIES.find((q) => q.key === state.quantity);
+  // An ideal opamp's loop is its feedback factor (T = A beta, A infinite).
+  const quantity = found.key === 'loop' && report.reports.loop?.infinite ? { ...found, label: 'Feedback factor', tex: '\\beta' } : found;
+  return { parameters, values, sketch, corners, quantity };
 }
 
 // ----- drawing -----------------------------------------------------------------------
@@ -40104,7 +40449,7 @@ function drawSketch() {
     return;
   }
   const { sketch, corners, quantity } = model;
-  figureHost.appendChild(figureElement(bodeFigure(sketch, { width: 480, height: 300, corners, quantity: quantity.tex })));
+  figureHost.appendChild(figureElement(bodeFigure(sketch, { width: 480, height: 300, corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })));
   for (const corner of corners) {
     const item = document.createElement('li');
     const where = `${formatNumber(corner.w)}\\,g/C`;
@@ -40119,6 +40464,27 @@ function drawSketch() {
     const item = document.createElement('li');
     item.className = 'bode-cancelled';
     item.textContent = `${sketch.cancelled} pole–zero pair${sketch.cancelled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out`;
+    list.appendChild(item);
+  }
+  // A loop gain's crossover, and its phase margin there.
+  if (quantity.key === 'loop' && quantity.tex === 'T') {
+    const item = document.createElement('li');
+    if (sketch.unityGain) {
+      let phase = sketch.unityGain.phase % 360;
+      if (phase > 0) phase -= 360;
+      const margin = 180 + phase;
+      item.appendChild(mathElement(`\\omega_{c} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase margin } ${Math.round(margin)}\\text{°}`));
+      if (margin < 0) item.classList.add('analysis-error');
+    } else {
+      item.textContent = 'No crossover: |T| does not pass 1 at these ratios.';
+    }
+    list.appendChild(item);
+  }
+  // Too large for every symbol, the loop was solved at these ratios' numbers.
+  if (quantity.key === 'loop' && state.report.reports?.loop?.numeric) {
+    const item = document.createElement('li');
+    item.className = 'bode-cancelled';
+    item.textContent = 'Too large to solve with every symbol: T was solved at the sketch ratios as they were at the last Analyze; analyze again after moving a slider.';
     list.appendChild(item);
   }
   if (sketch.unityGain && quantity.key === 'transfer') {
@@ -40255,7 +40621,7 @@ function currentPlotData() {
     points,
     asymptote: sketch.asymptote,
     corners: corners.map((corner) => ({ w: corner.w, text: corner.text })),
-    unityGain: quantity.key === 'transfer' ? sketch.unityGain : null,
+    unityGain: quantity.key === 'transfer' || quantity.key === 'loop' ? sketch.unityGain : null,
     quantity: quantity.tex,
     phase: state.withPhase,
   };
@@ -62318,7 +62684,7 @@ __exports.collapsedPanels = collapsedPanels;
 
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.installSignalFlowUi = installSignalFlowUi;
-let TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let expressionTex; __bind(() => { ({ expressionTex } = __require("src/core/transfer-function.js")); });
@@ -62432,7 +62798,10 @@ function setMode(next, { user = false } = {}) {
   for (const button of modeBar.querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
   const title = document.getElementById('analysis-dialog-title');
   if (title) title.textContent = flow ? 'Signal-flow analysis' : 'Small-signal analysis';
-  if (flow) fillForm();
+  if (flow) {
+    fillForm();
+    renderPlots();
+  }
 }
 
 // ----- the form -------------------------------------------------------------------------
@@ -62502,8 +62871,8 @@ let locus = null; // { plot, entryIndex, name }
 let locusRun = 0;
 
 function locusSection() {
-  return el('fieldset', { class: 'analysis-approximations signal-flow-locus', hidden: true }, [
-    el('legend', { text: 'Root locus' }),
+  return el('div', { class: 'signal-flow-locus', hidden: true }, [
+    el('p', { class: 'field-hint signal-flow-locus-empty', text: 'Derive first: the locus follows one result\'s poles as one coefficient sweeps.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Poles of' }), el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' }),
       el('label', { text: 'as' }), el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() }),
@@ -62520,7 +62889,8 @@ function locusSection() {
 function fillLocus() {
   const host = section.querySelector('.signal-flow-locus');
   const ready = latest?.ok && latest.entries.length && currentSymbols().length;
-  host.hidden = !ready;
+  host.querySelector('.signal-flow-locus-empty').hidden = !!ready;
+  for (const part of host.querySelectorAll('.signal-flow-swing-controls, .signal-flow-locus-status, .signal-flow-locus-plot')) part.hidden = !ready;
   if (!ready) return;
   const entrySelect = host.querySelector('.signal-flow-locus-entry');
   const previous = entrySelect.value;
@@ -62608,6 +62978,65 @@ function renderLocus() {
   ]));
 }
 
+// ----- loop gain: T at a broken signal --------------------------------------------------
+
+let loop = null; // { key, result }
+
+function loopSection() {
+  return el('div', { class: 'signal-flow-loop', hidden: true }, [
+    el('div', { class: 'signal-flow-swing-controls' }, [
+      el('label', { text: 'Break the loop at' }),
+      el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } }),
+    ]),
+    el('p', { class: 'field-hint', text: 'T is what returns, with a minus sign, for 1 injected where the loop is broken (every source at zero): a negative-feedback loop gain, so a quantizer\'s NTF is 1/(1 + T).' }),
+    el('div', { class: 'signal-flow-loop-body' }),
+  ]);
+}
+
+/** The signals a loop can be broken at (signal-flow.js loopBreakSignals). */
+const loopSignals = () => loopBreakSignals(editor.circuit);
+
+function renderLoop() {
+  const host = section.querySelector('.signal-flow-loop');
+  const select = host.querySelector('.signal-flow-loop-signal');
+  const body = host.querySelector('.signal-flow-loop-body');
+  const candidates = loopSignals();
+  select.replaceChildren(...candidates.map((s) => el('option', { value: s.key, text: String(s.display).replace(/[{}]/g, '') })));
+  if (candidates.some((s) => s.key === flow().loopAt)) select.value = flow().loopAt;
+  body.replaceChildren();
+  if (!candidates.length) { body.append(el('p', { class: 'field-hint', text: 'No loop to break: no signal is driven by a part.' })); return; }
+  const key = select.value;
+  if (!loop || loop.key !== key || loop.circuit !== editor.circuit || loop.revision !== editor.modelRevision) {
+    const numbers = resolved();
+    const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
+    loop = { key, circuit: editor.circuit, revision: editor.modelRevision, result: loopGain(editor.circuit, { breakAt: key, values }) };
+  }
+  const result = loop.result;
+  if (!result.ok) { body.append(el('p', { class: 'analysis-error', text: result.error })); return; }
+  // T at the coefficients' numbers.
+  const t = result.value?.kind === 'sampled' ? result.value.at(valuesFor(result.value, result.variable)) : numeric(result.value, result.variable);
+  const symbolic = result.value?.kind !== 'sampled';
+  body.append(mathRow(symbolic ? 'Loop gain' : 'Loop gain, at the coefficients above', `T(${result.variable}) = ${transferTex(symbolic ? result.value : t, result.variable, symbolic ? {} : { digits: 4 })}`));
+  if (!t) { body.append(el('p', { class: 'field-hint', text: 'This loop gain has no numbers to plot.' })); return; }
+  const curve = responseCurve(t, result.variable, { sAxis: result.variable === 'z' ? 'normalized' : sAxisSetting() });
+  const margins = loopMargins(curve);
+  const unit = curve?.axis === 'normalized' ? 'f/fs' : 'ω';
+  const number = (v) => String(Number(v.toPrecision(3)));
+  const summary = !margins?.crossover
+    ? 'No crossover: |T| never passes 1 in this range.'
+    : `Crossover at ${unit} = ${number(margins.crossover)}: phase margin ${margins.phaseMargin.toFixed(1)}°${margins.gainMargin !== null ? `, gain margin ${margins.gainMargin.toFixed(1)} dB` : ''}.`;
+  body.append(el('p', { class: `field-hint${margins?.phaseMargin !== null && margins?.phaseMargin < 0 ? ' analysis-error' : ''}`, text: summary }));
+  const markers = margins?.crossover ? [{ f: margins.crossover, label: `PM ${margins.phaseMargin.toFixed(0)}°` }] : [];
+  const trace = { label: 'T', color: TRACE_COLORS[0], value: t, variable: result.variable };
+  const magnitude = responsePlot([trace], result.variable, { sAxis: sAxisSetting() });
+  const phase = responsePlot([trace], result.variable, { sAxis: sAxisSetting(), quantity: 'phase' });
+  if (magnitude) body.append(graphSvg({ ...magnitude, markers, role: 'loop' }));
+  if (phase) body.append(graphSvg({ ...phase, role: 'loop', markers: markers.map((m) => ({ f: m.f, label: '' })) }));
+  body.append(el('div', { class: 'signal-flow-graph-actions' }, [
+    el('button', { type: 'button', text: 'Annotate loop', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !magnitude, onclick: () => placePlot({ ...magnitude, markers, role: 'loop' }, [{ label: `T_{${String(result.signal).replace(/[{}]/g, '')}}`, color: TRACE_COLORS[0] }], currentSymbols()) }),
+  ]));
+}
+
 // ----- swing: each net's peak against the input amplitude ------------------------------
 
 // The last sweep: { signals, fullScale, frequency, points: [{ a, peaks, tone, overloaded }] }.
@@ -62622,8 +63051,7 @@ const SWING_TONE = '\u0000tone';
 function swingSection() {
   const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
   const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
-  return el('fieldset', { class: 'analysis-approximations signal-flow-swing' }, [
-    el('legend', { text: 'Swing' }),
+  return el('div', { class: 'signal-flow-swing', hidden: true }, [
     el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Sine into' }), source,
@@ -62813,6 +63241,7 @@ function coefficientsChanged() {
     renderResults();
     swingCoefficientsChanged();
     if (flow().spectrum?.on) { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(runSpectrum, 350); }
+    if (graphView() === 'loop') { loop = null; renderLoop(); }
   });
 }
 
@@ -63108,19 +63537,41 @@ function addTrace(entry, variable, output) {
   traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer });
 }
 
+const GRAPH_VIEWS = new Set(['magnitude', 'phase', 'step']);
+
+/** The plot area's view switch, and the view it shows. */
+function renderPlots() {
+  const view = graphView();
+  const head = section.querySelector('.signal-flow-plots-head');
+  const viewButton = (value, text, title) => el('button', { type: 'button', text, title, 'aria-pressed': String(view === value), onclick: () => { flow().graphView = value; markSettingsChanged(); renderPlots(); } });
+  head.replaceChildren(el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Plot' }, [
+    viewButton('magnitude', 'Magnitude', 'The magnitude responses (in dBFS with a simulated spectrum)'),
+    viewButton('phase', 'Phase', 'The phase responses, in degrees'),
+    viewButton('step', 'Step', 'The step responses: overshoot and settling (a sampled result in samples)'),
+    viewButton('locus', 'Locus', 'The poles as one coefficient sweeps'),
+    viewButton('swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'),
+    viewButton('loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins'),
+  ]));
+  section.querySelector('.signal-flow-graph').hidden = !GRAPH_VIEWS.has(view);
+  section.querySelector('.signal-flow-locus').hidden = view !== 'locus';
+  section.querySelector('.signal-flow-swing').hidden = view !== 'swing';
+  section.querySelector('.signal-flow-loop').hidden = view !== 'loop';
+  if (GRAPH_VIEWS.has(view)) renderGraph();
+  if (view === 'locus') fillLocus();
+  if (view === 'loop') renderLoop();
+}
+
 function renderGraph() {
   const host = section.querySelector('.signal-flow-graph');
   host.replaceChildren();
-  const plot = traces.length ? graphPlot(shownTraces()) : null;
-  host.hidden = !traces.length;
-  if (!traces.length) return;
   const view = graphView();
-  const viewButton = (value, text, title) => el('button', { type: 'button', text, title, 'aria-pressed': String(view === value), onclick: () => { flow().graphView = value; markSettingsChanged(); renderGraph(); } });
-  const head = el('div', { class: 'signal-flow-graph-head' }, [el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Graph' }, [
-    viewButton('magnitude', 'Magnitude', 'The magnitude responses, in dB'),
-    viewButton('phase', 'Phase', 'The phase responses, in degrees'),
-    viewButton('step', 'Step', 'The step responses: overshoot and settling (a sampled result in samples)'),
-  ])]);
+  if (!GRAPH_VIEWS.has(view)) return;
+  if (!traces.length) {
+    host.append(el('p', { class: 'field-hint', text: 'Derive, and each result joins this graph.' }));
+    return;
+  }
+  const plot = graphPlot(shownTraces());
+  const head = el('div', { class: 'signal-flow-graph-head' });
   // With an s result on it, the frequency axis is a choice: ω in the
   // coefficients' units, or f/fs reading s in units of 1/Ts (as a
   // continuous-time loop filter normalized to its sample rate is written).
@@ -63140,7 +63591,7 @@ function renderGraph() {
       button('normalized', 'f/fs', forced ? 'A z result is on the graph: everything plots over f/fs, s in units of 1/Ts' : 'f/fs, reading s in units of 1/Ts: f/fs = ω/2π, to ½'),
     ]));
   }
-  host.append(head);
+  if (head.children.length) host.append(head);
   if (view !== 'step') host.append(bandControls());
   if (view === 'magnitude') host.append(spectrumControls());
   if (plot) host.append(graphSvg(plot));
@@ -63194,7 +63645,8 @@ function placePlot(plot, shown, used) {
   const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
   // The same kind of plot (a response graph also of the same quantity).
-  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind && (label.plot.quantity || '') === (plot.quantity || ''));
+  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind
+    && (label.plot.quantity || '') === (plot.quantity || '') && (label.plot.role || '') === (plot.role || ''));
   const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
   const target = chosen || (plots.length === 1 ? plots[0] : null);
   // The same numbers beside another plot already: not twice.
@@ -63337,8 +63789,7 @@ function derive() {
   if (latest.ok) for (const entry of latest.entries) addTrace(entry, latest.variable, latest.output);
   renderCoefficients();
   renderResults();
-  renderGraph();
-  fillLocus();
+  renderPlots();
   if (flow().spectrum?.on && latest.ok) runSpectrum();
   if (!latest.ok) logLine(`Signal-flow analysis: ${latest.error}`, 'error');
 }
@@ -63394,9 +63845,15 @@ function installSignalFlowUi() {
       el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value -- or = b_1 (= 2*b_1, = T/2) to make one follow others.' }),
       pasteCoefficients(),
     ]),
-    el('div', { class: 'signal-flow-graph', hidden: true }),
-    locusSection(),
-    swingSection(),
+    // One plot area, its view picked at the top: the frequency and step
+    // responses, the root locus, the swing.
+    el('div', { class: 'signal-flow-plots' }, [
+      el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
+      el('div', { class: 'signal-flow-graph' }),
+      locusSection(),
+      swingSection(),
+      loopSection(),
+    ]),
     el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
   ]);
   actions = [

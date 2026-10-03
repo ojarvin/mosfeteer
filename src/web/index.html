@@ -386,6 +386,8 @@
               <label><input id="analysis-tf-gm" name="transferGm" type="checkbox" data-transfer-function="Gm" /> <span><span class="math-inline">i<sub>out</sub>/v<sub>in</sub></span>, transconductance <span class="math-inline">G<sub>m</sub></span></span></label>
               <label><input id="analysis-tf-ai" name="transferAi" type="checkbox" data-transfer-function="Ai" /> <span><span class="math-inline">i<sub>out</sub>/i<sub>in</sub></span>, current gain <span class="math-inline">A<sub>i</sub></span></span></label>
               <p class="field-hint">A current input drives the input node; a current output flows into the shorted output node, as in <span class="math-inline">Z<sub>out</sub></span>. Input and output impedances are always derived.</p>
+              <label class="analysis-loop-row">Loop gain at <select id="analysis-loop-element" name="loopElement" aria-label="Break the loop at"><option value="">no loop gain</option></select></label>
+              <p class="field-hint">The return ratio at an opamp (its output driven, its input difference read: <span class="math-inline">T = Aβ</span>) or a transistor's <span class="math-inline">g<sub>m</sub></span>, the input shorted.</p>
             </fieldset>
             <fieldset class="analysis-approximations">
               <legend>Model simplifications</legend>

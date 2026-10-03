@@ -202,8 +202,23 @@ white with variance 1/3 (levels 2 apart) over f/fs in (-1/2, 1/2), shaped by
 |NTF|^2 in band -- 30 log OSR - 3.4 dB for a single-bit first-order loop,
 50 log OSR - 11.1 dB for a second-order one.
 
-The graph shows **Magnitude**, **Phase**, or **Step** (saved with the
-document). Phase is in degrees on the same frequency axis. The step
+The plots share one area, its view picked at the top (saved with the
+document): **Magnitude**, **Phase**, **Step**, **Locus**, **Swing**, **Loop**.
+Each view annotates the same way -- a plot box with its legend beside it,
+updated in place on the next annotate (a plot's identity is its kind, its
+quantity, and its role, so a loop plot and the graph never replace each
+other).
+
+**Loop** (`loopGain`, `loopMargins`): the loop broken at a picked signal (a
+quantizer's output first): 1 injected into what reads it, every source at
+zero, and T = -(what its driver returns) -- the negative-feedback loop gain,
+so a quantizer's NTF is 1/(1 + T). The injected copy keeps the signal's
+domain, so a sampled loop's T(z) comes from the same sampled solve. Its
+magnitude and phase are plotted with the crossover (|T| = 1) marked, the
+phase margin there (180 degrees plus its phase) and the gain margin (where
+the phase crosses -180 degrees) given.
+
+The graph's frequency and step views: Phase is in degrees on the same frequency axis. The step
 response comes from the same transfer function (`step.js`): a z result by its
 difference equation, in samples, drawn as stairs; an s result exactly,
 through a state-space realization and matrix exponentials, its time in the

@@ -103,3 +103,54 @@ test('MNA folds an ideal opamp as a nullor and reports its input voltage as an a
   // Its inputs both on ground leave the output undetermined.
   assert.throws(() => buildMNA([{ kind: 'opamp', id: 'U2', terminals: { a: 'x', b: '0' }, control: { a: '0', b: '0' }, value: 0 }, { kind: 'resistor', id: 'R', terminals: { a: 'x', b: '0' }, value: 1 }]), /undetermined/);
 });
+
+import { adaptCombinedReport } from '../src/core/analysis/report-adapter.js';
+
+test('loop gain as a return ratio: an opamp\'s T = A beta, a transistor\'s at its g_m', () => {
+  const loopOf = (circuit, element, options = {}) => analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT', loopGain: { element }, ...options });
+  // Ideal: the feedback factor alone (T is infinite).
+  const ideal = loopOf(inverting(), 'U1');
+  assert.equal(ideal.loop.ok, true, ideal.loop.error);
+  assert.equal(ideal.loop.infinite, true);
+  assert.deepEqual(ideal.loop.equations, ['\\beta(0) = \\frac{R_{1}}{R_{1} + R_{2}}']);
+  assert.deepEqual(loopOf(inverting('finite-gain'), 'U1').loop.equations, ['T(0) = \\frac{A_{1} \\, R_{1}}{R_{1} + R_{2}}', '\\beta = \\frac{R_{1}}{R_{1} + R_{2}}']);
+  assert.equal(loopOf(inverting('gbw'), 'U1').loop.equations[0], 'T(s) = \\frac{\\omega_{t1} \\, R_{1}}{s \\, \\left(R_{1} + R_{2}\\right)}');
+  // A source-degenerated common-source stage, broken at M1's g_m.
+  const stage = build(
+    [['input', 'VIN'], ['output', 'VOUT'], ['nmos', 'M1'], ['resistor', 'RD'], ['resistor', 'RS'], ['ground', 'GND'], ['supply', 'VDD']],
+    [['VIN', 'VIN.p', 'M1.g'], ['VOUT', 'M1.d', 'RD.a', 'VOUT.p'], ['S', 'M1.s', 'RS.a'], ['VSS', 'RS.b', 'GND.gnd'], ['VDD', 'RD.b', 'VDD.p']],
+  );
+  const degenerated = loopOf(stage, 'M1', { ignoreBodyEffect: true });
+  assert.deepEqual(degenerated.loop.equations, ['T(0) = \\frac{g_{m1} \\, r_{o1} \\, R_{S}}{R_{D} + r_{o1} + R_{S}}']);
+  // The adapted report lists it under Loop gain and hands the Bode tab its coefficients.
+  const adapted = adaptCombinedReport(loopOf(inverting('gbw'), 'U1'));
+  assert.ok(adapted.equationEntries.some((entry) => entry.group === 'loop' && /T\(s\)/.test(entry.result.equation)));
+  assert.ok(adapted.reports.loop.exact.numeratorCoefficients);
+  // A part off the analysed circuit says so.
+  assert.equal(loopOf(inverting(), 'R1').loop.ok, false);
+});
+
+test('a loop gain that does not apply says why, and never fails the port quantities', () => {
+  const stage = build(
+    [['input', 'VIN'], ['output', 'VOUT'], ['nmos', 'M1'], ['resistor', 'RD'], ['ground', 'GND'], ['supply', 'VDD']],
+    [['VIN', 'VIN.p', 'M1.g'], ['VOUT', 'M1.d', 'RD.a', 'VOUT.p'], ['VSS', 'M1.s', 'GND.gnd'], ['VDD', 'RD.b', 'VDD.p']],
+  );
+  // A plain common-source stage has no feedback at M1: its return ratio is zero.
+  const report = analyzeSmallSignalV2(stage, { input: 'VIN', output: 'VOUT', loopGain: { element: 'M1' }, ignoreBodyEffect: true });
+  assert.equal(report.ok, true, report.error);
+  assert.match(report.transfer.equations[0], /A_v/);
+  assert.equal(report.loop.ok, false);
+  assert.match(report.loop.error, /no feedback loop/);
+});
+
+test('a loop gain too large to keep its symbols is solved at the Bode sketch\'s numbers', () => {
+  const report = analyzeSmallSignalV2(inverting('gbw'), { input: 'VIN', output: 'VOUT', loopGain: { element: 'U1' }, loopGainOperations: 5 });
+  assert.equal(report.loop.ok, true, report.loop.error);
+  assert.equal(report.loop.numeric, true);
+  // Only s is left: no component symbol in the equation.
+  assert.doesNotMatch(report.loop.equations[0], /R_|omega/);
+  assert.match(report.loop.equations[0], /T\(s\)/);
+  const adapted = adaptCombinedReport(report);
+  assert.equal(adapted.reports.loop.numeric, true);
+  assert.ok(adapted.equationEntries.some((entry) => entry.group === 'loop' && /numeric/.test(entry.title || entry.label || JSON.stringify(entry))));
+});

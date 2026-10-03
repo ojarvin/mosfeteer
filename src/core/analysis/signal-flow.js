@@ -237,8 +237,8 @@ function failure(code, error, issues = []) {
  * sampler the result is in z and each `value` is a sampled result
  * (`sampledResult`), worked out again for each set of numbers.
  */
-export function analyzeSignalFlow(circuit, options = {}) {
-  const { signals, sources, issues } = signalFlowGraph(circuit);
+export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph(circuit)) {
+  const { signals, sources, issues } = graph;
   if (issues.length) return failure(issues[0].code, issues[0].message, issues);
   const parts = [...circuit.components.values()].filter(isSignalPart);
 
@@ -281,6 +281,93 @@ export function analyzeSignalFlow(circuit, options = {}) {
 
   const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
   return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+}
+
+/**
+ * The loop gain at a signal: the loop broken there, 1 injected into what
+ * reads it (every source at zero), and T = -(what its driver returns), the
+ * negative-feedback convention, so a quantizer's NTF is 1/(1 + T). `breakAt`
+ * names the signal (a key, a net name, a port); `values` as for
+ * analyzeSignalFlow. Returns `{ ok, variable, signal, value }` -- `value`
+ * T, an exact rational, or for a sampled loop a sampled result -- or a
+ * failure.
+ */
+/** The signals a loop can be broken at: driven ones, sampled ones only in
+ *  a diagram with a sampler; a quantizer's output first. */
+export function loopBreakSignals(circuit) {
+  const graph = signalFlowGraph(circuit);
+  const domains = [...circuit.components.values()].some((c) => c.type === 'sampler') ? signalDomains({ circuit, signals: graph.signals }) : null;
+  const driven = [...graph.signals.values()].filter((s) => s.driver && !s.driver.source && (!domains?.ok || domains.domain.get(s.key) === 'z'));
+  const quantized = driven.filter((s) => circuit.components.get(s.driver.comp)?.type === 'quantizer');
+  return [...quantized, ...driven.filter((s) => !quantized.includes(s))];
+}
+
+export function loopGain(circuit, { breakAt, values = {} } = {}) {
+  const graph = signalFlowGraph(circuit);
+  if (graph.issues.length) return failure(graph.issues[0].code, graph.issues[0].message, graph.issues);
+  const signal = resolveSignal(circuit, graph.signals, breakAt);
+  if (!signal) return failure('no-signal', breakAt ? `no signal "${breakAt}" to break the loop at` : 'pick a signal to break the loop at');
+  if (!signal.driver || signal.driver.source) return failure('not-in-loop', `${signal.display} is a source: break the loop at a signal a part drives`);
+  // The signal cut in two: an injected one its readers read, a returned one
+  // its driver drives; the injected one keeps the signal's domain.
+  const hasSampler = [...circuit.components.values()].some((c) => c.type === 'sampler');
+  const original = hasSampler ? signalDomains({ circuit, signals: graph.signals }) : null;
+  if (original && !original.ok) return original;
+  // A sampled loop is broken where it is sampled: a continuous signal in it
+  // carries no single return to inject against.
+  if (original && original.domain.get(signal.key) !== 'z') {
+    return failure('continuous-break', `${signal.display} is continuous: break a sampled loop at a sampled signal (the sampler's or the quantizer's output)`);
+  }
+  const injected = { ...signal, key: `${signal.key}\u0000in`, driver: { source: true, comp: '\u0000loop' }, readers: signal.readers, ...(original ? { domain: original.domain.get(signal.key) } : {}) };
+  const returned = { ...signal, key: `${signal.key}\u0000out`, readers: [] };
+  const signals = new Map([...graph.signals].filter(([key]) => key !== signal.key));
+  signals.set(injected.key, injected);
+  signals.set(returned.key, returned);
+  const source = { id: '\u0000loop', key: injected.key, name: signal.display };
+  const report = analyzeSignalFlow(circuit, { output: returned.key, sources: { [injected.key]: 'input' }, values }, { signals, sources: [source, ...graph.sources.filter((s) => s.key !== signal.key)], issues: [] });
+  if (!report.ok) return report;
+  const [entry] = report.entries;
+  const minusOne = rationalFunction(integer(-1), ONE, { variable: report.variable });
+  const negate = (value) => (value ? (value.kind === 'mixed' ? null : rationalMultiply(value, minusOne, { variable: value.variable })) : null);
+  const value = entry.value?.kind === 'sampled'
+    ? Object.freeze({ ...entry.value, at: (v) => negate(entry.value.at(v)) })
+    : negate(entry.value);
+  return { ok: true, variable: report.variable, signal: signal.display, key: signal.key, value, sampled: !!entry.sampled };
+}
+
+/**
+ * A loop gain's margins from its number-valued response: the crossover
+ * (|T| = 1, the last one), the phase margin there (180 degrees plus its
+ * phase, read in (-360, 0]), and the gain margin where the phase crosses
+ * -180 degrees. Frequencies as the curve gives them (f/fs, or omega).
+ */
+export function loopMargins(curve) {
+  if (!curve?.points?.length) return null;
+  const pts = curve.points;
+  const wrap = (phase) => { let p = phase % 360; if (p > 0) p -= 360; return p; };
+  let crossover = null;
+  for (let i = 1; i < pts.length; i++) {
+    if ((pts[i - 1].db >= 0) !== (pts[i].db >= 0)) {
+      const t = pts[i - 1].db / (pts[i - 1].db - pts[i].db);
+      crossover = { f: pts[i - 1].f * (pts[i].f / pts[i - 1].f) ** t, phase: pts[i - 1].phase + t * (pts[i].phase - pts[i - 1].phase) };
+    }
+  }
+  let phaseCross = null;
+  for (let i = 1; i < pts.length; i++) {
+    const a = wrap(pts[i - 1].phase) + 180;
+    const b = wrap(pts[i].phase) + 180;
+    if (Math.abs(a - b) < 180 && (a >= 0) !== (b >= 0)) {
+      const t = a / (a - b);
+      phaseCross = { f: pts[i - 1].f * (pts[i].f / pts[i - 1].f) ** t, db: pts[i - 1].db + t * (pts[i].db - pts[i - 1].db) };
+      break;
+    }
+  }
+  return {
+    crossover: crossover && crossover.f,
+    phaseMargin: crossover ? 180 + wrap(crossover.phase) : null,
+    gainMargin: phaseCross ? -phaseCross.db : null,
+    phaseCrossover: phaseCross && phaseCross.f,
+  };
 }
 
 /**
@@ -386,8 +473,10 @@ export function signalDomains({ circuit, signals }) {
   const readersOf = (signal) => signal.readers.map((reader) => ({ reader, component: circuit.components.get(reader.comp) }));
   const junctionInputs = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
   const outputOf = (component) => [...signals.values()].find((signal) => signal.driver?.comp === component.refdes && !signal.driver.source);
+  // A signal that says its domain keeps it (a broken loop's injected copy).
+  for (const signal of signals.values()) if (signal.domain) domain.set(signal.key, signal.domain);
   for (const signal of signals.values()) {
-    if (!signal.driver || signal.driver.source) continue;
+    if (!signal.driver || signal.driver.source || domain.has(signal.key)) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
     if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') domain.set(signal.key, 'z');
     else if (TRANSFER_FUNCTION_TYPES[type] === 's') domain.set(signal.key, 's');
