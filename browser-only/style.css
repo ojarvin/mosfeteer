@@ -1456,8 +1456,9 @@ button:disabled {
 
 .analysis-dock .dialog-actions {
   flex: 0 0 auto;
+  flex-wrap: wrap;
   margin: 0;
-  padding: 8px 14px;
+  padding: 10px 14px;
   border-top: 1px solid var(--border);
 }
 
@@ -6120,4 +6121,202 @@ body.chrome-away [data-editor-edge="right"] {
 /* The timing grid is wide: docked, it scrolls sideways. */
 .side-panel > .timing-dialog.docked {
   overflow: auto;
+}
+
+/* ----- signal-flow analysis (signal-flow-ui.js) ---------------------------
+   The analysis window's second mode: its own fields and results, the
+   circuit form hidden while it shows. */
+.analysis-mode-hidden {
+  display: none !important;
+}
+
+.analysis-mode {
+  align-self: flex-start;
+}
+
+.analysis-mode button {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-dim);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.analysis-mode button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.signal-flow-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.signal-flow-section[hidden] {
+  display: none;
+}
+
+.signal-flow-sources {
+  display: grid;
+  gap: 6px;
+}
+
+.signal-flow-source {
+  display: grid;
+  grid-template-columns: minmax(3rem, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-flow-source-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.signal-flow-constant[hidden] {
+  display: none;
+}
+
+.signal-flow-issues {
+  display: grid;
+  gap: 6px;
+}
+
+.signal-flow-issues[hidden] {
+  display: none;
+}
+
+.signal-flow-entry {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.signal-flow-roots {
+  font: 0.8125rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.signal-flow-plot {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.signal-flow-plot line,
+.signal-flow-plot path {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1;
+}
+
+.signal-flow-plot .role-grid {
+  stroke: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.signal-flow-plot .role-zero {
+  stroke-dasharray: 2 4;
+}
+
+.signal-flow-plot .role-curve {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.signal-flow-plot text {
+  fill: var(--text-dim);
+  font: 10px ui-sans-serif, system-ui, sans-serif;
+}
+
+.signal-flow-plot text.role-label {
+  font-style: italic;
+}
+
+.signal-flow-graph {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.signal-flow-graph[hidden] {
+  display: none;
+}
+
+.signal-flow-legend {
+  display: grid;
+  gap: 2px;
+}
+
+.signal-flow-legend-row {
+  display: grid;
+  grid-template-columns: auto 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-flow-legend-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.signal-flow-swatch {
+  height: 3px;
+  border-radius: 2px;
+}
+
+.signal-flow-legend-math {
+  min-width: 0;
+  padding: 3px 0;
+  font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif;
+  font-size: 1rem;
+  text-align: left;
+}
+
+.signal-flow-legend-math math {
+  display: inline-block;
+}
+
+.signal-flow-legend-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+}
+
+.signal-flow-legend-remove:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.signal-flow-graph-actions,
+.signal-flow-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.signal-flow-entry-actions {
+  padding: 4px;
+}
+
+.signal-flow-graph-actions button,
+.signal-flow-entry-actions button {
+  height: 28px;
+  font: 0.8125rem ui-sans-serif, system-ui, sans-serif;
 }

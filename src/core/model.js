@@ -962,6 +962,7 @@ const MAX_PLOT_DECADES = 60;
 
 export function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
+  if (plot.kind === 'response') return normalizeResponsePlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   const points = (Array.isArray(plot.points) ? plot.points : [])
@@ -987,6 +988,23 @@ export function normalizePlot(plot) {
     quantity: typeof plot.quantity === 'string' ? plot.quantity.slice(0, 40) : 'A_{v}',
     phase: plot.phase === true,
   };
+}
+
+/** A plot of several magnitude responses (signal-flow analysis): coloured
+ *  traces of dB against log frequency, each named by its TeX equation. */
+function normalizeResponsePlot(plot) {
+  const low = Number(plot.range?.low);
+  const high = Number(plot.range?.high);
+  if (!finite(low) || !finite(high) || high <= low || high - low > MAX_PLOT_DECADES) return null;
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+    label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    points: (Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db))
+      .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),
+  })).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces };
 }
 
 export class LabelInstance {

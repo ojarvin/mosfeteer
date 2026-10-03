@@ -9379,6 +9379,500 @@ __exports.MOS_TYPES = MOS_TYPES;
 __exports.PASSIVE_KINDS = PASSIVE_KINDS;
 };
 
+__modules["src/core/analysis/signal-flow.js"] = function (__require, __exports) {
+__exports.hasSignalFlow = hasSignalFlow;
+__exports.signalFlowGraph = signalFlowGraph;
+__exports.coefficientValue = coefficientValue;
+__exports.blockTransferFunction = blockTransferFunction;
+__exports.analyzeSignalFlow = analyzeSignalFlow;
+__exports.transferTex = transferTex;
+__exports.complexText = complexText;
+__exports.responseCurve = responseCurve;
+__exports.responsePlot = responsePlot;
+let add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol; __bind(() => { ({ add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js")); });
+let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
+let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
+let solveLinearSystem; __bind(() => { ({ solveLinearSystem } = __require("src/core/analysis/solve.js")); });
+let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
+let bodeSketch, polynomialRoots; __bind(() => { ({ bodeSketch, polynomialRoots } = __require("src/core/analysis/bode.js")); });
+let TRANSFER_FUNCTION_TYPES, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseTransferFunction } = __require("src/core/transfer-function.js")); });
+let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
+/**
+ * Signal-flow analysis: transfer functions of a block diagram drawn from
+ * transfer-function blocks (`tf_s`, `tf_z`), sum and multiply junctions, and
+ * ports. Each wire is one signal, driven by at most one output: a block's
+ * `out` or a junction's `e`. A signal nothing drives -- a named wire, or an
+ * input port's -- is a source. Every source is set to `input` (a transfer
+ * function is derived from it), `zero`, or a `constant`; one exact symbolic
+ * solve then gives each input's transfer function to the chosen output.
+ *
+ * The algebra is the small-signal engine's (rational.js, solve.js): exact,
+ * with symbolic coefficients (`k`, `a_1`, `w_0`), so feedback loops need no
+ * special handling. A multiply is linear only when all but one of its inputs
+ * are constants (a source set to `constant` or `zero`, wired straight to it);
+ * two signals meeting there have no transfer function and are refused, as
+ * are a loop mixing s and z, a doubly driven signal, and any other part on a
+ * signal wire. Nothing is guessed.
+ */
+
+
+
+
+
+
+
+
+
+
+const JUNCTIONS = new Set(['signal_sum', 'signal_multiply']);
+const JUNCTION_INPUTS = ['n', 's', 'w'];
+const SOURCE_TYPES = new Set(['input']);
+// Parts that may sit on a signal wire without taking part in it.
+const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput']);
+
+function isSignalPart(component) {
+  return JUNCTIONS.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type);
+}
+
+/** Whether a drawing has any signal-flow part (the analysis mode it opens in). */
+function hasSignalFlow(circuit) {
+  return [...circuit.components.values()].some(isSignalPart);
+}
+
+// ----- the signal graph ---------------------------------------------------------------
+
+function signalKey(net) {
+  const name = canonicalNetName(net.name || '');
+  return name ? `name:${name}` : `net:${net.id}`;
+}
+
+/**
+ * The drawing's signals: `{ signals, sources, issues }`. A signal is
+ * `{ key, name, display, netIds, driver, readers }` (driver and readers are
+ * `{ comp, term }`); sources are the signals nothing in the diagram drives,
+ * `{ id, key, name }`: an input port's (`id` its refdes) or any other wire
+ * that is read (`id` its name). Only wires touching a signal-flow part or an
+ * input port count.
+ */
+function signalFlowGraph(circuit) {
+  const signals = new Map();
+  const issues = [];
+  const signalOf = (net) => {
+    const key = signalKey(net);
+    let signal = signals.get(key);
+    if (!signal) {
+      signal = { key, name: net.name || net.id, display: net.name || net.id, netIds: [], drivers: [], readers: [], others: [] };
+      signals.set(key, signal);
+    }
+    signal.netIds.push(net.id);
+    return signal;
+  };
+  const relevant = (net) => net.terminals.some(({ comp }) => {
+    const component = circuit.components.get(comp);
+    return component && (isSignalPart(component) || SOURCE_TYPES.has(component.type));
+  });
+  for (const net of circuit.nets.values()) {
+    if (!relevant(net)) continue;
+    const signal = signalOf(net);
+    for (const terminal of net.terminals) {
+      const component = circuit.components.get(terminal.comp);
+      if (!component) continue;
+      const def = component.terminalDefs.find((t) => t.name === terminal.term);
+      if (SOURCE_TYPES.has(component.type)) signal.drivers.push({ ...terminal, source: true });
+      else if (isSignalPart(component)) {
+        if (def?.signalRole === 'output') signal.drivers.push({ ...terminal });
+        else signal.readers.push({ ...terminal });
+      } else if (!PASSIVE_TYPES.has(component.type)) signal.others.push(terminal.comp);
+    }
+  }
+  const sources = [];
+  for (const signal of signals.values()) {
+    const others = [...new Set(signal.others)];
+    if (others.length) issues.push({ code: 'not-a-signal-part', message: `${others.join(', ')} on signal ${signal.display} is not a signal-flow part (only transfer functions, sum and multiply junctions, and ports are)`, refs: others });
+    if (signal.drivers.length > 1) issues.push({ code: 'two-drivers', message: `signal ${signal.display} is driven by ${signal.drivers.map((d) => `${d.comp}.${d.term}`).join(' and ')}: a signal has one driver`, refs: signal.drivers.map((d) => d.comp) });
+    signal.driver = signal.drivers.length === 1 ? signal.drivers[0] : null;
+    // A source: an input port, or a wire that is read but nothing drives.
+    const port = signal.drivers.find((driver) => driver.source);
+    if (port) sources.push({ id: port.comp, key: signal.key, name: signal.display });
+    else if (!signal.drivers.length && signal.readers.length) sources.push({ id: signal.display, key: signal.key, name: signal.display });
+    delete signal.drivers;
+    delete signal.others;
+  }
+  sources.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return { signals, sources, issues };
+}
+
+// ----- coefficients -------------------------------------------------------------------
+
+/** An exact number from a decimal: 0.5 -> 1/2, 3.5e-3 -> 7/2000. */
+function exactDecimal(text) {
+  const match = text.match(/^(\d*)(?:\.(\d*))?(?:e([-+]?\d+))?$/i);
+  const digits = `${match[1] || ''}${match[2] || ''}` || '0';
+  const exponent = Number(match[3] || 0) - (match[2] || '').length;
+  return exponent >= 0 ? integer(BigInt(digits) * 10n ** BigInt(exponent)) : rational(BigInt(digits), 10n ** BigInt(-exponent));
+}
+
+function factor(text) {
+  if (/^(\d|\.\d)/.test(text)) return exactDecimal(text);
+  // K_{p} and K_p name the same symbol.
+  return symbol(text.replace(/[{}]/g, ''));
+}
+
+/** A coefficient token as an exact expression: `-2*g_m/C`. */
+function coefficientValue(token) {
+  const negative = token.startsWith('-');
+  const body = token.replace(/^[-+]/, '');
+  const [top, ...below] = body.split('/');
+  let value = multiply(...top.split('*').map(factor));
+  for (const part of below) value = multiply(value, power(multiply(...part.split('*').map(factor)), -1));
+  return negative ? negate(value) : value;
+}
+
+/** A block's transfer function as an exact rational in s, or in z (z^-1
+ *  definitions are written over the same power of z). */
+function blockTransferFunction(component) {
+  const variable = TRANSFER_FUNCTION_TYPES[component.type];
+  const { num, den, inverse } = parseTransferFunction(component.value, variable);
+  const v = symbol(variable);
+  const polynomial = (tokens, degree) => add(...tokens.map((token, i) => multiply(coefficientValue(token), power(v, degree(i)))));
+  if (inverse) {
+    const m = Math.max(num.length, den.length) - 1;
+    return rationalFunction(polynomial(num, (i) => m - i), polynomial(den, (i) => m - i), { variable });
+  }
+  return rationalFunction(polynomial(num, (i) => num.length - 1 - i), polynomial(den, (i) => den.length - 1 - i), { variable });
+}
+
+// ----- solving ------------------------------------------------------------------------
+
+function failure(code, error, issues = []) {
+  return { ok: false, code, error, issues };
+}
+
+/**
+ * Analyze the drawing. `options`: `output` (a signal key, a net name or id,
+ * or a port's refdes) and `sources` (`{ [refdes]: 'input' | 'zero' |
+ * { constant: value } }`; a source left out is zero). Returns `{ ok,
+ * variable, output, entries, issues }`, an entry per input:
+ * `{ input, value (exact rational), tex, equation, poles, zeros }`.
+ */
+function analyzeSignalFlow(circuit, options = {}) {
+  const { signals, sources, issues } = signalFlowGraph(circuit);
+  if (issues.length) return failure(issues[0].code, issues[0].message, issues);
+  const parts = [...circuit.components.values()].filter(isSignalPart);
+  const domains = new Set(parts.map((component) => TRANSFER_FUNCTION_TYPES[component.type]).filter(Boolean));
+  if (domains.size > 1) return failure('mixed-domains', 'the diagram mixes H(s) and H(z) blocks: a sampled loop needs a sampler and a conversion, which are not supported yet');
+  const variable = domains.has('z') ? 'z' : 's';
+
+  const output = resolveSignal(circuit, signals, options.output);
+  if (!output) return failure('no-output', options.output ? `no signal "${options.output}" to take the output from` : 'pick the output signal');
+  // Settings name a source by its port, its wire's name, or its signal key.
+  const settings = new Map(Object.entries(options.sources || {}).map(([name, value]) => [canonicalNetName(name), value]));
+  const modeOf = (source) => {
+    const value = settings.get(canonicalNetName(source.id)) ?? settings.get(canonicalNetName(source.name)) ?? settings.get(source.key);
+    if (value === 'input') return { kind: 'input' };
+    if (value && typeof value === 'object' && 'constant' in value) return { kind: 'constant', value: String(value.constant) };
+    return { kind: 'zero' };
+  };
+  const inputs = sources.filter((source) => modeOf(source).kind === 'input');
+  if (!inputs.length) return failure('no-input', 'set at least one source to input');
+  const sourceBySignal = new Map(sources.map((source) => [source.key, { ...source, mode: modeOf(source) }]));
+
+  // Unknowns: every signal a block or junction drives.
+  const unknowns = [...signals.values()].filter((signal) => signal.driver && !signal.driver.source);
+  const index = new Map(unknowns.map((signal, i) => [signal.key, i]));
+  const ops = createRationalOps({ variable });
+  const n = unknowns.length;
+  const A = Array.from({ length: n }, () => Array(n).fill(ops.zero));
+  const B = Array.from({ length: n }, () => Array(inputs.length).fill(ops.zero));
+  const inputColumn = new Map(inputs.map((source, column) => [source.key, column]));
+  const toRational = (value) => (value?.kind === 'rational' ? value : rationalFunction(value, integer(1), { variable }));
+  const signalAt = (component, term) => {
+    for (const signal of signals.values()) {
+      if (signal.readers.some((reader) => reader.comp === component.refdes && reader.term === term)) return signal;
+    }
+    return null;
+  };
+  // y = sum of gain * x over its inputs: x unknown -> into A; x an input
+  // source -> into B; zero and constant sources drop out (superposition).
+  const feed = (row, gain, signal) => {
+    if (!signal) return;
+    if (index.has(signal.key)) A[row][index.get(signal.key)] = ops.sub(A[row][index.get(signal.key)], gain);
+    else if (inputColumn.has(signal.key)) B[row][inputColumn.get(signal.key)] = ops.add(B[row][inputColumn.get(signal.key)], gain);
+  };
+
+  for (const signal of unknowns) {
+    const row = index.get(signal.key);
+    A[row][row] = ops.one;
+    const component = circuit.components.get(signal.driver.comp);
+    if (Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type)) {
+      let h;
+      try {
+        h = blockTransferFunction(component);
+      } catch (err) {
+        return failure('bad-transfer-function', `${component.refdes}: ${err.message}`);
+      }
+      feed(row, toRational(h), signalAt(component, 'in'));
+    } else if (component.type === 'signal_sum') {
+      for (const term of JUNCTION_INPUTS) {
+        const sign = component.negativeInputs?.has(term) ? ops.neg(ops.one) : ops.one;
+        feed(row, sign, signalAt(component, term));
+      }
+    } else if (component.type === 'signal_multiply') {
+      const connected = JUNCTION_INPUTS.map((term) => signalAt(component, term)).filter(Boolean);
+      const constants = [];
+      const varying = [];
+      for (const input of connected) {
+        const source = sourceBySignal.get(input.key);
+        if (source && source.mode.kind !== 'input') constants.push(source.mode.kind === 'zero' ? '0' : source.mode.value);
+        else varying.push(input);
+      }
+      if (varying.length > 1) {
+        return failure('nonlinear', `${component.refdes} multiplies ${varying.map((s) => s.display).join(' by ')}: two signals multiplied have no transfer function (set all but one of its inputs to a constant)`, [{ code: 'nonlinear', refs: [component.refdes] }]);
+      }
+      let gain;
+      try {
+        gain = constants.reduce((product, value) => multiply(product, coefficientValue(value.replace(/\s/g, ''))), integer(1));
+      } catch {
+        return failure('bad-constant', `${component.refdes}: a constant must be a number or a symbol`);
+      }
+      feed(row, toRational(gain), varying[0]);
+    }
+  }
+
+  const outputSource = sourceBySignal.get(output.key);
+  let columns;
+  if (index.has(output.key)) {
+    const solved = solveLinearSystem(A, B, { ops });
+    if (!solved.ok) return failure(solved.code || 'singular', solved.code === 'singular' || /singular/i.test(solved.error || '') ? 'the diagram has no unique solution: a loop with a gain of exactly 1 (check the signs at the sums)' : solved.error);
+    // The elimination leaves factors common to both sides (a loop's own
+    // characteristic polynomial, say): cancel them, as the engine does.
+    columns = solved.columns.map((column) => cancelCommonPolynomialFactor(column[index.get(output.key)], { variable, maxWork: 2_000_000 }));
+  } else if (outputSource) {
+    columns = inputs.map((source) => (source.key === output.key ? ops.one : ops.zero));
+  } else {
+    return failure('no-output', `signal ${output.display} is not driven`);
+  }
+
+  const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
+  return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+}
+
+/** A signal by key, net name or id, or the refdes of a port on it. */
+function resolveSignal(circuit, signals, target) {
+  if (!target) return null;
+  if (signals.has(target)) return signals.get(target);
+  const name = canonicalNetName(target);
+  for (const signal of signals.values()) {
+    if (signal.netIds.includes(target) || canonicalNetName(signal.name) === name) return signal;
+  }
+  const port = circuit.components.get(target);
+  if (port) {
+    for (const signal of signals.values()) {
+      if (signal.netIds.some((id) => circuit.nets.get(id)?.terminals.some((t) => t.comp === port.refdes))) return signal;
+    }
+  }
+  return null;
+}
+
+// ----- presentation -------------------------------------------------------------------
+
+function coefficientList(value, variable) {
+  return polynomialCoefficients(value, variable) || null;
+}
+
+const isPlainNumber = (value) => value?.kind === 'number';
+
+/** Coefficient times a power of the variable, as one signed term. */
+function termTex(coefficient, powerText) {
+  let tex = renderExpression(coefficient);
+  let negative = false;
+  if (tex.startsWith('-')) {
+    negative = true;
+    tex = tex.slice(1).trim();
+  }
+  const compound = coefficient.kind === 'add';
+  if (powerText) tex = tex === '1' ? powerText : `${compound ? `\\left(${tex}\\right)` : tex} ${powerText}`;
+  return { negative, tex };
+}
+
+function sumTex(terms) {
+  if (!terms.length) return '0';
+  return terms.map((t, i) => (i === 0 ? `${t.negative ? '-' : ''}${t.tex}` : ` ${t.negative ? '-' : '+'} ${t.tex}`)).join('');
+}
+
+/**
+ * A transfer function as textbook TeX: in s, descending powers with a monic
+ * denominator; in z, ascending powers of z^-1 with the constant term of the
+ * denominator 1 (when it is a number).
+ */
+function transferTex(value, variable) {
+  const numerator = coefficientList(value.numerator, variable);
+  const denominator = coefficientList(value.denominator, variable);
+  if (!numerator || !denominator) return `\\frac{${renderExpression(value.numerator, { variable })}}{${renderExpression(value.denominator, { variable })}}`;
+  if (!numerator.length) return '0';
+  // Normalize by the denominator's leading coefficient when it is a number.
+  const lead = denominator[0].coefficient;
+  const scale = isPlainNumber(lead) ? lead : null;
+  const norm = (list) => list.map(({ power: p, coefficient }) => ({ power: p, coefficient: scale ? multiply(coefficient, power(scale, -1)) : coefficient }));
+  const num = norm(numerator);
+  const den = norm(denominator);
+  // In z, every power is taken relative to the denominator's highest, so the
+  // denominator runs 1, z^-1, z^-2 ... and the numerator keeps whatever
+  // powers it has (a z^1 stays a z, rather than 1 over z^-1).
+  const shift = variable === 'z' ? (den[0]?.power ?? 0) : 0;
+  const powerText = (p) => {
+    const e = p - shift;
+    return e === 0 ? '' : e === 1 ? variable : `${variable}^{${e}}`;
+  };
+  // In z: the constant first, then falling powers (z^-1, z^-2), then any
+  // rising ones; in s: highest power first.
+  const zOrder = (a, b) => {
+    const ea = a.power - shift;
+    const eb = b.power - shift;
+    if ((ea <= 0) !== (eb <= 0)) return ea <= 0 ? -1 : 1;
+    return ea <= 0 ? eb - ea : ea - eb;
+  };
+  const order = (list) => (variable === 'z' ? [...list].sort(zOrder) : list);
+  const render = (list) => sumTex(order(list).map(({ power: p, coefficient }) => termTex(coefficient, powerText(p))));
+  const denominatorIsOne = den.length === 1 && den[0].power === shift && isPlainNumber(den[0].coefficient)
+    && den[0].coefficient.numerator === 1n && den[0].coefficient.denominator === 1n;
+  if (denominatorIsOne) return render(num);
+  return `\\frac{${render(num)}}{${render(den)}}`;
+}
+
+/** Numeric roots (low power first coefficients), or null when symbolic. */
+function numericRoots(list) {
+  if (!list || !list.length || !list.every(({ coefficient }) => isPlainNumber(coefficient))) return null;
+  const degree = list[0].power;
+  const dense = Array(degree + 1).fill(0);
+  for (const { power: p, coefficient } of list) dense[p] = Number(coefficient.numerator) / Number(coefficient.denominator);
+  return polynomialRoots(dense).map((root) => ({ re: root.re, im: root.im }));
+}
+
+/** A complex number the way a reader wants it: 3 significant figures. */
+function complexText(root) {
+  const fmt = (x) => {
+    const v = Math.abs(x) < 1e-12 ? 0 : Number(x.toPrecision(3));
+    return String(v);
+  };
+  if (Math.abs(root.im) < 1e-12) return fmt(root.re);
+  const re = Math.abs(root.re) < 1e-12 ? '' : fmt(root.re);
+  const im = `${fmt(Math.abs(root.im))}j`;
+  return re ? `${re} ${root.im < 0 ? '-' : '+'} ${im}` : `${root.im < 0 ? '-' : ''}${im}`;
+}
+
+function present(value, variable, source, output) {
+  const tex = transferTex(value, variable);
+  const label = `\\frac{${texName(output.display)}}{${texName(source.name)}}`;
+  return {
+    input: source.id,
+    inputName: source.name,
+    value,
+    tex,
+    label,
+    equation: `${label} = ${tex}`,
+    zeros: numericRoots(coefficientList(value.numerator, variable)),
+    poles: numericRoots(coefficientList(value.denominator, variable)),
+  };
+}
+
+/** A signal's name in TeX, as it was written (V_{OUT} keeps its markup). */
+function texName(name) {
+  return String(name);
+}
+
+// ----- frequency response -------------------------------------------------------------
+
+function denseCoefficients(value, variable) {
+  const list = coefficientList(value, variable);
+  if (!list || !list.every(({ coefficient }) => isPlainNumber(coefficient))) return null;
+  const dense = Array((list[0]?.power ?? 0) + 1).fill(0);
+  for (const { power: p, coefficient } of list) dense[p] = Number(coefficient.numerator) / Number(coefficient.denominator);
+  return dense;
+}
+
+function evaluate(dense, re, im) {
+  // Horner with a complex argument, coefficients low power first.
+  let a = 0;
+  let b = 0;
+  for (let i = dense.length - 1; i >= 0; i--) {
+    const nextA = a * re - b * im + dense[i];
+    b = a * im + b * re;
+    a = nextA;
+  }
+  return { re: a, im: b };
+}
+
+/**
+ * The magnitude (dB) and phase (degrees) of a numeric transfer function:
+ * in s over relative frequency around its corners (bode.js); in z over
+ * normalized frequency f/fs from 10^-4 to 1/2, z = e^{j 2 pi f}. Null when
+ * a coefficient is symbolic.
+ */
+function responseCurve(value, variable, { pointsPerDecade = 40 } = {}) {
+  const num = denseCoefficients(value.numerator, variable);
+  const den = denseCoefficients(value.denominator, variable);
+  if (!num || !den) return null;
+  if (variable === 's') {
+    const sketch = bodeSketch(num, den, { pointsPerDecade });
+    return { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
+  }
+  const points = [];
+  let previous = null;
+  for (let i = 0; i <= Math.round(Math.log10(0.5 / 1e-4) * pointsPerDecade); i++) {
+    const f = Math.min(0.5, 1e-4 * 10 ** (i / pointsPerDecade));
+    const w = 2 * Math.PI * f;
+    const top = evaluate(num, Math.cos(w), Math.sin(w));
+    const bottom = evaluate(den, Math.cos(w), Math.sin(w));
+    const d = bottom.re ** 2 + bottom.im ** 2;
+    const h = { re: (top.re * bottom.re + top.im * bottom.im) / d, im: (top.im * bottom.re - top.re * bottom.im) / d };
+    let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
+    if (previous !== null) {
+      while (phase - previous > 180) phase -= 360;
+      while (phase - previous < -180) phase += 360;
+    }
+    previous = phase;
+    points.push({ f, db: 20 * Math.log10(Math.hypot(h.re, h.im) || 1e-300), phase });
+  }
+  return { variable, axis: 'normalized', points };
+}
+
+// ----- plots of several responses -----------------------------------------------------
+
+/** Trace colors: distinct hues that read on light and dark paper alike. */
+const TRACE_COLORS = Object.freeze(['#3b74e0', '#e0533b', '#2e9e5b', '#c98a12', '#9356d6', '#1aa0a8', '#d6458f', '#6b7a8f']);
+
+/**
+ * A plot of several magnitude responses on one pair of axes, as a plot
+ * annotation keeps it (model.js normalizePlot): `traces` are
+ * `{ label (TeX), color, value (exact rational) }`, all in `variable`. The
+ * frequency range covers every trace. Null when none can be plotted.
+ */
+function responsePlot(traces, variable) {
+  const curves = traces
+    .map((trace) => ({ trace, curve: responseCurve(trace.value, variable) }))
+    .filter(({ curve }) => curve && curve.points.length > 1);
+  if (!curves.length) return null;
+  const all = curves.flatMap(({ curve }) => curve.points.map((point) => point.f));
+  const axis = curves[0].curve.axis;
+  const low = Math.floor(Math.log10(Math.min(...all)) + 1e-9);
+  // A sampled system's frequencies end at f_s/2, where its curves do.
+  const high = axis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
+  return {
+    kind: 'response',
+    axis,
+    range: { low, high: Math.max(high, low + 1) },
+    traces: curves.map(({ trace, curve }) => ({
+      label: trace.label,
+      color: trace.color,
+      points: curve.points.map(({ f, db }) => ({ f, db })),
+    })),
+  };
+}
+
+__exports.TRACE_COLORS = TRACE_COLORS;
+};
+
 __modules["src/core/analysis/solve.js"] = function (__require, __exports) {
 __exports.solveLinearSystem = solveLinearSystem;
 __exports.solveMNA = solveMNA;
@@ -11061,6 +11555,7 @@ __exports.PRESENCES = PRESENCES;
 __modules["src/core/bode-figure.js"] = function (__require, __exports) {
 __exports.bodeFigure = bodeFigure;
 __exports.cornerNames = cornerNames;
+__exports.responseFigure = responseFigure;
 /**
  * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
  * and short texts (with `_{}`/`^{}` markup). One layout, two renderers -- the
@@ -11258,6 +11753,50 @@ function cornerNames(poles, zeros) {
     .sort((a, b) => a.w - b.w)
     .map(({ root, w }, index) => ({ root, w, kind: letter === 'p' ? 'pole' : 'zero', text: `ω_{${letter}${index + 1}}`, rightHalf: root.re > 0 }));
   return [...named(poles, 'p'), ...named(zeros, 'z')];
+}
+
+/**
+ * Lay out a plot of several magnitude responses (a `kind: 'response'` plot,
+ * signal-flow analysis): dB against log frequency, a curve per trace in the
+ * trace's colour (`item.color`), numbered axes, and the frequency unit --
+ * f/f_{s} for sampled systems, relative ω otherwise. Curve items carry
+ * `trace`, their index. The traces' names go beside the figure, not in it.
+ */
+function responseFigure(plot, { width = 480, height = 260, fontSize = 11, maxSpanDb = 160 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const { low, high } = plot.range;
+  const left = 3.6 * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = 2 * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
+  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db));
+  let [dbLow, dbHigh] = niceRange(values, 20, 3);
+  if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
+  const step = dbHigh - dbLow > 100 ? 40 : 20;
+  const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
+  for (let decade = Math.ceil(low); decade <= high; decade++) {
+    const at = x(10 ** decade);
+    items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
+    items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
+    items.push({ type: 'text', x: at, y: pane.y + pane.h + 1.3 * em, text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}`, anchor: 'middle', role: 'number' });
+  }
+  for (let db = Math.ceil(dbLow / step) * step; db <= dbHigh; db += step) {
+    items.push({ type: 'line', x1: pane.x, y1: y(db), x2: pane.x + pane.w, y2: y(db), role: 'grid' });
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
+  }
+  plot.traces.forEach((trace, index) => {
+    const samples = trace.points.map((p) => ({ f: p.f, value: p.db }));
+    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
+  });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: '|H| (dB)', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
+  return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
 }
 
 };
@@ -11528,6 +12067,7 @@ __exports.parseArgs = parseArgs;
 __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
+let analyzeSignalFlow, complexText; __bind(() => { ({ analyzeSignalFlow, complexText } = __require("src/core/analysis/signal-flow.js")); });
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } = __require("src/core/part-moves.js")); });
 let TRANSFER_FUNCTION_ROLE, isTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, isTransferFunction } = __require("src/core/transfer-function.js")); });
@@ -11550,6 +12090,7 @@ let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapCom
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -11600,6 +12141,8 @@ function pinDir(c, wx, wy) {
 
 const FLAG_ARITY = {
   at: 2,
+  zero: 1,
+  const: 1,
   rot: 1,
   value: 1,
   name: 1,
@@ -12043,6 +12586,9 @@ function commandHelp() {
     '  bounds                         - drawing extents',
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
     '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
+    '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
+    '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
+    '                                   one per input port to the output; the other sources are zero or constant',
     '    --input NET --output NET --reference NET --ac-ground NET,...',
     '    --device-region REF=triode,... --ignore-body-effect --gmro-large',
     '    --ignore-channel-length-modulation --dominant-pole',
@@ -12131,6 +12677,29 @@ function dispatch(circuit, cmd, pos, flags, io) {
       lines.push('no dangling terminals, no bbox overlaps, all on grid');
     }
     return result(lines.join('\n'), rep, false);
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && ['signal-flow', 'signalflow', 'sfg'].includes(pos[0])) {
+    const list = (values) => (values || []).flatMap((value) => value.split(',')).map((value) => value.trim()).filter(Boolean);
+    const output = flags.output?.[0] || pos[1];
+    const sources = {};
+    for (const ref of list(flags.input)) sources[ref] = 'input';
+    for (const ref of list(flags.zero)) sources[ref] = 'zero';
+    for (const entry of list(flags.const)) {
+      const match = entry.match(/^([^=]+)=(.+)$/);
+      if (!match) throw new Error('--const expects PORT=VALUE');
+      sources[match[1].trim()] = { constant: match[2].trim() };
+    }
+    if (!output || !Object.values(sources).includes('input')) {
+      throw new Error('usage: analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]');
+    }
+    const report = analyzeSignalFlow(circuit, { output, sources });
+    if (!report.ok) throw new Error(report.error);
+    const lines = report.entries.flatMap((entry) => [
+      entry.equation,
+      ...(entry.zeros?.length ? [`  zeros: ${entry.zeros.map(complexText).join(', ')}`] : []),
+      ...(entry.poles?.length ? [`  poles: ${entry.poles.map(complexText).join(', ')}`] : []),
+    ]);
+    return result(lines.join('\n'), { variable: report.variable, output: report.output, entries: report.entries.map(({ value, ...entry }) => entry) });
   }
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();
@@ -17014,6 +17583,7 @@ const MAX_PLOT_DECADES = 60;
 
 function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
+  if (plot.kind === 'response') return normalizeResponsePlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   const points = (Array.isArray(plot.points) ? plot.points : [])
@@ -17039,6 +17609,23 @@ function normalizePlot(plot) {
     quantity: typeof plot.quantity === 'string' ? plot.quantity.slice(0, 40) : 'A_{v}',
     phase: plot.phase === true,
   };
+}
+
+/** A plot of several magnitude responses (signal-flow analysis): coloured
+ *  traces of dB against log frequency, each named by its TeX equation. */
+function normalizeResponsePlot(plot) {
+  const low = Number(plot.range?.low);
+  const high = Number(plot.range?.high);
+  if (!finite(low) || !finite(high) || high <= low || high - low > MAX_PLOT_DECADES) return null;
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+    label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    points: (Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db))
+      .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),
+  })).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces };
 }
 
 class LabelInstance {
@@ -23928,7 +24515,7 @@ let sizeReplacedNameLabels; __bind(() => { ({ sizeReplacedNameLabels } = __requi
 let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
 let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
-let bodeFigure; __bind(() => { ({ bodeFigure } = __require("src/core/bode-figure.js")); });
+let bodeFigure, responseFigure; __bind(() => { ({ bodeFigure, responseFigure } = __require("src/core/bode-figure.js")); });
 
 
 
@@ -24589,14 +25176,17 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const fontSize = Math.max(18, Math.min(38, h / (plot.phase ? 11 : 8)));
-  const figure = bodeFigure(plot, {
-    width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize,
-  });
+  const response = plot.kind === 'response';
+  const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
+  // A response plot (signal-flow analysis) draws each trace in its colour;
+  // its traces' names are math labels beside it, children of the box.
+  const figure = response
+    ? responseFigure(plot, { width: w, height: h, fontSize })
+    : bodeFigure(plot, { width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize });
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
-  const stroke = (role) => {
+  const stroke = (role, ink = color) => {
     const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
-    return `stroke="${color}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
+    return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
   };
   const text = (item) => {
     const runs = parseLabelRuns(item.text).map((run) => (run.sub || run.super
@@ -24606,7 +25196,7 @@ function plotAnnotationSvg(label, opacity = '') {
   };
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
-    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role)} stroke-linejoin="round"/>` : '';
+    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role, item.color ? escapeSvg(item.color) : color)} stroke-linejoin="round"/>` : '';
     if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${color}" stroke="none"/>`;
     if (item.type === 'text') return text(item);
     return '';
@@ -46565,6 +47155,7 @@ __exports.activateMove = activateMove;
 __exports.activateCopy = activateCopy;
 __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
+let installSignalFlowUi; __bind(() => { ({ installSignalFlowUi } = __require("src/web/signal-flow-ui.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouchingIn, rerouteTouchedNetsIn; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching: netsTouchingIn, rerouteTouchedNets: rerouteTouchedNetsIn } = __require("src/core/part-moves.js")); });
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
@@ -46640,6 +47231,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -46846,6 +47438,7 @@ let latestSmallSignalModel = null;
 
 let analysisPick = null;
 installAnalysisUi();
+installSignalFlowUi();
 
 installIcons();
 // The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.
@@ -57993,7 +58586,7 @@ function renderDetail() {
     if (label.owner) rows.push(['Owner', label.owner]);
     if (label.netId) rows.push(['Net', editor.circuit.nets.get(label.netId)?.name || label.netId]);
     detailEl.appendChild(label.plot
-      ? detailHeader('Bode sketch', 'plot')
+      ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : 'Bode sketch', 'plot')
       : detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
     const list = document.createElement('dl');
     list.className = 'detail-props';
@@ -58258,6 +58851,395 @@ function installSidePanel() {
 
 __exports.PANEL_COLLAPSED_KEY = PANEL_COLLAPSED_KEY;
 __exports.collapsedPanels = collapsedPanels;
+};
+
+__modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
+__exports.installSignalFlowUi = installSignalFlowUi;
+let TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, responsePlot, signalFlowGraph; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, responsePlot, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
+let responseFigure; __bind(() => { ({ responseFigure } = __require("src/core/bode-figure.js")); });
+let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let analysisDialog; __bind(() => { ({ analysisDialog } = __require("src/web/elements.js")); });
+let commit, render, setLabelSelection, setSelection; __bind(() => { ({ commit, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
+/**
+ * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
+ * block diagram rather than a circuit. A switch at the top of the window
+ * chooses the mode -- a drawing of signal-flow parts and no devices opens in
+ * it -- and this mode has its own fields, results, and actions, so the
+ * small-signal form is untouched by it.
+ *
+ * The user picks the output signal and sets every source -- an input port or
+ * any wire nothing drives -- to input, zero, or a constant. Derive shows each
+ * input's transfer function to the output and its poles and zeros. Numeric
+ * ones go onto one graph of magnitude responses, a colour per trace, kept
+ * across derives so responses can be compared; Annotate graph puts that graph
+ * on the drawing with its legend, and Annotate equations the equations.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+// Devices the small-signal analysis models: a drawing with any opens in it.
+const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
+
+let mode = null; // 'circuit' | 'signal-flow'; chosen per opening unless switched
+let chosenThisSession = false;
+const settings = { output: '', sources: {} }; // source id -> 'input' | 'zero' | { constant }
+let latest = null;
+// The graph's traces, kept across derives: { id, label (TeX), color, value, variable, on }.
+let traces = [];
+let modeBar = null;
+let section = null;
+let actions = null; // this mode's buttons, in the window's own footer
+let derivedRevision = -1;
+
+const el = (tag, props = {}, children = []) => {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
+  }
+  node.append(...children);
+  return node;
+};
+
+function circuitParts() {
+  return [...editor.circuit.components.values()].filter((component) => CIRCUIT_TYPES.test(component.type)).length;
+}
+
+/** The mode a drawing opens in: signal flow when it has signal-flow parts and no devices. */
+function suggestedMode() {
+  return hasSignalFlow(editor.circuit) && !circuitParts() ? 'signal-flow' : 'circuit';
+}
+
+function circuitChildren() {
+  const scroll = analysisDialog.querySelector('.analysis-scroll');
+  return [...scroll.children].filter((child) => child !== modeBar && child !== section);
+}
+
+function setMode(next, { user = false } = {}) {
+  mode = next;
+  if (user) chosenThisSession = true;
+  const flow = mode === 'signal-flow';
+  for (const child of circuitChildren()) child.classList.toggle('analysis-mode-hidden', flow);
+  // One footer: the circuit's buttons there, or this mode's.
+  for (const id of ['analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', flow);
+  for (const button of actions) button.classList.toggle('analysis-mode-hidden', !flow);
+  section.hidden = !flow;
+  for (const button of modeBar.querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+  const title = document.getElementById('analysis-dialog-title');
+  if (title) title.textContent = flow ? 'Signal-flow analysis' : 'Small-signal analysis';
+  if (flow) fillForm();
+}
+
+// ----- the form -------------------------------------------------------------------------
+
+function fillForm() {
+  const { signals, sources, issues } = signalFlowGraph(editor.circuit);
+  const output = section.querySelector('#signal-flow-output');
+  const names = [...signals.values()].filter((signal) => signal.driver).map((signal) => ({ key: signal.key, name: signal.display }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  // An output port's signal first: it is what is usually wanted.
+  const outputPorts = new Set([...editor.circuit.components.values()].filter((c) => c.type === 'output')
+    .flatMap((port) => [...signals.values()].filter((signal) => signal.netIds.some((id) => editor.circuit.nets.get(id)?.terminals.some((t) => t.comp === port.refdes)))).map((signal) => signal.key));
+  names.sort((a, b) => outputPorts.has(b.key) - outputPorts.has(a.key));
+  output.replaceChildren(...names.map(({ key, name }) => el('option', { value: key, text: name })));
+  if (names.some(({ key }) => key === settings.output)) output.value = settings.output;
+  settings.output = output.value;
+
+  const table = section.querySelector('.signal-flow-sources');
+  table.replaceChildren();
+  if (!sources.length) table.append(el('p', { class: 'field-hint', text: 'No sources yet: a source is an input port, or any named wire nothing drives.' }));
+  // Every source starts as an input: each gets its own transfer function
+  // (superposition holds the others at zero for it).
+  for (const source of sources) {
+    const value = settings.sources[source.id] ?? 'input';
+    settings.sources[source.id] = value;
+    const kind = typeof value === 'object' ? 'constant' : value;
+    const select = el('select', { 'aria-label': `${source.name}: input, zero, or constant` }, [
+      el('option', { value: 'input', text: 'Input' }), el('option', { value: 'zero', text: 'Zero' }), el('option', { value: 'constant', text: 'Constant' }),
+    ]);
+    select.value = kind;
+    const constant = el('input', { type: 'text', class: 'signal-flow-constant', placeholder: 'a or 0.5', 'aria-label': `${source.name} constant`, value: typeof value === 'object' ? value.constant : '' });
+    constant.hidden = kind !== 'constant';
+    const save = () => {
+      constant.hidden = select.value !== 'constant';
+      settings.sources[source.id] = select.value === 'constant' ? { constant: constant.value.trim() || '1' } : select.value;
+    };
+    select.addEventListener('change', save);
+    constant.addEventListener('input', save);
+    table.append(el('div', { class: 'signal-flow-source' }, [el('span', { class: 'signal-flow-source-name', text: source.name }), select, constant]));
+  }
+  const problems = section.querySelector('.signal-flow-issues');
+  problems.replaceChildren(...issues.map((issue) => el('p', { class: 'analysis-error', text: issue.message })));
+  problems.hidden = !issues.length;
+  section.querySelector('.signal-flow-stale').hidden = !latest || derivedRevision === editor.modelRevision;
+}
+
+// ----- results --------------------------------------------------------------------------
+
+function mathRow(label, tex) {
+  const value = el('div', { class: 'analysis-equation-value', 'aria-label': tex });
+  value.innerHTML = texToMathML(tex);
+  return el('div', { class: 'analysis-equation-row' }, [el('div', { class: 'analysis-equation-label', text: label }), value]);
+}
+
+// ----- the graph ------------------------------------------------------------------------
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Text with _{} and ^{} markup as SVG tspans. */
+function svgText(item, fontSize) {
+  const text = document.createElementNS(SVG_NS, 'text');
+  text.setAttribute('x', item.x);
+  text.setAttribute('y', item.y);
+  text.setAttribute('text-anchor', item.anchor || 'start');
+  text.setAttribute('class', `role-${item.role}`);
+  for (const run of parseLabelRuns(item.text)) {
+    const span = document.createElementNS(SVG_NS, 'tspan');
+    span.textContent = run.text;
+    if (run.sub || run.super) {
+      span.setAttribute('baseline-shift', run.sub ? '-25%' : '35%');
+      span.setAttribute('font-size', `${fontSize * 0.7}`);
+    }
+    text.append(span);
+  }
+  return text;
+}
+
+/** The graph in the panel: the same layout the drawing gets, in the theme's colours. */
+function graphSvg(plot) {
+  const figure = responseFigure(plot, { width: 400, height: 220, fontSize: 11 });
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${figure.width} ${figure.height}`);
+  svg.setAttribute('class', 'signal-flow-plot');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Magnitude responses');
+  for (const item of figure.items) {
+    let node;
+    if (item.type === 'line') {
+      node = document.createElementNS(SVG_NS, 'line');
+      for (const key of ['x1', 'y1', 'x2', 'y2']) node.setAttribute(key, item[key]);
+    } else if (item.type === 'path') {
+      node = document.createElementNS(SVG_NS, 'path');
+      node.setAttribute('d', item.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' '));
+      if (item.color) node.style.stroke = item.color;
+    } else if (item.type === 'text') node = svgText(item, 11);
+    if (!node) continue;
+    node.classList.add(`role-${item.role}`);
+    svg.append(node);
+  }
+  return svg;
+}
+
+const traceVariable = () => traces[0]?.variable || null;
+const shownTraces = () => traces.filter((trace) => trace.on);
+
+/** Add an entry's response to the graph (a graph keeps one variable). */
+function addTrace(entry, variable, output) {
+  if (traceVariable() && traceVariable() !== variable) traces = [];
+  const id = `${output.key}\n${entry.input}\n${entry.equation}`;
+  if (traces.some((trace) => trace.id === id)) return;
+  const used = new Set(traces.map((trace) => trace.color));
+  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  traces.push({ id, label: entry.equation, color, value: entry.value, variable, on: true });
+}
+
+function renderGraph() {
+  const host = section.querySelector('.signal-flow-graph');
+  host.replaceChildren();
+  const plot = traces.length ? responsePlot(shownTraces(), traceVariable()) : null;
+  host.hidden = !traces.length;
+  if (!traces.length) return;
+  host.append(el('div', { class: 'analysis-equation-label', text: 'Magnitude' }));
+  if (plot) host.append(graphSvg(plot));
+  else host.append(el('p', { class: 'field-hint', text: 'Check a trace below to plot it.' }));
+  const legend = el('div', { class: 'signal-flow-legend' });
+  for (const trace of traces) {
+    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
+    check.checked = trace.on;
+    check.addEventListener('change', () => { trace.on = check.checked; renderGraph(); });
+    const math = el('span', { class: 'signal-flow-legend-math' });
+    math.innerHTML = texToMathML(trace.label);
+    math.style.color = trace.color;
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderGraph(); } });
+    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
+  }
+  host.append(legend);
+  host.append(el('div', { class: 'signal-flow-graph-actions' }, [
+    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderGraph(); renderResults(); } }),
+    el('button', { type: 'button', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !plot, onclick: annotateGraph }),
+  ]));
+}
+
+/** The graph on the drawing: a plot annotation, each trace's equation a
+ *  math label in its colour beside it (children of the box, moving with it). */
+function annotateGraph() {
+  const shown = shownTraces();
+  const plot = responsePlot(shown, traceVariable());
+  if (!plot) return;
+  const bounds = editor.circuit.bounds();
+  const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
+  const x = empty ? 0 : snap(bounds.x + bounds.w + 2 * GRID);
+  const y = empty ? 0 : snap(bounds.y);
+  const w = 18 * GRID;
+  const h = 11 * GRID;
+  let box = null;
+  const ids = [];
+  commit(() => {
+    box = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' } });
+    let top = y;
+    for (const trace of shown) {
+      const label = editor.circuit.addLabel({ text: `$${trace.label}$`, math: true, parent: box.id, align: 'left', x: 0, y: 0, style: { color: trace.color } });
+      const size = label.bbox();
+      label.moveTo(snap(x + w + GRID + size.w / 2), snap(top + size.h / 2));
+      top = label.bbox().y + label.bbox().h;
+      ids.push(label.id);
+    }
+  });
+  if (!box) return;
+  setSelection([]);
+  setLabelSelection([box.id]);
+  logLine('placed the graph on the drawing; drag to move it, its corners to resize');
+  render();
+}
+
+// ----- results --------------------------------------------------------------------------
+
+function renderResults() {
+  const host = section.querySelector('.signal-flow-results');
+  host.replaceChildren();
+  actions[0].hidden = !latest?.ok;
+  if (!latest) return;
+  if (!latest.ok) {
+    host.append(el('p', { class: 'analysis-error', text: latest.error }));
+    return;
+  }
+  for (const entry of latest.entries) {
+    const block = el('div', { class: 'analysis-equation signal-flow-entry' });
+    block.append(mathRow(`From ${entry.inputName}`, entry.equation));
+    if (entry.zeros?.length) block.append(rootRow('Zeros', entry.zeros, latest.variable));
+    if (entry.poles?.length) block.append(rootRow('Poles', entry.poles, latest.variable));
+    if (entry.poles !== null && entry.zeros !== null) {
+      const id = `${latest.output.key}\n${entry.input}\n${entry.equation}`;
+      const plotted = traces.some((trace) => trace.id === id);
+      block.append(el('div', { class: 'signal-flow-entry-actions' }, [
+        el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderGraph(); renderResults(); } }),
+      ]));
+    }
+    host.append(block);
+  }
+}
+
+function rootRow(label, roots, variable) {
+  const unit = variable === 'z' && label === 'Poles' ? ' (stable inside |z| = 1)' : '';
+  return el('div', { class: 'analysis-equation-row' }, [
+    el('div', { class: 'analysis-equation-label', text: `${label}${unit}` }),
+    el('div', { class: 'signal-flow-roots', text: roots.map(complexText).join(',  ') }),
+  ]);
+}
+
+function derive() {
+  latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources });
+  derivedRevision = editor.modelRevision;
+  section.querySelector('.signal-flow-stale').hidden = true;
+  // Each new numeric response joins the graph, beside those already there.
+  if (latest.ok) for (const entry of latest.entries) if (entry.poles !== null && entry.zeros !== null) addTrace(entry, latest.variable, latest.output);
+  renderResults();
+  renderGraph();
+  if (!latest.ok) logLine(`Signal-flow analysis: ${latest.error}`, 'error');
+}
+
+/** The equations under the drawing, as math labels, one per input. */
+function annotate() {
+  if (!latest?.ok) return;
+  const bounds = editor.circuit.bounds();
+  const left = bounds.w > 0 ? bounds.x : editor.cursor.x;
+  let top = (bounds.h > 0 ? bounds.y + bounds.h : editor.cursor.y) + 2 * GRID;
+  const ids = [];
+  commit(() => {
+    for (const entry of latest.entries) {
+      const label = editor.circuit.addLabel({ text: `$${entry.equation}$`, x: 0, y: 0, align: 'left', math: true });
+      const box = label.bbox();
+      label.moveTo(snap(left + box.w / 2), snap(top + box.h / 2));
+      top = label.bbox().y + label.bbox().h + GRID;
+      ids.push(label.id);
+    }
+  });
+  setSelection([]);
+  setLabelSelection(ids);
+  render();
+}
+
+// ----- install --------------------------------------------------------------------------
+
+function installSignalFlowUi() {
+  const scroll = analysisDialog?.querySelector('.analysis-scroll');
+  if (!scroll) return;
+  modeBar = el('div', { class: 'segmented analysis-mode', role: 'group', 'aria-label': 'Analysis mode' }, [
+    el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis of a transistor circuit', onclick: () => setMode('circuit', { user: true }) }),
+    el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Transfer functions of a block diagram: H(s)/H(z) blocks, sums, and multipliers', onclick: () => setMode('signal-flow', { user: true }) }),
+  ]);
+  const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { settings.output = ev.target.value; } });
+  section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
+    el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
+    el('div', { class: 'analysis-grid' }, [
+      el('div', { class: 'analysis-node' }, [el('label', { for: 'signal-flow-output', text: 'Output signal' }), el('div', { class: 'analysis-node-control' }, [output])]),
+    ]),
+    el('fieldset', { class: 'analysis-approximations' }, [
+      el('legend', { text: 'Sources' }),
+      el('div', { class: 'signal-flow-sources' }),
+      el('p', { class: 'field-hint', text: 'A constant matters only where it multiplies a signal; elsewhere it adds no transfer function, the same as zero.' }),
+    ]),
+    el('div', { class: 'signal-flow-issues', hidden: true }),
+    el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
+    el('div', { class: 'signal-flow-graph', hidden: true }),
+    el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
+  ]);
+  actions = [
+    el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Write the equations under the drawing', onclick: annotate }),
+    el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive every input\'s transfer function to the output (Enter)', onclick: derive }),
+  ];
+  for (const button of actions) if (!button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
+  document.getElementById('analysis-submit')?.before(...actions);
+  scroll.prepend(modeBar);
+  modeBar.after(section);
+  // Enter in a field derives here; it must not submit the circuit form.
+  section.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' || ev.target.tagName === 'BUTTON') return;
+    ev.preventDefault();
+    derive();
+  });
+  // The diagram may have changed while the window was open: refresh the
+  // signals and sources when the pointer comes back to it.
+  let filledRevision = -1;
+  section.addEventListener('pointerenter', () => {
+    if (filledRevision === editor.modelRevision) return;
+    filledRevision = editor.modelRevision;
+    fillForm();
+  });
+  // Each opening picks the mode the drawing suggests, unless it was chosen.
+  new MutationObserver(() => {
+    if (analysisDialog.hidden) return;
+    setMode(chosenThisSession && mode ? mode : suggestedMode());
+  }).observe(analysisDialog, { attributes: true, attributeFilter: ['hidden'] });
+  setMode('circuit');
+}
+
 };
 
 __modules["src/web/startup.js"] = function (__require, __exports) {

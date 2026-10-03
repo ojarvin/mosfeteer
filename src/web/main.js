@@ -10,6 +10,7 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
+import { installSignalFlowUi } from './signal-flow-ui.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching as netsTouchingIn, rerouteTouchedNets as rerouteTouchedNetsIn } from '../core/part-moves.js';
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
@@ -223,6 +224,7 @@ let latestSmallSignalModel = null;
 
 let analysisPick = null;
 installAnalysisUi();
+installSignalFlowUi();
 
 installIcons();
 // The first-drawing tutorial while it runs: { startedAt, skipped, cheered, finishedAt }.

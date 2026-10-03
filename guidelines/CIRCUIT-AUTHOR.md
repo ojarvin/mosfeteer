@@ -222,6 +222,9 @@ list                           list components with world terminals
 state                          full JSON state
 bounds                         drawing extents
 eval                           quality report (connectivity, overlaps, routing, labels, grid)
+analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]
+                               transfer functions of a block diagram (tf_s/tf_z blocks, sum and
+                               multiply junctions): one per input port to the output (docs/signal-flow-analysis.md)
 explain eval                   grouped diagnostics with plain-language repair hints
 explain connect REF.TERM REF.TERM
                                dry-run route with path, bends, and pin-escape details

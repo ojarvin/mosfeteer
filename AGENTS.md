@@ -329,6 +329,14 @@ selected generator to that same solve. The main implementation is in
   analyzer directly. Provenance is opt-in and only decorates live equation
   MathML; it must not leak into labels, documents, or exports.
 
+Block diagrams have their own mode in the same window
+([`docs/signal-flow-analysis.md`](docs/signal-flow-analysis.md),
+`src/core/analysis/signal-flow.js`): `tf_s`/`tf_z` blocks, sum and multiply
+junctions, and input ports, solved exactly with the same rational algebra
+(one RHS per input). It never shares state with the small-signal form, and it
+refuses rather than guesses: a multiply of two signals, mixed `s` and `z`,
+an undriven or doubly driven signal.
+
 Read the focused tests before changing this pipeline. In particular, the
 analysis corpus, report-adapter, provenance, Miller, parasitics, reduction,
 and topology tests encode behavior that prose cannot safely replace.

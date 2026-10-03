@@ -196,3 +196,47 @@ export function cornerNames(poles, zeros) {
     .map(({ root, w }, index) => ({ root, w, kind: letter === 'p' ? 'pole' : 'zero', text: `ω_{${letter}${index + 1}}`, rightHalf: root.re > 0 }));
   return [...named(poles, 'p'), ...named(zeros, 'z')];
 }
+
+/**
+ * Lay out a plot of several magnitude responses (a `kind: 'response'` plot,
+ * signal-flow analysis): dB against log frequency, a curve per trace in the
+ * trace's colour (`item.color`), numbered axes, and the frequency unit --
+ * f/f_{s} for sampled systems, relative ω otherwise. Curve items carry
+ * `trace`, their index. The traces' names go beside the figure, not in it.
+ */
+export function responseFigure(plot, { width = 480, height = 260, fontSize = 11, maxSpanDb = 160 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const { low, high } = plot.range;
+  const left = 3.6 * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = 2 * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
+  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db));
+  let [dbLow, dbHigh] = niceRange(values, 20, 3);
+  if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
+  const step = dbHigh - dbLow > 100 ? 40 : 20;
+  const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  if (dbLow < 0 && dbHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
+  for (let decade = Math.ceil(low); decade <= high; decade++) {
+    const at = x(10 ** decade);
+    items.push({ type: 'line', x1: at, y1: pane.y, x2: at, y2: pane.y + pane.h, role: 'grid' });
+    items.push({ type: 'line', x1: at, y1: pane.y + pane.h, x2: at, y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
+    items.push({ type: 'text', x: at, y: pane.y + pane.h + 1.3 * em, text: decade === 0 ? '1' : decade === 1 ? '10' : `10^{${decade}}`, anchor: 'middle', role: 'number' });
+  }
+  for (let db = Math.ceil(dbLow / step) * step; db <= dbHigh; db += step) {
+    items.push({ type: 'line', x1: pane.x, y1: y(db), x2: pane.x + pane.w, y2: y(db), role: 'grid' });
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
+  }
+  plot.traces.forEach((trace, index) => {
+    const samples = trace.points.map((p) => ({ f: p.f, value: p.db }));
+    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
+  });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: '|H| (dB)', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
+  return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
+}

@@ -9,7 +9,7 @@ import { sizeReplacedNameLabels } from './mos-size.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
-import { bodeFigure } from './bode-figure.js';
+import { bodeFigure, responseFigure } from './bode-figure.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -658,14 +658,17 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const fontSize = Math.max(18, Math.min(38, h / (plot.phase ? 11 : 8)));
-  const figure = bodeFigure(plot, {
-    width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize,
-  });
+  const response = plot.kind === 'response';
+  const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
+  // A response plot (signal-flow analysis) draws each trace in its colour;
+  // its traces' names are math labels beside it, children of the box.
+  const figure = response
+    ? responseFigure(plot, { width: w, height: h, fontSize })
+    : bodeFigure(plot, { width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize });
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));
-  const stroke = (role) => {
+  const stroke = (role, ink = color) => {
     const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
-    return `stroke="${color}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
+    return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
   };
   const text = (item) => {
     const runs = parseLabelRuns(item.text).map((run) => (run.sub || run.super
@@ -675,7 +678,7 @@ function plotAnnotationSvg(label, opacity = '') {
   };
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
-    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role)} stroke-linejoin="round"/>` : '';
+    if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role, item.color ? escapeSvg(item.color) : color)} stroke-linejoin="round"/>` : '';
     if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${color}" stroke="none"/>`;
     if (item.type === 'text') return text(item);
     return '';

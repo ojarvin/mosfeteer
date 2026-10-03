@@ -1,3 +1,4 @@
+import { analyzeSignalFlow, complexText } from './analysis/signal-flow.js';
 import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
 import { TRANSFER_FUNCTION_ROLE, isTransferFunction } from './transfer-function.js';
@@ -48,6 +49,8 @@ function pinDir(c, wx, wy) {
 
 const FLAG_ARITY = {
   at: 2,
+  zero: 1,
+  const: 1,
   rot: 1,
   value: 1,
   name: 1,
@@ -491,6 +494,9 @@ export function commandHelp() {
     '  bounds                         - drawing extents',
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
     '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
+    '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
+    '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
+    '                                   one per input port to the output; the other sources are zero or constant',
     '    --input NET --output NET --reference NET --ac-ground NET,...',
     '    --device-region REF=triode,... --ignore-body-effect --gmro-large',
     '    --ignore-channel-length-modulation --dominant-pole',
@@ -579,6 +585,29 @@ function dispatch(circuit, cmd, pos, flags, io) {
       lines.push('no dangling terminals, no bbox overlaps, all on grid');
     }
     return result(lines.join('\n'), rep, false);
+  }
+  if ((cmd === 'analyze' || cmd === 'analysis') && ['signal-flow', 'signalflow', 'sfg'].includes(pos[0])) {
+    const list = (values) => (values || []).flatMap((value) => value.split(',')).map((value) => value.trim()).filter(Boolean);
+    const output = flags.output?.[0] || pos[1];
+    const sources = {};
+    for (const ref of list(flags.input)) sources[ref] = 'input';
+    for (const ref of list(flags.zero)) sources[ref] = 'zero';
+    for (const entry of list(flags.const)) {
+      const match = entry.match(/^([^=]+)=(.+)$/);
+      if (!match) throw new Error('--const expects PORT=VALUE');
+      sources[match[1].trim()] = { constant: match[2].trim() };
+    }
+    if (!output || !Object.values(sources).includes('input')) {
+      throw new Error('usage: analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]');
+    }
+    const report = analyzeSignalFlow(circuit, { output, sources });
+    if (!report.ok) throw new Error(report.error);
+    const lines = report.entries.flatMap((entry) => [
+      entry.equation,
+      ...(entry.zeros?.length ? [`  zeros: ${entry.zeros.map(complexText).join(', ')}`] : []),
+      ...(entry.poles?.length ? [`  poles: ${entry.poles.map(complexText).join(', ')}`] : []),
+    ]);
+    return result(lines.join('\n'), { variable: report.variable, output: report.output, entries: report.entries.map(({ value, ...entry }) => entry) });
   }
   if (cmd === 'analyze' || cmd === 'analysis') {
     const subject = pos.shift();
