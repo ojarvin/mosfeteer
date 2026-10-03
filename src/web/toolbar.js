@@ -52,7 +52,7 @@ export const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', gain: 'Gain',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', gain: 'Gain', sampler: 'Sampler (s to z)',
 };
 
 export const PLACEMENT_ALIASES = {
@@ -117,6 +117,7 @@ export const PLACEMENT_ALIASES = {
   filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
   gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
+  sampler: ['sampler', 'sample', 'switch', 'quantizer', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
 };

@@ -13,8 +13,10 @@
  * on the drawing with its legend, and Annotate equations the equations.
  */
 
-import { TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
+import { linkMakesCycle, parseCoefficientLink, resolveCoefficients } from '../core/analysis/coefficient-links.js';
+import { expressionTex } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { responseFigure } from '../core/bode-figure.js';
 import { parseLabelRuns } from '../core/model.js';
@@ -39,6 +41,9 @@ let traces = [];
 // the numeric poles and zeros use them. Kept in the document, so a drawing
 // opens with the numbers it was left at.
 const coefficients = () => editor.circuit.analysisValues.coefficients;
+// Linked coefficients (c_1 = b_1) and every coefficient's number through them.
+const links = () => (editor.circuit.analysisValues.links ||= {});
+const resolved = () => resolveCoefficients(coefficients(), links());
 let modeBar = null;
 let section = null;
 let actions = null; // this mode's buttons, in the window's own footer
@@ -147,11 +152,17 @@ function currentSymbols() {
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-/** A result with every symbol given its number (1 until set). */
-function numeric(value, variable) {
+/** Every symbol of a result with its number (1 until set). */
+function valuesFor(value, variable) {
   const values = {};
-  for (const name of resultSymbols(value, variable)) values[name] = coefficients()[name] ?? 1;
-  return withCoefficients(value, values);
+  const numbers = resolved();
+  for (const name of resultSymbols(value, variable)) values[name] = numbers[name] ?? 1;
+  return values;
+}
+
+/** A result with every symbol given its number. */
+function numeric(value, variable) {
+  return withCoefficients(value, valuesFor(value, variable));
 }
 
 let redrawFrame = 0;
@@ -173,27 +184,67 @@ function renderCoefficients() {
   const rows = host.querySelector('.signal-flow-coefficient-rows');
   rows.replaceChildren();
   for (const name of names) {
+    const linked = Object.hasOwn(links(), name);
     const value = coefficients()[name] ?? 1;
     const label = el('span', { class: 'signal-flow-coefficient-name' });
     label.innerHTML = texToMathML(symbolText(name));
     const slider = el('input', { type: 'range', min: String(-3 * PER_DECADE), max: String(3 * PER_DECADE), step: '1', 'aria-label': `${name}: slide to change` });
     slider.value = String(indexE24(Math.abs(value) || 1));
-    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, value: String(value) });
+    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, value: linked ? `= ${links()[name]}` : String(value) });
+    const row = el('div', { class: 'signal-flow-coefficient', 'data-name': name }, [label, slider, field]);
     slider.addEventListener('input', () => {
       // The slider sets the size; a value typed negative keeps its sign.
       const sign = (coefficients()[name] ?? 1) < 0 ? -1 : 1;
       coefficients()[name] = sign * stepE24(Number(slider.value));
       field.value = String(coefficients()[name]);
+      refreshLinkedRows();
       coefficientsChanged();
     });
     field.addEventListener('input', () => {
-      const number = Number(field.value);
-      if (!field.value.trim() || !Number.isFinite(number)) return;
-      coefficients()[name] = number;
-      if (number) slider.value = String(indexE24(Math.abs(number)));
+      const text = field.value.trim();
+      field.classList.remove('invalid');
+      field.title = '';
+      // `= b_1` follows b_1; a number is the coefficient's own again.
+      if (text.startsWith('=')) {
+        let link;
+        try {
+          link = parseCoefficientLink(text);
+          if (linkMakesCycle(name, link.text, links())) throw new Error(`${name} would follow itself`);
+        } catch (err) {
+          field.classList.add('invalid');
+          field.title = err.message;
+          return;
+        }
+        links()[name] = link.text;
+      } else {
+        const number = Number(text);
+        if (!text || !Number.isFinite(number)) return;
+        delete links()[name];
+        coefficients()[name] = number;
+        if (number) slider.value = String(indexE24(Math.abs(number)));
+      }
+      refreshLinkedRows();
       coefficientsChanged();
     });
-    rows.append(el('div', { class: 'signal-flow-coefficient' }, [label, slider, field]));
+    rows.append(row);
+  }
+  refreshLinkedRows();
+}
+
+/** Linked rows show the number they follow: the slider at it, disabled,
+ *  and the link with its number on hover. */
+function refreshLinkedRows() {
+  const numbers = resolved();
+  for (const row of section.querySelectorAll('.signal-flow-coefficient')) {
+    const name = row.dataset.name;
+    const linked = Object.hasOwn(links(), name);
+    const slider = row.querySelector('input[type=range]');
+    row.classList.toggle('linked', linked);
+    slider.disabled = linked;
+    if (!linked) { slider.title = ''; continue; }
+    const value = numbers[name] ?? 1;
+    if (value) slider.value = String(indexE24(Math.abs(value)));
+    slider.title = `${name} = ${links()[name]} = ${Number(value.toPrecision(4))}`;
   }
 }
 
@@ -317,7 +368,11 @@ function annotateGraph() {
   // The numbers the symbols were drawn with, under the legend.
   const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];
   // One coefficient a line, left-aligned under the trace names.
-  const values = used.map((name) => `${symbolText(name)} = ${Number((coefficients()[name] ?? 1).toPrecision(4))}`).join('\n');
+  const numbers = resolved();
+  const linkTex = (name) => {
+    try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
+  };
+  const values = used.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
   // Under the drawing, at its left edge.
   const bounds = editor.circuit.bounds();
   const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
@@ -367,22 +422,43 @@ function renderResults() {
   }
   for (const entry of latest.entries) {
     const block = el('div', { class: 'analysis-equation signal-flow-entry' });
+    if (entry.sampled) {
+      // Through a sampler the result is numbers: worked out again at the
+      // coefficients below, so it follows the sliders.
+      const shown = sampledEquation(entry, valuesFor(entry.value, latest.variable));
+      block.append(mathRow(`From ${entry.inputName}, at the coefficients below`, shown.equation));
+      if (shown.mixed) block.append(el('p', { class: 'field-hint', text: `${entry.inputName} is continuous: its path to the sampler stays in s (s = jω, z = e^jωT): a tone in at f comes out at f, images aside.` }));
+      if (shown.zeros?.length) block.append(rootRow('Zeros', shown.zeros, 'z'));
+      if (shown.poles?.length) block.append(rootRow(shown.mixed ? 'Poles of the sampled loop' : 'Poles', shown.poles, 'z'));
+      if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole lies outside the unit circle: the sampled loop is unstable at these numbers, whatever the magnitude plot shows.' }));
+      appendTraceButton(block, entry);
+      host.append(block);
+      continue;
+    }
     block.append(mathRow(`From ${entry.inputName}`, entry.equation));
     // Symbolic results show their roots at the coefficients' numbers.
-    const symbolic = entry.poles === null || entry.zeros === null;
+    if (entry.delayed) {
+      block.append(el('div', { class: 'analysis-equation-row' }, [
+        el('div', { class: 'analysis-equation-label', text: 'Poles and zeros' }),
+        el('div', { class: 'signal-flow-roots', text: 'infinitely many, from the delay; the graph is exact' }),
+      ]));
+    }
+    const symbolic = !entry.delayed && (entry.poles === null || entry.zeros === null);
     const roots = symbolic ? numericRootsOf(numeric(entry.value, latest.variable)) : entry;
     const at = symbolic ? ' at the coefficients below' : '';
     if (roots.zeros?.length) block.append(rootRow('Zeros', roots.zeros, latest.variable, at));
     if (roots.poles?.length) block.append(rootRow('Poles', roots.poles, latest.variable, at));
-    {
-      const id = `${latest.output.key}\n${entry.input}\n${entry.equation}`;
-      const plotted = traces.some((trace) => trace.id === id);
-      block.append(el('div', { class: 'signal-flow-entry-actions' }, [
-        el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderCoefficients(); renderGraph(); renderResults(); } }),
-      ]));
-    }
+    appendTraceButton(block, entry);
     host.append(block);
   }
+}
+
+function appendTraceButton(block, entry) {
+  const id = `${latest.output.key}\n${entry.input}\n${entry.equation}`;
+  const plotted = traces.some((trace) => trace.id === id);
+  block.append(el('div', { class: 'signal-flow-entry-actions' }, [
+    el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderCoefficients(); renderGraph(); renderResults(); } }),
+  ]));
 }
 
 function rootRow(label, roots, variable, at = '') {
@@ -394,7 +470,7 @@ function rootRow(label, roots, variable, at = '') {
 }
 
 function derive() {
-  latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources });
+  latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
   // Each new response joins the graph, beside those already there.
@@ -414,7 +490,9 @@ function annotate() {
   const ids = [];
   commit(() => {
     for (const entry of latest.entries) {
-      const label = editor.circuit.addLabel({ text: `$${entry.equation}$`, x: 0, y: 0, align: 'left', math: true });
+      // A sampled result is written at the numbers it is shown with.
+      const equation = entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation;
+      const label = editor.circuit.addLabel({ text: `$${equation}$`, x: 0, y: 0, align: 'left', math: true });
       const box = label.bbox();
       label.moveTo(snap(left + box.w / 2), snap(top + box.h / 2));
       top = label.bbox().y + label.bbox().h + GRID;
@@ -451,7 +529,7 @@ export function installSignalFlowUi() {
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
-      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value.' }),
+      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value -- or = b_1 (= 2*b_1, = T/2) to make one follow others.' }),
     ]),
     el('div', { class: 'signal-flow-graph', hidden: true }),
     el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),

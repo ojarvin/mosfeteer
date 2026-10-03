@@ -6198,6 +6198,12 @@ body.chrome-away [data-editor-edge="right"] {
   border-radius: 8px;
 }
 
+.signal-flow-entry .field-hint,
+.signal-flow-entry .analysis-error {
+  font: 0.75rem/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  text-align: left;
+}
+
 .signal-flow-roots {
   font: 0.8125rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   text-align: left;
@@ -6349,6 +6355,19 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-coefficient-value {
   width: 100%;
   font-variant-numeric: tabular-nums;
+}
+
+/* A linked coefficient follows others: its slider only shows the number. */
+.signal-flow-coefficient.linked input[type="range"] {
+  opacity: 0.45;
+}
+
+.signal-flow-coefficient.linked .signal-flow-coefficient-value {
+  color: var(--accent);
+}
+
+.signal-flow-coefficient-value.invalid {
+  outline: 1px solid var(--danger);
 }
 
 .signal-flow-graph-head {

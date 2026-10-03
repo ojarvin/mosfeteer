@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
-import { analyzeSignalFlow, blockTransferFunction, responseCurve, signalFlowGraph } from '../src/core/analysis/signal-flow.js';
+import { swapComponentType } from '../src/core/swap.js';
+import { applyTransform } from '../src/core/geometry.js';
+import { TRANSFER_FUNCTION_ROLE } from '../src/core/transfer-function.js';
+import { analyzeSignalFlow, blockTransferFunction, numericRootsOf, responseCurve, resultSymbols, signalFlowGraph, withCoefficients } from '../src/core/analysis/signal-flow.js';
 
 function diagram(lines, negatives = []) {
   const circuit = new Circuit();
@@ -293,4 +296,214 @@ test('an s result can plot over f/fs, s in units of 1/Ts, beside z results', asy
   const circuit = new Circuit();
   circuit.analysisValues.sAxis = 'normalized';
   assert.equal(Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).analysisValues.sAxis, 'normalized');
+});
+
+test('an s block with a delay: a hold DAC notches at f = 1/T, its T a coefficient', () => {
+  const circuit = diagram([
+    'add input U --at -800 0', 'add tf_s H1 --at 0 0', 'add output Y --at 800 0',
+    'connect U.p H1.in', 'connect H1.out Y.p', 'value H1 (1 - exp(-s*T))/s',
+  ]);
+  const report = analyzeSignalFlow(circuit, { output: 'Y', sources: { U: 'input' } });
+  assert.equal(report.ok, true, report.error);
+  const [entry] = report.entries;
+  assert.equal(entry.equation, '\\frac{Y}{U} = \\frac{1 - e^{-s\\,T}}{s}');
+  // Infinitely many zeros: none listed, not a pole at s = 0 that is not there.
+  assert.equal(entry.delayed, true);
+  assert.equal(entry.poles, null);
+  assert.deepEqual(resultSymbols(entry.value, 's'), ['T']);
+  const held = withCoefficients(entry.value, { T: 1 });
+  assert.equal(numericRootsOf(held).delayed, true);
+  // |H(j w)| = T |sinc(w T / 2)|: 0 dB low down, a notch at w = 2 pi / T.
+  const curve = responseCurve(held, 's');
+  const at = (w) => curve.points.reduce((best, p) => (Math.abs(Math.log(p.f / w)) < Math.abs(Math.log(best.f / w)) ? p : best));
+  assert.ok(Math.abs(curve.points[0].db) < 0.01);
+  assert.ok(at(2 * Math.PI).db < -40 && at(Math.PI).db > -5);
+  // On f/fs, T counts samples: 2/pi at half the sample rate, -90 degrees.
+  const sampled = responseCurve(held, 's', { sAxis: 'normalized' }).points.at(-1);
+  assert.ok(Math.abs(sampled.db - 20 * Math.log10(2 / Math.PI)) < 1e-6);
+  assert.ok(Math.abs(sampled.phase + 90) < 1e-6);
+  // A delay slid to zero is e^0 = 1, and still plots.
+  const excess = withCoefficients(blockTransferFunction(circuit.addComponent('tf_s', { value: 'exp(-s*T_d)/(s + 1)' })), { T_d: 0 });
+  assert.equal(responseCurve(excess, 's', { sAxis: 'normalized' }).points.length > 1, true);
+  assert.ok(Math.abs(responseCurve(excess, 's').points[0].db) < 0.1);
+});
+
+test('a loop with an excess delay stays exact, the delay one symbol of the solve', () => {
+  const circuit = diagram([
+    'add input U --at -1200 0', 'add signal_sum S1 --at -600 0', 'add tf_s H1 --at 0 0', 'add output Y --at 800 0',
+    'add tf_s H2 --at 0 400 --rot 180',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out Y.p', 'connect H1.out H2.in', 'connect H2.out S1.s',
+    'value H1 k/s', "value H2 tf([1], [1], 'InputDelay', T_d)",
+  ], [['S1', 's']]);
+  const report = analyzeSignalFlow(circuit, { output: 'Y', sources: { U: 'input' } });
+  assert.equal(report.ok, true, report.error);
+  assert.equal(report.entries[0].equation, '\\frac{Y}{U} = \\frac{k}{s + k\\,e^{-s\\,T_{d}}}');
+  assert.deepEqual(resultSymbols(report.entries[0].value, 's'), ['k', 'T_d']);
+  // Gain peaking near the loop's crossover once k T_d is large.
+  const curve = responseCurve(withCoefficients(report.entries[0].value, { k: 1, T_d: 1 }), 's');
+  assert.ok(Math.max(...curve.points.map((p) => p.db)) > 3);
+});
+
+// ----- sampled loops ---------------------------------------------------------------------
+
+import { samplePath } from '../src/core/analysis/sampling.js';
+import { sampledEquation } from '../src/core/analysis/signal-flow.js';
+
+test('sampling a DAC pulse through H(s): exact, the samples read just before each edge', () => {
+  const close = (actual, expected) => {
+    assert.equal(actual.length, expected.length, `${actual} vs ${expected}`);
+    actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-9, `${actual} vs ${expected}`));
+  };
+  // NRZ into an integrator: a ramp to 1 over a period, read at its end.
+  const nrz = samplePath({ den: [0, 0, 1], terms: [{ delay: 0, num: [1] }, { delay: 1, num: [-1] }] }, 1);
+  close(nrz.num, [0, 1]);
+  close(nrz.den, [1, -1]);
+  // Half a period of excess delay: samples 0.5, 1, 1, ...
+  const late = samplePath({ den: [0, 0, 1], terms: [{ delay: 0.5, num: [1] }, { delay: 1.5, num: [-1] }] }, 1);
+  close(late.num, [0, 0.5, 0.5]);
+  close(late.den, [1, -1]);
+  // A real pole: (1 - e^-1) z^-1 / (1 - e^-1 z^-1).
+  const pole = samplePath({ den: [0, 1, 1], terms: [{ delay: 0, num: [1] }, { delay: 1, num: [-1] }] }, 1);
+  close(pole.num, [0, 1 - Math.exp(-1)]);
+  close(pole.den, [1, -Math.exp(-1)]);
+  // Against the aliasing sum F_d(e^{j theta}) = sum_k F(j(theta + 2 pi k)), for a
+  // delayed pulse through a resonance (a continuous pulse response, so no edge to read).
+  const den = [0.1, 0.52, 0.3, 1];
+  const sampled = samplePath({ den: [0, ...den], terms: [{ delay: 0.3, num: [1] }, { delay: 1.3, num: [-1] }] }, 1);
+  const poly = (c, [re, im]) => c.reduceRight(([a, b], v) => [a * re - b * im + v, a * im + b * re], [0, 0]);
+  const div = ([a, b], [c, d]) => { const m = c * c + d * d; return [(a * c + b * d) / m, (b * c - a * d) / m]; };
+  const mul = ([a, b], [c, d]) => [a * c - b * d, a * d + b * c];
+  for (const theta of [0.3, 1.5, 3]) {
+    const w = [Math.cos(-theta), Math.sin(-theta)];
+    const exact = div(poly(sampled.num, w), poly(sampled.den, w));
+    let sum = [0, 0];
+    for (let k = -20000; k <= 20000; k++) {
+      const omega = theta + 2 * Math.PI * k;
+      const term = mul(mul(div([1 - Math.cos(omega), Math.sin(omega)], [0, omega]), [Math.cos(0.3 * omega), -Math.sin(0.3 * omega)]), div([1, 0], poly(den, [0, omega])));
+      sum = [sum[0] + term[0], sum[1] + term[1]];
+    }
+    assert.ok(Math.hypot(exact[0] - sum[0], exact[1] - sum[1]) < 1e-5, `theta ${theta}`);
+  }
+  // Impulses cannot be sampled: a path from the DAC input with no pulse.
+  assert.throws(() => samplePath({ den: [1, 1], terms: [{ delay: 0, num: [1, 1] }] }, 1), /impulses/);
+});
+
+function ctModulator(order) {
+  // A continuous-time CIFB modulator: integrators 1/s, an NRZ DAC feeding
+  // every integrator through -k_i, a sampler, and the quantization error q.
+  const lines = ['add input U --at -2000 0', 'add signal_sum S1 --at -1600 0', 'add tf_s H1 --at -1200 0 --value "1/s"'];
+  const negatives = [['S1', 's']];
+  let last = 'H1.out';
+  if (order === 2) {
+    lines.push('add signal_sum S3 --at -800 0', 'add tf_s H2 --at -400 0 --value "1/s"', 'add gain K2 --at -400 400 --rot 180 --value k_2', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect D1.out K2.in', 'connect K2.out S3.s');
+    negatives.push(['S3', 's']);
+    last = 'H2.out';
+  }
+  lines.splice(3, 0, 'add tf_s D1 --at 400 800 --rot 180 --value "exp(-s*T_d)*(1 - exp(-s*T))/s"', 'add gain K1 --at -1200 400 --rot 180 --value k_1');
+  lines.push('add sampler SMP1 --at 400 0', 'add signal_sum S2 --at 800 0', 'add input q --at 800 -280', 'add output V --at 1200 0',
+    'connect U.p S1.w', 'connect S1.e H1.in', `connect ${last} SMP1.in`, 'connect SMP1.out S2.w', 'connect q.p S2.n', 'connect S2.e V.p', 'connect V.p D1.in',
+    'connect D1.out K1.in', 'connect K1.out S1.s');
+  return diagram(lines, negatives);
+}
+
+test('a continuous-time modulator: the sampler makes its NTF the textbook (1 - z^-1)^n', () => {
+  const first = analyzeSignalFlow(ctModulator(1), { output: 'V', sources: { U: 'input', q: 'input' }, values: { T: 1, T_d: 0, k_1: 1 } });
+  assert.equal(first.ok, true, first.error);
+  assert.equal(first.variable, 'z');
+  const byInput = Object.fromEntries(first.entries.map((entry) => [entry.input, entry]));
+  assert.equal(byInput.q.equation, '\\frac{V}{q} = 1 - z^{-1}');
+  // A continuous input: the loop's part times its path to the sampler, at s = j omega.
+  assert.equal(byInput.U.equation, '\\frac{V}{U} = \\left(1 - z^{-1}\\right) \\cdot \\frac{1}{s}');
+  assert.equal(byInput.U.continuous, true);
+  const second = analyzeSignalFlow(ctModulator(2), { output: 'V', sources: { U: 'input', q: 'input' }, values: { T: 1, T_d: 0, k_1: 1, k_2: 1.5 } });
+  assert.equal(second.ok, true, second.error);
+  const ntf = second.entries.find((entry) => entry.input === 'q');
+  assert.equal(ntf.equation, '\\frac{V}{q} = 1 - 2 z^{-1} + z^{-2}');
+  assert.deepEqual(resultSymbols(ntf.value, 'z'), ['k_1', 'k_2', 'T', 'T_d']);
+  // The coefficients are live: the same result at other numbers, and its poles move off z = 0.
+  const slower = sampledEquation(ntf, { T: 1, T_d: 0, k_1: 0.5, k_2: 1 });
+  assert.notEqual(slower.equation, ntf.equation);
+  assert.ok(slower.poles.some((p) => Math.hypot(p.re, p.im) > 0.1));
+  // Excess loop delay adds a pole; uncompensated, half a period of it takes
+  // the loop unstable (the classic result), a tenth leaves it stable.
+  const radii = (td) => sampledEquation(ntf, { T: 1, T_d: td, k_1: 1, k_2: 1.5 }).poles.map((p) => Math.hypot(p.re, p.im));
+  assert.equal(radii(0.1).length, 3);
+  assert.ok(Math.max(...radii(0.1)) < 1);
+  assert.ok(Math.max(...radii(0.5)) > 1);
+  // The STF plots over f/fs, a tone in at f giving the same tone out.
+  const stf = responseCurve(withCoefficients(second.entries.find((entry) => entry.input === 'U').value, { T: 1, T_d: 0, k_1: 1, k_2: 1.5 }), 'z');
+  assert.equal(stf.axis, 'normalized');
+  assert.ok(Math.abs(stf.points[0].db) < 0.01);
+});
+
+test('a sampled loop refuses what it cannot sample: a continuous output, mixed domains at a sum', () => {
+  const circuit = ctModulator(1);
+  const samplerInput = [...circuit.nets.values()].find((net) => net.terminals.some((t) => t.comp === 'SMP1' && t.term === 'in'));
+  const continuous = analyzeSignalFlow(circuit, { output: samplerInput.id, sources: { U: 'input' } });
+  assert.equal(continuous.ok, false);
+  assert.equal(continuous.code, 'continuous-output');
+  // A sum adding the sampled signal to a continuous one, with no DAC between.
+  const mixed = diagram([
+    'add input U --at -800 0', 'add tf_s H1 --at -400 0 --value "1/s"', 'add sampler SMP1 --at 0 0', 'add signal_sum S1 --at 400 0', 'add output V --at 800 0',
+    'add tf_s H2 --at 0 -400 --value "1/s"',
+    'connect U.p H1.in', 'connect H1.out SMP1.in', 'connect SMP1.out S1.w', 'connect S1.e V.p', 'connect U.p H2.in', 'connect H2.out S1.n',
+  ]);
+  const report = analyzeSignalFlow(mixed, { output: 'V', sources: { U: 'input' } });
+  assert.equal(report.ok, false);
+  assert.equal(report.code, 'mixed-domains');
+});
+
+test('the sampler: a switch with its period beside it, swapped in with a period that reads', () => {
+  const circuit = new Circuit();
+  const sampler = circuit.addComponent('sampler', { refdes: 'SMP1' });
+  assert.equal(sampler.value, 'T');
+  assert.deepEqual(sampler.def.terminals.map((t) => [t.name, t.x, t.y, t.signalRole]), [['in', -80, 0, 'input'], ['out', 80, 0, 'output']]);
+  assert.deepEqual(sampler.def.bbox, { x: -80, y: -80, w: 160, h: 160 });
+  // Its period is an owned math label above it, beside it once turned.
+  const label = () => [...circuit.labels.values()].find((l) => l.owner === 'SMP1' && l.role === TRANSFER_FUNCTION_ROLE);
+  assert.equal(label().text, '$T$');
+  assert.deepEqual(label().offset, { x: 0, y: -120 });
+  runCommand(circuit, 'rotate SMP1 90');
+  const world = applyTransform(sampler.transform, label().offset.x, label().offset.y);
+  assert.ok(world.x > sampler.transform.x && world.y === sampler.transform.y);
+  runCommand(circuit, 'value SMP1 T_s');
+  assert.equal(label().text, '$T_{s}$');
+  assert.throws(() => runCommand(circuit, 'value SMP1 [1 2]'));
+  // A block swapped for a sampler takes the default period, its definition not reading as one.
+  const block = circuit.addComponent('tf_s', { refdes: 'H1', value: 'exp(-s*T)' });
+  swapComponentType(circuit, 'H1', 'sampler');
+  assert.equal(block.value, 'T');
+});
+
+import { linkMakesCycle, parseCoefficientLink, resolveCoefficients } from '../src/core/analysis/coefficient-links.js';
+
+test('linked coefficients follow others, through chains, and are saved with the document', () => {
+  const values = { b_1: 0.05, c_1: 9, T: 2 };
+  const numbers = resolveCoefficients(values, { c_1: 'b_1', c_2: '2*c_1', T_d: 'T/2' });
+  assert.equal(numbers.c_1, 0.05);
+  assert.equal(numbers.c_2, 0.1);
+  assert.equal(numbers.T_d, 1);
+  assert.equal(numbers.b_1, 0.05);
+  // A circle, or a link that does not read, falls back to the coefficient's own number.
+  assert.equal(resolveCoefficients(values, { c_1: 'b_1', b_1: 'c_1' }).b_1, values.b_1);
+  assert.equal(linkMakesCycle('b_1', 'c_1', { c_1: '2*b_1' }), true);
+  assert.equal(linkMakesCycle('c_2', 'c_1', { c_1: 'b_1' }), false);
+  assert.equal(linkMakesCycle('c_1', 'c_1 + 1', {}), true);
+  assert.deepEqual([...parseCoefficientLink('= a_1*b_{2} - 1').reads].sort(), ['a_1', 'b_2']);
+  assert.throws(() => parseCoefficientLink('= exp(-s*T)'), /without s/);
+  assert.throws(() => parseCoefficientLink('='), /needs an expression/);
+  // Saved and loaded with the coefficients.
+  const circuit = new Circuit();
+  circuit.analysisValues.coefficients.b_1 = 0.05;
+  circuit.analysisValues.links.c_1 = 'b_1';
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(loaded.analysisValues.links, { c_1: 'b_1' });
+  assert.deepEqual(new Circuit().toJSON().analysisValues, undefined);
+});
+
+test('a sampled result follows a linked coefficient', () => {
+  const report = analyzeSignalFlow(ctModulator(2), { output: 'V', sources: { q: 'input' }, values: { T: 1, T_d: 0, k_1: 1, k_2: 1.5 } });
+  const [ntf] = report.entries;
+  const linked = resolveCoefficients({ T: 1, T_d: 0, k_1: 1, k_2: 1 }, { k_2: '1.5*k_1' });
+  assert.equal(sampledEquation(ntf, linked).equation, '\\frac{V}{q} = 1 - 2 z^{-1} + z^{-2}');
 });

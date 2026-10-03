@@ -207,6 +207,7 @@ mirror flag to override that default.
 | latch family | `L` / `EN` or `ENB` inputs, `Q` (and optional inverted `QB`) outputs; no reset, `RST`, or `RSTB` bottom input | Same body and footprint as DFFs, with no clock marker and `L` aligned to the enable/output rows; reset-free variants have no bottom lead; owned component label sits above |
 | block | `T1`…`T12`, every non-corner grid slot per side | resizable schematic shell (default 160×160) with centered editable caption; selected blocks expose eight resize handles, preserve connected attachment positions where possible, and unused terminals do not fail Design Check |
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at the four cardinal directions | 80×80 signal-flow operator with a 40-unit-radius circle; sum uses a plus mark, multiply uses a × mark, unused terminals do not fail Design Check, and negative routed inputs carry a non-selectable `−` label one cell outward on the pin-entry side |
+| sampler | `in` (left) `out` (right) | a sampling switch in a 160×160 footprint: leads to x=±40, an arm from the pivot at (-40,0) rising 40°, and an arc arrow round the pivot across the arm, its filled head toward the contact; its value is the period (`T`), an owned math label three cells above (horizontal flow) or right (vertical), in world terms |
 
 Notes:
 

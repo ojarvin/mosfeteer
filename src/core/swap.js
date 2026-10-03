@@ -12,6 +12,19 @@ import { SYMBOL_CATEGORY_RULES } from './components/categories.js';
 import { ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } from './model.js';
 import { switchState } from './beats.js';
 import { PIN_RAIL_TYPES, railHang, railRotation } from './pin-rails.js';
+import { TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction } from './transfer-function.js';
+
+/** Whether a value still reads for a signal-flow part of this type (a
+ *  block's transfer function, a gain's or a sampler's one coefficient). */
+function valueReads(type, value) {
+  try {
+    if (type === 'gain' || type === 'sampler') parseGain(value);
+    else if (TRANSFER_FUNCTION_TYPES[type]) readTransferFunction(value, TRANSFER_FUNCTION_TYPES[type]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 import { MOS_SIZE_OFFSET, MOS_SIZE_TYPES } from './mos-size.js';
 
 const BJT_TYPES = new Set(['npn', 'pnp']);
@@ -175,7 +188,7 @@ export function swapComponentType(circuit, refdes, type) {
     if (hang && PIN_RAIL_TYPES.includes(type)) {
       Object.assign(component.transform, { rotation: railRotation(type, hang), mirrorX: false, mirrorY: false });
     }
-    if (component.value === fromDef.defaultValue) component.value = toDef.defaultValue;
+    if (component.value === fromDef.defaultValue || !valueReads(type, component.value)) component.value = toDef.defaultValue;
     const sameFamily = (MOS_ANALYSIS_TYPES.has(fromType) && MOS_ANALYSIS_TYPES.has(type)) || categoryOf(fromType) === categoryOf(type);
     if (!sameFamily) component.analysis = fresh.analysis;
     const inputs = new Set(toDef.terminals.filter((t) => t.signalRole === 'input').map((t) => t.name));

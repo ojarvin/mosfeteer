@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { swapComponentType } from '../src/core/swap.js';
-import { TRANSFER_FUNCTION_ROLE, parseTransferFunction, transferFunctionTex } from '../src/core/transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, parseTransferFunction, readTransferFunction, transferFunctionTex } from '../src/core/transfer-function.js';
 
 const run = (circuit, line) => runCommand(circuit, line);
 
@@ -81,4 +81,20 @@ test('a transfer function survives save and load, and swaps between s and z', ()
   assert.equal([...loaded.labels.values()].find((l) => l.role === TRANSFER_FUNCTION_ROLE).text, '$\\frac{1}{1 + 2 z^{-1} + z^{-2}}$');
   swapComponentType(loaded, 'H1', 'filter_lpf');
   assert.equal([...loaded.labels.values()].some((l) => l.role === TRANSFER_FUNCTION_ROLE), false);
+});
+
+test('an s block reads an expression with delays, or a tf() with an InputDelay', () => {
+  assert.equal(transferFunctionTex('(1 - exp(-s*T))/s', 's'), '\\frac{1 - e^{-s\\,T}}{s}');
+  assert.equal(transferFunctionTex('exp(-s*T_d)*k/(s + p)', 's'), '\\frac{e^{-s\\,T_{d}}\\,k}{s + p}');
+  assert.equal(transferFunctionTex('k(s+1)/(s^2 + w_0^2)', 's'), '\\frac{k\\,\\left(s + 1\\right)}{s^{2} + w_{0}^{2}}');
+  assert.equal(transferFunctionTex("tf([k], [1 p], 'InputDelay', T_d)", 's'), '\\frac{k}{s + p}\\,e^{-s\\,T_{d}}');
+  // An exponent is a delay; powers are whole; z blocks delay with z^-1.
+  for (const [bad, variable] of [['exp(s*T)', 's'], ['exp(-s^2)', 's'], ['s^1.5', 's'], ['(s + 1', 's'], ["tf([1], [1], 'InputDelay', 2)", 'z'], ['1/(1 - exp(-s))', 'z']]) {
+    assert.throws(() => readTransferFunction(bad, variable), undefined, bad);
+  }
+  // The box splits its fraction only when it is the whole equation.
+  const circuit = new Circuit();
+  const delayed = circuit.addComponent('tf_s', { value: "tf([k], [1 p], 'InputDelay', T)" });
+  assert.equal([...circuit.labels.values()].find((l) => l.owner === delayed.refdes).text, '$\\frac{k}{s + p}\\,e^{-s\\,T}$');
+  assert.throws(() => run(circuit, `value ${delayed.refdes} exp(s)`), /delay/);
 });

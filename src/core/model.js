@@ -9,7 +9,7 @@ import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
-import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -1007,7 +1007,12 @@ export function normalizeAnalysisValues(value) {
   }
   // The graph's frequency axis for s results: ω, or f/fs with s in units of 1/Ts.
   const sAxis = value?.sAxis === 'normalized' ? 'normalized' : null;
-  return { coefficients, bode, ...(sAxis ? { sAxis } : {}) };
+  // Linked coefficients: a name following an expression of others (c_1 = b_1).
+  const links = {};
+  for (const [name, text] of Object.entries(value?.links || {})) {
+    if (/^[A-Za-z][\w]{0,40}$/.test(name) && typeof text === 'string' && text.trim() && text.length <= 120) links[name] = text.trim();
+  }
+  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -1015,9 +1020,11 @@ function analysisValuesJSON(values) {
   const bode = values?.bode;
   const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
   const sAxis = values?.sAxis === 'normalized';
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis) return {};
+  const links = values?.links || {};
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length) return {};
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
+    ...(Object.keys(links).length ? { links: { ...links } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
   } };
@@ -2347,7 +2354,7 @@ export class Circuit {
     this.tags = [];
     // Numbers the analysis plots with, kept with the drawing: the
     // signal-flow coefficients (a_1 -> 0.5) and the Bode sketch's ratios.
-    this.analysisValues = { coefficients: {}, bode: null };
+    this.analysisValues = { coefficients: {}, bode: null, links: {} };
     this._routingEnvCache = new Map();
   }
 
@@ -2740,7 +2747,7 @@ export class Circuit {
    *  the middle of its box; any other part has none. */
   _syncTransferFunctionLabel(component) {
     if (!component) return null;
-    const gain = component.type === 'gain';
+    const gain = isCoefficientBlock(component);
     const variable = TRANSFER_FUNCTION_TYPES[component.type] || (gain ? 'gain' : null);
     let label = null;
     for (const candidate of [...this.labels.values()]) {
@@ -2758,7 +2765,9 @@ export class Circuit {
     let align = 'center';
     // Inside a triangle, every coefficient is set a size smaller, so a signed
     // name (-g_1) clears the edges as a plain one (b_1) does.
-    const inside = gain && gainFitsInside(component.value);
+    // A sampler's period always goes beside its switch.
+    const sampler = component.type === 'sampler';
+    const inside = gain && !sampler && gainFitsInside(component.value);
     const width = inside ? 'thin' : 'normal';
     if (gain && !inside) {
       const flow = applyDir(component.transform, 1, 0);
@@ -3006,7 +3015,7 @@ export class Circuit {
       if (mirrorX !== undefined) c.transform.mirrorX = !!mirrorX;
       if (mirrorY !== undefined) c.transform.mirrorY = !!mirrorY;
       // A gain's coefficient keeps its place in world terms (above, or right).
-      if (c.type === 'gain') this._syncTransferFunctionLabel(c);
+      if (isCoefficientBlock(c)) this._syncTransferFunctionLabel(c);
       this.connectCoincident(refdes);
     } catch (err) {
       this._rollbackComponentEdit();
@@ -3076,9 +3085,9 @@ export class Circuit {
     if (this._syncSwitchLabel(refdes, value)) return c;
     // A transfer function (or a gain) must read; its box (and pins) follow
     // the equation.
-    if (TRANSFER_FUNCTION_TYPES[c.type] || c.type === 'gain') {
-      if (c.type === 'gain') parseGain(value);
-      else parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
+    if (TRANSFER_FUNCTION_TYPES[c.type] || isCoefficientBlock(c)) {
+      if (isCoefficientBlock(c)) parseGain(value);
+      else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
       this._syncTransferFunctionLabel(c);
       this.invalidateRoutingCache();

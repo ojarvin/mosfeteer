@@ -997,6 +997,104 @@ __exports.OUTPUT_CAPACITANCE = OUTPUT_CAPACITANCE;
 __exports.DEFAULT_PARASITIC_RATIO = DEFAULT_PARASITIC_RATIO;
 };
 
+__modules["src/core/analysis/coefficient-links.js"] = function (__require, __exports) {
+__exports.parseCoefficientLink = parseCoefficientLink;
+__exports.linkMakesCycle = linkMakesCycle;
+__exports.resolveCoefficients = resolveCoefficients;
+let parseExpression; __bind(() => { ({ parseExpression } = __require("src/core/transfer-function.js")); });
+/**
+ * Linked coefficients (signal-flow analysis): a coefficient may follow
+ * others instead of holding its own number -- `c_1 = b_1`, `c_2 = 2*b_1`,
+ * `T_d = T/2` -- so dragging b_1 moves c_1 with it. A link is an expression
+ * in other coefficients (+ - * / ^, numbers, names); saved with the
+ * document (`analysisValues.links`), resolved wherever the numbers are used.
+ */
+
+
+
+/** The names an expression AST reads. */
+function names(node, out = new Set()) {
+  switch (node.t) {
+    case 'sym': out.add(node.name); break;
+    case 'add': node.terms.forEach((term) => names(term.node, out)); break;
+    case 'mul': node.factors.forEach((factor) => names(factor, out)); break;
+    case 'div': names(node.num, out); names(node.den, out); break;
+    case 'pow': names(node.base, out); break;
+    case 'var': case 'exp': throw new Error('a link is an expression of other coefficients, without s or delays');
+    default: break;
+  }
+  return out;
+}
+
+/** A link's text (`b_1`, `= 2*b_1`) as `{ ast, reads }`; throws when it does not read. */
+function parseCoefficientLink(text) {
+  const source = String(text ?? '').trim().replace(/^=\s*/, '');
+  if (!source) throw new Error('a link needs an expression, such as = b_1');
+  const ast = parseExpression(source);
+  return { ast, reads: names(ast), text: source };
+}
+
+function evaluate(node, lookup) {
+  switch (node.t) {
+    case 'num': return Number(node.v);
+    case 'sym': return lookup(node.name);
+    case 'add': return node.terms.reduce((sum, { sign, node: term }) => sum + sign * evaluate(term, lookup), 0);
+    case 'mul': return node.factors.reduce((product, factor) => product * evaluate(factor, lookup), 1);
+    case 'div': return evaluate(node.num, lookup) / evaluate(node.den, lookup);
+    case 'pow': return evaluate(node.base, lookup) ** node.n;
+    default: return NaN;
+  }
+}
+
+/**
+ * Whether linking `name` to `text` would make a coefficient follow itself,
+ * through any chain of the other links.
+ */
+function linkMakesCycle(name, text, links) {
+  const next = { ...links, [name]: text };
+  const seen = new Set();
+  const visit = (current, path) => {
+    if (path.has(current)) return true;
+    if (!Object.hasOwn(next, current) || seen.has(current)) return false;
+    seen.add(current);
+    let reads;
+    try { reads = parseCoefficientLink(next[current]).reads; } catch { return false; }
+    const deeper = new Set(path).add(current);
+    return [...reads].some((read) => visit(read, deeper));
+  };
+  return visit(name, new Set());
+}
+
+/**
+ * Every coefficient's number: its own (`values`, 1 when unset) or, when
+ * linked, its link's value through any chain. A link that does not read,
+ * or runs in a circle, falls back to the coefficient's own number.
+ */
+function resolveCoefficients(values = {}, links = {}) {
+  const resolved = {};
+  const parsed = new Map();
+  for (const [name, text] of Object.entries(links || {})) {
+    try { parsed.set(name, parseCoefficientLink(text)); } catch { /* falls back */ }
+  }
+  const own = (name) => (Number.isFinite(values[name]) ? values[name] : 1);
+  const visiting = new Set();
+  const lookup = (name) => {
+    if (Object.hasOwn(resolved, name)) return resolved[name];
+    const link = parsed.get(name);
+    if (!link) return (resolved[name] = own(name));
+    if (visiting.has(name)) return own(name);
+    visiting.add(name);
+    const value = evaluate(link.ast, lookup);
+    visiting.delete(name);
+    resolved[name] = Number.isFinite(value) ? value : own(name);
+    return resolved[name];
+  };
+  for (const name of new Set([...Object.keys(values || {}), ...parsed.keys()])) lookup(name);
+  return resolved;
+}
+
+};
+
 __modules["src/core/analysis/compact.js"] = function (__require, __exports) {
 __exports.compactRational = compactRational;
 let add, integer, multiply, rationalFunction; __bind(() => { ({ add, integer, multiply, rationalFunction } = __require("src/core/analysis/rational.js")); });
@@ -9349,6 +9447,178 @@ function processResponses(responses = {}, options = {}) {
 
 };
 
+__modules["src/core/analysis/sampling.js"] = function (__require, __exports) {
+__exports.expm = expm;
+__exports.samplePath = samplePath;
+let polynomialRoots; __bind(() => { ({ polynomialRoots } = __require("src/core/analysis/bode.js")); });
+/**
+ * Sampling a continuous path: the z-domain transfer function a sampler sees
+ * through an H(s) path driven by a sampled signal (a DAC and a loop filter,
+ * say). Each sample x[k] enters the path as an impulse at t = kT -- the
+ * path's H(s) includes the DAC's pulse, e.g. (1 - e^{-sT})/s -- and the
+ * sampler reads the response just before each t = nT, so a pulse edge
+ * landing on a sample counts from the next one (an NRZ DAC with no excess
+ * delay gives its natural z^-1). This is exact, not a transform choice:
+ *
+ *   F(s) = sum over delays tau of e^{-s tau} R_tau(s),  R_tau = N_tau / D
+ *   F_d(z) = sum_n f(nT^-) z^-n
+ *
+ * Each R_tau is put in controllable canonical form (A, B, C_tau); its
+ * samples are C_tau e^{A delta} (e^{AT})^j B after the first sample past
+ * tau, so the sum is a rational in z with the denominator det(zI - e^{AT})
+ * shared by every delay -- repeated poles (integrators) need no special
+ * case. Numbers only: the path's coefficients must have values.
+ */
+
+
+
+/** n x n identity. */
+const identity = (n) => Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
+
+function matMul(a, b) {
+  const n = a.length;
+  const m = b[0].length;
+  const out = Array.from({ length: n }, () => Array(m).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let k = 0; k < b.length; k++) {
+      const v = a[i][k];
+      if (!v) continue;
+      for (let j = 0; j < m; j++) out[i][j] += v * b[k][j];
+    }
+  }
+  return out;
+}
+
+/** e^{M}: scaling and squaring around a Taylor series. */
+function expm(m) {
+  const n = m.length;
+  if (!n) return [];
+  const norm = Math.max(...m.map((row) => row.reduce((sum, v) => sum + Math.abs(v), 0)));
+  const squarings = norm > 0.5 ? Math.ceil(Math.log2(norm / 0.5)) : 0;
+  const scaled = m.map((row) => row.map((v) => v / 2 ** squarings));
+  let term = identity(n);
+  let sum = identity(n);
+  for (let k = 1; k <= 24; k++) {
+    term = matMul(term, scaled).map((row) => row.map((v) => v / k));
+    sum = sum.map((row, i) => row.map((v, j) => v + term[i][j]));
+  }
+  for (let i = 0; i < squarings; i++) sum = matMul(sum, sum);
+  return sum;
+}
+
+/**
+ * Sample `{ den, terms }` with period `T`: `den` the path's denominator in
+ * s, coefficients low power first; `terms` `[{ delay, num }]`, each
+ * numerator low power first, strictly proper over `den`. Returns `{ num,
+ * den }` in ascending powers of z^-1, `den[0] = 1`.
+ */
+function samplePath({ den, terms }, T) {
+  const lead = den[den.length - 1];
+  const d = den.map((v) => v / lead);
+  const n = d.length - 1;
+  if (n < 1) throw new Error('impulses reach the sampler: the path from the sampled signal needs a pulse (a DAC such as (1 - exp(-s*T))/s)');
+  // Companion form of 1/D: x' = A x + B u, the state the derivatives of y.
+  const A = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i < n - 1 ? (j === i + 1 ? 1 : 0) : -d[j])));
+  const Bcol = Array.from({ length: n }, (_, i) => [i === n - 1 ? 1 : 0]);
+  const phi = expm(A.map((row) => row.map((v) => v * T)));
+  // Faddeev-LeVerrier: det(zI - phi) and the adjugate's matrix coefficients.
+  const p = [1];
+  const Ms = [identity(n)];
+  for (let k = 1; k <= n; k++) {
+    const am = matMul(phi, Ms[k - 1]);
+    const trace = am.reduce((sum, row, i) => sum + row[i], 0);
+    p.push(-trace / k);
+    if (k < n) Ms.push(am.map((row, i) => row.map((v, j) => v + (i === j ? p[k] : 0))));
+  }
+  const MB = Ms.map((M) => matMul(M, Bcol).map((row) => row[0]));
+  // num in z^-1: each delay's samples start N0 periods in, offset delta.
+  const num = [];
+  for (const { delay, num: c } of terms) {
+    if (delay < -1e-12) throw new Error('a path runs ahead of its input (a negative delay) and cannot be sampled');
+    if (c.length > n || (c.length === n + 1 && Math.abs(c[n]) > 0)) throw new Error('impulses reach the sampler: the path from the sampled signal needs a pulse (a DAC such as (1 - exp(-s*T))/s)');
+    const k = Math.floor(delay / T + 1e-9);
+    const start = k + 1;
+    const delta = Math.min(T, Math.max(0, start * T - delay));
+    const ead = expm(A.map((row) => row.map((v) => v * delta)));
+    const C = Array.from({ length: n }, (_, j) => (c[j] || 0) / lead);
+    const h = Array.from({ length: n }, (_, j) => C.reduce((sum, ci, i) => sum + ci * ead[i][j], 0));
+    // G = z^-start * sum_k (h M_k B) z^-k / (1 + p1 z^-1 + ... + pn z^-n).
+    for (let i = 0; i < n; i++) {
+      const q = h.reduce((sum, hj, j) => sum + hj * MB[i][j], 0);
+      const at = start + i;
+      while (num.length <= at) num.push(0);
+      num[at] += q;
+    }
+  }
+  return cancelCommonRoots(clean(num), clean(p));
+}
+
+/** `poly / factor` (both low power first): `{ quotient, exact }`, exact
+ *  when the remainder is round-off next to the polynomial's size. */
+function divide(poly, factor) {
+  if (factor.length > poly.length) return { quotient: poly, exact: false };
+  const rem = [...poly];
+  const out = Array(poly.length - factor.length + 1).fill(0);
+  const lead = factor[factor.length - 1];
+  for (let i = poly.length - factor.length; i >= 0; i--) {
+    const q = rem[i + factor.length - 1] / lead;
+    out[i] = q;
+    for (let j = 0; j < factor.length; j++) rem[i + j] -= q * factor[j];
+  }
+  const scale = Math.max(...poly.map(Math.abs), 1e-300);
+  const exact = rem.slice(0, factor.length - 1).every((r) => Math.abs(r) <= 1e-7 * scale);
+  return { quotient: out, exact };
+}
+
+/**
+ * Cancel the roots numerator and denominator share in floating point: a
+ * DAC's 1/s against its (1 - e^{-sT}) leaves a pole and a zero at z = 1
+ * that round-off keeps from cancelling exactly.
+ */
+function cancelCommonRoots(num, den) {
+  let n = trim(num);
+  let d = trim(den);
+  const tryFactor = (factor) => {
+    const top = divide(n, factor);
+    const bottom = divide(d, factor);
+    if (!top.exact || !bottom.exact) return false;
+    n = trim(top.quotient);
+    d = trim(bottom.quotient);
+    return true;
+  };
+  for (const root of polynomialRoots(d)) {
+    // A repeated real root comes back scattered round its value (by about
+    // the m-th root of round-off): try it as real, and rounded (an
+    // integrator chain's z = 1), before as a complex pair.
+    const near = Math.abs(root.im) <= 1e-3 * Math.max(1, Math.hypot(root.re, root.im));
+    if (near) {
+      // The exact-division check keeps a rounding from cancelling a root
+      // the numerator does not have.
+      const candidates = [1e3, 1e4, 1e6].map((k) => Math.round(root.re * k) / k);
+      if ([...new Set([...candidates, root.re])].some((r) => tryFactor([-r, 1]))) continue;
+    }
+    if (root.im <= 0) continue;
+    tryFactor([root.re ** 2 + root.im ** 2, -2 * root.re, 1]);
+  }
+  // Keep den[0] = 1.
+  const lead = d[0] || 1;
+  return { num: clean(n.map((v) => v / lead)), den: clean(d.map((v) => v / lead)) };
+}
+
+function trim(poly) {
+  const out = [...poly];
+  while (out.length > 1 && out[out.length - 1] === 0) out.pop();
+  return out;
+}
+
+/** Round-off zeros: a coefficient a trillionth of the largest is none. */
+function clean(list) {
+  const scale = Math.max(...list.map(Math.abs), 0);
+  return list.map((v) => (Math.abs(v) <= scale * 1e-12 ? 0 : v));
+}
+
+};
+
 __modules["src/core/analysis/shared.js"] = function (__require, __exports) {
 __exports.firstDefined = firstDefined;
 __exports.asList = asList;
@@ -9383,8 +9653,11 @@ __modules["src/core/analysis/signal-flow.js"] = function (__require, __exports) 
 __exports.hasSignalFlow = hasSignalFlow;
 __exports.signalFlowGraph = signalFlowGraph;
 __exports.coefficientValue = coefficientValue;
+__exports.delaySymbol = delaySymbol;
+__exports.hasDelays = hasDelays;
 __exports.blockTransferFunction = blockTransferFunction;
 __exports.analyzeSignalFlow = analyzeSignalFlow;
+__exports.sampledEquation = sampledEquation;
 __exports.eliminateSignals = eliminateSignals;
 __exports.transferTex = transferTex;
 __exports.complexText = complexText;
@@ -9394,13 +9667,14 @@ __exports.responsePlot = responsePlot;
 __exports.resultSymbols = resultSymbols;
 __exports.withCoefficients = withCoefficients;
 __exports.numericRootsOf = numericRootsOf;
-let add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, substituteRational, symbol; __bind(() => { ({ add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, substituteRational, symbol } = __require("src/core/analysis/rational.js")); });
+let ONE, add, integer, keyOf, multiply, negate, polynomialCoefficients, power, rational, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, substitute, substituteRational, symbol; __bind(() => { ({ ONE, add, integer, keyOf, multiply, negate, polynomialCoefficients, power, rational, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, substitute, substituteRational, symbol } = __require("src/core/analysis/rational.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
-let bodeSketch, expressionSymbols, polynomialRoots; __bind(() => { ({ bodeSketch, expressionSymbols, polynomialRoots } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, parseGain, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseGain, parseTransferFunction } = __require("src/core/transfer-function.js")); });
+let bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots; __bind(() => { ({ bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } = __require("src/core/analysis/bode.js")); });
+let TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
+let samplePath; __bind(() => { ({ samplePath } = __require("src/core/analysis/sampling.js")); });
 /**
  * Signal-flow analysis: transfer functions of a block diagram drawn from
  * transfer-function blocks (`tf_s`, `tf_z`), sum and multiply junctions, and
@@ -9427,6 +9701,7 @@ let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core
 
 
 
+
 const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
 const SOURCE_TYPES = new Set(['input']);
@@ -9434,7 +9709,7 @@ const SOURCE_TYPES = new Set(['input']);
 const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput']);
 
 function isSignalPart(component) {
-  return JUNCTIONS.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type);
+  return JUNCTIONS.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type) || component.type === 'sampler';
 }
 
 /** Whether a drawing has any signal-flow part (the analysis mode it opens in). */
@@ -9531,18 +9806,86 @@ function coefficientValue(token) {
   return negative ? negate(value) : value;
 }
 
+// ----- delays -------------------------------------------------------------------------
+
+// A delay e^{-sT} is a symbol of its own in the exact algebra, named by its
+// TeX so equations draw it as written; this registry keeps each name's delay
+// T (an exact expression free of s) for evaluating it numerically. A name
+// always means the same delay, so the registry only grows.
+const DELAYS = new Map();
+
+/** The symbol standing for e^{-s delay}. */
+function delaySymbol(delay) {
+  const shown = renderExpression(delay);
+  const name = shown === '1' ? '{e^{-s}}' : `{e^{-s\\,${shown}}}`;
+  const known = DELAYS.get(name);
+  if (known && keyOf(known) !== keyOf(delay)) throw new Error(`two delays draw as ${shown}`);
+  DELAYS.set(name, delay);
+  return symbol(name);
+}
+
+const isDelayName = (name) => DELAYS.has(name);
+
+/** Whether a result has a delay e^{-sT} in it. */
+function hasDelays(value) {
+  const names = new Set();
+  expressionSymbols(value.numerator, value.variable, names);
+  expressionSymbols(value.denominator, value.variable, names);
+  return [...names].some(isDelayName);
+}
+
+/** An expression AST (transfer-function.js parseExpression) as an exact
+ *  rational in s; `exp(-sT)` becomes T's delay symbol. */
+function expressionValue(node, options) {
+  switch (node.t) {
+    case 'num': return rationalFunction(exactDecimal(node.v), ONE, options);
+    case 'sym': return rationalFunction(symbol(node.name), ONE, options);
+    case 'var': return rationalFunction(symbol('s'), ONE, options);
+    case 'exp': return rationalFunction(delaySymbol(delayExpression(node.delay)), ONE, options);
+    case 'add': return node.terms.reduce((sum, { sign, node: term }) => {
+      const value = expressionValue(term, options);
+      return rationalAdd(sum, sign < 0 ? rationalMultiply(value, rationalFunction(integer(-1), ONE, options), options) : value, options);
+    }, rationalFunction(integer(0), ONE, options));
+    case 'mul': return node.factors.reduce((product, f) => rationalMultiply(product, expressionValue(f, options), options), rationalFunction(ONE, ONE, options));
+    case 'div': return rationalDivide(expressionValue(node.num, options), expressionValue(node.den, options), options);
+    case 'pow': {
+      const base = expressionValue(node.base, options);
+      let out = rationalFunction(ONE, ONE, options);
+      for (let i = 0; i < Math.abs(node.n); i++) out = rationalMultiply(out, base, options);
+      return node.n < 0 ? rationalDivide(rationalFunction(ONE, ONE, options), out, options) : out;
+    }
+    default: throw new Error('unknown expression');
+  }
+}
+
+/** A delay's AST (free of s) as an exact expression. */
+function delayExpression(node) {
+  switch (node.t) {
+    case 'num': return exactDecimal(node.v);
+    case 'sym': return symbol(node.name);
+    case 'add': return add(...node.terms.map(({ sign, node: term }) => (sign < 0 ? negate(delayExpression(term)) : delayExpression(term))));
+    case 'mul': return multiply(...node.factors.map(delayExpression));
+    case 'div': return multiply(delayExpression(node.num), power(delayExpression(node.den), -1));
+    case 'pow': return power(delayExpression(node.base), node.n);
+    default: throw new Error('a delay is free of s');
+  }
+}
+
 /** A block's transfer function as an exact rational in s, or in z (z^-1
  *  definitions are written over the same power of z). */
 function blockTransferFunction(component) {
   const variable = TRANSFER_FUNCTION_TYPES[component.type];
-  const { num, den, inverse } = parseTransferFunction(component.value, variable);
+  const read = readTransferFunction(component.value, variable);
+  if (read.kind === 'expression') return expressionValue(read.ast, { variable, maxOperations: 200000 });
+  const { num, den, inverse, delay } = read;
   const v = symbol(variable);
   const polynomial = (tokens, degree) => add(...tokens.map((token, i) => multiply(coefficientValue(token), power(v, degree(i)))));
   if (inverse) {
     const m = Math.max(num.length, den.length) - 1;
     return rationalFunction(polynomial(num, (i) => m - i), polynomial(den, (i) => m - i), { variable });
   }
-  return rationalFunction(polynomial(num, (i) => num.length - 1 - i), polynomial(den, (i) => den.length - 1 - i), { variable });
+  const top = polynomial(num, (i) => num.length - 1 - i);
+  return rationalFunction(delay ? multiply(delaySymbol(delayExpression(delay)), top) : top, polynomial(den, (i) => den.length - 1 - i), { variable });
 }
 
 // ----- solving ------------------------------------------------------------------------
@@ -9553,18 +9896,18 @@ function failure(code, error, issues = []) {
 
 /**
  * Analyze the drawing. `options`: `output` (a signal key, a net name or id,
- * or a port's refdes) and `sources` (`{ [refdes]: 'input' | 'zero' |
- * { constant: value } }`; a source left out is zero). Returns `{ ok,
+ * or a port's refdes), `sources` (`{ [refdes]: 'input' | 'zero' |
+ * { constant: value } }`; a source left out is zero), and `values` (the
+ * coefficients' numbers, which a sampled loop needs). Returns `{ ok,
  * variable, output, entries, issues }`, an entry per input:
- * `{ input, value (exact rational), tex, equation, poles, zeros }`.
+ * `{ input, value (exact rational), tex, equation, poles, zeros }`. With a
+ * sampler the result is in z and each `value` is a sampled result
+ * (`sampledResult`), worked out again for each set of numbers.
  */
 function analyzeSignalFlow(circuit, options = {}) {
   const { signals, sources, issues } = signalFlowGraph(circuit);
   if (issues.length) return failure(issues[0].code, issues[0].message, issues);
   const parts = [...circuit.components.values()].filter(isSignalPart);
-  const domains = new Set(parts.map((component) => TRANSFER_FUNCTION_TYPES[component.type]).filter(Boolean));
-  if (domains.size > 1) return failure('mixed-domains', 'the diagram mixes H(s) and H(z) blocks: a sampled loop needs a sampler and a conversion, which are not supported yet');
-  const variable = domains.has('z') ? 'z' : 's';
 
   const output = resolveSignal(circuit, signals, options.output);
   if (!output) return failure('no-output', options.output ? `no signal "${options.output}" to take the output from` : 'pick the output signal');
@@ -9579,17 +9922,51 @@ function analyzeSignalFlow(circuit, options = {}) {
   const inputs = sources.filter((source) => modeOf(source).kind === 'input');
   if (!inputs.length) return failure('no-input', 'set at least one source to input');
   const sourceBySignal = new Map(sources.map((source) => [source.key, { ...source, mode: modeOf(source) }]));
+  const context = { circuit, signals, sourceBySignal };
+
+  if (parts.some((component) => component.type === 'sampler')) return analyzeSampled(context, output, inputs, options.values || {});
+  const domains = new Set(parts.map((component) => TRANSFER_FUNCTION_TYPES[component.type]).filter(Boolean));
+  if (domains.size > 1) return failure('mixed-domains', 'the diagram mixes H(s) and H(z) blocks: put a sampler where the continuous signal is sampled (an H(s) block reading a sampled signal is the DAC)');
+  const variable = domains.has('z') ? 'z' : 's';
 
   // Unknowns: every signal a block or junction drives.
   const unknowns = [...signals.values()].filter((signal) => signal.driver && !signal.driver.source);
+  const system = linearSystem(context, unknowns, inputs.map((source) => source.key), variable);
+  if (!system.ok) return system;
+
+  const outputSource = sourceBySignal.get(output.key);
+  let columns;
+  if (system.index.has(output.key)) {
+    const solved = eliminateSignals(system.A, system.B, system.index.get(output.key), system.ops, variable);
+    if (!solved.ok) return failure(solved.code, solved.error);
+    columns = solved.columns;
+  } else if (outputSource) {
+    columns = inputs.map((source) => (source.key === output.key ? system.ops.one : system.ops.zero));
+  } else {
+    return failure('no-output', `signal ${output.display} is not driven`);
+  }
+
+  const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
+  return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+}
+
+/**
+ * The equations `x - sum G x = sum S u` of `unknowns` (signals), in
+ * `variable`: `A` over the unknowns, `B` over `inputKeys` (signals whose
+ * values are given -- input sources, or a sampled loop's other side). A
+ * signal neither unknown nor an input drops out (a zero or constant source:
+ * superposition). `extra(signal, row, feed)` builds a row the usual parts
+ * do not (a sampler's).
+ */
+function linearSystem({ circuit, signals, sourceBySignal }, unknowns, inputKeys, variable, extra = null) {
   const index = new Map(unknowns.map((signal, i) => [signal.key, i]));
   // A big diagram's exact algebra is big: give it room, the elimination
-  // below keeps it as small as the diagram allows.
+  // keeps it as small as the diagram allows.
   const ops = createRationalOps({ variable, maxOperations: 20_000_000 });
   const n = unknowns.length;
   const A = Array.from({ length: n }, () => Array(n).fill(ops.zero));
-  const B = Array.from({ length: n }, () => Array(inputs.length).fill(ops.zero));
-  const inputColumn = new Map(inputs.map((source, column) => [source.key, column]));
+  const B = Array.from({ length: n }, () => Array(inputKeys.length).fill(ops.zero));
+  const inputColumn = new Map(inputKeys.map((key, column) => [key, column]));
   const toRational = (value) => (value?.kind === 'rational' ? value : rationalFunction(value, integer(1), { variable }));
   const signalAt = (component, term) => {
     for (const signal of signals.values()) {
@@ -9598,11 +9975,12 @@ function analyzeSignalFlow(circuit, options = {}) {
     return null;
   };
   // y = sum of gain * x over its inputs: x unknown -> into A; x an input
-  // source -> into B; zero and constant sources drop out (superposition).
+  // -> into B; zero and constant sources drop out (superposition).
   const feed = (row, gain, signal) => {
     if (!signal) return;
-    if (index.has(signal.key)) A[row][index.get(signal.key)] = ops.sub(A[row][index.get(signal.key)], gain);
-    else if (inputColumn.has(signal.key)) B[row][inputColumn.get(signal.key)] = ops.add(B[row][inputColumn.get(signal.key)], gain);
+    const g = toRational(gain);
+    if (index.has(signal.key)) A[row][index.get(signal.key)] = ops.sub(A[row][index.get(signal.key)], g);
+    else if (inputColumn.has(signal.key)) B[row][inputColumn.get(signal.key)] = ops.add(B[row][inputColumn.get(signal.key)], g);
   };
 
   for (const signal of unknowns) {
@@ -9616,7 +9994,7 @@ function analyzeSignalFlow(circuit, options = {}) {
       } catch (err) {
         return failure('bad-transfer-function', `${component.refdes}: ${err.message}`);
       }
-      feed(row, toRational(h), signalAt(component, 'in'));
+      feed(row, h, signalAt(component, 'in'));
     } else if (component.type === 'gain') {
       let k;
       try {
@@ -9624,7 +10002,7 @@ function analyzeSignalFlow(circuit, options = {}) {
       } catch (err) {
         return failure('bad-gain', `${component.refdes}: ${err.message}`);
       }
-      feed(row, toRational(k), signalAt(component, 'in'));
+      feed(row, k, signalAt(component, 'in'));
     } else if (component.type === 'signal_sum') {
       for (const term of JUNCTION_INPUTS) {
         const sign = component.negativeInputs?.has(term) ? ops.neg(ops.one) : ops.one;
@@ -9648,24 +10026,330 @@ function analyzeSignalFlow(circuit, options = {}) {
       } catch {
         return failure('bad-constant', `${component.refdes}: a constant must be a number or a symbol`);
       }
-      feed(row, toRational(gain), varying[0]);
+      feed(row, gain, varying[0]);
+    } else if (extra) {
+      const built = extra(signal, row, feed, signalAt);
+      if (built && !built.ok) return built;
     }
   }
+  return { ok: true, A, B, ops, index, signalAt };
+}
 
-  const outputSource = sourceBySignal.get(output.key);
-  let columns;
-  if (index.has(output.key)) {
-    const solved = eliminateSignals(A, B, index.get(output.key), ops, variable);
-    if (!solved.ok) return failure(solved.code, solved.error);
-    columns = solved.columns;
-  } else if (outputSource) {
-    columns = inputs.map((source) => (source.key === output.key ? ops.one : ops.zero));
-  } else {
-    return failure('no-output', `signal ${output.display} is not driven`);
+// ----- sampled loops ------------------------------------------------------------------
+
+/**
+ * Each signal's domain: 's' (continuous) or 'z' (sampled). A sampler's and
+ * an H(z) block's outputs are sampled, an H(s) block's continuous (reading
+ * a sampled signal, it is the DAC); a junction's output is its inputs'
+ * domain, and a source takes the domain of what it meets. Returns `{ ok,
+ * domain: Map }` or a failure naming the part that mixes them.
+ */
+function signalDomains({ circuit, signals }) {
+  const domain = new Map();
+  const readersOf = (signal) => signal.readers.map((reader) => ({ reader, component: circuit.components.get(reader.comp) }));
+  const junctionInputs = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
+  const outputOf = (component) => [...signals.values()].find((signal) => signal.driver?.comp === component.refdes && !signal.driver.source);
+  for (const signal of signals.values()) {
+    if (!signal.driver || signal.driver.source) continue;
+    const type = circuit.components.get(signal.driver.comp)?.type;
+    if (type === 'sampler' || type === 'tf_z') domain.set(signal.key, 'z');
+    else if (type === 'tf_s') domain.set(signal.key, 's');
+  }
+  for (let changed = true; changed;) {
+    changed = false;
+    const set = (signal, value) => {
+      if (signal && value && !domain.has(signal.key)) { domain.set(signal.key, value); changed = true; }
+    };
+    for (const component of circuit.components.values()) {
+      if (!JUNCTIONS.has(component.type)) continue;
+      const out = outputOf(component);
+      const ins = junctionInputs(component);
+      const known = [out, ...ins].map((signal) => signal && domain.get(signal.key)).find(Boolean);
+      if (!known) continue;
+      set(out, known);
+      for (const signal of ins) set(signal, known);
+    }
+    // A source read by a sampler or an H(s) block is continuous; by an H(z) block, sampled.
+    for (const signal of signals.values()) {
+      if (domain.has(signal.key)) continue;
+      for (const { component } of readersOf(signal)) {
+        if (component?.type === 'sampler' || component?.type === 'tf_s') set(signal, 's');
+        else if (component?.type === 'tf_z') set(signal, 'z');
+      }
+    }
+  }
+  for (const signal of signals.values()) if (!domain.has(signal.key)) domain.set(signal.key, 's');
+  // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
+  for (const component of circuit.components.values()) {
+    if (component.type === 'sampler' || component.type === 'tf_z') {
+      const input = [...signals.values()].find((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
+      if (input && domain.get(input.key) !== (component.type === 'sampler' ? 's' : 'z')) {
+        return failure('mixed-domains', component.type === 'sampler'
+          ? `${component.refdes} samples a signal that is already sampled`
+          : `${component.refdes} is an H(z) block reading a continuous signal: sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+      }
+    } else if (JUNCTIONS.has(component.type)) {
+      const touching = [outputOf(component), ...junctionInputs(component)].filter(Boolean).map((signal) => domain.get(signal.key));
+      if (new Set(touching).size > 1) {
+        return failure('mixed-domains', `${component.refdes} joins a continuous and a sampled signal: put a sampler (s to z), or an H(s) block as the DAC (z to s), between them`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+      }
+    }
+  }
+  return { ok: true, domain };
+}
+
+/** An exact number from a float, to 12 significant figures. */
+const exactFloat = (x) => coefficientValue(String(Number(x.toPrecision(12))));
+
+/** A numeric rational in s with delays as `{ den, terms: [{ delay, num }] }`
+ *  (samplePath's input), or a failure. */
+function delayTermsOf(value) {
+  const den = denseCoefficients(value.denominator, 's');
+  if (!den) return { ok: false, error: 'a delay inside a continuous-time loop cannot be sampled exactly' };
+  const list = coefficientList(value.numerator, 's');
+  if (!list) return { ok: false, error: 'the path to a sampler does not reduce to numbers' };
+  const byDelay = new Map();
+  for (const { power: p, coefficient } of list) {
+    const split = delayMonomials(coefficient);
+    if (!split) return { ok: false, error: 'the path to a sampler does not reduce to numbers' };
+    for (const [delay, number] of split) {
+      const key = delay.toPrecision(12);
+      if (!byDelay.has(key)) byDelay.set(key, { delay, num: [] });
+      const num = byDelay.get(key).num;
+      while (num.length <= p) num.push(0);
+      num[p] += number;
+    }
+  }
+  return { ok: true, den, terms: [...byDelay.values()] };
+}
+
+/** A numeric coefficient with delays as a Map delay -> number. */
+function delayMonomials(value) {
+  switch (value?.kind) {
+    case 'number': return new Map([[0, Number(value.numerator) / Number(value.denominator)]]);
+    case 'symbol': {
+      const delay = DELAYS.get(value.name);
+      if (!delay) return null;
+      try { return new Map([[evaluateExpression(delay, {}), 1]]); } catch { return null; }
+    }
+    case 'add': {
+      const out = new Map();
+      for (const term of value.terms) {
+        const part = delayMonomials(term);
+        if (!part) return null;
+        for (const [d, v] of part) out.set(d, (out.get(d) || 0) + v);
+      }
+      return out;
+    }
+    case 'multiply': {
+      let out = new Map([[0, 1]]);
+      for (const factor of value.factors) {
+        const part = delayMonomials(factor);
+        if (!part) return null;
+        out = convolveDelays(out, part);
+      }
+      return out;
+    }
+    case 'power': {
+      const base = delayMonomials(value.base);
+      if (!base || value.exponent < 0) return null;
+      let out = new Map([[0, 1]]);
+      for (let i = 0; i < value.exponent; i++) out = convolveDelays(out, base);
+      return out;
+    }
+    default: return null;
+  }
+}
+
+/** The product of two delay -> number maps. */
+function convolveDelays(a, b) {
+  const next = new Map();
+  for (const [d1, v1] of a) for (const [d2, v2] of b) next.set(d1 + d2, (next.get(d1 + d2) || 0) + v1 * v2);
+  return next;
+}
+
+/** A sampled path `{ num, den }` (z^-1 powers) as an exact rational in z. */
+function sampledRational({ num, den }) {
+  const z = symbol('z');
+  const m = Math.max(num.length, den.length) - 1;
+  const polynomial = (list) => add(...list.map((c, i) => multiply(exactFloat(c), power(z, m - i))));
+  return cancelCommonPolynomialFactor(rationalFunction(polynomial(num), polynomial(den), { variable: 'z' }), { variable: 'z' });
+}
+
+/**
+ * A diagram with samplers: a continuous-time loop sampled into a discrete
+ * one (a CT sigma-delta modulator). The continuous side is solved exactly,
+ * once, for every sampler's input: a transfer function from each
+ * continuous source and from each sampled signal an H(s) block reads (the
+ * DAC's input). For a set of coefficient values those paths are sampled
+ * (sampling.js) and the sampled side solved in z: a sampled source's result
+ * is a rational in z; a continuous source's is the z part times its path
+ * to the sampler, G(s) at s = j omega, a tone in giving the same tone out
+ * (its images aside). The output must be a sampled signal.
+ */
+function analyzeSampled(context, output, inputs, initialValues) {
+  const { circuit, signals, sourceBySignal } = context;
+  const domains = signalDomains(context);
+  if (!domains.ok) return domains;
+  const { domain } = domains;
+  if (domain.get(output.key) !== 'z') return failure('continuous-output', `${output.display} is continuous: with a sampler, take the output from a sampled signal (after the sampler)`);
+  const samplers = [...circuit.components.values()].filter((component) => component.type === 'sampler');
+  let periods;
+  try {
+    periods = samplers.map((component) => coefficientValue(parseGain(component.value || 'T')));
+  } catch (err) {
+    return failure('bad-gain', `sampler: ${err.message}`);
   }
 
-  const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
-  return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+  // The continuous side: unknowns its driven signals, inputs its sources and
+  // the sampled signals H(s) blocks read.
+  const continuous = [...signals.values()].filter((signal) => domain.get(signal.key) === 's' && signal.driver && !signal.driver.source);
+  const sInputs = inputs.filter((source) => domain.get(source.key) === 's');
+  const dacInputs = [...signals.values()].filter((signal) => domain.get(signal.key) === 'z'
+    && signal.readers.some((reader) => circuit.components.get(reader.comp)?.type === 'tf_s'));
+  const sSystem = linearSystem(context, continuous, [...sInputs.map((s) => s.key), ...dacInputs.map((s) => s.key)], 's');
+  if (!sSystem.ok) return sSystem;
+  // Per sampler: its input's paths, [continuous sources..., DAC inputs...].
+  const paths = [];
+  for (const component of samplers) {
+    const input = sSystem.signalAt(component, 'in');
+    let columns;
+    if (input && sSystem.index.has(input.key)) {
+      const solved = eliminateSignals(sSystem.A, sSystem.B, sSystem.index.get(input.key), sSystem.ops, 's');
+      if (!solved.ok) return failure(solved.code, solved.error);
+      columns = solved.columns;
+    } else {
+      // Sampling a source (or nothing) directly.
+      const keys = [...sInputs.map((s) => s.key), ...dacInputs.map((s) => s.key)];
+      columns = keys.map((key) => (input && key === input.key ? sSystem.ops.one : sSystem.ops.zero));
+    }
+    paths.push({ component, g: columns.slice(0, sInputs.length), f: columns.slice(sInputs.length) });
+  }
+
+  // The sampled side, built once with each sampler's row filled per values.
+  const discrete = [...signals.values()].filter((signal) => domain.get(signal.key) === 'z' && signal.driver && !signal.driver.source);
+  const zInputs = inputs.filter((source) => domain.get(source.key) === 'z');
+  const pseudo = samplers.map((component) => `\u0000sampler:${component.refdes}`);
+  const symbols = new Set();
+  for (const path of paths) for (const value of [...path.g, ...path.f]) for (const name of resultSymbols(value, 's')) symbols.add(name);
+  for (const period of periods) expressionSymbols(period, 's', symbols);
+  const zProbe = linearSystem(context, discrete, [...zInputs.map((s) => s.key), ...pseudo], 'z', () => ({ ok: true }));
+  if (!zProbe.ok) return zProbe;
+  for (const row of [...zProbe.A, ...zProbe.B]) for (const value of row) for (const name of resultSymbols(value, 'z')) symbols.add(name);
+  const symbolList = [...symbols].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  let memo = null;
+  /** Every input's result at these numbers: `{ ok, columns }` or a failure. */
+  const at = (values) => {
+    const given = Object.fromEntries(symbolList.map((name) => [name, Number.isFinite(values?.[name]) ? values[name] : 1]));
+    const key = JSON.stringify(given);
+    if (memo?.key === key) return memo.result;
+    const result = solveSampledAt(given);
+    memo = { key, result };
+    return result;
+  };
+  const solveSampledAt = (given) => {
+    const T = periods.map((period) => evaluateExpression(period, given));
+    if (T.some((t) => !(t > 0))) return failure('bad-period', 'a sampler\'s period must be positive');
+    if (T.some((t) => Math.abs(t - T[0]) > 1e-9 * T[0])) return failure('mixed-periods', 'the samplers run at different periods: one rate is supported');
+    const sampled = [];
+    for (const [i, path] of paths.entries()) {
+      const fd = [];
+      for (const f of path.f) {
+        const numericF = withCoefficients(f, given);
+        if (!numericF.numerator || (numericF.numerator.kind === 'number' && numericF.numerator.numerator === 0n)) { fd.push(null); continue; }
+        const split = delayTermsOf(numericF);
+        if (!split.ok) return failure('unsampleable', `${path.component.refdes}: ${split.error}`);
+        try {
+          fd.push(sampledRational(samplePath(split, T[i])));
+        } catch (err) {
+          return failure('unsampleable', `${path.component.refdes}: ${err.message}`);
+        }
+      }
+      sampled.push(fd);
+    }
+    const sampler = new Map(samplers.map((component, i) => [component.refdes, i]));
+    const zSystem = linearSystem(context, discrete, [...zInputs.map((s) => s.key), ...pseudo], 'z', (signal, row, feed) => {
+      const i = sampler.get(signal.driver.comp);
+      if (i === undefined) return { ok: true };
+      sampled[i].forEach((fd, k) => { if (fd) feed(row, fd, dacInputs[k]); });
+      feed(row, integer(1), { key: pseudo[i] });
+      return { ok: true };
+    });
+    if (!zSystem.ok) return zSystem;
+    const numericEntry = (value) => withCoefficients(value, given);
+    const A = zSystem.A.map((row) => row.map(numericEntry));
+    const B = zSystem.B.map((row) => row.map(numericEntry));
+    let columns;
+    if (zSystem.index.has(output.key)) {
+      const solved = eliminateSignals(A, B, zSystem.index.get(output.key), zSystem.ops, 'z');
+      if (!solved.ok) return failure(solved.code, solved.error);
+      columns = solved.columns;
+    } else {
+      columns = [...zInputs.map((s) => s.key), ...pseudo].map((k) => (k === output.key ? zSystem.ops.one : zSystem.ops.zero));
+    }
+    const zColumn = new Map(zInputs.map((source, c) => [source.key, columns[c]]));
+    const out = inputs.map((source) => {
+      if (zColumn.has(source.key)) return zColumn.get(source.key);
+      const j = sInputs.findIndex((s) => s.key === source.key);
+      const terms = paths.map((path, i) => ({ z: columns[zInputs.length + i], s: withCoefficients(path.g[j], given) }))
+        .filter(({ z, s }) => !isZeroRational(z) && !isZeroRational(s));
+      return { kind: 'mixed', terms, period: T[0] };
+    });
+    return { ok: true, columns: out };
+  };
+
+  const first = at(initialValues);
+  if (!first.ok) return first;
+  const entries = inputs.map((source, column) => {
+    const value = sampledResult({ at: (values) => { const r = at(values); return r.ok ? r.columns[column] : null; }, symbols: symbolList, continuous: domain.get(source.key) === 's', paths: paths.map((path) => path.g[sInputs.findIndex((s) => s.key === source.key)]) });
+    return presentSampled(value, initialValues, source, output);
+  });
+  return { ok: true, variable: 'z', sampled: true, output: { key: output.key, name: output.display }, entries, issues: [] };
+}
+
+const isZeroRational = (value) => !value || (value.numerator?.kind === 'number' && value.numerator.numerator === 0n);
+
+/**
+ * A sampled result: worked out for each set of coefficient numbers.
+ * `withCoefficients` gives its number-valued form -- a rational in z for a
+ * sampled source, or `{ kind: 'mixed', terms: [{ z, s }], period }` for a
+ * continuous one -- and `resultSymbols` its symbols.
+ */
+function sampledResult(spec) {
+  return Object.freeze({ kind: 'sampled', ...spec });
+}
+
+/** A sampled result as an entry, its equation at these numbers. */
+function presentSampled(value, values, source, output) {
+  const label = `\\frac{${texName(output.display)}}{${texName(source.name)}}`;
+  const entry = { input: source.id, inputName: source.name, value, label, sampled: true, continuous: value.continuous };
+  Object.assign(entry, sampledEquation(entry, values));
+  return entry;
+}
+
+/** A sampled entry's equation, poles, and zeros at these numbers. */
+function sampledEquation(entry, values) {
+  const numericValue = entry.value.at(values);
+  if (!numericValue) return { equation: `${entry.label} = \\text{?}`, tex: '\\text{?}', zeros: null, poles: null, delayed: false };
+  if (numericValue.kind !== 'mixed') {
+    const tex = transferTex(numericValue, 'z', { digits: 4 });
+    return { tex, equation: `${entry.label} = ${tex}`, ...numericRootsOf(numericValue) };
+  }
+  // A continuous input: the sampled loop's part, times its path to the sampler.
+  const tex = numericValue.terms.map(({ z }, i) => {
+    const path = entry.value.paths[i];
+    const pathTex = path ? transferTex(path, 's') : '1';
+    const zTex = transferTex(z, 'z', { digits: 4 });
+    const wrap = (t) => (/^\\frac|^[^+-]*$/.test(t.replace(/^-/, '')) && !/ [+-] /.test(t) ? t : `\\left(${t}\\right)`);
+    return pathTex === '1' ? zTex : `${wrap(zTex)} \\cdot ${wrap(pathTex)}`;
+  }).join(' + ') || '0';
+  // Every term shares the sampled loop's poles; the zeros are the z part's
+  // when the path to the sampler is a plain number (a source added there).
+  const [first] = numericValue.terms;
+  const roots = first ? numericRootsOf(first.z) : { zeros: null, poles: null };
+  const plainPath = numericValue.terms.length === 1 && isPlainNumber(first.s.numerator) && isPlainNumber(first.s.denominator);
+  return { tex, equation: `${entry.label} = ${tex}`, zeros: plainPath ? roots.zeros : null, poles: roots.poles, delayed: false, mixed: true };
 }
 
 /**
@@ -9684,7 +10368,12 @@ function eliminateSignals(A, B, outputIndex, ops, variable) {
   const n = A.length;
   const width = B[0]?.length ?? 0;
   const cancel = (value) => cancelCommonPolynomialFactor(value, { variable, maxWork: 400_000 });
-  const G = A.map((row, y) => new Map(row.flatMap((a, x) => (x !== y && !ops.isZero(a) ? [[x, ops.neg(a)]] : []))));
+  // A row is x_y - sum G x: off the diagonal G = -a; on it, a signal feeding
+  // itself (a block wired back to its own input, a sampler's loop) is 1 - a.
+  const G = A.map((row, y) => new Map(row.flatMap((a, x) => {
+    const g = x === y ? ops.sub(ops.one, a) : ops.neg(a);
+    return ops.isZero(g) ? [] : [[x, g]];
+  })));
   const S = B.map((row) => new Map(row.flatMap((b, c) => (!ops.isZero(b) ? [[c, b]] : []))));
   const readers = Array.from({ length: n }, () => new Set());
   G.forEach((row, y) => { for (const x of row.keys()) readers[x].add(y); });
@@ -9768,9 +10457,58 @@ function coefficientList(value, variable) {
 
 const isPlainNumber = (value) => value?.kind === 'number';
 
+/** The symbol's delay e^{-s T} raised to n, as e^{-n s T}. */
+function delayPowerTex(name, n) {
+  const inner = name.slice(1, -1).replace(/^e\^\{-s/, '');
+  if (n === 1) return `e^{-s${inner.slice(0, -1)}}`;
+  return `e^{${n < 0 ? '' : '-'}${Math.abs(n)}s${inner.slice(0, -1)}}`;
+}
+
+const delayPart = (factor) => (factor.kind === 'symbol' && isDelayName(factor.name) ? [factor.name, 1]
+  : factor.kind === 'power' && factor.base.kind === 'symbol' && isDelayName(factor.base.name) ? [factor.base.name, factor.exponent] : null);
+
+/** An expression with delays: the delay-free part first and its delays
+ *  after it (k e^{-sT}), delay-free terms leading a sum (1 - e^{-sT}). */
+function coefficientTex(value) {
+  const names = expressionSymbols(value, 's');
+  if (![...names].some(isDelayName)) return renderExpression(value);
+  if (value.kind === 'add') {
+    const terms = value.terms.map((term) => coefficientTex(term));
+    const order = value.terms.map((term, i) => ({ i, delayed: [...expressionSymbols(term, 's')].some(isDelayName), negative: terms[i].startsWith('-') }));
+    order.sort((a, b) => (a.delayed - b.delayed) || (a.negative - b.negative) || (a.i - b.i));
+    return order.map(({ i }, k) => {
+      const tex = terms[i];
+      if (k === 0) return tex;
+      return tex.startsWith('-') ? ` - ${tex.slice(1).trim()}` : ` + ${tex}`;
+    }).join('');
+  }
+  if (value.kind === 'symbol' || value.kind === 'power') {
+    const part = delayPart(value);
+    if (part) return delayPowerTex(...part);
+  }
+  if (value.kind === 'multiply') {
+    const delays = [];
+    const sums = [];
+    const rest = [];
+    for (const factor of value.factors) {
+      const part = delayPart(factor);
+      if (part) delays.push(delayPowerTex(...part));
+      else if ([...expressionSymbols(factor, 's')].some(isDelayName)) sums.push(`\\left(${coefficientTex(factor)}\\right)`);
+      else rest.push(factor);
+    }
+    let head = rest.length ? renderExpression(rest.length === 1 ? rest[0] : multiply(...rest)) : '';
+    if (rest.some((f) => f.kind === 'add')) head = `\\left(${head}\\right)`;
+    if (head === '1') head = '';
+    if (head === '-1') head = '-';
+    const tail = [...sums, ...delays].join('\\,');
+    return `${head}${head && head !== '-' ? '\\,' : ''}${tail}`;
+  }
+  return renderExpression(value);
+}
+
 /** Coefficient times a power of the variable, as one signed term. */
-function termTex(coefficient, powerText) {
-  let tex = renderExpression(coefficient);
+function termTex(coefficient, powerText, digits = 0) {
+  let tex = digits && isPlainNumber(coefficient) ? decimalTex(coefficient, digits) : coefficientTex(coefficient);
   // A compound coefficient (a_1 - 1) keeps its own signs in its brackets: its
   // leading minus belongs to its first term, not to the whole term.
   if (coefficient.kind === 'add') return { negative: false, tex: powerText ? `\\left(${tex}\\right) ${powerText}` : tex };
@@ -9793,7 +10531,14 @@ function sumTex(terms) {
  * denominator; in z, ascending powers of z^-1 with the constant term of the
  * denominator 1 (when it is a number).
  */
-function transferTex(value, variable) {
+/** A number to `digits` significant figures, as a decimal (1.234, -0.05). */
+function decimalTex(value, digits) {
+  const x = Number(value.numerator) / Number(value.denominator);
+  const text = String(Number(x.toPrecision(digits)));
+  return /e/.test(text) ? text.replace(/e([-+]?\d+)/, (m, e) => `\\cdot 10^{${Number(e)}}`) : text;
+}
+
+function transferTex(value, variable, { digits = 0 } = {}) {
   const numerator = coefficientList(value.numerator, variable);
   const denominator = coefficientList(value.denominator, variable);
   if (!numerator || !denominator) return `\\frac{${renderExpression(value.numerator, { variable })}}{${renderExpression(value.denominator, { variable })}}`;
@@ -9821,7 +10566,7 @@ function transferTex(value, variable) {
     return ea <= 0 ? eb - ea : ea - eb;
   };
   const order = (list) => (variable === 'z' ? [...list].sort(zOrder) : list);
-  const render = (list) => sumTex(order(list).map(({ power: p, coefficient }) => termTex(coefficient, powerText(p))));
+  const render = (list) => sumTex(order(list).map(({ power: p, coefficient }) => termTex(coefficient, powerText(p), digits)));
   const denominatorIsOne = den.length === 1 && den[0].power === shift && isPlainNumber(den[0].coefficient)
     && den[0].coefficient.numerator === 1n && den[0].coefficient.denominator === 1n;
   if (denominatorIsOne) return render(num);
@@ -9843,7 +10588,8 @@ function complexText(root) {
     const v = Math.abs(x) < 1e-12 ? 0 : Number(x.toPrecision(3));
     return String(v);
   };
-  if (Math.abs(root.im) < 1e-12) return fmt(root.re);
+  // A repeated root comes back split by round-off (1 +- 1e-9j): it is real.
+  if (Math.abs(root.im) < 1e-12 || Math.abs(root.im) < 1e-6 * Math.abs(root.re)) return fmt(root.re);
   const re = Math.abs(root.re) < 1e-12 ? '' : fmt(root.re);
   const im = `${fmt(Math.abs(root.im))}j`;
   return re ? `${re} ${root.im < 0 ? '-' : '+'} ${im}` : `${root.im < 0 ? '-' : ''}${im}`;
@@ -9859,8 +10605,7 @@ function present(value, variable, source, output) {
     tex,
     label,
     equation: `${label} = ${tex}`,
-    zeros: numericRoots(coefficientList(value.numerator, variable)),
-    poles: numericRoots(coefficientList(value.denominator, variable)),
+    ...numericRootsOf(value),
   };
 }
 
@@ -9899,6 +10644,9 @@ function evaluate(dense, re, im) {
  * 1/2, z = e^{j 2 pi f}. Null when a coefficient is symbolic.
  */
 function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega' } = {}) {
+  if (!value) return null;
+  if (value.kind === 'mixed') return mixedCurve(value, { pointsPerDecade });
+  if (variable === 's' && hasDelays(value)) return delayedCurve(value, { pointsPerDecade, sAxis });
   const num = denseCoefficients(value.numerator, variable);
   const den = denseCoefficients(value.denominator, variable);
   if (!num || !den) return null;
@@ -9927,6 +10675,205 @@ function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega' 
     points.push({ f, db: 20 * Math.log10(Math.hypot(h.re, h.im) || 1e-300), phase });
   }
   return { variable, axis: 'normalized', points };
+}
+
+// A complex number as [re, im].
+const cmul = ([a, b], [c, d]) => [a * c - b * d, a * d + b * c];
+const cinv = ([a, b]) => { const m = a * a + b * b; return [a / m, -b / m]; };
+
+/** An expression's value at s = j w, its delays e^{-j w T}; null when a
+ *  symbol other than a numeric delay is left. */
+function complexAt(value, w) {
+  switch (value?.kind) {
+    case 'number': return [Number(value.numerator) / Number(value.denominator), 0];
+    case 'symbol': {
+      if (value.name === 's') return [0, w];
+      const delay = DELAYS.get(value.name);
+      if (!delay) return null;
+      const t = evaluateExpression(delay, {});
+      return [Math.cos(w * t), -Math.sin(w * t)];
+    }
+    case 'add': {
+      let sum = [0, 0];
+      for (const term of value.terms) {
+        const v = complexAt(term, w);
+        if (!v) return null;
+        sum = [sum[0] + v[0], sum[1] + v[1]];
+      }
+      return sum;
+    }
+    case 'multiply': {
+      let product = [1, 0];
+      for (const factor of value.factors) {
+        const v = complexAt(factor, w);
+        if (!v) return null;
+        product = cmul(product, v);
+      }
+      return product;
+    }
+    case 'power': {
+      const base = complexAt(value.base, w);
+      if (!base) return null;
+      let out = [1, 0];
+      for (let i = 0; i < Math.abs(value.exponent); i++) out = cmul(out, base);
+      return value.exponent < 0 ? cinv(out) : out;
+    }
+    default: return null;
+  }
+}
+
+/** The numeric delays of a result (its symbols' values all given). */
+function numericDelays(value) {
+  const names = new Set();
+  expressionSymbols(value.numerator, 's', names);
+  expressionSymbols(value.denominator, 's', names);
+  const delays = [];
+  for (const name of names) {
+    if (!isDelayName(name)) return null;
+    try { delays.push(evaluateExpression(DELAYS.get(name), {})); } catch { return null; }
+  }
+  return delays;
+}
+
+/**
+ * The response of a result with delays, evaluated directly at s = j w: on
+ * ω, from a decade under its slowest corner or longest delay to two over
+ * its fastest (a delay T notches at multiples of 2 pi/T); on f/fs, delays
+ * counted in sample periods. Null while a symbol has no value.
+ */
+function delayedCurve(value, { pointsPerDecade, sAxis }) {
+  const delays = numericDelays(value);
+  if (!delays || !delays.length || delays.some((t) => !Number.isFinite(t))) return null;
+  const normalized = sAxis === 'normalized';
+  let low = -4;
+  let high = Math.log10(0.5);
+  if (!normalized) {
+    const spans = delays.map(Math.abs).filter((t) => t > 0);
+    const tmin = spans.length ? Math.min(...spans) : 1;
+    const tmax = spans.length ? Math.max(...spans) : 1;
+    low = Math.log10(0.1 / tmax);
+    high = Math.log10(100 / tmin);
+    // Corners of the delay-free part (the delays set to 1) widen the range.
+    const replacements = new Map([...expressionSymbols(value.numerator, 's'), ...expressionSymbols(value.denominator, 's')].filter(isDelayName).map((name) => [name, ONE]));
+    try {
+      const bare = substituteRational(value, replacements);
+      const num = denseCoefficients(bare.numerator, 's');
+      const den = denseCoefficients(bare.denominator, 's');
+      if (num?.length && den) {
+        const sketch = bodeSketch(num, den, { pointsPerDecade: 4 }).points.map((p) => p.w);
+        if (sketch.length) {
+          low = Math.min(low, Math.log10(Math.min(...sketch)));
+          high = Math.max(high, Math.log10(Math.max(...sketch)));
+        }
+      }
+    } catch { /* the delays' range alone */ }
+    low = Math.floor(low);
+    high = Math.ceil(high);
+  }
+  // Delays ripple: a finer grid than a rational's.
+  const perDecade = Math.max(pointsPerDecade, 120);
+  const count = Math.round((high - low) * perDecade);
+  const points = [];
+  let previous = null;
+  for (let i = 0; i <= count; i++) {
+    const f = 10 ** Math.min(high, low + i / perDecade);
+    const w = normalized ? 2 * Math.PI * f : f;
+    const top = complexAt(value.numerator, w);
+    const bottom = complexAt(value.denominator, w);
+    if (!top || !bottom) return null;
+    const h = cmul(top, cinv(bottom));
+    if (!h.every(Number.isFinite)) continue;
+    let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
+    if (previous !== null) {
+      while (phase - previous > 180) phase -= 360;
+      while (phase - previous < -180) phase += 360;
+    }
+    previous = phase;
+    points.push({ f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+  }
+  return { variable: 's', axis: normalized ? 'normalized' : 'relative', points };
+}
+
+/** A rational's value at a complex point (z, or s), its delays e^{-sT}
+ *  taken at s = `sForDelays`. */
+function rationalAt(value, point, variable, w) {
+  const at = (expr) => complexAtPoint(expr, point, variable, w);
+  const top = at(value.numerator);
+  const bottom = at(value.denominator);
+  return top && bottom ? cmul(top, cinv(bottom)) : null;
+}
+
+function complexAtPoint(value, point, variable, w) {
+  switch (value?.kind) {
+    case 'number': return [Number(value.numerator) / Number(value.denominator), 0];
+    case 'symbol': {
+      if (value.name === variable) return point;
+      const delay = DELAYS.get(value.name);
+      if (!delay || variable !== 's') return null;
+      const t = evaluateExpression(delay, {});
+      return [Math.cos(w * t), -Math.sin(w * t)];
+    }
+    case 'add': {
+      let sum = [0, 0];
+      for (const term of value.terms) {
+        const v = complexAtPoint(term, point, variable, w);
+        if (!v) return null;
+        sum = [sum[0] + v[0], sum[1] + v[1]];
+      }
+      return sum;
+    }
+    case 'multiply': {
+      let product = [1, 0];
+      for (const factor of value.factors) {
+        const v = complexAtPoint(factor, point, variable, w);
+        if (!v) return null;
+        product = cmul(product, v);
+      }
+      return product;
+    }
+    case 'power': {
+      const base = complexAtPoint(value.base, point, variable, w);
+      if (!base) return null;
+      let out = [1, 0];
+      for (let i = 0; i < Math.abs(value.exponent); i++) out = cmul(out, base);
+      return value.exponent < 0 ? cinv(out) : out;
+    }
+    default: return null;
+  }
+}
+
+/**
+ * A continuous input's response through a sampled loop, over f/fs: each
+ * term's z part at z = e^{j 2 pi f} times its s part at s = j 2 pi f / T.
+ */
+function mixedCurve(value, { pointsPerDecade }) {
+  const points = [];
+  let previous = null;
+  const perDecade = Math.max(pointsPerDecade, 120);
+  const low = -4;
+  const high = Math.log10(0.5);
+  for (let i = 0; i <= Math.round((high - low) * perDecade); i++) {
+    const f = 10 ** Math.min(high, low + i / perDecade);
+    const theta = 2 * Math.PI * f;
+    const w = theta / value.period;
+    let h = [0, 0];
+    for (const term of value.terms) {
+      const zPart = rationalAt(term.z, [Math.cos(theta), Math.sin(theta)], 'z', 0);
+      const sPart = rationalAt(term.s, [0, w], 's', w);
+      if (!zPart || !sPart) return null;
+      const v = cmul(zPart, sPart);
+      h = [h[0] + v[0], h[1] + v[1]];
+    }
+    if (!h.every(Number.isFinite)) continue;
+    let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
+    if (previous !== null) {
+      while (phase - previous > 180) phase -= 360;
+      while (phase - previous < -180) phase += 360;
+    }
+    previous = phase;
+    points.push({ f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+  }
+  return { variable: 'z', axis: 'normalized', points };
 }
 
 // ----- plots of several responses -----------------------------------------------------
@@ -9972,28 +10919,52 @@ function responsePlot(traces, variable, { sAxis = 'omega' } = {}) {
 
 // ----- coefficients given values ------------------------------------------------------
 
-/** The symbols a result depends on, besides its variable (`a_1`, `k`). */
+/** The symbols a result depends on, besides its variable (`a_1`, `k`);
+ *  a delay e^{-sT} contributes the symbols of its T. */
 function resultSymbols(value, variable) {
+  if (value?.kind === 'sampled') return value.symbols;
+  const found = new Set();
+  expressionSymbols(value.numerator, variable, found);
+  expressionSymbols(value.denominator, variable, found);
   const out = new Set();
-  expressionSymbols(value.numerator, variable, out);
-  expressionSymbols(value.denominator, variable, out);
+  for (const name of found) {
+    if (isDelayName(name)) expressionSymbols(DELAYS.get(name), variable, out);
+    else out.add(name);
+  }
   return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-/** A result with its symbols given numbers (`{ a_1: 0.5 }`), still exact. */
+/** A result with its symbols given numbers (`{ a_1: 0.5 }`), still exact;
+ *  a delay e^{-sT} becomes the delay of T's number. */
 function withCoefficients(value, values) {
+  if (value?.kind === 'sampled') return value.at(values || {});
   const replacements = new Map();
   for (const [name, number] of Object.entries(values || {})) {
     if (Number.isFinite(number)) replacements.set(name, coefficientValue(String(Number(number.toPrecision(12)))));
   }
   if (!replacements.size) return value;
+  const found = new Set();
+  expressionSymbols(value.numerator, value.variable, found);
+  expressionSymbols(value.denominator, value.variable, found);
+  for (const name of found) {
+    if (!isDelayName(name)) continue;
+    const delay = DELAYS.get(name);
+    const given = substitute(delay, replacements);
+    // No delay at all is e^0 = 1.
+    if (given.kind === 'number' && given.numerator === 0n) replacements.set(name, ONE);
+    else if (keyOf(given) !== keyOf(delay)) replacements.set(name, delaySymbol(given));
+  }
   return cancelCommonPolynomialFactor(substituteRational(value, replacements), { variable: value.variable });
 }
 
-/** The zeros and poles of a result, numeric once its symbols have values. */
+/** The zeros and poles of a result, numeric once its symbols have values;
+ *  null with a delay, which has infinitely many. */
 function numericRootsOf(value) {
+  if (!value || value.kind === 'mixed') return { zeros: null, poles: null, delayed: false };
   const variable = value.variable;
+  if (hasDelays(value)) return { zeros: null, poles: null, delayed: true };
   return {
+    delayed: false,
     zeros: numericRoots(coefficientList(value.numerator, variable)),
     poles: numericRoots(coefficientList(value.denominator, variable)),
   };
@@ -13701,7 +14672,7 @@ const SYMBOL_CATEGORY_RULES = [
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
   ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch))$/],
-  ['Signal flow', /^(signal_(sum|multiply)|tf_[sz]|gain)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_[sz]|gain|sampler)$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each
@@ -14170,7 +15141,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain, sampler; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain, sampler } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -14288,6 +15259,7 @@ const symbolTypes = {
   tf_s,
   tf_z,
   gain,
+  sampler,
 };
 
 /** Ordered list of type names (for palettes / docs). */
@@ -15121,6 +16093,37 @@ const gain = defineSymbol({
   allowFloatingTerminals: true,
 });
 
+/**
+ * A sampler: the switch that reads a continuous signal at t = nT, turning
+ * an s-domain signal into a z-domain one (a quantizer's sampling in a
+ * continuous-time modulator). Its value is the period T, drawn beside it.
+ * The way back, z to s, needs no part: an H(s) block reading a sampled
+ * signal is the DAC, its H(s) the pulse each sample makes.
+ */
+const sampler = defineSymbol({
+  type: 'sampler',
+  description: 'Sampler (s to z)',
+  refPrefix: 'SMP',
+  terminals: [
+    { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+    { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -80, w: 160, h: 160 },
+  graphics: [
+    { kind: 'path', d: 'M -80 0 L -40 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M 40 0 L 80 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M -40 0 L 21.3 -51.4', style: 'symbol' },
+    // The arrow round the pivot, across the arm: it closes once a period.
+    { kind: 'path', d: 'M -30.3 -55.1 A 56 56 0 0 1 11.9 -21', style: 'symbol', fill: 'none' },
+    { kind: 'polygon', points: [{ x: 16.8, y: -8.9 }, { x: 17.9, y: -23.4 }, { x: 5.9, y: -18.6 }], fill: 'foreground' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: 'T',
+  allowFloatingTerminals: true,
+});
+
 __exports.signal_sum = signal_sum;
 __exports.signal_multiply = signal_multiply;
 __exports.filter_lpf = filter_lpf;
@@ -15130,6 +16133,7 @@ __exports.filter_notch = filter_notch;
 __exports.tf_s = tf_s;
 __exports.tf_z = tf_z;
 __exports.gain = gain;
+__exports.sampler = sampler;
 };
 
 __modules["src/core/components/solder.js"] = function (__require, __exports) {
@@ -16781,7 +17785,7 @@ let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_S
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
-let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, readTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, readTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
 
 
@@ -17792,7 +18796,12 @@ function normalizeAnalysisValues(value) {
   }
   // The graph's frequency axis for s results: ω, or f/fs with s in units of 1/Ts.
   const sAxis = value?.sAxis === 'normalized' ? 'normalized' : null;
-  return { coefficients, bode, ...(sAxis ? { sAxis } : {}) };
+  // Linked coefficients: a name following an expression of others (c_1 = b_1).
+  const links = {};
+  for (const [name, text] of Object.entries(value?.links || {})) {
+    if (/^[A-Za-z][\w]{0,40}$/.test(name) && typeof text === 'string' && text.trim() && text.length <= 120) links[name] = text.trim();
+  }
+  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -17800,9 +18809,11 @@ function analysisValuesJSON(values) {
   const bode = values?.bode;
   const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
   const sAxis = values?.sAxis === 'normalized';
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis) return {};
+  const links = values?.links || {};
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length) return {};
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
+    ...(Object.keys(links).length ? { links: { ...links } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
   } };
@@ -19132,7 +20143,7 @@ class Circuit {
     this.tags = [];
     // Numbers the analysis plots with, kept with the drawing: the
     // signal-flow coefficients (a_1 -> 0.5) and the Bode sketch's ratios.
-    this.analysisValues = { coefficients: {}, bode: null };
+    this.analysisValues = { coefficients: {}, bode: null, links: {} };
     this._routingEnvCache = new Map();
   }
 
@@ -19525,7 +20536,7 @@ class Circuit {
    *  the middle of its box; any other part has none. */
   _syncTransferFunctionLabel(component) {
     if (!component) return null;
-    const gain = component.type === 'gain';
+    const gain = isCoefficientBlock(component);
     const variable = TRANSFER_FUNCTION_TYPES[component.type] || (gain ? 'gain' : null);
     let label = null;
     for (const candidate of [...this.labels.values()]) {
@@ -19543,7 +20554,9 @@ class Circuit {
     let align = 'center';
     // Inside a triangle, every coefficient is set a size smaller, so a signed
     // name (-g_1) clears the edges as a plain one (b_1) does.
-    const inside = gain && gainFitsInside(component.value);
+    // A sampler's period always goes beside its switch.
+    const sampler = component.type === 'sampler';
+    const inside = gain && !sampler && gainFitsInside(component.value);
     const width = inside ? 'thin' : 'normal';
     if (gain && !inside) {
       const flow = applyDir(component.transform, 1, 0);
@@ -19791,7 +20804,7 @@ class Circuit {
       if (mirrorX !== undefined) c.transform.mirrorX = !!mirrorX;
       if (mirrorY !== undefined) c.transform.mirrorY = !!mirrorY;
       // A gain's coefficient keeps its place in world terms (above, or right).
-      if (c.type === 'gain') this._syncTransferFunctionLabel(c);
+      if (isCoefficientBlock(c)) this._syncTransferFunctionLabel(c);
       this.connectCoincident(refdes);
     } catch (err) {
       this._rollbackComponentEdit();
@@ -19861,9 +20874,9 @@ class Circuit {
     if (this._syncSwitchLabel(refdes, value)) return c;
     // A transfer function (or a gain) must read; its box (and pins) follow
     // the equation.
-    if (TRANSFER_FUNCTION_TYPES[c.type] || c.type === 'gain') {
-      if (c.type === 'gain') parseGain(value);
-      else parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
+    if (TRANSFER_FUNCTION_TYPES[c.type] || isCoefficientBlock(c)) {
+      if (isCoefficientBlock(c)) parseGain(value);
+      else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
       this._syncTransferFunctionLabel(c);
       this.invalidateRoutingCache();
@@ -28612,6 +29625,7 @@ let SYMBOL_CATEGORY_RULES; __bind(() => { ({ SYMBOL_CATEGORY_RULES } = __require
 let ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let PIN_RAIL_TYPES, railHang, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, railHang, railRotation } = __require("src/core/pin-rails.js")); });
+let TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_TYPES } = __require("src/core/mos-size.js")); });
 /**
  * Swapping a placed part for another type in place: nmos for pmos, a resistor
@@ -28627,6 +29641,19 @@ let MOS_SIZE_OFFSET, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE
 
 
 
+
+
+/** Whether a value still reads for a signal-flow part of this type (a
+ *  block's transfer function, a gain's or a sampler's one coefficient). */
+function valueReads(type, value) {
+  try {
+    if (type === 'gain' || type === 'sampler') parseGain(value);
+    else if (TRANSFER_FUNCTION_TYPES[type]) readTransferFunction(value, TRANSFER_FUNCTION_TYPES[type]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 
 const BJT_TYPES = new Set(['npn', 'pnp']);
@@ -28790,7 +29817,7 @@ function swapComponentType(circuit, refdes, type) {
     if (hang && PIN_RAIL_TYPES.includes(type)) {
       Object.assign(component.transform, { rotation: railRotation(type, hang), mirrorX: false, mirrorY: false });
     }
-    if (component.value === fromDef.defaultValue) component.value = toDef.defaultValue;
+    if (component.value === fromDef.defaultValue || !valueReads(type, component.value)) component.value = toDef.defaultValue;
     const sameFamily = (MOS_ANALYSIS_TYPES.has(fromType) && MOS_ANALYSIS_TYPES.has(type)) || categoryOf(fromType) === categoryOf(type);
     if (!sameFamily) component.analysis = fresh.analysis;
     const inputs = new Set(toDef.terminals.filter((t) => t.signalRole === 'input').map((t) => t.name));
@@ -29653,11 +30680,15 @@ __exports.MAX_EDGE_SHIFT = MAX_EDGE_SHIFT;
 
 __modules["src/core/transfer-function.js"] = function (__require, __exports) {
 __exports.isTransferFunction = isTransferFunction;
+__exports.isCoefficientBlock = isCoefficientBlock;
 __exports.isSignalBlock = isSignalBlock;
 __exports.parseGain = parseGain;
 __exports.gainFitsInside = gainFitsInside;
 __exports.gainDisplay = gainDisplay;
 __exports.parseTransferFunction = parseTransferFunction;
+__exports.parseExpression = parseExpression;
+__exports.expressionTex = expressionTex;
+__exports.readTransferFunction = readTransferFunction;
 __exports.polynomialTex = polynomialTex;
 __exports.transferFunctionTex = transferFunctionTex;
 __exports.transferFunctionLines = transferFunctionLines;
@@ -29674,7 +30705,10 @@ __exports.defaultTransferFunction = defaultTransferFunction;
  *                             tf([1 -1], [1]) is 1 - z^-1;
  *   [1], [1 2 1]              the same without tf();
  *   tf([1], [1 -1], 'Variable', 'z')   descending powers of z (MATLAB's tf);
- *   k                         a plain gain: one coefficient, no lists.
+ *   tf([k], [1 p], 'InputDelay', T)    times a delay, e^{-sT} (s only);
+ *   k                         a plain gain: one coefficient, no lists;
+ *   (1 - exp(-s*T))/s         in s, any expression in s with delays
+ *                             exp(-s*T) -- a DAC's pulse, excess loop delay.
  *
  * A coefficient is a number or a symbol (`k`, `a_1`, `2*g_m`, `-p`), so a
  * block can carry a symbolic gain or pole. This module only reads and draws
@@ -29688,9 +30722,15 @@ function isTransferFunction(component) {
   return !!component && Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type);
 }
 
-/** A gain block or a transfer-function block: a value drawn as math. */
+/** A part whose value is one coefficient, drawn as math: a gain's k, a
+ *  sampler's period T. */
+function isCoefficientBlock(component) {
+  return component?.type === 'gain' || component?.type === 'sampler';
+}
+
+/** A gain, a sampler, or a transfer-function block: a value drawn as math. */
 function isSignalBlock(component) {
-  return isTransferFunction(component) || component?.type === 'gain';
+  return isTransferFunction(component) || isCoefficientBlock(component);
 }
 
 /** A gain's value: one coefficient (`k`, `0.5`, `2*g_m`, `-a_1`). */
@@ -29751,20 +30791,195 @@ function parseTransferFunction(text, variable = 's') {
   const call = source.match(/^tf\s*\(([\s\S]*)\)$/i);
   if (call) source = call[1].trim();
   let inverse = variable === 'z';
-  const option = source.match(/,\s*'variable'\s*,\s*'([^']*)'\s*$/i);
-  if (option) {
-    const name = option[1].replace(/\s/g, '');
-    const powers = /^z\^?-1$|^z\^\{-1\}$/i.test(name) ? 'z^-1' : /^[sz]$/i.test(name) ? name.toLowerCase() : null;
-    if (!powers) throw new Error(`unknown variable "${option[1]}" ('z' or 'z^-1' in a z block)`);
-    if (powers !== variable && !(variable === 'z' && powers === 'z^-1')) throw new Error(`'Variable', '${option[1]}' does not fit an H(${variable}) block`);
-    inverse = powers === 'z^-1';
+  let delay = null;
+  // Trailing name-value options: 'Variable', 'z' and 'InputDelay', T.
+  for (let option = source.match(/,\s*'(\w+)'\s*,\s*('[^']*'|[^,']+)\s*$/); option; option = source.match(/,\s*'(\w+)'\s*,\s*('[^']*'|[^,']+)\s*$/)) {
+    const key = option[1].toLowerCase();
+    const value = option[2].trim().replace(/^'|'$/g, '');
+    if (key === 'variable') {
+      const name = value.replace(/\s/g, '');
+      const powers = /^z\^?-1$|^z\^\{-1\}$/i.test(name) ? 'z^-1' : /^[sz]$/i.test(name) ? name.toLowerCase() : null;
+      if (!powers) throw new Error(`unknown variable "${value}" ('z' or 'z^-1' in a z block)`);
+      if (powers !== variable && !(variable === 'z' && powers === 'z^-1')) throw new Error(`'Variable', '${value}' does not fit an H(${variable}) block`);
+      inverse = powers === 'z^-1';
+    } else if (key === 'inputdelay' || key === 'iodelay') {
+      if (variable !== 's') throw new Error(`'InputDelay' is for H(s) blocks; in z a delay is z^-1`);
+      delay = delayValue(parseExpression(value), value);
+    } else {
+      throw new Error(`unknown option '${option[1]}' ('Variable', or 'InputDelay' in s)`);
+    }
     source = source.slice(0, option.index).trim();
   }
   const lists = source.match(/^([[{][^\]}]*[\]}])\s*,?\s*([[{][^\]}]*[\]}])$/);
-  if (lists) return { num: coefficients(lists[1], 'numerator'), den: coefficients(lists[2], 'denominator'), inverse };
+  if (lists) return { num: coefficients(lists[1], 'numerator'), den: coefficients(lists[2], 'denominator'), inverse, ...(delay ? { delay } : {}) };
   if (/[[\]{}]/.test(source)) throw new Error('a transfer function is tf([num], [den]): two lists of coefficients');
   // A gain: one coefficient over 1.
-  return { num: coefficients(`[${source}]`, 'gain'), den: ['1'], inverse };
+  return { num: coefficients(`[${source}]`, 'gain'), den: ['1'], inverse, ...(delay ? { delay } : {}) };
+}
+
+// ----- expressions in s --------------------------------------------------------------
+
+/**
+ * An expression in s, as an AST: `{ t: 'num', v }`, `{ t: 'sym', name }`,
+ * `{ t: 'var' }` (s), `{ t: 'exp', delay }` (e^{-s delay}, `delay` an AST
+ * free of s), `{ t: 'add', terms: [{ sign, node }] }`, `{ t: 'mul', factors }`,
+ * `{ t: 'div', num, den }`, `{ t: 'pow', base, n }`. Multiplication may be
+ * implicit (`2s`, `k(s + 1)`). `exp()` takes only a delay, `-s*T` (T a
+ * number, a symbol, or a product or quotient of them), so the expression
+ * stays a ratio of polynomials in s and its delays.
+ */
+function parseExpression(text) {
+  const source = String(text ?? '');
+  let i = 0;
+  const skip = () => { while (/\s/.test(source[i] || '')) i += 1; };
+  const peek = () => { skip(); return source[i]; };
+  const fail = (what) => { throw new Error(`${what} at "${source.slice(i, i + 12) || 'the end'}"`); };
+  const expression = () => {
+    const terms = [];
+    let sign = 1;
+    if (peek() === '-' || peek() === '+') { sign = source[i] === '-' ? -1 : 1; i += 1; }
+    terms.push({ sign, node: product() });
+    while (peek() === '+' || peek() === '-') {
+      sign = source[i] === '-' ? -1 : 1;
+      i += 1;
+      terms.push({ sign, node: product() });
+    }
+    return terms.length === 1 && terms[0].sign === 1 ? terms[0].node : { t: 'add', terms };
+  };
+  const product = () => {
+    let node = power();
+    for (;;) {
+      const c = peek();
+      if (c === '*') { i += 1; node = mul(node, power()); }
+      else if (c === '/') { i += 1; node = { t: 'div', num: node, den: power() }; }
+      else if (c && /[A-Za-z0-9.(\\]/.test(c)) node = mul(node, power());
+      else return node;
+    }
+  };
+  const mul = (a, b) => ({ t: 'mul', factors: [...(a.t === 'mul' ? a.factors : [a]), ...(b.t === 'mul' ? b.factors : [b])] });
+  const power = () => {
+    const base = atom();
+    if (peek() !== '^') return base;
+    i += 1;
+    skip();
+    const braced = source[i] === '{' || source[i] === '(';
+    if (braced) i += 1;
+    const match = source.slice(i).match(/^\s*(-?\d+)(?![.\d])\s*/);
+    if (!match) fail('a power must be a whole number');
+    i += match[0].length;
+    if (braced) { if (peek() !== '}' && peek() !== ')') fail('unclosed power'); i += 1; }
+    return { t: 'pow', base, n: Number(match[1]) };
+  };
+  const atom = () => {
+    const c = peek();
+    if (c === '(') {
+      i += 1;
+      const inner = expression();
+      if (peek() !== ')') fail('a missing )');
+      i += 1;
+      return inner;
+    }
+    const number = source.slice(i).match(/^(\d+(?:\.\d*)?(?:e[-+]?\d+)?|\.\d+)/i);
+    if (number) { i += number[0].length; return { t: 'num', v: number[0] }; }
+    const name = source.slice(i).match(/^\\?[A-Za-z]+(?:_\{?[A-Za-z0-9]+\}?)?/);
+    if (!name) fail('expected a number, a name, or (');
+    i += name[0].length;
+    const word = name[0].replace(/^\\/, '');
+    if (word === 'exp') {
+      if (peek() !== '(') fail('exp needs (');
+      i += 1;
+      const inner = expression();
+      if (peek() !== ')') fail('a missing )');
+      i += 1;
+      return { t: 'exp', delay: delayOf(inner) };
+    }
+    if (word === 's') return { t: 'var' };
+    return { t: 'sym', name: word.replace(/[{}]/g, '') };
+  };
+  const node = expression();
+  if (peek() !== undefined) fail('unexpected text');
+  return node;
+}
+
+/** Whether an AST has s in it (delays aside). */
+function hasVariable(node) {
+  switch (node.t) {
+    case 'var': return true;
+    case 'add': return node.terms.some((term) => hasVariable(term.node));
+    case 'mul': return node.factors.some(hasVariable);
+    case 'div': return hasVariable(node.num) || hasVariable(node.den);
+    case 'pow': return hasVariable(node.base);
+    default: return false;
+  }
+}
+
+/** The delay of `exp(arg)`: arg must be -s times something free of s. */
+function delayOf(arg) {
+  let sign = 1;
+  let node = arg;
+  if (node.t === 'add' && node.terms.length === 1) { sign = node.terms[0].sign; node = node.terms[0].node; }
+  // -s*T, -T*s, -s*T/2: exactly one s, as a plain factor.
+  const flat = [];
+  const collect = (n) => { if (n.t === 'mul') n.factors.forEach(collect); else flat.push(n); };
+  let quotient = null;
+  if (node.t === 'div') { collect(node.num); quotient = node.den; } else collect(node);
+  const vars = flat.filter((f) => f.t === 'var');
+  const rest = flat.filter((f) => f.t !== 'var');
+  if (sign !== -1 || vars.length !== 1 || rest.some(hasVariable) || (quotient && hasVariable(quotient))) {
+    throw new Error('exp() takes a delay: exp(-s*T), T a number or a symbol');
+  }
+  let delay = rest.length === 0 ? { t: 'num', v: '1' } : rest.length === 1 ? rest[0] : { t: 'mul', factors: rest };
+  if (quotient) delay = { t: 'div', num: delay, den: quotient };
+  return delay;
+}
+
+/** A delay given on its own ('InputDelay', T): free of s. */
+function delayValue(node, text) {
+  if (hasVariable(node)) throw new Error(`a delay is a number or a symbol, not "${text}"`);
+  return node;
+}
+
+const symbolTex = (name) => name.replace(/^([A-Za-z]+)_(\w+)$/, (m, base, sub) => `${base}_{${sub}}`);
+
+/** An AST as TeX: a quotient as a fraction, delays as e^{-sT}. */
+function expressionTex(node, parent = 0) {
+  const wrap = (tex, needed) => (needed ? `\\left(${tex}\\right)` : tex);
+  switch (node.t) {
+    case 'num': return node.v.replace(/(\d)e([-+]?\d+)/i, (m, d, e) => `${d}\\cdot 10^{${Number(e)}}`);
+    case 'sym': return symbolTex(node.name);
+    case 'var': return 's';
+    case 'exp': {
+      const d = node.delay;
+      return d.t === 'num' && d.v === '1' ? 'e^{-s}' : `e^{-s\\,${expressionTex(d, 2)}}`;
+    }
+    case 'add': {
+      const tex = node.terms.map((term, index) => `${index === 0 ? (term.sign < 0 ? '-' : '') : (term.sign < 0 ? ' - ' : ' + ')}${expressionTex(term.node, 1)}`).join('');
+      return wrap(tex, parent >= 1);
+    }
+    case 'mul': return wrap(node.factors.map((f) => expressionTex(f, 2)).join('\\,'), parent >= 3);
+    case 'div': return `\\frac{${expressionTex(node.num)}}{${expressionTex(node.den)}}`;
+    case 'pow': return `${expressionTex(node.base, 3)}^{${node.n}}`;
+    default: return '?';
+  }
+}
+
+/**
+ * Read a block's definition: `{ kind: 'lists', num, den, inverse, delay }`
+ * (tf() or its lists, or a gain), or in s `{ kind: 'expression', ast }`
+ * for an expression with delays. Throws when neither reads.
+ */
+function readTransferFunction(text, variable = 's') {
+  const source = String(text ?? '');
+  // In s, anything that names s or a delay is an expression; the rest -- a
+  // gain such as g_m/C -- reads as before.
+  if (variable === 's' && !/^\s*(tf\s*\(|[[{])/i.test(source) && /(^|[^A-Za-z\\_{])s(?![A-Za-z_])|exp\s*\(/.test(source)) {
+    try {
+      return { kind: 'expression', ast: parseExpression(source) };
+    } catch (error) {
+      throw new Error(`${error.message} (an H(s) block is tf([num], [den]), or an expression in s such as (1 - exp(-s*T))/s)`);
+    }
+  }
+  return { kind: 'lists', ...parseTransferFunction(source, variable) };
 }
 
 const isZero = (token) => /^[-+]?0*(\.0*)?$/.test(token);
@@ -29804,7 +31019,15 @@ function polynomialTex(tokens, variable, inverse = false) {
 
 /** The definition as display math: a fraction, or the numerator alone over 1. */
 function transferFunctionTex(text, variable) {
-  const { num, den, inverse } = parseTransferFunction(text, variable);
+  const read = readTransferFunction(text, variable);
+  if (read.kind === 'expression') return expressionTex(read.ast);
+  const tex = listsTex(read, variable);
+  if (!read.delay) return tex;
+  const delay = expressionTex({ t: 'exp', delay: read.delay });
+  return /^\\frac/.test(tex) ? `${tex}\\,${delay}` : tex === '1' ? delay : `\\left(${tex}\\right) ${delay}`;
+}
+
+function listsTex({ num, den, inverse }, variable) {
   if (den.length === 1 && isOne(den[0])) return polynomialTex(num, variable, inverse);
   // Over -1: the numerator with its signs flipped.
   if (den.length === 1 && isMinusOne(den[0])) {
@@ -29818,8 +31041,25 @@ function transferFunctionTex(text, variable) {
  *  fraction, the denominator -- what its box is sized around. */
 function transferFunctionLines(text, variable) {
   const tex = transferFunctionDisplay(text, variable);
-  const fraction = tex.match(/^\\frac\{(.*)\}\{(.*)\}$/);
-  return fraction ? [fraction[1], fraction[2]] : [tex];
+  const fraction = wholeFraction(tex);
+  return fraction || [tex];
+}
+
+/** `\frac{a}{b}` as [a, b] when the fraction is the whole of `tex`. */
+function wholeFraction(tex) {
+  if (!tex.startsWith('\\frac{')) return null;
+  const group = (start) => {
+    let depth = 0;
+    for (let i = start; i < tex.length; i++) {
+      if (tex[i] === '{') depth += 1;
+      else if (tex[i] === '}' && --depth === 0) return i;
+    }
+    return -1;
+  };
+  const end = group(5);
+  if (end < 0 || tex[end + 1] !== '{') return null;
+  const close = group(end + 1);
+  return close === tex.length - 1 ? [tex.slice(6, end), tex.slice(end + 2, close)] : null;
 }
 
 /** The block's math: the transfer function, or a plain mark when the
@@ -46364,7 +47604,7 @@ let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
 let MOS_SIZE_ROLE, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
-let TRANSFER_FUNCTION_TYPES, isSignalBlock, parseGain, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isSignalBlock, parseGain, parseTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseGain, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseGain, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
@@ -46433,7 +47673,9 @@ function inlineEditSchematicBlock(component) {
   input.value = component.value || '';
   input.spellcheck = false;
   input.className = `label-inline-editor block-inline-editor${transfer ? ' tf-inline-editor' : ''}`;
-  if (transfer) input.title = component.type === 'gain'
+  if (transfer) input.title = component.type === 'sampler'
+    ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
+    : component.type === 'gain'
     ? 'One coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m). Enter applies, Esc cancels.'
     : component.type === 'tf_z'
     ? "tf([num], [den]) or a gain, in ascending powers of z^-1 ('Variable', 'z' for descending powers of z). Enter applies, Esc cancels."
@@ -46469,8 +47711,8 @@ function inlineEditSchematicBlock(component) {
       if (transfer) {
         // The box fits the new equation, and its wires follow its pins.
         try {
-          if (component.type === 'gain') parseGain(text);
-          else parseTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
+          if (isCoefficientBlock(component)) parseGain(text);
+          else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {
           logLine(`${component.refdes}: ${err.message}`, 'error');
           render();
@@ -59276,8 +60518,10 @@ __exports.collapsedPanels = collapsedPanels;
 
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.installSignalFlowUi = installSignalFlowUi;
-let TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
+let linkMakesCycle, parseCoefficientLink, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
+let expressionTex; __bind(() => { ({ expressionTex } = __require("src/core/transfer-function.js")); });
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let responseFigure; __bind(() => { ({ responseFigure } = __require("src/core/bode-figure.js")); });
 let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
@@ -59316,6 +60560,8 @@ let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js"));
 
 
 
+
+
 // Devices the small-signal analysis models: a drawing with any opens in it.
 const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
 
@@ -59329,6 +60575,9 @@ let traces = [];
 // the numeric poles and zeros use them. Kept in the document, so a drawing
 // opens with the numbers it was left at.
 const coefficients = () => editor.circuit.analysisValues.coefficients;
+// Linked coefficients (c_1 = b_1) and every coefficient's number through them.
+const links = () => (editor.circuit.analysisValues.links ||= {});
+const resolved = () => resolveCoefficients(coefficients(), links());
 let modeBar = null;
 let section = null;
 let actions = null; // this mode's buttons, in the window's own footer
@@ -59437,11 +60686,17 @@ function currentSymbols() {
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
-/** A result with every symbol given its number (1 until set). */
-function numeric(value, variable) {
+/** Every symbol of a result with its number (1 until set). */
+function valuesFor(value, variable) {
   const values = {};
-  for (const name of resultSymbols(value, variable)) values[name] = coefficients()[name] ?? 1;
-  return withCoefficients(value, values);
+  const numbers = resolved();
+  for (const name of resultSymbols(value, variable)) values[name] = numbers[name] ?? 1;
+  return values;
+}
+
+/** A result with every symbol given its number. */
+function numeric(value, variable) {
+  return withCoefficients(value, valuesFor(value, variable));
 }
 
 let redrawFrame = 0;
@@ -59463,27 +60718,67 @@ function renderCoefficients() {
   const rows = host.querySelector('.signal-flow-coefficient-rows');
   rows.replaceChildren();
   for (const name of names) {
+    const linked = Object.hasOwn(links(), name);
     const value = coefficients()[name] ?? 1;
     const label = el('span', { class: 'signal-flow-coefficient-name' });
     label.innerHTML = texToMathML(symbolText(name));
     const slider = el('input', { type: 'range', min: String(-3 * PER_DECADE), max: String(3 * PER_DECADE), step: '1', 'aria-label': `${name}: slide to change` });
     slider.value = String(indexE24(Math.abs(value) || 1));
-    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, value: String(value) });
+    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, value: linked ? `= ${links()[name]}` : String(value) });
+    const row = el('div', { class: 'signal-flow-coefficient', 'data-name': name }, [label, slider, field]);
     slider.addEventListener('input', () => {
       // The slider sets the size; a value typed negative keeps its sign.
       const sign = (coefficients()[name] ?? 1) < 0 ? -1 : 1;
       coefficients()[name] = sign * stepE24(Number(slider.value));
       field.value = String(coefficients()[name]);
+      refreshLinkedRows();
       coefficientsChanged();
     });
     field.addEventListener('input', () => {
-      const number = Number(field.value);
-      if (!field.value.trim() || !Number.isFinite(number)) return;
-      coefficients()[name] = number;
-      if (number) slider.value = String(indexE24(Math.abs(number)));
+      const text = field.value.trim();
+      field.classList.remove('invalid');
+      field.title = '';
+      // `= b_1` follows b_1; a number is the coefficient's own again.
+      if (text.startsWith('=')) {
+        let link;
+        try {
+          link = parseCoefficientLink(text);
+          if (linkMakesCycle(name, link.text, links())) throw new Error(`${name} would follow itself`);
+        } catch (err) {
+          field.classList.add('invalid');
+          field.title = err.message;
+          return;
+        }
+        links()[name] = link.text;
+      } else {
+        const number = Number(text);
+        if (!text || !Number.isFinite(number)) return;
+        delete links()[name];
+        coefficients()[name] = number;
+        if (number) slider.value = String(indexE24(Math.abs(number)));
+      }
+      refreshLinkedRows();
       coefficientsChanged();
     });
-    rows.append(el('div', { class: 'signal-flow-coefficient' }, [label, slider, field]));
+    rows.append(row);
+  }
+  refreshLinkedRows();
+}
+
+/** Linked rows show the number they follow: the slider at it, disabled,
+ *  and the link with its number on hover. */
+function refreshLinkedRows() {
+  const numbers = resolved();
+  for (const row of section.querySelectorAll('.signal-flow-coefficient')) {
+    const name = row.dataset.name;
+    const linked = Object.hasOwn(links(), name);
+    const slider = row.querySelector('input[type=range]');
+    row.classList.toggle('linked', linked);
+    slider.disabled = linked;
+    if (!linked) { slider.title = ''; continue; }
+    const value = numbers[name] ?? 1;
+    if (value) slider.value = String(indexE24(Math.abs(value)));
+    slider.title = `${name} = ${links()[name]} = ${Number(value.toPrecision(4))}`;
   }
 }
 
@@ -59607,7 +60902,11 @@ function annotateGraph() {
   // The numbers the symbols were drawn with, under the legend.
   const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];
   // One coefficient a line, left-aligned under the trace names.
-  const values = used.map((name) => `${symbolText(name)} = ${Number((coefficients()[name] ?? 1).toPrecision(4))}`).join('\n');
+  const numbers = resolved();
+  const linkTex = (name) => {
+    try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
+  };
+  const values = used.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
   // Under the drawing, at its left edge.
   const bounds = editor.circuit.bounds();
   const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
@@ -59657,22 +60956,43 @@ function renderResults() {
   }
   for (const entry of latest.entries) {
     const block = el('div', { class: 'analysis-equation signal-flow-entry' });
+    if (entry.sampled) {
+      // Through a sampler the result is numbers: worked out again at the
+      // coefficients below, so it follows the sliders.
+      const shown = sampledEquation(entry, valuesFor(entry.value, latest.variable));
+      block.append(mathRow(`From ${entry.inputName}, at the coefficients below`, shown.equation));
+      if (shown.mixed) block.append(el('p', { class: 'field-hint', text: `${entry.inputName} is continuous: its path to the sampler stays in s (s = jω, z = e^jωT): a tone in at f comes out at f, images aside.` }));
+      if (shown.zeros?.length) block.append(rootRow('Zeros', shown.zeros, 'z'));
+      if (shown.poles?.length) block.append(rootRow(shown.mixed ? 'Poles of the sampled loop' : 'Poles', shown.poles, 'z'));
+      if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole lies outside the unit circle: the sampled loop is unstable at these numbers, whatever the magnitude plot shows.' }));
+      appendTraceButton(block, entry);
+      host.append(block);
+      continue;
+    }
     block.append(mathRow(`From ${entry.inputName}`, entry.equation));
     // Symbolic results show their roots at the coefficients' numbers.
-    const symbolic = entry.poles === null || entry.zeros === null;
+    if (entry.delayed) {
+      block.append(el('div', { class: 'analysis-equation-row' }, [
+        el('div', { class: 'analysis-equation-label', text: 'Poles and zeros' }),
+        el('div', { class: 'signal-flow-roots', text: 'infinitely many, from the delay; the graph is exact' }),
+      ]));
+    }
+    const symbolic = !entry.delayed && (entry.poles === null || entry.zeros === null);
     const roots = symbolic ? numericRootsOf(numeric(entry.value, latest.variable)) : entry;
     const at = symbolic ? ' at the coefficients below' : '';
     if (roots.zeros?.length) block.append(rootRow('Zeros', roots.zeros, latest.variable, at));
     if (roots.poles?.length) block.append(rootRow('Poles', roots.poles, latest.variable, at));
-    {
-      const id = `${latest.output.key}\n${entry.input}\n${entry.equation}`;
-      const plotted = traces.some((trace) => trace.id === id);
-      block.append(el('div', { class: 'signal-flow-entry-actions' }, [
-        el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderCoefficients(); renderGraph(); renderResults(); } }),
-      ]));
-    }
+    appendTraceButton(block, entry);
     host.append(block);
   }
+}
+
+function appendTraceButton(block, entry) {
+  const id = `${latest.output.key}\n${entry.input}\n${entry.equation}`;
+  const plotted = traces.some((trace) => trace.id === id);
+  block.append(el('div', { class: 'signal-flow-entry-actions' }, [
+    el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderCoefficients(); renderGraph(); renderResults(); } }),
+  ]));
 }
 
 function rootRow(label, roots, variable, at = '') {
@@ -59684,7 +61004,7 @@ function rootRow(label, roots, variable, at = '') {
 }
 
 function derive() {
-  latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources });
+  latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
   // Each new response joins the graph, beside those already there.
@@ -59704,7 +61024,9 @@ function annotate() {
   const ids = [];
   commit(() => {
     for (const entry of latest.entries) {
-      const label = editor.circuit.addLabel({ text: `$${entry.equation}$`, x: 0, y: 0, align: 'left', math: true });
+      // A sampled result is written at the numbers it is shown with.
+      const equation = entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation;
+      const label = editor.circuit.addLabel({ text: `$${equation}$`, x: 0, y: 0, align: 'left', math: true });
       const box = label.bbox();
       label.moveTo(snap(left + box.w / 2), snap(top + box.h / 2));
       top = label.bbox().y + label.bbox().h + GRID;
@@ -59741,7 +61063,7 @@ function installSignalFlowUi() {
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
-      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value.' }),
+      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value -- or = b_1 (= 2*b_1, = T/2) to make one follow others.' }),
     ]),
     el('div', { class: 'signal-flow-graph', hidden: true }),
     el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
@@ -61656,7 +62978,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', gain: 'Gain',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', gain: 'Gain', sampler: 'Sampler (s to z)',
 };
 
 const PLACEMENT_ALIASES = {
@@ -61721,6 +63043,7 @@ const PLACEMENT_ALIASES = {
   filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
   gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
+  sampler: ['sampler', 'sample', 'switch', 'quantizer', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
 };

@@ -140,3 +140,34 @@ export const gain = defineSymbol({
   defaultValue: 'k',
   allowFloatingTerminals: true,
 });
+
+/**
+ * A sampler: the switch that reads a continuous signal at t = nT, turning
+ * an s-domain signal into a z-domain one (a quantizer's sampling in a
+ * continuous-time modulator). Its value is the period T, drawn beside it.
+ * The way back, z to s, needs no part: an H(s) block reading a sampled
+ * signal is the DAC, its H(s) the pulse each sample makes.
+ */
+export const sampler = defineSymbol({
+  type: 'sampler',
+  description: 'Sampler (s to z)',
+  refPrefix: 'SMP',
+  terminals: [
+    { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+    { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -80, w: 160, h: 160 },
+  graphics: [
+    { kind: 'path', d: 'M -80 0 L -40 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M 40 0 L 80 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M -40 0 L 21.3 -51.4', style: 'symbol' },
+    // The arrow round the pivot, across the arm: it closes once a period.
+    { kind: 'path', d: 'M -30.3 -55.1 A 56 56 0 0 1 11.9 -21', style: 'symbol', fill: 'none' },
+    { kind: 'polygon', points: [{ x: 16.8, y: -8.9 }, { x: 17.9, y: -23.4 }, { x: 5.9, y: -18.6 }], fill: 'foreground' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: 'T',
+  allowFloatingTerminals: true,
+});
