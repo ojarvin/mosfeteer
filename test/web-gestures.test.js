@@ -170,7 +170,7 @@ test('editor gestures are wired through the shared draft, history, and menus', a
   assert.match(main, /if \(placed\.length === 1\) spliceIfOnWire\(placed\[0\]\);/);
   assert.match(main, /if \(!moveDrag\.detached && refs\.length === 1\) spliceIfOnWire\(/);
   // The context menu waits for the release while a right press is undecided.
-  assert.match(main, /if \(drag\?\.mode === 'radialpending' \|\| drag\?\.mode === 'radial'\) return;/);
+  assert.match(main, /if \(drag\?\.mode === 'radialpending' \|\| drag\?\.mode === 'radial' \|\| drag\?\.contextOnRelease\) return;/);
   assert.match(main, /drag\.mode === 'radialpending'\) \{\s*window\.clearTimeout\(drag\.holdTimer\);\s*drag = null;\s*suppressContextMenuUntil/);
   // Ctrl/Cmd-drag copies preview inside a transaction and keep the clipboard.
   assert.match(main, /const savedClipboard = clipboard;[\s\S]{0,300}pasteClipboard\(\{ recordHistory: false, connect: false \}\);[\s\S]{0,40}clipboard = savedClipboard;/);
@@ -256,6 +256,12 @@ test('right-hold menus fit what is under the press', async () => {
   assert.match(main, /drag\.mode === 'radialpending' && Math\.hypot\(dx, dy\) > 10\) \{[\s\S]*?mode: 'zoom'/);
   assert.doesNotMatch(main, /radialpending' && Math\.hypot\(dx, dy\) > 10\) openRadialMenu/);
   assert.match(main, /openRadialMenu\(drag\);\s*\}, 320\);/);
+  // A right press elsewhere (a label) zooms on a drag and opens the context
+  // menu only on a release that did not drag, never on the press.
+  assert.match(main, /mode: 'zoom', startClient, startWorld, moved: false, rubber: null, contextOnRelease: true/);
+  assert.match(main, /else if \(drag\.contextOnRelease\) \{[\s\S]*?openContextMenuAt\(ev\.clientX, ev\.clientY\);/);
+  const contextMenu = readFileSync(new URL('../src/web/context-menu.js', import.meta.url), 'utf8');
+  assert.match(contextMenu, /editor\.drag\?\.contextOnRelease\) return;/);
   // The paper palette keeps its places; each sector has variants.
   const palette = radial.slice(radial.indexOf('const PALETTE = ['), radial.indexOf('];', radial.indexOf('const PALETTE = [')));
   for (const type of ['nmos', 'resistor', 'capacitor', 'current_source', 'ground', 'supply', 'vcm', 'port', 'opamp', 'pmos']) assert.match(palette, new RegExp(`part\\('${type}'`));

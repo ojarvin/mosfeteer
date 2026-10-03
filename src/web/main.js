@@ -4355,7 +4355,10 @@ function canvasMouseDown(ev) {
       }, 320);
       return;
     }
-    drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
+    // Anywhere else (a label, or while a wire or placement is pending) a right
+    // press is a tap or a zoom box: like the radial targets, the context menu
+    // waits for a release that did not drag.
+    drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null, contextOnRelease: true };
     return;
   }
   if (alignTool && b === 0) {
@@ -6057,6 +6060,12 @@ function finishCanvasMouseUp(ev) {
   if (drag.mode === 'wireseg' && !drag.modal && movedOut) canvasMouseMove(ev);
   if (drag.mode === 'zoom') {
     if (drag.moved) zoomToWorldRect(worldRect(drag.startWorld, w));
+    else if (drag.contextOnRelease) {
+      drag = null;
+      suppressContextMenuUntil = Date.now() + 400;
+      openContextMenuAt(ev.clientX, ev.clientY);
+      return;
+    }
   } else if (drag.mode === 'wireseg') {
     if (drag.modal) {
       render();

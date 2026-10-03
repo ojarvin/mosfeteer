@@ -696,7 +696,7 @@ function closeStrayContextSubmenus(button) {
 export function installContextMenu() {
   canvasEl.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
-    if (editor.drag?.mode === 'radialpending' || editor.drag?.mode === 'radial') return;
+    if (editor.drag?.mode === 'radialpending' || editor.drag?.mode === 'radial' || editor.drag?.contextOnRelease) return;
     if (Date.now() < editor.suppressContextMenuUntil) return;
     openContextMenuAt(ev.clientX, ev.clientY);
   });
