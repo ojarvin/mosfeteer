@@ -41,7 +41,7 @@ function failure(code, error) {
 
 /** num/den (low power first) in controllable canonical form `{ A, B, C, D, n }`
  *  (B the last unit vector); throws when not proper. */
-function realize(num, den) {
+export function realize(num, den) {
   const trim = (list) => { const out = [...list]; while (out.length > 1 && out[out.length - 1] === 0) out.pop(); return out; };
   const d0 = trim(den);
   const n0 = trim(num);
@@ -393,8 +393,9 @@ export function prepareSimulation(circuit, options = {}) {
     return input && ci.has(input.key) ? Mc[ci.get(input.key)] : null;
   });
 
-  /** One amplitude's run. */
-  const run = (amplitudeDb) => {
+  /** One amplitude's run; `record` keeps the output's samples over the window. */
+  const run = (amplitudeDb, { record = false } = {}) => {
+    const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
     let X = new Float64Array(size);
     let next = new Float64Array(size);
@@ -443,6 +444,7 @@ export function prepareSimulation(circuit, options = {}) {
         for (let i = 0; i < disc.length; i++) { const v = Math.abs(Yd[i]); if (v > peaks[cont.length + i]) peaks[cont.length + i] = v; }
         if (outputIndex >= 0) {
           const y = outputIndex < cont.length ? Yc[outputIndex] : Yd[outputIndex - cont.length];
+          if (recorded) recorded[n - warmup] = y;
           const phase = 2 * Math.PI * frequency * (n - warmup);
           re += y * Math.cos(phase);
           im -= y * Math.sin(phase);
@@ -487,7 +489,7 @@ export function prepareSimulation(circuit, options = {}) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true };
     }
     const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
-    return { peaks: Array.from(peaks), tone, overloaded: false };
+    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}) };
   };
 
   return { ok: true, fullScale, frequency, period: T, signals: signalList, run };

@@ -18,7 +18,10 @@ import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { expressionTex } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
-import { responseFigure, swingFigure } from '../core/bode-figure.js';
+import { locusFigure, responseFigure, stepFigure, swingFigure } from '../core/bode-figure.js';
+import { stepPlot } from '../core/analysis/step.js';
+import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
+import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
 import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
@@ -153,6 +156,118 @@ function fillForm() {
     swingShown = null;
     renderSwing();
   }
+}
+
+// ----- root locus: the poles as one coefficient sweeps ----------------------------------
+
+let locus = null; // { plot, entryIndex, name }
+let locusRun = 0;
+
+function locusSection() {
+  return el('fieldset', { class: 'analysis-approximations signal-flow-locus', hidden: true }, [
+    el('legend', { text: 'Root locus' }),
+    el('div', { class: 'signal-flow-swing-controls' }, [
+      el('label', { text: 'Poles of' }), el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' }),
+      el('label', { text: 'as' }), el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() }),
+      el('label', { text: 'from' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-from', 'aria-label': 'Sweep from' }),
+      el('label', { text: 'to' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-to', 'aria-label': 'Sweep to' }),
+      el('button', { type: 'button', text: 'Sweep', onclick: () => runLocus() }),
+    ]),
+    el('p', { class: 'field-hint signal-flow-locus-status', 'aria-live': 'polite' }),
+    el('div', { class: 'signal-flow-locus-plot' }),
+  ]);
+}
+
+/** The results and coefficients to choose from, after each derive. */
+function fillLocus() {
+  const host = section.querySelector('.signal-flow-locus');
+  const ready = latest?.ok && latest.entries.length && currentSymbols().length;
+  host.hidden = !ready;
+  if (!ready) return;
+  const entrySelect = host.querySelector('.signal-flow-locus-entry');
+  const previous = entrySelect.value;
+  entrySelect.replaceChildren(...latest.entries.map((entry, i) => el('option', { value: String(i), text: `from ${String(entry.inputName).replace(/[{}]/g, '')}` })));
+  if ([...entrySelect.options].some((o) => o.value === previous)) entrySelect.value = previous;
+  const nameSelect = host.querySelector('.signal-flow-locus-name');
+  const name = nameSelect.value;
+  nameSelect.replaceChildren(...currentSymbols().map((symbol) => el('option', { value: symbol, text: symbol })));
+  if (currentSymbols().includes(name)) nameSelect.value = name;
+  else fillLocusRange();
+}
+
+/** A decade either side of the coefficient's number. */
+function fillLocusRange() {
+  const host = section.querySelector('.signal-flow-locus');
+  const name = host.querySelector('.signal-flow-locus-name').value;
+  const value = resolved()[name] ?? 1;
+  const base = value || 1;
+  host.querySelector('.signal-flow-locus-from').value = String(Number((base / 10).toPrecision(3)));
+  host.querySelector('.signal-flow-locus-to').value = String(Number((base * 10).toPrecision(3)));
+}
+
+/** Sweep, a few steps a frame, then draw. */
+function runLocus() {
+  const host = section.querySelector('.signal-flow-locus');
+  const status = host.querySelector('.signal-flow-locus-status');
+  const entry = latest?.entries?.[Number(host.querySelector('.signal-flow-locus-entry').value)];
+  const name = host.querySelector('.signal-flow-locus-name').value;
+  const from = fraction(host.querySelector('.signal-flow-locus-from').value);
+  const to = fraction(host.querySelector('.signal-flow-locus-to').value);
+  const ks = locusSteps(from, to);
+  if (!entry || !name || !ks.length || Math.sign(from) !== Math.sign(to)) {
+    status.textContent = 'Pick a result and a coefficient, and a range from one number to another of the same sign.';
+    return;
+  }
+  // The coefficient at k, everything else (and what links to it) following.
+  const valuesAt = (k) => {
+    const own = { ...coefficients(), [name]: k };
+    const numbers = resolveCoefficients(own, Object.fromEntries(Object.entries(links()).filter(([key]) => key !== name)));
+    const values = {};
+    for (const symbol of resultSymbols(entry.value, latest.variable)) values[symbol] = numbers[symbol] ?? 1;
+    return values;
+  };
+  const cache = new Map();
+  const evaluate = (k) => {
+    if (!cache.has(k)) cache.set(k, withCoefficients(entry.value, valuesAt(k)));
+    return cache.get(k);
+  };
+  const run = ++locusRun;
+  let index = 0;
+  const step = () => {
+    if (run !== locusRun) return;
+    const started = performance.now();
+    while (index < ks.length && performance.now() - started < 30) evaluate(ks[index++]);
+    if (index < ks.length) {
+      status.textContent = `Sweeping ${name}... ${index} of ${ks.length}`;
+      requestAnimationFrame(step);
+      return;
+    }
+    const current = resolved()[name] ?? 1;
+    const result = rootLocus(evaluate, { ks, current });
+    if (!result) {
+      status.textContent = 'This result has no numeric poles to follow (a delay, or a continuous input through a sampler).';
+      locus = null;
+    } else {
+      locus = { plot: locusPlot(result, { parameter: symbolText(name), label: entry.label, color: TRACE_COLORS[0] }) };
+      status.textContent = result.crossings.length
+        ? `${result.crossings.map((c, i) => `${i ? 'then ' : ''}${c.becomes} at ${name} = ${Number(c.k.toPrecision(3))}`).join(', ').replace(/^./, (m) => m.toUpperCase())}.`
+        : `${unstableNow(result) ? 'Unstable' : 'Stable'} across the whole sweep, ${from} to ${to}.`;
+    }
+    renderLocus();
+  };
+  step();
+}
+
+const unstableNow = (result) => result.steps[0].poles.some((p) => (result.variable === 'z' ? Math.hypot(p.re, p.im) > 1 + 1e-9 : p.re > 1e-9));
+
+function renderLocus() {
+  const host = section.querySelector('.signal-flow-locus-plot');
+  host.replaceChildren();
+  if (!locus?.plot) return;
+  host.append(figureSvg(locusFigure(locus.plot, { width: 400, height: 260, fontSize: 11 }), 'Root locus'));
+  host.append(el('div', { class: 'signal-flow-graph-actions' }, [
+    el('button', { type: 'button', text: 'Annotate locus', title: 'Put this root locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
+  ]));
 }
 
 // ----- swing: each net's peak against the input amplitude ------------------------------
@@ -359,6 +474,7 @@ function coefficientsChanged() {
     renderGraph();
     renderResults();
     swingCoefficientsChanged();
+    if (flow().spectrum?.on) { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(runSpectrum, 350); }
   });
 }
 
@@ -489,7 +605,8 @@ function svgText(item, fontSize) {
 
 /** The graph in the panel: the same layout the drawing gets, in the theme's colours. */
 function graphSvg(plot) {
-  return figureSvg(responseFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Magnitude responses');
+  if (plot.kind === 'step') return figureSvg(stepFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Step responses');
+  return figureSvg(responseFigure(plot, { width: 400, height: 220, fontSize: 11 }), plot.quantity === 'phase' ? 'Phase responses' : 'Magnitude responses');
 }
 
 function figureSvg(figure, title) {
@@ -507,6 +624,13 @@ function figureSvg(figure, title) {
       node = document.createElementNS(SVG_NS, 'path');
       node.setAttribute('d', item.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' '));
       if (item.color) node.style.stroke = item.color;
+    } else if (item.type === 'dot') {
+      node = document.createElementNS(SVG_NS, 'circle');
+      node.setAttribute('cx', item.x);
+      node.setAttribute('cy', item.y);
+      node.setAttribute('r', item.r || 2);
+      node.style.fill = item.color || 'currentColor';
+      if (item.opacity !== undefined) node.style.fillOpacity = item.opacity;
     } else if (item.type === 'text') node = svgText(item, 11);
     if (!node) continue;
     node.classList.add(`role-${item.role}`);
@@ -518,7 +642,77 @@ function figureSvg(figure, title) {
 // The axis s results plot on: ω in the coefficients' units, or f/fs with s
 // in units of 1/Ts (saved with the document). A z result puts every trace on f/fs.
 const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
-const graphPlot = (list) => responsePlot(list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band });
+// What the graph shows (saved with the document): magnitude, phase, or the step response.
+const graphView = () => flow().graphView || 'magnitude';
+const graphPlot = (list) => {
+  const numbered = list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) }));
+  if (graphView() === 'step') return stepPlot(numbered);
+  // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
+  // as the noise it predicts, each STF as where the tone would sit.
+  const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: '#8a8f99', points: spectrum.points }] : [];
+  const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
+  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: graphView(), background, dbfs });
+};
+
+// ----- the simulated output's spectrum, behind the curves --------------------------------
+
+let spectrum = null; // { points (plotted), raw, frequency, amplitude } or { error }
+let spectrumTimer = 0;
+
+/** The checkbox and amplitude for the spectrum, and what it measured in band. */
+function spectrumControls() {
+  const settings = flow().spectrum || {};
+  const check = el('input', { type: 'checkbox', 'aria-label': 'Simulated output spectrum' });
+  check.checked = !!settings.on;
+  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field', value: settings.amplitude ?? '-6', 'aria-label': 'Sine amplitude, dBFS' });
+  const save = () => {
+    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6' };
+    markSettingsChanged();
+    runSpectrum();
+  };
+  check.addEventListener('change', save);
+  amplitude.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
+  amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
+    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS' }),
+    el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
+  ]);
+}
+
+function spectrumStatus() {
+  if (!spectrum) return '';
+  if (spectrum.error) return spectrum.error;
+  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
+  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)})` : 'set a band for its SNDR';
+}
+
+/** Simulate one run with the swing's source and frequency, and take its output's spectrum. */
+function runSpectrum() {
+  const settings = flow().spectrum || {};
+  if (!settings.on) {
+    spectrum = null;
+    renderGraph();
+    return;
+  }
+  const amplitude = Number(settings.amplitude ?? -6);
+  const numbers = resolved();
+  const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
+  const { sources } = signalFlowGraph(editor.circuit);
+  const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer)?.id;
+  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency: swingFrequency(), samples: 16384 });
+  if (!sim.ok) spectrum = { error: sim.error };
+  else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
+  else {
+    const run = sim.run(amplitude, { record: true });
+    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples);
+    spectrum = raw
+      ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale }
+      : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
+  }
+  redrawGraphPlot();
+  const status = section.querySelector('.signal-flow-spectrum-status');
+  if (status) status.textContent = spectrumStatus();
+}
 const shownTraces = () => traces.filter((trace) => trace.on);
 
 /** Redraw the graph's plot alone, its controls left as they are. */
@@ -551,6 +745,8 @@ function bandControls() {
       markSettingsChanged();
       redrawGraphPlot();
       renderResults();
+      const status = section.querySelector('.signal-flow-spectrum-status');
+      if (status) status.textContent = spectrumStatus();
     });
     // Enter applies the field, not a derive.
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
@@ -571,7 +767,7 @@ function addTrace(entry, variable, output) {
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
-  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true });
+  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer });
 }
 
 function renderGraph() {
@@ -580,11 +776,17 @@ function renderGraph() {
   const plot = traces.length ? graphPlot(shownTraces()) : null;
   host.hidden = !traces.length;
   if (!traces.length) return;
-  const head = el('div', { class: 'signal-flow-graph-head' }, [el('div', { class: 'analysis-equation-label', text: 'Magnitude' })]);
+  const view = graphView();
+  const viewButton = (value, text, title) => el('button', { type: 'button', text, title, 'aria-pressed': String(view === value), onclick: () => { flow().graphView = value; markSettingsChanged(); renderGraph(); } });
+  const head = el('div', { class: 'signal-flow-graph-head' }, [el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Graph' }, [
+    viewButton('magnitude', 'Magnitude', 'The magnitude responses, in dB'),
+    viewButton('phase', 'Phase', 'The phase responses, in degrees'),
+    viewButton('step', 'Step', 'The step responses: overshoot and settling (a sampled result in samples)'),
+  ])]);
   // With an s result on it, the frequency axis is a choice: ω in the
   // coefficients' units, or f/fs reading s in units of 1/Ts (as a
   // continuous-time loop filter normalized to its sample rate is written).
-  if (traces.some((trace) => trace.variable === 's')) {
+  if (view !== 'step' && traces.some((trace) => trace.variable === 's')) {
     const forced = traces.some((trace) => trace.variable === 'z');
     const choose = (value) => {
       editor.circuit.analysisValues.sAxis = value === 'normalized' ? 'normalized' : undefined;
@@ -601,9 +803,10 @@ function renderGraph() {
     ]));
   }
   host.append(head);
-  host.append(bandControls());
+  if (view !== 'step') host.append(bandControls());
+  if (view === 'magnitude') host.append(spectrumControls());
   if (plot) host.append(graphSvg(plot));
-  else host.append(el('p', { class: 'field-hint', text: 'Check a trace below to plot it.' }));
+  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay, or a continuous input through a sampler).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
@@ -652,7 +855,8 @@ function placePlot(plot, shown, used) {
   // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
   const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
-  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind);
+  // The same kind of plot (a response graph also of the same quantity).
+  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind && (label.plot.quantity || '') === (plot.quantity || ''));
   const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
   const target = chosen || (plots.length === 1 ? plots[0] : null);
   // The same numbers beside another plot already: not twice.
@@ -796,6 +1000,8 @@ function derive() {
   renderCoefficients();
   renderResults();
   renderGraph();
+  fillLocus();
+  if (flow().spectrum?.on && latest.ok) runSpectrum();
   if (!latest.ok) logLine(`Signal-flow analysis: ${latest.error}`, 'error');
 }
 
@@ -851,6 +1057,7 @@ export function installSignalFlowUi() {
       pasteCoefficients(),
     ]),
     el('div', { class: 'signal-flow-graph', hidden: true }),
+    locusSection(),
     swingSection(),
     el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
   ]);

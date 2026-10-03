@@ -964,6 +964,8 @@ export function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
   if (plot.kind === 'response') return normalizeResponsePlot(plot);
   if (plot.kind === 'swing') return normalizeSwingPlot(plot);
+  if (plot.kind === 'step') return normalizeStepPlot(plot);
+  if (plot.kind === 'locus') return normalizeLocusPlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   const points = (Array.isArray(plot.points) ? plot.points : [])
@@ -1024,6 +1026,8 @@ export function normalizeAnalysisValues(value) {
     sources: Object.fromEntries(Object.entries(rawFlow.sources || {}).filter(([k, v]) => k.length <= 200 && (['input', 'zero'].includes(v) || (v && typeof v === 'object' && typeof v.constant === 'string'))).map(([k, v]) => [k, typeof v === 'object' ? { constant: v.constant.slice(0, 100) } : v])),
     swingInput: text(rawFlow.swingInput),
     swingFrequency: text(rawFlow.swingFrequency),
+    ...(['phase', 'step'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
+    ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
   } : null;
   return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
 }
@@ -1035,7 +1039,7 @@ function analysisValuesJSON(values) {
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
   const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
-  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency) ? values.flow : null;
+  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum) ? values.flow : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
@@ -1053,16 +1057,55 @@ function normalizeResponsePlot(plot) {
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   if (!finite(low) || !finite(high) || high <= low || high - low > MAX_PLOT_DECADES) return null;
-  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 9).map((trace) => ({
     label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
     color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    // A simulated spectrum drawn behind the curves.
+    ...(trace?.background ? { background: true } : {}),
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db))
       .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}) };
+}
+
+/** A root-locus plot (signal-flow analysis): the swept poles, the current ones. */
+function normalizeLocusPlot(plot) {
+  const point = (p) => finite(p?.re) && finite(p?.im);
+  const points = (Array.isArray(plot.points) ? plot.points : []).filter(point).slice(0, 6000)
+    .map((p) => ({ re: round(p.re, 5), im: round(p.im, 5), t: finite(p.t) ? Math.max(0, Math.min(1, round(p.t, 3))) : 1 }));
+  if (!points.length) return null;
+  const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  return {
+    kind: 'locus',
+    variable: plot.variable === 'z' ? 'z' : 's',
+    parameter: text(plot.parameter, 60) || 'k',
+    label: text(plot.label, 400),
+    color: /^#[0-9a-f]{6}$/i.test(plot.color || '') ? plot.color : '#3b74e0',
+    from: finite(plot.from) ? plot.from : 1,
+    to: finite(plot.to) ? plot.to : 1,
+    points,
+    current: (Array.isArray(plot.current) ? plot.current : []).filter(point).slice(0, 64).map((p) => ({ re: round(p.re, 5), im: round(p.im, 5) })),
+    crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
+  };
+}
+
+/** A step-response plot (signal-flow analysis): coloured traces of output
+ *  against time (samples, or the coefficients' time), sampled ones as stairs. */
+function normalizeStepPlot(plot) {
+  const low = Number(plot.range?.low);
+  const high = Number(plot.range?.high);
+  if (!finite(low) || !finite(high) || high <= low) return null;
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+    label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    ...(trace?.stairs ? { stairs: true } : {}),
+    points: (Array.isArray(trace?.points) ? trace.points : []).filter((p) => finite(p?.t) && finite(p?.y)).slice(0, 4000).map((p) => ({ t: round(p.t, 6), y: round(p.y, 6) })),
+  })).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  return { kind: 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
 }
 
 /** A swing plot (signal-flow simulation): coloured traces of each net's

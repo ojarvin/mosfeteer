@@ -202,6 +202,38 @@ white with variance 1/3 (levels 2 apart) over f/fs in (-1/2, 1/2), shaped by
 |NTF|^2 in band -- 30 log OSR - 3.4 dB for a single-bit first-order loop,
 50 log OSR - 11.1 dB for a second-order one.
 
+The graph shows **Magnitude**, **Phase**, or **Step** (saved with the
+document). Phase is in degrees on the same frequency axis. The step
+response comes from the same transfer function (`step.js`): a z result by its
+difference equation, in samples, drawn as stairs; an s result exactly,
+through a state-space realization and matrix exponentials, its time in the
+coefficients' units or, on f/fs, in sample periods, so s and z results share
+the axis; an s result's delays shift its delayed terms. A loop holding a
+delay, or a continuous input through a sampler, has no step response here.
+
+**Simulated output spectrum** (magnitude view): one swing-simulation run at
+an amplitude (the swing's source and frequency, 16384 samples) Hann-windowed
+and drawn behind the analytic curves (`spectrum.js`). The graph is then one
+plot in the spectrum's units, dBFS per bin (a full-scale sine reads 0 dBFS;
+white noise its power in the window's noise bandwidth): each NTF (a
+quantizer's error) is moved to the noise level it predicts, white error of
+variance 1/3 (Schreier's levels) shaped by |NTF|^2, so it lies on the
+simulated floor; each STF (a real input) to where the tone would sit, the
+amplitude in dBFS plus |STF| in dB, so it runs through the tone's peak.
+With a band, the simulated SNDR and ENOB beside the predicted SQNR.
+
+**Root locus** (`locus.js`): a result's poles as one coefficient sweeps,
+logarithmically from a decade below its number to a decade above by default,
+the rest at their numbers (a coefficient linked to it follows it). Drawn in
+the complex plane, light to dark as the coefficient grows, with the unit
+circle (z, the view kept near it) or the jω axis (s) and the current poles
+as crosses; it names where the loop becomes stable or unstable.
+
+Selecting several plots on the drawing and dragging one's handle resizes
+them all alike, each from its own corner; a plot below (or right of)
+another selected one moves on by its growth, so a column of plots keeps its
+spacing.
+
 Annotating a graph or a swing again updates the plot of that kind already
 on the drawing -- the selected one, else the only one -- keeping its place,
 size, and style and swapping its data and legend (labels of role

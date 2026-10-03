@@ -3936,6 +3936,80 @@ function expressionHasFrequency(value, seen = new Set()) {
 
 };
 
+__modules["src/core/analysis/locus.js"] = function (__require, __exports) {
+__exports.locusSteps = locusSteps;
+__exports.rootLocus = rootLocus;
+__exports.locusPlot = locusPlot;
+let numericRootsOf; __bind(() => { ({ numericRootsOf } = __require("src/core/analysis/signal-flow.js")); });
+/**
+ * Root locus against one coefficient: a result's poles as that coefficient
+ * sweeps (logarithmically, its sign kept), the rest at their numbers -- "at
+ * what k_1 does this loop go unstable?". In z the stability boundary is the
+ * unit circle, in s the j omega axis.
+ */
+
+
+
+const unstable = (variable, poles) => poles.some((p) => (variable === 'z' ? Math.hypot(p.re, p.im) > 1 + 1e-9 : p.re > 1e-9));
+
+/**
+ * `evaluate(k)` gives the number-valued result with the coefficient at k.
+ * Returns `{ variable, steps: [{ k, poles }], current: { k, poles },
+ * crossings: [{ k, becomes: 'unstable' | 'stable' }] }`, or null when the
+ * result has no numeric poles.
+ */
+/** The values a sweep from `from` to `to` takes: logarithmic, the sign kept. */
+function locusSteps(from, to, steps = 120) {
+  const sign = Math.sign(from || to || 1) || 1;
+  const a = Math.log(Math.abs(from));
+  const b = Math.log(Math.abs(to));
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) return [];
+  return Array.from({ length: steps + 1 }, (_, i) => sign * Math.exp(a + ((b - a) * i) / steps));
+}
+
+function rootLocus(evaluate, { from, to, current, steps = 120, ks = locusSteps(from, to, steps) } = {}) {
+  if (!ks.length) return null;
+  const out = [];
+  let variable = null;
+  for (const k of ks) {
+    const value = evaluate(k);
+    const roots = value && value.kind !== 'mixed' ? numericRootsOf(value) : null;
+    if (!roots?.poles) continue;
+    variable = value.variable;
+    out.push({ k, poles: roots.poles });
+  }
+  if (!out.length) return null;
+  const currentValue = current !== undefined ? evaluate(current) : null;
+  const currentPoles = currentValue && currentValue.kind !== 'mixed' ? numericRootsOf(currentValue).poles : null;
+  const crossings = [];
+  for (let i = 1; i < out.length; i++) {
+    const before = unstable(variable, out[i - 1].poles);
+    const after = unstable(variable, out[i].poles);
+    if (before !== after) crossings.push({ k: out[i].k, becomes: after ? 'unstable' : 'stable' });
+  }
+  return { variable, steps: out, current: currentPoles ? { k: current, poles: currentPoles } : null, crossings };
+}
+
+/** The locus as a plot annotation keeps it: points coloured by their k. */
+function locusPlot(locus, { parameter, label, color = '#3b74e0' } = {}) {
+  if (!locus) return null;
+  const n = locus.steps.length;
+  return {
+    kind: 'locus',
+    variable: locus.variable,
+    parameter: parameter || 'k',
+    label: label || '',
+    color,
+    from: locus.steps[0].k,
+    to: locus.steps[n - 1].k,
+    points: locus.steps.flatMap((step, i) => step.poles.map((p) => ({ re: p.re, im: p.im, t: n > 1 ? i / (n - 1) : 0 }))),
+    current: locus.current ? locus.current.poles.map((p) => ({ re: p.re, im: p.im })) : [],
+    crossings: locus.crossings,
+  };
+}
+
+};
+
 __modules["src/core/analysis/miller.js"] = function (__require, __exports) {
 __exports.applyMillerApproximation = applyMillerApproximation;
 let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
@@ -11249,7 +11323,11 @@ function bandSqnr(ntf, levels, band) {
   return noise > 0 ? 10 * Math.log10(signal / noise) : Infinity;
 }
 
-function responsePlot(traces, variable, { sAxis = 'omega', band = null } = {}) {
+/** `quantity` 'phase' plots each trace's phase (degrees) in place of its
+ *  magnitude (dB), on the same frequency axis. */
+/** `dbfs`, with a simulated spectrum: `{ offset(trace) }`, each trace's |H|
+ *  moved into the spectrum's dBFS (a noise level, or a tone's level). */
+function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
   const curves = withVariable
@@ -11269,11 +11347,20 @@ function responsePlot(traces, variable, { sAxis = 'omega', band = null } = {}) {
     axis: curveAxis,
     range: { low, high: Math.max(high, low + 1) },
     ...(edges.length ? { band: edges } : {}),
-    traces: curves.map(({ trace, curve }) => ({
-      label: trace.label,
-      color: trace.color,
-      points: curve.points.map(({ f, db }) => ({ f, db })),
-    })),
+    ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
+    ...(dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? { units: 'dBFS' } : {}),
+    traces: [
+      // Behind the curves: a simulated output's spectrum, on f/fs.
+      ...(quantity !== 'phase' && curveAxis === 'normalized' ? background : []).map((trace) => ({ ...trace, background: true, points: trace.points.filter((p) => p.f <= 0.5) })),
+      ...curves.map(({ trace, curve }) => {
+        const offset = dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? dbfs.offset(trace) : 0;
+        return {
+          label: trace.label,
+          color: trace.color,
+          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : db + offset })),
+        };
+      }),
+    ],
   };
 }
 
@@ -11352,6 +11439,7 @@ __exports.TRACE_COLORS = TRACE_COLORS;
 
 __modules["src/core/analysis/simulate.js"] = function (__require, __exports) {
 __exports.quantize = quantize;
+__exports.realize = realize;
 __exports.prepareSimulation = prepareSimulation;
 __exports.sweepAmplitudes = sweepAmplitudes;
 let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients; __bind(() => { ({ blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
@@ -11754,8 +11842,9 @@ function prepareSimulation(circuit, options = {}) {
     return input && ci.has(input.key) ? Mc[ci.get(input.key)] : null;
   });
 
-  /** One amplitude's run. */
-  const run = (amplitudeDb) => {
+  /** One amplitude's run; `record` keeps the output's samples over the window. */
+  const run = (amplitudeDb, { record = false } = {}) => {
+    const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
     let X = new Float64Array(size);
     let next = new Float64Array(size);
@@ -11804,6 +11893,7 @@ function prepareSimulation(circuit, options = {}) {
         for (let i = 0; i < disc.length; i++) { const v = Math.abs(Yd[i]); if (v > peaks[cont.length + i]) peaks[cont.length + i] = v; }
         if (outputIndex >= 0) {
           const y = outputIndex < cont.length ? Yc[outputIndex] : Yd[outputIndex - cont.length];
+          if (recorded) recorded[n - warmup] = y;
           const phase = 2 * Math.PI * frequency * (n - warmup);
           re += y * Math.cos(phase);
           im -= y * Math.sin(phase);
@@ -11848,7 +11938,7 @@ function prepareSimulation(circuit, options = {}) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true };
     }
     const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
-    return { peaks: Array.from(peaks), tone, overloaded: false };
+    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}) };
   };
 
   return { ok: true, fullScale, frequency, period: T, signals: signalList, run };
@@ -12161,6 +12251,297 @@ function withAliases(solved, system) {
     values,
     solution: values,
     byVariable: columns.map((column) => new Map(variables.map((name, index) => [name, column[index]]))),
+  };
+}
+
+};
+
+__modules["src/core/analysis/spectrum.js"] = function (__require, __exports) {
+__exports.outputSpectrum = outputSpectrum;
+__exports.dbfsSpectrum = dbfsSpectrum;
+__exports.dbfsOffset = dbfsOffset;
+__exports.inBand = inBand;
+__exports.plotSpectrum = plotSpectrum;
+/**
+ * The spectrum of a simulated output (the swing simulation's samples), on
+ * the response graph behind the analytic curves: Hann-windowed, and scaled
+ * so white quantization error -- variance 1/3, Schreier's levels 2 apart --
+ * reads 0 dB, so a quantizer's shaped error lands on its |NTF| curve and the
+ * input tone stands up as a peak. With a band, the simulated SNDR and ENOB.
+ */
+
+/** An in-place radix-2 FFT of `re`/`im` (length a power of two). */
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let size = 2; size <= n; size <<= 1) {
+    const step = (-2 * Math.PI) / size;
+    for (let start = 0; start < n; start += size) {
+      for (let k = 0; k < size / 2; k++) {
+        const wr = Math.cos(step * k);
+        const wi = Math.sin(step * k);
+        const a = start + k;
+        const b = a + size / 2;
+        const tr = re[b] * wr - im[b] * wi;
+        const ti = re[b] * wi + im[b] * wr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti;
+        re[a] += tr; im[a] += ti;
+      }
+    }
+  }
+}
+
+/**
+ * `samples` (length a power of two). Returns `{ points: [{ f, db }] }` for
+ * f/fs from 1/N to 1/2, scaled so white noise of variance `variance` reads
+ * 0 dB, and the raw powers for `inBand`.
+ */
+function outputSpectrum(samples, { variance = 1 / 3 } = {}) {
+  const n = samples.length;
+  if (n < 16 || (n & (n - 1))) return null;
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  let w2 = 0;
+  for (let i = 0; i < n; i++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
+    re[i] = samples[i] * w;
+    w2 += w * w;
+  }
+  fft(re, im);
+  const power = Array.from({ length: n / 2 + 1 }, (_, k) => re[k] ** 2 + im[k] ** 2);
+  const scale = variance * w2;
+  let w1 = 0;
+  for (let i = 0; i < n; i++) w1 += 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
+  const points = [];
+  for (let k = 1; k <= n / 2; k++) points.push({ f: k / n, db: 10 * Math.log10(power[k] / scale || 1e-30) });
+  return { points, power, n, w1, w2, variance };
+}
+
+/**
+ * The spectrum in dBFS per bin: a full-scale sine (amplitude `fullScale`)
+ * reads 0 dBFS in its bin -- the window's coherent gain taken out, so white
+ * noise reads its power in the window's noise bandwidth (dBFS/NBW).
+ */
+function dbfsSpectrum(spectrum, fullScale) {
+  const reference = (fullScale * spectrum.w1 / 2) ** 2;
+  return spectrum.power.slice(1).map((p, i) => ({ f: (i + 1) / spectrum.n, db: 10 * Math.log10(p / reference || 1e-30) }));
+}
+
+/**
+ * What a result predicts the spectrum shows, in the same dBFS: a
+ * quantizer's error through its NTF is white noise of `variance` shaped by
+ * |NTF|^2, per bin; an input's tone at `amplitude` dBFS through its STF sits
+ * at amplitude + |STF| dB. Returns the dB offset to add to |H| in dB.
+ */
+function dbfsOffset(spectrum, fullScale, { noise, amplitude }) {
+  if (!noise) return amplitude;
+  return 10 * Math.log10((spectrum.variance * spectrum.w2) / ((fullScale * spectrum.w1 / 2) ** 2));
+}
+
+/**
+ * The simulated SNDR in band: the tone's bins (the input frequency, a Hann
+ * window spreading it over three either side) against every other bin of
+ * the band. `band` `{ f0, bw }` as bandEdges reads it; returns `{ sndr, enob }`
+ * or null.
+ */
+function inBand(spectrum, frequency, edges) {
+  if (!spectrum || !edges.length) return null;
+  const { power, n } = spectrum;
+  const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
+  const tone = Math.round(frequency * n);
+  let signal = 0;
+  let noise = 0;
+  for (let k = Math.max(1, Math.ceil(f1 * n)); k <= Math.min(n / 2, Math.floor(f2 * n)); k++) {
+    if (Math.abs(k - tone) <= 3) signal += power[k];
+    // DC and the window's spread of it are not noise.
+    else if (k > 2) noise += power[k];
+  }
+  if (!(signal > 0) || !(noise > 0)) return null;
+  const sndr = 10 * Math.log10(signal / noise);
+  return { sndr, enob: (sndr - 1.76) / 6.02 };
+}
+
+/**
+ * A spectrum for a log-frequency plot: averaged into about `bins` bins a
+ * plot can draw (the floor reads as its mean), the tone's own bins kept.
+ */
+function plotSpectrum(spectrum, frequency, { bins = 600 } = {}) {
+  if (!spectrum) return [];
+  const { points, n } = spectrum;
+  const tone = Math.round(frequency * n);
+  const low = Math.log10(points[0].f);
+  const high = Math.log10(0.5);
+  const out = [];
+  let bucket = [];
+  let edge = low;
+  const flush = () => {
+    if (!bucket.length) return;
+    const mean = bucket.reduce((sum, p) => sum + 10 ** (p.db / 10), 0) / bucket.length;
+    out.push({ f: bucket[Math.floor(bucket.length / 2)].f, db: 10 * Math.log10(mean) });
+    bucket = [];
+  };
+  for (const [index, point] of points.entries()) {
+    const k = index + 1;
+    if (Math.abs(k - tone) <= 3) { flush(); out.push(point); continue; }
+    if (Math.log10(point.f) > edge) { flush(); edge += (high - low) / bins; }
+    bucket.push(point);
+  }
+  flush();
+  return out;
+}
+
+};
+
+__modules["src/core/analysis/step.js"] = function (__require, __exports) {
+__exports.stepResponse = stepResponse;
+__exports.stepPlot = stepPlot;
+let delayTermsOf, denseCoefficients, hasDelays, numericRootsOf; __bind(() => { ({ delayTermsOf, denseCoefficients, hasDelays, numericRootsOf } = __require("src/core/analysis/signal-flow.js")); });
+let realize; __bind(() => { ({ realize } = __require("src/core/analysis/simulate.js")); });
+let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
+/**
+ * Step responses of signal-flow results, from the same transfer functions
+ * the graph plots: a z result by its difference equation (samples n), an s
+ * result exactly through a state-space realization and matrix exponentials
+ * (time in the coefficients' units, or in sample periods on f/fs, so s and z
+ * results share an axis), an s result with delays as its delayed terms'
+ * step responses shifted. A result whose loop holds a delay, or a
+ * continuous input through a sampler, has none here.
+ */
+
+
+
+
+
+const MAX_SAMPLES = 4000;
+
+/** How long a response takes to settle, from its poles: in samples (z) or
+ *  time (s); null when it never settles (a pole on or past the boundary). */
+function settlingSpan(value) {
+  const { poles } = numericRootsOf(value);
+  if (!poles?.length) return null;
+  if (value.variable === 'z') {
+    const radius = Math.max(...poles.map((p) => Math.hypot(p.re, p.im)));
+    if (radius >= 1 - 1e-9) return null;
+    return radius < 1e-6 ? 4 : Math.log(1e-3) / Math.log(radius);
+  }
+  const slowest = Math.max(...poles.map((p) => p.re));
+  if (slowest >= -1e-12) return null;
+  return Math.log(1e3) / -slowest;
+}
+
+/** A z result's step response: y[n] for n = 0 .. count - 1. */
+function zStep(value, count) {
+  const num = denseCoefficients(value.numerator, 'z');
+  const den = denseCoefficients(value.denominator, 'z');
+  if (!num || !den || num.length > den.length) return null;
+  // In powers of z^-1: H = sum b_k z^-k / sum a_k z^-k.
+  const order = den.length - 1;
+  const a = den.slice().reverse();
+  const b = Array.from({ length: order + 1 }, (_, k) => num[order - k] || 0);
+  const y = [];
+  for (let n = 0; n < count; n++) {
+    let acc = 0;
+    for (let k = 0; k <= order; k++) if (n - k >= 0) acc += b[k];
+    for (let k = 1; k <= order; k++) if (n - k >= 0) acc -= a[k] * y[n - k];
+    y.push(acc / a[0]);
+  }
+  return y;
+}
+
+/** An s rational's step response at times 0, h, 2h, ... (count samples),
+ *  exact: the state stepped with e^{[A B; 0 0] h}. */
+function sStep(num, den, h, count) {
+  const model = realize(num, den);
+  const n = model.n;
+  if (!n) return Array(count).fill(model.D);
+  const aug = Array.from({ length: n + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => {
+    if (i === n) return 0;
+    if (j === n) return i === n - 1 ? 1 : 0;
+    return model.A[i][j] * 1;
+  })).map((row) => row.map((v) => v * h));
+  const phi = expm(aug);
+  let x = new Array(n).fill(0);
+  const y = [];
+  for (let k = 0; k < count; k++) {
+    y.push(model.C.reduce((sum, c, j) => sum + c * x[j], 0) + model.D);
+    const next = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      let v = phi[i][n];
+      for (let j = 0; j < n; j++) v += phi[i][j] * x[j];
+      next[i] = v;
+    }
+    x = next;
+  }
+  return y;
+}
+
+/**
+ * A number-valued result's step response: `{ unit: 'n' | 't', points:
+ * [{ t, y }], stairs }` (stairs for a sampled one), over about the time it
+ * takes to settle (`span` overrides). `sAxis: 'normalized'` reads s in
+ * units of 1/Ts, so its time is in sample periods. Null when it has none.
+ */
+function stepResponse(value, { span = null } = {}) {
+  if (!value || value.kind === 'mixed' || !value.numerator) return null;
+  if (value.variable === 'z') {
+    const settle = settlingSpan(value);
+    const count = Math.min(MAX_SAMPLES, Math.max(32, Math.ceil(span ?? (settle === null ? 64 : 1.5 * settle))));
+    const y = zStep(value, count);
+    return y && { unit: 'n', stairs: true, points: y.map((v, n) => ({ t: n, y: v })) };
+  }
+  let terms;
+  let den;
+  if (hasDelays(value)) {
+    const split = delayTermsOf(value);
+    if (!split.ok) return null;
+    den = split.den;
+    terms = split.terms;
+  } else {
+    den = denseCoefficients(value.denominator, 's');
+    const num = denseCoefficients(value.numerator, 's');
+    if (!den || !num) return null;
+    terms = [{ delay: 0, num }];
+  }
+  if (terms.some((term) => term.num.length > den.length)) return null;
+  const settle = settlingSpan({ ...value, numerator: value.denominator });
+  const longest = Math.max(0, ...terms.map((term) => term.delay));
+  const end = span ?? (settle === null ? 10 * Math.max(1, longest) : 1.5 * settle + longest);
+  const count = 600;
+  const h = end / (count - 1);
+  const total = new Array(count).fill(0);
+  for (const term of terms) {
+    const y = sStep(term.num, den, h, count);
+    const shift = Math.round(term.delay / h);
+    for (let k = shift; k < count; k++) total[k] += y[k - shift];
+  }
+  return { unit: 't', stairs: false, points: total.map((v, k) => ({ t: k * h, y: v })) };
+}
+
+/**
+ * Several results' step responses on one pair of axes, as a plot annotation
+ * keeps it: `traces` `{ label, color, value }`. Their time spans are made
+ * one: the longest any of them needs. Null when none has a step response.
+ */
+function stepPlot(traces) {
+  const first = traces.map((trace) => ({ trace, step: stepResponse(trace.value) })).filter(({ step }) => step && step.points.length > 1);
+  if (!first.length) return null;
+  const end = Math.max(...first.map(({ step }) => step.points.at(-1).t));
+  const steps = first.map(({ trace, step }) => ({ trace, step: step.points.at(-1).t < end ? stepResponse(trace.value, { span: end }) : step }));
+  return {
+    kind: 'step',
+    unit: steps.some(({ step }) => step.unit === 'n') ? 'n' : 't',
+    range: { low: 0, high: end },
+    traces: steps.map(({ trace, step }) => ({
+      label: trace.label,
+      color: trace.color,
+      ...(step.stairs ? { stairs: true } : {}),
+      points: step.points.map(({ t, y }) => ({ t, y })),
+    })),
   };
 }
 
@@ -13575,11 +13956,13 @@ __modules["src/core/bode-figure.js"] = function (__require, __exports) {
 __exports.bodeFigure = bodeFigure;
 __exports.cornerNames = cornerNames;
 __exports.responseFigure = responseFigure;
+__exports.stepFigure = stepFigure;
 __exports.swingFigure = swingFigure;
 __exports.swingOverload = swingOverload;
 __exports.swingRunaway = swingRunaway;
 __exports.swingFullScale = swingFullScale;
 __exports.swingLimit = swingLimit;
+__exports.locusFigure = locusFigure;
 /**
  * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
  * and short texts (with `_{}`/`^{}` markup). One layout, two renderers -- the
@@ -13798,10 +14181,15 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
   // a wide range (a high-order noise shaper reaches far down).
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000);
-  const [dbLow, dbHigh] = niceRange(values, 20, 0);
+  // A phase plot: degrees in steps of 45 (90, 180 on a wide range).
+  const phase = plot.quantity === 'phase';
+  // A background trace (a simulated spectrum) does not set the axis.
+  const values = plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000 && Number.isFinite(db));
+  let [dbLow, dbHigh] = niceRange(values, phase ? 45 : 20, 0);
+  // In dBFS, room above full scale for the axis title.
+  if (plot.units === 'dBFS') dbHigh = Math.max(dbHigh, 20);
   const span = dbHigh - dbLow;
-  const step = span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
+  const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
   items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
   items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
@@ -13817,17 +14205,77 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {})
     items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
   }
   plot.traces.forEach((trace, index) => {
-    const samples = trace.points.map((p) => ({ f: p.f, value: p.db }));
-    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
+    // Only what lies in the frequency range (a spectrum's lowest bins may not).
+    const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
+    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
   // The signal band's edges.
   for (const f of plot.band || []) {
     if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
     items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
   }
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: '|H| (dB)', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: phase ? '∠H (°)' : plot.units === 'dBFS' ? 'dBFS' : '|H| (dB)', anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
+}
+
+/**
+ * A step-response plot: each trace's output against time, linear axes, a
+ * sampled trace as stairs. `plot`: `{ unit: 'n' | 't', range: { low, high },
+ * traces: [{ color, stairs, points: [{ t, y }] }] }`.
+ */
+function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const left = 3.6 * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = 2 * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const { low, high } = plot.range;
+  const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
+  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.y)).filter(Number.isFinite);
+  const yTop = Math.max(0, ...values);
+  const yBottom = Math.min(0, ...values);
+  const span = yTop - yBottom || 1;
+  const ystep = niceStep(span / 4);
+  // A little room above and below, clear of the axis title.
+  const yLow = Math.floor((yBottom - (yBottom < 0 ? 0.08 * span : 0)) / ystep) * ystep;
+  const yHigh = Math.ceil((yTop + 0.08 * span) / ystep) * ystep || ystep;
+  const y = (v) => pane.y + ((yHigh - Math.max(yLow, Math.min(yHigh, v))) / (yHigh - yLow)) * pane.h;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  if (yLow < 0 && yHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
+  const xstep = niceStep((high - low) / 5);
+  for (let t = Math.ceil(low / xstep) * xstep; t <= high + 1e-9; t += xstep) {
+    items.push({ type: 'line', x1: x(t), y1: pane.y, x2: x(t), y2: pane.y + pane.h, role: 'grid' });
+    items.push({ type: 'text', x: x(t), y: pane.y + pane.h + 1.3 * em, text: `${Number(t.toPrecision(3))}`, anchor: 'middle', role: 'number' });
+  }
+  for (let v = yLow; v <= yHigh + 1e-9; v += ystep) {
+    items.push({ type: 'line', x1: pane.x, y1: y(v), x2: pane.x + pane.w, y2: y(v), role: 'grid' });
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(v) + 0.36 * em, text: `${Number(v.toPrecision(3))}`, anchor: 'end', role: 'number' });
+  }
+  plot.traces.forEach((trace, index) => {
+    const points = [];
+    trace.points.forEach((p, i) => {
+      if (!Number.isFinite(p.y)) return;
+      // A sampled response holds each value until the next sample.
+      if (trace.stairs && i > 0) points.push({ x: x(p.t), y: y(trace.points[i - 1].y) });
+      points.push({ x: x(p.t), y: y(p.y) });
+    });
+    if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
+  });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'step response', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.unit === 'n' ? 'n (t/T_{s})' : 't', anchor: 'end', role: 'label' });
+  return { width, height, items, pane, ranges: { y: [yLow, yHigh] } };
+}
+
+/** 1, 2, or 5 times a power of ten, near `rough`. */
+function niceStep(rough) {
+  if (!(rough > 0)) return 1;
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const unit = rough / power;
+  return (unit < 1.5 ? 1 : unit < 3.5 ? 2 : unit < 7.5 ? 5 : 10) * power;
 }
 
 /**
@@ -13961,6 +14409,70 @@ function swingLimit(traces) {
   const runaway = swingRunaway(traces);
   if (full && (runaway === null || full.a <= runaway)) return { a: full.a, kind: 'full-scale', label: full.label };
   return runaway === null ? null : { a: runaway, kind: 'runaway', label: '' };
+}
+
+/**
+ * A root-locus plot: the complex plane, equal scales, the unit circle (z)
+ * or the j omega axis (s) as the stability boundary, the swept poles as
+ * dots from light (the sweep's start) to full colour (its end), the
+ * current value's poles as crosses. `plot`: locus.js's `locusPlot`.
+ */
+function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const left = 3.6 * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = 2 * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const z = plot.variable === 'z';
+  // In z the view stays near the unit circle: a pole far outside is
+  // unstable either way, and following it would shrink the circle away.
+  const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
+  const all = [...plot.points, ...plot.current].filter(near);
+  let reLow = Math.min(...all.map((p) => p.re), z ? -1.1 : 0);
+  let reHigh = Math.max(...all.map((p) => p.re), z ? 1.1 : 0);
+  let imHigh = Math.max(...all.map((p) => Math.abs(p.im)), z ? 1.1 : 0);
+  if (!Number.isFinite(reLow) || !Number.isFinite(reHigh)) { reLow = -1; reHigh = 1; }
+  // Equal scales: the axis that needs more room per pixel sets both.
+  const spanRe = Math.max(reHigh - reLow, 1e-9) * 1.1;
+  const spanIm = Math.max(2 * imHigh, 1e-9) * 1.1;
+  const scale = Math.max(spanRe / pane.w, spanIm / pane.h);
+  const cx = (reLow + reHigh) / 2;
+  const x = (re) => pane.x + pane.w / 2 + (re - cx) / scale;
+  const y = (im) => pane.y + pane.h / 2 - im / scale;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  // The real and imaginary axes through the origin, when in view.
+  if (y(0) > pane.y && y(0) < pane.y + pane.h) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'grid' });
+  if (x(0) > pane.x && x(0) < pane.x + pane.w) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: z ? 'grid' : 'band' });
+  if (z) {
+    const circle = Array.from({ length: 97 }, (_, i) => ({ x: x(Math.cos((i * Math.PI) / 48)), y: y(Math.sin((i * Math.PI) / 48)) }));
+    items.push({ type: 'path', points: circle, role: 'band' });
+  }
+  for (const p of plot.points) {
+    if (x(p.re) < pane.x || x(p.re) > pane.x + pane.w || y(p.im) < pane.y || y(p.im) > pane.y + pane.h) continue;
+    items.push({ type: 'dot', x: x(p.re), y: y(p.im), r: 0.17 * em, color: plot.color, opacity: 0.2 + 0.8 * p.t, role: 'curve' });
+  }
+  const arm = 0.4 * em;
+  for (const p of plot.current) {
+    items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) - arm, x2: x(p.re) + arm, y2: y(p.im) + arm, role: 'marker' });
+    items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) + arm, x2: x(p.re) + arm, y2: y(p.im) - arm, role: 'marker' });
+  }
+  const number = (v) => String(Number(v.toPrecision(3)));
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: `${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`, anchor: 'start', role: 'label' });
+  // Where it is stable: between its crossings.
+  const crossings = plot.crossings || [];
+  if (crossings.length) {
+    const stableFrom = crossings.find((c) => c.becomes === 'stable');
+    const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
+    const text = stableFrom && unstableAt
+      ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
+      : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`;
+    items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
+  }
+  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: z ? 'Re z' : 'Re s', anchor: 'end', role: 'label' });
+  return { width, height, items, pane };
 }
 
 };
@@ -19855,6 +20367,8 @@ function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
   if (plot.kind === 'response') return normalizeResponsePlot(plot);
   if (plot.kind === 'swing') return normalizeSwingPlot(plot);
+  if (plot.kind === 'step') return normalizeStepPlot(plot);
+  if (plot.kind === 'locus') return normalizeLocusPlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   const points = (Array.isArray(plot.points) ? plot.points : [])
@@ -19915,6 +20429,8 @@ function normalizeAnalysisValues(value) {
     sources: Object.fromEntries(Object.entries(rawFlow.sources || {}).filter(([k, v]) => k.length <= 200 && (['input', 'zero'].includes(v) || (v && typeof v === 'object' && typeof v.constant === 'string'))).map(([k, v]) => [k, typeof v === 'object' ? { constant: v.constant.slice(0, 100) } : v])),
     swingInput: text(rawFlow.swingInput),
     swingFrequency: text(rawFlow.swingFrequency),
+    ...(['phase', 'step'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
+    ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
   } : null;
   return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
 }
@@ -19926,7 +20442,7 @@ function analysisValuesJSON(values) {
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
   const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
-  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency) ? values.flow : null;
+  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum) ? values.flow : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
@@ -19944,16 +20460,55 @@ function normalizeResponsePlot(plot) {
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   if (!finite(low) || !finite(high) || high <= low || high - low > MAX_PLOT_DECADES) return null;
-  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 9).map((trace) => ({
     label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
     color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    // A simulated spectrum drawn behind the curves.
+    ...(trace?.background ? { background: true } : {}),
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => finite(p?.f) && p.f > 0 && finite(p?.db))
       .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}) };
+}
+
+/** A root-locus plot (signal-flow analysis): the swept poles, the current ones. */
+function normalizeLocusPlot(plot) {
+  const point = (p) => finite(p?.re) && finite(p?.im);
+  const points = (Array.isArray(plot.points) ? plot.points : []).filter(point).slice(0, 6000)
+    .map((p) => ({ re: round(p.re, 5), im: round(p.im, 5), t: finite(p.t) ? Math.max(0, Math.min(1, round(p.t, 3))) : 1 }));
+  if (!points.length) return null;
+  const text = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  return {
+    kind: 'locus',
+    variable: plot.variable === 'z' ? 'z' : 's',
+    parameter: text(plot.parameter, 60) || 'k',
+    label: text(plot.label, 400),
+    color: /^#[0-9a-f]{6}$/i.test(plot.color || '') ? plot.color : '#3b74e0',
+    from: finite(plot.from) ? plot.from : 1,
+    to: finite(plot.to) ? plot.to : 1,
+    points,
+    current: (Array.isArray(plot.current) ? plot.current : []).filter(point).slice(0, 64).map((p) => ({ re: round(p.re, 5), im: round(p.im, 5) })),
+    crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
+  };
+}
+
+/** A step-response plot (signal-flow analysis): coloured traces of output
+ *  against time (samples, or the coefficients' time), sampled ones as stairs. */
+function normalizeStepPlot(plot) {
+  const low = Number(plot.range?.low);
+  const high = Number(plot.range?.high);
+  if (!finite(low) || !finite(high) || high <= low) return null;
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 8).map((trace) => ({
+    label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    ...(trace?.stairs ? { stairs: true } : {}),
+    points: (Array.isArray(trace?.points) ? trace.points : []).filter((p) => finite(p?.t) && finite(p?.y)).slice(0, 4000).map((p) => ({ t: round(p.t, 6), y: round(p.y, 6) })),
+  })).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  return { kind: 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
 }
 
 /** A swing plot (signal-flow simulation): coloured traces of each net's
@@ -26924,7 +27479,7 @@ let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedS
 let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
-let bodeFigure, responseFigure, swingFigure; __bind(() => { ({ bodeFigure, responseFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
 
 
 
@@ -27607,6 +28162,7 @@ const PLOT_STROKES = {
   corner: { width: 2, dash: '4 10' },
   grid: { width: 1 },
   band: { width: 3, dash: '18 9' },
+  spectrum: { width: 2 },
   marker: { width: 3, dash: '18 9' },
 };
 
@@ -27621,12 +28177,16 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const response = plot.kind === 'response' || plot.kind === 'swing';
+  const response = ['response', 'swing', 'step', 'locus'].includes(plot.kind);
   const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
   // A response plot (signal-flow analysis) draws each trace in its colour;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
-  const figure = plot.kind === 'swing'
+  const figure = plot.kind === 'locus'
+    ? locusFigure(plot, { width: w, height: h, fontSize })
+    : plot.kind === 'step'
+    ? stepFigure(plot, { width: w, height: h, fontSize })
+    : plot.kind === 'swing'
     ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize })
     : response
     ? responseFigure(plot, { width: w, height: h, fontSize })
@@ -27645,7 +28205,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
     if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role, item.color ? escapeSvg(item.color) : color)} stroke-linejoin="round"/>` : '';
-    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${color}" stroke="none"/>`;
+    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${item.color ? escapeSvg(item.color) : color}"${item.opacity !== undefined ? ` fill-opacity="${fmt(item.opacity)}"` : ''} stroke="none"/>`;
     if (item.type === 'text') return text(item);
     return '';
   }).join('');
@@ -54464,11 +55024,19 @@ function canvasMouseDown(ev) {
   if (handleOwner?.dataset.resizeKind === 'annotation') {
     const label = circuit.labels.get(handleOwner.dataset.resizeId);
     if (label?.kind === 'box') {
-      setSelection([]);
-      setLabelSelection([label.id]);
+      // Several boxes selected (plots side by side): one handle resizes them
+      // all alike, each from its own corner.
+      const together = selLabels.has(label.id)
+        ? [...selLabels].map((id) => circuit.labels.get(id)).filter((other) => other && other !== label && other.kind === 'box')
+        : [];
+      if (!together.length) {
+        setSelection([]);
+        setLabelSelection([label.id]);
+      }
       drag = {
         mode: 'boxresize', label, handle: handle.dataset.resizeHandle,
         startWorld, startClient, origin: label.bbox(), startBox: boxState(label), startSnapshot: snapshot(), moved: false,
+        others: together.map((other) => ({ label: other, origin: other.bbox(), startBox: boxState(other) })),
       };
       try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
       render();
@@ -55620,7 +56188,32 @@ function canvasMouseMove(ev) {
     // Resize from the pointer-down state every frame, so child labels follow
     // the box without accumulating grid rounding.
     restoreBoxState(drag.label, drag.startBox);
-    drag.label.resizeBox(resizeRect(drag.origin, drag.handle, movedWorld, { symmetric: ev.ctrlKey || ev.metaKey, min: GRID }));
+    const rect = resizeRect(drag.origin, drag.handle, movedWorld, { symmetric: ev.ctrlKey || ev.metaKey, min: GRID });
+    drag.label.resizeBox(rect);
+    // The others' edges move as this one's did; a box below (or right of)
+    // another selected one moves on by its growth, so a column (or row) of
+    // plots keeps its spacing. The dragged box stays where it is.
+    const o = drag.origin;
+    const d = { x0: rect.x - o.x, y0: rect.y - o.y, x1: rect.x + rect.w - o.x - o.w, y1: rect.y + rect.h - o.y - o.h };
+    const grow = { w: d.x1 - d.x0, h: d.y1 - d.y0 };
+    const all = [{ origin: o }, ...(drag.others || [])];
+    const before = (b) => ({
+      above: all.filter((a) => a.origin !== b && a.origin.y + a.origin.h <= b.y && a.origin.x < b.x + b.w && b.x < a.origin.x + a.origin.w).length,
+      left: all.filter((a) => a.origin !== b && a.origin.x + a.origin.w <= b.x && a.origin.y < b.y + b.h && b.y < a.origin.y + a.origin.h).length,
+    });
+    const mine = before(o);
+    for (const other of drag.others || []) {
+      restoreBoxState(other.label, other.startBox);
+      const b = other.origin;
+      const theirs = before(b);
+      const sx = (theirs.left - mine.left) * grow.w;
+      const sy = (theirs.above - mine.above) * grow.h;
+      const x0 = b.x + d.x0 + sx; const y0 = b.y + d.y0 + sy;
+      const x1 = Math.max(x0 + GRID, b.x + b.w + d.x1 + sx); const y1 = Math.max(y0 + GRID, b.y + b.h + d.y1 + sy);
+      // Shift it (and its legend) first, then size it from there.
+      if (sx || sy) shiftBoxGroup(other.label, sx, sy);
+      other.label.resizeBox({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    }
     markModelChanged(false);
     scheduleInteractionRender();
     return;
@@ -58058,6 +58651,15 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
 }
 
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
+
+/** Move a box annotation and its child labels by (dx, dy). */
+function shiftBoxGroup(box, dx, dy) {
+  const by = (p) => (p ? { x: p.x + dx, y: p.y + dy } : p);
+  box.anchor = by(box.anchor);
+  box.end = by(box.end);
+  if (box.textAnchor) box.textAnchor = by(box.textAnchor);
+  for (const label of circuit.labels.values()) if (label.parent === box.id) label.anchor = by(label.anchor);
+}
 
 };
 
@@ -61447,7 +62049,7 @@ function renderDetail() {
     if (label.owner) rows.push(['Owner', label.owner]);
     if (label.netId) rows.push(['Net', editor.circuit.nets.get(label.netId)?.name || label.netId]);
     detailEl.appendChild(label.plot
-      ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : label.plot.kind === 'swing' ? 'Swing graph' : 'Bode sketch', 'plot')
+      ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : label.plot.kind === 'swing' ? 'Swing graph' : label.plot.kind === 'step' ? 'Step response' : label.plot.kind === 'locus' ? 'Root locus' : 'Bode sketch', 'plot')
       : detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
     const list = document.createElement('dl');
     list.className = 'detail-props';
@@ -61721,7 +62323,10 @@ let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/pr
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let expressionTex; __bind(() => { ({ expressionTex } = __require("src/core/transfer-function.js")); });
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
-let responseFigure, swingFigure; __bind(() => { ({ responseFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
+let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
+let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
 let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
 let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
@@ -61745,6 +62350,9 @@ let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js"));
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
+
+
 
 
 
@@ -61886,6 +62494,118 @@ function fillForm() {
     swingShown = null;
     renderSwing();
   }
+}
+
+// ----- root locus: the poles as one coefficient sweeps ----------------------------------
+
+let locus = null; // { plot, entryIndex, name }
+let locusRun = 0;
+
+function locusSection() {
+  return el('fieldset', { class: 'analysis-approximations signal-flow-locus', hidden: true }, [
+    el('legend', { text: 'Root locus' }),
+    el('div', { class: 'signal-flow-swing-controls' }, [
+      el('label', { text: 'Poles of' }), el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' }),
+      el('label', { text: 'as' }), el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() }),
+      el('label', { text: 'from' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-from', 'aria-label': 'Sweep from' }),
+      el('label', { text: 'to' }), el('input', { type: 'text', class: 'signal-flow-locus-range signal-flow-locus-to', 'aria-label': 'Sweep to' }),
+      el('button', { type: 'button', text: 'Sweep', onclick: () => runLocus() }),
+    ]),
+    el('p', { class: 'field-hint signal-flow-locus-status', 'aria-live': 'polite' }),
+    el('div', { class: 'signal-flow-locus-plot' }),
+  ]);
+}
+
+/** The results and coefficients to choose from, after each derive. */
+function fillLocus() {
+  const host = section.querySelector('.signal-flow-locus');
+  const ready = latest?.ok && latest.entries.length && currentSymbols().length;
+  host.hidden = !ready;
+  if (!ready) return;
+  const entrySelect = host.querySelector('.signal-flow-locus-entry');
+  const previous = entrySelect.value;
+  entrySelect.replaceChildren(...latest.entries.map((entry, i) => el('option', { value: String(i), text: `from ${String(entry.inputName).replace(/[{}]/g, '')}` })));
+  if ([...entrySelect.options].some((o) => o.value === previous)) entrySelect.value = previous;
+  const nameSelect = host.querySelector('.signal-flow-locus-name');
+  const name = nameSelect.value;
+  nameSelect.replaceChildren(...currentSymbols().map((symbol) => el('option', { value: symbol, text: symbol })));
+  if (currentSymbols().includes(name)) nameSelect.value = name;
+  else fillLocusRange();
+}
+
+/** A decade either side of the coefficient's number. */
+function fillLocusRange() {
+  const host = section.querySelector('.signal-flow-locus');
+  const name = host.querySelector('.signal-flow-locus-name').value;
+  const value = resolved()[name] ?? 1;
+  const base = value || 1;
+  host.querySelector('.signal-flow-locus-from').value = String(Number((base / 10).toPrecision(3)));
+  host.querySelector('.signal-flow-locus-to').value = String(Number((base * 10).toPrecision(3)));
+}
+
+/** Sweep, a few steps a frame, then draw. */
+function runLocus() {
+  const host = section.querySelector('.signal-flow-locus');
+  const status = host.querySelector('.signal-flow-locus-status');
+  const entry = latest?.entries?.[Number(host.querySelector('.signal-flow-locus-entry').value)];
+  const name = host.querySelector('.signal-flow-locus-name').value;
+  const from = fraction(host.querySelector('.signal-flow-locus-from').value);
+  const to = fraction(host.querySelector('.signal-flow-locus-to').value);
+  const ks = locusSteps(from, to);
+  if (!entry || !name || !ks.length || Math.sign(from) !== Math.sign(to)) {
+    status.textContent = 'Pick a result and a coefficient, and a range from one number to another of the same sign.';
+    return;
+  }
+  // The coefficient at k, everything else (and what links to it) following.
+  const valuesAt = (k) => {
+    const own = { ...coefficients(), [name]: k };
+    const numbers = resolveCoefficients(own, Object.fromEntries(Object.entries(links()).filter(([key]) => key !== name)));
+    const values = {};
+    for (const symbol of resultSymbols(entry.value, latest.variable)) values[symbol] = numbers[symbol] ?? 1;
+    return values;
+  };
+  const cache = new Map();
+  const evaluate = (k) => {
+    if (!cache.has(k)) cache.set(k, withCoefficients(entry.value, valuesAt(k)));
+    return cache.get(k);
+  };
+  const run = ++locusRun;
+  let index = 0;
+  const step = () => {
+    if (run !== locusRun) return;
+    const started = performance.now();
+    while (index < ks.length && performance.now() - started < 30) evaluate(ks[index++]);
+    if (index < ks.length) {
+      status.textContent = `Sweeping ${name}... ${index} of ${ks.length}`;
+      requestAnimationFrame(step);
+      return;
+    }
+    const current = resolved()[name] ?? 1;
+    const result = rootLocus(evaluate, { ks, current });
+    if (!result) {
+      status.textContent = 'This result has no numeric poles to follow (a delay, or a continuous input through a sampler).';
+      locus = null;
+    } else {
+      locus = { plot: locusPlot(result, { parameter: symbolText(name), label: entry.label, color: TRACE_COLORS[0] }) };
+      status.textContent = result.crossings.length
+        ? `${result.crossings.map((c, i) => `${i ? 'then ' : ''}${c.becomes} at ${name} = ${Number(c.k.toPrecision(3))}`).join(', ').replace(/^./, (m) => m.toUpperCase())}.`
+        : `${unstableNow(result) ? 'Unstable' : 'Stable'} across the whole sweep, ${from} to ${to}.`;
+    }
+    renderLocus();
+  };
+  step();
+}
+
+const unstableNow = (result) => result.steps[0].poles.some((p) => (result.variable === 'z' ? Math.hypot(p.re, p.im) > 1 + 1e-9 : p.re > 1e-9));
+
+function renderLocus() {
+  const host = section.querySelector('.signal-flow-locus-plot');
+  host.replaceChildren();
+  if (!locus?.plot) return;
+  host.append(figureSvg(locusFigure(locus.plot, { width: 400, height: 260, fontSize: 11 }), 'Root locus'));
+  host.append(el('div', { class: 'signal-flow-graph-actions' }, [
+    el('button', { type: 'button', text: 'Annotate locus', title: 'Put this root locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
+  ]));
 }
 
 // ----- swing: each net's peak against the input amplitude ------------------------------
@@ -62092,6 +62812,7 @@ function coefficientsChanged() {
     renderGraph();
     renderResults();
     swingCoefficientsChanged();
+    if (flow().spectrum?.on) { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(runSpectrum, 350); }
   });
 }
 
@@ -62222,7 +62943,8 @@ function svgText(item, fontSize) {
 
 /** The graph in the panel: the same layout the drawing gets, in the theme's colours. */
 function graphSvg(plot) {
-  return figureSvg(responseFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Magnitude responses');
+  if (plot.kind === 'step') return figureSvg(stepFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Step responses');
+  return figureSvg(responseFigure(plot, { width: 400, height: 220, fontSize: 11 }), plot.quantity === 'phase' ? 'Phase responses' : 'Magnitude responses');
 }
 
 function figureSvg(figure, title) {
@@ -62240,6 +62962,13 @@ function figureSvg(figure, title) {
       node = document.createElementNS(SVG_NS, 'path');
       node.setAttribute('d', item.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' '));
       if (item.color) node.style.stroke = item.color;
+    } else if (item.type === 'dot') {
+      node = document.createElementNS(SVG_NS, 'circle');
+      node.setAttribute('cx', item.x);
+      node.setAttribute('cy', item.y);
+      node.setAttribute('r', item.r || 2);
+      node.style.fill = item.color || 'currentColor';
+      if (item.opacity !== undefined) node.style.fillOpacity = item.opacity;
     } else if (item.type === 'text') node = svgText(item, 11);
     if (!node) continue;
     node.classList.add(`role-${item.role}`);
@@ -62251,7 +62980,77 @@ function figureSvg(figure, title) {
 // The axis s results plot on: ω in the coefficients' units, or f/fs with s
 // in units of 1/Ts (saved with the document). A z result puts every trace on f/fs.
 const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
-const graphPlot = (list) => responsePlot(list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band });
+// What the graph shows (saved with the document): magnitude, phase, or the step response.
+const graphView = () => flow().graphView || 'magnitude';
+const graphPlot = (list) => {
+  const numbered = list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) }));
+  if (graphView() === 'step') return stepPlot(numbered);
+  // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
+  // as the noise it predicts, each STF as where the tone would sit.
+  const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: '#8a8f99', points: spectrum.points }] : [];
+  const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
+  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: graphView(), background, dbfs });
+};
+
+// ----- the simulated output's spectrum, behind the curves --------------------------------
+
+let spectrum = null; // { points (plotted), raw, frequency, amplitude } or { error }
+let spectrumTimer = 0;
+
+/** The checkbox and amplitude for the spectrum, and what it measured in band. */
+function spectrumControls() {
+  const settings = flow().spectrum || {};
+  const check = el('input', { type: 'checkbox', 'aria-label': 'Simulated output spectrum' });
+  check.checked = !!settings.on;
+  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field', value: settings.amplitude ?? '-6', 'aria-label': 'Sine amplitude, dBFS' });
+  const save = () => {
+    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6' };
+    markSettingsChanged();
+    runSpectrum();
+  };
+  check.addEventListener('change', save);
+  amplitude.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
+  amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
+    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS' }),
+    el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
+  ]);
+}
+
+function spectrumStatus() {
+  if (!spectrum) return '';
+  if (spectrum.error) return spectrum.error;
+  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
+  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)})` : 'set a band for its SNDR';
+}
+
+/** Simulate one run with the swing's source and frequency, and take its output's spectrum. */
+function runSpectrum() {
+  const settings = flow().spectrum || {};
+  if (!settings.on) {
+    spectrum = null;
+    renderGraph();
+    return;
+  }
+  const amplitude = Number(settings.amplitude ?? -6);
+  const numbers = resolved();
+  const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
+  const { sources } = signalFlowGraph(editor.circuit);
+  const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer)?.id;
+  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency: swingFrequency(), samples: 16384 });
+  if (!sim.ok) spectrum = { error: sim.error };
+  else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
+  else {
+    const run = sim.run(amplitude, { record: true });
+    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples);
+    spectrum = raw
+      ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale }
+      : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
+  }
+  redrawGraphPlot();
+  const status = section.querySelector('.signal-flow-spectrum-status');
+  if (status) status.textContent = spectrumStatus();
+}
 const shownTraces = () => traces.filter((trace) => trace.on);
 
 /** Redraw the graph's plot alone, its controls left as they are. */
@@ -62284,6 +63083,8 @@ function bandControls() {
       markSettingsChanged();
       redrawGraphPlot();
       renderResults();
+      const status = section.querySelector('.signal-flow-spectrum-status');
+      if (status) status.textContent = spectrumStatus();
     });
     // Enter applies the field, not a derive.
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
@@ -62304,7 +63105,7 @@ function addTrace(entry, variable, output) {
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
   // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
-  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true });
+  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true, noise: !!entry.quantizer });
 }
 
 function renderGraph() {
@@ -62313,11 +63114,17 @@ function renderGraph() {
   const plot = traces.length ? graphPlot(shownTraces()) : null;
   host.hidden = !traces.length;
   if (!traces.length) return;
-  const head = el('div', { class: 'signal-flow-graph-head' }, [el('div', { class: 'analysis-equation-label', text: 'Magnitude' })]);
+  const view = graphView();
+  const viewButton = (value, text, title) => el('button', { type: 'button', text, title, 'aria-pressed': String(view === value), onclick: () => { flow().graphView = value; markSettingsChanged(); renderGraph(); } });
+  const head = el('div', { class: 'signal-flow-graph-head' }, [el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Graph' }, [
+    viewButton('magnitude', 'Magnitude', 'The magnitude responses, in dB'),
+    viewButton('phase', 'Phase', 'The phase responses, in degrees'),
+    viewButton('step', 'Step', 'The step responses: overshoot and settling (a sampled result in samples)'),
+  ])]);
   // With an s result on it, the frequency axis is a choice: ω in the
   // coefficients' units, or f/fs reading s in units of 1/Ts (as a
   // continuous-time loop filter normalized to its sample rate is written).
-  if (traces.some((trace) => trace.variable === 's')) {
+  if (view !== 'step' && traces.some((trace) => trace.variable === 's')) {
     const forced = traces.some((trace) => trace.variable === 'z');
     const choose = (value) => {
       editor.circuit.analysisValues.sAxis = value === 'normalized' ? 'normalized' : undefined;
@@ -62334,9 +63141,10 @@ function renderGraph() {
     ]));
   }
   host.append(head);
-  host.append(bandControls());
+  if (view !== 'step') host.append(bandControls());
+  if (view === 'magnitude') host.append(spectrumControls());
   if (plot) host.append(graphSvg(plot));
-  else host.append(el('p', { class: 'field-hint', text: 'Check a trace below to plot it.' }));
+  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay, or a continuous input through a sampler).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
@@ -62385,7 +63193,8 @@ function placePlot(plot, shown, used) {
   // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
   const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
-  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind);
+  // The same kind of plot (a response graph also of the same quantity).
+  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind && (label.plot.quantity || '') === (plot.quantity || ''));
   const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
   const target = chosen || (plots.length === 1 ? plots[0] : null);
   // The same numbers beside another plot already: not twice.
@@ -62529,6 +63338,8 @@ function derive() {
   renderCoefficients();
   renderResults();
   renderGraph();
+  fillLocus();
+  if (flow().spectrum?.on && latest.ok) runSpectrum();
   if (!latest.ok) logLine(`Signal-flow analysis: ${latest.error}`, 'error');
 }
 
@@ -62584,6 +63395,7 @@ function installSignalFlowUi() {
       pasteCoefficients(),
     ]),
     el('div', { class: 'signal-flow-graph', hidden: true }),
+    locusSection(),
     swingSection(),
     el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
   ]);

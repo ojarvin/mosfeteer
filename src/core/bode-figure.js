@@ -216,10 +216,15 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
   // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
   // a wide range (a high-order noise shaper reaches far down).
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000);
-  const [dbLow, dbHigh] = niceRange(values, 20, 0);
+  // A phase plot: degrees in steps of 45 (90, 180 on a wide range).
+  const phase = plot.quantity === 'phase';
+  // A background trace (a simulated spectrum) does not set the axis.
+  const values = plot.traces.filter((trace) => !trace.background).flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000 && Number.isFinite(db));
+  let [dbLow, dbHigh] = niceRange(values, phase ? 45 : 20, 0);
+  // In dBFS, room above full scale for the axis title.
+  if (plot.units === 'dBFS') dbHigh = Math.max(dbHigh, 20);
   const span = dbHigh - dbLow;
-  const step = span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
+  const step = phase ? (span > 720 ? 180 : span > 360 ? 90 : 45) : span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
   items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
   items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
@@ -235,17 +240,77 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
   }
   plot.traces.forEach((trace, index) => {
-    const samples = trace.points.map((p) => ({ f: p.f, value: p.db }));
-    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
+    // Only what lies in the frequency range (a spectrum's lowest bins may not).
+    const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
+    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
   // The signal band's edges.
   for (const f of plot.band || []) {
     if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
     items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
   }
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: '|H| (dB)', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: phase ? '∠H (°)' : plot.units === 'dBFS' ? 'dBFS' : '|H| (dB)', anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
+}
+
+/**
+ * A step-response plot: each trace's output against time, linear axes, a
+ * sampled trace as stairs. `plot`: `{ unit: 'n' | 't', range: { low, high },
+ * traces: [{ color, stairs, points: [{ t, y }] }] }`.
+ */
+export function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const left = 3.6 * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = 2 * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const { low, high } = plot.range;
+  const x = (t) => pane.x + ((t - low) / (high - low || 1)) * pane.w;
+  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.y)).filter(Number.isFinite);
+  const yTop = Math.max(0, ...values);
+  const yBottom = Math.min(0, ...values);
+  const span = yTop - yBottom || 1;
+  const ystep = niceStep(span / 4);
+  // A little room above and below, clear of the axis title.
+  const yLow = Math.floor((yBottom - (yBottom < 0 ? 0.08 * span : 0)) / ystep) * ystep;
+  const yHigh = Math.ceil((yTop + 0.08 * span) / ystep) * ystep || ystep;
+  const y = (v) => pane.y + ((yHigh - Math.max(yLow, Math.min(yHigh, v))) / (yHigh - yLow)) * pane.h;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  if (yLow < 0 && yHigh > 0) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
+  const xstep = niceStep((high - low) / 5);
+  for (let t = Math.ceil(low / xstep) * xstep; t <= high + 1e-9; t += xstep) {
+    items.push({ type: 'line', x1: x(t), y1: pane.y, x2: x(t), y2: pane.y + pane.h, role: 'grid' });
+    items.push({ type: 'text', x: x(t), y: pane.y + pane.h + 1.3 * em, text: `${Number(t.toPrecision(3))}`, anchor: 'middle', role: 'number' });
+  }
+  for (let v = yLow; v <= yHigh + 1e-9; v += ystep) {
+    items.push({ type: 'line', x1: pane.x, y1: y(v), x2: pane.x + pane.w, y2: y(v), role: 'grid' });
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(v) + 0.36 * em, text: `${Number(v.toPrecision(3))}`, anchor: 'end', role: 'number' });
+  }
+  plot.traces.forEach((trace, index) => {
+    const points = [];
+    trace.points.forEach((p, i) => {
+      if (!Number.isFinite(p.y)) return;
+      // A sampled response holds each value until the next sample.
+      if (trace.stairs && i > 0) points.push({ x: x(p.t), y: y(trace.points[i - 1].y) });
+      points.push({ x: x(p.t), y: y(p.y) });
+    });
+    if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
+  });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'step response', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.unit === 'n' ? 'n (t/T_{s})' : 't', anchor: 'end', role: 'label' });
+  return { width, height, items, pane, ranges: { y: [yLow, yHigh] } };
+}
+
+/** 1, 2, or 5 times a power of ten, near `rough`. */
+function niceStep(rough) {
+  if (!(rough > 0)) return 1;
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const unit = rough / power;
+  return (unit < 1.5 ? 1 : unit < 3.5 ? 2 : unit < 7.5 ? 5 : 10) * power;
 }
 
 /**
@@ -379,4 +444,68 @@ export function swingLimit(traces) {
   const runaway = swingRunaway(traces);
   if (full && (runaway === null || full.a <= runaway)) return { a: full.a, kind: 'full-scale', label: full.label };
   return runaway === null ? null : { a: runaway, kind: 'runaway', label: '' };
+}
+
+/**
+ * A root-locus plot: the complex plane, equal scales, the unit circle (z)
+ * or the j omega axis (s) as the stability boundary, the swept poles as
+ * dots from light (the sweep's start) to full colour (its end), the
+ * current value's poles as crosses. `plot`: locus.js's `locusPlot`.
+ */
+export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const left = 3.6 * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = 2 * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const z = plot.variable === 'z';
+  // In z the view stays near the unit circle: a pole far outside is
+  // unstable either way, and following it would shrink the circle away.
+  const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
+  const all = [...plot.points, ...plot.current].filter(near);
+  let reLow = Math.min(...all.map((p) => p.re), z ? -1.1 : 0);
+  let reHigh = Math.max(...all.map((p) => p.re), z ? 1.1 : 0);
+  let imHigh = Math.max(...all.map((p) => Math.abs(p.im)), z ? 1.1 : 0);
+  if (!Number.isFinite(reLow) || !Number.isFinite(reHigh)) { reLow = -1; reHigh = 1; }
+  // Equal scales: the axis that needs more room per pixel sets both.
+  const spanRe = Math.max(reHigh - reLow, 1e-9) * 1.1;
+  const spanIm = Math.max(2 * imHigh, 1e-9) * 1.1;
+  const scale = Math.max(spanRe / pane.w, spanIm / pane.h);
+  const cx = (reLow + reHigh) / 2;
+  const x = (re) => pane.x + pane.w / 2 + (re - cx) / scale;
+  const y = (im) => pane.y + pane.h / 2 - im / scale;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  // The real and imaginary axes through the origin, when in view.
+  if (y(0) > pane.y && y(0) < pane.y + pane.h) items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'grid' });
+  if (x(0) > pane.x && x(0) < pane.x + pane.w) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: z ? 'grid' : 'band' });
+  if (z) {
+    const circle = Array.from({ length: 97 }, (_, i) => ({ x: x(Math.cos((i * Math.PI) / 48)), y: y(Math.sin((i * Math.PI) / 48)) }));
+    items.push({ type: 'path', points: circle, role: 'band' });
+  }
+  for (const p of plot.points) {
+    if (x(p.re) < pane.x || x(p.re) > pane.x + pane.w || y(p.im) < pane.y || y(p.im) > pane.y + pane.h) continue;
+    items.push({ type: 'dot', x: x(p.re), y: y(p.im), r: 0.17 * em, color: plot.color, opacity: 0.2 + 0.8 * p.t, role: 'curve' });
+  }
+  const arm = 0.4 * em;
+  for (const p of plot.current) {
+    items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) - arm, x2: x(p.re) + arm, y2: y(p.im) + arm, role: 'marker' });
+    items.push({ type: 'line', x1: x(p.re) - arm, y1: y(p.im) + arm, x2: x(p.re) + arm, y2: y(p.im) - arm, role: 'marker' });
+  }
+  const number = (v) => String(Number(v.toPrecision(3)));
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: `${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`, anchor: 'start', role: 'label' });
+  // Where it is stable: between its crossings.
+  const crossings = plot.crossings || [];
+  if (crossings.length) {
+    const stableFrom = crossings.find((c) => c.becomes === 'stable');
+    const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
+    const text = stableFrom && unstableAt
+      ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
+      : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`;
+    items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 2.1 * em, text, anchor: 'start', role: 'marker' });
+  }
+  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: z ? 'Re z' : 'Re s', anchor: 'end', role: 'label' });
+  return { width, height, items, pane };
 }

@@ -1276,7 +1276,11 @@ export function bandSqnr(ntf, levels, band) {
   return noise > 0 ? 10 * Math.log10(signal / noise) : Infinity;
 }
 
-export function responsePlot(traces, variable, { sAxis = 'omega', band = null } = {}) {
+/** `quantity` 'phase' plots each trace's phase (degrees) in place of its
+ *  magnitude (dB), on the same frequency axis. */
+/** `dbfs`, with a simulated spectrum: `{ offset(trace) }`, each trace's |H|
+ *  moved into the spectrum's dBFS (a noise level, or a tone's level). */
+export function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
   const curves = withVariable
@@ -1296,11 +1300,20 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null } 
     axis: curveAxis,
     range: { low, high: Math.max(high, low + 1) },
     ...(edges.length ? { band: edges } : {}),
-    traces: curves.map(({ trace, curve }) => ({
-      label: trace.label,
-      color: trace.color,
-      points: curve.points.map(({ f, db }) => ({ f, db })),
-    })),
+    ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
+    ...(dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? { units: 'dBFS' } : {}),
+    traces: [
+      // Behind the curves: a simulated output's spectrum, on f/fs.
+      ...(quantity !== 'phase' && curveAxis === 'normalized' ? background : []).map((trace) => ({ ...trace, background: true, points: trace.points.filter((p) => p.f <= 0.5) })),
+      ...curves.map(({ trace, curve }) => {
+        const offset = dbfs && quantity !== 'phase' && curveAxis === 'normalized' ? dbfs.offset(trace) : 0;
+        return {
+          label: trace.label,
+          color: trace.color,
+          points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : db + offset })),
+        };
+      }),
+    ],
   };
 }
 

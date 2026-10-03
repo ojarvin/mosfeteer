@@ -4448,11 +4448,19 @@ function canvasMouseDown(ev) {
   if (handleOwner?.dataset.resizeKind === 'annotation') {
     const label = circuit.labels.get(handleOwner.dataset.resizeId);
     if (label?.kind === 'box') {
-      setSelection([]);
-      setLabelSelection([label.id]);
+      // Several boxes selected (plots side by side): one handle resizes them
+      // all alike, each from its own corner.
+      const together = selLabels.has(label.id)
+        ? [...selLabels].map((id) => circuit.labels.get(id)).filter((other) => other && other !== label && other.kind === 'box')
+        : [];
+      if (!together.length) {
+        setSelection([]);
+        setLabelSelection([label.id]);
+      }
       drag = {
         mode: 'boxresize', label, handle: handle.dataset.resizeHandle,
         startWorld, startClient, origin: label.bbox(), startBox: boxState(label), startSnapshot: snapshot(), moved: false,
+        others: together.map((other) => ({ label: other, origin: other.bbox(), startBox: boxState(other) })),
       };
       try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
       render();
@@ -5604,7 +5612,32 @@ export function canvasMouseMove(ev) {
     // Resize from the pointer-down state every frame, so child labels follow
     // the box without accumulating grid rounding.
     restoreBoxState(drag.label, drag.startBox);
-    drag.label.resizeBox(resizeRect(drag.origin, drag.handle, movedWorld, { symmetric: ev.ctrlKey || ev.metaKey, min: GRID }));
+    const rect = resizeRect(drag.origin, drag.handle, movedWorld, { symmetric: ev.ctrlKey || ev.metaKey, min: GRID });
+    drag.label.resizeBox(rect);
+    // The others' edges move as this one's did; a box below (or right of)
+    // another selected one moves on by its growth, so a column (or row) of
+    // plots keeps its spacing. The dragged box stays where it is.
+    const o = drag.origin;
+    const d = { x0: rect.x - o.x, y0: rect.y - o.y, x1: rect.x + rect.w - o.x - o.w, y1: rect.y + rect.h - o.y - o.h };
+    const grow = { w: d.x1 - d.x0, h: d.y1 - d.y0 };
+    const all = [{ origin: o }, ...(drag.others || [])];
+    const before = (b) => ({
+      above: all.filter((a) => a.origin !== b && a.origin.y + a.origin.h <= b.y && a.origin.x < b.x + b.w && b.x < a.origin.x + a.origin.w).length,
+      left: all.filter((a) => a.origin !== b && a.origin.x + a.origin.w <= b.x && a.origin.y < b.y + b.h && b.y < a.origin.y + a.origin.h).length,
+    });
+    const mine = before(o);
+    for (const other of drag.others || []) {
+      restoreBoxState(other.label, other.startBox);
+      const b = other.origin;
+      const theirs = before(b);
+      const sx = (theirs.left - mine.left) * grow.w;
+      const sy = (theirs.above - mine.above) * grow.h;
+      const x0 = b.x + d.x0 + sx; const y0 = b.y + d.y0 + sy;
+      const x1 = Math.max(x0 + GRID, b.x + b.w + d.x1 + sx); const y1 = Math.max(y0 + GRID, b.y + b.h + d.y1 + sy);
+      // Shift it (and its legend) first, then size it from there.
+      if (sx || sy) shiftBoxGroup(other.label, sx, sy);
+      other.label.resizeBox({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    }
     markModelChanged(false);
     scheduleInteractionRender();
     return;
@@ -8042,3 +8075,12 @@ if (paneEl && typeof ResizeObserver !== 'undefined') {
 }
 
 statusZoomEl?.addEventListener('click', () => fitView({ animate: true }));
+
+/** Move a box annotation and its child labels by (dx, dy). */
+function shiftBoxGroup(box, dx, dy) {
+  const by = (p) => (p ? { x: p.x + dx, y: p.y + dy } : p);
+  box.anchor = by(box.anchor);
+  box.end = by(box.end);
+  if (box.textAnchor) box.textAnchor = by(box.textAnchor);
+  for (const label of circuit.labels.values()) if (label.parent === box.id) label.anchor = by(label.anchor);
+}

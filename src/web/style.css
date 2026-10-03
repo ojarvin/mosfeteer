@@ -6250,6 +6250,12 @@ body.chrome-away [data-editor-edge="right"] {
   stroke: none;
 }
 
+/* A simulated spectrum: thin, behind the analytic curves. */
+.signal-flow-plot .role-spectrum {
+  stroke-width: 0.75;
+  stroke-opacity: 0.8;
+}
+
 .signal-flow-plot .role-curve {
   stroke: var(--accent);
   stroke-width: 2;
@@ -6390,6 +6396,7 @@ body.chrome-away [data-editor-edge="right"] {
   min-width: 5rem;
 }
 
+.analysis-dock .signal-flow-swing-controls .signal-flow-locus-range,
 .analysis-dock .signal-flow-swing-controls .signal-flow-swing-frequency {
   flex: 0 0 5.5rem;
   width: 5.5rem;
@@ -6400,6 +6407,23 @@ body.chrome-away [data-editor-edge="right"] {
   align-items: center;
   gap: 6px;
   justify-content: flex-end;
+}
+
+.signal-flow-spectrum {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.analysis-dock .signal-flow-spectrum .signal-flow-spectrum-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.analysis-dock .signal-flow-spectrum-toggle input {
+  width: auto;
+  min-height: 0;
 }
 
 .signal-flow-band label {
@@ -6454,7 +6478,8 @@ body.chrome-away [data-editor-edge="right"] {
   gap: 8px;
 }
 
-.signal-flow-axis button {
+.signal-flow-axis button,
+.signal-flow-view button {
   height: 24px;
   padding: 0 10px;
   border: 0;
@@ -6465,7 +6490,8 @@ body.chrome-away [data-editor-edge="right"] {
   cursor: pointer;
 }
 
-.signal-flow-axis button[aria-pressed="true"] {
+.signal-flow-axis button[aria-pressed="true"],
+.signal-flow-view button[aria-pressed="true"] {
   color: var(--text);
   background: var(--bg-panel);
   box-shadow: 0 0 0 1px var(--border);

@@ -687,3 +687,81 @@ test('the signal-flow settings are saved with the document', () => {
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(loaded.analysisValues.flow, circuit.analysisValues.flow);
 });
+
+// ----- phase, step, root locus, spectrum ------------------------------------------------
+
+import { stepPlot, stepResponse } from '../src/core/analysis/step.js';
+import { locusPlot, rootLocus } from '../src/core/analysis/locus.js';
+import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum } from '../src/core/analysis/spectrum.js';
+import { locusFigure, stepFigure } from '../src/core/bode-figure.js';
+
+test('step responses: exact for s (overshoot of a second-order section), by recursion for z', () => {
+  const circuit = new Circuit();
+  const tf = (type, value) => blockTransferFunction(circuit.addComponent(type, { value }));
+  const underdamped = stepResponse(tf('tf_s', 'tf([1], [1 0.4 1])'));
+  // zeta = 0.2: overshoot exp(-pi zeta / sqrt(1 - zeta^2)).
+  const peak = Math.max(...underdamped.points.map((p) => p.y));
+  assert.ok(Math.abs(peak - 1 - Math.exp(-Math.PI * 0.2 / Math.sqrt(1 - 0.04))) < 2e-3);
+  assert.ok(Math.abs(underdamped.points.at(-1).y - 1) < 2e-3);
+  // A delay shifts its term's step response.
+  const delayed = stepResponse(tf('tf_s', 'exp(-s*2)/(s+1)'));
+  assert.ok(delayed.points.filter((p) => p.t < 1.9).every((p) => Math.abs(p.y) < 1e-9));
+  // In z: the samples of the difference equation; an NTF's FIR step 1, -1, 0, ...
+  const ntf = stepResponse(tf('tf_z', 'tf([1 -2 1], [1])'));
+  assert.deepEqual(ntf.points.slice(0, 4).map((p) => p.y), [1, -1, 0, 0]);
+  assert.equal(ntf.unit, 'n');
+  const plot = stepPlot([{ label: 'A', color: '#3b74e0', value: tf('tf_z', 'tf([0.5], [1 -0.5])') }]);
+  assert.equal(plot.kind, 'step');
+  assert.ok(stepFigure(plot).items.some((item) => item.type === 'path'));
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify((() => { const c = new Circuit(); c.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, plot }); return c; })().toJSON())));
+  assert.equal([...loaded.labels.values()][0].plot.traces[0].stairs, true);
+});
+
+test('the root locus finds where a loop becomes stable and unstable again', () => {
+  // MOD2 with k_1 = 1: stable for 1 < k_2 < 2.5 (|a_2| < 1, 1 - a_1 + a_2 > 0).
+  const report = analyzeSignalFlow(quantizedModulator('dt'), { output: 'V', sources: { QZ1: 'input' } });
+  const [ntf] = report.entries;
+  const locus = rootLocus((k) => withCoefficients(ntf.value, { k_1: 1, k_2: k }), { from: 0.5, to: 5, current: 2, steps: 400 });
+  assert.equal(locus.variable, 'z');
+  assert.deepEqual(locus.crossings.map((c) => c.becomes), ['stable', 'unstable']);
+  assert.ok(Math.abs(locus.crossings[0].k - 1) < 0.02 && Math.abs(locus.crossings[1].k - 2.5) < 0.02);
+  const plot = locusPlot(locus, { parameter: 'k_2' });
+  assert.ok(locusFigure(plot).items.some((item) => /^stable for k_2 1(\.0\d)? … 2\.5\d?$/.test(item.text || '')), locusFigure(plot).items.map((i) => i.text).filter(Boolean).join(' | '));
+});
+
+test('the simulated spectrum: shaped error on its |NTF|, the SNDR in band', () => {
+  const sim = prepareSimulation(quantizedModulator('dt'), { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V', frequency: 1 / 256, samples: 16384 });
+  const run = sim.run(-6, { record: true });
+  const spectrum = outputSpectrum(run.samples);
+  // Around f/fs = 0.25 the floor reads |NTF|^2 = (2 sin(pi/4))^4, 6 dB.
+  const near = spectrum.points.filter((p) => Math.abs(p.f - 0.25) < 0.01);
+  const floor = 10 * Math.log10(near.reduce((sum, p) => sum + 10 ** (p.db / 10), 0) / near.length);
+  assert.ok(Math.abs(floor - 6) < 1.5, `${floor}`);
+  // A second-order loop at OSR 64, -6 dBFS: near the linear model's 73 dB, a little under.
+  const measured = inBand(spectrum, sim.frequency, [1 / 128]);
+  assert.ok(measured.sndr > 65 && measured.sndr < 76, `${measured.sndr}`);
+});
+
+test('with a simulated spectrum the response graph is one plot in dBFS: noise levels and tone levels', () => {
+  const sim = prepareSimulation(quantizedModulator('dt'), { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V', frequency: 1 / 256, samples: 16384 });
+  const run = sim.run(-6, { record: true });
+  const raw = outputSpectrum(run.samples);
+  const spectrum = dbfsSpectrum(raw, sim.fullScale);
+  // The tone's bin reads its amplitude in dBFS.
+  const tone = spectrum[Math.round(sim.frequency * raw.n) - 1];
+  assert.ok(Math.abs(tone.db + 6) < 0.2, `${tone.db}`);
+  // An NTF moved to the noise it predicts lies on the floor near f/fs = 0.25.
+  const offset = dbfsOffset(raw, sim.fullScale, { noise: true });
+  const near = spectrum.filter((p) => Math.abs(p.f - 0.25) < 0.01);
+  const floor = 10 * Math.log10(near.reduce((sum, p) => sum + 10 ** (p.db / 10), 0) / near.length);
+  assert.ok(Math.abs(floor - (6 + offset)) < 1.5, `${floor} vs ${6 + offset}`);
+  // An STF moves to the tone's level.
+  assert.equal(dbfsOffset(raw, sim.fullScale, { noise: false, amplitude: -6 }), -6);
+  const ntf = blockTransferFunction(new Circuit().addComponent('tf_z', { value: 'tf([1 -2 1], [1])' }));
+  const plot = bandedPlot([{ label: 'N', color: '#3b74e0', value: ntf, variable: 'z', noise: true }], 'z', { background: [{ label: 's', color: '#888888', points: spectrum }], dbfs: { offset: (t) => dbfsOffset(raw, sim.fullScale, { noise: t.noise, amplitude: -6 }) } });
+  assert.equal(plot.units, 'dBFS');
+  assert.equal(plot.traces[0].background, true);
+  // Everything drawn stays inside the plot, the spectrum's lowest bins included.
+  const figure = responseFigure(plot);
+  for (const item of figure.items.filter((i) => i.type === 'path')) for (const p of item.points) assert.ok(p.x >= figure.pane.x - 1e-6, 'left of the axis');
+});

@@ -10,7 +10,7 @@ import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
-import { bodeFigure, responseFigure, swingFigure } from './bode-figure.js';
+import { bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } from './bode-figure.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -680,6 +680,7 @@ const PLOT_STROKES = {
   corner: { width: 2, dash: '4 10' },
   grid: { width: 1 },
   band: { width: 3, dash: '18 9' },
+  spectrum: { width: 2 },
   marker: { width: 3, dash: '18 9' },
 };
 
@@ -694,12 +695,16 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const response = plot.kind === 'response' || plot.kind === 'swing';
+  const response = ['response', 'swing', 'step', 'locus'].includes(plot.kind);
   const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
   // A response plot (signal-flow analysis) draws each trace in its colour;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
-  const figure = plot.kind === 'swing'
+  const figure = plot.kind === 'locus'
+    ? locusFigure(plot, { width: w, height: h, fontSize })
+    : plot.kind === 'step'
+    ? stepFigure(plot, { width: w, height: h, fontSize })
+    : plot.kind === 'swing'
     ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize })
     : response
     ? responseFigure(plot, { width: w, height: h, fontSize })
@@ -718,7 +723,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
     if (item.type === 'path') return item.points.length > 1 ? `<path d="${polylineD(item.points)}" ${stroke(item.role, item.color ? escapeSvg(item.color) : color)} stroke-linejoin="round"/>` : '';
-    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${color}" stroke="none"/>`;
+    if (item.type === 'dot') return `<circle cx="${fmt(item.x)}" cy="${fmt(item.y)}" r="${fmt(item.r || 6)}" fill="${item.color ? escapeSvg(item.color) : color}"${item.opacity !== undefined ? ` fill-opacity="${fmt(item.opacity)}"` : ''} stroke="none"/>`;
     if (item.type === 'text') return text(item);
     return '';
   }).join('');
