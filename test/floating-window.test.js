@@ -15,6 +15,12 @@ test('a floating window goes where it was put, or its default place, and stays i
   assert.deepEqual(floatingWindowPosition(pane, size, { x: 900, y: -50 }, PLACE.topRight), { x: 692, y: 8 });
   // A window bigger than the pane keeps its title bar in reach.
   assert.deepEqual(floatingWindowPosition({ w: 200, h: 100 }, size, { x: 50, y: 50 }, PLACE.topRight), { x: 8, y: 8 });
+  // Never over the tool rail: beside it when level with it, free below it.
+  const rail = { x: 8, y: 8, w: 44, h: 300 };
+  assert.deepEqual(floatingWindowPosition(pane, size, { x: 10, y: 40 }, PLACE.topRight, rail), { x: 60, y: 40 });
+  assert.deepEqual(floatingWindowPosition(pane, size, { x: 10, y: 380 }, PLACE.topRight, rail), { x: 10, y: 380 });
+  // With no room beside it, the window goes under it instead.
+  assert.deepEqual(floatingWindowPosition({ w: 320, h: 600 }, size, { x: 10, y: 40 }, PLACE.topRight, rail), { x: 10, y: 316 });
 });
 
 test('beats, timing, and analysis are floating windows with one title bar and a close ×', () => {
@@ -36,11 +42,12 @@ test('beats, timing, and analysis are floating windows with one title bar and a 
 
 test('the toolbar groups the windows, and More lists them too', () => {
   const group = html.slice(html.indexOf('class="toolbar-cluster window-cluster"'), html.indexOf('class="toolbar-cluster view-cluster"'));
-  assert.deepEqual([...group.matchAll(/<button id="([^"]+)"/g)].map((m) => m[1]), ['btn-window-beats', 'btn-window-timing', 'btn-analysis']);
+  assert.deepEqual([...group.matchAll(/<button id="([^"]+)"/g)].map((m) => m[1]), ['btn-window-beats', 'btn-window-timing', 'btn-analysis', 'btn-window-reference']);
   const more = html.slice(html.indexOf('id="document-menu"'), html.indexOf('class="toolbar-spacer"'));
   assert.match(more, /id="btn-beats"/);
   assert.match(more, /id="btn-timing-diagram"/);
   assert.match(more, /data-proxy-for="btn-analysis"[^>]*>Small-signal analysis/);
+  assert.match(more, /data-proxy-for="btn-window-reference"[^>]*>Reference windows/);
   // A folded toolbar drops the group: More has every window.
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
   assert.match(css, /data-compact~="fold"\] :is\([^)]*\.window-cluster/);
@@ -68,4 +75,29 @@ test('the workspace reads as one: an Atlas button and tags by the name, one set 
   assert.equal((hierarchy.match(/ appendLinkVerbs\(group, component, (\[component\]|parts)\);/g) || []).length, 2);
   const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
   assert.match(atlas, /function focusNamed\(generation, name\)/);
+});
+
+test('every floating window docks into the side panel and floats out again', () => {
+  const source = readFileSync(new URL('../src/web/floating-window.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
+  const panel = readFileSync(new URL('../src/web/side-panel.js', import.meta.url), 'utf8');
+  // One dock button per window, before its close ×, moving it between pane and panel.
+  assert.match(source, /dockButton\.className = 'floating-window-dock'/);
+  assert.match(source, /header\?\.insertBefore\(dockButton, closeButton\)/);
+  assert.match(source, /panel\.appendChild\(el\)/);
+  assert.match(source, /pane\.appendChild\(el\)/);
+  // Dragged to the pane's right edge it docks; a docked title bar dragged out floats.
+  assert.match(source, /atEdge\(e\)\) \{[\s\S]*?setDocked\(true\)/);
+  assert.match(source, /UNDOCK_DRAG\) return;[\s\S]*?setDocked\(false\)/);
+  // Docking shows the panel; restoring a dock on load does not.
+  assert.match(source, /if \(remember\) el\.dispatchEvent\(new CustomEvent\('floating-window-dock'/);
+  assert.match(panel, /addEventListener\('floating-window-dock'/);
+  // Docked, a window is a panel section that folds to its title bar; beats run down.
+  assert.match(css, /\.side-panel > \.floating-window\.docked \{[^}]*flex: 1 1 16rem/);
+  assert.match(css, /\.floating-window\.docked\.folded > :not\(\.floating-window-header/);
+  // Folded, only the title bar shows -- its own title and buttons included,
+  // whether the bar is the window's child or (the analysis form's) grandchild.
+  assert.match(css, /\.docked\.folded > :has\(> \.floating-window-header\) > :not\(\.floating-window-header\)/);
+  assert.doesNotMatch(css, /\.docked\.folded > \* > :not/);
+  assert.match(css, /\.beat-strip\.docked \.beat-list \{[^}]*flex-direction: column/);
 });

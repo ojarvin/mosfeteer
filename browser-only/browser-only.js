@@ -14751,8 +14751,8 @@ function exitPoint(r, toward) {
 
 /**
  * An arrow from one tile to another along the line joining their centres,
- * starting and ending `gap` outside their edges. Null when the tiles
- * overlap or sit too close for an arrow to show.
+ * starting and ending `gap` outside their edges -- less when the tiles sit
+ * close, so neighbours still get a short arrow. Null when they overlap.
  */
 function linkArrow(from, to, gap = 0) {
   const fromCentre = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
@@ -14762,10 +14762,11 @@ function linkArrow(from, to, gap = 0) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   // The tiles overlap when the exits cross over.
   const along = (b.x - a.x) * (toCentre.x - fromCentre.x) + (b.y - a.y) * (toCentre.y - fromCentre.y);
-  if (along <= 0 || length <= 2 * gap) return null;
+  if (along <= 0 || !length) return null;
   const ux = (b.x - a.x) / length;
   const uy = (b.y - a.y) / length;
-  return { x1: a.x + ux * gap, y1: a.y + uy * gap, x2: b.x - ux * gap, y2: b.y - uy * gap };
+  const g = Math.min(gap, length / 4);
+  return { x1: a.x + ux * g, y1: a.y + uy * g, x2: b.x - ux * g, y2: b.y - uy * g };
 }
 
 };
@@ -32656,8 +32657,8 @@ const LINKS_KEY = 'mosfeteer.atlas.links';
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then returns',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc clears the pick · Enter or Shift+Backspace returns',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -33033,7 +33034,7 @@ function colors() {
   };
 }
 
-/** The header's way back names the design Esc returns to, and says so when
+/** The header's way back names the design the editor returns to, and says so when
  *  that design is not on the desk (a new drawing, or one from elsewhere). */
 function syncBackButton() {
   if (!backEl || state.opening) return;
@@ -33042,7 +33043,7 @@ function syncBackButton() {
   const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
   if (backEl.textContent !== label) {
     backEl.textContent = label;
-    backEl.title = `Esc returns to ${name}, the design open in the editor`;
+    backEl.title = `Back to ${name}, the design open in the editor (Shift+Backspace, or Enter with nothing picked)`;
   }
 }
 
@@ -33175,7 +33176,6 @@ function drawLinks(ctx, palette, shown) {
   const edges = deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to));
   if (!edges.length) return;
   const tiles = new Map(shown.map(({ tile, alpha }) => [tile.id, { tile, alpha }]));
-  const head = 9;
   ctx.save();
   ctx.lineCap = 'round';
   for (const { from, to } of edges) {
@@ -33190,17 +33190,35 @@ function drawLinks(ctx, palette, shown) {
     ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (faded ? 0.3 : 0.9);
     ctx.strokeStyle = ctx.fillStyle = palette.accent;
     ctx.lineWidth = 2;
-    const angle = Math.atan2(arrow.y2 - arrow.y1, arrow.x2 - arrow.x1);
+    // A gentle bend, always to the same side of the way it points, so two
+    // designs linking both ways get two arrows rather than one line.
+    const dx = arrow.x2 - arrow.x1;
+    const dy = arrow.y2 - arrow.y1;
+    const length = Math.hypot(dx, dy);
+    const bend = Math.min(length * 0.18, 60);
+    const control = { x: (arrow.x1 + arrow.x2) / 2 - (dy / length) * bend, y: (arrow.y1 + arrow.y2) / 2 + (dx / length) * bend };
+    // The head points along the curve where it arrives, and takes at most
+    // half a short arrow, so a short one still shows a shaft.
+    const head = Math.min(10, length / 2);
+    const angle = Math.atan2(arrow.y2 - control.y, arrow.x2 - control.x);
     const tip = { x: arrow.x2, y: arrow.y2 };
-    const base = { x: tip.x - Math.cos(angle) * head, y: tip.y - Math.sin(angle) * head };
+    const base = { x: tip.x - Math.cos(angle) * head * 0.8, y: tip.y - Math.sin(angle) * head * 0.8 };
     ctx.beginPath();
     ctx.moveTo(arrow.x1, arrow.y1);
-    ctx.lineTo(base.x, base.y);
+    ctx.quadraticCurveTo(control.x, control.y, base.x, base.y);
     ctx.stroke();
+    // A dot where it leaves the design that links.
+    ctx.beginPath();
+    ctx.arc(arrow.x1, arrow.y1, Math.min(3, length / 8), 0, Math.PI * 2);
+    ctx.fill();
+    // A slim, swept-back head.
+    const wing = head * 0.42;
+    const back = { x: tip.x - Math.cos(angle) * head, y: tip.y - Math.sin(angle) * head };
     ctx.beginPath();
     ctx.moveTo(tip.x, tip.y);
-    ctx.lineTo(base.x + Math.sin(angle) * head * 0.45, base.y - Math.cos(angle) * head * 0.45);
-    ctx.lineTo(base.x - Math.sin(angle) * head * 0.45, base.y + Math.cos(angle) * head * 0.45);
+    ctx.lineTo(back.x + Math.sin(angle) * wing, back.y - Math.cos(angle) * wing);
+    ctx.lineTo(base.x, base.y);
+    ctx.lineTo(back.x - Math.sin(angle) * wing, back.y + Math.cos(angle) * wing);
     ctx.closePath();
     ctx.fill();
   }
@@ -33248,8 +33266,7 @@ function applySearch(query, { arrange = 'soon' } = {}) {
     statusEl.textContent = count ? `${count} of ${designs} · Enter steps through them` : 'No design matches';
   }
   for (const [id, el] of state.overlays) el.style.opacity = !state.matches || state.matches.has(id) ? '' : '0.18';
-  // One design left is the one being looked for: pick it, so Esc and Enter
-  // open it. Packing the desk around it brings it into view.
+  // One design left is the one being looked for: pick it, so Enter opens it. Packing the desk around it brings it into view.
   if (state.matches?.size === 1) state.selected = [...state.matches.keys()][0];
   clearTimeout(state.arrangeTimer);
   state.arrangeTimer = null;
@@ -33527,7 +33544,7 @@ function leaveSearch() {
   requestDraw();
 }
 
-/** Esc on the desk drops a search before it leaves the Atlas. */
+/** Esc on the desk drops a search before it clears the pick. */
 function clearSearch() {
   if (searchEl) searchEl.value = '';
   applySearch('', { arrange: 'now' });
@@ -33659,7 +33676,7 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   let room = (tile.w + ATLAS_GAP * 0.8) * k;
   let x = rect.x;
   const y = rect.y + rect.h + size * 0.6;
-  // The open design -- where Esc returns -- carries an Open badge before its
+  // The open design -- where the editor returns to -- carries an Open badge before its
   // name, whichever design is picked or hovered.
   if (entry.current) {
     ctx.font = `700 ${size * 0.8}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
@@ -33896,7 +33913,7 @@ async function reloadDesk() {
   if (!ready || !state || state.generation !== generation) return true;
   state.selected = state.tiles.find((tile) => state.entries.get(tile.id).current)?.id || null;
   if (!state.tiles.length) {
-    statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
+    statusEl.textContent = 'No designs in the workspace yet. Shift+Backspace returns to the editor.';
     requestDraw();
   } else {
     void animateView(clampView(fitAllView()));
@@ -34030,7 +34047,7 @@ async function openDesk(generation, source, animate, startup) {
     return;
   }
   if (!state.tiles.length) {
-    statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
+    statusEl.textContent = 'No designs in the workspace yet. Shift+Backspace returns to the editor.';
   }
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id).current);
   // The open design starts picked; otherwise nothing is until you choose.
@@ -34274,6 +34291,8 @@ function onAtlasKey(ev) {
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
   if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && key.toLowerCase() === 'c') void copyPickedAsImage();
+  // Esc takes things back one at a time and never leaves: the pick of
+  // several, then a search, then the pick (and its link arrows) itself.
   else if (key === 'Escape' && state.picked?.size) {
     state.picked = null;
     requestDraw();
@@ -34281,8 +34300,12 @@ function onAtlasKey(ev) {
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
-  else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
-  else if (key === 'Enter' && selected) void openTile(selected);
+  else if (key === 'Escape') {
+    state.selected = null;
+    requestDraw();
+  } else if (key === 'Backspace') void closeAtlas();
+  // Enter opens the picked design; with none picked, back to the editor.
+  else if (key === 'Enter') void (selected ? openTile(selected) : closeAtlas());
   else if (arrows[key]) {
     // While a search is on, the arrows and Tab move among what it found.
     const tiles = navigableTiles();
@@ -34758,9 +34781,11 @@ function beginBeatChipDrag(index, chip, ev) {
     const groups = [...beatListEl.querySelectorAll('.beat-chip-group')];
     // The slot the pointer is over: before the first chip whose middle it has
     // not passed, else after the last.
+    // Docked in the side panel, the beats run down instead of across.
+    const down = beatStripEl.classList.contains('docked');
     const before = groups.findIndex((group) => {
       const rect = group.getBoundingClientRect();
-      return moveEv.clientX < rect.left + rect.width / 2;
+      return down ? moveEv.clientY < rect.top + rect.height / 2 : moveEv.clientX < rect.left + rect.width / 2;
     });
     const slot = before === -1 ? groups.length : before;
     target = slot > index ? slot - 1 : slot;
@@ -36516,12 +36541,14 @@ let enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubble
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy-paste.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
+let referenceWindowsShown, toggleReferenceWindows; __bind(() => { ({ referenceWindowsShown, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 /**
  * The `:` command line: history, Tab completion with a suggestion list, and
  * the editor commands (panels, view toggles, menus, dialogs). Everything else
  * goes to the shared document command language through runLine. The
  * vocabulary and completion rules are command-line.js.
  */
+
 
 
 
@@ -36562,6 +36589,7 @@ const ACTIONS = {
   more: () => openMenu('btn-document-menu'),
   panel: (state) => setSidePanelVisible(state ?? !sidePanelVisible()),
   analysis: (state) => toggleTo(state, !analysisDialog.hidden, () => toggleAnalysisDock()),
+  reference: (state) => toggleTo(state, referenceWindowsShown(), toggleReferenceWindows),
   grid: (state) => setGrid(state ?? !editor.showGrid),
   guides: (state) => setGuides(state ?? !editor.guidesVisible),
   crosshair: (state) => setCrosshair(state ?? !editor.crosshairVisible),
@@ -36835,6 +36863,7 @@ const TOGGLE_VALUES = {
 const EDITOR_COMMANDS = [
   { name: 'settings', aliases: ['preferences', 'prefs', 'options', 'config'], help: 'open the settings menu' },
   { name: 'panel', aliases: ['sidebar', 'side-panel', 'sidepanel', 'inspector'], toggle: true, help: 'show or hide the components, nets, and selection panel (Shift+P)' },
+  { name: 'reference', aliases: ['reference-window', 'references', 'ref'], toggle: true, help: 'show or hide reference windows: another design beside this one (Shift+V)' },
   { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
   { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },
@@ -41901,11 +41930,13 @@ __modules["src/web/floating-window.js"] = function (__require, __exports) {
 __exports.floatingWindowPosition = floatingWindowPosition;
 __exports.floatingWindow = floatingWindow;
 /**
- * Floating windows: the beats, the timing diagram editor, and the
- * small-signal analysis float over the drawing, where the side panel docks
- * beside it. Each is a `.floating-window` in the canvas pane with one title
- * bar: the title to drag it by, then a close × at the right. A window stays
- * where it was put (per window, in this browser) and inside the pane.
+ * Floating windows: the beats, the timing diagram editor, the small-signal
+ * analysis, and reference windows float over the drawing, where the side
+ * panel docks beside it. Each is a `.floating-window` in the canvas pane with
+ * one title bar: the title to drag it by, then a dock button and a close ×
+ * at the right. A window stays where it was put (per window, in this
+ * browser), inside the pane and clear of the tool rail -- or, docked, in
+ * the side panel as one of its sections.
  */
 
 const PLACE_KEY = (key) => `mosfeteer.window.${key}`;
@@ -41914,11 +41945,25 @@ const MARGIN = 8;
 
 /** Where a window of `size` ({ w, h }) goes in a pane of `pane` ({ w, h }):
  *  `stored` ({ x, y }) when there is one, else `place`'s default, clamped so
- *  the whole window stays in the pane (or its top-left, when it cannot). */
-function floatingWindowPosition(pane, size, stored, place) {
+ *  the whole window stays in the pane (or its top-left, when it cannot) and
+ *  off `avoid` ({ x, y, w, h }, the tool rail): beside it when the window
+ *  is level with it -- or, with no room beside it, below it. */
+function floatingWindowPosition(pane, size, stored, place, avoid = null) {
   const at = stored && Number.isFinite(stored.x) && Number.isFinite(stored.y) ? stored : place(pane, size);
-  const x = Math.min(Math.max(MARGIN, at.x), Math.max(MARGIN, pane.w - size.w - MARGIN));
-  const y = Math.min(Math.max(MARGIN, at.y), Math.max(MARGIN, pane.h - size.h - MARGIN));
+  const clampX = (x, left = MARGIN) => Math.min(Math.max(left, x), Math.max(left, pane.w - size.w - MARGIN));
+  const clampY = (y, top = MARGIN) => Math.min(Math.max(top, y), Math.max(top, pane.h - size.h - MARGIN));
+  let x = clampX(at.x);
+  let y = clampY(at.y);
+  if (avoid) {
+    const right = avoid.x + avoid.w + MARGIN;
+    const bottom = avoid.y + avoid.h + MARGIN;
+    const level = y < bottom && y + size.h > avoid.y - MARGIN;
+    if (level && x < right) {
+      // Beside the rail when the window fits there, else under it.
+      if (pane.w - right - MARGIN >= size.w || pane.h - bottom - MARGIN < size.h) x = clampX(x, right);
+      else y = clampY(bottom, bottom);
+    }
+  }
   return { x: Math.round(x), y: Math.round(y) };
 }
 
@@ -41940,29 +41985,172 @@ function writePlace(key, value) {
   try { localStorage.setItem(PLACE_KEY(key), JSON.stringify(value)); } catch { /* per-session only */ }
 }
 
+/** Within this many pixels of the pane's right edge, a dragged window docks. */
+const DOCK_EDGE = 28;
+/** A docked window's title bar dragged this far pulls it out to float. */
+const UNDOCK_DRAG = 8;
+
+function iconSvg(paths) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('button-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = paths;
+  return svg;
+}
+
+// A window into the panel's column, or out of it.
+const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M14.5 4.5v15"/><path d="M15 8h4M15 11h4" stroke-width="1.2"/>';
+
 /**
  * Make `el` a floating window. `onClose` runs for its ×; `place` gives its
  * default position; `resizable` keeps the size the user drags its corner to.
- * Returns { place() }, to call after showing it (it also comes to the
- * front), and dispose(), for a window that is removed rather than hidden.
+ * Every window can also dock: its dock button (or a drag against the pane's
+ * right edge) puts it in the side panel as a section, full width and sharing
+ * the column's height; the button again, or dragging its title bar out,
+ * floats it where it was. A click on a docked window's title bar folds it
+ * to that bar. Where a window is, docked or not, is kept per window in this
+ * browser. Returns { place() }, to call after showing it (it also comes to
+ * the front), and dispose(), for a window that is removed rather than hidden.
  */
 function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = false }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
+  const panel = document.getElementById('side-panel');
   const header = el.querySelector('.floating-window-header');
-  el.querySelector('.floating-window-close')?.addEventListener('click', () => onClose?.());
+  const closeButton = el.querySelector('.floating-window-close');
+  closeButton?.addEventListener('click', () => onClose?.());
   let stored = readPlace(key);
-  if (resizable && stored?.w && stored?.h) {
-    el.style.width = `${stored.w}px`;
-    el.style.height = `${stored.h}px`;
-  }
+  const sizeFromStore = () => {
+    if (resizable && stored?.w && stored?.h) {
+      el.style.width = `${stored.w}px`;
+      el.style.height = `${stored.h}px`;
+    }
+  };
+  sizeFromStore();
 
+  const docked = () => el.classList.contains('docked');
   const paneSize = () => ({ w: pane.clientWidth, h: pane.clientHeight });
+  // Windows keep clear of the tool rail on the pane's left -- the rail
+  // itself, not the paper under it: never placed or dragged over it.
+  const rail = pane.querySelector('.mode-toolbar');
+  const railRect = () => (rail && rail.offsetWidth
+    ? { x: rail.offsetLeft, y: rail.offsetTop, w: rail.offsetWidth, h: rail.offsetHeight }
+    : null);
   const apply = () => {
-    if (el.hidden) return;
+    if (el.hidden || docked()) return;
+    const room = `${Math.max(0, paneSize().w - 2 * MARGIN)}px`;
+    if (el.style.maxWidth !== room) el.style.maxWidth = room;
     const size = { w: el.offsetWidth, h: el.offsetHeight };
-    const at = floatingWindowPosition(paneSize(), size, stored, place);
+    const at = floatingWindowPosition(paneSize(), size, stored, place, railRect());
     el.style.left = `${at.x}px`;
     el.style.top = `${at.y}px`;
+  };
+
+  // ----- docking -----
+  const dockButton = document.createElement('button');
+  dockButton.type = 'button';
+  dockButton.className = 'floating-window-dock';
+  dockButton.append(iconSvg(DOCK_ICON));
+  if (closeButton) header?.insertBefore(dockButton, closeButton);
+  else header?.append(dockButton);
+  const syncDockButton = () => {
+    const on = docked();
+    dockButton.setAttribute('aria-pressed', String(on));
+    dockButton.setAttribute('aria-label', on ? 'Float over the drawing' : 'Dock in the side panel');
+    dockButton.title = on ? 'Float this window over the drawing again (or drag its title bar out)' : 'Dock this window in the side panel (or drag it to the right edge)';
+    header?.setAttribute('aria-expanded', String(!el.classList.contains('folded')));
+  };
+  // A docked window's height, when its top edge was dragged: a fixed share
+  // of the column, the rest of which the panel's sections share.
+  const dockHeight = () => {
+    const h = docked() && !el.classList.contains('folded') ? stored?.dockH : null;
+    if (h) {
+      el.style.setProperty('--dock-height', `${h}px`);
+      el.dataset.dockSized = '';
+    } else {
+      el.style.removeProperty('--dock-height');
+      delete el.dataset.dockSized;
+    }
+  };
+  const resizer = document.createElement('div');
+  resizer.className = 'floating-window-dock-resizer';
+  resizer.setAttribute('role', 'separator');
+  resizer.setAttribute('aria-orientation', 'horizontal');
+  resizer.title = 'Drag to resize; double-click to reset';
+  el.prepend(resizer);
+  resizer.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 || !docked()) return;
+    ev.preventDefault();
+    resizer.setPointerCapture(ev.pointerId);
+    const start = { y: ev.clientY, h: el.offsetHeight };
+    // It grows by what the column's other sections can still give up.
+    const spare = [...panel.children].reduce((sum, child) => {
+      if (child === el || !child.offsetHeight) return sum;
+      const style = getComputedStyle(child);
+      if (style.position === 'absolute' || Number(style.flexShrink) === 0) return sum;
+      return sum + Math.max(0, child.offsetHeight - (parseFloat(style.minHeight) || 0));
+    }, 0);
+    const max = start.h + spare;
+    panel.classList.add('resizing');
+    let frame = 0;
+    let lastY = start.y;
+    const step = () => {
+      frame = 0;
+      stored = { ...stored, dockH: Math.round(Math.min(max, Math.max(96, start.h - (lastY - start.y)))) };
+      dockHeight();
+    };
+    const move = (e) => {
+      lastY = e.clientY;
+      if (!frame) frame = requestAnimationFrame(step);
+    };
+    const end = () => {
+      if (frame) {
+        cancelAnimationFrame(frame);
+        step();
+      }
+      resizer.removeEventListener('pointermove', move);
+      resizer.removeEventListener('pointerup', end);
+      resizer.removeEventListener('pointercancel', end);
+      panel.classList.remove('resizing');
+      writePlace(key, stored);
+    };
+    resizer.addEventListener('pointermove', move);
+    resizer.addEventListener('pointerup', end);
+    resizer.addEventListener('pointercancel', end);
+  });
+  resizer.addEventListener('dblclick', () => {
+    stored = { ...stored, dockH: undefined };
+    writePlace(key, stored);
+    dockHeight();
+  });
+
+  const setDocked = (on, { remember = true } = {}) => {
+    if (!panel || on === docked()) return;
+    if (on) {
+      el.classList.add('docked');
+      el.classList.toggle('folded', !!stored?.folded);
+      for (const prop of ['left', 'top', 'width', 'height', 'maxWidth']) el.style[prop] = '';
+      panel.appendChild(el);
+    } else {
+      el.classList.remove('docked', 'folded');
+      pane.appendChild(el);
+      sizeFromStore();
+    }
+    dockHeight();
+    stored = { ...stored, docked: on || undefined };
+    if (remember) writePlace(key, stored);
+    syncDockButton();
+    // The side panel shows what is docked in it (not when restoring a dock).
+    if (remember) el.dispatchEvent(new CustomEvent('floating-window-dock', { bubbles: true, detail: { docked: on } }));
+    apply();
+  };
+  dockButton.addEventListener('click', () => setDocked(!docked()));
+  const setFolded = (on) => {
+    el.classList.toggle('folded', on);
+    stored = { ...stored, folded: on || undefined };
+    dockHeight();
+    writePlace(key, stored);
+    syncDockButton();
   };
 
   // The window last opened or pressed comes to the front of the others.
@@ -41976,26 +42164,88 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
   header?.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 || ev.target.closest('button, input, select, textarea, a')) return;
     ev.preventDefault();
-    const start = { x: ev.clientX, y: ev.clientY, left: el.offsetLeft, top: el.offsetTop };
     header.setPointerCapture(ev.pointerId);
-    el.classList.add('dragging');
-    const move = (e) => {
+    const press = { x: ev.clientX, y: ev.clientY };
+    // Floating, the title bar drags the window; docked, a click folds it and
+    // a drag pulls it out, under the pointer, to go on dragging.
+    // A drag moves the window by a transform, at most once a frame, from
+    // geometry read once: moving it by left/top would lay its content out
+    // again on every pointer move. Its place is committed on release.
+    const begin = (x, y) => ({
+      x, y, left: el.offsetLeft, top: el.offsetTop,
+      size: { w: el.offsetWidth, h: el.offsetHeight }, pane: paneSize(), rail: railRect(),
+      right: pane.getBoundingClientRect().right,
+    });
+    let start = docked() ? null : begin(ev.clientX, ev.clientY);
+    let moved = false;
+    let frame = 0;
+    let pending = null;
+    let at = null;
+    const atEdge = (e) => !!panel && e.clientX >= (start?.right ?? pane.getBoundingClientRect().right) - DOCK_EDGE;
+    const follow = () => {
+      frame = 0;
+      const e = pending;
       stored = { ...stored, x: start.left + e.clientX - start.x, y: start.top + e.clientY - start.y };
-      apply();
+      at = floatingWindowPosition(start.pane, start.size, stored, place, start.rail);
+      el.style.transform = `translate(${at.x - start.left}px, ${at.y - start.top}px)`;
+      panel?.classList.toggle('dock-target', atEdge(e));
     };
-    const end = () => {
+    const settle = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (pending && start && moved) follow();
+      el.style.transform = '';
+      if (at) {
+        el.style.left = `${at.x}px`;
+        el.style.top = `${at.y}px`;
+      }
+    };
+    const move = (e) => {
+      if (!start) {
+        if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < UNDOCK_DRAG) return;
+        const grab = e.clientX - el.getBoundingClientRect().left;
+        setDocked(false);
+        // Moving the window between parents drops the pointer capture.
+        header.setPointerCapture(e.pointerId);
+        const paneRect = pane.getBoundingClientRect();
+        const left = e.clientX - paneRect.left - Math.min(grab, el.offsetWidth / 2);
+        const top = e.clientY - paneRect.top - header.offsetHeight / 2;
+        stored = { ...stored, x: left, y: top };
+        apply();
+        start = begin(e.clientX, e.clientY);
+      }
+      moved = true;
+      el.classList.add('dragging');
+      pending = e;
+      if (!frame) frame = requestAnimationFrame(follow);
+    };
+    const end = (e) => {
       header.removeEventListener('pointermove', move);
+      header.removeEventListener('pointerup', end);
+      header.removeEventListener('pointercancel', end);
+      settle();
       el.classList.remove('dragging');
-      stored = { ...stored, x: el.offsetLeft, y: el.offsetTop };
+      panel?.classList.remove('dock-target');
+      if (!start) {
+        // A click on a docked title bar folds the window to it, or unfolds it.
+        if (e.type === 'pointerup') setFolded(!el.classList.contains('folded'));
+        return;
+      }
+      if (moved && e.type === 'pointerup' && atEdge(e)) {
+        stored = { ...stored, x: start.left, y: start.top };
+        setDocked(true);
+        return;
+      }
+      if (at) stored = { ...stored, x: at.x, y: at.y };
       writePlace(key, stored);
     };
     header.addEventListener('pointermove', move);
-    header.addEventListener('pointerup', end, { once: true });
-    header.addEventListener('pointercancel', end, { once: true });
+    header.addEventListener('pointerup', end);
+    header.addEventListener('pointercancel', end);
   });
-  // Double-clicking the title bar puts the window back in its default place.
+  // Double-clicking the title bar puts a floating window back in its default place.
   header?.addEventListener('dblclick', (ev) => {
-    if (ev.target.closest('button, input, select, textarea, a')) return;
+    if (docked() || ev.target.closest('button, input, select, textarea, a')) return;
     stored = resizable && stored?.w ? { w: stored.w, h: stored.h } : null;
     writePlace(key, stored);
     apply();
@@ -42003,19 +42253,25 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
 
   // A smaller pane (a docked side panel, a narrower window) pulls it back in;
   // its own new size (content, or the corner grip) may push it out too.
+  // A size dragged from the corner is saved once it rests, not every frame.
+  let saveTimer = 0;
   const observers = typeof ResizeObserver === 'function'
     ? [new ResizeObserver(apply), new ResizeObserver(() => {
-      if (resizable && !el.hidden && el.style.width) {
+      if (resizable && !el.hidden && !docked() && el.style.width) {
         stored = { ...stored, w: el.offsetWidth, h: el.offsetHeight };
-        writePlace(key, stored);
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => writePlace(key, stored), 250);
       }
       apply();
     })]
     : [];
   observers[0]?.observe(pane);
   observers[1]?.observe(el);
+  if (stored?.docked) setDocked(true, { remember: false });
+  syncDockButton();
   return {
     place: () => { raise(); apply(); },
+    docked,
     dispose: () => observers.forEach((observer) => observer.disconnect()),
   };
 }
@@ -42760,6 +43016,8 @@ __exports.enterLinkedDesign = enterLinkedDesign;
 __exports.leaveLinkedDesign = leaveLinkedDesign;
 __exports.linkDot = linkDot;
 __exports.appendLinkContextItems = appendLinkContextItems;
+__exports.appendDesignChoices = appendDesignChoices;
+__exports.workspaceDesigns = workspaceDesigns;
 __exports.openLinkBubbleMenu = openLinkBubbleMenu;
 __exports.installHierarchy = installHierarchy;
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
@@ -43561,52 +43819,72 @@ function appendLinkContextItems(group, component) {
  *  into (typing anywhere in the list goes there). */
 function appendDesignPicker(group, scope, current) {
   const submenu = appendContextSubmenu(group, current ? 'Link to another design' : 'Link to design', (list) => {
-    list.classList.add('context-submenu-scroll');
-    const search = document.createElement('input');
-    search.type = 'search';
-    search.className = 'context-submenu-search';
-    search.placeholder = 'Find a design…';
-    search.setAttribute('aria-label', 'Find a design to link to');
-    list.appendChild(search);
-    const designs = linkableDesigns();
-    const items = designs.map((doc) => {
-      appendContextItem(list, doc.name, () => setLinks(scope, doc.name), { active: doc.name === current });
-      const item = list.lastElementChild;
-      item.dataset.key = searchKey(doc.name);
-      return item;
+    appendDesignChoices(list, linkableDesigns(), {
+      current,
+      label: 'Find a design to link to',
+      empty: 'No other designs in the workspace',
+      pick: (doc) => setLinks(scope, doc.name),
     });
-    const empty = document.createElement('div');
-    empty.className = 'context-submenu-empty';
-    empty.textContent = designs.length ? 'No design matches' : 'No other designs in the workspace';
-    empty.hidden = designs.length > 0;
-    list.appendChild(empty);
     if (current) appendContextItem(list, 'None (unlink)', () => setLinks(scope, null));
-    const visible = () => items.filter((item) => !item.hidden);
-    search.addEventListener('input', () => {
-      const key = searchKey(search.value);
-      for (const item of items) item.hidden = !!key && !item.dataset.key.includes(key);
-      empty.hidden = visible().length > 0;
-    });
-    search.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape') return;
-      ev.stopPropagation();
-      if (ev.key === 'Enter') {
-        ev.preventDefault();
-        visible()[0]?.click();
-      } else if (ev.key === 'ArrowDown') {
-        ev.preventDefault();
-        visible()[0]?.focus();
-      }
-    });
-    list.addEventListener('keydown', (ev) => {
-      if (ev.target === search || ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
-      search.focus();
-    });
   });
   submenu.previousElementSibling?.addEventListener('keydown', (ev) => {
     if (ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey || ev.key === ' ') return;
     submenu.querySelector('.context-submenu-search')?.focus();
   });
+}
+
+/** A searchable list of designs in a menu: a field that narrows them as it
+ *  is typed into (typing anywhere in the list goes there; Enter takes the
+ *  first, Down steps into them). Returns the field. */
+function appendDesignChoices(list, designs, { current = null, label = 'Find a design', empty = 'No designs in the workspace', pick }) {
+  list.classList.add('context-submenu-scroll');
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'context-submenu-search';
+  search.placeholder = 'Find a design…';
+  search.setAttribute('aria-label', label);
+  list.appendChild(search);
+  const items = designs.map((doc) => {
+    appendContextItem(list, doc.name, () => pick(doc), { active: doc.name === current });
+    const item = list.lastElementChild;
+    item.dataset.key = searchKey(doc.name);
+    return item;
+  });
+  const none = document.createElement('div');
+  none.className = 'context-submenu-empty';
+  none.textContent = designs.length ? 'No design matches' : empty;
+  none.hidden = designs.length > 0;
+  list.appendChild(none);
+  const visible = () => items.filter((item) => !item.hidden);
+  search.addEventListener('input', () => {
+    const key = searchKey(search.value);
+    for (const item of items) item.hidden = !!key && !item.dataset.key.includes(key);
+    none.hidden = visible().length > 0;
+  });
+  search.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') return;
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      visible()[0]?.click();
+    } else if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      visible()[0]?.focus();
+    }
+  });
+  list.addEventListener('keydown', (ev) => {
+    if (ev.target === search || ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    search.focus();
+  });
+  return search;
+}
+
+/** Every design of the workspace (and recent ones), each name once. */
+function workspaceDesigns() {
+  const seen = new Set();
+  return knownDesigns()
+    .filter((doc) => !doc.missing && !seen.has(doc.name) && seen.add(doc.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
 /** The menu of a bubble: open, hide, or relink its part. */
@@ -43814,6 +44092,8 @@ const ICON_PATHS = {
   move: '<path d="M12 5v14M5 12h14"/><path d="m12 2 3.2 3.8H8.8zM12 22l-3.2-3.8h6.4zM2 12l3.8-3.2v6.4zM22 12l-3.8 3.2V8.8z" fill="currentColor" stroke="none"/>',
   detach: '<rect x="8" y="6.5" width="8" height="11" rx="1.8" fill="currentColor" fill-opacity=".16"/><path d="M2.5 12H5M19 12h2.5"/><path d="m5.5 9-1 6M19.5 9l-1 6"/>',
   copy: '<rect x="3.5" y="3.5" width="11" height="11" rx="2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".16"/>',
+  fit: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" fill="currentColor" fill-opacity=".16"/>',
+  reference: '<rect x="3.5" y="5.5" width="11" height="13" rx="1.5"/><rect x="9.5" y="3.5" width="11" height="13" rx="1.5" fill="currentColor" fill-opacity=".16"/><path d="M12.5 8.5h5M12.5 11.5h5M12.5 14.5h3"/>',
   hierarchy: '<rect x="9" y="3.5" width="6" height="5" rx="1"/><rect x="3.5" y="15.5" width="6" height="5" rx="1"/><rect x="14.5" y="15.5" width="6" height="5" rx="1"/><path d="M12 8.5V12M6.5 15.5V12h11v3.5"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
   highlight: '<path d="M14.5 4.5l5 5-8 8H6.5v-5z" fill="currentColor" fill-opacity=".16"/><path d="M12 7l5 5"/><path d="M3.5 20.5h8"/>',
@@ -44704,7 +44984,9 @@ function isPrimaryPointerEvent({ pointerType = '', button = 0 } = {}) {
  * being browsed, since repainting rebuilds its scrolling contents. */
 function shouldForwardCanvasMove(target, canvasElement) {
   if (canvasElement?.contains?.(target)) return false;
-  return !target?.closest?.('#insert-menu');
+  // A floating window over the drawing is not the drawing: moving or
+  // resizing one must not drive the editor's hover, crosshair, and repaint.
+  return !target?.closest?.('#insert-menu, .floating-window');
 }
 
 /** Browsers follow each mouse `pointermove` with a compatibility `mousemove`
@@ -45987,6 +46269,7 @@ let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickA
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
+let fitHoveredReference, installReferenceWindows, toggleReferenceWindows; __bind(() => { ({ fitHoveredReference, installReferenceWindows, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
 let refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste; __bind(() => { ({ refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } = __require("src/web/copy-paste.js")); });
@@ -46003,6 +46286,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -52510,6 +52794,7 @@ canvasEl.addEventListener('mouseleave', () => {
 let suppressContextMenuUntil = 0;
 installContextMenu();
 installHierarchy();
+installReferenceWindows();
 installRenumberUi();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
@@ -52695,7 +52980,8 @@ function transformPendingComponent(operation) {
  *  where every printable key is search text. Returns true when handled. */
 function viewKey(key, shiftKey = false) {
   if (mode === 'insert' && !pendingPlace) return false;
-  if (key === 'F' || key === 'f') fitView({ animate: true });
+  // Over a reference window, f fits its design instead.
+  if (key === 'F' || key === 'f') { if (!fitHoveredReference()) fitView({ animate: true }); }
   else if (key === '#') setGrid(!showGrid);
   else if (key === 'C' || (key === 'c' && shiftKey)) setCrosshair(!crosshairVisible);
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
@@ -52703,6 +52989,7 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'P') toggleSidePanel();
   // The canvas keeps focus, so a second Shift+S closes the dock again.
   else if (key === 'S') toggleAnalysisDock({ focus: false });
+  else if (key === 'V') toggleReferenceWindows();
   else if (key === '?') showHelp();
   else return false;
   return true;
@@ -56094,6 +56381,495 @@ function finishRadialMenu(radial, client) {
 
 };
 
+__modules["src/web/reference-window.js"] = function (__require, __exports) {
+__exports.fitHoveredReference = fitHoveredReference;
+__exports.referenceWindowsShown = referenceWindowsShown;
+__exports.toggleReferenceWindows = toggleReferenceWindows;
+__exports.showInReferenceWindow = showInReferenceWindow;
+__exports.installReferenceWindows = installReferenceWindows;
+let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
+let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
+let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
+let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
+let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let wheelIntent; __bind(() => { ({ wheelIntent } = __require("src/web/gestures.js")); });
+let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
+let appendDesignChoices, workspaceDesigns; __bind(() => { ({ appendDesignChoices, workspaceDesigns } = __require("src/web/hierarchy.js")); });
+let openMenuAt; __bind(() => { ({ openMenuAt } = __require("src/web/context-menu.js")); });
+let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+/**
+ * Reference windows: another design of the workspace shown beside the
+ * drawing, to keep its context in view while editing this one -- the bias
+ * generator next to the amplifier it feeds. Each is a floating window
+ * (floating-window.js), moved by its title bar and resized from its corner,
+ * holding a read-only picture of the design that zooms (wheel, or pinch)
+ * and pans (drag) on its own, right-drag zooming to a box. Its title picks
+ * another design, and its swap button trades places with the editor: the
+ * design opens there and the one that was open moves into the window. It
+ * follows the design's file as it is saved.
+ *
+ * Which designs the windows show is remembered in this browser; nothing is
+ * saved in a document. `Shift+V` shows or hides them, opening a first one
+ * (with its design picker) when there is none.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const STORE_KEY = 'mosfeteer.references';
+/** How often a shown window asks whether its design's file changed. */
+const POLL_MS = 2000;
+/** The closest zoom, in screen pixels per drawing unit (the editor's). */
+const MAX_SCALE = 3;
+const FIT_MARGIN = 0.06;
+
+const windows = []; // { el, slot, doc, picture, view, fitted, etag, revision, chrome }
+let hidden = false;
+let pollTimer = null;
+
+const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+const dark = () => document.documentElement.classList.contains('dark');
+
+// ----- remembering ------------------------------------------------------------------
+
+function remember() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      hidden,
+      windows: windows.map((win) => (win.doc ? { path: win.doc.path, name: win.doc.name } : null)),
+    }));
+  } catch { /* remembered for this visit only */ }
+}
+
+function remembered() {
+  try {
+    const value = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+    return value && Array.isArray(value.windows) ? value : null;
+  } catch { return null; }
+}
+
+// ----- the picture ------------------------------------------------------------------
+
+/** The whole design as drawn by its export, in both themes. */
+async function pictureOf(circuit) {
+  if (!circuit.components.size && !circuit.labels.size) return null;
+  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
+  const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
+  if (!match) return null;
+  const [light, darkSvg] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
+  const [x, y, w, h] = match.slice(1).map(Number);
+  return { box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(darkSvg) } };
+}
+
+function showMessage(win, text) {
+  win.message.textContent = text || '';
+  win.message.hidden = !text;
+  win.image.hidden = !!text || !win.picture;
+}
+
+/** Read the window's design from its file (or, unchanged, keep it). */
+async function loadInto(win, { force = false } = {}) {
+  const doc = win.doc;
+  if (!doc) return;
+  try {
+    if (persistence.browserOnly && !force && win.revision) {
+      const revision = await persistence.revision?.(doc.path);
+      if (!revision || revision === win.revision) return;
+    }
+    const data = await persistence.load(doc.path, force || !win.etag ? {} : { ifNoneMatch: win.etag });
+    if (win.doc !== doc || data.notModified) return;
+    const picture = await pictureOf(loadDocument(data.state));
+    if (win.doc !== doc) return;
+    win.etag = data.etag || null;
+    win.revision = data.revision || null;
+    const first = !win.picture;
+    win.picture = picture;
+    if (!picture) {
+      showMessage(win, `${doc.name} is empty`);
+      return;
+    }
+    showMessage(win, '');
+    if (first || win.fitted) fit(win);
+    else draw(win);
+  } catch (err) {
+    if (win.doc !== doc) return;
+    win.picture = null;
+    showMessage(win, err.status === 404 ? `${doc.name} is no longer in the workspace` : `${doc.name} could not be read: ${err.message}`);
+  }
+}
+
+// ----- the view ---------------------------------------------------------------------
+
+function viewportSize(win) {
+  return { w: win.viewport.clientWidth, h: win.viewport.clientHeight };
+}
+
+/** The whole design in the window, centred. */
+function fit(win) {
+  const box = win.picture?.box;
+  const { w, h } = viewportSize(win);
+  if (!box || !w || !h) return;
+  const s = Math.min(MAX_SCALE, Math.min(w / box.w, h / box.h) * (1 - 2 * FIT_MARGIN));
+  win.view = { s, x: box.x + box.w / 2 - w / 2 / s, y: box.y + box.h / 2 - h / 2 / s };
+  win.fitted = true;
+  draw(win);
+}
+
+/** Lay the picture out at the view: sized to the screen, so the vector
+ *  image is drawn crisp at every zoom. */
+function draw(win) {
+  const picture = win.picture;
+  if (!picture || !win.view) return;
+  const { s, x, y } = win.view;
+  const href = picture.href[dark() ? 'dark' : 'light'];
+  if (win.image.getAttribute('src') !== href) win.image.setAttribute('src', href);
+  win.image.style.left = `${(picture.box.x - x) * s}px`;
+  win.image.style.top = `${(picture.box.y - y) * s}px`;
+  win.image.style.width = `${picture.box.w * s}px`;
+  win.image.style.height = `${picture.box.h * s}px`;
+}
+
+function zoomAbout(win, factor, clientX, clientY) {
+  if (!win.view || !win.picture) return;
+  const rect = win.viewport.getBoundingClientRect();
+  const px = clientX - rect.left;
+  const py = clientY - rect.top;
+  const { s, x, y } = win.view;
+  const box = win.picture.box;
+  // Out no further than a quarter of the fitted size.
+  const minScale = Math.min(rect.width / box.w, rect.height / box.h) / 4;
+  const next = Math.min(MAX_SCALE, Math.max(minScale, s * factor));
+  win.view = { s: next, x: x + px / s - px / next, y: y + py / s - py / next };
+  win.fitted = false;
+  draw(win);
+}
+
+/** Right-drag: a box to zoom to, as on the drawing. */
+function startZoomBox(win, ev) {
+  const { viewport, zoomBox } = win;
+  ev.preventDefault();
+  viewport.setPointerCapture(ev.pointerId);
+  const rect = viewport.getBoundingClientRect();
+  const from = { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  let to = null;
+  const move = (e) => {
+    const at = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    to = Math.hypot(at.x - from.x, at.y - from.y) >= 4 ? at : null;
+    zoomBox.hidden = !to;
+    if (!to) return;
+    Object.assign(zoomBox.style, {
+      left: `${Math.min(from.x, to.x)}px`, top: `${Math.min(from.y, to.y)}px`,
+      width: `${Math.abs(to.x - from.x)}px`, height: `${Math.abs(to.y - from.y)}px`,
+    });
+  };
+  const end = () => {
+    viewport.removeEventListener('pointermove', move);
+    zoomBox.hidden = true;
+    if (!to || !win.view) return;
+    const { s, x, y } = win.view;
+    const box = { x: x + Math.min(from.x, to.x) / s, y: y + Math.min(from.y, to.y) / s, w: Math.abs(to.x - from.x) / s, h: Math.abs(to.y - from.y) / s };
+    const next = Math.min(MAX_SCALE, Math.min(rect.width / box.w, rect.height / box.h));
+    win.view = { s: next, x: box.x + box.w / 2 - rect.width / 2 / next, y: box.y + box.h / 2 - rect.height / 2 / next };
+    win.fitted = false;
+    draw(win);
+  };
+  viewport.addEventListener('pointermove', move);
+  viewport.addEventListener('pointerup', end, { once: true });
+  viewport.addEventListener('pointercancel', end, { once: true });
+}
+
+function installViewport(win) {
+  const { viewport } = win;
+  viewport.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    if (!win.view) return;
+    const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 400 : 1;
+    if (wheelIntent(ev, editor.scrollScheme) === 'pan') {
+      win.view = { ...win.view, x: win.view.x + (ev.deltaX * unit) / win.view.s, y: win.view.y + (ev.deltaY * unit) / win.view.s };
+      win.fitted = false;
+      draw(win);
+      return;
+    }
+    // The editor's zoom rates: pinch arrives as a ctrl-wheel with small deltas.
+    zoomAbout(win, Math.pow(ev.ctrlKey && editor.scrollScheme === 'trackpad' ? 1.01 : 1.0016, -ev.deltaY * unit), ev.clientX, ev.clientY);
+  }, { passive: false });
+  viewport.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  viewport.addEventListener('pointerdown', (ev) => {
+    if (ev.button === 2 && win.view) {
+      startZoomBox(win, ev);
+      return;
+    }
+    if ((ev.button !== 0 && ev.button !== 1) || !win.view) return;
+    ev.preventDefault();
+    viewport.setPointerCapture(ev.pointerId);
+    viewport.classList.add('panning');
+    const start = { x: ev.clientX, y: ev.clientY, view: { ...win.view } };
+    const move = (e) => {
+      win.view = { ...start.view, x: start.view.x - (e.clientX - start.x) / start.view.s, y: start.view.y - (e.clientY - start.y) / start.view.s };
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 2) win.fitted = false;
+      draw(win);
+    };
+    const end = () => {
+      viewport.removeEventListener('pointermove', move);
+      viewport.classList.remove('panning');
+    };
+    viewport.addEventListener('pointermove', move);
+    viewport.addEventListener('pointerup', end, { once: true });
+    viewport.addEventListener('pointercancel', end, { once: true });
+  });
+  // Double-click fits the whole design again.
+  viewport.addEventListener('dblclick', () => fit(win));
+  // A resized window keeps a fitted design fitted, else its centre.
+  if (typeof ResizeObserver === 'function') {
+    let last = null;
+    new ResizeObserver(() => {
+      const size = viewportSize(win);
+      if (win.fitted) fit(win);
+      else if (last && win.view) {
+        win.view = { ...win.view, x: win.view.x + (last.w - size.w) / 2 / win.view.s, y: win.view.y + (last.h - size.h) / 2 / win.view.s };
+        draw(win);
+      }
+      last = size;
+    }).observe(viewport);
+  }
+}
+
+// ----- windows ----------------------------------------------------------------------
+
+function headerButton(className, icon, label, title) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `reference-button ${className}`;
+  button.setAttribute('aria-label', label);
+  button.title = title;
+  button.append(buttonIcon(icon));
+  return button;
+}
+
+function freeSlot() {
+  let slot = 1;
+  while (windows.some((win) => win.slot === slot)) slot += 1;
+  return slot;
+}
+
+function createWindow(doc = null) {
+  const pane = document.querySelector('.canvas-pane');
+  if (!pane) return null;
+  const slot = freeSlot();
+  const el = document.createElement('section');
+  el.className = 'floating-window reference-window';
+  el.dataset.editorEdge = 'right';
+  el.setAttribute('aria-label', 'Reference design');
+  const header = document.createElement('header');
+  header.className = 'floating-window-header';
+  const title = document.createElement('button');
+  title.type = 'button';
+  title.className = 'reference-title floating-window-title';
+  title.title = 'Show another design in this window';
+  const fitButton = headerButton('reference-fit', 'fit', 'Fit', 'Fit the whole design in the window (f with the pointer over it, or double-click it); right-drag zooms to a box');
+  const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap: open this design in the editor, and show the one open now in this window');
+  const another = headerButton('reference-new', 'plus', 'Another reference window', 'Open another reference window');
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'floating-window-close';
+  close.setAttribute('aria-label', 'Close the reference window');
+  close.title = 'Close this reference window';
+  close.textContent = '×';
+  header.append(title, fitButton, swap, another, close);
+  const viewport = document.createElement('div');
+  viewport.className = 'reference-viewport';
+  const image = document.createElement('img');
+  image.className = 'reference-picture';
+  image.alt = '';
+  image.draggable = false;
+  image.hidden = true;
+  const message = document.createElement('p');
+  message.className = 'reference-message';
+  const zoomBox = document.createElement('div');
+  zoomBox.className = 'reference-zoom-box';
+  zoomBox.hidden = true;
+  viewport.append(image, message, zoomBox);
+  el.append(header, viewport);
+  el.hidden = hidden;
+  pane.appendChild(el);
+
+  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox };
+  win.chrome = floatingWindow(el, {
+    key: `reference-${slot}`,
+    resizable: true,
+    onClose: () => closeWindow(win),
+    // Down the right side, each further window a step lower.
+    place: (paneSize, size) => ({ x: paneSize.w - size.w - 52, y: 56 + (slot - 1) * 36 }),
+  });
+  title.addEventListener('click', () => openPicker(win));
+  another.addEventListener('click', () => {
+    const next = createWindow();
+    if (next) openPicker(next);
+  });
+  fitButton.addEventListener('click', () => fit(win));
+  swap.addEventListener('click', () => void swapWithEditor(win));
+  installViewport(win);
+  el.addEventListener('pointerenter', () => { hovered = win; });
+  el.addEventListener('pointerleave', () => { if (hovered === win) hovered = null; });
+  windows.push(win);
+  setDocument(win, doc);
+  win.chrome.place();
+  ensurePolling();
+  syncButton();
+  return win;
+}
+
+function setDocument(win, doc) {
+  win.doc = doc ? { path: doc.path, name: doc.name } : null;
+  win.picture = null;
+  win.etag = null;
+  win.revision = null;
+  win.fitted = true;
+  win.title.textContent = doc ? doc.name : 'Pick a design…';
+  win.title.append(document.createTextNode(' ▾'));
+  showMessage(win, doc ? 'Loading…' : 'Click the title to pick a design to show here');
+  if (doc) void loadInto(win, { force: true });
+  remember();
+}
+
+/** Open the window's design in the editor, and show the design that was
+ *  open there in the window instead: the two trade places. */
+async function swapWithEditor(win) {
+  const shown = win.doc;
+  if (!shown) return;
+  const path = editor.currentDocumentPath;
+  if (!path) {
+    logLine('Save this design first, so the reference window can hold it when the two swap.', 'error');
+    return;
+  }
+  if (path === shown.path) return;
+  const current = { path, name: editor.currentCircuitName };
+  if (!await openDocumentPath(shown.path)) return;
+  setDocument(win, current);
+}
+
+function closeWindow(win) {
+  const index = windows.indexOf(win);
+  if (index < 0) return;
+  windows.splice(index, 1);
+  if (hovered === win) hovered = null;
+  win.chrome.dispose();
+  win.el.remove();
+  remember();
+  syncButton();
+}
+
+/** The designs to show, by the window's title: typing narrows them. */
+function openPicker(win) {
+  const rect = win.title.getBoundingClientRect();
+  const menu = openMenuAt(rect.left, rect.bottom + 4, 'Show in this window');
+  if (!menu) return;
+  const group = document.createElement('div');
+  group.className = 'context-menu-group reference-picker';
+  const search = appendDesignChoices(group, workspaceDesigns(), {
+    current: win.doc?.name,
+    label: 'Find a design to show',
+    pick: (doc) => setDocument(win, doc),
+  });
+  menu.appendChild(group);
+  search.focus();
+}
+
+// ----- following saves ----------------------------------------------------------------
+
+function ensurePolling() {
+  if (pollTimer || !windows.length) return;
+  pollTimer = setInterval(() => {
+    if (!windows.length) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      return;
+    }
+    if (hidden || document.hidden) return;
+    for (const win of windows) if (win.doc) void loadInto(win);
+  }, POLL_MS);
+}
+
+// ----- the toggle ----------------------------------------------------------------------
+
+function syncButton() {
+  const button = document.getElementById('btn-window-reference');
+  button?.setAttribute('aria-pressed', String(windows.length > 0 && !hidden));
+}
+
+// The window under the pointer, which `f` fits instead of the drawing.
+let hovered = null;
+
+/** `f` over a reference window fits its design, not the drawing. Returns
+ *  whether it did. */
+function fitHoveredReference() {
+  if (!hovered || hidden || !windows.includes(hovered) || !hovered.picture) return false;
+  fit(hovered);
+  return true;
+}
+
+/** Whether reference windows are open and shown. */
+function referenceWindowsShown() {
+  return windows.length > 0 && !hidden;
+}
+
+/** Shift+V: show or hide the reference windows; with none, open one and
+ *  its design picker. */
+function toggleReferenceWindows() {
+  if (!windows.length) {
+    hidden = false;
+    const win = createWindow();
+    if (win) openPicker(win);
+    remember();
+    return;
+  }
+  hidden = !hidden;
+  for (const win of windows) {
+    win.el.hidden = hidden;
+    if (!hidden) {
+      win.chrome.place();
+      void loadInto(win);
+    }
+  }
+  if (!hidden) for (const win of windows) if (win.fitted) fit(win);
+  remember();
+  syncButton();
+  logLine(hidden ? 'Reference windows hidden (Shift+V shows them)' : 'Reference windows shown');
+}
+
+/** Show `doc` in a reference window: a new one. */
+function showInReferenceWindow(doc) {
+  hidden = false;
+  for (const win of windows) win.el.hidden = false;
+  createWindow(doc);
+}
+
+function installReferenceWindows() {
+  document.getElementById('btn-window-reference')?.addEventListener('click', () => toggleReferenceWindows());
+  // A theme change swaps every picture for its other theme.
+  new MutationObserver(() => windows.forEach(draw)).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  const saved = remembered();
+  if (saved) {
+    hidden = !!saved.hidden;
+    for (const doc of saved.windows) if (doc?.path) createWindow(doc);
+  }
+  syncButton();
+}
+
+};
+
 __modules["src/web/renumber-ui.js"] = function (__require, __exports) {
 __exports.openRenumberDialog = openRenumberDialog;
 __exports.installRenumberUi = installRenumberUi;
@@ -56977,6 +57753,10 @@ function syncSidePanelToggle() {
   sidePanelToggleEl?.setAttribute('aria-expanded', String(visible));
   sidePanelToggleEl?.setAttribute('aria-pressed', String(visible));
   if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (Shift+P)`;
+  // While the panel shows, its own button at its top right toggles it: the
+  // canvas's floating one, in that same spot when the panel is hidden, goes.
+  const floating = sidePanelToggleEl?.closest('.canvas-panel-toggles');
+  if (floating && floating.hidden !== visible) floating.hidden = visible;
   if (sidePanelEl) sidePanelEl.inert = !visible;
 }
 
@@ -57042,6 +57822,14 @@ function installSidePanel() {
   sidePanelToggleEl?.addEventListener('click', (ev) => {
     toggleSidePanel();
     if (ev.detail > 0) canvasEl.focus({ preventScroll: true });
+  });
+  // A window docked into the panel shows it.
+  document.addEventListener('floating-window-dock', (ev) => {
+    if (ev.detail?.docked && !sidePanelVisible()) setSidePanelVisible(true);
+  });
+  document.getElementById('btn-side-panel-hide')?.addEventListener('click', () => {
+    setSidePanelVisible(false);
+    canvasEl.focus({ preventScroll: true });
   });
 
   // Focusing into the panel (Ctrl+F filter, Tab) reveals it; a canvas press or
@@ -59137,7 +59925,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
     ['Shift+S', 'show or hide the small-signal analysis window'],
-    ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc returns'],
+    ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
+    ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],

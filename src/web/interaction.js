@@ -118,7 +118,9 @@ export function isPrimaryPointerEvent({ pointerType = '', button = 0 } = {}) {
  * being browsed, since repainting rebuilds its scrolling contents. */
 export function shouldForwardCanvasMove(target, canvasElement) {
   if (canvasElement?.contains?.(target)) return false;
-  return !target?.closest?.('#insert-menu');
+  // A floating window over the drawing is not the drawing: moving or
+  // resizing one must not drive the editor's hover, crosshair, and repaint.
+  return !target?.closest?.('#insert-menu, .floating-window');
 }
 
 /** Browsers follow each mouse `pointermove` with a compatibility `mousemove`

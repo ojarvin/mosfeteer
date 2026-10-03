@@ -1393,6 +1393,11 @@ button:disabled {
   cursor: grabbing;
 }
 
+/* Moved by a transform while dragged: its own layer, nothing laid out again. */
+.floating-window.dragging {
+  will-change: transform;
+}
+
 .floating-window-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -4944,6 +4949,18 @@ button.off {
   border-radius: 10px;
 }
 
+/* File actions together, then the view toggles, as in the editor toolbar. */
+.atlas-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.atlas-group[hidden],
+.atlas-group:not(:has(> button:not([hidden]))) {
+  display: none;
+}
+
 /* The header's buttons match the editor toolbar's. */
 .atlas-head button {
   height: 30px;
@@ -4951,7 +4968,7 @@ button.off {
   font-size: 0.8125rem;
 }
 
-/* Names the design Esc returns to; a long name gives way to an ellipsis. */
+/* Names the design the editor returns to; a long name gives way to an ellipsis. */
 .atlas-head .atlas-close {
   max-width: 22rem;
   overflow: hidden;
@@ -5098,6 +5115,8 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 }
 
 .panel-filter-row[hidden] { display: none; }
+
+.canvas-panel-toggles[hidden] { display: none; }
 
 .panel-filter-row input {
   flex: 1 1 auto;
@@ -5802,4 +5821,303 @@ body.chrome-away [data-editor-edge="left"] {
 
 body.chrome-away [data-editor-edge="right"] {
   translate: calc(100% + 24px) 0;
+}
+
+/* ----- reference windows (reference-window.js) ----------------------------
+   Another design beside the drawing: a picture that zooms and pans in its
+   own viewport, resized from the corner like the analysis window. */
+.reference-window {
+  width: min(420px, calc(100% - 16px));
+  height: min(320px, calc(100% - 16px));
+  min-width: 220px;
+  min-height: 160px;
+  resize: both;
+}
+
+.reference-window .floating-window-header {
+  gap: 2px;
+}
+
+.reference-window .reference-title {
+  /* As wide as the name, so the rest of the bar drags the window. */
+  flex: 0 1 auto;
+  margin-right: auto;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reference-title:hover,
+.reference-title:focus-visible {
+  background: var(--bg-hover);
+}
+
+.reference-button {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+}
+
+.reference-button:hover,
+.reference-button:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.reference-button .button-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.reference-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paper);
+  cursor: grab;
+  touch-action: none;
+}
+
+.reference-viewport.panning {
+  cursor: grabbing;
+}
+
+.reference-picture {
+  position: absolute;
+  max-width: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+.reference-zoom-box {
+  position: absolute;
+  border: 1px dashed var(--svg-faint, #7a7d85);
+  background: color-mix(in srgb, var(--svg-faint, #7a7d85) 10%, transparent);
+  pointer-events: none;
+}
+
+.reference-zoom-box[hidden] {
+  display: none;
+}
+
+.reference-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 16px;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.reference-message[hidden] {
+  display: none;
+}
+
+.component-context-menu .reference-picker {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+
+/* ----- docked windows (floating-window.js) ---------------------------------
+   A docked window is a section of the side panel: full width, sharing the
+   column's height with the panel's own sections, its title bar a heading
+   that folds it. */
+.floating-window-dock {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+}
+
+.floating-window-dock:hover,
+.floating-window-dock:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.floating-window-dock .button-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.floating-window-dock[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.side-panel > .floating-window.docked {
+  position: relative;
+  inset: auto;
+  flex: 1 1 16rem;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 6rem;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  resize: none;
+}
+
+.side-panel > .floating-window.docked[hidden] {
+  display: none;
+}
+
+.side-panel > .floating-window.docked .floating-window-header {
+  cursor: pointer;
+}
+
+/* A docked window whose top edge was dragged keeps that height; what it
+   gives up goes to the lists above it, so the column never ends in a gap.
+   With both lists folded, the sized windows fill the rest themselves. */
+.side-panel > .floating-window.docked[data-dock-sized] {
+  flex: 0 0 var(--dock-height);
+}
+
+.side-panel:has(> .floating-window.docked[data-dock-sized]:not([hidden], .folded)) > .panel-group:is([data-panel="components"], [data-panel="nets"]):not(.collapsed) {
+  flex-grow: 1;
+}
+
+.side-panel:not(:has(> .panel-group:is([data-panel="components"], [data-panel="nets"]):not(.collapsed))) > .floating-window.docked[data-dock-sized] {
+  flex-grow: 1;
+}
+
+/* The panel sections' fold triangle, inviting the click that folds it. */
+.side-panel > .floating-window.docked .floating-window-header::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  color: var(--text-dim);
+  transition: transform 120ms ease;
+}
+
+.side-panel > .floating-window.docked.folded .floating-window-header::before {
+  transform: rotate(-90deg);
+}
+
+/* Its top edge drags its height, as the panel's own edge drags its width. */
+.floating-window-dock-resizer {
+  display: none;
+}
+
+.side-panel > .floating-window.docked .floating-window-dock-resizer {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  display: block;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.side-panel > .floating-window.docked.folded .floating-window-dock-resizer {
+  display: none;
+}
+
+.side-panel > .floating-window.docked .floating-window-dock-resizer:hover,
+.side-panel.resizing .floating-window-dock-resizer:active {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.side-panel > .floating-window.docked.folded {
+  flex: none;
+  min-height: 0;
+}
+
+.side-panel > .floating-window.docked.folded > :not(.floating-window-header, :has(> .floating-window-header)),
+.side-panel > .floating-window.docked.folded > :has(> .floating-window-header) > :not(.floating-window-header) {
+  display: none;
+}
+
+.side-panel > .floating-window.docked.folded .floating-window-header {
+  border-bottom: 0;
+}
+
+/* A dragged window over the right edge: the panel it would dock into. */
+.side-panel.dock-target {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* Docked beats run down the panel, one beat per row, Add and Present
+   side by side under them. */
+.side-panel > .beat-strip.docked:not(.folded) {
+  flex-basis: 15rem;
+  min-height: 13rem;
+}
+
+/* With windows docked, the lists give up height down to two rows. */
+.side-panel:has(> .floating-window.docked:not([hidden], .folded)) .panel-group[data-panel="components"]:not(.collapsed),
+.side-panel:has(> .floating-window.docked:not([hidden], .folded)) .panel-group[data-panel="nets"]:not(.collapsed) {
+  min-height: 4.5rem;
+}
+
+.side-panel > .beat-strip.docked .beat-strip-row {
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  min-height: 0;
+}
+
+.side-panel > .beat-strip.docked .beat-list {
+  flex: 1 1 100%;
+  min-height: 5.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  max-height: calc(100% - 40px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.side-panel > .beat-strip.docked .beat-chip-group {
+  display: flex;
+}
+
+.side-panel > .beat-strip.docked .beat-chip {
+  flex: 1 1 auto;
+  max-width: none;
+  border-radius: 8px;
+}
+
+.side-panel > .beat-strip.docked .beat-chip-group.drop-before {
+  box-shadow: 0 -3px 0 -1px var(--accent);
+}
+
+.side-panel > .beat-strip.docked .beat-chip-group.drop-after {
+  box-shadow: 0 3px 0 -1px var(--accent);
+}
+
+/* The timing grid is wide: docked, it scrolls sideways. */
+.side-panel > .timing-dialog.docked {
+  overflow: auto;
 }

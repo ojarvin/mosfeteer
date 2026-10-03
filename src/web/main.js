@@ -76,6 +76,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
+import { fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
@@ -6524,6 +6525,7 @@ canvasEl.addEventListener('mouseleave', () => {
 let suppressContextMenuUntil = 0;
 installContextMenu();
 installHierarchy();
+installReferenceWindows();
 installRenumberUi();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
@@ -6709,7 +6711,8 @@ export function transformPendingComponent(operation) {
  *  where every printable key is search text. Returns true when handled. */
 function viewKey(key, shiftKey = false) {
   if (mode === 'insert' && !pendingPlace) return false;
-  if (key === 'F' || key === 'f') fitView({ animate: true });
+  // Over a reference window, f fits its design instead.
+  if (key === 'F' || key === 'f') { if (!fitHoveredReference()) fitView({ animate: true }); }
   else if (key === '#') setGrid(!showGrid);
   else if (key === 'C' || (key === 'c' && shiftKey)) setCrosshair(!crosshairVisible);
   else if (key === 'G' || (key === 'g' && shiftKey)) setGuides(!guidesVisible);
@@ -6717,6 +6720,7 @@ function viewKey(key, shiftKey = false) {
   else if (key === 'P') toggleSidePanel();
   // The canvas keeps focus, so a second Shift+S closes the dock again.
   else if (key === 'S') toggleAnalysisDock({ focus: false });
+  else if (key === 'V') toggleReferenceWindows();
   else if (key === '?') showHelp();
   else return false;
   return true;

@@ -198,9 +198,11 @@ function beginBeatChipDrag(index, chip, ev) {
     const groups = [...beatListEl.querySelectorAll('.beat-chip-group')];
     // The slot the pointer is over: before the first chip whose middle it has
     // not passed, else after the last.
+    // Docked in the side panel, the beats run down instead of across.
+    const down = beatStripEl.classList.contains('docked');
     const before = groups.findIndex((group) => {
       const rect = group.getBoundingClientRect();
-      return moveEv.clientX < rect.left + rect.width / 2;
+      return down ? moveEv.clientY < rect.top + rect.height / 2 : moveEv.clientX < rect.left + rect.width / 2;
     });
     const slot = before === -1 ? groups.length : before;
     target = slot > index ? slot - 1 : slot;

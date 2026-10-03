@@ -780,52 +780,72 @@ export function appendLinkContextItems(group, component) {
  *  into (typing anywhere in the list goes there). */
 function appendDesignPicker(group, scope, current) {
   const submenu = appendContextSubmenu(group, current ? 'Link to another design' : 'Link to design', (list) => {
-    list.classList.add('context-submenu-scroll');
-    const search = document.createElement('input');
-    search.type = 'search';
-    search.className = 'context-submenu-search';
-    search.placeholder = 'Find a design…';
-    search.setAttribute('aria-label', 'Find a design to link to');
-    list.appendChild(search);
-    const designs = linkableDesigns();
-    const items = designs.map((doc) => {
-      appendContextItem(list, doc.name, () => setLinks(scope, doc.name), { active: doc.name === current });
-      const item = list.lastElementChild;
-      item.dataset.key = searchKey(doc.name);
-      return item;
+    appendDesignChoices(list, linkableDesigns(), {
+      current,
+      label: 'Find a design to link to',
+      empty: 'No other designs in the workspace',
+      pick: (doc) => setLinks(scope, doc.name),
     });
-    const empty = document.createElement('div');
-    empty.className = 'context-submenu-empty';
-    empty.textContent = designs.length ? 'No design matches' : 'No other designs in the workspace';
-    empty.hidden = designs.length > 0;
-    list.appendChild(empty);
     if (current) appendContextItem(list, 'None (unlink)', () => setLinks(scope, null));
-    const visible = () => items.filter((item) => !item.hidden);
-    search.addEventListener('input', () => {
-      const key = searchKey(search.value);
-      for (const item of items) item.hidden = !!key && !item.dataset.key.includes(key);
-      empty.hidden = visible().length > 0;
-    });
-    search.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape') return;
-      ev.stopPropagation();
-      if (ev.key === 'Enter') {
-        ev.preventDefault();
-        visible()[0]?.click();
-      } else if (ev.key === 'ArrowDown') {
-        ev.preventDefault();
-        visible()[0]?.focus();
-      }
-    });
-    list.addEventListener('keydown', (ev) => {
-      if (ev.target === search || ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
-      search.focus();
-    });
   });
   submenu.previousElementSibling?.addEventListener('keydown', (ev) => {
     if (ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey || ev.key === ' ') return;
     submenu.querySelector('.context-submenu-search')?.focus();
   });
+}
+
+/** A searchable list of designs in a menu: a field that narrows them as it
+ *  is typed into (typing anywhere in the list goes there; Enter takes the
+ *  first, Down steps into them). Returns the field. */
+export function appendDesignChoices(list, designs, { current = null, label = 'Find a design', empty = 'No designs in the workspace', pick }) {
+  list.classList.add('context-submenu-scroll');
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'context-submenu-search';
+  search.placeholder = 'Find a design…';
+  search.setAttribute('aria-label', label);
+  list.appendChild(search);
+  const items = designs.map((doc) => {
+    appendContextItem(list, doc.name, () => pick(doc), { active: doc.name === current });
+    const item = list.lastElementChild;
+    item.dataset.key = searchKey(doc.name);
+    return item;
+  });
+  const none = document.createElement('div');
+  none.className = 'context-submenu-empty';
+  none.textContent = designs.length ? 'No design matches' : empty;
+  none.hidden = designs.length > 0;
+  list.appendChild(none);
+  const visible = () => items.filter((item) => !item.hidden);
+  search.addEventListener('input', () => {
+    const key = searchKey(search.value);
+    for (const item of items) item.hidden = !!key && !item.dataset.key.includes(key);
+    none.hidden = visible().length > 0;
+  });
+  search.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') return;
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      visible()[0]?.click();
+    } else if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      visible()[0]?.focus();
+    }
+  });
+  list.addEventListener('keydown', (ev) => {
+    if (ev.target === search || ev.key.length !== 1 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    search.focus();
+  });
+  return search;
+}
+
+/** Every design of the workspace (and recent ones), each name once. */
+export function workspaceDesigns() {
+  const seen = new Set();
+  return knownDesigns()
+    .filter((doc) => !doc.missing && !seen.has(doc.name) && seen.add(doc.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
 /** The menu of a bubble: open, hide, or relink its part. */

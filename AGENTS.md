@@ -353,16 +353,20 @@ Core keyboard vocabulary:
 | Context | Keys |
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `Shift+A` align to (selection outline edge/point, then another object's), `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
-| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis window, `Shift+Backspace` Atlas view ([`docs/atlas.md`](docs/atlas.md)), `?` Learn (keys, tutorial, symbols, tips; `src/web/help.js`), `:` command line (log drawer), which also searches and runs every editor action by description (`src/web/command-line.js`) |
+| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis window, `Shift+V` reference windows (another design beside this one, `src/web/reference-window.js`), `Shift+Backspace` Atlas view ([`docs/atlas.md`](docs/atlas.md)), `?` Learn (keys, tutorial, symbols, tips; `src/web/help.js`), `:` command line (log drawer), which also searches and runs every editor action by description (`src/web/command-line.js`) |
 | editing | `dd`/Delete delete, `Ctrl/Cmd+C`/`Ctrl/Cmd+V` copy/paste, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `/` or `Ctrl/Cmd+F` find (in the Atlas: search every design) / `Ctrl/Cmd+H` replace in label text (`src/core/label-search.js`), `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped), `q` swap the selected or pointed-at parts' type in place (`src/core/swap.js`), `g`/`v` over an unconnected pin wire a ground/supply to it (`src/core/pin-rails.js`), `.` repeat the last rotate, mirror, swap, rail, stubs, or tidy, `Shift+T` tidy the selection, `t`/`=`/`F2` edit the selected or pointed-at text (several selected switches or rails take one phase or rail name, `src/core/shared-labels.js`) |
 | beats | `Shift+B` beats window, `Shift+K` timing diagram editor, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or cursor snapping to the nearest terminal or free wire end while wiring; a click on a free wire end (`Circuit#openWireEnds`) finishes a draft there like a terminal; a placed, moved, or copied part's pin that will join a pin, a free wire end, or (unconnected) a wire's middle on commit is ringed first (`pinJoinPoints`) |
 | pointer | drag from a multi-terminal pin wires (drop in space opens quick-add); Ctrl/Cmd-drag copies a part, label, or annotation, or branches a wire; right-hold on paper, a pin, a part, or a wire for its radial menu (`src/web/radial-menu.js`: part palette, connect, swap, net), applied once on release, while a right-drag before the hold zooms to a box; Shift-drag in Delete is a knife that deletes every wire, part, and annotation it cuts; Space-drag pans; double-click paper inserts |
 
-The side panel docks beside the drawing; the beats, timing diagram, and
-analysis are floating windows over it (`src/web/floating-window.js`): one
-title bar to drag, a close × at its right, toggled from the toolbar's window
-group, the More menu, or their keys.
+The side panel docks beside the drawing; the beats, timing diagram,
+analysis, and reference windows are floating windows over it
+(`src/web/floating-window.js`): one title bar to drag, a dock button and a
+close × at its right, toggled from the toolbar's window group, the More
+menu, or their keys. Docked (the button, or a drag to the pane's right
+edge), a window becomes a section of the side panel that its title bar
+folds and its top edge resizes; dragging the title bar out floats it
+again. No window covers the tool rail itself (the paper below it is free).
 
 View toggles are handled before mode-specific keys, except printable insert
 query text before a ghost exists. Any tool can be picked straight from another

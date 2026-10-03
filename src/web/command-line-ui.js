@@ -26,6 +26,7 @@ import { enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkB
 import { copyAsImage } from './export-ui.js';
 import { pasteClipboard } from './copy-paste.js';
 import { openSwapPicker } from './insert-menu.js';
+import { referenceWindowsShown, toggleReferenceWindows } from './reference-window.js';
 
 const click = (id) => document.getElementById(id)?.click();
 const checked = (button) => button?.getAttribute('aria-checked') === 'true';
@@ -46,6 +47,7 @@ const ACTIONS = {
   more: () => openMenu('btn-document-menu'),
   panel: (state) => setSidePanelVisible(state ?? !sidePanelVisible()),
   analysis: (state) => toggleTo(state, !analysisDialog.hidden, () => toggleAnalysisDock()),
+  reference: (state) => toggleTo(state, referenceWindowsShown(), toggleReferenceWindows),
   grid: (state) => setGrid(state ?? !editor.showGrid),
   guides: (state) => setGuides(state ?? !editor.guidesVisible),
   crosshair: (state) => setCrosshair(state ?? !editor.crosshairVisible),

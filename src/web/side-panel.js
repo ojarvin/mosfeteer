@@ -709,6 +709,10 @@ export function installSidePanel() {
     toggleSidePanel();
     if (ev.detail > 0) canvasEl.focus({ preventScroll: true });
   });
+  // A window docked into the panel shows it.
+  document.addEventListener('floating-window-dock', (ev) => {
+    if (ev.detail?.docked && !sidePanelVisible()) setSidePanelVisible(true);
+  });
   document.getElementById('btn-side-panel-hide')?.addEventListener('click', () => {
     setSidePanelVisible(false);
     canvasEl.focus({ preventScroll: true });

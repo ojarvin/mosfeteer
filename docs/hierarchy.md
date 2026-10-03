@@ -83,3 +83,21 @@ offers them in a menu -- with its linking parts picked. Finding them reads
 each workspace design's links through the Atlas's cache of its index, so
 only designs changed since they were last seen are read again
 (`src/web/hierarchy.js`; the graph is `src/core/design-links.js`).
+
+## Reference windows
+
+A reference window keeps another design in view beside the drawing, with no
+link at all: the bias generator next to the amplifier it feeds
+(`src/web/reference-window.js`). `Shift+V`, the toolbar's Reference button,
+or `:reference` shows or hides the windows; with none open it opens one and
+its design picker. Each is a floating window, moved by its title bar and
+resized from its corner, and never over the tool rail (no floating window
+is). The design inside is a read-only picture of its whole export: the
+wheel (or pinch) zooms, a drag pans, and a right-drag zooms to a box, on
+its own and without taking the keyboard; **Fit** (or `f` with the pointer
+over it, or a double-click) shows it whole again. The title picks another design (typing narrows the list);
+**Swap** trades places with the editor -- the design opens there, and the
+one that was open moves into the window (it must be saved) -- and `+` opens
+another window. A window follows its design's file as it is saved (it asks
+every two seconds while shown). Which designs the windows show, and where
+they sit, is remembered in this browser; nothing is saved in a document.
