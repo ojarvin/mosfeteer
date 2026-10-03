@@ -458,6 +458,9 @@
         <div class="panel-filter-row">
           <input id="panel-filter" type="search" placeholder="Find parts, nets, and text (/ or Ctrl+F)" aria-label="Find parts, nets, and text" aria-keyshortcuts="/ Control+F Meta+F" autocomplete="off" spellcheck="false" />
           <button type="button" id="panel-replace-toggle" class="icon-button" data-icon="replace" aria-expanded="false" aria-controls="panel-replace" aria-keyshortcuts="Control+H Meta+H" aria-label="Replace text" title="Replace text in labels (Ctrl+H)">Replace</button>
+          <!-- Where the canvas's panel button sits while the panel is hidden, so
+               the same spot toggles it both ways. -->
+          <button type="button" id="btn-side-panel-hide" class="icon-button panel-hide-toggle" data-icon="sidebar" aria-controls="side-panel" aria-expanded="true" aria-pressed="true" aria-label="Hide the panel" title="Hide the components, nets, and selection panel (Shift+P)">Hide panel</button>
         </div>
         <div class="panel-filter-row" id="panel-replace" hidden>
           <input id="panel-replace-input" type="text" placeholder="Replace with" aria-label="Replace with" autocomplete="off" spellcheck="false" />

@@ -5111,6 +5111,8 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 
 .panel-filter-row[hidden] { display: none; }
 
+.canvas-panel-toggles[hidden] { display: none; }
+
 .panel-filter-row input {
   flex: 1 1 auto;
   min-width: 0;

@@ -639,6 +639,10 @@ function syncSidePanelToggle() {
   sidePanelToggleEl?.setAttribute('aria-expanded', String(visible));
   sidePanelToggleEl?.setAttribute('aria-pressed', String(visible));
   if (sidePanelToggleEl) sidePanelToggleEl.title = `${visible ? 'Hide' : 'Show'} the components, nets, and selection panel (Shift+P)`;
+  // While the panel shows, its own button at its top right toggles it: the
+  // canvas's floating one, in that same spot when the panel is hidden, goes.
+  const floating = sidePanelToggleEl?.closest('.canvas-panel-toggles');
+  if (floating && floating.hidden !== visible) floating.hidden = visible;
   if (sidePanelEl) sidePanelEl.inert = !visible;
 }
 
@@ -704,6 +708,10 @@ export function installSidePanel() {
   sidePanelToggleEl?.addEventListener('click', (ev) => {
     toggleSidePanel();
     if (ev.detail > 0) canvasEl.focus({ preventScroll: true });
+  });
+  document.getElementById('btn-side-panel-hide')?.addEventListener('click', () => {
+    setSidePanelVisible(false);
+    canvasEl.focus({ preventScroll: true });
   });
 
   // Focusing into the panel (Ctrl+F filter, Tab) reveals it; a canvas press or
