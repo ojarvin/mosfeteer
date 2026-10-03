@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/images/logo.svg" width="112" alt=""></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg"><img src="docs/images/logo.svg" width="112" alt=""></picture></p>
 
 <h1 align="center">Mosfeteer</h1>
 
