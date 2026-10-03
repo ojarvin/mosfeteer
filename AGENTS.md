@@ -143,6 +143,13 @@ marker label is distinct from the global rail name; deleting it clears the
 marker value and restores the global behavior. `GND` remains a compatibility
 alias for an unnamed ground marker.
 
+A MOS part may carry a size (`ComponentInstance#size`, `src/core/mos-size.js`:
+W, L, multiplier, authored as `2u/400n x4`); its owned `mos-size` role label
+is a projection of it, TeX with the part's name as W and L's subscript, and
+deleting the label clears the size. With `replacesName` the size label stands
+in for the name label, which stays the identity but is neither drawn nor
+picked (`sizeReplacedNameLabels`, alongside joined supply bars' hidden labels).
+
 Switches (`switch_open`, `switch_closed`) are the other role-labelled parts:
 a switch's owned label names its phase (the controlling signal, stored as its
 value; `$...$` is TeX drawn as math, compared by `phaseKey`), not its

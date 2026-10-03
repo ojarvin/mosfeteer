@@ -9,6 +9,7 @@ import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
+import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
  * whitespace is non-semantic. Empty names mean that a net is unnamed. */
@@ -1299,7 +1300,9 @@ export class LabelInstance {
     if (!component) return null;
     const a = this.anchorWorld();
     const b = component.bboxWorld();
-    if (!(a.y > b.y && a.y < b.y + b.h)) return null;
+    // A size label sits under the name label, below the part's height, and
+    // still grows away from the part.
+    if (this.role !== MOS_SIZE_ROLE && !(a.y > b.y && a.y < b.y + b.h)) return null;
     if (a.x < b.x) return 'left';
     if (a.x > b.x + b.w) return 'right';
     return null;
@@ -1651,6 +1654,9 @@ export class ComponentInstance {
     // that shows what this part is (an amplifier's transistors, say). It
     // carries no connectivity; a missing design is simply a broken link.
     this.link = normalizeDesignLink(opts.link);
+    // A transistor's optional W/L and multiplier (mos-size.js), drawn as an
+    // owned math label.
+    this.size = MOS_SIZE_TYPES.has(type) ? normalizeMosSize(opts.size) : null;
     // Schematic blocks are the one resizable symbol. Keep their geometry and
     // perimeter terminal slots on the instance rather than mutating the shared
     // symbol definition (which would resize every block in the document).
@@ -1839,6 +1845,7 @@ export class ComponentInstance {
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
+      ...(this.size ? { size: { ...this.size } } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -2278,7 +2285,10 @@ export class Circuit {
     // JSON load defers this until its authored labels have been read, while a
     // paste keeps the option in the component payload and reaches this path
     // with noLabel omitted.
-    if (!this._loading || !opts.noLabel) this._syncSignalInputLabels(inst);
+    if (!this._loading || !opts.noLabel) {
+      this._syncSignalInputLabels(inst);
+      this._syncSizeLabel(inst);
+    }
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
     // state is being loaded (fromJSON) so explicit nets are not pre-empted.
@@ -2379,6 +2389,7 @@ export class Circuit {
           label.clearRenderedTextBounds();
         }
       }
+      this._syncSizeLabel(component);
       return component;
     }
     if (this.components.has(next)) throw new Error(`component name "${next}" is already in use`);
@@ -2435,6 +2446,7 @@ export class Circuit {
       if (renamedNet && interfaceName && renamedNet.name !== interfaceName) this.renameNet(renamedNet, interfaceName);
     }
     this._ensureComponentInstanceLabel(component);
+    this._syncSizeLabel(component);
     return component;
   }
 
@@ -2568,6 +2580,75 @@ export class Circuit {
     else component.negativeInputs.delete(terminal.name);
     this._syncSignalInputLabels(component);
     return component;
+  }
+
+  /** Set (or with null clear) a transistor's size: a compact string such as
+   * `2u/400n x4` or a `{ w, l, m }` object. `replacesName` (kept when
+   * omitted) makes the size label stand in for the name label. */
+  setComponentSize(refdes, size, { replacesName } = {}) {
+    const component = this.getComponent(refdes);
+    if (!MOS_SIZE_TYPES.has(component.type)) throw new Error(`${component.refdes} is not a transistor; only MOS parts take a size`);
+    const previous = component.size;
+    if (size === null || size === undefined || size === '') {
+      component.size = null;
+    } else {
+      const parsed = typeof size === 'string' ? parseMosSize(size) : normalizeMosSize(size);
+      if (!parsed) throw new Error('bad size');
+      const replace = replacesName ?? !!previous?.replacesName;
+      component.size = { w: parsed.w, l: parsed.l, m: parsed.m, ...(replace ? { replacesName: true } : {}) };
+    }
+    const sizeLabel = this.sizeLabelOf(component.refdes);
+    // Taking the name's place puts the size label where the name is drawn,
+    // and giving it back puts it under the name again.
+    if (sizeLabel && !!previous?.replacesName !== !!component.size?.replacesName) {
+      sizeLabel.offset = this._defaultSizeOffset(component);
+    }
+    this._syncSizeLabel(component);
+    return component;
+  }
+
+  /** A transistor's size label, or null. */
+  sizeLabelOf(refdes) {
+    for (const label of this.labels.values()) if (label.owner === refdes && label.role === MOS_SIZE_ROLE) return label;
+    return null;
+  }
+
+  _defaultSizeOffset(component) {
+    const name = this.labelOf(component.refdes);
+    return component.size?.replacesName
+      ? { ...(name?.offset || component.def.labelOffset) }
+      : { x: (name?.offset || component.def.labelOffset).x, y: (name?.offset || component.def.labelOffset).y + MOS_SIZE_OFFSET.y };
+  }
+
+  /** Keep a transistor's size label an idempotent projection of its size:
+   * one label, its TeX derived from the size and the part's name. */
+  _syncSizeLabel(component) {
+    if (!component) return null;
+    let label = null;
+    for (const candidate of [...this.labels.values()]) {
+      if (candidate.owner !== component.refdes || candidate.role !== MOS_SIZE_ROLE) continue;
+      if (label || !component.size) this.labels.delete(candidate.id);
+      else label = candidate;
+    }
+    if (!component.size) return null;
+    const text = mosSizeTex(component.size, sizeSubscript(this.labelOf(component.refdes)?._text, component.refdes));
+    if (!label) {
+      label = this.addLabel({
+        text,
+        math: true,
+        owner: component.refdes,
+        role: MOS_SIZE_ROLE,
+        offset: this._defaultSizeOffset(component),
+        align: 'parent',
+        style: { color: component.style.color },
+      });
+    } else if (label._text !== text) {
+      label._text = text;
+      label._mathBox = null;
+      label.clearRenderedTextBounds();
+    }
+    this.invalidateRoutingCache();
+    return label;
   }
 
 
@@ -3582,6 +3663,8 @@ export class Circuit {
       if (removedLabel.role === SIGNAL_INPUT_SIGN_ROLE && isSignalFlowComponent(signalComponent)) {
         signalComponent.negativeInputs.delete(removedLabel.signalTerminal);
       }
+      // The size label is the size: deleting it unsizes the part.
+      if (removedLabel.role === MOS_SIZE_ROLE && signalComponent) signalComponent.size = null;
     }
     return removed;
   }
@@ -6853,6 +6936,7 @@ export class Circuit {
         negativeInputs: c.negativeInputs,
         joinBar: c.joinBar,
         link: c.link,
+        size: c.size,
         style: c.style,
         analysis: migrateSerializedComponentAnalysis(c.analysis),
         drawOrder: c.drawOrder,
@@ -6966,7 +7050,10 @@ export class Circuit {
       if (component.type !== 'port' || circuit.labelOf(component.refdes)) continue;
       try { circuit._ensureComponentInstanceLabel(component); } catch { /* label id in use */ }
     }
-    for (const component of circuit.components.values()) circuit._syncSignalInputLabels(component);
+    for (const component of circuit.components.values()) {
+      circuit._syncSignalInputLabels(component);
+      circuit._syncSizeLabel(component);
+    }
     // A switch's value is its phase, shown as its label.
     for (const component of circuit.components.values()) {
       if (switchState(component) && component.value) circuit._syncSwitchLabel(component.refdes, component.value);

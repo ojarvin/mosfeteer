@@ -5,6 +5,7 @@ import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeW
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
+import { sizeReplacedNameLabels } from './mos-size.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
@@ -1144,6 +1145,7 @@ export function svgString(circuit, opts = {}) {
   const barHidden = beat
     ? new Set(bars.flatMap((bar) => bar.refs.map((ref) => circuit.labelOf(ref)).filter(Boolean).slice(1).map((label) => label.id)))
     : hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
   for (const label of labels
     .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent && !barHidden.has(candidate.id))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {

@@ -52,6 +52,7 @@ function componentProblem(comp) {
   if (!finite(comp.x) || !finite(comp.y) || !finite(comp.rotation)) return `part ${comp.origRef} has no position`;
   if (!optional(comp.negativeInputs, (inputs) => Array.isArray(inputs) && inputs.every(text))) return `part ${comp.origRef} has bad inputs`;
   if (!optional(comp.style, isObject)) return `part ${comp.origRef} has a bad style`;
+  if (!optional(comp.size, isObject)) return `part ${comp.origRef} has a bad size`;
   return null;
 }
 

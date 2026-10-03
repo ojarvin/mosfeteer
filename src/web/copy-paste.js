@@ -195,6 +195,7 @@ export function copySelection({ quiet = false } = {}) {
       negativeInputs: c.negativeInputs ? [...c.negativeInputs] : [],
       joinBar: !!c.joinBar,
       ...(c.link ? { link: c.link } : {}),
+      ...(c.size ? { size: { ...c.size } } : {}),
       style: { ...(c.style || {}) },
       // The value: a resistance, a switch's phase.
       value: c.value,
@@ -600,6 +601,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           negativeInputs: c.negativeInputs,
           joinBar: c.joinBar,
           link: c.link,
+          size: c.size,
           style: c.style,
           value: c.value,
         });

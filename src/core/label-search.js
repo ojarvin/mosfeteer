@@ -1,5 +1,6 @@
 import { Circuit, INTERFACE_PIN_TYPES, canonicalNetName, isReferenceMarker } from './model.js';
 import { switchState } from './beats.js';
+import { MOS_SIZE_ROLE } from './mos-size.js';
 
 // Search and replace over the drawing's text: every label role (net names,
 // part names, switch phases, rail names, annotations, equations, captions),
@@ -44,7 +45,8 @@ function netNameShown(circuit, net) {
 export function searchableTexts(circuit) {
   const texts = [];
   for (const label of circuit.labels.values()) {
-    if (label.role === 'signal-input-sign' || !label.text) continue;
+    // Generated text (input signs, a transistor's size) is not authored here.
+    if (label.role === 'signal-input-sign' || label.role === MOS_SIZE_ROLE || !label.text) continue;
     texts.push({ key: `label:${label.id}`, role: roleOf(circuit, label), text: label.text, label });
   }
   for (const component of circuit.components.values()) {

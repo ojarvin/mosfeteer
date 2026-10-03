@@ -16,6 +16,7 @@ import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { pinJoinPoints } from './gestures.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
+import { sizeReplacedNameLabels } from '../core/mos-size.js';
 import { addTerminalStubs, stubLabelPlacement } from '../core/stubs.js';
 import { PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation } from '../core/pin-rails.js';
 import { tidySelection } from '../core/tidy.js';
@@ -1202,6 +1203,7 @@ function labelsAt(w) {
   const p = paneSize();
   const tol = 4 / (p ? view.w / p.w : 1);
   const barHidden = hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
   const onText = [];
   const inBox = [];
   for (const label of labels()) {

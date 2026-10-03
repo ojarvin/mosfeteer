@@ -8,6 +8,7 @@ import { INTERFACE_PIN_TYPES, isReferenceMarker, componentNameIdentity, referenc
 import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
+import { MOS_SIZE_ROLE, formatMosSize, parseMosSize } from '../core/mos-size.js';
 import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
 import { logLine } from './status-bar-ui.js';
@@ -111,6 +112,20 @@ export function openComponentChildLabelEditor(component) {
   if (label) inlineEditLabel(label, { ownedLabelDraft: true, initialSnapshot: before });
 }
 
+/** Edit a transistor's size in its compact spelling (2u/400n x4). A part
+ *  without one gets a draft label that Escape or a blank edit takes away. */
+export function editComponentSize(component) {
+  if (!component || editor.inlineInput) return;
+  const existing = editor.circuit.sizeLabelOf(component.refdes);
+  if (existing) {
+    inlineEditLabel(existing);
+    return;
+  }
+  const before = snapshot();
+  editor.circuit.setComponentSize(component.refdes, '1/1');
+  inlineEditLabel(editor.circuit.sizeLabelOf(component.refdes), { sizeDraft: true, initialSnapshot: before });
+}
+
 /** A joined supply bar has one label, shown over its first supply and
  *  centred on the bar; its name goes to every supply on the bar. */
 function openSupplyBarLabelEditor(refs) {
@@ -210,6 +225,9 @@ export function inlineEditLabel(label, options = {}) {
   // indentation and blank lines are kept (other labels name something, and
   // Tab moves on to the next label).
   const freeText = !label.owner && !label.netId && !label.math;
+  // A size label shows TeX made from the size; it is edited as the size.
+  const sizeOwner = label.role === MOS_SIZE_ROLE ? editor.circuit.components.get(label.owner) : null;
+  if (sizeOwner) input.value = options.sizeDraft ? '' : formatMosSize(sizeOwner.size);
   // Measure the live editor text in the same face as the rendered label. The
   // The box grows from the actual text anchor while keeping alignment stable.
   const measure = document.createElement('span');
@@ -267,6 +285,16 @@ export function inlineEditLabel(label, options = {}) {
     // Free text keeps its first line's indent; only blank lines and trailing
     // space around it go.
     const v = freeText ? input.value.replace(/^(?:[ \t]*\n)+/, '').trimEnd() : input.value.trim();
+    if (sizeOwner && applyText && v) {
+      try {
+        parseMosSize(v);
+      } catch (err) {
+        logLine(err.message, 'error');
+        input.focus({ preventScroll: true });
+        input.select();
+        return false;
+      }
+    }
     const owner = label.owner ? editor.circuit.components.get(label.owner) : null;
     const namesNet = !!label.netId || !!(owner && INTERFACE_PIN_TYPES.has(owner.type));
     if (applyText && v && v !== label.text && namesNet) {
@@ -297,7 +325,22 @@ export function inlineEditLabel(label, options = {}) {
     editor.inlineInput = null;
     measure.remove();
     input.remove();
-    if (provisional) {
+    if (sizeOwner) {
+      const refdes = sizeOwner.refdes;
+      if (options.sizeDraft) {
+        if (applyText && v) {
+          editor.circuit.setComponentSize(refdes, v);
+          recordHistoryEntry(initialSnapshot || snapshot());
+        } else {
+          editor.circuit.setComponentSize(refdes, null);
+        }
+        markModelChanged(false);
+      } else if (applyText && !v) {
+        commit(() => editor.circuit.setComponentSize(refdes, null));
+      } else if (applyText && v !== formatMosSize(sizeOwner.size)) {
+        commit(() => editor.circuit.setComponentSize(refdes, v));
+      }
+    } else if (provisional) {
       if (applyText && v) {
         try {
           renameLabelThroughModel(label, v);
@@ -386,6 +429,7 @@ export function inlineEditLabel(label, options = {}) {
   // Ctrl+, / Ctrl+. are handled here, live (side-panel.js installMarkupShortcuts).
   input.dataset.markupKeys = 'own';
   const toggleMarkup = (mark) => {
+    if (sizeOwner) return;
     const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, mark);
     if (!res) return;
     input.value = res.text;

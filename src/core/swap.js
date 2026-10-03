@@ -12,6 +12,7 @@ import { SYMBOL_CATEGORY_RULES } from './components/categories.js';
 import { ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } from './model.js';
 import { switchState } from './beats.js';
 import { PIN_RAIL_TYPES, railHang, railRotation } from './pin-rails.js';
+import { MOS_SIZE_OFFSET, MOS_SIZE_TYPES } from './mos-size.js';
 
 const BJT_TYPES = new Set(['npn', 'pnp']);
 const UNSWAPPABLE = new Set(['solder', 'block']);
@@ -230,6 +231,15 @@ export function swapComponentType(circuit, refdes, type) {
     circuit.renameComponent(component.refdes, circuit.nextRefdes(toPrefix, { reserveLabels: !!toDef.labelOffset }));
   }
   circuit._ensureComponentInstanceLabel(component);
+  // A size stays with a transistor swapped for another, under its name
+  // label's new slot unless it was moved; any other part drops it.
+  if (!MOS_SIZE_TYPES.has(type)) component.size = null;
+  const sizeLabel = circuit.sizeLabelOf(component.refdes);
+  if (sizeLabel && fromDef.labelOffset && toDef.labelOffset && component.size) {
+    const slot = (def) => (component.size.replacesName ? def.labelOffset : { x: def.labelOffset.x, y: def.labelOffset.y + MOS_SIZE_OFFSET.y });
+    if (samePoint(sizeLabel.offset, slot(fromDef))) sizeLabel.offset = { ...slot(toDef) };
+  }
+  circuit._syncSizeLabel(component);
   circuit.invalidateRoutingCache();
   return component;
 }

@@ -113,6 +113,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
+  { name: 'size', aliases: ['sizing', 'wl', 'transistor-size'], help: 'size <refdes> [W/L] [xM] [replace|beside] (a transistor\'s W/L label; off removes it)' },
   { name: 'renumber', aliases: ['number', 'renumber-parts'], help: 'renumber [--order right-down|up-right|...] [refdes ...] (along each row or column, then row by row)' },
   { name: 'rm', aliases: ['remove', 'delete'], help: 'rm <refdes>' },
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },

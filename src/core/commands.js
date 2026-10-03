@@ -7,6 +7,7 @@ import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, sma
 import { crossNetOverlaps } from './wiring.js';
 import { plainTexText, svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
+import { formatMosSize, sizeReplacedNameLabels } from './mos-size.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
@@ -261,7 +262,9 @@ export function evaluate(circuit) {
   }
   // A joined supply bar shows one of its supplies' labels; the hidden ones
   // are not drawn, so they cannot overlap anything.
+  // A size label standing in for a name hides it the same way.
   const barHidden = hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
   const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box', 'line'].includes(label.kind) && !barHidden.has(label.id));
   const labelComponentOverlaps = [];
   const labelOverlaps = [];
@@ -444,6 +447,8 @@ export function commandHelp() {
     '  mirror <refdes> <x|y>          - flip along an axis',
     '  value <refdes> <V>             - set value/label text',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
+    '  size <refdes> [W/L] [xM] [replace|beside] - a transistor\'s sizing label, W/L = M·W/L (2u/400n x4; bare numbers are μm); replace puts it in place of',
+    '                                   the name label, beside under it; size <refdes> off removes it; no size prints it',
     '  rename <refdes> <new>          - rename a component',
     '  renumber [--order ALONG-THEN] [refdes ...] - renumber automatically named parts (M1, R2): along each row/column, then row by row; ALONG and THEN are right|left|up|down, crosswise (default right-down, reading order; up-right: each column bottom up, columns left to right); listed parts trade only their own numbers',
     '  rm <refdes>                    - remove a component',
@@ -749,6 +754,24 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (cmd === 'link' && !name) return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} links to no design`, { refdes: c.refdes, link: c.link });
     circuit.setLink(c.refdes, name);
     return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} unlinked`, { refdes: c.refdes, link: c.link }, true);
+  }
+  if (cmd === 'size') {
+    if (!pos[0]) throw new Error('usage: size <refdes> [W/L] [xM] [replace|beside] ; size <refdes> off');
+    const c = circuit.getComponent(pos[0]);
+    const words = pos.slice(1);
+    const mode = String(words.at(-1) || '').toLowerCase();
+    const replacesName = mode === 'replace' ? true : mode === 'beside' ? false : undefined;
+    if (replacesName !== undefined) words.pop();
+    const spec = words.join(' ');
+    const describe = () => (c.size
+      ? `${c.refdes} size ${formatMosSize(c.size)}${c.size.replacesName ? ' (in place of its name)' : ''}`
+      : `${c.refdes} has no size`);
+    if (!spec && replacesName === undefined) return result(describe(), { refdes: c.refdes, size: c.size });
+    if (spec.toLowerCase() === 'off') circuit.setComponentSize(c.refdes, null);
+    else if (spec) circuit.setComponentSize(c.refdes, spec, { replacesName });
+    else if (c.size) circuit.setComponentSize(c.refdes, c.size, { replacesName });
+    else throw new Error(`${c.refdes} has no size to place; give one, e.g. size ${c.refdes} 2u/400n`);
+    return result(describe(), { refdes: c.refdes, size: c.size }, true);
   }
   if (cmd === 'supplybar' && String(pos[0] || '').toLowerCase() === 'name') {
     if (pos.length < 3) throw new Error('usage: supplybar name <NAME|-> <refdes> [refdes...]');

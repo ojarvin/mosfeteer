@@ -12,7 +12,8 @@ import { logLine } from './status-bar-ui.js';
 import { clientToWorld } from './canvas-view.js';
 import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } from './analysis-ui.js';
 import { editor } from './editor-state.js';
-import { inlineEditLabel } from './label-editor.js';
+import { editComponentSize, inlineEditLabel } from './label-editor.js';
+import { MOS_SIZE_ROLE, MOS_SIZE_TYPES } from '../core/mos-size.js';
 import { joinSelectedLines, selectedLines } from './annotation-tools.js';
 import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hierarchy.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
@@ -321,6 +322,22 @@ function appendSwitchPhaseMenu(menu, target) {
   });
 }
 
+/** A transistor's W/L label: add or edit it, put it in place of the name,
+ *  or take it away. Offered on the part and on its size label. */
+function appendSizingMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value
+    : target.value?.role === MOS_SIZE_ROLE ? editor.circuit.components.get(target.value.owner) : null;
+  if (!component || !MOS_SIZE_TYPES.has(component.type)) return;
+  const { refdes, size } = component;
+  appendContextSubmenu(menu, 'Sizing', (submenu) => {
+    appendContextItem(submenu, size ? 'Edit W/L…' : 'Add W/L…', () => setTimeout(() => editComponentSize(editor.circuit.components.get(refdes)), 0));
+    appendContextItem(submenu, 'In place of the name', () => {
+      commit(() => editor.circuit.setComponentSize(refdes, size, { replacesName: !size.replacesName }));
+    }, { disabled: !size, active: !!size?.replacesName });
+    appendContextItem(submenu, 'Remove W/L', () => commit(() => editor.circuit.setComponentSize(refdes, null)), { disabled: !size });
+  });
+}
+
 function appendSignalFlowPolarityMenu(menu, target) {
   const component = target.kind === 'component' ? target.value : null;
   const inputs = component?.terminalDefs?.filter((terminal) => terminal.signalRole === 'input') || [];
@@ -519,6 +536,7 @@ export function openComponentContextMenu(target, x, y) {
   appendContextSelectionMenu(menu, target);
   appendSignalFlowPolarityMenu(menu, target);
   appendSwitchPhaseMenu(menu, target);
+  appendSizingMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
     appendContextItem(menu, 'Close', closeComponentContextMenu);
