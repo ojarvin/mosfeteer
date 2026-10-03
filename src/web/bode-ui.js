@@ -7,6 +7,7 @@
  * again: only the derived coefficients are re-evaluated.
  */
 
+import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import {
   DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
   sketchParameters, sketchValues,
@@ -43,30 +44,6 @@ const state = {
 const panelEl = () => document.getElementById('analysis-panel-bode');
 
 // ----- steps ---------------------------------------------------------------------
-
-/** 1-2-5 per decade, `index` 0 being 1. */
-function step125(index) {
-  const decade = Math.floor(index / 3);
-  return [1, 2, 5][((index % 3) + 3) % 3] * 10 ** decade;
-}
-
-function index125(value) {
-  const decade = Math.floor(Math.log10(value) + 1e-9);
-  const mantissa = value / 10 ** decade;
-  return decade * 3 + (mantissa >= 4.9 ? 2 : mantissa >= 1.9 ? 1 : 0);
-}
-
-/** 1-2-3-5 per decade, for g_m r_o (30 is a common starting point). */
-function step1235(index) {
-  const decade = Math.floor(index / 4);
-  return [1, 2, 3, 5][((index % 4) + 4) % 4] * 10 ** decade;
-}
-
-function index1235(value) {
-  const decade = Math.floor(Math.log10(value) + 1e-9);
-  const mantissa = value / 10 ** decade;
-  return decade * 4 + (mantissa >= 4.9 ? 3 : mantissa >= 2.9 ? 2 : mantissa >= 1.9 ? 1 : 0);
-}
 
 /** A slider's plain readout: ×0.002, ×1, ×500. */
 function ratioText(value) {
@@ -335,15 +312,15 @@ export function renderBode(report) {
   const model = currentModel();
   // The one ratio every MOS design has.
   sliders.appendChild(slider({
-    label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: index1235(state.intrinsicGain), min: 0, max: 16,
-    text: (i) => String(step1235(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
-    onInput: (i) => { state.intrinsicGain = step1235(i); drawSketch(); },
+    label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: indexE24(state.intrinsicGain), min: 0, max: 4 * PER_DECADE,
+    text: (i) => String(stepE24(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
+    onInput: (i) => { state.intrinsicGain = stepE24(i); drawSketch(); },
   }));
   if (model?.parameters.some((parameter) => parameter.parasitic)) {
     sliders.appendChild(slider({
-      label: 'Parasitic capacitance', tex: 'C_{par}/C', index: index125(state.parasiticRatio), min: -6, max: 3,
-      text: (i) => String(Number(step125(i).toPrecision(3))), title: 'Every MOS C_gs and C_gd, in units of C',
-      onInput: (i) => { state.parasiticRatio = step125(i); drawSketch(); },
+      label: 'Parasitic capacitance', tex: 'C_{par}/C', index: indexE24(state.parasiticRatio), min: -2 * PER_DECADE, max: PER_DECADE,
+      text: (i) => String(stepE24(i)), title: 'Every MOS C_gs and C_gd, in units of C',
+      onInput: (i) => { state.parasiticRatio = stepE24(i); drawSketch(); },
     }));
   }
   const own = [...(model?.parameters || [])].filter((parameter) => !parameter.parasitic)
@@ -352,14 +329,14 @@ export function renderBode(report) {
     sliders.appendChild(slider({
       label: parameter.name,
       tex: parameter.tex,
-      index: index125(state.multipliers[parameter.name] ?? 1),
-      min: -9,
-      max: 9,
-      text: (i) => ratioText(step125(i)),
+      index: indexE24(state.multipliers[parameter.name] ?? 1),
+      min: -3 * PER_DECADE,
+      max: 3 * PER_DECADE,
+      text: (i) => ratioText(stepE24(i)),
       components: [parameter.component],
       title: parameter.load ? 'A load on the output: starts at 10 units' : '',
       onInput: (i) => {
-        const value = step125(i);
+        const value = stepE24(i);
         if (value === 1) delete state.multipliers[parameter.name];
         else state.multipliers[parameter.name] = value;
         drawSketch();
