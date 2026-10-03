@@ -178,6 +178,7 @@ export function approximateTopology(topology, queries, options) {
 export function buildTopologyIdentities(pipeline, options = {}) {
   const empty = { identities: [], stages: [] };
   if (options.topologicalPresentation === false || pipeline.queries.transfer.value?.kind !== 'rational'
+      || pipeline.system?.nullorReduced
       || !pipeline.selectedMna.some((primitive) => primitive.kind === 'vccs')) return empty;
   const ops = createRationalOps({ variable: options.variable || 's', maxOperations: 12000 });
   try {

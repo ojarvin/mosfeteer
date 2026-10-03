@@ -260,9 +260,34 @@ export function solveMNA(system, options = {}) {
   if (!system || !Array.isArray(system.A) || !Array.isArray(system.B)) {
     throw new TypeError('solveMNA requires a system returned by buildMNA');
   }
-  return solveLinearSystem(system.A, system.B, {
+  const solved = solveLinearSystem(system.A, system.B, {
     ...options,
     ops: options.ops || system.ops,
     variables: options.variables || system.unknowns,
   });
+  return system.aliases?.size && solved.ok ? withAliases(solved, system) : solved;
+}
+
+/** A nullor-reduced system's folded voltages, back in its solution: each
+ *  equal to the voltage it was folded into, or zero (AC ground). */
+function withAliases(solved, system) {
+  const ops = system.ops;
+  const names = [...system.aliases.keys()];
+  const variables = [...solved.variables, ...names];
+  const columns = solved.columns.map((column) => [
+    ...column,
+    ...names.map((name) => {
+      const target = system.aliases.get(name);
+      return target === null ? ops.zero : column[solved.variables.indexOf(target)];
+    }),
+  ]);
+  const values = variables.map((_, index) => columns.map((column) => column[index]));
+  return {
+    ...solved,
+    variables,
+    columns,
+    values,
+    solution: values,
+    byVariable: columns.map((column) => new Map(variables.map((name, index) => [name, column[index]]))),
+  };
 }

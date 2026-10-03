@@ -463,7 +463,9 @@ function canonicalResponseValue(value, options) {
   const numerator = response.numeratorCoefficients.find(({ power }) => power === 0)?.coefficient;
   const denominator = response.denominatorCoefficients.find(({ power }) => power === 0)?.coefficient;
   if (numerator === undefined || denominator === undefined) return response;
-  const valueAtZero = rationalFunction(numerator, denominator, { variable: options.variable || 's' });
+  // A common factor in the parameters (a finite-gain opamp's loop leaves
+  // R_1 (1 + A) + R_2 above and below) cancels here, as noise rows' do.
+  const valueAtZero = cancelParameterFactors(rationalFunction(numerator, denominator, { variable: options.variable || 's' }));
   return {
     ...response,
     dc: { ...response.dc, value: valueAtZero, coefficient: valueAtZero },

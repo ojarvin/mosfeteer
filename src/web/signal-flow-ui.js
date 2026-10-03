@@ -13,19 +13,19 @@
  * on the drawing with its legend, and Annotate equations the equations.
  */
 
-import { TRACE_COLORS, analyzeSignalFlow, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { expressionTex } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { responseFigure, swingFigure } from '../core/bode-figure.js';
 import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
-import { parseLabelRuns } from '../core/model.js';
+import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { editor } from './editor-state.js';
 import { analysisDialog } from './elements.js';
-import { alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, setLabelSelection, setSelection } from './main.js';
+import { alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } from './main.js';
 import { logLine } from './status-bar-ui.js';
 import { buttonIcon } from './icons.js';
 
@@ -34,7 +34,10 @@ const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|induct
 
 let mode = null; // 'circuit' | 'signal-flow'; chosen per opening unless switched
 let chosenThisSession = false;
-const settings = { output: '', sources: {} }; // source id -> 'input' | 'zero' | { constant }
+// The mode's settings, kept in the document so it reopens as it was left:
+// the output, each source's mode (source id -> 'input' | 'zero' |
+// { constant }), and the swing's source and frequency.
+const flow = () => (editor.circuit.analysisValues.flow ||= { output: '', sources: {}, swingInput: '', swingFrequency: '' });
 let latest = null;
 // The graph's traces, kept across derives: { id, label (TeX), color, value, variable, on }.
 let traces = [];
@@ -103,8 +106,13 @@ function fillForm() {
     .flatMap((port) => [...signals.values()].filter((signal) => signal.netIds.some((id) => editor.circuit.nets.get(id)?.terminals.some((t) => t.comp === port.refdes)))).map((signal) => signal.key));
   names.sort((a, b) => outputPorts.has(b.key) - outputPorts.has(a.key));
   output.replaceChildren(...names.map(({ key, name }) => el('option', { value: key, text: name })));
-  if (names.some(({ key }) => key === settings.output)) output.value = settings.output;
-  settings.output = output.value;
+  if (names.some(({ key }) => key === flow().output)) output.value = flow().output;
+  // A first default is no edit; replacing a saved output (its signal gone) is.
+  if (flow().output !== output.value) {
+    const had = flow().output;
+    flow().output = output.value;
+    if (had) markSettingsChanged();
+  }
 
   const table = section.querySelector('.signal-flow-sources');
   table.replaceChildren();
@@ -112,8 +120,8 @@ function fillForm() {
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
-    const value = settings.sources[source.id] ?? 'input';
-    settings.sources[source.id] = value;
+    const value = flow().sources[source.id] ?? 'input';
+    flow().sources[source.id] = value;
     const kind = typeof value === 'object' ? 'constant' : value;
     const select = el('select', { 'aria-label': `${source.name}: input, zero, or constant` }, [
       el('option', { value: 'input', text: 'Input' }), el('option', { value: 'zero', text: 'Zero' }), el('option', { value: 'constant', text: 'Constant' }),
@@ -123,7 +131,8 @@ function fillForm() {
     constant.hidden = kind !== 'constant';
     const save = () => {
       constant.hidden = select.value !== 'constant';
-      settings.sources[source.id] = select.value === 'constant' ? { constant: constant.value.trim() || '1' } : select.value;
+      flow().sources[source.id] = select.value === 'constant' ? { constant: constant.value.trim() || '1' } : select.value;
+      markSettingsChanged();
     };
     select.addEventListener('change', save);
     constant.addEventListener('input', save);
@@ -137,6 +146,13 @@ function fillForm() {
   problems.hidden = !issues.length;
   section.querySelector('.signal-flow-stale').hidden = !latest || revisionCurrent(derivedRevision);
   fillSwingSources(sources);
+  // Another document: its own swing, not the last one's.
+  if (swingCircuit !== editor.circuit) {
+    swingCircuit = editor.circuit;
+    swing = null;
+    swingShown = null;
+    renderSwing();
+  }
 }
 
 // ----- swing: each net's peak against the input amplitude ------------------------------
@@ -146,12 +162,13 @@ let swing = null;
 let swingRun = 0; // a sweep in progress stops when a newer one starts
 let swingShown = null; // keys of the nets on the plot
 let swingTimer = 0;
+let swingCircuit = null;
 const swingColors = new Map();
 const SWING_TONE = '\u0000tone';
 
 function swingSection() {
-  const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives' });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window' });
+  const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
   return el('fieldset', { class: 'analysis-approximations signal-flow-swing' }, [
     el('legend', { text: 'Swing' }),
     el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
@@ -169,9 +186,10 @@ function fillSwingSources(sources) {
   const select = section.querySelector('.signal-flow-swing-source');
   if (!select) return;
   const real = sources.filter((s) => !s.quantizer);
-  const previous = select.value;
   select.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
-  if (real.some((s) => s.id === previous)) select.value = previous;
+  if (real.some((s) => s.id === flow().swingInput)) select.value = flow().swingInput;
+  // The document's frequency, or the default.
+  section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '1/256';
 }
 
 function swingFrequency() {
@@ -188,9 +206,9 @@ function runSwing() {
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const sim = prepareSimulation(editor.circuit, {
     values,
-    sources: settings.sources,
+    sources: flow().sources,
     input: section.querySelector('.signal-flow-swing-source').value,
-    output: settings.output,
+    output: flow().output,
     frequency: swingFrequency(),
   });
   const run = ++swingRun;
@@ -243,15 +261,16 @@ function swingCoefficientsChanged() {
 function swingTraces() {
   if (!swing) return [];
   const db = (peak) => (peak > 0 ? 20 * Math.log10(peak / swing.fullScale) : -300);
-  const entries = swing.signals.filter((s) => s.role !== 'source').map((s, i) => ({ key: s.key, label: s.name, index: swing.signals.indexOf(s), order: i }));
+  const entries = swing.signals.filter((s) => s.role !== 'source').map((s, i) => ({ key: s.key, label: s.name, index: swing.signals.indexOf(s), order: i, stepped: !!s.quantized }));
   const traces = entries.map((entry, i) => ({
     key: entry.key,
     label: entry.label,
+    ...(entry.stepped ? { stepped: true } : {}),
     color: TRACE_COLORS[i % TRACE_COLORS.length],
     points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.peaks[entry.index]) })),
   }));
   if (swing.points.some((p) => p.tone !== null && p.tone !== undefined)) {
-    const output = swing.signals.find((s) => s.key === settings.output);
+    const output = swing.signals.find((s) => s.key === flow().output);
     traces.push({ key: SWING_TONE, label: `\\text{tone at } ${output?.name || 'out'}`, color: TRACE_COLORS[traces.length % TRACE_COLORS.length], points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.tone) })) });
   }
   return traces;
@@ -531,6 +550,7 @@ function bandControls() {
       editor.circuit.analysisValues.band = bwText ? { f0: f0 || 0, bw } : undefined;
       markSettingsChanged();
       redrawGraphPlot();
+      renderResults();
     });
     // Enter applies the field, not a derive.
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
@@ -613,51 +633,76 @@ function annotateGraph() {
   placePlot(plot, shown, used);
 }
 
-/** A plot on the drawing, under it at its left edge: its traces named
- *  beside it in their colours, the coefficients' numbers under them. */
+const PLOT_LEGEND_ROLE = 'plot-legend';
+
+/**
+ * A plot on the drawing. Annotating again replaces the data of the plot of
+ * that kind already there -- the selected one (or the one whose legend is
+ * selected), else the only one -- keeping its place, size, and style: its
+ * plot and its legend (the traces named in their colours, the coefficients'
+ * numbers under them) are swapped, the legend staying where it was. With
+ * none to update, a new plot goes under the drawing at its left edge.
+ */
 function placePlot(plot, shown, used) {
-  // One coefficient a line, left-aligned under the trace names.
+  const circuit = editor.circuit;
   const numbers = resolved();
   const linkTex = (name) => {
     try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
   };
-  let values = used.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
+  // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
+  const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
+  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind);
+  const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
+  const target = chosen || (plots.length === 1 ? plots[0] : null);
   // The same numbers beside another plot already: not twice.
-  const circuit = editor.circuit;
-  if ([...circuit.labels.values()].some((label) => label.parent && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
-  // Under the drawing, at its left edge.
-  const bounds = editor.circuit.bounds();
-  const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
-  const x = empty ? 0 : snap(bounds.x);
-  const y = empty ? 0 : snap(bounds.y + bounds.h + 2 * GRID);
-  const w = 18 * GRID;
-  const h = 11 * GRID;
-  let box = null;
+  if ([...circuit.labels.values()].some((label) => label.parent && label.parent !== target?.id && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
+  // A legend label: ours by role (older plots' math children too).
+  const legendOf = (box) => [...circuit.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+  let box = target;
+  let left;
+  let top;
+  if (target) {
+    const old = legendOf(target).map((label) => label.bbox());
+    const frame = target.bbox();
+    left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w + GRID;
+    top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
+  } else {
+    // Under the drawing, at its left edge.
+    const bounds = circuit.bounds();
+    const empty = !circuit.components.size && !circuit.labels.size;
+    const x = empty ? 0 : snap(bounds.x);
+    const y = empty ? 0 : snap(bounds.y + bounds.h + 2 * GRID);
+    left = x + 18 * GRID + GRID;
+    top = y;
+  }
   const ids = [];
   commit(() => {
-    box = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' } });
-    let top = y;
-    for (const trace of shown) {
-      const label = editor.circuit.addLabel({ text: `$${trace.label}$`, math: true, parent: box.id, align: 'left', x: 0, y: 0, style: { color: trace.color } });
-      const size = label.bbox();
-      label.moveTo(snap(x + w + GRID + size.w / 2), snap(top + size.h / 2));
-      top = label.bbox().y + label.bbox().h;
-      ids.push(label.id);
+    if (target) {
+      target.plot = normalizePlot(plot);
+      for (const label of legendOf(target)) circuit.removeLabel(label.id);
+    } else {
+      const x = left - 19 * GRID;
+      box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' } });
     }
-    if (values) {
-      const label = editor.circuit.addLabel({ text: values, math: true, parent: box.id, align: 'left', x: 0, y: 0 });
+    let y = top;
+    const add = (text, style) => {
+      const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
       const size = label.bbox();
-      label.moveTo(snap(x + w + GRID + size.w / 2), snap(top + size.h / 2));
+      label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
+      y = label.bbox().y + label.bbox().h;
       ids.push(label.id);
-    }
+    };
+    for (const trace of shown) add(`$${trace.label}$`, { color: trace.color });
+    if (values) add(values);
   });
   if (!box) return;
-  // Their sizes are estimates until the browser measures them: line their
-  // left edges up then.
-  alignLabelColumn(ids, { left: x + w + GRID, top: y, gap: 0 });
+  // Their sizes are estimates until the browser measures them: stack them
+  // then, edge to edge (each box is rounded to the grid already).
+  alignLabelColumn(ids, { left, top, gap: 0 });
   setSelection([]);
   setLabelSelection([box.id]);
-  logLine('placed the graph on the drawing; drag to move it, its corners to resize');
+  logLine(target ? 'updated the plot on the drawing in place' : 'placed the graph on the drawing; drag to move it, its corners to resize');
   render();
 }
 
@@ -683,6 +728,7 @@ function renderResults() {
       if (shown.zeros?.length) block.append(rootRow('Zeros', shown.zeros, 'z'));
       if (shown.poles?.length) block.append(rootRow(shown.mixed ? 'Poles of the sampled loop' : 'Poles', shown.poles, 'z'));
       if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole lies outside the unit circle: the sampled loop is unstable at these numbers, whatever the magnitude plot shows.' }));
+      appendSqnr(block, entry, entry.value.at(valuesFor(entry.value, latest.variable)));
       appendTraceButton(block, entry);
       host.append(block);
       continue;
@@ -700,9 +746,29 @@ function renderResults() {
     const at = symbolic ? ' at the coefficients below' : '';
     if (roots.zeros?.length) block.append(rootRow('Zeros', roots.zeros, latest.variable, at));
     if (roots.poles?.length) block.append(rootRow('Poles', roots.poles, latest.variable, at));
+    if (latest.variable === 'z') appendSqnr(block, entry, numeric(entry.value, latest.variable));
     appendTraceButton(block, entry);
     host.append(block);
   }
+}
+
+/** A quantizer's NTF, with a band set: the peak SQNR it predicts. */
+function appendSqnr(block, entry, ntf) {
+  if (!entry.quantizer) return;
+  const band = editor.circuit.analysisValues.band;
+  const component = editor.circuit.components.get(entry.quantizer);
+  const levels = Number(component?.value) || 2;
+  if (!bandEdges(band).length) {
+    block.append(el('p', { class: 'field-hint', text: 'Set a band on the graph (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
+    return;
+  }
+  const sqnr = bandSqnr(ntf, levels, band);
+  if (sqnr === null) return;
+  const edges = bandEdges(band).map((f) => Number(f.toPrecision(3)));
+  block.append(el('div', { class: 'analysis-equation-row' }, [
+    el('div', { class: 'analysis-equation-label', text: 'Peak SQNR in band' }),
+    el('div', { class: 'signal-flow-roots', text: `${Number.isFinite(sqnr) ? sqnr.toFixed(1) : '∞'} dB`, title: `A full-scale sine (amplitude ${levels - 1}, ${levels} levels) against white quantization noise (variance 1/3, levels 2 apart) through this NTF, in f/fs ${edges.length === 2 ? `${edges[0]} to ${edges[1]}` : `0 to ${edges[0]}`}; a linear-model prediction` }),
+  ]));
 }
 
 function appendTraceButton(block, entry) {
@@ -722,7 +788,7 @@ function rootRow(label, roots, variable, at = '') {
 }
 
 function derive() {
-  latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources, values: resolved() });
+  latest = analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
   // Each new response joins the graph, beside those already there.
@@ -765,7 +831,7 @@ export function installSignalFlowUi() {
     el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis of a transistor circuit', onclick: () => setMode('circuit', { user: true }) }),
     el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Transfer functions of a block diagram: H(s)/H(z) blocks, sums, and multipliers', onclick: () => setMode('signal-flow', { user: true }) }),
   ]);
-  const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { settings.output = ev.target.value; } });
+  const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
     el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
     el('div', { class: 'analysis-grid' }, [

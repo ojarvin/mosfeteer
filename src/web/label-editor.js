@@ -64,7 +64,7 @@ export function inlineEditSchematicBlock(component) {
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
     ? 'One coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m). Enter applies, Esc cancels.'
-    : component.type === 'tf_z'
+    : TRANSFER_FUNCTION_TYPES[component.type] === 'z'
     ? "tf([num], [den]) or a gain, in ascending powers of z^-1 ('Variable', 'z' for descending powers of z). Enter applies, Esc cancels."
     : 'tf([num], [den]) or a gain, coefficients highest power of s first. Enter applies, Esc cancels.';
   input.style.position = 'fixed';

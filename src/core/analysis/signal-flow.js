@@ -21,7 +21,7 @@ import { createRationalOps } from './algebra-ops.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { renderExpression } from './present.js';
 import { bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction } from '../transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } from '../transfer-function.js';
 import { canonicalNetName } from '../model.js';
 import { samplePath } from './sampling.js';
 
@@ -389,8 +389,8 @@ export function signalDomains({ circuit, signals }) {
   for (const signal of signals.values()) {
     if (!signal.driver || signal.driver.source) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
-    if (type === 'sampler' || type === 'tf_z') domain.set(signal.key, 'z');
-    else if (type === 'tf_s') domain.set(signal.key, 's');
+    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') domain.set(signal.key, 'z');
+    else if (TRANSFER_FUNCTION_TYPES[type] === 's') domain.set(signal.key, 's');
   }
   for (let changed = true; changed;) {
     changed = false;
@@ -410,8 +410,8 @@ export function signalDomains({ circuit, signals }) {
     for (const signal of signals.values()) {
       if (domain.has(signal.key)) continue;
       for (const { component } of readersOf(signal)) {
-        if (component?.type === 'sampler' || component?.type === 'tf_s') set(signal, 's');
-        else if (component?.type === 'tf_z') set(signal, 'z');
+        if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's');
+        else if (isBlockIn(component, 'z')) set(signal, 'z');
       }
     }
   }
@@ -422,7 +422,7 @@ export function signalDomains({ circuit, signals }) {
   }
   // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
   for (const component of circuit.components.values()) {
-    if (component.type === 'sampler' || component.type === 'tf_z') {
+    if (component.type === 'sampler' || isBlockIn(component, 'z')) {
       const input = [...signals.values()].find((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
       if (input && domain.get(input.key) !== (component.type === 'sampler' ? 's' : 'z')) {
         return failure('mixed-domains', component.type === 'sampler'
@@ -547,7 +547,7 @@ function analyzeSampled(context, output, inputs, initialValues) {
   const continuous = [...signals.values()].filter((signal) => domain.get(signal.key) === 's' && signal.driver && !signal.driver.source);
   const sInputs = inputs.filter((source) => domain.get(source.key) === 's');
   const dacInputs = [...signals.values()].filter((signal) => domain.get(signal.key) === 'z'
-    && signal.readers.some((reader) => circuit.components.get(reader.comp)?.type === 'tf_s'));
+    && signal.readers.some((reader) => isBlockIn(circuit.components.get(reader.comp), 's')));
   const sSystem = linearSystem(context, continuous, [...sInputs.map((s) => s.key), ...dacInputs.map((s) => s.key)], 's');
   if (!sSystem.ok) return sSystem;
   // Per sampler: its input's paths, [continuous sources..., DAC inputs...].
@@ -664,7 +664,7 @@ function sampledResult(spec) {
 /** A sampled result as an entry, its equation at these numbers. */
 function presentSampled(value, values, source, output) {
   const label = `\\frac{${texName(output.display)}}{${texName(source.name)}}`;
-  const entry = { input: source.id, inputName: source.name, value, label, sampled: true, continuous: value.continuous };
+  const entry = { input: source.id, inputName: source.name, value, label, sampled: true, continuous: value.continuous, ...(source.quantizer ? { quantizer: source.id } : {}) };
   Object.assign(entry, sampledEquation(entry, values));
   return entry;
 }
@@ -941,6 +941,7 @@ function present(value, variable, source, output) {
   const label = `\\frac{${texName(output.display)}}{${texName(source.name)}}`;
   return {
     input: source.id,
+    ...(source.quantizer ? { quantizer: source.id } : {}),
     inputName: source.name,
     value,
     tex,
@@ -1243,6 +1244,36 @@ export function bandEdges(band) {
   const bw = Number(band?.bw);
   if (!(bw > 0)) return [];
   return f0 > 0 ? [f0 - bw / 2, f0 + bw / 2].filter((f) => f > 0) : [bw];
+}
+
+/**
+ * The peak SQNR (dB) of a quantizer of `levels` levels whose error reaches
+ * the output through `ntf` (a number-valued rational in z), over the signal
+ * band: a full-scale sine (amplitude N - 1, Schreier's levels) against the
+ * error taken as white, of variance Delta^2/12 = 1/3 (levels 2 apart)
+ * spread over f/fs in (-1/2, 1/2), shaped by |NTF(e^{j 2 pi f})|^2 in band.
+ * Null without a band or a number-valued z result.
+ */
+export function bandSqnr(ntf, levels, band) {
+  const edges = bandEdges(band);
+  if (!edges.length || !ntf || ntf.kind === 'mixed' || ntf.variable !== 'z') return null;
+  const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
+  if (!(f2 > f1) || f2 > 0.5) return null;
+  // Simpson's rule over the band.
+  const steps = 4096;
+  const h = (f2 - f1) / steps;
+  let sum = 0;
+  for (let i = 0; i <= steps; i++) {
+    const theta = 2 * Math.PI * (f1 + i * h);
+    const v = rationalAt(ntf, [Math.cos(theta), Math.sin(theta)], 'z', 0);
+    if (!v) return null;
+    const power = v[0] ** 2 + v[1] ** 2;
+    sum += power * (i === 0 || i === steps ? 1 : i % 2 ? 4 : 2);
+  }
+  const inBand = (sum * h) / 3;
+  const noise = 2 * (1 / 3) * inBand;
+  const signal = (levels - 1) ** 2 / 2;
+  return noise > 0 ? 10 * Math.log10(signal / noise) : Infinity;
 }
 
 export function responsePlot(traces, variable, { sAxis = 'omega', band = null } = {}) {

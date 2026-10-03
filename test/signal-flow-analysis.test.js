@@ -597,7 +597,7 @@ test('coefficients paste from the delta-sigma toolbox: vectors name their entrie
 });
 
 import { bandEdges, responsePlot as bandedPlot } from '../src/core/analysis/signal-flow.js';
-import { responseFigure, swingCrossing, swingFigure } from '../src/core/bode-figure.js';
+import { responseFigure, swingFigure, swingFullScale, swingLimit, swingOverload, swingRunaway } from '../src/core/bode-figure.js';
 
 test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved with the plot', () => {
   assert.deepEqual(bandEdges({ f0: 0, bw: 1 / 128 }), [1 / 128]);
@@ -615,18 +615,75 @@ test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved wit
   assert.deepEqual(loaded.analysisValues.band, { f0: 0.25, bw: 0.02 });
 });
 
-test('the swing plot marks where a net first climbs through full scale', () => {
-  const traces = [
-    { color: '#3b74e0', points: [{ a: -20, db: -10 }, { a: -10, db: -4 }, { a: -6, db: 2 }, { a: 0, db: 8 }] },
-    // A quantizer's output sits at full scale throughout: no crossing.
-    { color: '#e0533b', points: [{ a: -20, db: 0 }, { a: -10, db: 0 }, { a: 0, db: 0 }] },
-    // An overloaded run counts as above full scale.
-    { color: '#2e9e5b', points: [{ a: -20, db: -30 }, { a: -2, db: -1 }, { a: 0, db: Infinity }] },
-  ];
-  // Between -10 dBFS (-4 dB) and -6 dBFS (+2 dB): two thirds of the way.
-  assert.ok(Math.abs(swingCrossing(traces) + 22 / 3) < 1e-9);
-  const figure = swingFigure({ range: { low: -60, high: 3 }, traces });
+test('the swing plot marks where the swings run away: a net outgrowing the input, or an overload', () => {
+  // Flat, noise-limited peaks jittering a dB or two, then a jump (4 dB past their best slope-1
+  // line) a step before the overload.
+  const jittery = { color: '#3b74e0', points: [-4, -3.75, -3.5, -3.25, -3, -2.75, -2.5].map((a, i) => ({ a, db: -10 + (i % 2 ? 1.5 : -1) })).concat([{ a: -2.25, db: -3 }, { a: -2, db: null }]) };
+  // A tone tracking the input (slope 1) never trips it.
+  const tone = { color: '#e0533b', points: [-20, -10, -4, -3, -2.5, -2.25].map((a) => ({ a, db: a })).concat([{ a: -2, db: null }]) };
+  // A quantizer's output jumps between levels by nature: left out.
+  const stepped = { color: '#2e9e5b', stepped: true, points: [{ a: -10, db: -6 }, { a: -9, db: 0 }, { a: -2, db: null }] };
+  assert.equal(swingOverload([jittery, tone, stepped]), -2);
+  assert.equal(swingRunaway([jittery, tone, stepped]), -2.25);
+  assert.equal(swingRunaway([tone, stepped]), -2, 'no knee: the overload');
+  const figure = swingFigure({ range: { low: -60, high: 3 }, traces: [jittery, tone, stepped] });
   assert.equal(figure.items.filter((item) => item.role === 'marker' && item.type === 'line').length, 1);
-  assert.ok(figure.items.some((item) => item.type === 'text' && item.text === '-7.3 dBFS'));
-  assert.equal(swingCrossing([traces[1]]), null);
+  assert.ok(figure.items.some((item) => item.type === 'text' && item.text === 'runaway -2.25 dBFS'));
+  assert.equal(swingRunaway([{ points: [{ a: -20, db: -3 }, { a: 0, db: 1 }] }]), null);
+  // A net rising smoothly through full scale first is the limit, named.
+  const rising = { label: 'H_{3}', color: '#c98a12', points: [{ a: -10, db: -6 }, { a: -4, db: -2 }, { a: -3, db: 2 }] };
+  assert.deepEqual(swingLimit([jittery, tone, stepped, rising]), { a: -3.5, kind: 'full-scale', label: 'H_{3}' });
+  assert.ok(swingFigure({ range: { low: -60, high: 3 }, traces: [jittery, rising] }).items.some((item) => item.text === 'H_{3} full scale -3.5 dBFS'));
+  // Nets at full scale from the start (a quantizer's output) never cross.
+  assert.equal(swingFullScale([stepped, { points: [{ a: -20, db: 0 }, { a: 0, db: 0.5 }] }]), null);
+});
+
+import { bandSqnr } from '../src/core/analysis/signal-flow.js';
+import { swapCandidates } from '../src/core/swap.js';
+
+test('signal-flow parts swap only among themselves; the DAC and delays are preset blocks', () => {
+  for (const type of ['tf_s', 'gain', 'sampler', 'quantizer', 'tf_dac']) {
+    assert.ok(swapCandidates(type).every((candidate) => !/^filter_|^block$/.test(candidate)), type);
+  }
+  assert.ok(swapCandidates('filter_lpf').every((candidate) => /^filter_/.test(candidate)));
+  const circuit = new Circuit();
+  assert.equal(circuit.addComponent('tf_dac').value, '(1 - exp(-s*T))/s');
+  assert.equal(circuit.addComponent('tf_delay').value, 'exp(-s*T_d)');
+  const zdelay = circuit.addComponent('tf_zdelay');
+  assert.equal(transferTexOf(zdelay), 'z^{-1}');
+  // A DAC preset closes a sampled loop like a DAC drawn as an H(s) block.
+  const loop = diagram([
+    'add input U --at -1200 0', 'add signal_sum S1 --at -800 0', 'add tf_s H1 --at -400 0 --value "1/s"', 'add sampler SMP1 --at 0 0',
+    'add quantizer QZ1 --at 400 0', 'add output V --at 800 0', 'add tf_dac D1 --at 0 400 --rot 180',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out SMP1.in', 'connect SMP1.out QZ1.in', 'connect QZ1.out V.p', 'connect V.p D1.in', 'connect D1.out S1.s',
+  ], [['S1', 's']]);
+  const report = analyzeSignalFlow(loop, { output: 'V', sources: { QZ1: 'input' }, values: { T: 1 } });
+  assert.equal(report.ok, true, report.error);
+  assert.equal(report.entries[0].equation, '\\frac{V}{E_{QZ1}} = 1 - z^{-1}');
+});
+
+function transferTexOf(component) {
+  return [...component.circuit.labels.values()].find((l) => l.owner === component.refdes && l.role === TRANSFER_FUNCTION_ROLE).text.replace(/^\$|\$$/g, '');
+}
+
+test('the peak SQNR in band: a full-scale sine against white quantization noise through the NTF', () => {
+  const circuit = new Circuit();
+  const mod1 = blockTransferFunction(circuit.addComponent('tf_z', { value: 'tf([1 -1], [1])' }));
+  const mod2 = blockTransferFunction(circuit.addComponent('tf_z', { value: 'tf([1 -2 1], [1])' }));
+  // MOD1: 9 OSR^3 / (2 pi^2); MOD2: 15 OSR^5 / (2 pi^4), single-bit (sigma^2 = 1/3).
+  const osr = 64;
+  assert.ok(Math.abs(bandSqnr(mod1, 2, { bw: 1 / (2 * osr) }) - 10 * Math.log10(9 * osr ** 3 / (2 * Math.PI ** 2))) < 0.05);
+  assert.ok(Math.abs(bandSqnr(mod2, 2, { bw: 1 / (2 * osr) }) - 10 * Math.log10(15 * osr ** 5 / (2 * Math.PI ** 4))) < 0.05);
+  // Three levels: twice the amplitude, 6 dB.
+  assert.ok(Math.abs(bandSqnr(mod2, 3, { bw: 1 / 128 }) - bandSqnr(mod2, 2, { bw: 1 / 128 }) - 20 * Math.log10(2)) < 1e-9);
+  // A band-pass band integrates f0 +- bw/2; no band, no SQNR.
+  assert.ok(Number.isFinite(bandSqnr(mod1, 2, { f0: 0.25, bw: 0.01 })));
+  assert.equal(bandSqnr(mod1, 2, {}), null);
+});
+
+test('the signal-flow settings are saved with the document', () => {
+  const circuit = new Circuit();
+  circuit.analysisValues.flow = { output: 'name:V', sources: { U: 'input', QZ1: 'zero', W: { constant: 'a' } }, swingInput: 'U', swingFrequency: '1/512' };
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(loaded.analysisValues.flow, circuit.analysisValues.flow);
 });

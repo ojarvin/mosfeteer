@@ -22,7 +22,7 @@
 import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients } from './signal-flow.js';
 import { expm } from './sampling.js';
 import { evaluateExpression } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, parseGain, parseLevels } from '../transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels } from '../transfer-function.js';
 import { canonicalNetName } from '../model.js';
 
 const JUNCTION_INPUTS = ['n', 's', 'w'];
@@ -110,7 +110,7 @@ export function prepareSimulation(circuit, options = {}) {
     if (!found.ok) return failure(found.code, found.error);
     domain = found.domain;
   } else {
-    if (parts.some((c) => c.type === 'tf_s')) return failure('no-clock', 'a continuous-time diagram needs a sampler to be simulated (it sets the clock)');
+    if (parts.some((c) => isBlockIn(c, 's'))) return failure('no-clock', 'a continuous-time diagram needs a sampler to be simulated (it sets the clock)');
     domain = new Map([...signals.keys()].map((key) => [key, 'z']));
   }
   const num = (expression) => evaluateExpression(coefficientValue(String(expression).replace(/\s/g, '')), values);
@@ -177,7 +177,7 @@ export function prepareSimulation(circuit, options = {}) {
   try {
     for (const signal of cont) {
       const component = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
-      if (component?.type !== 'tf_s') continue;
+      if (!isBlockIn(component, 's')) continue;
       const input = signalAt(component, 'in');
       const value = numeric(component);
       if (input && domain.get(input.key) === 'z') {
@@ -225,7 +225,7 @@ export function prepareSimulation(circuit, options = {}) {
       if (!signal.driver) continue;
       const component = circuit.components.get(signal.driver.comp);
       const feed = (gain, from) => { if (from && ci.has(from.key)) Gc[i][ci.get(from.key)] += gain; };
-      if (component.type === 'tf_s') {
+      if (isBlockIn(component, 's')) {
         const block = blocks.find((b) => b.out === signal.key);
         if (block) {
           block.model.C.forEach((c, j) => { Hc[i][block.offset + j] += c; });
@@ -256,7 +256,7 @@ export function prepareSimulation(circuit, options = {}) {
   try {
     for (const signal of disc) {
       const component = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
-      if (component?.type !== 'tf_z') continue;
+      if (!isBlockIn(component, 'z')) continue;
       const value = numeric(component);
       const model = realize(denseCoefficients(value.numerator, 'z'), denseCoefficients(value.denominator, 'z'));
       zblocks.push({ component, out: signal.key, input: signalAt(component, 'in')?.key || null, model, offset: md });
@@ -278,7 +278,7 @@ export function prepareSimulation(circuit, options = {}) {
       if (!signal.driver) continue;
       const component = circuit.components.get(signal.driver.comp);
       const feed = (gain, from) => { if (from && di.has(from.key)) Gd[i][di.get(from.key)] += gain; };
-      if (component.type === 'tf_z') {
+      if (isBlockIn(component, 'z')) {
         const block = zblocks.find((b) => b.out === signal.key);
         block.model.C.forEach((c, j) => { Hd[i][block.offset + j] += c; });
         if (block.input) feed(block.model.D, { key: block.input });
@@ -366,10 +366,26 @@ export function prepareSimulation(circuit, options = {}) {
     const type = signal.driver ? circuit.components.get(signal.driver.comp)?.type : null;
     if (signal.key === options.output) return 'output';
     if (quantizers.some((q) => signalAt(q, 'in')?.key === signal.key)) return 'quantizer-input';
-    if (type === 'tf_z' || (type === 'tf_s' && blocks.some((b) => b.out === signal.key))) return 'state';
+    if (TRANSFER_FUNCTION_TYPES[type] === 'z' || (TRANSFER_FUNCTION_TYPES[type] === 's' && blocks.some((b) => b.out === signal.key))) return 'state';
     return 'other';
   };
-  const signalList = [...cont, ...disc].map((signal) => ({ key: signal.key, name: named(signal), domain: domain.get(signal.key), role: roleOf(signal) }));
+  // A quantizer's output steps between levels, its peak jumping by nature;
+  // so does anything only scaled or summed from such signals (c_1 v).
+  const steppedKeys = new Set();
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const signal of [...cont, ...disc]) {
+      if (steppedKeys.has(signal.key) || !signal.driver || signal.driver.source) continue;
+      const part = circuit.components.get(signal.driver.comp);
+      const inputs = (part.type === 'signal_sum' ? JUNCTION_INPUTS : part.type === 'gain' ? ['in'] : []).map((term) => signalAt(part, term)).filter(Boolean);
+      if (part.type === 'quantizer' || (inputs.length && inputs.every((input) => steppedKeys.has(input.key)))) {
+        steppedKeys.add(signal.key);
+        changed = true;
+      }
+    }
+  }
+  const quantized = (signal) => steppedKeys.has(signal.key);
+  const signalList = [...cont, ...disc].map((signal) => ({ key: signal.key, name: named(signal), domain: domain.get(signal.key), role: roleOf(signal), ...(quantized(signal) ? { quantized: true } : {}) }));
   const outputIndex = signalList.findIndex((s) => s.key === options.output);
 
   const samplerRows = samplers.map((c) => {

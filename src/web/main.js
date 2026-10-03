@@ -7289,7 +7289,8 @@ export function runLine(line) {
   let output = result ? result.text : '';
   if (result && result.json !== undefined && result.json !== null) {
     output += output ? '\n' : '';
-    output += JSON.stringify(result.json);
+    // Exact analysis results carry BigInt numerators: write them as digits.
+    output += JSON.stringify(result.json, (key, value) => (typeof value === 'bigint' ? String(value) : value));
   }
 
   if (output) logLine(output);

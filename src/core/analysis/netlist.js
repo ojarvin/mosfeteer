@@ -14,6 +14,8 @@ const KIND_ORDER = new Map([
   ['admittance', 65],
   ['triode-resistance', 70],
   ['vccs', 80],
+  ['opamp', 90],
+  ['opamp-cm', 95],
 ]);
 
 function lookup(map, key) {
@@ -59,7 +61,7 @@ function normalizePrimitive(primitive) {
     a: firstDefined(primitive.a, primitive.outPlus, nodes.a, nodes.positive, output.a, output.positive, primitive.positive),
     b: firstDefined(primitive.b, primitive.outMinus, nodes.b, nodes.negative, output.b, output.negative, primitive.negative),
   };
-  const controlTerminals = kind === 'vccs' ? {
+  const controlTerminals = kind === 'vccs' || kind === 'opamp' ? {
     a: firstDefined(primitive.controlPlus, control.a, control.plus, control.positive),
     b: firstDefined(primitive.controlMinus, control.b, control.minus, control.negative),
   } : null;
@@ -231,6 +233,19 @@ function describePrimitive(primitive, resolveNode, options = {}) {
       `* ${primitiveId(primitive)}: ${metadata.millerSide} shunt admittance from the Miller approximation`,
     ] : [];
     return { kind, id: primitiveId(primitive), line: `Y_${primitiveId(primitive)} ${a} ${b} ${format(primitive.value)}`, notes };
+  }
+  if (kind === 'opamp') {
+    // A VCVS: E out ref in+ in- gain (an ideal opamp's gain is infinite).
+    const plus = resolveNode(nodeOf(primitive, 'controlPlus'));
+    const minus = resolveNode(nodeOf(primitive, 'controlMinus'));
+    const model = primitive.metadata?.opampModel || 'ideal';
+    const parameter = primitive.metadata?.opampParameter;
+    const gain = model === 'finite-gain' ? textbookName(parameter) : model === 'gbw' ? `${textbookName(parameter)}/s` : '\\infty';
+    const describe = { ideal: 'ideal (inputs held equal)', 'finite-gain': 'finite gain', gbw: 'single pole, A = omega_t/s' }[model];
+    return { kind, id: primitiveId(primitive), line: `E_${name} ${a} ${b} ${plus} ${minus} ${gain}`, notes: [`* ${name}: opamp, ${describe}`] };
+  }
+  if (kind === 'opamp-cm') {
+    return { kind, id: primitiveId(primitive), line: `* ${name}: output common mode (${a}+${b})/2 held at AC ground`, notes: [] };
   }
   if (kind === 'vccs') {
     const data = vccsData(primitive, resolveNode);

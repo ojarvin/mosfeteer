@@ -10,7 +10,7 @@ import { switchGroupKey, switchPhase, switchPhases, switchState, switchesOf } fr
 import { canvasEl, componentContextMenuEl, componentsListEl, netsListEl, panelFilterEl } from './elements.js';
 import { logLine } from './status-bar-ui.js';
 import { clientToWorld } from './canvas-view.js';
-import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } from './analysis-ui.js';
+import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_OPAMP_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } from './analysis-ui.js';
 import { editor } from './editor-state.js';
 import { editComponentSize, inlineEditLabel } from './label-editor.js';
 import { MOS_SIZE_ROLE, MOS_SIZE_TYPES } from '../core/mos-size.js';
@@ -375,7 +375,8 @@ function appendContextSmallSignalMenu(menu, target) {
   const transistor = SMALL_SIGNAL_TRANSISTOR_TYPES.has(component.type);
   const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
   const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
-  if (!transistor && !resistor && !port) return;
+  const opamp = SMALL_SIGNAL_OPAMP_TYPES.has(component.type);
+  if (!transistor && !resistor && !port && !opamp) return;
   appendContextSubmenu(menu, 'Small-signal attributes', (submenu) => {
     if (transistor) {
       const transistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type));
@@ -424,6 +425,17 @@ function appendContextSmallSignalMenu(menu, target) {
         appendContextItem(resistanceMenu, 'Clear resistance override', () => applyComponentAnalysis(component, { resistance: null }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), {
           disabled: !resistorTargets.some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
         });
+      });
+    }
+    if (opamp) {
+      // Ideal (inputs held equal) unless a finite gain A or one pole, A = omega_t / s.
+      const isOpamp = (candidate) => SMALL_SIGNAL_OPAMP_TYPES.has(candidate.type);
+      const opampTargets = analysisComponentTargets(component, isOpamp);
+      const modelOf = (candidate) => candidate.analysis?.model || 'ideal';
+      appendContextSubmenu(submenu, 'Opamp model', (opampMenu) => {
+        appendContextItem(opampMenu, 'Ideal (infinite gain)', () => applyComponentAnalysis(component, { model: null }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'ideal'));
+        appendContextItem(opampMenu, 'Finite gain A', () => applyComponentAnalysis(component, { model: 'finite-gain' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'finite-gain'));
+        appendContextItem(opampMenu, 'Single pole (A = ω_t / s)', () => applyComponentAnalysis(component, { model: 'gbw' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'gbw'));
       });
     }
     if (port) {

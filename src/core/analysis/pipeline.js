@@ -177,6 +177,18 @@ export function adaptPrimitiveDescriptor(primitive, options = {}) {
       value,
     };
   }
+  if (primitive.kind === 'opamp') {
+    return {
+      ...base,
+      kind: 'opamp',
+      outPlus: terminals.a,
+      outMinus: terminals.b,
+      controlPlus: terminals.controlPlus,
+      controlMinus: terminals.controlMinus,
+      gain: primitive.metadata?.opampModel === 'ideal' ? Infinity : value,
+      value,
+    };
+  }
   if (primitive.kind === 'voltage-source') {
     return {
       ...base,
@@ -266,6 +278,14 @@ function toMnaPrimitive(primitive, options, ops) {
       throw new TypeError(`${primitive.id} must have control.a and control.b`);
     }
     return { ...primitive, kind: 'vccs', id: primitive.id, terminals, value, control: primitive.control };
+  }
+  if (primitive.kind === 'opamp') {
+    // MNA stamps the inverse gain: 0 ideal, 1/A, or s/omega_t (one pole; ideal at DC).
+    const model = primitive.metadata?.opampModel;
+    const inverse = model === 'finite-gain' ? ops.div(ops.one, value)
+      : model === 'gbw' ? ops.div(s, value)
+      : ops.zero;
+    return { ...primitive, kind: 'opamp', id: primitive.id, terminals, value: inverse, control: primitive.control };
   }
   return { ...primitive, kind: primitive.kind, id: primitive.id, terminals, value };
 }
@@ -658,8 +678,9 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
   const mnaBudget = budgetFailure(ops, 'MNA construction');
   if (mnaBudget) return failure('budget', mnaBudget.error, mnaBudget);
 
-  const solution = (options.topologicalSolve === false ? null : solveByTopology(system, excitations, context, ops, {
-    splitBranches: selectedMna.some((primitive) => primitive.kind === 'vccs'),
+  // A nullor-reduced system's rows do not pair with its unknowns: no structural solve.
+  const solution = (options.topologicalSolve === false || system.nullorReduced ? null : solveByTopology(system, excitations, context, ops, {
+    splitBranches: selectedMna.some((primitive) => ['vccs', 'opamp', 'opamp-cm'].includes(primitive.kind)),
   }))
     || solveMNA(system, { ops });
   if (solution.code === 'operation-budget' || solution.code === 'solver-work-limit' || solution.code === 'matrix-size-limit') {

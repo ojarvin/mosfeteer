@@ -41,7 +41,7 @@ const PARTNERS = new Map([
   ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
-  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
+  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['tf_delay', 'tf_zdelay'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
   ...['and', 'or', 'xor'].flatMap((gate) => [2, 3].map((n) => [`${gate}${n}_gate`, `n${gate}${n}_gate`])),
 ].flatMap(([a, b]) => [[a, b], [b, a]]));
 
@@ -86,8 +86,11 @@ export function swapCandidates(type) {
     const sameCategory = categoryOf(candidate) === category;
     const complete = map.size === fromDef.terminals.length && map.size === toDef.terminals.length;
     // Across categories only a whole multi-pin footprint carries over: a
-    // resistor can become a switch, but a port never becomes a rail.
+    // resistor can become a switch, but a port never becomes a rail. Signal-
+    // flow parts are analysed as blocks, not drawn: they swap only among
+    // themselves (a transfer function never becomes a drawn filter).
     if (!sameCategory && !(complete && map.size > 1)) continue;
+    if (!sameCategory && (category === 'Signal flow' || categoryOf(candidate) === 'Signal flow')) continue;
     let staying = 0;
     for (const [oldName, newName] of map) {
       const a = fromDef.terminals.find((t) => t.name === oldName);

@@ -88,11 +88,11 @@ export const filter_notch = filterBlock('notch');
  * (transfer-function.js); each instance sizes its box to the equation
  * (ComponentInstance#bodySize), so this footprint is only the smallest one.
  */
-function transferFunctionBlock(type, variable) {
+function transferFunctionBlock(type, variable, description = `Transfer function H(${variable})`, refPrefix = 'H') {
   return defineSymbol({
     type,
-    description: `Transfer function H(${variable})`,
-    refPrefix: 'H',
+    description,
+    refPrefix,
     terminals: [
       { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
       { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
@@ -112,6 +112,10 @@ function transferFunctionBlock(type, variable) {
 
 export const tf_s = transferFunctionBlock('tf_s', 's');
 export const tf_z = transferFunctionBlock('tf_z', 'z');
+// Presets: a DAC (its NRZ pulse, the way back from z to s), and delays.
+export const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC pulse (1 - e^{-sT})/s', 'DAC');
+export const tf_delay = transferFunctionBlock('tf_delay', 's', 'Delay e^{-sT_d}', 'DL');
+export const tf_zdelay = transferFunctionBlock('tf_zdelay', 'z', 'Delay z^{-1}', 'DL');
 
 /**
  * A gain: the block-diagram triangle, pointing the way the signal goes, its

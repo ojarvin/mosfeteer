@@ -1,7 +1,7 @@
 import { asList, PASSIVE_KINDS } from './shared.js';
 import { AC_GROUND } from './context.js';
 
-const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs']);
+const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs', 'opamp', 'opamp-cm']);
 
 function asNode(value) {
   if (value == null) return null;

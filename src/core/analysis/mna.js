@@ -121,7 +121,7 @@ function stampVccs(matrix, element, nodeIndex, ops) {
 }
 
 function branchElement(kind) {
-  return kind === 'voltage-source' || kind === 'inductor';
+  return kind === 'voltage-source' || kind === 'inductor' || kind === 'opamp' || kind === 'opamp-cm';
 }
 
 function normalizedKind(element) {
@@ -139,7 +139,7 @@ function normalizeElement(element) {
     a: element.a ?? element.outPlus ?? element.positive ?? element.p,
     b: element.b ?? element.outMinus ?? element.negative ?? element.n,
   };
-  const control = element.control || (kind === 'vccs' ? {
+  const control = element.control || (kind === 'vccs' || kind === 'opamp' ? {
     a: element.controlPlus ?? element.cp,
     b: element.controlMinus ?? element.cn,
   } : undefined);
@@ -156,8 +156,8 @@ function normalizeElement(element) {
     throw new TypeError(`MNA ${kind} terminals.a and terminals.b are required`);
   }
   if (value === undefined) throw new TypeError(`MNA ${kind} value is required`);
-  if (kind === 'vccs' && (!control || control.a === undefined || control.b === undefined)) {
-    throw new TypeError('MNA vccs control.a and control.b are required');
+  if ((kind === 'vccs' || kind === 'opamp') && (!control || control.a === undefined || control.b === undefined)) {
+    throw new TypeError(`MNA ${kind} control.a and control.b are required`);
   }
   return {
     kind,
@@ -209,7 +209,7 @@ export function buildMNA(inputElements = [], options = {}) {
   const branches = branchElements.map((element, index) => ({
     element,
     name: branchName(element, index),
-    kind: element.kind === 'inductor' ? 'inductor' : 'voltage-source',
+    kind: ['inductor', 'opamp', 'opamp-cm'].includes(element.kind) ? element.kind : 'voltage-source',
   }));
   if (new Set(branches.map((branch) => branch.name)).size !== branches.length) {
     throw new RangeError('MNA branch names must be unique');
@@ -276,6 +276,32 @@ export function buildMNA(inputElements = [], options = {}) {
         addMatrixEntry(matrix, branch, branch, ops.neg(element.value), ops);
         break;
       }
+      case 'opamp': {
+        // An opamp: its output current enters at a (leaves b), and its row
+        // is beta (V(a) - V(b)) = V(control.a) - V(control.b), beta its
+        // inverse gain -- 0 for an ideal opamp, whose inputs are then held
+        // equal (a nullor), 1/A for finite gain, s/omega_t for one pole.
+        const branch = branchColumn.get(element);
+        const plus = indexOf(element.control.a);
+        const minus = indexOf(element.control.b);
+        addMatrixEntry(matrix, a, branch, ops.one, ops);
+        addMatrixEntry(matrix, b, branch, ops.neg(ops.one), ops);
+        addMatrixEntry(matrix, branch, a, element.value, ops);
+        addMatrixEntry(matrix, branch, b, ops.neg(element.value), ops);
+        addMatrixEntry(matrix, branch, plus, ops.neg(ops.one), ops);
+        addMatrixEntry(matrix, branch, minus, ops.one, ops);
+        break;
+      }
+      case 'opamp-cm': {
+        // A fully differential opamp's common mode: its current enters both
+        // outputs alike, and holds V(a) + V(b) at AC ground.
+        const branch = branchColumn.get(element);
+        addMatrixEntry(matrix, a, branch, ops.one, ops);
+        addMatrixEntry(matrix, b, branch, ops.one, ops);
+        addMatrixEntry(matrix, branch, a, ops.one, ops);
+        addMatrixEntry(matrix, branch, b, ops.one, ops);
+        break;
+      }
       default:
         throw new TypeError(`unsupported MNA element kind "${element.kind}"`);
     }
@@ -288,6 +314,18 @@ export function buildMNA(inputElements = [], options = {}) {
         rhs[row][column] = ops.add(rhs[row][column], explicitRhs[row][column]);
       }
     }
+  }
+  const opamps = elements.filter((element) => element.kind === 'opamp');
+  if (opamps.length) {
+    return reduceNullors({ ops, ground, nodes, branches, columnCount, unknowns, matrix, rhs }, opamps.map((element) => ({
+      out: indexOf(element.terminals.a),
+      ref: indexOf(element.terminals.b),
+      plus: indexOf(element.control.a),
+      minus: indexOf(element.control.b),
+      branch: branchColumn.get(element),
+      ideal: ops.isZero(element.value),
+      id: element.id,
+    })));
   }
   return {
     ok: true,
@@ -305,5 +343,103 @@ export function buildMNA(inputElements = [], options = {}) {
     B: rhs,
     matrix,
     rhs,
+  };
+}
+
+/**
+ * Fold ideal opamps out of a built system: each is a nullor. Its inputs, a
+ * nullator, hold V(minus) = V(plus), so V(minus) stops being an unknown (its
+ * column joins plus's, or goes when plus is AC ground) while its KCL row
+ * stays; its output, a norator, carries whatever current it must, so the
+ * output's KCL row goes (added into its reference's row) while V(out) stays.
+ * With its branch row and current gone too, each opamp takes one row and one
+ * column away instead of adding them -- an opamp-RC filter's summing nodes
+ * become virtual grounds and its system shrinks to the opamp outputs. The
+ * rows no longer pair with the unknowns of the same index, so the result is
+ * flagged `nullorReduced` (structural solvers skip it); `aliases` maps each
+ * folded voltage to the one it equals (null: AC ground). A finite opamp's
+ * output current goes the same way, its own row (beta V_out = V_+ - V_-)
+ * staying as the equation in the output's KCL row's place.
+ */
+function reduceNullors(system, opamps) {
+  const { ops, matrix, rhs, unknowns, columnCount } = system;
+  const size = unknowns.length;
+  const rowInto = new Map(); // dropped row -> the row it was added into
+  const columnInto = new Map(); // dropped column -> the column it joined (null: ground)
+  const rowOf = (row) => { while (row !== undefined && rowInto.has(row)) row = rowInto.get(row); return row; };
+  const columnOf = (column) => {
+    while (column !== undefined && column !== null && columnInto.has(column)) column = columnInto.get(column);
+    return column;
+  };
+  const dropRow = (row, into) => {
+    if (into !== undefined) {
+      for (let c = 0; c < size; c++) if (!ops.isZero(matrix[row][c])) matrix[into][c] = ops.add(matrix[into][c], matrix[row][c]);
+      for (let c = 0; c < columnCount; c++) if (!ops.isZero(rhs[row][c])) rhs[into][c] = ops.add(rhs[into][c], rhs[row][c]);
+    }
+    rowInto.set(row, into);
+  };
+  const dropColumn = (column, into) => {
+    if (into !== null && into !== undefined) {
+      for (let r = 0; r < size; r++) if (!ops.isZero(matrix[r][column])) matrix[r][into] = ops.add(matrix[r][into], matrix[r][column]);
+    }
+    columnInto.set(column, into ?? null);
+  };
+  for (const opamp of opamps) {
+    // The norator: the output's KCL row goes, into its reference's.
+    const out = rowOf(opamp.out);
+    const ref = rowOf(opamp.ref);
+    if (out === undefined && ref === undefined) throw new RangeError(`${opamp.id} drives AC ground from AC ground`);
+    if (out !== undefined) dropRow(out, ref);
+    else dropRow(ref, undefined);
+    // A finite opamp keeps its row; only its current goes.
+    if (!opamp.ideal) {
+      columnInto.set(opamp.branch, null);
+      continue;
+    }
+    // The nullator: V(minus) = V(plus).
+    const plus = columnOf(opamp.plus);
+    const minus = columnOf(opamp.minus);
+    if ((plus === undefined || plus === null) && (minus === undefined || minus === null)) {
+      throw new RangeError(`${opamp.id} has both inputs on AC ground: its output is undetermined`);
+    }
+    if (plus === minus) throw new RangeError(`${opamp.id} has its inputs shorted together: its output is undetermined`);
+    if (minus !== undefined && minus !== null) dropColumn(minus, plus ?? null);
+    else dropColumn(plus, null);
+    // Its branch row and current.
+    rowInto.set(opamp.branch, undefined);
+    columnInto.set(opamp.branch, null);
+  }
+  const keptRows = [...Array(size).keys()].filter((row) => !rowInto.has(row));
+  const keptColumns = [...Array(size).keys()].filter((column) => !columnInto.has(column));
+  if (keptRows.length !== keptColumns.length) throw new RangeError('the ideal opamps leave the circuit over- or under-determined');
+  const A = keptRows.map((row) => keptColumns.map((column) => matrix[row][column]));
+  const B = keptRows.map((row) => rhs[row].slice());
+  const reducedUnknowns = keptColumns.map((column) => unknowns[column]);
+  const aliases = new Map();
+  for (const [column] of columnInto) {
+    if (!unknowns[column].startsWith('V(')) continue;
+    const target = columnOf(column);
+    aliases.set(unknowns[column], target === null || target === undefined ? null : unknowns[target]);
+  }
+  const nodes = system.nodes.filter((node) => reducedUnknowns.includes(`V(${node})`));
+  const branches = system.branches.filter((branch) => reducedUnknowns.includes(`I(${branch.name})`));
+  return {
+    ok: true,
+    ops,
+    ground: system.ground,
+    nodes,
+    branches,
+    rhsCount: columnCount,
+    unknowns: reducedUnknowns,
+    nodeVoltageUnknowns: nodes.map((node) => `V(${node})`),
+    branchCurrentUnknowns: branches.map((branch) => `I(${branch.name})`),
+    nodeIndex: new Map(nodes.map((node) => [node, reducedUnknowns.indexOf(`V(${node})`)])),
+    branchIndex: new Map(branches.map((branch) => [branch.name, reducedUnknowns.indexOf(`I(${branch.name})`)])),
+    A,
+    B,
+    matrix: A,
+    rhs: B,
+    nullorReduced: true,
+    aliases,
   };
 }

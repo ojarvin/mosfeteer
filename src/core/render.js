@@ -8,6 +8,7 @@ import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { sizeReplacedNameLabels } from './mos-size.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
+import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure, responseFigure, swingFigure } from './bode-figure.js';
 
@@ -68,12 +69,12 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 /** Signal-flow inputs whose wires carry an arrowhead into them without
  *  being asked: a sum's or multiplier's inputs and a transfer function's
  *  input (a gain's triangle already points the way). By pin ("x,y"). */
-const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 function signalInputPins(circuit) {
   const pins = new Set();

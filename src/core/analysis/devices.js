@@ -1,4 +1,5 @@
 import { MOS_TYPES } from './shared.js';
+import { AC_GROUND } from './context.js';
 // Primitive contract: terminals.a -> terminals.b is the branch direction;
 // VCCS control.a -> control.b is its voltage-control direction.
 const PASSIVE_TYPES = new Map([
@@ -339,9 +340,72 @@ function convertMos(circuit, component, context) {
   };
 }
 
+// Amplifiers: an opamp is a voltage-controlled voltage source from its
+// inputs' difference to its output, ideal (infinite gain, the inputs held
+// equal: a nullor) unless its model says finite gain A or a single pole of
+// gain-bandwidth omega_t (A = omega_t / s); a fully differential one adds
+// its outputs' common mode held at AC ground. A Gm cell is a VCCS.
+const OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
+
+/** The opamp's gain parameters: its inverse gain is what MNA stamps (0 when ideal). */
+export function opampModel(component) {
+  const suffix = String(component.refdes).replace(/^U(?=\d)/, '').replace(/[^A-Za-z0-9]/g, '');
+  const model = component.analysis?.model;
+  if (model === 'finite-gain') return { model, parameter: `A${suffix}` };
+  if (model === 'gbw') return { model, parameter: `\\omega_{t${suffix}}` };
+  return { model: 'ideal', parameter: null };
+}
+
+function convertAmplifier(circuit, component, context) {
+  const names = component.def.terminals.map((terminal) => terminal.name);
+  const results = names.map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
+  const diagnostics = results.map(([, result]) => result.error).filter(Boolean);
+  const nodes = Object.fromEntries(results.map(([terminal, result]) => [terminal, result.node]));
+  const touched = results.map(([, result]) => result.node).filter(Boolean);
+  if (diagnostics.length) return { primitives: [], diagnostics, nodes: touched };
+  const metadata = { component: component.refdes, device: component.type };
+  if (component.type === 'gm') {
+    const gm = `Gm${String(component.refdes).replace(/^G(?=\d)/, '')}`;
+    return {
+      primitives: [{
+        kind: 'vccs',
+        id: `${component.refdes}.gm`,
+        // Gm (v_ip - v_im) leaves om and enters op.
+        terminals: { a: nodes.om, b: nodes.op },
+        value: gm,
+        control: { a: nodes.ip, b: nodes.im },
+        metadata: { ...metadata, controlExpression: `${gm}(v_ip-v_im)` },
+      }],
+      diagnostics: [],
+      nodes: touched,
+    };
+  }
+  const { model, parameter } = opampModel(component);
+  const amplifier = (id, a, b) => ({
+    kind: 'opamp',
+    id,
+    terminals: { a, b },
+    control: { a: nodes.ip, b: nodes.im },
+    value: parameter ?? 0,
+    metadata: { ...metadata, opampModel: model, ...(parameter ? { opampParameter: parameter } : {}) },
+  });
+  if (component.type === 'opamp') {
+    return { primitives: [amplifier(`${component.refdes}.opamp`, nodes.o, AC_GROUND)], diagnostics: [], nodes: touched };
+  }
+  return {
+    primitives: [
+      amplifier(`${component.refdes}.opamp`, nodes.op, nodes.om),
+      { kind: 'opamp-cm', id: `${component.refdes}.cm`, terminals: { a: nodes.op, b: nodes.om }, value: 0, metadata },
+    ],
+    diagnostics: [],
+    nodes: touched,
+  };
+}
+
 function convertOneComponent(circuit, component, context) {
   if (IGNORED_TYPES.has(component.type)) return { primitives: [], diagnostics: [], nodes: [] };
   if (MOS_TYPES.has(component.type)) return convertMos(circuit, component, context);
+  if (OPAMP_TYPES.has(component.type) || component.type === 'gm') return convertAmplifier(circuit, component, context);
   if (component.type === 'voltage_source' || component.type === 'current_source') {
     const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
     const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);

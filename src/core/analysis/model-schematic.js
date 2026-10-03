@@ -19,7 +19,7 @@ import { renderExpression } from './present.js';
 export const AC_GROUND_NODE = '@AC_GROUND';
 
 const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
-const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
+const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source', 'opamp']);
 const MIN_PITCH = 240;
 const SLOT_PADDING = 240;
 const BUS_Y = 0;
@@ -36,6 +36,8 @@ const ELEMENT_TYPES = new Map([
   ['capacitor', 'capacitor'],
   ['inductor', 'inductor'],
   ['vccs', 'vccs'],
+  // An opamp: a VCVS from its output to its reference.
+  ['opamp', 'vcvs'],
   ['current-source', 'current_source'],
   ['voltage-source', 'voltage_source'],
 ]);
@@ -48,6 +50,8 @@ function isGround(node) {
  * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
 function normalize(primitive) {
   if (!primitive || typeof primitive !== 'object') return null;
+  // A differential opamp's common-mode constraint has no branch to draw.
+  if (String(primitive.kind || '').toLowerCase() === 'opamp-cm') return null;
   const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
   const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
   if (a === undefined && b === undefined) return null;
@@ -123,6 +127,15 @@ function perFrequency(value, options) {
 
 function elementLabel(element, symbol, options, nodeName) {
   if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
+  if (element.kind === 'opamp') {
+    // Its gain times its inputs' difference: infinite when ideal.
+    const parameter = textbookSymbol(element.metadata.opampParameter || '');
+    const model = element.metadata.opampModel;
+    const gain = model === 'finite-gain' ? parameter : model === 'gbw' ? `\\frac{${parameter}}{s}` : '\\infty';
+    const plus = nodeName(element.control?.a) || '0';
+    const minus = nodeName(element.control?.b) || '0';
+    return { text: `${gain}(${plus} - ${minus})` };
+  }
   if (element.parameter) return { text: textbookSymbol(element.parameter) };
   let rendered = '';
   try { rendered = renderExpression(element.value, options.renderOptions || {}); }

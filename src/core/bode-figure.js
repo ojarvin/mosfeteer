@@ -284,13 +284,17 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
     items.push({ type: 'line', x1: pane.x, y1: y(db), x2: pane.x + pane.w, y2: y(db), role: 'grid' });
     items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
   }
-  // The first amplitude at which any net climbs through full scale.
-  const crossing = swingCrossing(plot.traces);
-  if (crossing !== null && crossing > low && crossing < high) {
-    items.push({ type: 'line', x1: x(crossing), y1: pane.y, x2: x(crossing), y2: pane.y + pane.h, role: 'marker' });
+  // The amplitude not to operate at: a net reaching full scale, or the
+  // swings running away, whichever comes first.
+  const limit = swingLimit(plot.traces);
+  if (limit && limit.a > low && limit.a < high) {
+    items.push({ type: 'line', x1: x(limit.a), y1: pane.y, x2: x(limit.a), y2: pane.y + pane.h, role: 'marker' });
     // At the top, clear of the axis titles: left of the line in the right half, else right of it.
-    const right = x(crossing) > pane.x + pane.w / 2;
-    items.push({ type: 'text', x: x(crossing) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text: `${Number(crossing.toFixed(1))} dBFS`, anchor: right ? 'end' : 'start', role: 'marker' });
+    const right = x(limit.a) > pane.x + pane.w / 2;
+    const text = limit.kind === 'full-scale'
+      ? `${limit.label ? `${limit.label} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
+      : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
+    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
   }
   plot.traces.forEach((trace, index) => {
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
@@ -302,24 +306,77 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
 }
 
 /**
- * The lowest input amplitude (dBFS) at which a swing trace climbs through
- * 0 dBFS, from below (a net already at full scale, as a quantizer's output
- * is, never crosses); an overloaded run counts as above. Null when none does.
+ * The lowest input amplitude (dBFS) at which the simulated system overloaded
+ * -- its run ran away, so every trace has no value there (null, or not
+ * finite). Null when every run stayed bounded.
  */
-export function swingCrossing(traces) {
+export function swingOverload(traces) {
   let best = null;
   for (const trace of traces) {
-    const points = trace.points;
-    for (let i = 1; i < points.length; i++) {
-      const a = points[i - 1];
-      const b = points[i];
-      const before = Number.isFinite(a.db) ? a.db : Infinity;
-      const after = Number.isFinite(b.db) ? b.db : Infinity;
-      if (!(before < -0.05) || !(after >= 0)) continue;
-      const at = Number.isFinite(after) ? a.a + ((0 - before) / (after - before)) * (b.a - a.a) : b.a;
-      if (best === null || at < best) best = at;
+    for (const point of trace.points) {
+      if (Number.isFinite(point.db)) continue;
+      if (best === null || point.a < best) best = point.a;
       break;
     }
   }
   return best;
+}
+
+/**
+ * Where a system's swings run away, the amplitude not to operate at: the
+ * first (dBFS) at which a net's peak outgrows the input by more than
+ * `excess` dB over the preceding `window` dB of sweep -- above the best
+ * line of slope 1 (growing as the input does) through any earlier point
+ * in that window -- or at which the run overloads. A net that tracks the
+ * input never trips it, a noise-limited one only with a real jump; a
+ * quantized net (`stepped`, a quantizer's output moving between levels)
+ * is left out. Null when neither happens.
+ */
+export function swingRunaway(traces, { excess = 3, window = 3 } = {}) {
+  let best = swingOverload(traces);
+  for (const trace of traces) {
+    if (trace.stepped) continue;
+    const points = trace.points.filter((p) => Number.isFinite(p.db)).sort((p, q) => p.a - q.a);
+    for (let i = 1; i < points.length; i++) {
+      const here = points[i];
+      if (best !== null && here.a >= best) break;
+      const earlier = points.slice(0, i).filter((p) => p.a >= here.a - window - 1e-9);
+      if (!earlier.length) continue;
+      const line = Math.max(...earlier.map((p) => p.db - p.a)) + here.a;
+      if (here.db - line > excess) { best = here.a; break; }
+    }
+  }
+  return best;
+}
+
+/**
+ * The first amplitude (dBFS) at which a net's peak climbs through full
+ * scale, 0 dBFS, from below -- interpolated between sweep points -- as
+ * `{ a, label }`. A net already at full scale never crosses, and a quantized
+ * one (`stepped`) is left out. Null when none does.
+ */
+export function swingFullScale(traces) {
+  let best = null;
+  for (const trace of traces) {
+    if (trace.stepped) continue;
+    const points = trace.points.filter((p) => Number.isFinite(p.db)).sort((p, q) => p.a - q.a);
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (!(a.db < -0.05) || !(b.db >= 0)) continue;
+      const at = a.a + ((0 - a.db) / (b.db - a.db)) * (b.a - a.a);
+      if (!best || at < best.a) best = { a: at, label: trace.label || '' };
+      break;
+    }
+  }
+  return best;
+}
+
+/** Where to stop: the earlier of a net reaching full scale and the swings
+ *  running away, as `{ a, kind: 'full-scale' | 'runaway', label }`. */
+export function swingLimit(traces) {
+  const full = swingFullScale(traces);
+  const runaway = swingRunaway(traces);
+  if (full && (runaway === null || full.a <= runaway)) return { a: full.a, kind: 'full-scale', label: full.label };
+  return runaway === null ? null : { a: runaway, kind: 'runaway', label: '' };
 }

@@ -68,6 +68,31 @@ Ignoring body effect means the substitution `g_{mb}=0`. It does not move or
 reconnect the bulk. If bulk and source already share one AC node, the body
 control voltage is zero naturally.
 
+## Opamps and Gm cells
+
+An `opamp` is a voltage-controlled voltage source from its inputs'
+difference to its output (`devices.js`, `mna.js`): ideal by default --
+infinite gain, its inputs held equal (a nullor) -- or, chosen per opamp
+under Small-signal attributes > Opamp model (`analysis.model`), a finite
+gain `A` (`A_{1}` for `U1`) or a single pole `A = omega_t / s`
+(`\omega_{t1}`), ideal at DC. MNA stamps the inverse gain, `0`, `1/A`, or
+`s/omega_t`, so one stamp serves all three. An `opamp_diff` adds its
+outputs' common mode held at AC ground. A `gm` cell is a VCCS,
+`G_{m1} (v_ip - v_im)` into `op` and out of `om`.
+
+Ideal opamps are folded out of the system before it is solved
+(`reduceNullors`): each input pair holds `V(-) = V(+)`, so `V(-)` stops
+being an unknown, and each output's KCL row goes (its current is whatever
+it must be), so the summing nodes of an opamp-RC filter become virtual
+grounds and a three-opamp biquad solves in a moment; a finite opamp's
+output current is folded the same way, its own row kept. The reduced
+system's rows no longer pair with its unknowns, so the structural solve and
+stage factoring step aside for it, and the folded voltages come back in the
+solution as aliases. Several finite or single-pole opamps with every
+component symbolic can still exceed the work limit; ideal ones scale. The
+audit netlist lists an opamp as `E out ref in+ in- gain` and the model
+drawing as a VCVS diamond.
+
 ## Exact and displayed results
 
 The exact solve is canonicalized before presentation:

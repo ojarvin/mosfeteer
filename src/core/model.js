@@ -1016,7 +1016,16 @@ export function normalizeAnalysisValues(value) {
   // The signal band on the response graph: f0 and bw in f/fs.
   const rawBand = value?.band;
   const band = rawBand && Number(rawBand.bw) > 0 ? { f0: Math.max(0, Number(rawBand.f0) || 0), bw: Number(rawBand.bw) } : null;
-  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}) };
+  // The signal-flow mode's settings: output, sources' modes, the swing's source and frequency.
+  const rawFlow = value?.flow;
+  const text = (v) => (typeof v === 'string' ? v.slice(0, 200) : '');
+  const flow = rawFlow && typeof rawFlow === 'object' ? {
+    output: text(rawFlow.output),
+    sources: Object.fromEntries(Object.entries(rawFlow.sources || {}).filter(([k, v]) => k.length <= 200 && (['input', 'zero'].includes(v) || (v && typeof v === 'object' && typeof v.constant === 'string'))).map(([k, v]) => [k, typeof v === 'object' ? { constant: v.constant.slice(0, 100) } : v])),
+    swingInput: text(rawFlow.swingInput),
+    swingFrequency: text(rawFlow.swingFrequency),
+  } : null;
+  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -1026,11 +1035,13 @@ function analysisValuesJSON(values) {
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
   const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band) return {};
+  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency) ? values.flow : null;
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
     ...(Object.keys(links).length ? { links: { ...links } } : {}),
     ...(band ? { band } : {}),
+    ...(flow ? { flow: { ...flow, sources: { ...flow.sources } } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
   } };
@@ -1066,6 +1077,7 @@ function normalizeSwingPlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => finite(p?.a) && (p.db === null || finite(p.db)))
       .map((p) => ({ a: round(p.a), db: p.db === null ? null : round(p.db) })),
+    ...(trace?.stepped ? { stepped: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   return { kind: 'swing', range: { low, high }, traces };
@@ -1706,7 +1718,8 @@ export class LabelInstance {
   }
 }
 
-const SMALL_SIGNAL_DEVICE_MODELS = new Set(['triode', 'ro']);
+// A MOS device's model ('triode', 'ro'), or an opamp's: 'ideal' (the default), 'finite-gain' A, 'gbw' omega_t / s.
+const SMALL_SIGNAL_DEVICE_MODELS = new Set(['triode', 'ro', 'ideal', 'finite-gain', 'gbw']);
 
 function normalizeSmallSignalDeviceModel(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -3197,6 +3210,10 @@ export class Circuit {
       throw new Error(`parasitics overrides apply only to MOS components, not ${component.type}`);
     }
     const normalizedModel = model === undefined ? undefined : normalizeSmallSignalDeviceModel(model);
+    const opampModel = ['ideal', 'finite-gain', 'gbw'].includes(normalizedModel);
+    if (normalizedModel && opampModel !== ['opamp', 'opamp_diff'].includes(component.type)) {
+      throw new Error(opampModel ? `opamp models apply only to opamps, not ${component.type}` : `the ${normalizedModel} model does not apply to an opamp`);
+    }
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
       throw new Error(`unknown small-signal device role "${role}"`);
     }

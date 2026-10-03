@@ -17,6 +17,9 @@ Each wire is one signal. The parts are:
   `exp(-s*T_d)*k/(s + p)`), or `tf(num, den, 'InputDelay', T)`. `exp()`
   takes only a delay, `-s` times something free of `s`, and powers are
   whole, so a block stays a ratio of polynomials in `s` and its delays.
+- **Presets**: `tf_dac` (a DAC's NRZ pulse, `(1 - exp(-s*T))/s`),
+  `tf_delay` (`exp(-s*T_d)`), and `tf_zdelay` (`z^-1`) are transfer-function
+  blocks that start with that definition, editable like any other.
 - **Gains** `gain`: `y = k x`, the triangle pointing the way the signal
   goes (its tip on the output pin, its centroid on the part's origin), its
   one coefficient (`k`, `0.5`, `a_1`, `2*g_m`) placed by one rule: a short
@@ -168,7 +171,13 @@ amplitude sweeps from -60 dBFS past full scale. It plots each net's peak
 against the input amplitude, both in dB of full scale (the largest
 quantizer's `N - 1`, else 1), with the output's tone at the input frequency
 -- how the loop is scaled, and where it overloads (a state past a thousand
-times full scale). The integrators' outputs, the quantizer's input, the
+times full scale, or still growing). The plot marks the amplitude not to
+operate at (`swingLimit`): the first at which a net climbs through full
+scale, or the swings run away (`swingRunaway`), whichever comes first. The
+swings run away at the first amplitude at which a net's peak outgrows
+the input by more than 3 dB over the preceding 3 dB of sweep, or the run
+overloads -- a net tracking the input never trips it, and a quantizer's
+output, stepping between levels, is left out. The integrators' outputs, the quantizer's input, the
 output, and its tone are shown at first; any net can be checked. It runs at
 the coefficients' numbers and again as they move, and **Annotate swing**
 puts it on the drawing like the graph (`plot.kind: 'swing'`,
@@ -184,6 +193,22 @@ reads just before each `t = nT`, and peaks are taken at eight sub-steps a
 period and at every impulse. Refused: a continuous diagram with no sampler
 (no clock), a quantizer in a loop with no delay, a delay on a continuous
 signal outside a DAC block, a block with more zeros than poles.
+
+The response graph takes a signal band, f0 and bw in f/fs: a dashed line
+at bw for a baseband signal, two at f0 +- bw/2 otherwise (`bandEdges`). With
+a band, a quantizer's NTF shows its **peak SQNR** (`bandSqnr`): a
+full-scale sine, amplitude N - 1, against the quantizer's error taken as
+white with variance 1/3 (levels 2 apart) over f/fs in (-1/2, 1/2), shaped by
+|NTF|^2 in band -- 30 log OSR - 3.4 dB for a single-bit first-order loop,
+50 log OSR - 11.1 dB for a second-order one.
+
+Annotating a graph or a swing again updates the plot of that kind already
+on the drawing -- the selected one, else the only one -- keeping its place,
+size, and style and swapping its data and legend (labels of role
+`plot-legend`) in place; with none, a new plot goes under the drawing. The
+mode's settings (the output, the sources, the swing's source and
+frequency) are saved with the document (`analysisValues.flow`), as are the
+band and the coefficients.
 
 **Paste coefficients** (under the sliders) takes the delta-sigma toolbox's
 vectors as MATLAB prints them -- `a = [0.0444 0.2843 0.7894]`, or its

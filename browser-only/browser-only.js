@@ -1862,9 +1862,12 @@ function symbolsIn(values) {
 };
 
 __modules["src/core/analysis/devices.js"] = function (__require, __exports) {
+__exports.opampModel = opampModel;
 __exports.componentToPrimitives = componentToPrimitives;
 __exports.convertCircuitToPrimitives = convertCircuitToPrimitives;
 let MOS_TYPES; __bind(() => { ({ MOS_TYPES } = __require("src/core/analysis/shared.js")); });
+let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
+
 
 // Primitive contract: terminals.a -> terminals.b is the branch direction;
 // VCCS control.a -> control.b is its voltage-control direction.
@@ -2206,9 +2209,72 @@ function convertMos(circuit, component, context) {
   };
 }
 
+// Amplifiers: an opamp is a voltage-controlled voltage source from its
+// inputs' difference to its output, ideal (infinite gain, the inputs held
+// equal: a nullor) unless its model says finite gain A or a single pole of
+// gain-bandwidth omega_t (A = omega_t / s); a fully differential one adds
+// its outputs' common mode held at AC ground. A Gm cell is a VCCS.
+const OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
+
+/** The opamp's gain parameters: its inverse gain is what MNA stamps (0 when ideal). */
+function opampModel(component) {
+  const suffix = String(component.refdes).replace(/^U(?=\d)/, '').replace(/[^A-Za-z0-9]/g, '');
+  const model = component.analysis?.model;
+  if (model === 'finite-gain') return { model, parameter: `A${suffix}` };
+  if (model === 'gbw') return { model, parameter: `\\omega_{t${suffix}}` };
+  return { model: 'ideal', parameter: null };
+}
+
+function convertAmplifier(circuit, component, context) {
+  const names = component.def.terminals.map((terminal) => terminal.name);
+  const results = names.map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
+  const diagnostics = results.map(([, result]) => result.error).filter(Boolean);
+  const nodes = Object.fromEntries(results.map(([terminal, result]) => [terminal, result.node]));
+  const touched = results.map(([, result]) => result.node).filter(Boolean);
+  if (diagnostics.length) return { primitives: [], diagnostics, nodes: touched };
+  const metadata = { component: component.refdes, device: component.type };
+  if (component.type === 'gm') {
+    const gm = `Gm${String(component.refdes).replace(/^G(?=\d)/, '')}`;
+    return {
+      primitives: [{
+        kind: 'vccs',
+        id: `${component.refdes}.gm`,
+        // Gm (v_ip - v_im) leaves om and enters op.
+        terminals: { a: nodes.om, b: nodes.op },
+        value: gm,
+        control: { a: nodes.ip, b: nodes.im },
+        metadata: { ...metadata, controlExpression: `${gm}(v_ip-v_im)` },
+      }],
+      diagnostics: [],
+      nodes: touched,
+    };
+  }
+  const { model, parameter } = opampModel(component);
+  const amplifier = (id, a, b) => ({
+    kind: 'opamp',
+    id,
+    terminals: { a, b },
+    control: { a: nodes.ip, b: nodes.im },
+    value: parameter ?? 0,
+    metadata: { ...metadata, opampModel: model, ...(parameter ? { opampParameter: parameter } : {}) },
+  });
+  if (component.type === 'opamp') {
+    return { primitives: [amplifier(`${component.refdes}.opamp`, nodes.o, AC_GROUND)], diagnostics: [], nodes: touched };
+  }
+  return {
+    primitives: [
+      amplifier(`${component.refdes}.opamp`, nodes.op, nodes.om),
+      { kind: 'opamp-cm', id: `${component.refdes}.cm`, terminals: { a: nodes.op, b: nodes.om }, value: 0, metadata },
+    ],
+    diagnostics: [],
+    nodes: touched,
+  };
+}
+
 function convertOneComponent(circuit, component, context) {
   if (IGNORED_TYPES.has(component.type)) return { primitives: [], diagnostics: [], nodes: [] };
   if (MOS_TYPES.has(component.type)) return convertMos(circuit, component, context);
+  if (OPAMP_TYPES.has(component.type) || component.type === 'gm') return convertAmplifier(circuit, component, context);
   if (component.type === 'voltage_source' || component.type === 'current_source') {
     const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
     const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);
@@ -3095,7 +3161,9 @@ function canonicalResponseValue(value, options) {
   const numerator = response.numeratorCoefficients.find(({ power }) => power === 0)?.coefficient;
   const denominator = response.denominatorCoefficients.find(({ power }) => power === 0)?.coefficient;
   if (numerator === undefined || denominator === undefined) return response;
-  const valueAtZero = rationalFunction(numerator, denominator, { variable: options.variable || 's' });
+  // A common factor in the parameters (a finite-gain opamp's loop leaves
+  // R_1 (1 + A) + R_2 above and below) cancels here, as noise rows' do.
+  const valueAtZero = cancelParameterFactors(rationalFunction(numerator, denominator, { variable: options.variable || 's' }));
   return {
     ...response,
     dc: { ...response.dc, value: valueAtZero, coefficient: valueAtZero },
@@ -3555,7 +3623,7 @@ let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/cont
 
 
 
-const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs']);
+const SUPPORTED_KINDS = new Set([...PASSIVE_KINDS, 'voltage-source', 'current-source', 'vccs', 'opamp', 'opamp-cm']);
 
 function asNode(value) {
   if (value == null) return null;
@@ -4208,7 +4276,7 @@ function stampVccs(matrix, element, nodeIndex, ops) {
 }
 
 function branchElement(kind) {
-  return kind === 'voltage-source' || kind === 'inductor';
+  return kind === 'voltage-source' || kind === 'inductor' || kind === 'opamp' || kind === 'opamp-cm';
 }
 
 function normalizedKind(element) {
@@ -4226,7 +4294,7 @@ function normalizeElement(element) {
     a: element.a ?? element.outPlus ?? element.positive ?? element.p,
     b: element.b ?? element.outMinus ?? element.negative ?? element.n,
   };
-  const control = element.control || (kind === 'vccs' ? {
+  const control = element.control || (kind === 'vccs' || kind === 'opamp' ? {
     a: element.controlPlus ?? element.cp,
     b: element.controlMinus ?? element.cn,
   } : undefined);
@@ -4243,8 +4311,8 @@ function normalizeElement(element) {
     throw new TypeError(`MNA ${kind} terminals.a and terminals.b are required`);
   }
   if (value === undefined) throw new TypeError(`MNA ${kind} value is required`);
-  if (kind === 'vccs' && (!control || control.a === undefined || control.b === undefined)) {
-    throw new TypeError('MNA vccs control.a and control.b are required');
+  if ((kind === 'vccs' || kind === 'opamp') && (!control || control.a === undefined || control.b === undefined)) {
+    throw new TypeError(`MNA ${kind} control.a and control.b are required`);
   }
   return {
     kind,
@@ -4296,7 +4364,7 @@ function buildMNA(inputElements = [], options = {}) {
   const branches = branchElements.map((element, index) => ({
     element,
     name: branchName(element, index),
-    kind: element.kind === 'inductor' ? 'inductor' : 'voltage-source',
+    kind: ['inductor', 'opamp', 'opamp-cm'].includes(element.kind) ? element.kind : 'voltage-source',
   }));
   if (new Set(branches.map((branch) => branch.name)).size !== branches.length) {
     throw new RangeError('MNA branch names must be unique');
@@ -4363,6 +4431,32 @@ function buildMNA(inputElements = [], options = {}) {
         addMatrixEntry(matrix, branch, branch, ops.neg(element.value), ops);
         break;
       }
+      case 'opamp': {
+        // An opamp: its output current enters at a (leaves b), and its row
+        // is beta (V(a) - V(b)) = V(control.a) - V(control.b), beta its
+        // inverse gain -- 0 for an ideal opamp, whose inputs are then held
+        // equal (a nullor), 1/A for finite gain, s/omega_t for one pole.
+        const branch = branchColumn.get(element);
+        const plus = indexOf(element.control.a);
+        const minus = indexOf(element.control.b);
+        addMatrixEntry(matrix, a, branch, ops.one, ops);
+        addMatrixEntry(matrix, b, branch, ops.neg(ops.one), ops);
+        addMatrixEntry(matrix, branch, a, element.value, ops);
+        addMatrixEntry(matrix, branch, b, ops.neg(element.value), ops);
+        addMatrixEntry(matrix, branch, plus, ops.neg(ops.one), ops);
+        addMatrixEntry(matrix, branch, minus, ops.one, ops);
+        break;
+      }
+      case 'opamp-cm': {
+        // A fully differential opamp's common mode: its current enters both
+        // outputs alike, and holds V(a) + V(b) at AC ground.
+        const branch = branchColumn.get(element);
+        addMatrixEntry(matrix, a, branch, ops.one, ops);
+        addMatrixEntry(matrix, b, branch, ops.one, ops);
+        addMatrixEntry(matrix, branch, a, ops.one, ops);
+        addMatrixEntry(matrix, branch, b, ops.one, ops);
+        break;
+      }
       default:
         throw new TypeError(`unsupported MNA element kind "${element.kind}"`);
     }
@@ -4375,6 +4469,18 @@ function buildMNA(inputElements = [], options = {}) {
         rhs[row][column] = ops.add(rhs[row][column], explicitRhs[row][column]);
       }
     }
+  }
+  const opamps = elements.filter((element) => element.kind === 'opamp');
+  if (opamps.length) {
+    return reduceNullors({ ops, ground, nodes, branches, columnCount, unknowns, matrix, rhs }, opamps.map((element) => ({
+      out: indexOf(element.terminals.a),
+      ref: indexOf(element.terminals.b),
+      plus: indexOf(element.control.a),
+      minus: indexOf(element.control.b),
+      branch: branchColumn.get(element),
+      ideal: ops.isZero(element.value),
+      id: element.id,
+    })));
   }
   return {
     ok: true,
@@ -4392,6 +4498,104 @@ function buildMNA(inputElements = [], options = {}) {
     B: rhs,
     matrix,
     rhs,
+  };
+}
+
+/**
+ * Fold ideal opamps out of a built system: each is a nullor. Its inputs, a
+ * nullator, hold V(minus) = V(plus), so V(minus) stops being an unknown (its
+ * column joins plus's, or goes when plus is AC ground) while its KCL row
+ * stays; its output, a norator, carries whatever current it must, so the
+ * output's KCL row goes (added into its reference's row) while V(out) stays.
+ * With its branch row and current gone too, each opamp takes one row and one
+ * column away instead of adding them -- an opamp-RC filter's summing nodes
+ * become virtual grounds and its system shrinks to the opamp outputs. The
+ * rows no longer pair with the unknowns of the same index, so the result is
+ * flagged `nullorReduced` (structural solvers skip it); `aliases` maps each
+ * folded voltage to the one it equals (null: AC ground). A finite opamp's
+ * output current goes the same way, its own row (beta V_out = V_+ - V_-)
+ * staying as the equation in the output's KCL row's place.
+ */
+function reduceNullors(system, opamps) {
+  const { ops, matrix, rhs, unknowns, columnCount } = system;
+  const size = unknowns.length;
+  const rowInto = new Map(); // dropped row -> the row it was added into
+  const columnInto = new Map(); // dropped column -> the column it joined (null: ground)
+  const rowOf = (row) => { while (row !== undefined && rowInto.has(row)) row = rowInto.get(row); return row; };
+  const columnOf = (column) => {
+    while (column !== undefined && column !== null && columnInto.has(column)) column = columnInto.get(column);
+    return column;
+  };
+  const dropRow = (row, into) => {
+    if (into !== undefined) {
+      for (let c = 0; c < size; c++) if (!ops.isZero(matrix[row][c])) matrix[into][c] = ops.add(matrix[into][c], matrix[row][c]);
+      for (let c = 0; c < columnCount; c++) if (!ops.isZero(rhs[row][c])) rhs[into][c] = ops.add(rhs[into][c], rhs[row][c]);
+    }
+    rowInto.set(row, into);
+  };
+  const dropColumn = (column, into) => {
+    if (into !== null && into !== undefined) {
+      for (let r = 0; r < size; r++) if (!ops.isZero(matrix[r][column])) matrix[r][into] = ops.add(matrix[r][into], matrix[r][column]);
+    }
+    columnInto.set(column, into ?? null);
+  };
+  for (const opamp of opamps) {
+    // The norator: the output's KCL row goes, into its reference's.
+    const out = rowOf(opamp.out);
+    const ref = rowOf(opamp.ref);
+    if (out === undefined && ref === undefined) throw new RangeError(`${opamp.id} drives AC ground from AC ground`);
+    if (out !== undefined) dropRow(out, ref);
+    else dropRow(ref, undefined);
+    // A finite opamp keeps its row; only its current goes.
+    if (!opamp.ideal) {
+      columnInto.set(opamp.branch, null);
+      continue;
+    }
+    // The nullator: V(minus) = V(plus).
+    const plus = columnOf(opamp.plus);
+    const minus = columnOf(opamp.minus);
+    if ((plus === undefined || plus === null) && (minus === undefined || minus === null)) {
+      throw new RangeError(`${opamp.id} has both inputs on AC ground: its output is undetermined`);
+    }
+    if (plus === minus) throw new RangeError(`${opamp.id} has its inputs shorted together: its output is undetermined`);
+    if (minus !== undefined && minus !== null) dropColumn(minus, plus ?? null);
+    else dropColumn(plus, null);
+    // Its branch row and current.
+    rowInto.set(opamp.branch, undefined);
+    columnInto.set(opamp.branch, null);
+  }
+  const keptRows = [...Array(size).keys()].filter((row) => !rowInto.has(row));
+  const keptColumns = [...Array(size).keys()].filter((column) => !columnInto.has(column));
+  if (keptRows.length !== keptColumns.length) throw new RangeError('the ideal opamps leave the circuit over- or under-determined');
+  const A = keptRows.map((row) => keptColumns.map((column) => matrix[row][column]));
+  const B = keptRows.map((row) => rhs[row].slice());
+  const reducedUnknowns = keptColumns.map((column) => unknowns[column]);
+  const aliases = new Map();
+  for (const [column] of columnInto) {
+    if (!unknowns[column].startsWith('V(')) continue;
+    const target = columnOf(column);
+    aliases.set(unknowns[column], target === null || target === undefined ? null : unknowns[target]);
+  }
+  const nodes = system.nodes.filter((node) => reducedUnknowns.includes(`V(${node})`));
+  const branches = system.branches.filter((branch) => reducedUnknowns.includes(`I(${branch.name})`));
+  return {
+    ok: true,
+    ops,
+    ground: system.ground,
+    nodes,
+    branches,
+    rhsCount: columnCount,
+    unknowns: reducedUnknowns,
+    nodeVoltageUnknowns: nodes.map((node) => `V(${node})`),
+    branchCurrentUnknowns: branches.map((branch) => `I(${branch.name})`),
+    nodeIndex: new Map(nodes.map((node) => [node, reducedUnknowns.indexOf(`V(${node})`)])),
+    branchIndex: new Map(branches.map((branch) => [branch.name, reducedUnknowns.indexOf(`I(${branch.name})`)])),
+    A,
+    B,
+    matrix: A,
+    rhs: B,
+    nullorReduced: true,
+    aliases,
   };
 }
 
@@ -4426,7 +4630,7 @@ let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core
 const AC_GROUND_NODE = '@AC_GROUND';
 
 const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
-const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source']);
+const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source', 'opamp']);
 const MIN_PITCH = 240;
 const SLOT_PADDING = 240;
 const BUS_Y = 0;
@@ -4443,6 +4647,8 @@ const ELEMENT_TYPES = new Map([
   ['capacitor', 'capacitor'],
   ['inductor', 'inductor'],
   ['vccs', 'vccs'],
+  // An opamp: a VCVS from its output to its reference.
+  ['opamp', 'vcvs'],
   ['current-source', 'current_source'],
   ['voltage-source', 'voltage_source'],
 ]);
@@ -4455,6 +4661,8 @@ function isGround(node) {
  * or `terminals`, controlled sources carry `outPlus`/`outMinus`. */
 function normalize(primitive) {
   if (!primitive || typeof primitive !== 'object') return null;
+  // A differential opamp's common-mode constraint has no branch to draw.
+  if (String(primitive.kind || '').toLowerCase() === 'opamp-cm') return null;
   const a = primitive.a ?? primitive.terminals?.a ?? primitive.outPlus;
   const b = primitive.b ?? primitive.terminals?.b ?? primitive.outMinus;
   if (a === undefined && b === undefined) return null;
@@ -4530,6 +4738,15 @@ function perFrequency(value, options) {
 
 function elementLabel(element, symbol, options, nodeName) {
   if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
+  if (element.kind === 'opamp') {
+    // Its gain times its inputs' difference: infinite when ideal.
+    const parameter = textbookSymbol(element.metadata.opampParameter || '');
+    const model = element.metadata.opampModel;
+    const gain = model === 'finite-gain' ? parameter : model === 'gbw' ? `\\frac{${parameter}}{s}` : '\\infty';
+    const plus = nodeName(element.control?.a) || '0';
+    const minus = nodeName(element.control?.b) || '0';
+    return { text: `${gain}(${plus} - ${minus})` };
+  }
   if (element.parameter) return { text: textbookSymbol(element.parameter) };
   let rendered = '';
   try { rendered = renderExpression(element.value, options.renderOptions || {}); }
@@ -4899,6 +5116,8 @@ const KIND_ORDER = new Map([
   ['admittance', 65],
   ['triode-resistance', 70],
   ['vccs', 80],
+  ['opamp', 90],
+  ['opamp-cm', 95],
 ]);
 
 function lookup(map, key) {
@@ -4944,7 +5163,7 @@ function normalizePrimitive(primitive) {
     a: firstDefined(primitive.a, primitive.outPlus, nodes.a, nodes.positive, output.a, output.positive, primitive.positive),
     b: firstDefined(primitive.b, primitive.outMinus, nodes.b, nodes.negative, output.b, output.negative, primitive.negative),
   };
-  const controlTerminals = kind === 'vccs' ? {
+  const controlTerminals = kind === 'vccs' || kind === 'opamp' ? {
     a: firstDefined(primitive.controlPlus, control.a, control.plus, control.positive),
     b: firstDefined(primitive.controlMinus, control.b, control.minus, control.negative),
   } : null;
@@ -5116,6 +5335,19 @@ function describePrimitive(primitive, resolveNode, options = {}) {
       `* ${primitiveId(primitive)}: ${metadata.millerSide} shunt admittance from the Miller approximation`,
     ] : [];
     return { kind, id: primitiveId(primitive), line: `Y_${primitiveId(primitive)} ${a} ${b} ${format(primitive.value)}`, notes };
+  }
+  if (kind === 'opamp') {
+    // A VCVS: E out ref in+ in- gain (an ideal opamp's gain is infinite).
+    const plus = resolveNode(nodeOf(primitive, 'controlPlus'));
+    const minus = resolveNode(nodeOf(primitive, 'controlMinus'));
+    const model = primitive.metadata?.opampModel || 'ideal';
+    const parameter = primitive.metadata?.opampParameter;
+    const gain = model === 'finite-gain' ? textbookName(parameter) : model === 'gbw' ? `${textbookName(parameter)}/s` : '\\infty';
+    const describe = { ideal: 'ideal (inputs held equal)', 'finite-gain': 'finite gain', gbw: 'single pole, A = omega_t/s' }[model];
+    return { kind, id: primitiveId(primitive), line: `E_${name} ${a} ${b} ${plus} ${minus} ${gain}`, notes: [`* ${name}: opamp, ${describe}`] };
+  }
+  if (kind === 'opamp-cm') {
+    return { kind, id: primitiveId(primitive), line: `* ${name}: output common mode (${a}+${b})/2 held at AC ground`, notes: [] };
   }
   if (kind === 'vccs') {
     const data = vccsData(primitive, resolveNode);
@@ -5598,6 +5830,18 @@ function adaptPrimitiveDescriptor(primitive, options = {}) {
       value,
     };
   }
+  if (primitive.kind === 'opamp') {
+    return {
+      ...base,
+      kind: 'opamp',
+      outPlus: terminals.a,
+      outMinus: terminals.b,
+      controlPlus: terminals.controlPlus,
+      controlMinus: terminals.controlMinus,
+      gain: primitive.metadata?.opampModel === 'ideal' ? Infinity : value,
+      value,
+    };
+  }
   if (primitive.kind === 'voltage-source') {
     return {
       ...base,
@@ -5687,6 +5931,14 @@ function toMnaPrimitive(primitive, options, ops) {
       throw new TypeError(`${primitive.id} must have control.a and control.b`);
     }
     return { ...primitive, kind: 'vccs', id: primitive.id, terminals, value, control: primitive.control };
+  }
+  if (primitive.kind === 'opamp') {
+    // MNA stamps the inverse gain: 0 ideal, 1/A, or s/omega_t (one pole; ideal at DC).
+    const model = primitive.metadata?.opampModel;
+    const inverse = model === 'finite-gain' ? ops.div(ops.one, value)
+      : model === 'gbw' ? ops.div(s, value)
+      : ops.zero;
+    return { ...primitive, kind: 'opamp', id: primitive.id, terminals, value: inverse, control: primitive.control };
   }
   return { ...primitive, kind: primitive.kind, id: primitive.id, terminals, value };
 }
@@ -6079,8 +6331,9 @@ function buildExactAnalysisPipeline(circuit, options = {}) {
   const mnaBudget = budgetFailure(ops, 'MNA construction');
   if (mnaBudget) return failure('budget', mnaBudget.error, mnaBudget);
 
-  const solution = (options.topologicalSolve === false ? null : solveByTopology(system, excitations, context, ops, {
-    splitBranches: selectedMna.some((primitive) => primitive.kind === 'vccs'),
+  // A nullor-reduced system's rows do not pair with its unknowns: no structural solve.
+  const solution = (options.topologicalSolve === false || system.nullorReduced ? null : solveByTopology(system, excitations, context, ops, {
+    splitBranches: selectedMna.some((primitive) => ['vccs', 'opamp', 'opamp-cm'].includes(primitive.kind)),
   }))
     || solveMNA(system, { ops });
   if (solution.code === 'operation-budget' || solution.code === 'solver-work-limit' || solution.code === 'matrix-size-limit') {
@@ -9704,6 +9957,7 @@ __exports.denseCoefficients = denseCoefficients;
 __exports.responseCurve = responseCurve;
 __exports.plotAxis = plotAxis;
 __exports.bandEdges = bandEdges;
+__exports.bandSqnr = bandSqnr;
 __exports.responsePlot = responsePlot;
 __exports.resultSymbols = resultSymbols;
 __exports.diagramSymbols = diagramSymbols;
@@ -9714,7 +9968,7 @@ let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/co
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots; __bind(() => { ({ bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseGain, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
 let samplePath; __bind(() => { ({ samplePath } = __require("src/core/analysis/sampling.js")); });
 /**
@@ -10108,8 +10362,8 @@ function signalDomains({ circuit, signals }) {
   for (const signal of signals.values()) {
     if (!signal.driver || signal.driver.source) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
-    if (type === 'sampler' || type === 'tf_z') domain.set(signal.key, 'z');
-    else if (type === 'tf_s') domain.set(signal.key, 's');
+    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') domain.set(signal.key, 'z');
+    else if (TRANSFER_FUNCTION_TYPES[type] === 's') domain.set(signal.key, 's');
   }
   for (let changed = true; changed;) {
     changed = false;
@@ -10129,8 +10383,8 @@ function signalDomains({ circuit, signals }) {
     for (const signal of signals.values()) {
       if (domain.has(signal.key)) continue;
       for (const { component } of readersOf(signal)) {
-        if (component?.type === 'sampler' || component?.type === 'tf_s') set(signal, 's');
-        else if (component?.type === 'tf_z') set(signal, 'z');
+        if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's');
+        else if (isBlockIn(component, 'z')) set(signal, 'z');
       }
     }
   }
@@ -10141,7 +10395,7 @@ function signalDomains({ circuit, signals }) {
   }
   // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
   for (const component of circuit.components.values()) {
-    if (component.type === 'sampler' || component.type === 'tf_z') {
+    if (component.type === 'sampler' || isBlockIn(component, 'z')) {
       const input = [...signals.values()].find((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
       if (input && domain.get(input.key) !== (component.type === 'sampler' ? 's' : 'z')) {
         return failure('mixed-domains', component.type === 'sampler'
@@ -10266,7 +10520,7 @@ function analyzeSampled(context, output, inputs, initialValues) {
   const continuous = [...signals.values()].filter((signal) => domain.get(signal.key) === 's' && signal.driver && !signal.driver.source);
   const sInputs = inputs.filter((source) => domain.get(source.key) === 's');
   const dacInputs = [...signals.values()].filter((signal) => domain.get(signal.key) === 'z'
-    && signal.readers.some((reader) => circuit.components.get(reader.comp)?.type === 'tf_s'));
+    && signal.readers.some((reader) => isBlockIn(circuit.components.get(reader.comp), 's')));
   const sSystem = linearSystem(context, continuous, [...sInputs.map((s) => s.key), ...dacInputs.map((s) => s.key)], 's');
   if (!sSystem.ok) return sSystem;
   // Per sampler: its input's paths, [continuous sources..., DAC inputs...].
@@ -10383,7 +10637,7 @@ function sampledResult(spec) {
 /** A sampled result as an entry, its equation at these numbers. */
 function presentSampled(value, values, source, output) {
   const label = `\\frac{${texName(output.display)}}{${texName(source.name)}}`;
-  const entry = { input: source.id, inputName: source.name, value, label, sampled: true, continuous: value.continuous };
+  const entry = { input: source.id, inputName: source.name, value, label, sampled: true, continuous: value.continuous, ...(source.quantizer ? { quantizer: source.id } : {}) };
   Object.assign(entry, sampledEquation(entry, values));
   return entry;
 }
@@ -10660,6 +10914,7 @@ function present(value, variable, source, output) {
   const label = `\\frac{${texName(output.display)}}{${texName(source.name)}}`;
   return {
     input: source.id,
+    ...(source.quantizer ? { quantizer: source.id } : {}),
     inputName: source.name,
     value,
     tex,
@@ -10964,6 +11219,36 @@ function bandEdges(band) {
   return f0 > 0 ? [f0 - bw / 2, f0 + bw / 2].filter((f) => f > 0) : [bw];
 }
 
+/**
+ * The peak SQNR (dB) of a quantizer of `levels` levels whose error reaches
+ * the output through `ntf` (a number-valued rational in z), over the signal
+ * band: a full-scale sine (amplitude N - 1, Schreier's levels) against the
+ * error taken as white, of variance Delta^2/12 = 1/3 (levels 2 apart)
+ * spread over f/fs in (-1/2, 1/2), shaped by |NTF(e^{j 2 pi f})|^2 in band.
+ * Null without a band or a number-valued z result.
+ */
+function bandSqnr(ntf, levels, band) {
+  const edges = bandEdges(band);
+  if (!edges.length || !ntf || ntf.kind === 'mixed' || ntf.variable !== 'z') return null;
+  const [f1, f2] = edges.length === 2 ? edges : [0, edges[0]];
+  if (!(f2 > f1) || f2 > 0.5) return null;
+  // Simpson's rule over the band.
+  const steps = 4096;
+  const h = (f2 - f1) / steps;
+  let sum = 0;
+  for (let i = 0; i <= steps; i++) {
+    const theta = 2 * Math.PI * (f1 + i * h);
+    const v = rationalAt(ntf, [Math.cos(theta), Math.sin(theta)], 'z', 0);
+    if (!v) return null;
+    const power = v[0] ** 2 + v[1] ** 2;
+    sum += power * (i === 0 || i === steps ? 1 : i % 2 ? 4 : 2);
+  }
+  const inBand = (sum * h) / 3;
+  const noise = 2 * (1 / 3) * inBand;
+  const signal = (levels - 1) ** 2 / 2;
+  return noise > 0 ? 10 * Math.log10(signal / noise) : Infinity;
+}
+
 function responsePlot(traces, variable, { sAxis = 'omega', band = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
@@ -11072,7 +11357,7 @@ __exports.sweepAmplitudes = sweepAmplitudes;
 let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients; __bind(() => { ({ blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
 let evaluateExpression; __bind(() => { ({ evaluateExpression } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, parseGain, parseLevels; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseGain, parseLevels } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels } = __require("src/core/transfer-function.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
 /**
  * Time-domain simulation of a signal-flow diagram (the swing analysis): a
@@ -11186,7 +11471,7 @@ function prepareSimulation(circuit, options = {}) {
     if (!found.ok) return failure(found.code, found.error);
     domain = found.domain;
   } else {
-    if (parts.some((c) => c.type === 'tf_s')) return failure('no-clock', 'a continuous-time diagram needs a sampler to be simulated (it sets the clock)');
+    if (parts.some((c) => isBlockIn(c, 's'))) return failure('no-clock', 'a continuous-time diagram needs a sampler to be simulated (it sets the clock)');
     domain = new Map([...signals.keys()].map((key) => [key, 'z']));
   }
   const num = (expression) => evaluateExpression(coefficientValue(String(expression).replace(/\s/g, '')), values);
@@ -11253,7 +11538,7 @@ function prepareSimulation(circuit, options = {}) {
   try {
     for (const signal of cont) {
       const component = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
-      if (component?.type !== 'tf_s') continue;
+      if (!isBlockIn(component, 's')) continue;
       const input = signalAt(component, 'in');
       const value = numeric(component);
       if (input && domain.get(input.key) === 'z') {
@@ -11301,7 +11586,7 @@ function prepareSimulation(circuit, options = {}) {
       if (!signal.driver) continue;
       const component = circuit.components.get(signal.driver.comp);
       const feed = (gain, from) => { if (from && ci.has(from.key)) Gc[i][ci.get(from.key)] += gain; };
-      if (component.type === 'tf_s') {
+      if (isBlockIn(component, 's')) {
         const block = blocks.find((b) => b.out === signal.key);
         if (block) {
           block.model.C.forEach((c, j) => { Hc[i][block.offset + j] += c; });
@@ -11332,7 +11617,7 @@ function prepareSimulation(circuit, options = {}) {
   try {
     for (const signal of disc) {
       const component = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
-      if (component?.type !== 'tf_z') continue;
+      if (!isBlockIn(component, 'z')) continue;
       const value = numeric(component);
       const model = realize(denseCoefficients(value.numerator, 'z'), denseCoefficients(value.denominator, 'z'));
       zblocks.push({ component, out: signal.key, input: signalAt(component, 'in')?.key || null, model, offset: md });
@@ -11354,7 +11639,7 @@ function prepareSimulation(circuit, options = {}) {
       if (!signal.driver) continue;
       const component = circuit.components.get(signal.driver.comp);
       const feed = (gain, from) => { if (from && di.has(from.key)) Gd[i][di.get(from.key)] += gain; };
-      if (component.type === 'tf_z') {
+      if (isBlockIn(component, 'z')) {
         const block = zblocks.find((b) => b.out === signal.key);
         block.model.C.forEach((c, j) => { Hd[i][block.offset + j] += c; });
         if (block.input) feed(block.model.D, { key: block.input });
@@ -11442,10 +11727,26 @@ function prepareSimulation(circuit, options = {}) {
     const type = signal.driver ? circuit.components.get(signal.driver.comp)?.type : null;
     if (signal.key === options.output) return 'output';
     if (quantizers.some((q) => signalAt(q, 'in')?.key === signal.key)) return 'quantizer-input';
-    if (type === 'tf_z' || (type === 'tf_s' && blocks.some((b) => b.out === signal.key))) return 'state';
+    if (TRANSFER_FUNCTION_TYPES[type] === 'z' || (TRANSFER_FUNCTION_TYPES[type] === 's' && blocks.some((b) => b.out === signal.key))) return 'state';
     return 'other';
   };
-  const signalList = [...cont, ...disc].map((signal) => ({ key: signal.key, name: named(signal), domain: domain.get(signal.key), role: roleOf(signal) }));
+  // A quantizer's output steps between levels, its peak jumping by nature;
+  // so does anything only scaled or summed from such signals (c_1 v).
+  const steppedKeys = new Set();
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const signal of [...cont, ...disc]) {
+      if (steppedKeys.has(signal.key) || !signal.driver || signal.driver.source) continue;
+      const part = circuit.components.get(signal.driver.comp);
+      const inputs = (part.type === 'signal_sum' ? JUNCTION_INPUTS : part.type === 'gain' ? ['in'] : []).map((term) => signalAt(part, term)).filter(Boolean);
+      if (part.type === 'quantizer' || (inputs.length && inputs.every((input) => steppedKeys.has(input.key)))) {
+        steppedKeys.add(signal.key);
+        changed = true;
+      }
+    }
+  }
+  const quantized = (signal) => steppedKeys.has(signal.key);
+  const signalList = [...cont, ...disc].map((signal) => ({ key: signal.key, name: named(signal), domain: domain.get(signal.key), role: roleOf(signal), ...(quantized(signal) ? { quantized: true } : {}) }));
   const outputIndex = signalList.findIndex((s) => s.key === options.output);
 
   const samplerRows = samplers.map((c) => {
@@ -11831,11 +12132,36 @@ function solveMNA(system, options = {}) {
   if (!system || !Array.isArray(system.A) || !Array.isArray(system.B)) {
     throw new TypeError('solveMNA requires a system returned by buildMNA');
   }
-  return solveLinearSystem(system.A, system.B, {
+  const solved = solveLinearSystem(system.A, system.B, {
     ...options,
     ops: options.ops || system.ops,
     variables: options.variables || system.unknowns,
   });
+  return system.aliases?.size && solved.ok ? withAliases(solved, system) : solved;
+}
+
+/** A nullor-reduced system's folded voltages, back in its solution: each
+ *  equal to the voltage it was folded into, or zero (AC ground). */
+function withAliases(solved, system) {
+  const ops = system.ops;
+  const names = [...system.aliases.keys()];
+  const variables = [...solved.variables, ...names];
+  const columns = solved.columns.map((column) => [
+    ...column,
+    ...names.map((name) => {
+      const target = system.aliases.get(name);
+      return target === null ? ops.zero : column[solved.variables.indexOf(target)];
+    }),
+  ]);
+  const values = variables.map((_, index) => columns.map((column) => column[index]));
+  return {
+    ...solved,
+    variables,
+    columns,
+    values,
+    solution: values,
+    byVariable: columns.map((column) => new Map(variables.map((name, index) => [name, column[index]]))),
+  };
 }
 
 };
@@ -12184,6 +12510,7 @@ function approximateTopology(topology, queries, options) {
 function buildTopologyIdentities(pipeline, options = {}) {
   const empty = { identities: [], stages: [] };
   if (options.topologicalPresentation === false || pipeline.queries.transfer.value?.kind !== 'rational'
+      || pipeline.system?.nullorReduced
       || !pipeline.selectedMna.some((primitive) => primitive.kind === 'vccs')) return empty;
   const ops = createRationalOps({ variable: options.variable || 's', maxOperations: 12000 });
   try {
@@ -13249,7 +13576,10 @@ __exports.bodeFigure = bodeFigure;
 __exports.cornerNames = cornerNames;
 __exports.responseFigure = responseFigure;
 __exports.swingFigure = swingFigure;
-__exports.swingCrossing = swingCrossing;
+__exports.swingOverload = swingOverload;
+__exports.swingRunaway = swingRunaway;
+__exports.swingFullScale = swingFullScale;
+__exports.swingLimit = swingLimit;
 /**
  * The layout of a Bode sketch as plain drawing items in a box: lines, paths,
  * and short texts (with `_{}`/`^{}` markup). One layout, two renderers -- the
@@ -13536,13 +13866,17 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     items.push({ type: 'line', x1: pane.x, y1: y(db), x2: pane.x + pane.w, y2: y(db), role: 'grid' });
     items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
   }
-  // The first amplitude at which any net climbs through full scale.
-  const crossing = swingCrossing(plot.traces);
-  if (crossing !== null && crossing > low && crossing < high) {
-    items.push({ type: 'line', x1: x(crossing), y1: pane.y, x2: x(crossing), y2: pane.y + pane.h, role: 'marker' });
+  // The amplitude not to operate at: a net reaching full scale, or the
+  // swings running away, whichever comes first.
+  const limit = swingLimit(plot.traces);
+  if (limit && limit.a > low && limit.a < high) {
+    items.push({ type: 'line', x1: x(limit.a), y1: pane.y, x2: x(limit.a), y2: pane.y + pane.h, role: 'marker' });
     // At the top, clear of the axis titles: left of the line in the right half, else right of it.
-    const right = x(crossing) > pane.x + pane.w / 2;
-    items.push({ type: 'text', x: x(crossing) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text: `${Number(crossing.toFixed(1))} dBFS`, anchor: right ? 'end' : 'start', role: 'marker' });
+    const right = x(limit.a) > pane.x + pane.w / 2;
+    const text = limit.kind === 'full-scale'
+      ? `${limit.label ? `${limit.label} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
+      : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
+    items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
   }
   plot.traces.forEach((trace, index) => {
     const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
@@ -13554,26 +13888,79 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
 }
 
 /**
- * The lowest input amplitude (dBFS) at which a swing trace climbs through
- * 0 dBFS, from below (a net already at full scale, as a quantizer's output
- * is, never crosses); an overloaded run counts as above. Null when none does.
+ * The lowest input amplitude (dBFS) at which the simulated system overloaded
+ * -- its run ran away, so every trace has no value there (null, or not
+ * finite). Null when every run stayed bounded.
  */
-function swingCrossing(traces) {
+function swingOverload(traces) {
   let best = null;
   for (const trace of traces) {
-    const points = trace.points;
-    for (let i = 1; i < points.length; i++) {
-      const a = points[i - 1];
-      const b = points[i];
-      const before = Number.isFinite(a.db) ? a.db : Infinity;
-      const after = Number.isFinite(b.db) ? b.db : Infinity;
-      if (!(before < -0.05) || !(after >= 0)) continue;
-      const at = Number.isFinite(after) ? a.a + ((0 - before) / (after - before)) * (b.a - a.a) : b.a;
-      if (best === null || at < best) best = at;
+    for (const point of trace.points) {
+      if (Number.isFinite(point.db)) continue;
+      if (best === null || point.a < best) best = point.a;
       break;
     }
   }
   return best;
+}
+
+/**
+ * Where a system's swings run away, the amplitude not to operate at: the
+ * first (dBFS) at which a net's peak outgrows the input by more than
+ * `excess` dB over the preceding `window` dB of sweep -- above the best
+ * line of slope 1 (growing as the input does) through any earlier point
+ * in that window -- or at which the run overloads. A net that tracks the
+ * input never trips it, a noise-limited one only with a real jump; a
+ * quantized net (`stepped`, a quantizer's output moving between levels)
+ * is left out. Null when neither happens.
+ */
+function swingRunaway(traces, { excess = 3, window = 3 } = {}) {
+  let best = swingOverload(traces);
+  for (const trace of traces) {
+    if (trace.stepped) continue;
+    const points = trace.points.filter((p) => Number.isFinite(p.db)).sort((p, q) => p.a - q.a);
+    for (let i = 1; i < points.length; i++) {
+      const here = points[i];
+      if (best !== null && here.a >= best) break;
+      const earlier = points.slice(0, i).filter((p) => p.a >= here.a - window - 1e-9);
+      if (!earlier.length) continue;
+      const line = Math.max(...earlier.map((p) => p.db - p.a)) + here.a;
+      if (here.db - line > excess) { best = here.a; break; }
+    }
+  }
+  return best;
+}
+
+/**
+ * The first amplitude (dBFS) at which a net's peak climbs through full
+ * scale, 0 dBFS, from below -- interpolated between sweep points -- as
+ * `{ a, label }`. A net already at full scale never crosses, and a quantized
+ * one (`stepped`) is left out. Null when none does.
+ */
+function swingFullScale(traces) {
+  let best = null;
+  for (const trace of traces) {
+    if (trace.stepped) continue;
+    const points = trace.points.filter((p) => Number.isFinite(p.db)).sort((p, q) => p.a - q.a);
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (!(a.db < -0.05) || !(b.db >= 0)) continue;
+      const at = a.a + ((0 - a.db) / (b.db - a.db)) * (b.a - a.a);
+      if (!best || at < best.a) best = { a: at, label: trace.label || '' };
+      break;
+    }
+  }
+  return best;
+}
+
+/** Where to stop: the earlier of a net reaching full scale and the swings
+ *  running away, as `{ a, kind: 'full-scale' | 'runaway', label }`. */
+function swingLimit(traces) {
+  const full = swingFullScale(traces);
+  const runaway = swingRunaway(traces);
+  if (full && (runaway === null || full.a <= runaway)) return { a: full.a, kind: 'full-scale', label: full.label };
+  return runaway === null ? null : { a: runaway, kind: 'runaway', label: '' };
 }
 
 };
@@ -15347,7 +15734,7 @@ const SYMBOL_CATEGORY_RULES = [
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
   ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch))$/],
-  ['Signal flow', /^(signal_(sum|multiply)|tf_[sz]|gain|sampler|quantizer)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|delay|zdelay)|gain|sampler|quantizer)$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each
@@ -15816,7 +16203,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain, sampler, quantizer; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain, sampler, quantizer } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_delay, tf_zdelay, gain, sampler, quantizer; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_delay, tf_zdelay, gain, sampler, quantizer } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -15933,6 +16320,9 @@ const symbolTypes = {
   filter_notch,
   tf_s,
   tf_z,
+  tf_dac,
+  tf_delay,
+  tf_zdelay,
   gain,
   sampler,
   quantizer,
@@ -16716,11 +17106,11 @@ const filter_notch = filterBlock('notch');
  * (transfer-function.js); each instance sizes its box to the equation
  * (ComponentInstance#bodySize), so this footprint is only the smallest one.
  */
-function transferFunctionBlock(type, variable) {
+function transferFunctionBlock(type, variable, description = `Transfer function H(${variable})`, refPrefix = 'H') {
   return defineSymbol({
     type,
-    description: `Transfer function H(${variable})`,
-    refPrefix: 'H',
+    description,
+    refPrefix,
     terminals: [
       { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
       { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
@@ -16740,6 +17130,10 @@ function transferFunctionBlock(type, variable) {
 
 const tf_s = transferFunctionBlock('tf_s', 's');
 const tf_z = transferFunctionBlock('tf_z', 'z');
+// Presets: a DAC (its NRZ pulse, the way back from z to s), and delays.
+const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC pulse (1 - e^{-sT})/s', 'DAC');
+const tf_delay = transferFunctionBlock('tf_delay', 's', 'Delay e^{-sT_d}', 'DL');
+const tf_zdelay = transferFunctionBlock('tf_zdelay', 'z', 'Delay z^{-1}', 'DL');
 
 /**
  * A gain: the block-diagram triangle, pointing the way the signal goes, its
@@ -16836,6 +17230,9 @@ __exports.filter_bpf = filter_bpf;
 __exports.filter_notch = filter_notch;
 __exports.tf_s = tf_s;
 __exports.tf_z = tf_z;
+__exports.tf_dac = tf_dac;
+__exports.tf_delay = tf_delay;
+__exports.tf_zdelay = tf_zdelay;
 __exports.gain = gain;
 __exports.sampler = sampler;
 __exports.quantizer = quantizer;
@@ -19510,7 +19907,16 @@ function normalizeAnalysisValues(value) {
   // The signal band on the response graph: f0 and bw in f/fs.
   const rawBand = value?.band;
   const band = rawBand && Number(rawBand.bw) > 0 ? { f0: Math.max(0, Number(rawBand.f0) || 0), bw: Number(rawBand.bw) } : null;
-  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}) };
+  // The signal-flow mode's settings: output, sources' modes, the swing's source and frequency.
+  const rawFlow = value?.flow;
+  const text = (v) => (typeof v === 'string' ? v.slice(0, 200) : '');
+  const flow = rawFlow && typeof rawFlow === 'object' ? {
+    output: text(rawFlow.output),
+    sources: Object.fromEntries(Object.entries(rawFlow.sources || {}).filter(([k, v]) => k.length <= 200 && (['input', 'zero'].includes(v) || (v && typeof v === 'object' && typeof v.constant === 'string'))).map(([k, v]) => [k, typeof v === 'object' ? { constant: v.constant.slice(0, 100) } : v])),
+    swingInput: text(rawFlow.swingInput),
+    swingFrequency: text(rawFlow.swingFrequency),
+  } : null;
+  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -19520,11 +19926,13 @@ function analysisValuesJSON(values) {
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
   const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band) return {};
+  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency) ? values.flow : null;
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
     ...(Object.keys(links).length ? { links: { ...links } } : {}),
     ...(band ? { band } : {}),
+    ...(flow ? { flow: { ...flow, sources: { ...flow.sources } } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
   } };
@@ -19560,6 +19968,7 @@ function normalizeSwingPlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : [])
       .filter((p) => finite(p?.a) && (p.db === null || finite(p.db)))
       .map((p) => ({ a: round(p.a), db: p.db === null ? null : round(p.db) })),
+    ...(trace?.stepped ? { stepped: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   return { kind: 'swing', range: { low, high }, traces };
@@ -20200,7 +20609,8 @@ class LabelInstance {
   }
 }
 
-const SMALL_SIGNAL_DEVICE_MODELS = new Set(['triode', 'ro']);
+// A MOS device's model ('triode', 'ro'), or an opamp's: 'ideal' (the default), 'finite-gain' A, 'gbw' omega_t / s.
+const SMALL_SIGNAL_DEVICE_MODELS = new Set(['triode', 'ro', 'ideal', 'finite-gain', 'gbw']);
 
 function normalizeSmallSignalDeviceModel(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -21691,6 +22101,10 @@ class Circuit {
       throw new Error(`parasitics overrides apply only to MOS components, not ${component.type}`);
     }
     const normalizedModel = model === undefined ? undefined : normalizeSmallSignalDeviceModel(model);
+    const opampModel = ['ideal', 'finite-gain', 'gbw'].includes(normalizedModel);
+    if (normalizedModel && opampModel !== ['opamp', 'opamp_diff'].includes(component.type)) {
+      throw new Error(opampModel ? `opamp models apply only to opamps, not ${component.type}` : `the ${normalizedModel} model does not apply to an opamp`);
+    }
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {
       throw new Error(`unknown small-signal device role "${role}"`);
     }
@@ -26508,8 +26922,10 @@ let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, 
 let sizeReplacedNameLabels; __bind(() => { ({ sizeReplacedNameLabels } = __require("src/core/mos-size.js")); });
 let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
 let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind(() => { ({ BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } = __require("src/core/bus.js")); });
+let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure, responseFigure, swingFigure; __bind(() => { ({ bodeFigure, responseFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+
 
 
 
@@ -26580,12 +26996,12 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 /** Signal-flow inputs whose wires carry an arrowhead into them without
  *  being asked: a sum's or multiplier's inputs and a transfer function's
  *  input (a gain's triangle already points the way). By pin ("x,y"). */
-const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 function signalInputPins(circuit) {
   const pins = new Set();
@@ -30406,7 +30822,7 @@ const PARTNERS = new Map([
   ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
-  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
+  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['tf_delay', 'tf_zdelay'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
   ...['and', 'or', 'xor'].flatMap((gate) => [2, 3].map((n) => [`${gate}${n}_gate`, `n${gate}${n}_gate`])),
 ].flatMap(([a, b]) => [[a, b], [b, a]]));
 
@@ -30451,8 +30867,11 @@ function swapCandidates(type) {
     const sameCategory = categoryOf(candidate) === category;
     const complete = map.size === fromDef.terminals.length && map.size === toDef.terminals.length;
     // Across categories only a whole multi-pin footprint carries over: a
-    // resistor can become a switch, but a port never becomes a rail.
+    // resistor can become a switch, but a port never becomes a rail. Signal-
+    // flow parts are analysed as blocks, not drawn: they swap only among
+    // themselves (a transfer function never becomes a drawn filter).
     if (!sameCategory && !(complete && map.size > 1)) continue;
+    if (!sameCategory && (category === 'Signal flow' || categoryOf(candidate) === 'Signal flow')) continue;
     let staying = 0;
     for (const [oldName, newName] of map) {
       const a = fromDef.terminals.find((t) => t.name === oldName);
@@ -31453,7 +31872,20 @@ __exports.defaultTransferFunction = defaultTransferFunction;
  * the definition; it imports nothing, so the model can size the box from it.
  */
 
-const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z' });
+// Every transfer-function block and its variable: the general H(s) and H(z)
+// blocks, and presets of them -- a DAC's NRZ pulse, a delay in s, a delay
+// in z -- whose definitions are as editable as any block's.
+const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z', tf_dac: 's', tf_delay: 's', tf_zdelay: 'z' });
+const PRESETS = Object.freeze({
+  tf_z: 'tf([1], [1 -1])', // an accumulator: 1 / (1 - z^-1)
+  tf_s: 'tf([1], [1 1])',
+  tf_dac: '(1 - exp(-s*T))/s', // a sample held for a period (NRZ)
+  tf_delay: 'exp(-s*T_d)',
+  tf_zdelay: 'tf([0 1], [1])', // z^-1
+});
+
+/** Whether a part is a transfer-function block in `variable` ('s' or 'z'). */
+const isBlockIn = (component, variable) => TRANSFER_FUNCTION_TYPES[component?.type] === variable;
 const TRANSFER_FUNCTION_ROLE = 'transfer-function';
 
 function isTransferFunction(component) {
@@ -31819,11 +32251,11 @@ function transferFunctionDisplay(text, variable) {
 
 /** The default definition a new block starts with. */
 function defaultTransferFunction(type) {
-  // An accumulator in z: 1 / (1 - z^-1).
-  return type === 'tf_z' ? 'tf([1], [1 -1])' : 'tf([1], [1 1])';
+  return PRESETS[type] || PRESETS.tf_s;
 }
 
 __exports.TRANSFER_FUNCTION_TYPES = TRANSFER_FUNCTION_TYPES;
+__exports.isBlockIn = isBlockIn;
 __exports.TRANSFER_FUNCTION_ROLE = TRANSFER_FUNCTION_ROLE;
 };
 
@@ -34508,6 +34940,7 @@ function suggestedAnalysisTarget() {
 const SMALL_SIGNAL_TRANSISTOR_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 
 const SMALL_SIGNAL_RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
+const SMALL_SIGNAL_OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
 
 const SMALL_SIGNAL_PORT_TYPES = INTERFACE_PIN_TYPES;
 
@@ -34691,6 +35124,7 @@ function installAnalysisUi() {
 
 __exports.SMALL_SIGNAL_TRANSISTOR_TYPES = SMALL_SIGNAL_TRANSISTOR_TYPES;
 __exports.SMALL_SIGNAL_RESISTOR_TYPES = SMALL_SIGNAL_RESISTOR_TYPES;
+__exports.SMALL_SIGNAL_OPAMP_TYPES = SMALL_SIGNAL_OPAMP_TYPES;
 __exports.SMALL_SIGNAL_PORT_TYPES = SMALL_SIGNAL_PORT_TYPES;
 };
 
@@ -40715,7 +41149,7 @@ let switchGroupKey, switchPhase, switchPhases, switchState, switchesOf; __bind((
 let canvasEl, componentContextMenuEl, componentsListEl, netsListEl, panelFilterEl; __bind(() => { ({ canvasEl, componentContextMenuEl, componentsListEl, netsListEl, panelFilterEl } = __require("src/web/elements.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let clientToWorld; __bind(() => { ({ clientToWorld } = __require("src/web/canvas-view.js")); });
-let SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis; __bind(() => { ({ SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } = __require("src/web/analysis-ui.js")); });
+let SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_OPAMP_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis; __bind(() => { ({ SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_OPAMP_TYPES, SMALL_SIGNAL_PORT_TYPES, analysisComponentTargets, analysisNetTargets, applyComponentAnalysis, applyNetAnalysis } = __require("src/web/analysis-ui.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let editComponentSize, inlineEditLabel; __bind(() => { ({ editComponentSize, inlineEditLabel } = __require("src/web/label-editor.js")); });
 let MOS_SIZE_ROLE, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_ROLE, MOS_SIZE_TYPES } = __require("src/core/mos-size.js")); });
@@ -41107,7 +41541,8 @@ function appendContextSmallSignalMenu(menu, target) {
   const transistor = SMALL_SIGNAL_TRANSISTOR_TYPES.has(component.type);
   const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
   const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
-  if (!transistor && !resistor && !port) return;
+  const opamp = SMALL_SIGNAL_OPAMP_TYPES.has(component.type);
+  if (!transistor && !resistor && !port && !opamp) return;
   appendContextSubmenu(menu, 'Small-signal attributes', (submenu) => {
     if (transistor) {
       const transistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type));
@@ -41156,6 +41591,17 @@ function appendContextSmallSignalMenu(menu, target) {
         appendContextItem(resistanceMenu, 'Clear resistance override', () => applyComponentAnalysis(component, { resistance: null }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), {
           disabled: !resistorTargets.some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
         });
+      });
+    }
+    if (opamp) {
+      // Ideal (inputs held equal) unless a finite gain A or one pole, A = omega_t / s.
+      const isOpamp = (candidate) => SMALL_SIGNAL_OPAMP_TYPES.has(candidate.type);
+      const opampTargets = analysisComponentTargets(component, isOpamp);
+      const modelOf = (candidate) => candidate.analysis?.model || 'ideal';
+      appendContextSubmenu(submenu, 'Opamp model', (opampMenu) => {
+        appendContextItem(opampMenu, 'Ideal (infinite gain)', () => applyComponentAnalysis(component, { model: null }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'ideal'));
+        appendContextItem(opampMenu, 'Finite gain A', () => applyComponentAnalysis(component, { model: 'finite-gain' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'finite-gain'));
+        appendContextItem(opampMenu, 'Single pole (A = ω_t / s)', () => applyComponentAnalysis(component, { model: 'gbw' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'gbw'));
       });
     }
     if (port) {
@@ -48424,7 +48870,7 @@ function inlineEditSchematicBlock(component) {
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
     ? 'One coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m). Enter applies, Esc cancels.'
-    : component.type === 'tf_z'
+    : TRANSFER_FUNCTION_TYPES[component.type] === 'z'
     ? "tf([num], [den]) or a gain, in ascending powers of z^-1 ('Variable', 'z' for descending powers of z). Enter applies, Esc cancels."
     : 'tf([num], [den]) or a gain, coefficients highest power of s first. Enter applies, Esc cancels.';
   input.style.position = 'fixed';
@@ -56856,7 +57302,8 @@ function runLine(line) {
   let output = result ? result.text : '';
   if (result && result.json !== undefined && result.json !== null) {
     output += output ? '\n' : '';
-    output += JSON.stringify(result.json);
+    // Exact analysis results carry BigInt numerators: write them as digits.
+    output += JSON.stringify(result.json, (key, value) => (typeof value === 'bigint' ? String(value) : value));
   }
 
   if (output) logLine(output);
@@ -61266,19 +61713,19 @@ __exports.collapsedPanels = collapsedPanels;
 
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.installSignalFlowUi = installSignalFlowUi;
-let TRACE_COLORS, analyzeSignalFlow, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let expressionTex; __bind(() => { ({ expressionTex } = __require("src/core/transfer-function.js")); });
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let responseFigure, swingFigure; __bind(() => { ({ responseFigure, swingFigure } = __require("src/core/bode-figure.js")); });
 let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
-let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let analysisDialog; __bind(() => { ({ analysisDialog } = __require("src/web/elements.js")); });
-let alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 /**
@@ -61317,7 +61764,10 @@ const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|induct
 
 let mode = null; // 'circuit' | 'signal-flow'; chosen per opening unless switched
 let chosenThisSession = false;
-const settings = { output: '', sources: {} }; // source id -> 'input' | 'zero' | { constant }
+// The mode's settings, kept in the document so it reopens as it was left:
+// the output, each source's mode (source id -> 'input' | 'zero' |
+// { constant }), and the swing's source and frequency.
+const flow = () => (editor.circuit.analysisValues.flow ||= { output: '', sources: {}, swingInput: '', swingFrequency: '' });
 let latest = null;
 // The graph's traces, kept across derives: { id, label (TeX), color, value, variable, on }.
 let traces = [];
@@ -61386,8 +61836,13 @@ function fillForm() {
     .flatMap((port) => [...signals.values()].filter((signal) => signal.netIds.some((id) => editor.circuit.nets.get(id)?.terminals.some((t) => t.comp === port.refdes)))).map((signal) => signal.key));
   names.sort((a, b) => outputPorts.has(b.key) - outputPorts.has(a.key));
   output.replaceChildren(...names.map(({ key, name }) => el('option', { value: key, text: name })));
-  if (names.some(({ key }) => key === settings.output)) output.value = settings.output;
-  settings.output = output.value;
+  if (names.some(({ key }) => key === flow().output)) output.value = flow().output;
+  // A first default is no edit; replacing a saved output (its signal gone) is.
+  if (flow().output !== output.value) {
+    const had = flow().output;
+    flow().output = output.value;
+    if (had) markSettingsChanged();
+  }
 
   const table = section.querySelector('.signal-flow-sources');
   table.replaceChildren();
@@ -61395,8 +61850,8 @@ function fillForm() {
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
-    const value = settings.sources[source.id] ?? 'input';
-    settings.sources[source.id] = value;
+    const value = flow().sources[source.id] ?? 'input';
+    flow().sources[source.id] = value;
     const kind = typeof value === 'object' ? 'constant' : value;
     const select = el('select', { 'aria-label': `${source.name}: input, zero, or constant` }, [
       el('option', { value: 'input', text: 'Input' }), el('option', { value: 'zero', text: 'Zero' }), el('option', { value: 'constant', text: 'Constant' }),
@@ -61406,7 +61861,8 @@ function fillForm() {
     constant.hidden = kind !== 'constant';
     const save = () => {
       constant.hidden = select.value !== 'constant';
-      settings.sources[source.id] = select.value === 'constant' ? { constant: constant.value.trim() || '1' } : select.value;
+      flow().sources[source.id] = select.value === 'constant' ? { constant: constant.value.trim() || '1' } : select.value;
+      markSettingsChanged();
     };
     select.addEventListener('change', save);
     constant.addEventListener('input', save);
@@ -61420,6 +61876,13 @@ function fillForm() {
   problems.hidden = !issues.length;
   section.querySelector('.signal-flow-stale').hidden = !latest || revisionCurrent(derivedRevision);
   fillSwingSources(sources);
+  // Another document: its own swing, not the last one's.
+  if (swingCircuit !== editor.circuit) {
+    swingCircuit = editor.circuit;
+    swing = null;
+    swingShown = null;
+    renderSwing();
+  }
 }
 
 // ----- swing: each net's peak against the input amplitude ------------------------------
@@ -61429,12 +61892,13 @@ let swing = null;
 let swingRun = 0; // a sweep in progress stops when a newer one starts
 let swingShown = null; // keys of the nets on the plot
 let swingTimer = 0;
+let swingCircuit = null;
 const swingColors = new Map();
 const SWING_TONE = '\u0000tone';
 
 function swingSection() {
-  const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives' });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window' });
+  const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
   return el('fieldset', { class: 'analysis-approximations signal-flow-swing' }, [
     el('legend', { text: 'Swing' }),
     el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
@@ -61452,9 +61916,10 @@ function fillSwingSources(sources) {
   const select = section.querySelector('.signal-flow-swing-source');
   if (!select) return;
   const real = sources.filter((s) => !s.quantizer);
-  const previous = select.value;
   select.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
-  if (real.some((s) => s.id === previous)) select.value = previous;
+  if (real.some((s) => s.id === flow().swingInput)) select.value = flow().swingInput;
+  // The document's frequency, or the default.
+  section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '1/256';
 }
 
 function swingFrequency() {
@@ -61471,9 +61936,9 @@ function runSwing() {
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const sim = prepareSimulation(editor.circuit, {
     values,
-    sources: settings.sources,
+    sources: flow().sources,
     input: section.querySelector('.signal-flow-swing-source').value,
-    output: settings.output,
+    output: flow().output,
     frequency: swingFrequency(),
   });
   const run = ++swingRun;
@@ -61526,15 +61991,16 @@ function swingCoefficientsChanged() {
 function swingTraces() {
   if (!swing) return [];
   const db = (peak) => (peak > 0 ? 20 * Math.log10(peak / swing.fullScale) : -300);
-  const entries = swing.signals.filter((s) => s.role !== 'source').map((s, i) => ({ key: s.key, label: s.name, index: swing.signals.indexOf(s), order: i }));
+  const entries = swing.signals.filter((s) => s.role !== 'source').map((s, i) => ({ key: s.key, label: s.name, index: swing.signals.indexOf(s), order: i, stepped: !!s.quantized }));
   const traces = entries.map((entry, i) => ({
     key: entry.key,
     label: entry.label,
+    ...(entry.stepped ? { stepped: true } : {}),
     color: TRACE_COLORS[i % TRACE_COLORS.length],
     points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.peaks[entry.index]) })),
   }));
   if (swing.points.some((p) => p.tone !== null && p.tone !== undefined)) {
-    const output = swing.signals.find((s) => s.key === settings.output);
+    const output = swing.signals.find((s) => s.key === flow().output);
     traces.push({ key: SWING_TONE, label: `\\text{tone at } ${output?.name || 'out'}`, color: TRACE_COLORS[traces.length % TRACE_COLORS.length], points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.tone) })) });
   }
   return traces;
@@ -61814,6 +62280,7 @@ function bandControls() {
       editor.circuit.analysisValues.band = bwText ? { f0: f0 || 0, bw } : undefined;
       markSettingsChanged();
       redrawGraphPlot();
+      renderResults();
     });
     // Enter applies the field, not a derive.
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
@@ -61896,51 +62363,76 @@ function annotateGraph() {
   placePlot(plot, shown, used);
 }
 
-/** A plot on the drawing, under it at its left edge: its traces named
- *  beside it in their colours, the coefficients' numbers under them. */
+const PLOT_LEGEND_ROLE = 'plot-legend';
+
+/**
+ * A plot on the drawing. Annotating again replaces the data of the plot of
+ * that kind already there -- the selected one (or the one whose legend is
+ * selected), else the only one -- keeping its place, size, and style: its
+ * plot and its legend (the traces named in their colours, the coefficients'
+ * numbers under them) are swapped, the legend staying where it was. With
+ * none to update, a new plot goes under the drawing at its left edge.
+ */
 function placePlot(plot, shown, used) {
-  // One coefficient a line, left-aligned under the trace names.
+  const circuit = editor.circuit;
   const numbers = resolved();
   const linkTex = (name) => {
     try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
   };
-  let values = used.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
+  // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
+  const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
+  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind);
+  const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
+  const target = chosen || (plots.length === 1 ? plots[0] : null);
   // The same numbers beside another plot already: not twice.
-  const circuit = editor.circuit;
-  if ([...circuit.labels.values()].some((label) => label.parent && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
-  // Under the drawing, at its left edge.
-  const bounds = editor.circuit.bounds();
-  const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
-  const x = empty ? 0 : snap(bounds.x);
-  const y = empty ? 0 : snap(bounds.y + bounds.h + 2 * GRID);
-  const w = 18 * GRID;
-  const h = 11 * GRID;
-  let box = null;
+  if ([...circuit.labels.values()].some((label) => label.parent && label.parent !== target?.id && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
+  // A legend label: ours by role (older plots' math children too).
+  const legendOf = (box) => [...circuit.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+  let box = target;
+  let left;
+  let top;
+  if (target) {
+    const old = legendOf(target).map((label) => label.bbox());
+    const frame = target.bbox();
+    left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w + GRID;
+    top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
+  } else {
+    // Under the drawing, at its left edge.
+    const bounds = circuit.bounds();
+    const empty = !circuit.components.size && !circuit.labels.size;
+    const x = empty ? 0 : snap(bounds.x);
+    const y = empty ? 0 : snap(bounds.y + bounds.h + 2 * GRID);
+    left = x + 18 * GRID + GRID;
+    top = y;
+  }
   const ids = [];
   commit(() => {
-    box = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' } });
-    let top = y;
-    for (const trace of shown) {
-      const label = editor.circuit.addLabel({ text: `$${trace.label}$`, math: true, parent: box.id, align: 'left', x: 0, y: 0, style: { color: trace.color } });
-      const size = label.bbox();
-      label.moveTo(snap(x + w + GRID + size.w / 2), snap(top + size.h / 2));
-      top = label.bbox().y + label.bbox().h;
-      ids.push(label.id);
+    if (target) {
+      target.plot = normalizePlot(plot);
+      for (const label of legendOf(target)) circuit.removeLabel(label.id);
+    } else {
+      const x = left - 19 * GRID;
+      box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' } });
     }
-    if (values) {
-      const label = editor.circuit.addLabel({ text: values, math: true, parent: box.id, align: 'left', x: 0, y: 0 });
+    let y = top;
+    const add = (text, style) => {
+      const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
       const size = label.bbox();
-      label.moveTo(snap(x + w + GRID + size.w / 2), snap(top + size.h / 2));
+      label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
+      y = label.bbox().y + label.bbox().h;
       ids.push(label.id);
-    }
+    };
+    for (const trace of shown) add(`$${trace.label}$`, { color: trace.color });
+    if (values) add(values);
   });
   if (!box) return;
-  // Their sizes are estimates until the browser measures them: line their
-  // left edges up then.
-  alignLabelColumn(ids, { left: x + w + GRID, top: y, gap: 0 });
+  // Their sizes are estimates until the browser measures them: stack them
+  // then, edge to edge (each box is rounded to the grid already).
+  alignLabelColumn(ids, { left, top, gap: 0 });
   setSelection([]);
   setLabelSelection([box.id]);
-  logLine('placed the graph on the drawing; drag to move it, its corners to resize');
+  logLine(target ? 'updated the plot on the drawing in place' : 'placed the graph on the drawing; drag to move it, its corners to resize');
   render();
 }
 
@@ -61966,6 +62458,7 @@ function renderResults() {
       if (shown.zeros?.length) block.append(rootRow('Zeros', shown.zeros, 'z'));
       if (shown.poles?.length) block.append(rootRow(shown.mixed ? 'Poles of the sampled loop' : 'Poles', shown.poles, 'z'));
       if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole lies outside the unit circle: the sampled loop is unstable at these numbers, whatever the magnitude plot shows.' }));
+      appendSqnr(block, entry, entry.value.at(valuesFor(entry.value, latest.variable)));
       appendTraceButton(block, entry);
       host.append(block);
       continue;
@@ -61983,9 +62476,29 @@ function renderResults() {
     const at = symbolic ? ' at the coefficients below' : '';
     if (roots.zeros?.length) block.append(rootRow('Zeros', roots.zeros, latest.variable, at));
     if (roots.poles?.length) block.append(rootRow('Poles', roots.poles, latest.variable, at));
+    if (latest.variable === 'z') appendSqnr(block, entry, numeric(entry.value, latest.variable));
     appendTraceButton(block, entry);
     host.append(block);
   }
+}
+
+/** A quantizer's NTF, with a band set: the peak SQNR it predicts. */
+function appendSqnr(block, entry, ntf) {
+  if (!entry.quantizer) return;
+  const band = editor.circuit.analysisValues.band;
+  const component = editor.circuit.components.get(entry.quantizer);
+  const levels = Number(component?.value) || 2;
+  if (!bandEdges(band).length) {
+    block.append(el('p', { class: 'field-hint', text: 'Set a band on the graph (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
+    return;
+  }
+  const sqnr = bandSqnr(ntf, levels, band);
+  if (sqnr === null) return;
+  const edges = bandEdges(band).map((f) => Number(f.toPrecision(3)));
+  block.append(el('div', { class: 'analysis-equation-row' }, [
+    el('div', { class: 'analysis-equation-label', text: 'Peak SQNR in band' }),
+    el('div', { class: 'signal-flow-roots', text: `${Number.isFinite(sqnr) ? sqnr.toFixed(1) : '∞'} dB`, title: `A full-scale sine (amplitude ${levels - 1}, ${levels} levels) against white quantization noise (variance 1/3, levels 2 apart) through this NTF, in f/fs ${edges.length === 2 ? `${edges[0]} to ${edges[1]}` : `0 to ${edges[0]}`}; a linear-model prediction` }),
+  ]));
 }
 
 function appendTraceButton(block, entry) {
@@ -62005,7 +62518,7 @@ function rootRow(label, roots, variable, at = '') {
 }
 
 function derive() {
-  latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources, values: resolved() });
+  latest = analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
   // Each new response joins the graph, beside those already there.
@@ -62048,7 +62561,7 @@ function installSignalFlowUi() {
     el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis of a transistor circuit', onclick: () => setMode('circuit', { user: true }) }),
     el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Transfer functions of a block diagram: H(s)/H(z) blocks, sums, and multipliers', onclick: () => setMode('signal-flow', { user: true }) }),
   ]);
-  const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { settings.output = ev.target.value; } });
+  const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
     el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
     el('div', { class: 'analysis-grid' }, [
@@ -63981,7 +64494,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', gain: 'Gain', sampler: 'Sampler (s to z)', quantizer: 'Quantizer (N levels)',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC pulse (NRZ)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler (s to z)', quantizer: 'Quantizer (N levels)',
 };
 
 const PLACEMENT_ALIASES = {
@@ -64050,6 +64563,9 @@ const PLACEMENT_ALIASES = {
   sampler: ['sampler', 'sample', 'switch', 'quantizer', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
+  tf_dac: ['dac', 'nrz', 'zero-order hold', 'zoh', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
+  tf_delay: ['delay', 'excess loop delay', 'eld', 'exp', 'signal flow'],
+  tf_zdelay: ['delay', 'z^-1', 'unit delay', 'register', 'signal flow'],
 };
 
 /** Rank a name against a query: prefix beats substring beats subsequence, and

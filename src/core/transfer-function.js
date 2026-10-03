@@ -19,7 +19,20 @@
  * the definition; it imports nothing, so the model can size the box from it.
  */
 
-export const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z' });
+// Every transfer-function block and its variable: the general H(s) and H(z)
+// blocks, and presets of them -- a DAC's NRZ pulse, a delay in s, a delay
+// in z -- whose definitions are as editable as any block's.
+export const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z', tf_dac: 's', tf_delay: 's', tf_zdelay: 'z' });
+const PRESETS = Object.freeze({
+  tf_z: 'tf([1], [1 -1])', // an accumulator: 1 / (1 - z^-1)
+  tf_s: 'tf([1], [1 1])',
+  tf_dac: '(1 - exp(-s*T))/s', // a sample held for a period (NRZ)
+  tf_delay: 'exp(-s*T_d)',
+  tf_zdelay: 'tf([0 1], [1])', // z^-1
+});
+
+/** Whether a part is a transfer-function block in `variable` ('s' or 'z'). */
+export const isBlockIn = (component, variable) => TRANSFER_FUNCTION_TYPES[component?.type] === variable;
 export const TRANSFER_FUNCTION_ROLE = 'transfer-function';
 
 export function isTransferFunction(component) {
@@ -385,6 +398,5 @@ export function transferFunctionDisplay(text, variable) {
 
 /** The default definition a new block starts with. */
 export function defaultTransferFunction(type) {
-  // An accumulator in z: 1 / (1 - z^-1).
-  return type === 'tf_z' ? 'tf([1], [1 -1])' : 'tf([1], [1 1])';
+  return PRESETS[type] || PRESETS.tf_s;
 }
