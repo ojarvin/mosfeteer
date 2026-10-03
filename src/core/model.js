@@ -1504,7 +1504,9 @@ export class LabelInstance {
    * keep their place relative to the box: on each axis a point stays at its
    * distance from whichever of the near edge, center, or far edge it was
    * closest to, so a title above the box, a caption in a corner, and centered
-   * text all read the same after the resize. */
+   * text all read the same after the resize. Labels outside the box on one
+   * side (a graph's legend) move together, one shift for the group, so they
+   * keep their spacing instead of each following its own reference. */
   resizeBox(rect) {
     if (this.kind !== 'box') return false;
     const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
@@ -1533,8 +1535,27 @@ export class LabelInstance {
     };
     const place = (p) => ({ x: follow(p.x, prev.x0, prev.x1, next.x0, next.x1), y: follow(p.y, prev.y0, prev.y1, next.y0, next.y1) });
     this.textAnchor = place(this.textAnchor);
-    for (const label of this.circuit.labels.values()) {
-      if (label.parent === this.id) label.anchor = place(label.anchor);
+    const children = [...this.circuit.labels.values()].filter((label) => label.parent === this.id);
+    const sideOf = (p) => (p.x > prev.x1 ? 'right' : p.x < prev.x0 ? 'left' : p.y < prev.y0 ? 'above' : p.y > prev.y1 ? 'below' : null);
+    const groups = new Map();
+    for (const label of children) {
+      const side = sideOf(label.anchor);
+      if (!side) {
+        label.anchor = place(label.anchor);
+        continue;
+      }
+      if (!groups.has(side)) groups.set(side, []);
+      groups.get(side).push(label);
+    }
+    // A group beside the box follows that side's edge across, and along the
+    // edge one reference chosen by the group's first member (its top or left).
+    for (const [side, labels] of groups) {
+      const vertical = side === 'left' || side === 'right';
+      const lead = labels.reduce((first, label) => ((vertical ? label.anchor.y < first.anchor.y : label.anchor.x < first.anchor.x) ? label : first));
+      const moved = place(lead.anchor);
+      const dx = side === 'right' ? next.x1 - prev.x1 : side === 'left' ? next.x0 - prev.x0 : moved.x - lead.anchor.x;
+      const dy = side === 'below' ? next.y1 - prev.y1 : side === 'above' ? next.y0 - prev.y0 : moved.y - lead.anchor.y;
+      for (const label of labels) label.anchor = { x: label.anchor.x + dx, y: label.anchor.y + dy };
     }
     this.anchor = { x: next.x0, y: next.y0 };
     this.end = { x: next.x1, y: next.y1 };

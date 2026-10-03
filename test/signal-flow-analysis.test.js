@@ -260,3 +260,15 @@ test('a short gain coefficient sits in its triangle; a longer one beside it, by 
   circuit.setTransform(gain.refdes, { rotation: 0 });
   assert.deepEqual([...circuit.labels.values()].find((label) => label.owner === gain.refdes).anchorWorld(), { x: 0, y: -120 });
 });
+
+test('resizing a graph keeps its legend together beside it', () => {
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 } });
+  const legend = [40, 160, 280, 400, 520].map((y) => circuit.addLabel({ text: `L${y}`, parent: box.id, x: 880, y }));
+  const caption = circuit.addLabel({ text: 'caption', parent: box.id, x: 360, y: -40 });
+  box.resizeBox({ x: 0, y: 0, w: 1000, h: 800 });
+  // One shift for the whole legend: it follows the right edge, its spacing kept.
+  assert.deepEqual(legend.map((label) => label.anchor), [40, 160, 280, 400, 520].map((y) => ({ x: 1160, y })));
+  // A caption above the box still follows its centre.
+  assert.deepEqual(caption.anchor, { x: 520, y: -40 });
+});
