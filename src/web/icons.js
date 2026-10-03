@@ -63,6 +63,7 @@ export const ICON_PATHS = {
   move: '<path d="M12 5v14M5 12h14"/><path d="m12 2 3.2 3.8H8.8zM12 22l-3.2-3.8h6.4zM2 12l3.8-3.2v6.4zM22 12l-3.8 3.2V8.8z" fill="currentColor" stroke="none"/>',
   detach: '<rect x="8" y="6.5" width="8" height="11" rx="1.8" fill="currentColor" fill-opacity=".16"/><path d="M2.5 12H5M19 12h2.5"/><path d="m5.5 9-1 6M19.5 9l-1 6"/>',
   copy: '<rect x="3.5" y="3.5" width="11" height="11" rx="2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".16"/>',
+  hierarchy: '<rect x="9" y="3.5" width="6" height="5" rx="1"/><rect x="3.5" y="15.5" width="6" height="5" rx="1"/><rect x="14.5" y="15.5" width="6" height="5" rx="1"/><path d="M12 8.5V12M6.5 15.5V12h11v3.5"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
   highlight: '<path d="M14.5 4.5l5 5-8 8H6.5v-5z" fill="currentColor" fill-opacity=".16"/><path d="M12 7l5 5"/><path d="M3.5 20.5h8"/>',
   text: '<path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"/>',

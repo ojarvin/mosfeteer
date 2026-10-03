@@ -79,7 +79,7 @@ export const EDITOR_COMMANDS = [
   { name: 'link-bubble', aliases: ['peek', 'show-link'], canvas: true, help: 'show or hide the selected part\'s linked design beside the drawing (o)' },
   { name: 'link-bubbles-all', aliases: ['peek-all', 'show-all-links'], canvas: true, help: 'show or hide every linked part\'s design beside the drawing (Shift+O)' },
   { name: 'enter-link', aliases: ['dive', 'descend', 'open-link'], canvas: true, help: 'open the selected part\'s linked design, with a way back up (Alt+↓)' },
-  { name: 'leave-link', aliases: ['up', 'ascend', 'parent'], canvas: true, help: 'back up to the design this one was opened from (Alt+↑)' },
+  { name: 'leave-link', aliases: ['up', 'ascend', 'parent', 'used-in', 'where-used'], canvas: true, help: 'back up to the design this one was opened from, else to a design it is used in (Alt+↑)' },
   { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (Shift+J)' },
   { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
   { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },

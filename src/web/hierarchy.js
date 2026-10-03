@@ -20,7 +20,8 @@ import { loadDocument } from '../core/document.js';
 import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
-import { searchKey } from '../core/design-index.js';
+import { designIndex, searchKey } from '../core/design-index.js';
+import { cacheGet, cachePut, renderingKey } from './atlas-cache.js';
 import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
@@ -509,7 +510,87 @@ export function syncLinkBubbles() {
 function checkTrail() {
   if (navigating) return;
   if (trail.length && trail.at(-1).childPath !== editor.currentDocumentPath) trail = [];
+  followUsedIn();
   renderTrail();
+}
+
+// ----- where a design is used ----------------------------------------------------
+
+// The designs whose parts link to the open one, for the way up when it was
+// not entered from one: { key, workspace, parents: [doc] }.
+let usedIn = { key: null, workspace: null, parents: [] };
+const linkLists = new Map(); // path -> { revision, links }
+
+/** The designs a document's parts link to, through the Atlas's cache of its
+ *  index when that revision was seen before. */
+async function linksOfDocument(doc) {
+  const known = linkLists.get(doc.path);
+  if (known && doc.revision && known.revision === doc.revision) return known.links;
+  const key = doc.revision && renderingKey(doc.path, doc.revision, 'index-v2');
+  let index = key ? await cacheGet(key) : null;
+  if (!index) {
+    index = designIndex(loadDocument((await persistence.load(doc.path)).state));
+    if (key) await cachePut(key, index);
+  }
+  const links = index.links || [];
+  if (doc.revision) linkLists.set(doc.path, { revision: doc.revision, links });
+  return links;
+}
+
+/** Look again for where the open design is used when it, its name, or the
+ *  workspace's documents change. */
+function followUsedIn() {
+  const path = editor.currentDocumentPath;
+  const name = editor.currentCircuitName;
+  const key = path && name ? `${path}\n${name}` : null;
+  if (usedIn.key === key && usedIn.workspace === editor.workspaceState) return;
+  usedIn = { key, workspace: editor.workspaceState, parents: usedIn.key === key ? usedIn.parents : [] };
+  if (!key) return;
+  const seen = new Set([path]);
+  const docs = knownDesigns().filter((doc) => !doc.missing && !seen.has(doc.path) && seen.add(doc.path));
+  void Promise.all(docs.map(async (doc) => {
+    try { return (await linksOfDocument(doc)).includes(name) ? doc : null; } catch { return null; }
+  })).then((found) => {
+    if (usedIn.key !== key) return;
+    usedIn.parents = found.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    renderTrail();
+  });
+}
+
+/** The designs the open one is used in (their parts link to it). */
+export function usedInDesigns() {
+  return usedIn.parents;
+}
+
+/** Open a design the open one is used in, its linking parts selected. */
+async function openParentDesign(doc) {
+  const child = editor.currentCircuitName;
+  if (!await openDocumentPath(doc.path)) return false;
+  const linking = [...editor.circuit.components.values()].filter((component) => component.link === child).map((component) => component.refdes);
+  if (linking.length) setSelection(linking);
+  logLine(`${doc.name} uses ${child}${linking.length ? ` in ${linking.join(', ')}` : ''}.`);
+  render();
+  return true;
+}
+
+/** Up without a trail: the one design this one is used in, or a choice of
+ *  them by the toolbar's Used in. */
+function goUpToParent() {
+  const parents = usedIn.parents;
+  if (parents.length === 1) return openParentDesign(parents[0]);
+  if (!parents.length) {
+    hintLine('LINK: no design links to this one; Alt+↓ on a linked part opens its design');
+    return false;
+  }
+  const chip = document.querySelector('#hierarchy-trail .hierarchy-used-in')?.getBoundingClientRect();
+  const menu = openMenuAt(chip ? chip.left : window.innerWidth / 2, chip ? chip.bottom + 4 : 80, `${editor.currentCircuitName} is used in`);
+  if (!menu) return false;
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  for (const doc of parents) appendContextItem(group, doc.name, () => void openParentDesign(doc));
+  menu.appendChild(group);
+  menu.querySelector('button:not(:disabled)')?.focus();
+  return false;
 }
 
 const paneRect = () => document.querySelector('.canvas-pane')?.getBoundingClientRect();
@@ -559,10 +640,7 @@ export async function enterLinkedDesign(component = linkTargets()[0]) {
  *  where the parent was left, its linked part selected. */
 export async function leaveLinkedDesign(levels = 1) {
   checkTrail();
-  if (!trail.length) {
-    hintLine('LINK: not inside a linked design; Alt+↓ on a linked part opens it');
-    return false;
-  }
+  if (!trail.length) return goUpToParent();
   const index = Math.max(0, trail.length - levels);
   const target = trail[index];
   // The child as saved, drawn now, so its bubble is ready the moment the
@@ -613,12 +691,34 @@ export async function leaveLinkedDesign(levels = 1) {
 function renderTrail() {
   const nav = document.getElementById('hierarchy-trail');
   const pane = document.querySelector('.canvas-pane');
-  const key = trail.map((entry) => `${entry.path}\n${entry.name}`).join('\n\n');
+  // Not entered from another design, it says where it is used instead.
+  const parents = trail.length ? [] : usedIn.parents;
+  const key = trail.length
+    ? trail.map((entry) => `${entry.path}\n${entry.name}`).join('\n\n')
+    : `used in\n${parents.map((doc) => doc.path).join('\n')}`;
   pane?.classList.toggle('inside-link', trail.length > 0);
   if (!nav || nav.dataset.key === key) return;
   nav.dataset.key = key;
-  nav.hidden = !trail.length;
+  nav.hidden = !trail.length && !parents.length;
   nav.replaceChildren();
+  if (parents.length) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'hierarchy-step hierarchy-used-in';
+    button.textContent = parents.length === 1 ? `Used in ${parents[0].name}` : `Used in ${parents.length}`;
+    button.title = parents.length === 1
+      ? `${parents[0].name} links to this design: open it, its linking parts picked (Alt+↑)`
+      : `Designs that link to this one: ${parents.map((doc) => doc.name).join(', ')} — pick one to open (Alt+↑)`;
+    button.addEventListener('click', () => void goUpToParent());
+    const separator = document.createElement('span');
+    separator.className = 'hierarchy-separator';
+    separator.textContent = '›';
+    separator.setAttribute('aria-hidden', 'true');
+    nav.setAttribute('aria-label', 'Designs that link to this one');
+    nav.append(button, separator);
+    return;
+  }
+  nav.setAttribute('aria-label', 'Designs this one was opened from');
   trail.forEach((entry, index) => {
     const button = document.createElement('button');
     button.type = 'button';

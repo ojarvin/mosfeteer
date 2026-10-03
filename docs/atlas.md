@@ -29,6 +29,12 @@ centre, else moves to the nearest free spot), and a new design is placed near
 its kin. `Shift+T` forgets the places and packs the desk afresh in
 neighbourhoods of related designs.
 
+A picked design shows its links (`src/core/design-links.js`): accent arrows
+from it to the designs its parts link to, and to it from the designs that
+use it. With nothing picked, and while the desk is in a transition, no
+arrows show. **Links** in the top bar, or `L`, turns them off or on; the
+choice is kept in this browser.
+
 Kinship (`src/core/design-related.js`) adds up weak hints: a shared tag or a
 hierarchy link says so outright; shared words in the names (`ota-folded`,
 `ota_5t`) or a shared stem count strongly; the same subfolder, a similar mix

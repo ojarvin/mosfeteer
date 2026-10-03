@@ -693,6 +693,23 @@ function closeStrayContextSubmenus(button) {
   }
 }
 
+/** Up and down step through the menu's items (those of the open submenu
+ *  while focus is in it), wrapping; Home and End jump to either end. */
+function moveMenuFocus(key) {
+  const menu = componentContextMenuEl;
+  const active = menu.contains(document.activeElement) ? document.activeElement : null;
+  const scope = active?.closest('.context-submenu') || menu;
+  const items = [...scope.querySelectorAll('button')].filter((button) => !button.disabled
+    && (button.closest('.context-submenu') || menu) === scope && button.getClientRects().length);
+  if (!items.length) return;
+  const index = items.indexOf(active);
+  const next = key === 'Home' ? 0
+    : key === 'End' ? items.length - 1
+      : index < 0 ? (key === 'ArrowDown' ? 0 : items.length - 1)
+        : (index + (key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+  items[next].focus({ preventScroll: true });
+}
+
 export function installContextMenu() {
   canvasEl.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
@@ -728,6 +745,11 @@ export function installContextMenu() {
       ev.preventDefault();
       componentContextSubmenu.classList.remove('open');
       componentContextSubmenu.previousElementSibling?.focus();
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(ev.key)) {
+      ev.preventDefault();
+      moveMenuFocus(ev.key);
     }
   });
 }

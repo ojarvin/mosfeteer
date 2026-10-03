@@ -19,6 +19,7 @@ import { symbolSheet } from '../core/symbol-sheet.js';
 import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
+import { linkArrow, linkGraph } from '../core/design-links.js';
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeInOutCubic, wheelIntent, lerpView, zoomView } from './gestures.js';
@@ -51,13 +52,15 @@ const newCircuitEl = document.getElementById('atlas-new-circuit');
 const openFolderEl = document.getElementById('atlas-open-folder');
 const openFilesEl = document.getElementById('atlas-open-files');
 const exportEl = document.getElementById('atlas-export');
+const linksEl = document.getElementById('atlas-links');
+const LINKS_KEY = 'mosfeteer.atlas.links';
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks by kinship · Esc clears the search, then returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -529,12 +532,83 @@ function draw() {
     drawCaption(ctx, tile, entry, rect, palette);
   }
   ctx.globalAlpha = 1;
+  drawLinks(ctx, palette, shown);
   drawZoomBox(ctx, palette);
   // Every small image first (the whole desk becomes recognizable), then large.
   wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
   state.wanted = wanted;
   void pump();
   syncVectorOverlays(vector, moving);
+}
+
+// ----- links -------------------------------------------------------------------
+
+/** Whether the desk draws its links, a viewer's choice kept in this browser. */
+function linksShown() {
+  try { return localStorage.getItem(LINKS_KEY) !== 'off'; } catch { return true; }
+}
+
+function toggleLinks() {
+  const show = !linksShown();
+  try { localStorage.setItem(LINKS_KEY, show ? 'on' : 'off'); } catch { /* shown for this visit only */ }
+  syncLinksButton();
+  requestDraw();
+}
+
+function syncLinksButton() {
+  linksEl?.setAttribute('aria-pressed', String(linksShown()));
+}
+
+/** The desk's link graph, built again only when a design's links change
+ *  (the open design's index is refreshed in place). */
+function deskLinks() {
+  const designs = [...state.entries.values()].map((entry) => ({ id: entry.id, name: entry.name, links: entry.index?.links || [] }));
+  const key = JSON.stringify(designs);
+  if (state.links?.key !== key) state.links = { key, graph: linkGraph(designs) };
+  return state.links.graph;
+}
+
+/** The picked designs' links: an arrow from a design to each design its
+ *  parts link to, and to it from each design using it. Nothing is drawn
+ *  with no design picked, nor while the desk is in a transition (its
+ *  names and picks are gone then too). */
+function drawLinks(ctx, palette, shown) {
+  if (state.source !== 'workspace' || state.quiet || !linksShown()) return;
+  const focus = new Set([state.selected, ...(state.picked || [])].filter(Boolean));
+  if (!focus.size) return;
+  const edges = deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to));
+  if (!edges.length) return;
+  const tiles = new Map(shown.map(({ tile, alpha }) => [tile.id, { tile, alpha }]));
+  const head = 9;
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const { from, to } of edges) {
+    const a = tiles.get(from);
+    const b = tiles.get(to);
+    if (!a || !b) continue;
+    // A tile and its caption, so an arrow never runs through a name.
+    const box = (tile) => worldToScreen({ ...tile, h: tile.h + ATLAS_CAPTION });
+    const arrow = linkArrow(box(a.tile), box(b.tile), 10);
+    if (!arrow) continue;
+    const faded = state.matches && !(state.matches.has(from) && state.matches.has(to));
+    ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (faded ? 0.3 : 0.9);
+    ctx.strokeStyle = ctx.fillStyle = palette.accent;
+    ctx.lineWidth = 2;
+    const angle = Math.atan2(arrow.y2 - arrow.y1, arrow.x2 - arrow.x1);
+    const tip = { x: arrow.x2, y: arrow.y2 };
+    const base = { x: tip.x - Math.cos(angle) * head, y: tip.y - Math.sin(angle) * head };
+    ctx.beginPath();
+    ctx.moveTo(arrow.x1, arrow.y1);
+    ctx.lineTo(base.x, base.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(base.x + Math.sin(angle) * head * 0.45, base.y - Math.cos(angle) * head * 0.45);
+    ctx.lineTo(base.x - Math.sin(angle) * head * 0.45, base.y + Math.cos(angle) * head * 0.45);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 /** A search's hits in one design: a translucent mark under each. */
@@ -1261,6 +1335,7 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   // Node mode opens single files in the editor; browser-only mode can add
   // files from anywhere to the desk.
   if (openFilesEl) openFilesEl.hidden = source !== 'workspace' || !persistence.browserOnly;
+  if (linksEl) linksEl.hidden = source !== 'workspace';
   if (searchEl) {
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
@@ -1626,6 +1701,7 @@ export function onAtlasKey(ev) {
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
   else if (key === 'T' && state.source === 'workspace') repackDesk();
+  else if ((key === 'l' || key === 'L') && state.source === 'workspace') toggleLinks();
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centreOf().x, centreOf().y);
   else if (key === '-' || key === '_') zoomAbout(1.5, centreOf().x, centreOf().y);
   else if (key === 'D' || (key === 'd' && ev.shiftKey)) toggleTheme();
@@ -1803,6 +1879,8 @@ export function installAtlas() {
   document.getElementById('app-mark')?.addEventListener('click', () => void openAtlas());
   document.getElementById('btn-atlas')?.addEventListener('click', () => void openAtlas());
   exportEl?.addEventListener('click', exportDesk);
+  linksEl?.addEventListener('click', toggleLinks);
+  syncLinksButton();
   // A click on a header button leaves the keys with the desk (and a dialog
   // it opens hands them back there); Tab still reaches the buttons.
   rootEl.querySelector('.atlas-head')?.addEventListener('mousedown', (ev) => {

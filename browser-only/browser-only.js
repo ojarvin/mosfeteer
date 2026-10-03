@@ -14704,6 +14704,72 @@ function searchDesign(index, name, query) {
 __exports.normalizeTags = normalizeTags;
 };
 
+__modules["src/core/design-links.js"] = function (__require, __exports) {
+__exports.linkGraph = linkGraph;
+__exports.linkArrow = linkArrow;
+/**
+ * The workspace's links as a graph: which designs a design's parts link to
+ * (its children) and which designs link to it (where it is used). A link
+ * names a design (ComponentInstance#link); a name no design has is a broken
+ * link and joins nothing.
+ */
+
+/**
+ * `designs`: [{ id, name, links: [name] }]. Returns `{ edges, children,
+ * parents }`: edges `{ from, to }` by id, parent to child, each pair once;
+ * children and parents map an id to the ids on the other end. A name shared
+ * by several designs resolves to the first, as a link does.
+ */
+function linkGraph(designs) {
+  const byName = new Map();
+  for (const design of designs) if (!byName.has(design.name)) byName.set(design.name, design.id);
+  const edges = [];
+  const children = new Map(designs.map((design) => [design.id, []]));
+  const parents = new Map(designs.map((design) => [design.id, []]));
+  for (const design of designs) {
+    for (const name of new Set(design.links || [])) {
+      const to = byName.get(name);
+      if (to === undefined || to === design.id || children.get(design.id).includes(to)) continue;
+      edges.push({ from: design.id, to });
+      children.get(design.id).push(to);
+      parents.get(to).push(design.id);
+    }
+  }
+  return { edges, children, parents };
+}
+
+/** Where the line from `r`'s centre toward `toward` leaves the rectangle. */
+function exitPoint(r, toward) {
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const dx = toward.x - cx;
+  const dy = toward.y - cy;
+  if (!dx && !dy) return { x: cx, y: cy };
+  const t = Math.min(dx ? (r.w / 2) / Math.abs(dx) : Infinity, dy ? (r.h / 2) / Math.abs(dy) : Infinity);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+/**
+ * An arrow from one tile to another along the line joining their centres,
+ * starting and ending `gap` outside their edges. Null when the tiles
+ * overlap or sit too close for an arrow to show.
+ */
+function linkArrow(from, to, gap = 0) {
+  const fromCentre = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
+  const toCentre = { x: to.x + to.w / 2, y: to.y + to.h / 2 };
+  const a = exitPoint(from, toCentre);
+  const b = exitPoint(to, fromCentre);
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  // The tiles overlap when the exits cross over.
+  const along = (b.x - a.x) * (toCentre.x - fromCentre.x) + (b.y - a.y) * (toCentre.y - fromCentre.y);
+  if (along <= 0 || length <= 2 * gap) return null;
+  const ux = (b.x - a.x) / length;
+  const uy = (b.y - a.y) / length;
+  return { x1: a.x + ux * gap, y1: a.y + uy * gap, x2: b.x - ux * gap, y2: b.y - uy * gap };
+}
+
+};
+
 __modules["src/core/design-related.js"] = function (__require, __exports) {
 __exports.nameWords = nameWords;
 __exports.relatednessProfile = relatednessProfile;
@@ -32512,6 +32578,7 @@ let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sh
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
+let linkArrow, linkGraph; __bind(() => { ({ linkArrow, linkGraph } = __require("src/core/design-links.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
@@ -32568,6 +32635,7 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
 
 
 
+
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
 const overlayEl = document.getElementById('atlas-overlays');
@@ -32580,13 +32648,15 @@ const newCircuitEl = document.getElementById('atlas-new-circuit');
 const openFolderEl = document.getElementById('atlas-open-folder');
 const openFilesEl = document.getElementById('atlas-open-files');
 const exportEl = document.getElementById('atlas-export');
+const linksEl = document.getElementById('atlas-links');
+const LINKS_KEY = 'mosfeteer.atlas.links';
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · Shift+T repacks by kinship · Esc clears the search, then returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then returns',
   symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
@@ -33058,12 +33128,83 @@ function draw() {
     drawCaption(ctx, tile, entry, rect, palette);
   }
   ctx.globalAlpha = 1;
+  drawLinks(ctx, palette, shown);
   drawZoomBox(ctx, palette);
   // Every small image first (the whole desk becomes recognizable), then large.
   wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
   state.wanted = wanted;
   void pump();
   syncVectorOverlays(vector, moving);
+}
+
+// ----- links -------------------------------------------------------------------
+
+/** Whether the desk draws its links, a viewer's choice kept in this browser. */
+function linksShown() {
+  try { return localStorage.getItem(LINKS_KEY) !== 'off'; } catch { return true; }
+}
+
+function toggleLinks() {
+  const show = !linksShown();
+  try { localStorage.setItem(LINKS_KEY, show ? 'on' : 'off'); } catch { /* shown for this visit only */ }
+  syncLinksButton();
+  requestDraw();
+}
+
+function syncLinksButton() {
+  linksEl?.setAttribute('aria-pressed', String(linksShown()));
+}
+
+/** The desk's link graph, built again only when a design's links change
+ *  (the open design's index is refreshed in place). */
+function deskLinks() {
+  const designs = [...state.entries.values()].map((entry) => ({ id: entry.id, name: entry.name, links: entry.index?.links || [] }));
+  const key = JSON.stringify(designs);
+  if (state.links?.key !== key) state.links = { key, graph: linkGraph(designs) };
+  return state.links.graph;
+}
+
+/** The picked designs' links: an arrow from a design to each design its
+ *  parts link to, and to it from each design using it. Nothing is drawn
+ *  with no design picked, nor while the desk is in a transition (its
+ *  names and picks are gone then too). */
+function drawLinks(ctx, palette, shown) {
+  if (state.source !== 'workspace' || state.quiet || !linksShown()) return;
+  const focus = new Set([state.selected, ...(state.picked || [])].filter(Boolean));
+  if (!focus.size) return;
+  const edges = deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to));
+  if (!edges.length) return;
+  const tiles = new Map(shown.map(({ tile, alpha }) => [tile.id, { tile, alpha }]));
+  const head = 9;
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const { from, to } of edges) {
+    const a = tiles.get(from);
+    const b = tiles.get(to);
+    if (!a || !b) continue;
+    // A tile and its caption, so an arrow never runs through a name.
+    const box = (tile) => worldToScreen({ ...tile, h: tile.h + ATLAS_CAPTION });
+    const arrow = linkArrow(box(a.tile), box(b.tile), 10);
+    if (!arrow) continue;
+    const faded = state.matches && !(state.matches.has(from) && state.matches.has(to));
+    ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (faded ? 0.3 : 0.9);
+    ctx.strokeStyle = ctx.fillStyle = palette.accent;
+    ctx.lineWidth = 2;
+    const angle = Math.atan2(arrow.y2 - arrow.y1, arrow.x2 - arrow.x1);
+    const tip = { x: arrow.x2, y: arrow.y2 };
+    const base = { x: tip.x - Math.cos(angle) * head, y: tip.y - Math.sin(angle) * head };
+    ctx.beginPath();
+    ctx.moveTo(arrow.x1, arrow.y1);
+    ctx.lineTo(base.x, base.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(base.x + Math.sin(angle) * head * 0.45, base.y - Math.cos(angle) * head * 0.45);
+    ctx.lineTo(base.x - Math.sin(angle) * head * 0.45, base.y + Math.cos(angle) * head * 0.45);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 /** A search's hits in one design: a translucent mark under each. */
@@ -33790,6 +33931,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   // Node mode opens single files in the editor; browser-only mode can add
   // files from anywhere to the desk.
   if (openFilesEl) openFilesEl.hidden = source !== 'workspace' || !persistence.browserOnly;
+  if (linksEl) linksEl.hidden = source !== 'workspace';
   if (searchEl) {
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
@@ -34155,6 +34297,7 @@ function onAtlasKey(ev) {
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
   else if (key === 'T' && state.source === 'workspace') repackDesk();
+  else if ((key === 'l' || key === 'L') && state.source === 'workspace') toggleLinks();
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centreOf().x, centreOf().y);
   else if (key === '-' || key === '_') zoomAbout(1.5, centreOf().x, centreOf().y);
   else if (key === 'D' || (key === 'd' && ev.shiftKey)) toggleTheme();
@@ -34332,6 +34475,8 @@ function installAtlas() {
   document.getElementById('app-mark')?.addEventListener('click', () => void openAtlas());
   document.getElementById('btn-atlas')?.addEventListener('click', () => void openAtlas());
   exportEl?.addEventListener('click', exportDesk);
+  linksEl?.addEventListener('click', toggleLinks);
+  syncLinksButton();
   // A click on a header button leaves the keys with the desk (and a dialog
   // it opens hands them back there); Tab still reaches the buttons.
   rootEl.querySelector('.atlas-head')?.addEventListener('mousedown', (ev) => {
@@ -36747,7 +36892,7 @@ const EDITOR_COMMANDS = [
   { name: 'link-bubble', aliases: ['peek', 'show-link'], canvas: true, help: 'show or hide the selected part\'s linked design beside the drawing (o)' },
   { name: 'link-bubbles-all', aliases: ['peek-all', 'show-all-links'], canvas: true, help: 'show or hide every linked part\'s design beside the drawing (Shift+O)' },
   { name: 'enter-link', aliases: ['dive', 'descend', 'open-link'], canvas: true, help: 'open the selected part\'s linked design, with a way back up (Alt+↓)' },
-  { name: 'leave-link', aliases: ['up', 'ascend', 'parent'], canvas: true, help: 'back up to the design this one was opened from (Alt+↑)' },
+  { name: 'leave-link', aliases: ['up', 'ascend', 'parent', 'used-in', 'where-used'], canvas: true, help: 'back up to the design this one was opened from, else to a design it is used in (Alt+↑)' },
   { name: 'join-lines', aliases: ['join', 'merge-lines'], canvas: true, help: 'join the selected line annotations into one continuous line (Shift+J)' },
   { name: 'align-to', aliases: ['snap-to'], canvas: true, help: 'align the selection to another object\'s edge or point (Shift+A)' },
   { name: 'align', needsArg: true, choices: ['left', 'right', 'top', 'bottom', 'center-x', 'center-y'], canvas: true, help: 'align the selection: left, right, top, bottom, center-x, or center-y (Ctrl/Cmd+Shift+arrows)' },
@@ -38036,10 +38181,27 @@ function closeStrayContextSubmenus(button) {
   }
 }
 
+/** Up and down step through the menu's items (those of the open submenu
+ *  while focus is in it), wrapping; Home and End jump to either end. */
+function moveMenuFocus(key) {
+  const menu = componentContextMenuEl;
+  const active = menu.contains(document.activeElement) ? document.activeElement : null;
+  const scope = active?.closest('.context-submenu') || menu;
+  const items = [...scope.querySelectorAll('button')].filter((button) => !button.disabled
+    && (button.closest('.context-submenu') || menu) === scope && button.getClientRects().length);
+  if (!items.length) return;
+  const index = items.indexOf(active);
+  const next = key === 'Home' ? 0
+    : key === 'End' ? items.length - 1
+      : index < 0 ? (key === 'ArrowDown' ? 0 : items.length - 1)
+        : (index + (key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+  items[next].focus({ preventScroll: true });
+}
+
 function installContextMenu() {
   canvasEl.addEventListener('contextmenu', (ev) => {
     ev.preventDefault();
-    if (editor.drag?.mode === 'radialpending' || editor.drag?.mode === 'radial') return;
+    if (editor.drag?.mode === 'radialpending' || editor.drag?.mode === 'radial' || editor.drag?.contextOnRelease) return;
     if (Date.now() < editor.suppressContextMenuUntil) return;
     openContextMenuAt(ev.clientX, ev.clientY);
   });
@@ -38071,6 +38233,11 @@ function installContextMenu() {
       ev.preventDefault();
       componentContextSubmenu.classList.remove('open');
       componentContextSubmenu.previousElementSibling?.focus();
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(ev.key)) {
+      ev.preventDefault();
+      moveMenuFocus(ev.key);
     }
   });
 }
@@ -42588,6 +42755,7 @@ __exports.resetLinkBubble = resetLinkBubble;
 __exports.linkBubbleFrames = linkBubbleFrames;
 __exports.mountLinkBubbles = mountLinkBubbles;
 __exports.syncLinkBubbles = syncLinkBubbles;
+__exports.usedInDesigns = usedInDesigns;
 __exports.enterLinkedDesign = enterLinkedDesign;
 __exports.leaveLinkedDesign = leaveLinkedDesign;
 __exports.linkDot = linkDot;
@@ -42598,7 +42766,8 @@ let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/documen
 let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
-let searchKey; __bind(() => { ({ searchKey } = __require("src/core/design-index.js")); });
+let designIndex, searchKey; __bind(() => { ({ designIndex, searchKey } = __require("src/core/design-index.js")); });
+let cacheGet, cachePut, renderingKey; __bind(() => { ({ cacheGet, cachePut, renderingKey } = __require("src/web/atlas-cache.js")); });
 let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
@@ -42627,6 +42796,7 @@ let openAtlas; __bind(() => { ({ openAtlas } = __require("src/web/atlas.js")); }
  * in this browser; they are never saved in the document or undone. Parts
  * linked to one design share one bubble, a connector to each.
  */
+
 
 
 
@@ -43121,7 +43291,87 @@ function syncLinkBubbles() {
 function checkTrail() {
   if (navigating) return;
   if (trail.length && trail.at(-1).childPath !== editor.currentDocumentPath) trail = [];
+  followUsedIn();
   renderTrail();
+}
+
+// ----- where a design is used ----------------------------------------------------
+
+// The designs whose parts link to the open one, for the way up when it was
+// not entered from one: { key, workspace, parents: [doc] }.
+let usedIn = { key: null, workspace: null, parents: [] };
+const linkLists = new Map(); // path -> { revision, links }
+
+/** The designs a document's parts link to, through the Atlas's cache of its
+ *  index when that revision was seen before. */
+async function linksOfDocument(doc) {
+  const known = linkLists.get(doc.path);
+  if (known && doc.revision && known.revision === doc.revision) return known.links;
+  const key = doc.revision && renderingKey(doc.path, doc.revision, 'index-v2');
+  let index = key ? await cacheGet(key) : null;
+  if (!index) {
+    index = designIndex(loadDocument((await persistence.load(doc.path)).state));
+    if (key) await cachePut(key, index);
+  }
+  const links = index.links || [];
+  if (doc.revision) linkLists.set(doc.path, { revision: doc.revision, links });
+  return links;
+}
+
+/** Look again for where the open design is used when it, its name, or the
+ *  workspace's documents change. */
+function followUsedIn() {
+  const path = editor.currentDocumentPath;
+  const name = editor.currentCircuitName;
+  const key = path && name ? `${path}\n${name}` : null;
+  if (usedIn.key === key && usedIn.workspace === editor.workspaceState) return;
+  usedIn = { key, workspace: editor.workspaceState, parents: usedIn.key === key ? usedIn.parents : [] };
+  if (!key) return;
+  const seen = new Set([path]);
+  const docs = knownDesigns().filter((doc) => !doc.missing && !seen.has(doc.path) && seen.add(doc.path));
+  void Promise.all(docs.map(async (doc) => {
+    try { return (await linksOfDocument(doc)).includes(name) ? doc : null; } catch { return null; }
+  })).then((found) => {
+    if (usedIn.key !== key) return;
+    usedIn.parents = found.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    renderTrail();
+  });
+}
+
+/** The designs the open one is used in (their parts link to it). */
+function usedInDesigns() {
+  return usedIn.parents;
+}
+
+/** Open a design the open one is used in, its linking parts selected. */
+async function openParentDesign(doc) {
+  const child = editor.currentCircuitName;
+  if (!await openDocumentPath(doc.path)) return false;
+  const linking = [...editor.circuit.components.values()].filter((component) => component.link === child).map((component) => component.refdes);
+  if (linking.length) setSelection(linking);
+  logLine(`${doc.name} uses ${child}${linking.length ? ` in ${linking.join(', ')}` : ''}.`);
+  render();
+  return true;
+}
+
+/** Up without a trail: the one design this one is used in, or a choice of
+ *  them by the toolbar's Used in. */
+function goUpToParent() {
+  const parents = usedIn.parents;
+  if (parents.length === 1) return openParentDesign(parents[0]);
+  if (!parents.length) {
+    hintLine('LINK: no design links to this one; Alt+↓ on a linked part opens its design');
+    return false;
+  }
+  const chip = document.querySelector('#hierarchy-trail .hierarchy-used-in')?.getBoundingClientRect();
+  const menu = openMenuAt(chip ? chip.left : window.innerWidth / 2, chip ? chip.bottom + 4 : 80, `${editor.currentCircuitName} is used in`);
+  if (!menu) return false;
+  const group = document.createElement('div');
+  group.className = 'context-menu-group';
+  for (const doc of parents) appendContextItem(group, doc.name, () => void openParentDesign(doc));
+  menu.appendChild(group);
+  menu.querySelector('button:not(:disabled)')?.focus();
+  return false;
 }
 
 const paneRect = () => document.querySelector('.canvas-pane')?.getBoundingClientRect();
@@ -43171,10 +43421,7 @@ async function enterLinkedDesign(component = linkTargets()[0]) {
  *  where the parent was left, its linked part selected. */
 async function leaveLinkedDesign(levels = 1) {
   checkTrail();
-  if (!trail.length) {
-    hintLine('LINK: not inside a linked design; Alt+↓ on a linked part opens it');
-    return false;
-  }
+  if (!trail.length) return goUpToParent();
   const index = Math.max(0, trail.length - levels);
   const target = trail[index];
   // The child as saved, drawn now, so its bubble is ready the moment the
@@ -43225,12 +43472,34 @@ async function leaveLinkedDesign(levels = 1) {
 function renderTrail() {
   const nav = document.getElementById('hierarchy-trail');
   const pane = document.querySelector('.canvas-pane');
-  const key = trail.map((entry) => `${entry.path}\n${entry.name}`).join('\n\n');
+  // Not entered from another design, it says where it is used instead.
+  const parents = trail.length ? [] : usedIn.parents;
+  const key = trail.length
+    ? trail.map((entry) => `${entry.path}\n${entry.name}`).join('\n\n')
+    : `used in\n${parents.map((doc) => doc.path).join('\n')}`;
   pane?.classList.toggle('inside-link', trail.length > 0);
   if (!nav || nav.dataset.key === key) return;
   nav.dataset.key = key;
-  nav.hidden = !trail.length;
+  nav.hidden = !trail.length && !parents.length;
   nav.replaceChildren();
+  if (parents.length) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'hierarchy-step hierarchy-used-in';
+    button.textContent = parents.length === 1 ? `Used in ${parents[0].name}` : `Used in ${parents.length}`;
+    button.title = parents.length === 1
+      ? `${parents[0].name} links to this design: open it, its linking parts picked (Alt+↑)`
+      : `Designs that link to this one: ${parents.map((doc) => doc.name).join(', ')} — pick one to open (Alt+↑)`;
+    button.addEventListener('click', () => void goUpToParent());
+    const separator = document.createElement('span');
+    separator.className = 'hierarchy-separator';
+    separator.textContent = '›';
+    separator.setAttribute('aria-hidden', 'true');
+    nav.setAttribute('aria-label', 'Designs that link to this one');
+    nav.append(button, separator);
+    return;
+  }
+  nav.setAttribute('aria-label', 'Designs this one was opened from');
   trail.forEach((entry, index) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -43545,6 +43814,7 @@ const ICON_PATHS = {
   move: '<path d="M12 5v14M5 12h14"/><path d="m12 2 3.2 3.8H8.8zM12 22l-3.2-3.8h6.4zM2 12l3.8-3.2v6.4zM22 12l-3.8 3.2V8.8z" fill="currentColor" stroke="none"/>',
   detach: '<rect x="8" y="6.5" width="8" height="11" rx="1.8" fill="currentColor" fill-opacity=".16"/><path d="M2.5 12H5M19 12h2.5"/><path d="m5.5 9-1 6M19.5 9l-1 6"/>',
   copy: '<rect x="3.5" y="3.5" width="11" height="11" rx="2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".16"/>',
+  hierarchy: '<rect x="9" y="3.5" width="6" height="5" rx="1"/><rect x="3.5" y="15.5" width="6" height="5" rx="1"/><rect x="14.5" y="15.5" width="6" height="5" rx="1"/><path d="M12 8.5V12M6.5 15.5V12h11v3.5"/>',
   tag: '<path d="M3.5 4.5v7l9 9 8-8-9-9h-7z" fill="currentColor" fill-opacity=".16"/><circle cx="8" cy="8.5" r="1.6" fill="currentColor" stroke="none"/>',
   highlight: '<path d="M14.5 4.5l5 5-8 8H6.5v-5z" fill="currentColor" fill-opacity=".16"/><path d="M12 7l5 5"/><path d="M3.5 20.5h8"/>',
   text: '<path d="M5 6.5V4.5h14v2M12 4.5v15M9 19.5h6"/>',
@@ -50071,7 +50341,10 @@ function canvasMouseDown(ev) {
       }, 320);
       return;
     }
-    drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null };
+    // Anywhere else (a label, or while a wire or placement is pending) a right
+    // press is a tap or a zoom box: like the radial targets, the context menu
+    // waits for a release that did not drag.
+    drag = { mode: 'zoom', startClient, startWorld, moved: false, rubber: null, contextOnRelease: true };
     return;
   }
   if (alignTool && b === 0) {
@@ -51773,6 +52046,12 @@ function finishCanvasMouseUp(ev) {
   if (drag.mode === 'wireseg' && !drag.modal && movedOut) canvasMouseMove(ev);
   if (drag.mode === 'zoom') {
     if (drag.moved) zoomToWorldRect(worldRect(drag.startWorld, w));
+    else if (drag.contextOnRelease) {
+      drag = null;
+      suppressContextMenuUntil = Date.now() + 400;
+      openContextMenuAt(ev.clientX, ev.clientY);
+      return;
+    }
   } else if (drag.mode === 'wireseg') {
     if (drag.modal) {
       render();
@@ -58826,7 +59105,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['o', 'show or hide the selected (or pointed-at) part\'s linked design beside the drawing; link a part from its right-click menu'],
     ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],
-    ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from'],
+    ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from, else to one it is used in'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
     ['Shift+K', 'timing diagram of the switch phases and signals you add: edit its slots in a grid beside the drawing; Make beats writes the timing into the beats'],
     ['Box over vertices', 'a box catching only some vertices of lines or arrows picks them, on any number of lines; Shift+box or Shift/Ctrl-click a vertex adds more; drag one to move them together, Delete removes them, Escape lets go'],

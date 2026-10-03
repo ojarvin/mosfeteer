@@ -73,3 +73,13 @@ parent was left in, its linked part selected: the design just left shrinks
 into its bubble there as the view pulls back. Opening another design any
 other way leaves the trail. The usual unsaved-changes check applies, and the
 parent must be saved so there is a way back.
+
+## Where used
+
+A design opened any other way shows, where the trail would be, the designs
+that link to it: **Used in system** (one) or **Used in 2** (several). It, or
+`Alt+↑` with no trail, opens the design it is used in -- or, for several,
+offers them in a menu -- with its linking parts picked. Finding them reads
+each workspace design's links through the Atlas's cache of its index, so
+only designs changed since they were last seen are read again
+(`src/web/hierarchy.js`; the graph is `src/core/design-links.js`).
