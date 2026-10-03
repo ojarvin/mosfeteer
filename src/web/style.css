@@ -6178,6 +6178,13 @@ body.chrome-away [data-editor-edge="right"] {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
+}
+
+/* A quantizer's error source (E_{QZ1}) as math, set flush left like a name. */
+.signal-flow-source-name math {
+  display: inline;
+  margin: 0;
 }
 
 .signal-flow-constant[hidden] {
@@ -6229,6 +6236,18 @@ body.chrome-away [data-editor-edge="right"] {
 
 .signal-flow-plot .role-zero {
   stroke-dasharray: 2 4;
+}
+
+/* The signal band's edges, and the swing's first full-scale crossing. */
+.signal-flow-plot .role-band,
+.signal-flow-plot .role-marker {
+  stroke: var(--text);
+  stroke-dasharray: 6 3;
+}
+
+.signal-flow-plot text.role-marker {
+  fill: var(--text);
+  stroke: none;
 }
 
 .signal-flow-plot .role-curve {
@@ -6355,6 +6374,64 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-coefficient-value {
   width: 100%;
   font-variant-numeric: tabular-nums;
+}
+
+/* The swing sweep's controls: source, frequency, and the run button on one line. */
+.signal-flow-swing-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.analysis-dock .signal-flow-swing-controls select {
+  flex: 1 1 5rem;
+  width: auto;
+  min-width: 5rem;
+}
+
+.analysis-dock .signal-flow-swing-controls .signal-flow-swing-frequency {
+  flex: 0 0 5.5rem;
+  width: 5.5rem;
+}
+
+.signal-flow-band {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.signal-flow-band label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.analysis-dock .signal-flow-band .signal-flow-band-field {
+  width: 4.5rem;
+  min-height: 24px;
+  padding: 2px 6px;
+}
+
+.signal-flow-swing-controls label {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.signal-flow-swing-plot .signal-flow-plot {
+  margin-top: 6px;
+}
+
+.signal-flow-paste-box summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+}
+
+.signal-flow-paste {
+  width: 100%;
+  margin-top: 6px;
+  font: 0.75rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* A linked coefficient follows others: its slider only shows the number. */

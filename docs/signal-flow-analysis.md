@@ -37,6 +37,13 @@ Each wire is one signal. The parts are:
 
 - **Samplers** `sampler`: the switch that reads a continuous signal at
   `t = nT`, its value the period `T`. See *Sampled loops*.
+- **Quantizers** `quantizer`: round to `N` levels (the value, default 2),
+  by Schreier's convention as the delta-sigma toolbox does: the odd
+  integers `±1, ±3, ... ±(N-1)` for even `N`, `0, ±2, ...` for odd `N`,
+  saturating beyond; full scale is `N - 1`. In the transfer functions a
+  quantizer is a gain of 1 plus its own error source, listed with the
+  sources as `E_{QZ1}`, so a modulator's NTF needs no separate `q` port; in
+  the swing simulation it rounds.
 
 A signal has at most one driver: a block's `out`, a junction's `e`, or a
 sampler's `out`. Two drivers, a part on a signal wire that is none of the
@@ -151,6 +158,37 @@ images aside. Both plot over `f/fs`. The output must be a sampled signal;
 a delay inside a continuous loop that feeds a sampler, samplers at
 different periods, or impulses reaching a sampler (a DAC block with no
 pulse) are refused.
+
+## Swing
+
+**Swing** simulates the diagram in time (`simulate.js`): a sine into one
+source, at an f/fs made a whole number of cycles in its 4096-sample window
+(after a quarter as many to settle), every net's peak recorded, as the
+amplitude sweeps from -60 dBFS past full scale. It plots each net's peak
+against the input amplitude, both in dB of full scale (the largest
+quantizer's `N - 1`, else 1), with the output's tone at the input frequency
+-- how the loop is scaled, and where it overloads (a state past a thousand
+times full scale). The integrators' outputs, the quantizer's input, the
+output, and its tone are shown at first; any net can be checked. It runs at
+the coefficients' numbers and again as they move, and **Annotate swing**
+puts it on the drawing like the graph (`plot.kind: 'swing'`,
+`swingFigure`).
+
+The sampled side steps as state-space (H(z) blocks in controllable form,
+junctions and gains one linear map a step, quantizers in the order their
+inputs need them). The continuous side is integrated exactly between
+samples, `x(t + h) = e^{Fh} x(t)` over the H(s) blocks, the DAC blocks'
+pulse terms, a sine oscillator, and a constant; each DAC block takes each
+sample as impulses into its pulse's terms at their delays, the sampler
+reads just before each `t = nT`, and peaks are taken at eight sub-steps a
+period and at every impulse. Refused: a continuous diagram with no sampler
+(no clock), a quantizer in a loop with no delay, a delay on a continuous
+signal outside a DAC block, a block with more zeros than poles.
+
+**Paste coefficients** (under the sliders) takes the delta-sigma toolbox's
+vectors as MATLAB prints them -- `a = [0.0444 0.2843 0.7894]`, or its
+display with no brackets, scale lines and column headers -- and sets
+`a_1`, `a_2`, ...; name the diagram's gains to match.
 
 Scripted: `analyze signal-flow --output NET --input PORT,... [--zero PORT,...]
 [--const PORT=VALUE,...]`.

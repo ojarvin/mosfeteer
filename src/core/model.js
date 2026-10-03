@@ -9,7 +9,7 @@ import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
-import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -963,6 +963,7 @@ const MAX_PLOT_DECADES = 60;
 export function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
   if (plot.kind === 'response') return normalizeResponsePlot(plot);
+  if (plot.kind === 'swing') return normalizeSwingPlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
   const points = (Array.isArray(plot.points) ? plot.points : [])
@@ -1012,7 +1013,10 @@ export function normalizeAnalysisValues(value) {
   for (const [name, text] of Object.entries(value?.links || {})) {
     if (/^[A-Za-z][\w]{0,40}$/.test(name) && typeof text === 'string' && text.trim() && text.length <= 120) links[name] = text.trim();
   }
-  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}) };
+  // The signal band on the response graph: f0 and bw in f/fs.
+  const rawBand = value?.band;
+  const band = rawBand && Number(rawBand.bw) > 0 ? { f0: Math.max(0, Number(rawBand.f0) || 0), bw: Number(rawBand.bw) } : null;
+  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -1021,10 +1025,12 @@ function analysisValuesJSON(values) {
   const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length) return {};
+  const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band) return {};
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
     ...(Object.keys(links).length ? { links: { ...links } } : {}),
+    ...(band ? { band } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
   } };
@@ -1044,7 +1050,25 @@ function normalizeResponsePlot(plot) {
       .map((p) => ({ f: round(p.f, 6), db: round(p.db) })),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces };
+  const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}) };
+}
+
+/** A swing plot (signal-flow simulation): coloured traces of each net's
+ *  peak (dBFS) against the input amplitude (dBFS); an overloaded run is null. */
+function normalizeSwingPlot(plot) {
+  const low = Number(plot.range?.low);
+  const high = Number(plot.range?.high);
+  if (!finite(low) || !finite(high) || high <= low || high - low > 200) return null;
+  const traces = (Array.isArray(plot.traces) ? plot.traces : []).slice(0, 12).map((trace) => ({
+    label: typeof trace?.label === 'string' ? trace.label.slice(0, 400) : '',
+    color: /^#[0-9a-f]{6}$/i.test(trace?.color || '') ? trace.color : '#3b74e0',
+    points: (Array.isArray(trace?.points) ? trace.points : [])
+      .filter((p) => finite(p?.a) && (p.db === null || finite(p.db)))
+      .map((p) => ({ a: round(p.a), db: p.db === null ? null : round(p.db) })),
+  })).filter((trace) => trace.points.length > 1);
+  if (!traces.length) return null;
+  return { kind: 'swing', range: { low, high }, traces };
 }
 
 export class LabelInstance {
@@ -2756,7 +2780,8 @@ export class Circuit {
       else label = candidate;
     }
     if (!variable) return null;
-    const text = `$${gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    const quantizer = component.type === 'quantizer';
+    const text = `$${quantizer ? `N = ${component.value}` : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centred on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
@@ -2765,8 +2790,8 @@ export class Circuit {
     let align = 'center';
     // Inside a triangle, every coefficient is set a size smaller, so a signed
     // name (-g_1) clears the edges as a plain one (b_1) does.
-    // A sampler's period always goes beside its switch.
-    const sampler = component.type === 'sampler';
+    // A sampler's period and a quantizer's levels always go beside it.
+    const sampler = component.type === 'sampler' || quantizer;
     const inside = gain && !sampler && gainFitsInside(component.value);
     const width = inside ? 'thin' : 'normal';
     if (gain && !inside) {
@@ -3086,7 +3111,8 @@ export class Circuit {
     // A transfer function (or a gain) must read; its box (and pins) follow
     // the equation.
     if (TRANSFER_FUNCTION_TYPES[c.type] || isCoefficientBlock(c)) {
-      if (isCoefficientBlock(c)) parseGain(value);
+      if (c.type === 'quantizer') value = String(parseLevels(value));
+      else if (isCoefficientBlock(c)) parseGain(value);
       else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
       this._syncTransferFunctionLabel(c);

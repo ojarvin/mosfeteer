@@ -9,7 +9,7 @@ import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
 import { MOS_SIZE_ROLE, formatMosSize, parseMosSize } from '../core/mos-size.js';
-import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseGain, readTransferFunction } from '../core/transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseGain, parseLevels, readTransferFunction } from '../core/transfer-function.js';
 import { setPartValue } from '../core/part-moves.js';
 import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
@@ -58,7 +58,9 @@ export function inlineEditSchematicBlock(component) {
   input.value = component.value || '';
   input.spellcheck = false;
   input.className = `label-inline-editor block-inline-editor${transfer ? ' tf-inline-editor' : ''}`;
-  if (transfer) input.title = component.type === 'sampler'
+  if (transfer) input.title = component.type === 'quantizer'
+    ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
+    : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
     ? 'One coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m). Enter applies, Esc cancels.'
@@ -96,7 +98,8 @@ export function inlineEditSchematicBlock(component) {
       if (transfer) {
         // The box fits the new equation, and its wires follow its pins.
         try {
-          if (isCoefficientBlock(component)) parseGain(text);
+          if (component.type === 'quantizer') parseLevels(text);
+          else if (isCoefficientBlock(component)) parseGain(text);
           else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {
           logLine(`${component.refdes}: ${err.message}`, 'error');

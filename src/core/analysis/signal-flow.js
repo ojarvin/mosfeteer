@@ -31,9 +31,15 @@ const SOURCE_TYPES = new Set(['input']);
 // Parts that may sit on a signal wire without taking part in it.
 const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput']);
 
+// Parts whose output is in their input's domain (s or z).
+const PASS_THROUGH = new Set([...JUNCTIONS, 'quantizer']);
+
 function isSignalPart(component) {
-  return JUNCTIONS.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type) || component.type === 'sampler';
+  return PASS_THROUGH.has(component.type) || Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type) || component.type === 'sampler';
 }
+
+/** A quantizer's error source: a gain of 1 plus this, in the linear model. */
+export const quantizerErrorKey = (refdes) => `quantizer:${refdes}`;
 
 /** Whether a drawing has any signal-flow part (the analysis mode it opens in). */
 export function hasSignalFlow(circuit) {
@@ -98,6 +104,10 @@ export function signalFlowGraph(circuit) {
     else if (!signal.drivers.length && signal.readers.length) sources.push({ id: signal.display, key: signal.key, name: signal.display });
     delete signal.drivers;
     delete signal.others;
+  }
+  // Each quantizer adds its error, E, as a source of its own.
+  for (const component of circuit.components.values()) {
+    if (component.type === 'quantizer') sources.push({ id: component.refdes, key: quantizerErrorKey(component.refdes), name: `E_{${component.refdes}}`, quantizer: true });
   }
   sources.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   return { signals, sources, issues };
@@ -326,6 +336,10 @@ function linearSystem({ circuit, signals, sourceBySignal }, unknowns, inputKeys,
         return failure('bad-gain', `${component.refdes}: ${err.message}`);
       }
       feed(row, k, signalAt(component, 'in'));
+    } else if (component.type === 'quantizer') {
+      // Linear model: v = y + E, its error a source of its own.
+      feed(row, ops.one, signalAt(component, 'in'));
+      feed(row, ops.one, { key: quantizerErrorKey(component.refdes) });
     } else if (component.type === 'signal_sum') {
       for (const term of JUNCTION_INPUTS) {
         const sign = component.negativeInputs?.has(term) ? ops.neg(ops.one) : ops.one;
@@ -367,7 +381,7 @@ function linearSystem({ circuit, signals, sourceBySignal }, unknowns, inputKeys,
  * domain, and a source takes the domain of what it meets. Returns `{ ok,
  * domain: Map }` or a failure naming the part that mixes them.
  */
-function signalDomains({ circuit, signals }) {
+export function signalDomains({ circuit, signals }) {
   const domain = new Map();
   const readersOf = (signal) => signal.readers.map((reader) => ({ reader, component: circuit.components.get(reader.comp) }));
   const junctionInputs = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
@@ -384,7 +398,7 @@ function signalDomains({ circuit, signals }) {
       if (signal && value && !domain.has(signal.key)) { domain.set(signal.key, value); changed = true; }
     };
     for (const component of circuit.components.values()) {
-      if (!JUNCTIONS.has(component.type)) continue;
+      if (!PASS_THROUGH.has(component.type)) continue;
       const out = outputOf(component);
       const ins = junctionInputs(component);
       const known = [out, ...ins].map((signal) => signal && domain.get(signal.key)).find(Boolean);
@@ -402,6 +416,10 @@ function signalDomains({ circuit, signals }) {
     }
   }
   for (const signal of signals.values()) if (!domain.has(signal.key)) domain.set(signal.key, 's');
+  // A quantizer's error is in its output's domain.
+  for (const component of circuit.components.values()) {
+    if (component.type === 'quantizer') domain.set(quantizerErrorKey(component.refdes), domain.get(outputOf(component)?.key) || 's');
+  }
   // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
   for (const component of circuit.components.values()) {
     if (component.type === 'sampler' || component.type === 'tf_z') {
@@ -411,7 +429,7 @@ function signalDomains({ circuit, signals }) {
           ? `${component.refdes} samples a signal that is already sampled`
           : `${component.refdes} is an H(z) block reading a continuous signal: sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
       }
-    } else if (JUNCTIONS.has(component.type)) {
+    } else if (PASS_THROUGH.has(component.type)) {
       const touching = [outputOf(component), ...junctionInputs(component)].filter(Boolean).map((signal) => domain.get(signal.key));
       if (new Set(touching).size > 1) {
         return failure('mixed-domains', `${component.refdes} joins a continuous and a sampled signal: put a sampler (s to z), or an H(s) block as the DAC (z to s), between them`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
@@ -426,7 +444,7 @@ const exactFloat = (x) => coefficientValue(String(Number(x.toPrecision(12))));
 
 /** A numeric rational in s with delays as `{ den, terms: [{ delay, num }] }`
  *  (samplePath's input), or a failure. */
-function delayTermsOf(value) {
+export function delayTermsOf(value) {
   const den = denseCoefficients(value.denominator, 's');
   if (!den) return { ok: false, error: 'a delay inside a continuous-time loop cannot be sampled exactly' };
   const list = coefficientList(value.numerator, 's');
@@ -939,7 +957,7 @@ function texName(name) {
 
 // ----- frequency response -------------------------------------------------------------
 
-function denseCoefficients(value, variable) {
+export function denseCoefficients(value, variable) {
   const list = coefficientList(value, variable);
   if (!list || !list.every(({ coefficient }) => isPlainNumber(coefficient))) return null;
   const dense = Array((list[0]?.power ?? 0) + 1).fill(0);
@@ -1216,7 +1234,18 @@ export function plotAxis(traces, sAxis = 'omega') {
   return traces.some((trace) => trace.variable === 'z') || sAxis === 'normalized' ? 'normalized' : 'omega';
 }
 
-export function responsePlot(traces, variable, { sAxis = 'omega' } = {}) {
+/**
+ * The signal band's edges in f/fs: `bw` from DC when `f0` is 0 (one line at
+ * bw), else `f0 +- bw/2` (two). Empty when no bandwidth is set.
+ */
+export function bandEdges(band) {
+  const f0 = Number(band?.f0) || 0;
+  const bw = Number(band?.bw);
+  if (!(bw > 0)) return [];
+  return f0 > 0 ? [f0 - bw / 2, f0 + bw / 2].filter((f) => f > 0) : [bw];
+}
+
+export function responsePlot(traces, variable, { sAxis = 'omega', band = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
   const curves = withVariable
@@ -1228,10 +1257,14 @@ export function responsePlot(traces, variable, { sAxis = 'omega' } = {}) {
   const low = Math.floor(Math.log10(Math.min(...all)) + 1e-9);
   // A sampled system's frequencies end at f_s/2, where its curves do.
   const high = curveAxis === 'normalized' ? Math.log10(0.5) : Math.ceil(Math.log10(Math.max(...all)) - 1e-9);
+  // The band's edges on this axis: f/fs as they are, or omega = 2 pi f with
+  // s in units of 1/Ts.
+  const edges = bandEdges(band).map((f) => (curveAxis === 'normalized' ? f : 2 * Math.PI * f));
   return {
     kind: 'response',
     axis: curveAxis,
     range: { low, high: Math.max(high, low + 1) },
+    ...(edges.length ? { band: edges } : {}),
     traces: curves.map(({ trace, curve }) => ({
       label: trace.label,
       color: trace.color,
@@ -1253,6 +1286,22 @@ export function resultSymbols(value, variable) {
   for (const name of found) {
     if (isDelayName(name)) expressionSymbols(DELAYS.get(name), variable, out);
     else out.add(name);
+  }
+  return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/** Every coefficient a diagram's parts name: its blocks' (a delay's T
+ *  included), its gains', its samplers' periods. */
+export function diagramSymbols(circuit) {
+  const out = new Set();
+  for (const component of circuit.components.values()) {
+    try {
+      if (Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type)) {
+        for (const name of resultSymbols(blockTransferFunction(component), TRANSFER_FUNCTION_TYPES[component.type])) out.add(name);
+      } else if (component.type === 'gain' || component.type === 'sampler') {
+        expressionSymbols(coefficientValue(parseGain(component.value || 'T')), 's', out);
+      }
+    } catch { /* a part that does not read names nothing */ }
   }
   return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }

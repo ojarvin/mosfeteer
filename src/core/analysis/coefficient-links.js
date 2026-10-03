@@ -88,3 +88,39 @@ export function resolveCoefficients(values = {}, links = {}) {
   for (const name of new Set([...Object.keys(values || {}), ...parsed.keys()])) lookup(name);
   return resolved;
 }
+
+/**
+ * Coefficients pasted from the delta-sigma toolbox (or any MATLAB/Python
+ * print-out): `a = [0.0444 0.2843 0.7894]`, `g = 0.0039`, MATLAB's display
+ * without brackets, `Columns 1 through 4` and `1.0e-03 *` scale lines
+ * included. A vector names its entries `a_1`, `a_2`, ...; a lone number
+ * names the coefficient itself, or `a_1` when only that exists (`known`).
+ * Returns `{ values: { name: number }, vectors: { a: 4, g: 1 } }`.
+ */
+export function parseCoefficientVectors(text, known = []) {
+  const source = String(text ?? '').replace(/^\s*Columns?\s+\d+(\s+(through|and|to)\s+\d+)?\s*$/gim, ' ');
+  const known1 = new Set(known);
+  const values = {};
+  const vectors = {};
+  const heads = [...source.matchAll(/([A-Za-z][\w]*)\s*=(?!=)/g)];
+  heads.forEach((head, i) => {
+    const name = head[1];
+    let body = source.slice(head.index + head[0].length, heads[i + 1]?.index ?? source.length);
+    let scale = 1;
+    const scaled = body.match(/([-+]?\d*\.?\d+e[-+]?\d+)\s*\*/i);
+    if (scaled) {
+      scale = Number(scaled[1]);
+      body = body.replace(scaled[0], ' ');
+    }
+    const numbers = [...body.matchAll(/[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi)].map((m) => Number(m[0]) * scale).filter(Number.isFinite);
+    if (!numbers.length) return;
+    const bracketed = /[[\]]/.test(body);
+    if (numbers.length === 1 && !bracketed && (known1.has(name) || !known1.has(`${name}_1`))) {
+      values[name] = numbers[0];
+      return;
+    }
+    numbers.forEach((number, k) => { values[`${name}_${k + 1}`] = number; });
+    vectors[name] = numbers.length;
+  });
+  return { values, vectors };
+}

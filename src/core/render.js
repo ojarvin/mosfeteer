@@ -9,7 +9,7 @@ import { sizeReplacedNameLabels } from './mos-size.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
-import { bodeFigure, responseFigure } from './bode-figure.js';
+import { bodeFigure, responseFigure, swingFigure } from './bode-figure.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -678,6 +678,8 @@ const PLOT_STROKES = {
   asymptote: { width: 3, dash: '16 12' },
   corner: { width: 2, dash: '4 10' },
   grid: { width: 1 },
+  band: { width: 3, dash: '18 9' },
+  marker: { width: 3, dash: '18 9' },
 };
 
 /**
@@ -691,11 +693,14 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const response = plot.kind === 'response';
+  const response = plot.kind === 'response' || plot.kind === 'swing';
   const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
   // A response plot (signal-flow analysis) draws each trace in its colour;
   // its traces' names are math labels beside it, children of the box.
-  const figure = response
+  // An overloaded run (null) runs off the top.
+  const figure = plot.kind === 'swing'
+    ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize })
+    : response
     ? responseFigure(plot, { width: w, height: h, fontSize })
     : bodeFigure(plot, { width: w, height: h, phase: plot.phase, numbers: false, corners: plot.corners, quantity: plot.quantity, fontSize });
   const color = escapeSvg(resolveColor(label.style?.color || '#111'));

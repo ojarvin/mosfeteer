@@ -171,3 +171,31 @@ export const sampler = defineSymbol({
   defaultValue: 'T',
   allowFloatingTerminals: true,
 });
+
+/**
+ * A quantizer: rounds a sampled signal to N levels, Schreier's convention
+ * (the delta-sigma toolbox): the odd integers +-1, +-3, ... +-(N-1) for even
+ * N, the even ones 0, +-2, ... for odd N, saturating beyond; full scale is
+ * N - 1. Its value is N, drawn beside it. The transfer-function analysis
+ * takes it as a gain of 1 plus its own error source; the swing simulation
+ * rounds.
+ */
+export const quantizer = defineSymbol({
+  type: 'quantizer',
+  description: 'Quantizer (N levels)',
+  refPrefix: 'QZ',
+  terminals: [
+    { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+    { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -80, w: 160, h: 160 },
+  graphics: [
+    { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+    { kind: 'path', d: 'M -52 40 L -28 40 L -28 14 L -4 14 L -4 -12 L 20 -12 L 20 -38 L 44 -38', style: 'symbol', fill: 'none' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: '2',
+  allowFloatingTerminals: true,
+});

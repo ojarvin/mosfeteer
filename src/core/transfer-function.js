@@ -29,7 +29,14 @@ export function isTransferFunction(component) {
 /** A part whose value is one coefficient, drawn as math: a gain's k, a
  *  sampler's period T. */
 export function isCoefficientBlock(component) {
-  return component?.type === 'gain' || component?.type === 'sampler';
+  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer';
+}
+
+/** A quantizer's level count: a whole number of at least 2. */
+export function parseLevels(text) {
+  const source = String(text ?? '').trim().replace(/^N\s*=\s*/i, '');
+  if (!/^\d+$/.test(source) || Number(source) < 2) throw new Error('a quantizer has a whole number of levels, at least 2 (N = 2 is single-bit)');
+  return Number(source);
 }
 
 /** A gain, a sampler, or a transfer-function block: a value drawn as math. */

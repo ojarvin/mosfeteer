@@ -13,12 +13,13 @@
  * on the drawing with its legend, and Annotate equations the equations.
  */
 
-import { TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { TRACE_COLORS, analyzeSignalFlow, complexText, diagramSymbols, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
-import { linkMakesCycle, parseCoefficientLink, resolveCoefficients } from '../core/analysis/coefficient-links.js';
+import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { expressionTex } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
-import { responseFigure } from '../core/bode-figure.js';
+import { responseFigure, swingFigure } from '../core/bode-figure.js';
+import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
 import { parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
@@ -126,12 +127,174 @@ function fillForm() {
     };
     select.addEventListener('change', save);
     constant.addEventListener('input', save);
-    table.append(el('div', { class: 'signal-flow-source' }, [el('span', { class: 'signal-flow-source-name', text: source.name }), select, constant]));
+    const name = el('span', { class: 'signal-flow-source-name', text: source.name });
+    // A quantizer's error source: E_{QZ1}, as math.
+    if (source.quantizer) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s quantization error (its linear model: a gain of 1 plus this)`; }
+    table.append(el('div', { class: 'signal-flow-source' }, [name, select, constant]));
   }
   const problems = section.querySelector('.signal-flow-issues');
   problems.replaceChildren(...issues.map((issue) => el('p', { class: 'analysis-error', text: issue.message })));
   problems.hidden = !issues.length;
   section.querySelector('.signal-flow-stale').hidden = !latest || revisionCurrent(derivedRevision);
+  fillSwingSources(sources);
+}
+
+// ----- swing: each net's peak against the input amplitude ------------------------------
+
+// The last sweep: { signals, fullScale, frequency, points: [{ a, peaks, tone, overloaded }] }.
+let swing = null;
+let swingRun = 0; // a sweep in progress stops when a newer one starts
+let swingShown = null; // keys of the nets on the plot
+let swingTimer = 0;
+const swingColors = new Map();
+const SWING_TONE = '\u0000tone';
+
+function swingSection() {
+  const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives' });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window' });
+  return el('fieldset', { class: 'analysis-approximations signal-flow-swing' }, [
+    el('legend', { text: 'Swing' }),
+    el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
+    el('div', { class: 'signal-flow-swing-controls' }, [
+      el('label', { text: 'Sine into' }), source,
+      el('label', { text: 'at f/fs' }), frequency,
+      el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() }),
+    ]),
+    el('p', { class: 'field-hint signal-flow-swing-status', 'aria-live': 'polite' }),
+    el('div', { class: 'signal-flow-swing-plot' }),
+  ]);
+}
+
+function fillSwingSources(sources) {
+  const select = section.querySelector('.signal-flow-swing-source');
+  if (!select) return;
+  const real = sources.filter((s) => !s.quantizer);
+  const previous = select.value;
+  select.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
+  if (real.some((s) => s.id === previous)) select.value = previous;
+}
+
+function swingFrequency() {
+  const text = section.querySelector('.signal-flow-swing-frequency').value.trim();
+  const match = text.match(/^(\d+(?:\.\d*)?)\s*\/\s*(\d+(?:\.\d*)?)$/);
+  const value = match ? Number(match[1]) / Number(match[2]) : Number(text);
+  return value > 0 && value < 0.5 ? value : 1 / 256;
+}
+
+/** Sweep the amplitude, one run a frame, drawing as it goes. */
+function runSwing() {
+  const status = section.querySelector('.signal-flow-swing-status');
+  const numbers = resolved();
+  const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
+  const sim = prepareSimulation(editor.circuit, {
+    values,
+    sources: settings.sources,
+    input: section.querySelector('.signal-flow-swing-source').value,
+    output: settings.output,
+    frequency: swingFrequency(),
+  });
+  const run = ++swingRun;
+  if (!sim.ok) {
+    swing = null;
+    status.textContent = sim.error;
+    status.classList.add('analysis-error');
+    renderSwing();
+    return;
+  }
+  status.classList.remove('analysis-error');
+  const amplitudes = sweepAmplitudes();
+  swing = { signals: sim.signals, fullScale: sim.fullScale, frequency: sim.frequency, points: [] };
+  if (!swingShown) swingShown = new Set([...sim.signals.filter((s) => ['state', 'quantizer-input', 'output'].includes(s.role)).map((s) => s.key), SWING_TONE]);
+  // Its coefficients get sliders, derived or not.
+  renderCoefficients();
+  let index = 0;
+  const step = () => {
+    if (run !== swingRun) return;
+    const started = performance.now();
+    // As many runs as fit in a frame's worth of time.
+    while (index < amplitudes.length && performance.now() - started < 30) {
+      const a = amplitudes[index++];
+      const result = sim.run(a);
+      swing.points.push({ a, ...result });
+      // Past three overloaded runs in a row there is nothing more to see.
+      if (swing.points.slice(-3).length === 3 && swing.points.slice(-3).every((p) => p.overloaded)) index = amplitudes.length;
+    }
+    // A loop that runs away even at the smallest input is unstable, not overloaded.
+    const unstable = swing.points.length && swing.points.every((p) => p.overloaded);
+    status.classList.toggle('analysis-error', !!unstable && index >= amplitudes.length);
+    status.textContent = index < amplitudes.length
+      ? `Simulating... ${swing.points.length} of ${amplitudes.length} amplitudes`
+      : unstable
+      ? `The loop runs away even at ${swing.points[0].a} dBFS: it is unstable at these coefficients, so there is no swing to plot. Derive and check its poles (a sampled loop needs them inside |z| = 1; the quantizer cannot hold a loop that is unstable already).`
+      : `Full scale ${sim.fullScale}; sine at f/fs = ${Number(sim.frequency.toPrecision(4))}, ${Math.round(sim.frequency * 4096)} cycles in 4096 samples.${swing.points.find((p) => p.overloaded) ? ` Overloads from ${swing.points.find((p) => p.overloaded).a} dBFS.` : ''}`;
+    renderSwing();
+    if (index < amplitudes.length) requestAnimationFrame(step);
+  };
+  step();
+}
+
+/** The sliders moved: run the sweep again once they settle. */
+function swingCoefficientsChanged() {
+  if (!swing) return;
+  clearTimeout(swingTimer);
+  swingTimer = setTimeout(runSwing, 350);
+}
+
+function swingTraces() {
+  if (!swing) return [];
+  const db = (peak) => (peak > 0 ? 20 * Math.log10(peak / swing.fullScale) : -300);
+  const entries = swing.signals.filter((s) => s.role !== 'source').map((s, i) => ({ key: s.key, label: s.name, index: swing.signals.indexOf(s), order: i }));
+  const traces = entries.map((entry, i) => ({
+    key: entry.key,
+    label: entry.label,
+    color: TRACE_COLORS[i % TRACE_COLORS.length],
+    points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.peaks[entry.index]) })),
+  }));
+  if (swing.points.some((p) => p.tone !== null && p.tone !== undefined)) {
+    const output = swing.signals.find((s) => s.key === settings.output);
+    traces.push({ key: SWING_TONE, label: `\\text{tone at } ${output?.name || 'out'}`, color: TRACE_COLORS[traces.length % TRACE_COLORS.length], points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.tone) })) });
+  }
+  return traces;
+}
+
+function swingPlotOf(traces) {
+  const amplitudes = swing.points.map((p) => p.a);
+  return { kind: 'swing', range: { low: Math.min(...amplitudes, -60), high: Math.max(...amplitudes, 3) }, traces };
+}
+
+function renderSwing() {
+  const host = section.querySelector('.signal-flow-swing-plot');
+  host.replaceChildren();
+  if (!swing || swing.points.length < 2) return;
+  const traces = swingTraces();
+  // Each shown net keeps a colour no other shown net has.
+  const used = new Set();
+  for (const trace of traces.filter((t) => swingShown.has(t.key))) {
+    let color = swingColors.get(trace.key);
+    if (!color || used.has(color)) color = TRACE_COLORS.find((c) => !used.has(c)) || trace.color;
+    swingColors.set(trace.key, color);
+    used.add(color);
+  }
+  for (const trace of traces) trace.color = swingColors.get(trace.key) || trace.color;
+  const shown = traces.filter((t) => swingShown.has(t.key));
+  const plot = swingPlotOf(shown.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })));
+  if (shown.length) host.append(figureSvg(swingFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Peak against input amplitude'));
+  else host.append(el('p', { class: 'field-hint', text: 'Check a net below to plot it.' }));
+  const legend = el('div', { class: 'signal-flow-legend' });
+  for (const trace of traces) {
+    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this net' });
+    check.checked = swingShown.has(trace.key);
+    check.addEventListener('change', () => { if (check.checked) swingShown.add(trace.key); else swingShown.delete(trace.key); renderSwing(); });
+    const math = el('span', { class: 'signal-flow-legend-math' });
+    math.innerHTML = texToMathML(trace.label);
+    math.style.color = trace.color;
+    const last = trace.points.filter((p) => p.db !== null).at(-1);
+    legend.append(el('div', { class: 'signal-flow-legend-row', title: last ? `peak ${Number((10 ** (last.db / 20) * swing.fullScale).toPrecision(3))} at ${last.a} dBFS in` : '' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math]));
+  }
+  host.append(legend);
+  host.append(el('div', { class: 'signal-flow-graph-actions' }, [
+    el('button', { type: 'button', text: 'Annotate swing', title: 'Put this plot on the drawing, its nets named beside it', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
+  ]));
 }
 
 // ----- results --------------------------------------------------------------------------
@@ -149,6 +312,8 @@ function currentSymbols() {
   const names = new Set();
   for (const trace of traces) for (const name of resultSymbols(trace.value, trace.variable)) names.add(name);
   if (latest?.ok) for (const entry of latest.entries) for (const name of resultSymbols(entry.value, latest.variable)) names.add(name);
+  // A swing sweep runs on every coefficient the diagram names.
+  if (swing) for (const name of diagramSymbols(editor.circuit)) names.add(name);
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
@@ -174,14 +339,22 @@ function coefficientsChanged() {
     markSettingsChanged();
     renderGraph();
     renderResults();
+    swingCoefficientsChanged();
   });
 }
 
-function renderCoefficients() {
+let shownSymbols = '';
+let shownCircuit = null;
+/** The coefficient rows; kept (a slider mid-drag with them) unless the
+ *  names change or `force` (new numbers from elsewhere, a paste). */
+function renderCoefficients({ force = false } = {}) {
   const host = section.querySelector('.signal-flow-coefficients');
   const names = currentSymbols();
   host.hidden = !names.length;
   const rows = host.querySelector('.signal-flow-coefficient-rows');
+  if (!force && names.join('\n') === shownSymbols && shownCircuit === editor.circuit && rows.children.length) { refreshLinkedRows(); return; }
+  shownSymbols = names.join('\n');
+  shownCircuit = editor.circuit;
   rows.replaceChildren();
   for (const name of names) {
     const linked = Object.hasOwn(links(), name);
@@ -231,6 +404,30 @@ function renderCoefficients() {
   refreshLinkedRows();
 }
 
+/** Paste coefficient vectors (the delta-sigma toolbox's a, b, c, g) into the sliders. */
+function pasteCoefficients() {
+  const area = el('textarea', { class: 'signal-flow-paste', rows: '4', spellcheck: 'false', placeholder: 'a = [0.0444 0.2843 0.7894 1.25]\nb = [0.0444 0.2843 0.7894 1.25 1]\nc = [1 1 1 1]\ng = [0.0039 0.0034]', 'aria-label': 'Coefficients to paste' });
+  const apply = () => {
+    const { values, vectors } = parseCoefficientVectors(area.value, currentSymbols());
+    const names = Object.keys(values);
+    if (!names.length) { logLine('Paste coefficients: no name = value found (a = [0.1 0.2], g = 0.004)', 'error'); return; }
+    for (const name of names) {
+      coefficients()[name] = values[name];
+      delete links()[name];
+    }
+    const summary = [...Object.entries(vectors).map(([v, n]) => `${v}_1..${v}_${n}`), ...names.filter((n) => !Object.keys(vectors).some((v) => n.startsWith(`${v}_`)))];
+    logLine(`set ${summary.join(', ')}`);
+    renderCoefficients({ force: true });
+    coefficientsChanged();
+  };
+  return el('details', { class: 'signal-flow-paste-box' }, [
+    el('summary', { text: 'Paste coefficients (delta-sigma toolbox)' }),
+    area,
+    el('p', { class: 'field-hint', text: 'Name = numbers, one per line: a vector names its entries a_1, a_2, ... (MATLAB output pastes as it prints). Name the diagram\'s gains to match: a_1, b_1, c_1, g_1.' }),
+    el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Apply', onclick: apply })]),
+  ]);
+}
+
 /** Linked rows show the number they follow: the slider at it, disabled,
  *  and the link with its number on hover. */
 function refreshLinkedRows() {
@@ -273,12 +470,15 @@ function svgText(item, fontSize) {
 
 /** The graph in the panel: the same layout the drawing gets, in the theme's colours. */
 function graphSvg(plot) {
-  const figure = responseFigure(plot, { width: 400, height: 220, fontSize: 11 });
+  return figureSvg(responseFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Magnitude responses');
+}
+
+function figureSvg(figure, title) {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', `0 0 ${figure.width} ${figure.height}`);
   svg.setAttribute('class', 'signal-flow-plot');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Magnitude responses');
+  svg.setAttribute('aria-label', title);
   for (const item of figure.items) {
     let node;
     if (item.type === 'line') {
@@ -299,8 +499,50 @@ function graphSvg(plot) {
 // The axis s results plot on: ω in the coefficients' units, or f/fs with s
 // in units of 1/Ts (saved with the document). A z result puts every trace on f/fs.
 const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
-const graphPlot = (list) => responsePlot(list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), 's', { sAxis: sAxisSetting() });
+const graphPlot = (list) => responsePlot(list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band });
 const shownTraces = () => traces.filter((trace) => trace.on);
+
+/** Redraw the graph's plot alone, its controls left as they are. */
+function redrawGraphPlot() {
+  const host = section.querySelector('.signal-flow-graph');
+  const old = host.querySelector('.signal-flow-plot');
+  const plot = graphPlot(shownTraces());
+  if (old && plot) old.replaceWith(graphSvg(plot));
+  else renderGraph();
+}
+
+/** A number typed as f/fs: 0.004, 1/256. */
+function fraction(text) {
+  const match = String(text).trim().match(/^(\d*\.?\d+)\s*\/\s*(\d*\.?\d+)$/);
+  return match ? Number(match[1]) / Number(match[2]) : Number(String(text).trim());
+}
+
+/** The signal band, f0 and bw in f/fs: a line at bw, or two at f0 +- bw/2. */
+function bandControls() {
+  const band = editor.circuit.analysisValues.band;
+  const field = (key, label, title) => {
+    const input = el('input', { type: 'text', class: 'signal-flow-band-field', value: band?.[key] ? String(Number(band[key].toPrecision(6))) : '', placeholder: key === 'f0' ? '0' : '-', 'aria-label': label, title });
+    // Applied as typed; only the plot redraws, so the field keeps its focus.
+    input.addEventListener('input', () => {
+      const f0 = fraction(row.querySelector('[data-key=f0]').value || '0');
+      const bwText = row.querySelector('[data-key=bw]').value.trim();
+      const bw = fraction(bwText);
+      if (bwText && !(bw > 0 && f0 >= 0)) return;
+      editor.circuit.analysisValues.band = bwText ? { f0: f0 || 0, bw } : undefined;
+      markSettingsChanged();
+      redrawGraphPlot();
+    });
+    // Enter applies the field, not a derive.
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
+    input.dataset.key = key;
+    return input;
+  };
+  const row = el('div', { class: 'signal-flow-band' }, [
+    el('label', { text: 'Band f0' }), field('f0', 'Band centre, f/fs', 'The band\'s centre as f/fs; 0 for a baseband signal'),
+    el('label', { text: 'bw' }), field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'),
+  ]);
+  return row;
+}
 
 /** Add an entry's response to the graph (a graph keeps one variable). */
 function addTrace(entry, variable, output) {
@@ -339,6 +581,7 @@ function renderGraph() {
     ]));
   }
   host.append(head);
+  host.append(bandControls());
   if (plot) host.append(graphSvg(plot));
   else host.append(el('p', { class: 'field-hint', text: 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
@@ -367,12 +610,21 @@ function annotateGraph() {
   if (!plot) return;
   // The numbers the symbols were drawn with, under the legend.
   const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];
+  placePlot(plot, shown, used);
+}
+
+/** A plot on the drawing, under it at its left edge: its traces named
+ *  beside it in their colours, the coefficients' numbers under them. */
+function placePlot(plot, shown, used) {
   // One coefficient a line, left-aligned under the trace names.
   const numbers = resolved();
   const linkTex = (name) => {
     try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
   };
-  const values = used.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
+  let values = used.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
+  // The same numbers beside another plot already: not twice.
+  const circuit = editor.circuit;
+  if ([...circuit.labels.values()].some((label) => label.parent && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
   // Under the drawing, at its left edge.
   const bounds = editor.circuit.bounds();
   const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
@@ -402,7 +654,7 @@ function annotateGraph() {
   if (!box) return;
   // Their sizes are estimates until the browser measures them: line their
   // left edges up then.
-  alignLabelColumn(ids, { left: x + w + GRID, top: y, gap: GRID / 2 });
+  alignLabelColumn(ids, { left: x + w + GRID, top: y, gap: 0 });
   setSelection([]);
   setLabelSelection([box.id]);
   logLine('placed the graph on the drawing; drag to move it, its corners to resize');
@@ -530,8 +782,10 @@ export function installSignalFlowUi() {
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
       el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value -- or = b_1 (= 2*b_1, = T/2) to make one follow others.' }),
+      pasteCoefficients(),
     ]),
     el('div', { class: 'signal-flow-graph', hidden: true }),
+    swingSection(),
     el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
   ]);
   actions = [

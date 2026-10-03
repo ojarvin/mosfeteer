@@ -507,3 +507,126 @@ test('a sampled result follows a linked coefficient', () => {
   const linked = resolveCoefficients({ T: 1, T_d: 0, k_1: 1, k_2: 1 }, { k_2: '1.5*k_1' });
   assert.equal(sampledEquation(ntf, linked).equation, '\\frac{V}{q} = 1 - 2 z^{-1} + z^{-2}');
 });
+
+// ----- quantizer and swing ---------------------------------------------------------------
+
+import { prepareSimulation, quantize, sweepAmplitudes } from '../src/core/analysis/simulate.js';
+import { parseCoefficientVectors } from '../src/core/analysis/coefficient-links.js';
+
+function quantizedModulator(kind) {
+  // A second-order modulator with a single-bit quantizer: continuous (a
+  // sampler and an NRZ DAC, gains 1 and 1.5) or discrete (z^-1/(1 - z^-1), 1 and 2).
+  const ct = kind === 'ct';
+  const integrator = ct ? '"1/s"' : '"tf([0 1], [1 -1])"';
+  const block = ct ? 'tf_s' : 'tf_z';
+  const lines = ['add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', `add ${block} H1 --at -800 0 --value ${integrator}`, 'add signal_sum S3 --at -400 0', `add ${block} H2 --at 0 0 --value ${integrator}`,
+    'add quantizer QZ1 --at 800 0', 'add output V --at 1200 0', 'add gain K1 --at -800 400 --rot 180 --value k_1', 'add gain K2 --at 0 400 --rot 180 --value k_2',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect QZ1.out V.p', 'connect K1.out S1.s', 'connect K2.out S3.s'];
+  if (ct) lines.push('add sampler SMP1 --at 400 0', 'add tf_s D1 --at 400 640 --rot 180 --value "exp(-s*T_d)*(1 - exp(-s*T))/s"', 'connect H2.out SMP1.in', 'connect SMP1.out QZ1.in', 'connect V.p D1.in', 'connect D1.out K1.in', 'connect D1.out K2.in');
+  else lines.push('connect H2.out QZ1.in', 'connect V.p K1.in', 'connect V.p K2.in');
+  return diagram(lines, [['S1', 's'], ['S3', 's']]);
+}
+
+test('the quantizer rounds to Schreier\'s levels, full scale N - 1', () => {
+  assert.deepEqual([-3, -0.2, 0, 0.4, 7].map((y) => quantize(y, 2)), [-1, -1, 1, 1, 1]);
+  assert.deepEqual([-9, -1.2, -0.9, 0.9, 1.1, 9].map((y) => quantize(y, 3)), [-2, -2, 0, 0, 2, 2]);
+  assert.deepEqual([-9, -2.1, -0.5, 0.5, 2.1, 9].map((y) => quantize(y, 4)), [-3, -3, -1, 1, 3, 3]);
+  const circuit = new Circuit();
+  circuit.addComponent('quantizer', { refdes: 'QZ1' });
+  assert.equal(circuit.components.get('QZ1').value, '2');
+  assert.equal([...circuit.labels.values()].find((l) => l.owner === 'QZ1' && l.role === TRANSFER_FUNCTION_ROLE).text, '$N = 2$');
+  runCommand(circuit, 'value QZ1 N=5');
+  assert.equal(circuit.components.get('QZ1').value, '5');
+  assert.throws(() => runCommand(circuit, 'value QZ1 1'), /at least 2/);
+});
+
+test('in the transfer functions a quantizer is a gain of 1 plus its own error source', () => {
+  const report = analyzeSignalFlow(quantizedModulator('ct'), { output: 'V', sources: { U: 'input', QZ1: 'input' }, values: { T: 1, T_d: 0, k_1: 1, k_2: 1.5 } });
+  assert.equal(report.ok, true, report.error);
+  const ntf = report.entries.find((entry) => entry.input === 'QZ1');
+  assert.equal(ntf.inputName, 'E_{QZ1}');
+  assert.equal(ntf.equation, '\\frac{V}{E_{QZ1}} = 1 - 2 z^{-1} + z^{-2}');
+  const dt = analyzeSignalFlow(quantizedModulator('dt'), { output: 'V', sources: { QZ1: 'input' } });
+  assert.equal(dt.entries[0].equation, '\\frac{V}{E_{QZ1}} = \\frac{1 - 2 z^{-1} + z^{-2}}{1 + \\left(-2 + k_{2}\\right) z^{-1} + \\left(-k_{2} + 1 + k_{1}\\right) z^{-2}}');
+});
+
+test('the swing simulation: the output tracks the input until the loop overloads past full scale', () => {
+  for (const [kind, values] of [['ct', { T: 1, T_d: 0, k_1: 1, k_2: 1.5 }], ['dt', { k_1: 1, k_2: 2 }]]) {
+    const sim = prepareSimulation(quantizedModulator(kind), { values, input: 'U', output: 'name:V', frequency: 1 / 256, samples: 2048 });
+    assert.equal(sim.ok, true, sim.error);
+    assert.equal(sim.fullScale, 1);
+    // The integrators' outputs, named after their blocks.
+    const states = sim.signals.filter((s) => /^H_?\{?[12]\}?$/.test(s.name)).map((s) => sim.signals.indexOf(s));
+    assert.equal(states.length, 2, kind);
+    const quiet = sim.run(-20);
+    const loud = sim.run(-3);
+    assert.equal(quiet.overloaded, false);
+    // A tone at -20 dBFS comes out at -20 dBFS (the STF is 1 in band).
+    assert.ok(Math.abs(20 * Math.log10(quiet.tone) + 20) < 0.1, `${kind} ${quiet.tone}`);
+    // The integrators swing further as the input grows, and blow up past full scale.
+    for (const i of states) assert.ok(loud.peaks[i] > quiet.peaks[i], kind);
+    const over = sim.run(3);
+    assert.ok(over.overloaded || Math.max(...states.map((i) => over.peaks[i])) > 100, kind);
+  }
+  assert.equal(sweepAmplitudes().at(-1), 3);
+  assert.ok(sweepAmplitudes().includes(-5.75), 'quarter-dB steps near full scale');
+  // A DAC's pulse edges share one state, so a long run stays bounded: no
+  // overload read into a stable loop (each edge integrating apart ramps).
+  const long = prepareSimulation(quantizedModulator('ct'), { values: { T: 1, T_d: 0.3, k_1: 1, k_2: 1.5 }, input: 'U', output: 'name:V', samples: 16384 });
+  assert.equal(long.run(-40).overloaded, false);
+  // No clock, no simulation; a quantizer on the continuous side is refused.
+  const unclocked = diagram(['add input U --at -400 0', 'add tf_s H1 --at 0 0 --value "1/s"', 'add output V --at 400 0', 'connect U.p H1.in', 'connect H1.out V.p']);
+  assert.equal(prepareSimulation(unclocked, { input: 'U' }).code, 'no-clock');
+});
+
+test('a swing plot keeps its traces when annotated, an overloaded run as a gap', () => {
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, plot: { kind: 'swing', range: { low: -60, high: 3 }, traces: [{ label: 'H_{1}', color: '#3b74e0', points: [{ a: -60, db: -50 }, { a: 0, db: -3 }, { a: 3, db: null }] }] } });
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(loaded.labels.get(box.id).plot.traces[0].points.at(-1), { a: 3, db: null });
+  assert.equal(loaded.labels.get(box.id).plot.kind, 'swing');
+});
+
+test('coefficients paste from the delta-sigma toolbox: vectors name their entries', () => {
+  const { values, vectors } = parseCoefficientVectors('a = [0.0444 0.2843 0.7894 1.25]\nb=[1, 2]\ng = 0.0039', ['g_1']);
+  assert.deepEqual(values, { a_1: 0.0444, a_2: 0.2843, a_3: 0.7894, a_4: 1.25, b_1: 1, b_2: 2, g_1: 0.0039 });
+  assert.deepEqual(vectors, { a: 4, b: 2, g: 1 });
+  // MATLAB's display: a scale line, column headers.
+  assert.deepEqual(parseCoefficientVectors('a =\n\n   1.0e-03 *\n\n    0.4440    2.8430\n\nk = 2', ['k']).values, { a_1: 0.000444, a_2: 0.002843, k: 2 });
+  assert.deepEqual(parseCoefficientVectors('c =\n  Columns 1 through 2\n    0.1    0.2\n  Column 3\n    0.3\n').values, { c_1: 0.1, c_2: 0.2, c_3: 0.3 });
+});
+
+import { bandEdges, responsePlot as bandedPlot } from '../src/core/analysis/signal-flow.js';
+import { responseFigure, swingCrossing, swingFigure } from '../src/core/bode-figure.js';
+
+test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved with the plot', () => {
+  assert.deepEqual(bandEdges({ f0: 0, bw: 1 / 128 }), [1 / 128]);
+  assert.deepEqual(bandEdges({ f0: 0.25, bw: 0.02 }), [0.24, 0.26]);
+  assert.deepEqual(bandEdges({ bw: 0 }), []);
+  const integrator = blockTransferFunction(new Circuit().addComponent('tf_z', { value: 'tf([0 1], [1 -1])' }));
+  const plot = bandedPlot([{ label: 'H', color: '#3b74e0', value: integrator, variable: 'z' }], 'z', { band: { f0: 0, bw: 0.01 } });
+  assert.deepEqual(plot.band, [0.01]);
+  assert.equal(responseFigure(plot).items.filter((item) => item.role === 'band').length, 1);
+  const circuit = new Circuit();
+  const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 200 }, plot });
+  circuit.analysisValues.band = { f0: 0.25, bw: 0.02 };
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(loaded.labels.get(box.id).plot.band, [0.01]);
+  assert.deepEqual(loaded.analysisValues.band, { f0: 0.25, bw: 0.02 });
+});
+
+test('the swing plot marks where a net first climbs through full scale', () => {
+  const traces = [
+    { color: '#3b74e0', points: [{ a: -20, db: -10 }, { a: -10, db: -4 }, { a: -6, db: 2 }, { a: 0, db: 8 }] },
+    // A quantizer's output sits at full scale throughout: no crossing.
+    { color: '#e0533b', points: [{ a: -20, db: 0 }, { a: -10, db: 0 }, { a: 0, db: 0 }] },
+    // An overloaded run counts as above full scale.
+    { color: '#2e9e5b', points: [{ a: -20, db: -30 }, { a: -2, db: -1 }, { a: 0, db: Infinity }] },
+  ];
+  // Between -10 dBFS (-4 dB) and -6 dBFS (+2 dB): two thirds of the way.
+  assert.ok(Math.abs(swingCrossing(traces) + 22 / 3) < 1e-9);
+  const figure = swingFigure({ range: { low: -60, high: 3 }, traces });
+  assert.equal(figure.items.filter((item) => item.role === 'marker' && item.type === 'line').length, 1);
+  assert.ok(figure.items.some((item) => item.type === 'text' && item.text === '-7.3 dBFS'));
+  assert.equal(swingCrossing([traces[1]]), null);
+});

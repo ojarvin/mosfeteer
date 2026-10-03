@@ -238,7 +238,88 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     const samples = trace.points.map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
+  // The signal band's edges.
+  for (const f of plot.band || []) {
+    if (Math.log10(f) <= low || Math.log10(f) >= high) continue;
+    items.push({ type: 'line', x1: x(f), y1: pane.y, x2: x(f), y2: pane.y + pane.h, role: 'band' });
+  }
   items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: '|H| (dB)', anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
+}
+
+/**
+ * A swing plot (signal-flow simulation): each net's peak against the input
+ * amplitude, both in dB of full scale, a 0 dB line at full scale. `plot`:
+ * `{ range: { low, high } (input dBFS), traces: [{ color, points: [{ a, db }] }] }`.
+ */
+export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
+  const items = [];
+  const em = fontSize;
+  const { low, high } = plot.range;
+  const left = 3.6 * em;
+  const right = 0.9 * em;
+  const top = 0.9 * em;
+  const bottom = 2 * em;
+  const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
+  const x = (a) => pane.x + ((a - low) / (high - low)) * pane.w;
+  // The peaks fit in whole 10 dB steps; a loop blowing up runs off the top.
+  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => Number.isFinite(db) && db > -200);
+  let [dbLow, dbHigh] = niceRange(values.length ? values : [-40, 0], 10, 0);
+  dbHigh = Math.min(Math.max(dbHigh, 10), 40);
+  dbLow = Math.min(dbLow, -10);
+  const step = dbHigh - dbLow > 80 ? 20 : 10;
+  const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
+  items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
+  items.push({ type: 'line', x1: pane.x, y1: y(0), x2: pane.x + pane.w, y2: y(0), role: 'zero' });
+  if (low < 0 && high > 0) items.push({ type: 'line', x1: x(0), y1: pane.y, x2: x(0), y2: pane.y + pane.h, role: 'zero' });
+  const xStep = high - low > 60 ? 20 : 10;
+  for (let a = Math.ceil(low / xStep) * xStep; a <= high; a += xStep) {
+    items.push({ type: 'line', x1: x(a), y1: pane.y, x2: x(a), y2: pane.y + pane.h, role: 'grid' });
+    items.push({ type: 'line', x1: x(a), y1: pane.y + pane.h, x2: x(a), y2: pane.y + pane.h - 0.36 * em, role: 'tick' });
+    items.push({ type: 'text', x: x(a), y: pane.y + pane.h + 1.3 * em, text: `${a}`, anchor: 'middle', role: 'number' });
+  }
+  for (let db = Math.ceil(dbLow / step) * step; db <= dbHigh; db += step) {
+    items.push({ type: 'line', x1: pane.x, y1: y(db), x2: pane.x + pane.w, y2: y(db), role: 'grid' });
+    items.push({ type: 'text', x: pane.x - 0.45 * em, y: y(db) + 0.36 * em, text: `${db}`, anchor: 'end', role: 'number' });
+  }
+  // The first amplitude at which any net climbs through full scale.
+  const crossing = swingCrossing(plot.traces);
+  if (crossing !== null && crossing > low && crossing < high) {
+    items.push({ type: 'line', x1: x(crossing), y1: pane.y, x2: x(crossing), y2: pane.y + pane.h, role: 'marker' });
+    // At the top, clear of the axis titles: left of the line in the right half, else right of it.
+    const right = x(crossing) > pane.x + pane.w / 2;
+    items.push({ type: 'text', x: x(crossing) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text: `${Number(crossing.toFixed(1))} dBFS`, anchor: right ? 'end' : 'start', role: 'marker' });
+  }
+  plot.traces.forEach((trace, index) => {
+    const samples = trace.points.map((p) => ({ f: p.a, value: Number.isFinite(p.db) ? p.db : dbHigh + 100 }));
+    for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, 'curve')) items.push({ ...path, color: trace.color, trace: index });
+  });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'peak (dBFS)', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: 'input (dBFS)', anchor: 'end', role: 'label' });
+  return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
+}
+
+/**
+ * The lowest input amplitude (dBFS) at which a swing trace climbs through
+ * 0 dBFS, from below (a net already at full scale, as a quantizer's output
+ * is, never crosses); an overloaded run counts as above. Null when none does.
+ */
+export function swingCrossing(traces) {
+  let best = null;
+  for (const trace of traces) {
+    const points = trace.points;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const before = Number.isFinite(a.db) ? a.db : Infinity;
+      const after = Number.isFinite(b.db) ? b.db : Infinity;
+      if (!(before < -0.05) || !(after >= 0)) continue;
+      const at = Number.isFinite(after) ? a.a + ((0 - before) / (after - before)) * (b.a - a.a) : b.a;
+      if (best === null || at < best) best = at;
+      break;
+    }
+  }
+  return best;
 }
