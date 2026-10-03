@@ -101,3 +101,16 @@ test('every floating window docks into the side panel and floats out again', () 
   assert.doesNotMatch(css, /\.docked\.folded > \* > :not/);
   assert.match(css, /\.beat-strip\.docked \.beat-list \{[^}]*flex-direction: column/);
 });
+
+test('a picture pasted over a reference window shows there, not on the drawing', () => {
+  const paste = readFileSync(new URL('../src/web/copy-paste.js', import.meta.url), 'utf8');
+  const reference = readFileSync(new URL('../src/web/reference-window.js', import.meta.url), 'utf8');
+  // The drawing's paste offers a picture to takers first, after disarming its own paste.
+  assert.match(paste, /objectPaste = null;\s*ev\.preventDefault\(\);\s*if \(pictureTakers\.some\(\(take\) => take\(picture\)\)\) return;\s*void pasteImage\(picture\);/);
+  // A reference window takes it only with the pointer over it.
+  assert.match(reference, /takePastedPictures\(\(file\) => \{\s*const win = hovered && !hidden/);
+  assert.match(reference, /storedImage\(file\)\.then\(\(image\) => \{\s*if \(windows\.includes\(win\)\) setPicture\(win, image\)/);
+  // Remembered when small enough; restored only as a raster data URL.
+  assert.match(reference, /win\.pasted\.src\.length <= MAX_REMEMBERED_PICTURE/);
+  assert.match(reference, /\/\^data:image\\\/\(png\|jpeg\|webp\);\/\.test\(entry\.picture\.src\)/);
+});

@@ -470,7 +470,7 @@ function decodedImage(src) {
 /** A pasted picture as the document keeps it: a PNG, JPEG, or WebP data URL
  *  no larger than MAX_IMAGE_PX on its longer side (re-encoded when it was
  *  larger, or of another type), and its aspect. */
-async function storedImage(file) {
+export async function storedImage(file) {
   const original = await readDataUrl(file);
   const image = await decodedImage(original);
   const aspect = image.naturalWidth / image.naturalHeight;
@@ -486,6 +486,16 @@ async function storedImage(file) {
   if (!src.startsWith('data:image/webp')) src = canvas.toDataURL('image/png');
   if (src.length > MAX_IMAGE_DATA) src = canvas.toDataURL('image/jpeg', 0.85);
   return { src, aspect, width: canvas.width };
+}
+
+// Surfaces over the drawing that may take a pasted picture first: a
+// reference window under the pointer shows it instead.
+const pictureTakers = [];
+
+/** Offer pasted pictures to `take(file)` before the drawing; it returns
+ *  true when it took the picture. */
+export function takePastedPictures(take) {
+  pictureTakers.push(take);
 }
 
 /** Put a pasted picture on the drawing at the cursor, selected, its box at
@@ -708,6 +718,7 @@ export function installCopyPaste() {
     if (picture) {
       objectPaste = null;
       ev.preventDefault();
+      if (pictureTakers.some((take) => take(picture))) return;
       void pasteImage(picture);
       return;
     }

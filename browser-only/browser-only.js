@@ -38281,6 +38281,8 @@ __exports.startCopyGhost = startCopyGhost;
 __exports.moveCopyGhost = moveCopyGhost;
 __exports.dropCopyGhostMirror = dropCopyGhostMirror;
 __exports.commitCopyGhost = commitCopyGhost;
+__exports.storedImage = storedImage;
+__exports.takePastedPictures = takePastedPictures;
 __exports.publishObjectClipboard = publishObjectClipboard;
 __exports.armObjectPaste = armObjectPaste;
 __exports.pasteClipboard = pasteClipboard;
@@ -38785,6 +38787,16 @@ async function storedImage(file) {
   return { src, aspect, width: canvas.width };
 }
 
+// Surfaces over the drawing that may take a pasted picture first: a
+// reference window under the pointer shows it instead.
+const pictureTakers = [];
+
+/** Offer pasted pictures to `take(file)` before the drawing; it returns
+ *  true when it took the picture. */
+function takePastedPictures(take) {
+  pictureTakers.push(take);
+}
+
 /** Put a pasted picture on the drawing at the cursor, selected, its box at
  *  most START_WIDTH wide and keeping the picture's proportions. */
 async function pasteImage(file) {
@@ -39005,6 +39017,7 @@ function installCopyPaste() {
     if (picture) {
       objectPaste = null;
       ev.preventDefault();
+      if (pictureTakers.some((take) => take(picture))) return;
       void pasteImage(picture);
       return;
     }
@@ -56398,6 +56411,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
 let appendDesignChoices, workspaceDesigns; __bind(() => { ({ appendDesignChoices, workspaceDesigns } = __require("src/web/hierarchy.js")); });
 let openMenuAt; __bind(() => { ({ openMenuAt } = __require("src/web/context-menu.js")); });
+let storedImage, takePastedPictures; __bind(() => { ({ storedImage, takePastedPictures } = __require("src/web/copy-paste.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 /**
  * Reference windows: another design of the workspace shown beside the
@@ -56410,10 +56424,14 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
  * design opens there and the one that was open moves into the window. It
  * follows the design's file as it is saved.
  *
- * Which designs the windows show is remembered in this browser; nothing is
- * saved in a document. `Shift+V` shows or hides them, opening a first one
+ * A picture pasted (Ctrl+V) with the pointer over a window shows there
+ * instead of a design: a datasheet figure, a sketch, a scope capture.
+ *
+ * Which designs (or pictures) the windows show is remembered in this
+ * browser; nothing is saved in a document. `Shift+V` shows or hides them, opening a first one
  * (with its design picker) when there is none.
  */
+
 
 
 
@@ -56435,7 +56453,9 @@ const POLL_MS = 2000;
 const MAX_SCALE = 3;
 const FIT_MARGIN = 0.06;
 
-const windows = []; // { el, slot, doc, picture, view, fitted, etag, revision, chrome }
+const windows = []; // { el, slot, doc | pasted, picture, view, fitted, etag, revision, chrome }
+/** A pasted picture larger than this (as a data URL) is shown but not remembered. */
+const MAX_REMEMBERED_PICTURE = 1_500_000;
 let hidden = false;
 let pollTimer = null;
 
@@ -56445,12 +56465,15 @@ const dark = () => document.documentElement.classList.contains('dark');
 // ----- remembering ------------------------------------------------------------------
 
 function remember() {
+  const entry = (win, pictures) => (win.doc ? { path: win.doc.path, name: win.doc.name }
+    : win.pasted && pictures && win.pasted.src.length <= MAX_REMEMBERED_PICTURE ? { picture: win.pasted } : null);
+  const write = (pictures) => localStorage.setItem(STORE_KEY, JSON.stringify({ hidden, windows: windows.map((win) => entry(win, pictures)) }));
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({
-      hidden,
-      windows: windows.map((win) => (win.doc ? { path: win.doc.path, name: win.doc.name } : null)),
-    }));
-  } catch { /* remembered for this visit only */ }
+    write(true);
+  } catch {
+    // Storage full with pictures: keep at least the designs.
+    try { write(false); } catch { /* remembered for this visit only */ }
+  }
 }
 
 function remembered() {
@@ -56705,7 +56728,7 @@ function createWindow(doc = null) {
   el.hidden = hidden;
   pane.appendChild(el);
 
-  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox };
+  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap };
   win.chrome = floatingWindow(el, {
     key: `reference-${slot}`,
     resizable: true,
@@ -56731,7 +56754,24 @@ function createWindow(doc = null) {
   return win;
 }
 
+/** Show a pasted picture ({ src, aspect, width }) in the window. */
+function setPicture(win, image) {
+  win.doc = null;
+  win.pasted = { src: image.src, aspect: image.aspect, width: image.width };
+  const w = image.width || 800;
+  win.picture = { box: { x: 0, y: 0, w, h: w / image.aspect }, href: { light: image.src, dark: image.src } };
+  win.etag = null;
+  win.revision = null;
+  win.title.textContent = 'Pasted picture ▾';
+  win.swap.disabled = true;
+  showMessage(win, '');
+  fit(win);
+  remember();
+}
+
 function setDocument(win, doc) {
+  win.pasted = null;
+  win.swap.disabled = false;
   win.doc = doc ? { path: doc.path, name: doc.name } : null;
   win.picture = null;
   win.etag = null;
@@ -56739,7 +56779,7 @@ function setDocument(win, doc) {
   win.fitted = true;
   win.title.textContent = doc ? doc.name : 'Pick a design…';
   win.title.append(document.createTextNode(' ▾'));
-  showMessage(win, doc ? 'Loading…' : 'Click the title to pick a design to show here');
+  showMessage(win, doc ? 'Loading…' : 'Click the title to pick a design, or paste a picture (Ctrl+V)');
   if (doc) void loadInto(win, { force: true });
   remember();
 }
@@ -56748,7 +56788,10 @@ function setDocument(win, doc) {
  *  open there in the window instead: the two trade places. */
 async function swapWithEditor(win) {
   const shown = win.doc;
-  if (!shown) return;
+  if (!shown) {
+    if (win.pasted) logLine('A pasted picture is not a design: there is nothing to open in the editor.');
+    return;
+  }
   const path = editor.currentDocumentPath;
   if (!path) {
     logLine('Save this design first, so the reference window can hold it when the two swap.', 'error');
@@ -56858,12 +56901,32 @@ function showInReferenceWindow(doc) {
 
 function installReferenceWindows() {
   document.getElementById('btn-window-reference')?.addEventListener('click', () => toggleReferenceWindows());
+  // Ctrl+V with the pointer over a window puts the picture there.
+  takePastedPictures((file) => {
+    const win = hovered && !hidden && windows.includes(hovered) ? hovered : null;
+    if (!win) return false;
+    showMessage(win, 'Pasting…');
+    storedImage(file).then((image) => {
+      if (windows.includes(win)) setPicture(win, image);
+      logLine('Picture pasted into the reference window');
+    }, (err) => {
+      if (windows.includes(win)) showMessage(win, win.picture ? '' : 'Click the title to pick a design, or paste a picture (Ctrl+V)');
+      logLine(`Could not paste the picture: ${err.message}`, 'error');
+    });
+    return true;
+  });
   // A theme change swaps every picture for its other theme.
   new MutationObserver(() => windows.forEach(draw)).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   const saved = remembered();
   if (saved) {
     hidden = !!saved.hidden;
-    for (const doc of saved.windows) if (doc?.path) createWindow(doc);
+    for (const entry of saved.windows) {
+      if (entry?.path) createWindow(entry);
+      else if (typeof entry?.picture?.src === 'string' && /^data:image\/(png|jpeg|webp);/.test(entry.picture.src)) {
+        const win = createWindow();
+        if (win) setPicture(win, entry.picture);
+      }
+    }
   }
   syncButton();
 }

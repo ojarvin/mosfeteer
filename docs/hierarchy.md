@@ -98,6 +98,10 @@ its own and without taking the keyboard; **Fit** (or `f` with the pointer
 over it, or a double-click) shows it whole again. The title picks another design (typing narrows the list);
 **Swap** trades places with the editor -- the design opens there, and the
 one that was open moves into the window (it must be saved) -- and `+` opens
-another window. A window follows its design's file as it is saved (it asks
-every two seconds while shown). Which designs the windows show, and where
-they sit, is remembered in this browser; nothing is saved in a document.
+another window. A picture pasted (Ctrl+V) with the pointer over a window
+shows there instead of a design -- a datasheet figure, a scope capture --
+zoomed and panned the same way; elsewhere a paste still lands on the
+drawing. A window follows its design's file as it is saved (it asks
+every two seconds while shown). Which designs (or pictures, up to about
+1.5 MB each) the windows show, and where they sit, is remembered in this
+browser; nothing is saved in a document.
