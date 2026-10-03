@@ -32,6 +32,8 @@ test('a box carrying a plot saves, loads, and draws the sketch instead of a fram
   assert.match(svg, /class="plot-annotation"/);
   assert.match(svg, /ω<tspan[^>]*>p1<\/tspan>/);
   assert.doesNotMatch(svg, /<rect x="0" y="0" width="640" height="400"/);
+  // Its own paper, unframed, so the canvas grid stays out of the plot.
+  assert.match(svg, /<rect class="plot-paper" x="0" y="0" width="640" height="400" fill="#fff" stroke="none"\/>/);
   // A plain box is still a frame.
   const plain = new Circuit();
   plain.addAnnotation('box', { x: 0, y: 0, end: { x: 80, y: 80 } });

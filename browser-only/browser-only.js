@@ -27649,7 +27649,10 @@ function plotAnnotationSvg(label, opacity = '') {
     if (item.type === 'text') return text(item);
     return '';
   }).join('');
-  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
+  // On its own paper (#fff takes the theme's paper), so the canvas grid
+  // does not run through the plot's own.
+  const paper = `<rect class="plot-paper" x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#fff" stroke="none"/>`;
+  return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}</g>`;
 }
 
 /**
