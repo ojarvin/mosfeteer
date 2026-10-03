@@ -432,6 +432,27 @@ installStatusBar();
 
 // ----- history --------------------------------------------------------
 
+// Revisions that changed only a setting kept in the document (the analysis's
+// slider values), not the drawing: what was derived before them still holds.
+const settingsRevisions = new Set();
+
+/** A setting saved with the document changed (a coefficient, a Bode ratio):
+ *  the document is edited -- saved, and marked unsaved until then -- but
+ *  nothing derived from the drawing goes stale, and no undo entry is made. */
+export function markSettingsChanged() {
+  markModelChanged(false);
+  if (settingsRevisions.size > 5000) settingsRevisions.clear();
+  settingsRevisions.add(modelRevision);
+}
+
+/** Whether `revision` still describes the drawing: no edit since it but
+ *  settings changes. */
+export function revisionCurrent(revision) {
+  if (revision === null || revision === undefined) return false;
+  for (let r = revision + 1; r <= modelRevision; r++) if (!settingsRevisions.has(r)) return false;
+  return true;
+}
+
 export function markModelChanged(wires = true) {
   if (previewTransaction) {
     previewRevision += 1;
@@ -2515,6 +2536,43 @@ function renderedLabelTextBounds(group) {
 // MathML dimensions are available, the layout is recalculated below the figure.
 let equationAnnotationLayout = null;
 
+// Columns of left-aligned math labels placed from the model's estimate (a
+// graph's legend): once every label is measured, each is moved so their left
+// edges line up at `left` and they stack down from `top`, a `gap` apart. A
+// column settles once and is forgotten, so moving its labels later sticks.
+let labelColumns = [];
+
+/** Line up `ids` (math labels) at `left`, stacking down from `top`, once measured. */
+export function alignLabelColumn(ids, { left, top, gap = 0 }) {
+  labelColumns.push({ ids: [...ids], left, top, gap });
+}
+
+function reflowLabelColumns() {
+  if (!labelColumns.length) return false;
+  let moved = false;
+  labelColumns = labelColumns.filter((column) => {
+    const labels = column.ids.map((id) => circuit.labels.get(id));
+    if (labels.some((label) => !label)) return false;
+    if (!labels.every((label) => label._renderedTextBounds?.w > 0)) return true;
+    let top = column.top;
+    for (const label of labels) {
+      const box = label.bbox();
+      const x = snap(column.left + box.w / 2);
+      const y = snap(top + box.h / 2);
+      const anchor = label.anchorWorld();
+      if (anchor.x !== x || anchor.y !== y) {
+        label.moveTo(x, y);
+        moved = true;
+      }
+      top = label.bbox().y + label.bbox().h + column.gap;
+    }
+    return false;
+  });
+  // A layout correction, not an edit: the annotate it finishes is the undo entry.
+  if (moved) markModelChanged(false);
+  return moved;
+}
+
 function reflowEquationAnnotations() {
   const layout = equationAnnotationLayout;
   if (!layout) return false;
@@ -2672,7 +2730,7 @@ export function syncRenderedLabelMetrics() {
     keepAlignedEdge(label, before);
     changed = true;
   }
-  return reflowEquationAnnotations() || changed;
+  return reflowLabelColumns() || reflowEquationAnnotations() || changed;
 }
 
 function scheduleMeasuredLabelRender() {

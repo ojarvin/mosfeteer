@@ -9,7 +9,7 @@ import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
-import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -988,6 +988,32 @@ export function normalizePlot(plot) {
     quantity: typeof plot.quantity === 'string' ? plot.quantity.slice(0, 40) : 'A_{v}',
     phase: plot.phase === true,
   };
+}
+
+/** The analysis's saved numbers, checked: finite coefficients by symbol
+ *  name, and the Bode sketch's positive ratios. */
+export function normalizeAnalysisValues(value) {
+  const coefficients = {};
+  for (const [name, number] of Object.entries(value?.coefficients || {})) {
+    if (/^[A-Za-z][\w]{0,40}$/.test(name) && Number.isFinite(number)) coefficients[name] = number;
+  }
+  const raw = value?.bode;
+  const positive = (n) => (Number.isFinite(n) && n > 0 ? n : null);
+  let bode = null;
+  if (raw && typeof raw === 'object') {
+    const multipliers = {};
+    for (const [name, number] of Object.entries(raw.multipliers || {})) if (typeof name === 'string' && name.length <= 60 && positive(number)) multipliers[name] = number;
+    bode = { intrinsicGain: positive(raw.intrinsicGain), parasiticRatio: positive(raw.parasiticRatio), multipliers };
+  }
+  return { coefficients, bode };
+}
+
+function analysisValuesJSON(values) {
+  const coefficients = values?.coefficients || {};
+  const bode = values?.bode;
+  const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
+  if (!Object.keys(coefficients).length && !hasBode) return {};
+  return { analysisValues: { ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}), ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}) } };
 }
 
 /** A plot of several magnitude responses (signal-flow analysis): coloured
@@ -2291,6 +2317,9 @@ export class Circuit {
     this.beats = [];
     // Document tags, for finding a design in a workspace (the Atlas search).
     this.tags = [];
+    // Numbers the analysis plots with, kept with the drawing: the
+    // signal-flow coefficients (a_1 -> 0.5) and the Bode sketch's ratios.
+    this.analysisValues = { coefficients: {}, bode: null };
     this._routingEnvCache = new Map();
   }
 
@@ -2683,7 +2712,8 @@ export class Circuit {
    *  the middle of its box; any other part has none. */
   _syncTransferFunctionLabel(component) {
     if (!component) return null;
-    const variable = TRANSFER_FUNCTION_TYPES[component.type];
+    const gain = component.type === 'gain';
+    const variable = TRANSFER_FUNCTION_TYPES[component.type] || (gain ? 'gain' : null);
     let label = null;
     for (const candidate of [...this.labels.values()]) {
       if (candidate.owner !== component.refdes || candidate.role !== TRANSFER_FUNCTION_ROLE) continue;
@@ -2691,11 +2721,16 @@ export class Circuit {
       else label = candidate;
     }
     if (!variable) return null;
-    const text = `$${transferFunctionDisplay(component.value, variable)}$`;
+    const text = `$${gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    // A gain's coefficient sits inside its triangle when it fits there (a
+    // symbol or a short number), else above it.
+    const offset = gain
+      ? (new LabelInstance(this, { text, math: true, align: 'center' }).textWidth() <= 1.6 * GRID ? { x: 0, y: 0 } : { x: 0, y: -3 * GRID })
+      : { x: 0, y: 0 };
     if (!label) {
       label = this.addLabel({
         text, math: true, owner: component.refdes, role: TRANSFER_FUNCTION_ROLE,
-        offset: { x: 0, y: 0 }, align: 'center', selectable: false,
+        offset, align: 'center', selectable: false,
         style: { color: component.style.color },
       });
     } else if (label._text !== text) {
@@ -2703,7 +2738,7 @@ export class Circuit {
       label._mathBox = null;
       label.clearRenderedTextBounds();
     }
-    label.offset = { x: 0, y: 0 };
+    label.offset = offset;
     this.invalidateRoutingCache();
     return label;
   }
@@ -2992,9 +3027,11 @@ export class Circuit {
   setValue(refdes, value) {
     const c = this.getComponent(refdes);
     if (this._syncSwitchLabel(refdes, value)) return c;
-    // A transfer function must read; its box (and pins) follow the equation.
-    if (TRANSFER_FUNCTION_TYPES[c.type]) {
-      parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
+    // A transfer function (or a gain) must read; its box (and pins) follow
+    // the equation.
+    if (TRANSFER_FUNCTION_TYPES[c.type] || c.type === 'gain') {
+      if (c.type === 'gain') parseGain(value);
+      else parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
       this._syncTransferFunctionLabel(c);
       this.invalidateRoutingCache();
@@ -6986,6 +7023,7 @@ export class Circuit {
       ...this._netHighlightsJSON(),
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
+      ...analysisValuesJSON(this.analysisValues),
     };
   }
 
@@ -7001,6 +7039,7 @@ export class Circuit {
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
     circuit.tags = normalizeTags(data.tags);
+    circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     // A rail's group is keyed by its V_{..} spelling; older documents keyed
     // it by the plain one (`name:VSS`).
     const railKey = (key) => (key.startsWith('name:') ? `name:${railNameKey(key.slice(5))}` : key);

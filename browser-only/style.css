@@ -6320,3 +6320,33 @@ body.chrome-away [data-editor-edge="right"] {
   height: 28px;
   font: 0.8125rem ui-sans-serif, system-ui, sans-serif;
 }
+
+.signal-flow-coefficients[hidden] {
+  display: none;
+}
+
+.signal-flow-coefficient-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.signal-flow-coefficient {
+  display: grid;
+  grid-template-columns: minmax(2.5rem, auto) minmax(0, 1fr) 5.5rem;
+  align-items: center;
+  gap: 8px;
+}
+
+.signal-flow-coefficient-name {
+  font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif;
+  font-size: 1.05rem;
+}
+
+.signal-flow-coefficient input[type="range"] {
+  width: 100%;
+}
+
+.signal-flow-coefficient-value {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}

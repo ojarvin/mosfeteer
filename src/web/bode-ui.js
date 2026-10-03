@@ -18,7 +18,7 @@ import { bodeFigure, cornerNames } from '../core/bode-figure.js';
 import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { editor } from './editor-state.js';
-import { commit, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
+import { commit, markSettingsChanged, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
 import { fitView } from './canvas-view.js';
 import { logLine } from './status-bar-ui.js';
 import { GRID, snap } from '../core/grid.js';
@@ -30,6 +30,27 @@ const QUANTITIES = [
 ];
 
 const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance', 'other'];
+
+/** The ratios a document was left at (Circuit#analysisValues.bode): the
+ *  sketch opens with them. */
+function loadRatios() {
+  const saved = editor.circuit.analysisValues?.bode;
+  state.intrinsicGain = saved?.intrinsicGain || DEFAULT_INTRINSIC_GAIN;
+  state.parasiticRatio = saved?.parasiticRatio || DEFAULT_PARASITIC_RATIO;
+  state.multipliers = { ...(saved?.multipliers || {}) };
+}
+
+let saveFrame = 0;
+/** Keep the ratios with the document, once a frame while a slider moves. */
+function saveRatios() {
+  if (saveFrame) return;
+  saveFrame = requestAnimationFrame(() => {
+    saveFrame = 0;
+    const defaults = state.intrinsicGain === DEFAULT_INTRINSIC_GAIN && state.parasiticRatio === DEFAULT_PARASITIC_RATIO && !Object.keys(state.multipliers).length;
+    editor.circuit.analysisValues.bode = defaults ? null : { intrinsicGain: state.intrinsicGain, parasiticRatio: state.parasiticRatio, multipliers: { ...state.multipliers } };
+    markSettingsChanged();
+  });
+}
 
 /** Ratios chosen so far, by symbol: they outlast a re-analysis. */
 const state = {
@@ -256,6 +277,7 @@ export function renderBode(report) {
   if (!panel) return available;
   panel.replaceChildren();
   if (!available) return available;
+  loadRatios();
   if (!exactOf(report, state.quantity)) state.quantity = QUANTITIES.find(({ key }) => exactOf(report, key))?.key || 'transfer';
 
   const head = document.createElement('div');
@@ -282,6 +304,8 @@ export function renderBode(report) {
   reset.textContent = 'Reset ratios';
   reset.addEventListener('click', () => {
     Object.assign(state, { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} });
+    editor.circuit.analysisValues.bode = null;
+    markSettingsChanged();
     renderBode(state.report);
   });
   const place = document.createElement('button');
@@ -314,13 +338,13 @@ export function renderBode(report) {
   sliders.appendChild(slider({
     label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: indexE24(state.intrinsicGain), min: 0, max: 4 * PER_DECADE,
     text: (i) => String(stepE24(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
-    onInput: (i) => { state.intrinsicGain = stepE24(i); drawSketch(); },
+    onInput: (i) => { state.intrinsicGain = stepE24(i); saveRatios(); drawSketch(); },
   }));
   if (model?.parameters.some((parameter) => parameter.parasitic)) {
     sliders.appendChild(slider({
       label: 'Parasitic capacitance', tex: 'C_{par}/C', index: indexE24(state.parasiticRatio), min: -2 * PER_DECADE, max: PER_DECADE,
       text: (i) => String(stepE24(i)), title: 'Every MOS C_gs and C_gd, in units of C',
-      onInput: (i) => { state.parasiticRatio = stepE24(i); drawSketch(); },
+      onInput: (i) => { state.parasiticRatio = stepE24(i); saveRatios(); drawSketch(); },
     }));
   }
   const own = [...(model?.parameters || [])].filter((parameter) => !parameter.parasitic)
@@ -339,6 +363,7 @@ export function renderBode(report) {
         const value = stepE24(i);
         if (value === 1) delete state.multipliers[parameter.name];
         else state.multipliers[parameter.name] = value;
+        saveRatios();
         drawSketch();
       },
     }));

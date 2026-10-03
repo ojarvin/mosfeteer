@@ -9385,17 +9385,20 @@ __exports.signalFlowGraph = signalFlowGraph;
 __exports.coefficientValue = coefficientValue;
 __exports.blockTransferFunction = blockTransferFunction;
 __exports.analyzeSignalFlow = analyzeSignalFlow;
+__exports.eliminateSignals = eliminateSignals;
 __exports.transferTex = transferTex;
 __exports.complexText = complexText;
 __exports.responseCurve = responseCurve;
 __exports.responsePlot = responsePlot;
-let add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol; __bind(() => { ({ add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } = __require("src/core/analysis/rational.js")); });
+__exports.resultSymbols = resultSymbols;
+__exports.withCoefficients = withCoefficients;
+__exports.numericRootsOf = numericRootsOf;
+let add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, substituteRational, symbol; __bind(() => { ({ add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, substituteRational, symbol } = __require("src/core/analysis/rational.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
-let solveLinearSystem; __bind(() => { ({ solveLinearSystem } = __require("src/core/analysis/solve.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
-let bodeSketch, polynomialRoots; __bind(() => { ({ bodeSketch, polynomialRoots } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseTransferFunction } = __require("src/core/transfer-function.js")); });
+let bodeSketch, expressionSymbols, polynomialRoots; __bind(() => { ({ bodeSketch, expressionSymbols, polynomialRoots } = __require("src/core/analysis/bode.js")); });
+let TRANSFER_FUNCTION_TYPES, parseGain, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseGain, parseTransferFunction } = __require("src/core/transfer-function.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
 /**
  * Signal-flow analysis: transfer functions of a block diagram drawn from
@@ -9423,8 +9426,7 @@ let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core
 
 
 
-
-const JUNCTIONS = new Set(['signal_sum', 'signal_multiply']);
+const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
 const SOURCE_TYPES = new Set(['input']);
 // Parts that may sit on a signal wire without taking part in it.
@@ -9580,7 +9582,9 @@ function analyzeSignalFlow(circuit, options = {}) {
   // Unknowns: every signal a block or junction drives.
   const unknowns = [...signals.values()].filter((signal) => signal.driver && !signal.driver.source);
   const index = new Map(unknowns.map((signal, i) => [signal.key, i]));
-  const ops = createRationalOps({ variable });
+  // A big diagram's exact algebra is big: give it room, the elimination
+  // below keeps it as small as the diagram allows.
+  const ops = createRationalOps({ variable, maxOperations: 20_000_000 });
   const n = unknowns.length;
   const A = Array.from({ length: n }, () => Array(n).fill(ops.zero));
   const B = Array.from({ length: n }, () => Array(inputs.length).fill(ops.zero));
@@ -9612,6 +9616,14 @@ function analyzeSignalFlow(circuit, options = {}) {
         return failure('bad-transfer-function', `${component.refdes}: ${err.message}`);
       }
       feed(row, toRational(h), signalAt(component, 'in'));
+    } else if (component.type === 'gain') {
+      let k;
+      try {
+        k = coefficientValue(parseGain(component.value));
+      } catch (err) {
+        return failure('bad-gain', `${component.refdes}: ${err.message}`);
+      }
+      feed(row, toRational(k), signalAt(component, 'in'));
     } else if (component.type === 'signal_sum') {
       for (const term of JUNCTION_INPUTS) {
         const sign = component.negativeInputs?.has(term) ? ops.neg(ops.one) : ops.one;
@@ -9642,11 +9654,9 @@ function analyzeSignalFlow(circuit, options = {}) {
   const outputSource = sourceBySignal.get(output.key);
   let columns;
   if (index.has(output.key)) {
-    const solved = solveLinearSystem(A, B, { ops });
-    if (!solved.ok) return failure(solved.code || 'singular', solved.code === 'singular' || /singular/i.test(solved.error || '') ? 'the diagram has no unique solution: a loop with a gain of exactly 1 (check the signs at the sums)' : solved.error);
-    // The elimination leaves factors common to both sides (a loop's own
-    // characteristic polynomial, say): cancel them, as the engine does.
-    columns = solved.columns.map((column) => cancelCommonPolynomialFactor(column[index.get(output.key)], { variable, maxWork: 2_000_000 }));
+    const solved = eliminateSignals(A, B, index.get(output.key), ops, variable);
+    if (!solved.ok) return failure(solved.code, solved.error);
+    columns = solved.columns;
   } else if (outputSource) {
     columns = inputs.map((source) => (source.key === output.key ? ops.one : ops.zero));
   } else {
@@ -9655,6 +9665,81 @@ function analyzeSignalFlow(circuit, options = {}) {
 
   const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
   return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+}
+
+/**
+ * Solve `A x = B` for one unknown by eliminating the others one at a time,
+ * the way a signal-flow graph is reduced by hand: each signal is a weighted
+ * sum of others (A's rows are `x_y - sum G x = sum S u`). A node's self-loop
+ * folds into `1 / (1 - loop)`, then the node is substituted into every
+ * equation that reads it. The next node to go is always the cheapest
+ * (fewest inputs times readers), and each new coefficient has its common
+ * factors cancelled, so the expressions stay as small as the diagram allows
+ * -- where a generic elimination order makes a large symbolic diagram's
+ * algebra explode. Returns `{ ok, columns }`, a transfer function per column
+ * of B, or `{ ok: false, code, error }`.
+ */
+function eliminateSignals(A, B, outputIndex, ops, variable) {
+  const n = A.length;
+  const width = B[0]?.length ?? 0;
+  const cancel = (value) => cancelCommonPolynomialFactor(value, { variable, maxWork: 400_000 });
+  const G = A.map((row, y) => new Map(row.flatMap((a, x) => (x !== y && !ops.isZero(a) ? [[x, ops.neg(a)]] : []))));
+  const S = B.map((row) => new Map(row.flatMap((b, c) => (!ops.isZero(b) ? [[c, b]] : []))));
+  const readers = Array.from({ length: n }, () => new Set());
+  G.forEach((row, y) => { for (const x of row.keys()) readers[x].add(y); });
+  const alive = new Set(Array.from({ length: n }, (_, i) => i));
+  const budgetOut = () => ({ ok: false, code: 'budget', error: 'the diagram is too large to solve symbolically within the work limit: give some coefficients numbers, or split the diagram' });
+  const singular = { ok: false, code: 'singular', error: 'the diagram has no unique solution: a loop with a gain of exactly 1 (check the signs at the sums)' };
+  const exhausted = (value) => value?.budgetExceeded === true;
+  // v = (sum G x + S u) / (1 - loop).
+  const fold = (v) => {
+    const loop = G[v].get(v);
+    if (loop === undefined) return true;
+    G[v].delete(v);
+    readers[v].delete(v);
+    const d = ops.sub(ops.one, loop);
+    if (ops.isZero(d)) return false;
+    for (const [x, g] of G[v]) G[v].set(x, cancel(ops.div(g, d)));
+    for (const [c, s] of S[v]) S[v].set(c, cancel(ops.div(s, d)));
+    return true;
+  };
+  const accumulate = (map, key, value) => {
+    const sum = map.has(key) ? ops.add(map.get(key), value) : value;
+    if (ops.isZero(sum)) map.delete(key);
+    else map.set(key, cancel(sum));
+    return map.has(key);
+  };
+  while (alive.size > 1) {
+    let pick = -1;
+    let cost = Infinity;
+    for (const v of alive) {
+      if (v === outputIndex) continue;
+      const inputs = G[v].size - (G[v].has(v) ? 1 : 0);
+      const reading = readers[v].size - (readers[v].has(v) ? 1 : 0);
+      const c = inputs * reading;
+      if (c < cost) { cost = c; pick = v; }
+    }
+    const v = pick;
+    if (!fold(v)) return singular;
+    for (const y of [...readers[v]]) {
+      if (y === v || !alive.has(y)) continue;
+      const gyv = G[y].get(v);
+      G[y].delete(v);
+      for (const [x, g] of G[v]) {
+        if (accumulate(G[y], x, ops.mul(gyv, g))) readers[x].add(y);
+        else readers[x].delete(y);
+      }
+      for (const [c, s] of S[v]) accumulate(S[y], c, ops.mul(gyv, s));
+      if ([...G[y].values(), ...S[y].values()].some(exhausted)) return budgetOut();
+    }
+    for (const x of G[v].keys()) readers[x].delete(v);
+    alive.delete(v);
+  }
+  if (!fold(outputIndex)) return singular;
+  if (G[outputIndex].size) return singular;
+  const columns = Array.from({ length: width }, (_, c) => S[outputIndex].get(c) ?? ops.zero);
+  if (columns.some(exhausted)) return budgetOut();
+  return { ok: true, columns: columns.map(cancel) };
 }
 
 /** A signal by key, net name or id, or the refdes of a port on it. */
@@ -9685,13 +9770,15 @@ const isPlainNumber = (value) => value?.kind === 'number';
 /** Coefficient times a power of the variable, as one signed term. */
 function termTex(coefficient, powerText) {
   let tex = renderExpression(coefficient);
+  // A compound coefficient (a_1 - 1) keeps its own signs in its brackets: its
+  // leading minus belongs to its first term, not to the whole term.
+  if (coefficient.kind === 'add') return { negative: false, tex: powerText ? `\\left(${tex}\\right) ${powerText}` : tex };
   let negative = false;
   if (tex.startsWith('-')) {
     negative = true;
     tex = tex.slice(1).trim();
   }
-  const compound = coefficient.kind === 'add';
-  if (powerText) tex = tex === '1' ? powerText : `${compound ? `\\left(${tex}\\right)` : tex} ${powerText}`;
+  if (powerText) tex = tex === '1' ? powerText : `${tex} ${powerText}`;
   return { negative, tex };
 }
 
@@ -9867,6 +9954,35 @@ function responsePlot(traces, variable) {
       color: trace.color,
       points: curve.points.map(({ f, db }) => ({ f, db })),
     })),
+  };
+}
+
+// ----- coefficients given values ------------------------------------------------------
+
+/** The symbols a result depends on, besides its variable (`a_1`, `k`). */
+function resultSymbols(value, variable) {
+  const out = new Set();
+  expressionSymbols(value.numerator, variable, out);
+  expressionSymbols(value.denominator, variable, out);
+  return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/** A result with its symbols given numbers (`{ a_1: 0.5 }`), still exact. */
+function withCoefficients(value, values) {
+  const replacements = new Map();
+  for (const [name, number] of Object.entries(values || {})) {
+    if (Number.isFinite(number)) replacements.set(name, coefficientValue(String(Number(number.toPrecision(12)))));
+  }
+  if (!replacements.size) return value;
+  return cancelCommonPolynomialFactor(substituteRational(value, replacements), { variable: value.variable });
+}
+
+/** The zeros and poles of a result, numeric once its symbols have values. */
+function numericRootsOf(value) {
+  const variable = value.variable;
+  return {
+    zeros: numericRoots(coefficientList(value.numerator, variable)),
+    poles: numericRoots(coefficientList(value.denominator, variable)),
   };
 }
 
@@ -11762,7 +11878,7 @@ function cornerNames(poles, zeros) {
  * f/f_{s} for sampled systems, relative ω otherwise. Curve items carry
  * `trace`, their index. The traces' names go beside the figure, not in it.
  */
-function responseFigure(plot, { width = 480, height = 260, fontSize = 11, maxSpanDb = 160 } = {}) {
+function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
   const { low, high } = plot.range;
@@ -11772,10 +11888,12 @@ function responseFigure(plot, { width = 480, height = 260, fontSize = 11, maxSpa
   const bottom = 2 * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db));
-  let [dbLow, dbHigh] = niceRange(values, 20, 3);
-  if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
-  const step = dbHigh - dbLow > 100 ? 40 : 20;
+  // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
+  // a wide range (a high-order noise shaper reaches far down).
+  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000);
+  const [dbLow, dbHigh] = niceRange(values, 20, 0);
+  const span = dbHigh - dbLow;
+  const step = span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
   items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
   items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });
@@ -13567,8 +13685,10 @@ const SYMBOL_CATEGORY_RULES = [
   ['Macros', /^(opamp|opamp_diff|gm|comparator|comparator_clocked|adc|dac|adc_diff|dac_diff)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
-  ['Blocks / shells', /^block$/],
-  ['Signal flow', /^(signal_(sum|multiply)|filter_(lpf|hpf|bpf|notch)|tf_[sz])$/],
+  // Block-diagram drawing parts; the signal-flow analysis reads only the
+  // next group's.
+  ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch))$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_[sz]|gain)$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each
@@ -14037,7 +14157,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, gain } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -14154,6 +14274,7 @@ const symbolTypes = {
   filter_notch,
   tf_s,
   tf_z,
+  gain,
 };
 
 /** Ordered list of type names (for palettes / docs). */
@@ -14959,6 +15080,34 @@ function transferFunctionBlock(type, variable) {
 const tf_s = transferFunctionBlock('tf_s', 's');
 const tf_z = transferFunctionBlock('tf_z', 'z');
 
+/**
+ * A gain: the block-diagram triangle, pointing the way the signal goes, with
+ * its one coefficient (a number or a symbol, `k`, `a_1`, `2*g_m`) drawn
+ * inside it as math when it fits, above it otherwise (Circuit
+ * #_syncTransferFunctionLabel). Its shape already shows the direction, so its
+ * input wire takes no automatic arrowhead.
+ */
+const gain = defineSymbol({
+  type: 'gain',
+  description: 'Gain',
+  refPrefix: 'K',
+  terminals: [
+    { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+    { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -80, w: 160, h: 160 },
+  graphics: [
+    { kind: 'path', d: 'M -80 0 L -48 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M 52 0 L -48 -60 L -48 60 Z', style: 'emph' },
+    { kind: 'path', d: 'M 52 0 L 80 0', style: 'symbol', terminalLead: true },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: 'k',
+  allowFloatingTerminals: true,
+});
+
 __exports.signal_sum = signal_sum;
 __exports.signal_multiply = signal_multiply;
 __exports.filter_lpf = filter_lpf;
@@ -14967,6 +15116,7 @@ __exports.filter_bpf = filter_bpf;
 __exports.filter_notch = filter_notch;
 __exports.tf_s = tf_s;
 __exports.tf_z = tf_z;
+__exports.gain = gain;
 };
 
 __modules["src/core/components/solder.js"] = function (__require, __exports) {
@@ -16604,6 +16754,7 @@ __exports.componentLabelText = componentLabelText;
 __exports.normalizeImage = normalizeImage;
 __exports.normalizeTiming = normalizeTiming;
 __exports.normalizePlot = normalizePlot;
+__exports.normalizeAnalysisValues = normalizeAnalysisValues;
 __exports.pathHasDiagonal = pathHasDiagonal;
 __exports.diagonalDraftPath = diagonalDraftPath;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
@@ -16617,7 +16768,7 @@ let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_S
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
-let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, parseTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, parseGain, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
 
 
@@ -17609,6 +17760,32 @@ function normalizePlot(plot) {
     quantity: typeof plot.quantity === 'string' ? plot.quantity.slice(0, 40) : 'A_{v}',
     phase: plot.phase === true,
   };
+}
+
+/** The analysis's saved numbers, checked: finite coefficients by symbol
+ *  name, and the Bode sketch's positive ratios. */
+function normalizeAnalysisValues(value) {
+  const coefficients = {};
+  for (const [name, number] of Object.entries(value?.coefficients || {})) {
+    if (/^[A-Za-z][\w]{0,40}$/.test(name) && Number.isFinite(number)) coefficients[name] = number;
+  }
+  const raw = value?.bode;
+  const positive = (n) => (Number.isFinite(n) && n > 0 ? n : null);
+  let bode = null;
+  if (raw && typeof raw === 'object') {
+    const multipliers = {};
+    for (const [name, number] of Object.entries(raw.multipliers || {})) if (typeof name === 'string' && name.length <= 60 && positive(number)) multipliers[name] = number;
+    bode = { intrinsicGain: positive(raw.intrinsicGain), parasiticRatio: positive(raw.parasiticRatio), multipliers };
+  }
+  return { coefficients, bode };
+}
+
+function analysisValuesJSON(values) {
+  const coefficients = values?.coefficients || {};
+  const bode = values?.bode;
+  const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
+  if (!Object.keys(coefficients).length && !hasBode) return {};
+  return { analysisValues: { ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}), ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}) } };
 }
 
 /** A plot of several magnitude responses (signal-flow analysis): coloured
@@ -18912,6 +19089,9 @@ class Circuit {
     this.beats = [];
     // Document tags, for finding a design in a workspace (the Atlas search).
     this.tags = [];
+    // Numbers the analysis plots with, kept with the drawing: the
+    // signal-flow coefficients (a_1 -> 0.5) and the Bode sketch's ratios.
+    this.analysisValues = { coefficients: {}, bode: null };
     this._routingEnvCache = new Map();
   }
 
@@ -19304,7 +19484,8 @@ class Circuit {
    *  the middle of its box; any other part has none. */
   _syncTransferFunctionLabel(component) {
     if (!component) return null;
-    const variable = TRANSFER_FUNCTION_TYPES[component.type];
+    const gain = component.type === 'gain';
+    const variable = TRANSFER_FUNCTION_TYPES[component.type] || (gain ? 'gain' : null);
     let label = null;
     for (const candidate of [...this.labels.values()]) {
       if (candidate.owner !== component.refdes || candidate.role !== TRANSFER_FUNCTION_ROLE) continue;
@@ -19312,11 +19493,16 @@ class Circuit {
       else label = candidate;
     }
     if (!variable) return null;
-    const text = `$${transferFunctionDisplay(component.value, variable)}$`;
+    const text = `$${gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    // A gain's coefficient sits inside its triangle when it fits there (a
+    // symbol or a short number), else above it.
+    const offset = gain
+      ? (new LabelInstance(this, { text, math: true, align: 'center' }).textWidth() <= 1.6 * GRID ? { x: 0, y: 0 } : { x: 0, y: -3 * GRID })
+      : { x: 0, y: 0 };
     if (!label) {
       label = this.addLabel({
         text, math: true, owner: component.refdes, role: TRANSFER_FUNCTION_ROLE,
-        offset: { x: 0, y: 0 }, align: 'center', selectable: false,
+        offset, align: 'center', selectable: false,
         style: { color: component.style.color },
       });
     } else if (label._text !== text) {
@@ -19324,7 +19510,7 @@ class Circuit {
       label._mathBox = null;
       label.clearRenderedTextBounds();
     }
-    label.offset = { x: 0, y: 0 };
+    label.offset = offset;
     this.invalidateRoutingCache();
     return label;
   }
@@ -19613,9 +19799,11 @@ class Circuit {
   setValue(refdes, value) {
     const c = this.getComponent(refdes);
     if (this._syncSwitchLabel(refdes, value)) return c;
-    // A transfer function must read; its box (and pins) follow the equation.
-    if (TRANSFER_FUNCTION_TYPES[c.type]) {
-      parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
+    // A transfer function (or a gain) must read; its box (and pins) follow
+    // the equation.
+    if (TRANSFER_FUNCTION_TYPES[c.type] || c.type === 'gain') {
+      if (c.type === 'gain') parseGain(value);
+      else parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
       this._syncTransferFunctionLabel(c);
       this.invalidateRoutingCache();
@@ -23607,6 +23795,7 @@ class Circuit {
       ...this._netHighlightsJSON(),
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
+      ...analysisValuesJSON(this.analysisValues),
     };
   }
 
@@ -23622,6 +23811,7 @@ class Circuit {
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
     circuit.tags = normalizeTags(data.tags);
+    circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     // A rail's group is keyed by its V_{..} spelling; older documents keyed
     // it by the plain one (`name:VSS`).
     const railKey = (key) => (key.startsWith('name:') ? `name:${railNameKey(key.slice(5))}` : key);
@@ -24509,7 +24699,7 @@ let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = _
 let autoRoute; __bind(() => { ({ autoRoute } = __require("src/core/router.js")); });
 let escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg; __bind(() => { ({ escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } = __require("src/core/style.js")); });
 let INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters; __bind(() => { ({ INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } = __require("src/core/model.js")); });
-let defaultArrowhead, polylineArrowheads; __bind(() => { ({ defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
+let arrowheadEnds, defaultArrowhead, polylineArrowheads; __bind(() => { ({ arrowheadEnds, defaultArrowhead, polylineArrowheads } = __require("src/core/line-style.js")); });
 let hiddenSupplyBarLabels, supplyBars; __bind(() => { ({ hiddenSupplyBarLabels, supplyBars } = __require("src/core/supply-bars.js")); });
 let sizeReplacedNameLabels; __bind(() => { ({ sizeReplacedNameLabels } = __require("src/core/mos-size.js")); });
 let closedSwitchHighlight, drawnNetPaths, switchState; __bind(() => { ({ closedSwitchHighlight, drawnNetPaths, switchState } = __require("src/core/beats.js")); });
@@ -24586,7 +24776,34 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply']);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+
+/** Signal-flow inputs whose wires carry an arrowhead into them without
+ *  being asked: a sum's or multiplier's inputs and a transfer function's
+ *  input (a gain's triangle already points the way). By pin ("x,y"). */
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+
+function signalInputPins(circuit) {
+  const pins = new Set();
+  for (const component of circuit.components.values()) {
+    if (!AUTO_ARROW_TYPES.has(component.type)) continue;
+    for (const terminal of component.terminalDefs) {
+      if (terminal.signalRole !== 'input') continue;
+      const world = component.terminalWorld(terminal.name);
+      pins.add(`${world.x},${world.y}`);
+    }
+  }
+  return pins;
+}
+
+/** A wire's arrowhead with heads added where it ends on a signal input. */
+function withSignalArrows(value, pins, first, last) {
+  if (!pins.size) return value;
+  const ends = arrowheadEnds(value);
+  const start = ends.start || (first && pins.has(`${first.x},${first.y}`));
+  const end = ends.end || (last && pins.has(`${last.x},${last.y}`));
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : value;
+}
 
 function bodyEdgePinInsets(circuit) {
   const insets = new Map();
@@ -25475,6 +25692,7 @@ function svgString(circuit, opts = {}) {
   const UNPAINTED = ' stroke-opacity="0"';
   let pinInsetMap = null;
   const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
+  const signalPins = signalInputPins(circuit);
   for (const net of nets) {
     // A beat draws only the wire that joins what it shows (see beats.js).
     const shown = beat?.wires.get(net.id) ?? 'all';
@@ -25519,7 +25737,8 @@ function svgString(circuit, opts = {}) {
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
         const inked = !opacity && solidStyle(netStyle);
-        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(pinInsets, pts, netStyle?.arrowhead));
+        const arrowhead = withSignalArrows(netStyle?.arrowhead, signalPins, pts[0], pts.at(-1));
+        const geometry = polylineArrowheads(pts, arrowhead, wireArrowheadOptions(pinInsets, pts, arrowhead));
         if (inked) addInk(inkAttrs(netStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, netStyle?.color, opacity));
@@ -25530,7 +25749,8 @@ function svgString(circuit, opts = {}) {
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, shown !== 'all' ? FADE_INK : highlight);
         const inked = !opacity && solidStyle(segmentStyle);
-        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(pinInsets, [a, b], segmentStyle.arrowhead));
+        const arrowhead = withSignalArrows(segmentStyle.arrowhead, signalPins, i === 1 ? a : null, i === pts.length - 1 ? b : null);
+        const geometry = polylineArrowheads([a, b], arrowhead, wireArrowheadOptions(pinInsets, [a, b], arrowhead));
         // Solid wires are painted by the shared ink path below, but dashed
         // and ghosted wires paint their own element. Use the same shortened
         // shaft for those visible strokes so a dash cannot run underneath an
@@ -29367,6 +29587,9 @@ __exports.MAX_EDGE_SHIFT = MAX_EDGE_SHIFT;
 
 __modules["src/core/transfer-function.js"] = function (__require, __exports) {
 __exports.isTransferFunction = isTransferFunction;
+__exports.isSignalBlock = isSignalBlock;
+__exports.parseGain = parseGain;
+__exports.gainDisplay = gainDisplay;
 __exports.parseTransferFunction = parseTransferFunction;
 __exports.polynomialTex = polynomialTex;
 __exports.transferFunctionTex = transferFunctionTex;
@@ -29396,6 +29619,28 @@ const TRANSFER_FUNCTION_ROLE = 'transfer-function';
 
 function isTransferFunction(component) {
   return !!component && Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type);
+}
+
+/** A gain block or a transfer-function block: a value drawn as math. */
+function isSignalBlock(component) {
+  return isTransferFunction(component) || component?.type === 'gain';
+}
+
+/** A gain's value: one coefficient (`k`, `0.5`, `2*g_m`, `-a_1`). */
+function parseGain(text) {
+  const tokens = coefficients(`[${String(text ?? '').trim()}]`, 'gain');
+  if (tokens.length !== 1) throw new Error('a gain is one coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m)');
+  return tokens[0];
+}
+
+/** A gain's value as TeX, or a plain mark when it does not read. */
+function gainDisplay(text) {
+  try {
+    const token = parseGain(text);
+    return `${token.startsWith('-') ? '-' : ''}${coefficientTex(token.replace(/^[-+]/, ''))}`;
+  } catch {
+    return '\\text{?}';
+  }
 }
 
 /** The coefficient tokens of one list: `[1 -2, a_1]` -> ['1', '-2', 'a_1']. */
@@ -31172,7 +31417,7 @@ let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, anal
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, visibleNets; __bind(() => { ({ commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, visibleNets } = __require("src/web/main.js")); });
+let commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets; __bind(() => { ({ commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } = __require("src/web/main.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 /**
  * The small-signal analysis dock: its form and remembered settings, running
@@ -32035,7 +32280,7 @@ function syncAnalysisDock() {
   });
   followGroundMarks();
   const stale = document.getElementById('analysis-stale');
-  if (stale) stale.hidden = !latestAnalysisReport || analysisReportRevision === editor.modelRevision;
+  if (stale) stale.hidden = !latestAnalysisReport || revisionCurrent(analysisReportRevision);
 }
 
 function setAnalysisPick(selectId) {
@@ -33557,7 +33802,7 @@ let lastQuery = '';
 
 const HINTS = {
   workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc clears the pick · Enter or Shift+Backspace returns',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -35199,6 +35444,8 @@ function onAtlasKey(ev) {
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
+  // The symbol sheet is a reference glanced at: Esc closes it.
+  else if (key === 'Escape' && state.source === 'symbols') void closeAtlas();
   else if (key === 'Escape') {
     state.selected = null;
     requestDraw();
@@ -36558,7 +36805,7 @@ let bodeFigure, cornerNames; __bind(() => { ({ bodeFigure, cornerNames } = __req
 let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let commit, render, selectedLabel, setLabelSelection, setSelection; __bind(() => { ({ commit, render, selectedLabel, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let commit, markSettingsChanged, render, selectedLabel, setLabelSelection, setSelection; __bind(() => { ({ commit, markSettingsChanged, render, selectedLabel, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
@@ -36591,6 +36838,27 @@ const QUANTITIES = [
 ];
 
 const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance', 'other'];
+
+/** The ratios a document was left at (Circuit#analysisValues.bode): the
+ *  sketch opens with them. */
+function loadRatios() {
+  const saved = editor.circuit.analysisValues?.bode;
+  state.intrinsicGain = saved?.intrinsicGain || DEFAULT_INTRINSIC_GAIN;
+  state.parasiticRatio = saved?.parasiticRatio || DEFAULT_PARASITIC_RATIO;
+  state.multipliers = { ...(saved?.multipliers || {}) };
+}
+
+let saveFrame = 0;
+/** Keep the ratios with the document, once a frame while a slider moves. */
+function saveRatios() {
+  if (saveFrame) return;
+  saveFrame = requestAnimationFrame(() => {
+    saveFrame = 0;
+    const defaults = state.intrinsicGain === DEFAULT_INTRINSIC_GAIN && state.parasiticRatio === DEFAULT_PARASITIC_RATIO && !Object.keys(state.multipliers).length;
+    editor.circuit.analysisValues.bode = defaults ? null : { intrinsicGain: state.intrinsicGain, parasiticRatio: state.parasiticRatio, multipliers: { ...state.multipliers } };
+    markSettingsChanged();
+  });
+}
 
 /** Ratios chosen so far, by symbol: they outlast a re-analysis. */
 const state = {
@@ -36817,6 +37085,7 @@ function renderBode(report) {
   if (!panel) return available;
   panel.replaceChildren();
   if (!available) return available;
+  loadRatios();
   if (!exactOf(report, state.quantity)) state.quantity = QUANTITIES.find(({ key }) => exactOf(report, key))?.key || 'transfer';
 
   const head = document.createElement('div');
@@ -36843,6 +37112,8 @@ function renderBode(report) {
   reset.textContent = 'Reset ratios';
   reset.addEventListener('click', () => {
     Object.assign(state, { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} });
+    editor.circuit.analysisValues.bode = null;
+    markSettingsChanged();
     renderBode(state.report);
   });
   const place = document.createElement('button');
@@ -36875,13 +37146,13 @@ function renderBode(report) {
   sliders.appendChild(slider({
     label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: indexE24(state.intrinsicGain), min: 0, max: 4 * PER_DECADE,
     text: (i) => String(stepE24(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
-    onInput: (i) => { state.intrinsicGain = stepE24(i); drawSketch(); },
+    onInput: (i) => { state.intrinsicGain = stepE24(i); saveRatios(); drawSketch(); },
   }));
   if (model?.parameters.some((parameter) => parameter.parasitic)) {
     sliders.appendChild(slider({
       label: 'Parasitic capacitance', tex: 'C_{par}/C', index: indexE24(state.parasiticRatio), min: -2 * PER_DECADE, max: PER_DECADE,
       text: (i) => String(stepE24(i)), title: 'Every MOS C_gs and C_gd, in units of C',
-      onInput: (i) => { state.parasiticRatio = stepE24(i); drawSketch(); },
+      onInput: (i) => { state.parasiticRatio = stepE24(i); saveRatios(); drawSketch(); },
     }));
   }
   const own = [...(model?.parameters || [])].filter((parameter) => !parameter.parasitic)
@@ -36900,6 +37171,7 @@ function renderBode(report) {
         const value = stepE24(i);
         if (value === 1) delete state.multipliers[parameter.name];
         else state.multipliers[parameter.name] = value;
+        saveRatios();
         drawSketch();
       },
     }));
@@ -38951,6 +39223,10 @@ function selectContextTarget(target) {
     if (editor.selLabels.has(target.value.id)) return;
     setSelection([]);
     setLabelSelection([target.value.id]);
+  } else if (target.kind === 'wire' && editor.selectedWires?.has(`${target.value.net.id}:${target.value.branch}:${target.value.segment}`)) {
+    // A segment of a wire selection keeps it: its menu acts on all of them
+    // (arrowheads on every Shift-selected segment, say).
+    return;
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     if (!net || editor.selectedNets.has(net.id)) return;
@@ -46007,7 +46283,7 @@ let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
 let MOS_SIZE_ROLE, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
-let TRANSFER_FUNCTION_TYPES, isTransferFunction, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isTransferFunction, parseTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isSignalBlock, parseGain, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isSignalBlock, parseGain, parseTransferFunction } = __require("src/core/transfer-function.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
@@ -46069,14 +46345,16 @@ function restoreBoxState(label, state) {
 }
 
 function inlineEditSchematicBlock(component) {
-  if (!component || (component.type !== 'block' && !isTransferFunction(component)) || editor.inlineInput) return;
-  const transfer = isTransferFunction(component);
+  if (!component || (component.type !== 'block' && !isSignalBlock(component)) || editor.inlineInput) return;
+  const transfer = isSignalBlock(component);
   const pane = document.querySelector('.canvas-pane');
   const input = document.createElement('textarea');
   input.value = component.value || '';
   input.spellcheck = false;
   input.className = `label-inline-editor block-inline-editor${transfer ? ' tf-inline-editor' : ''}`;
-  if (transfer) input.title = component.type === 'tf_z'
+  if (transfer) input.title = component.type === 'gain'
+    ? 'One coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m). Enter applies, Esc cancels.'
+    : component.type === 'tf_z'
     ? "tf([num], [den]) or a gain, in ascending powers of z^-1 ('Variable', 'z' for descending powers of z). Enter applies, Esc cancels."
     : 'tf([num], [den]) or a gain, coefficients highest power of s first. Enter applies, Esc cancels.';
   input.style.position = 'fixed';
@@ -46110,7 +46388,8 @@ function inlineEditSchematicBlock(component) {
       if (transfer) {
         // The box fits the new equation, and its wires follow its pins.
         try {
-          parseTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
+          if (component.type === 'gain') parseGain(text);
+          else parseTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {
           logLine(`${component.refdes}: ${err.message}`, 'error');
           render();
@@ -46131,7 +46410,7 @@ function openComponentChildLabelEditor(component) {
     openReferenceMarkerEditor(component);
     return;
   }
-  if (component.type === 'block' || isTransferFunction(component)) {
+  if (component.type === 'block' || isSignalBlock(component)) {
     inlineEditSchematicBlock(component);
     return;
   }
@@ -47055,6 +47334,8 @@ function layoutSuggestions(items, grid = GRID) {
 __modules["src/web/main.js"] = function (__require, __exports) {
 __exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
+__exports.markSettingsChanged = markSettingsChanged;
+__exports.revisionCurrent = revisionCurrent;
 __exports.markModelChanged = markModelChanged;
 __exports.commit = commit;
 __exports.snapshot = snapshot;
@@ -47109,6 +47390,7 @@ __exports.splicePreviewTarget = splicePreviewTarget;
 __exports.placePending = placePending;
 __exports.render = render;
 __exports.draftRoutePath = draftRoutePath;
+__exports.alignLabelColumn = alignLabelColumn;
 __exports.syncRenderedLabelMetrics = syncRenderedLabelMetrics;
 __exports.renderCanvas = renderCanvas;
 __exports.beginMarqueeSelection = beginMarqueeSelection;
@@ -47645,6 +47927,27 @@ let logDrawerState = LOG_DRAWER_CLOSED;
 installStatusBar();
 
 // ----- history --------------------------------------------------------
+
+// Revisions that changed only a setting kept in the document (the analysis's
+// slider values), not the drawing: what was derived before them still holds.
+const settingsRevisions = new Set();
+
+/** A setting saved with the document changed (a coefficient, a Bode ratio):
+ *  the document is edited -- saved, and marked unsaved until then -- but
+ *  nothing derived from the drawing goes stale, and no undo entry is made. */
+function markSettingsChanged() {
+  markModelChanged(false);
+  if (settingsRevisions.size > 5000) settingsRevisions.clear();
+  settingsRevisions.add(modelRevision);
+}
+
+/** Whether `revision` still describes the drawing: no edit since it but
+ *  settings changes. */
+function revisionCurrent(revision) {
+  if (revision === null || revision === undefined) return false;
+  for (let r = revision + 1; r <= modelRevision; r++) if (!settingsRevisions.has(r)) return false;
+  return true;
+}
 
 function markModelChanged(wires = true) {
   if (previewTransaction) {
@@ -49729,6 +50032,43 @@ function renderedLabelTextBounds(group) {
 // MathML dimensions are available, the layout is recalculated below the figure.
 let equationAnnotationLayout = null;
 
+// Columns of left-aligned math labels placed from the model's estimate (a
+// graph's legend): once every label is measured, each is moved so their left
+// edges line up at `left` and they stack down from `top`, a `gap` apart. A
+// column settles once and is forgotten, so moving its labels later sticks.
+let labelColumns = [];
+
+/** Line up `ids` (math labels) at `left`, stacking down from `top`, once measured. */
+function alignLabelColumn(ids, { left, top, gap = 0 }) {
+  labelColumns.push({ ids: [...ids], left, top, gap });
+}
+
+function reflowLabelColumns() {
+  if (!labelColumns.length) return false;
+  let moved = false;
+  labelColumns = labelColumns.filter((column) => {
+    const labels = column.ids.map((id) => circuit.labels.get(id));
+    if (labels.some((label) => !label)) return false;
+    if (!labels.every((label) => label._renderedTextBounds?.w > 0)) return true;
+    let top = column.top;
+    for (const label of labels) {
+      const box = label.bbox();
+      const x = snap(column.left + box.w / 2);
+      const y = snap(top + box.h / 2);
+      const anchor = label.anchorWorld();
+      if (anchor.x !== x || anchor.y !== y) {
+        label.moveTo(x, y);
+        moved = true;
+      }
+      top = label.bbox().y + label.bbox().h + column.gap;
+    }
+    return false;
+  });
+  // A layout correction, not an edit: the annotate it finishes is the undo entry.
+  if (moved) markModelChanged(false);
+  return moved;
+}
+
 function reflowEquationAnnotations() {
   const layout = equationAnnotationLayout;
   if (!layout) return false;
@@ -49886,7 +50226,7 @@ function syncRenderedLabelMetrics() {
     keepAlignedEdge(label, before);
     changed = true;
   }
-  return reflowEquationAnnotations() || changed;
+  return reflowLabelColumns() || reflowEquationAnnotations() || changed;
 }
 
 function scheduleMeasuredLabelRender() {
@@ -58855,14 +59195,16 @@ __exports.collapsedPanels = collapsedPanels;
 
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.installSignalFlowUi = installSignalFlowUi;
-let TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, responsePlot, signalFlowGraph; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, responsePlot, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
+let TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, complexText, hasSignalFlow, numericRootsOf, responsePlot, resultSymbols, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
+let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let responseFigure; __bind(() => { ({ responseFigure } = __require("src/core/bode-figure.js")); });
 let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let analysisDialog; __bind(() => { ({ analysisDialog } = __require("src/web/elements.js")); });
-let commit, render, setLabelSelection, setSelection; __bind(() => { ({ commit, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 /**
@@ -58891,6 +59233,8 @@ let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js"));
 
 
 
+
+
 // Devices the small-signal analysis models: a drawing with any opens in it.
 const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
 
@@ -58900,6 +59244,10 @@ const settings = { output: '', sources: {} }; // source id -> 'input' | 'zero' |
 let latest = null;
 // The graph's traces, kept across derives: { id, label (TeX), color, value, variable, on }.
 let traces = [];
+// Numbers for the symbols in the results (a_1, k), 1 until set: the graph and
+// the numeric poles and zeros use them. Kept in the document, so a drawing
+// opens with the numbers it was left at.
+const coefficients = () => editor.circuit.analysisValues.coefficients;
 let modeBar = null;
 let section = null;
 let actions = null; // this mode's buttons, in the window's own footer
@@ -58987,7 +59335,7 @@ function fillForm() {
   const problems = section.querySelector('.signal-flow-issues');
   problems.replaceChildren(...issues.map((issue) => el('p', { class: 'analysis-error', text: issue.message })));
   problems.hidden = !issues.length;
-  section.querySelector('.signal-flow-stale').hidden = !latest || derivedRevision === editor.modelRevision;
+  section.querySelector('.signal-flow-stale').hidden = !latest || revisionCurrent(derivedRevision);
 }
 
 // ----- results --------------------------------------------------------------------------
@@ -58996,6 +59344,66 @@ function mathRow(label, tex) {
   const value = el('div', { class: 'analysis-equation-value', 'aria-label': tex });
   value.innerHTML = texToMathML(tex);
   return el('div', { class: 'analysis-equation-row' }, [el('div', { class: 'analysis-equation-label', text: label }), value]);
+}
+
+// ----- coefficients ---------------------------------------------------------------------
+
+/** Every symbol the results and the graph's traces depend on. */
+function currentSymbols() {
+  const names = new Set();
+  for (const trace of traces) for (const name of resultSymbols(trace.value, trace.variable)) names.add(name);
+  if (latest?.ok) for (const entry of latest.entries) for (const name of resultSymbols(entry.value, latest.variable)) names.add(name);
+  return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/** A result with every symbol given its number (1 until set). */
+function numeric(value, variable) {
+  const values = {};
+  for (const name of resultSymbols(value, variable)) values[name] = coefficients()[name] ?? 1;
+  return withCoefficients(value, values);
+}
+
+let redrawFrame = 0;
+/** Redraw what the coefficients feed, once a frame while a slider moves. */
+function coefficientsChanged() {
+  if (redrawFrame) return;
+  redrawFrame = requestAnimationFrame(() => {
+    redrawFrame = 0;
+    markSettingsChanged();
+    renderGraph();
+    renderResults();
+  });
+}
+
+function renderCoefficients() {
+  const host = section.querySelector('.signal-flow-coefficients');
+  const names = currentSymbols();
+  host.hidden = !names.length;
+  const rows = host.querySelector('.signal-flow-coefficient-rows');
+  rows.replaceChildren();
+  for (const name of names) {
+    const value = coefficients()[name] ?? 1;
+    const label = el('span', { class: 'signal-flow-coefficient-name' });
+    label.innerHTML = texToMathML(symbolText(name));
+    const slider = el('input', { type: 'range', min: String(-3 * PER_DECADE), max: String(3 * PER_DECADE), step: '1', 'aria-label': `${name}: slide to change` });
+    slider.value = String(indexE24(Math.abs(value) || 1));
+    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, value: String(value) });
+    slider.addEventListener('input', () => {
+      // The slider sets the size; a value typed negative keeps its sign.
+      const sign = (coefficients()[name] ?? 1) < 0 ? -1 : 1;
+      coefficients()[name] = sign * stepE24(Number(slider.value));
+      field.value = String(coefficients()[name]);
+      coefficientsChanged();
+    });
+    field.addEventListener('input', () => {
+      const number = Number(field.value);
+      if (!field.value.trim() || !Number.isFinite(number)) return;
+      coefficients()[name] = number;
+      if (number) slider.value = String(indexE24(Math.abs(number)));
+      coefficientsChanged();
+    });
+    rows.append(el('div', { class: 'signal-flow-coefficient' }, [label, slider, field]));
+  }
 }
 
 // ----- the graph ------------------------------------------------------------------------
@@ -59056,13 +59464,14 @@ function addTrace(entry, variable, output) {
   if (traces.some((trace) => trace.id === id)) return;
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
-  traces.push({ id, label: entry.equation, color, value: entry.value, variable, on: true });
+  // A trace is named by its ratio (OUT/IN); the equation can be annotated on its own.
+  traces.push({ id, label: entry.label, equation: entry.equation, color, value: entry.value, variable, on: true });
 }
 
 function renderGraph() {
   const host = section.querySelector('.signal-flow-graph');
   host.replaceChildren();
-  const plot = traces.length ? responsePlot(shownTraces(), traceVariable()) : null;
+  const plot = traces.length ? responsePlot(shownTraces().map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), traceVariable()) : null;
   host.hidden = !traces.length;
   if (!traces.length) return;
   host.append(el('div', { class: 'analysis-equation-label', text: 'Magnitude' }));
@@ -59076,12 +59485,12 @@ function renderGraph() {
     const math = el('span', { class: 'signal-flow-legend-math' });
     math.innerHTML = texToMathML(trace.label);
     math.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderGraph(); } });
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); } });
     legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
   }
   host.append(legend);
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderGraph(); renderResults(); } }),
+    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderCoefficients(); renderGraph(); renderResults(); } }),
     el('button', { type: 'button', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !plot, onclick: annotateGraph }),
   ]));
 }
@@ -59090,12 +59499,17 @@ function renderGraph() {
  *  math label in its colour beside it (children of the box, moving with it). */
 function annotateGraph() {
   const shown = shownTraces();
-  const plot = responsePlot(shown, traceVariable());
+  const plot = responsePlot(shown.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) })), traceVariable());
   if (!plot) return;
+  // The numbers the symbols were drawn with, under the legend.
+  const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];
+  // One coefficient a line, left-aligned under the trace names.
+  const values = used.map((name) => `${symbolText(name)} = ${Number((coefficients()[name] ?? 1).toPrecision(4))}`).join('\n');
+  // Under the drawing, at its left edge.
   const bounds = editor.circuit.bounds();
   const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
-  const x = empty ? 0 : snap(bounds.x + bounds.w + 2 * GRID);
-  const y = empty ? 0 : snap(bounds.y);
+  const x = empty ? 0 : snap(bounds.x);
+  const y = empty ? 0 : snap(bounds.y + bounds.h + 2 * GRID);
   const w = 18 * GRID;
   const h = 11 * GRID;
   let box = null;
@@ -59110,8 +59524,17 @@ function annotateGraph() {
       top = label.bbox().y + label.bbox().h;
       ids.push(label.id);
     }
+    if (values) {
+      const label = editor.circuit.addLabel({ text: values, math: true, parent: box.id, align: 'left', x: 0, y: 0 });
+      const size = label.bbox();
+      label.moveTo(snap(x + w + GRID + size.w / 2), snap(top + size.h / 2));
+      ids.push(label.id);
+    }
   });
   if (!box) return;
+  // Their sizes are estimates until the browser measures them: line their
+  // left edges up then.
+  alignLabelColumn(ids, { left: x + w + GRID, top: y, gap: GRID / 2 });
   setSelection([]);
   setLabelSelection([box.id]);
   logLine('placed the graph on the drawing; drag to move it, its corners to resize');
@@ -59132,23 +59555,27 @@ function renderResults() {
   for (const entry of latest.entries) {
     const block = el('div', { class: 'analysis-equation signal-flow-entry' });
     block.append(mathRow(`From ${entry.inputName}`, entry.equation));
-    if (entry.zeros?.length) block.append(rootRow('Zeros', entry.zeros, latest.variable));
-    if (entry.poles?.length) block.append(rootRow('Poles', entry.poles, latest.variable));
-    if (entry.poles !== null && entry.zeros !== null) {
+    // Symbolic results show their roots at the coefficients' numbers.
+    const symbolic = entry.poles === null || entry.zeros === null;
+    const roots = symbolic ? numericRootsOf(numeric(entry.value, latest.variable)) : entry;
+    const at = symbolic ? ' at the coefficients below' : '';
+    if (roots.zeros?.length) block.append(rootRow('Zeros', roots.zeros, latest.variable, at));
+    if (roots.poles?.length) block.append(rootRow('Poles', roots.poles, latest.variable, at));
+    {
       const id = `${latest.output.key}\n${entry.input}\n${entry.equation}`;
       const plotted = traces.some((trace) => trace.id === id);
       block.append(el('div', { class: 'signal-flow-entry-actions' }, [
-        el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderGraph(); renderResults(); } }),
+        el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderCoefficients(); renderGraph(); renderResults(); } }),
       ]));
     }
     host.append(block);
   }
 }
 
-function rootRow(label, roots, variable) {
+function rootRow(label, roots, variable, at = '') {
   const unit = variable === 'z' && label === 'Poles' ? ' (stable inside |z| = 1)' : '';
   return el('div', { class: 'analysis-equation-row' }, [
-    el('div', { class: 'analysis-equation-label', text: `${label}${unit}` }),
+    el('div', { class: 'analysis-equation-label', text: `${label}${at}${unit}` }),
     el('div', { class: 'signal-flow-roots', text: roots.map(complexText).join(',  ') }),
   ]);
 }
@@ -59157,8 +59584,9 @@ function derive() {
   latest = analyzeSignalFlow(editor.circuit, { output: settings.output, sources: settings.sources });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
-  // Each new numeric response joins the graph, beside those already there.
-  if (latest.ok) for (const entry of latest.entries) if (entry.poles !== null && entry.zeros !== null) addTrace(entry, latest.variable, latest.output);
+  // Each new response joins the graph, beside those already there.
+  if (latest.ok) for (const entry of latest.entries) addTrace(entry, latest.variable, latest.output);
+  renderCoefficients();
   renderResults();
   renderGraph();
   if (!latest.ok) logLine(`Signal-flow analysis: ${latest.error}`, 'error');
@@ -59207,6 +59635,11 @@ function installSignalFlowUi() {
     ]),
     el('div', { class: 'signal-flow-issues', hidden: true }),
     el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
+    el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
+      el('legend', { text: 'Coefficients' }),
+      el('div', { class: 'signal-flow-coefficient-rows' }),
+      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value.' }),
+    ]),
     el('div', { class: 'signal-flow-graph', hidden: true }),
     el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
   ]);
@@ -61120,7 +61553,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', gain: 'Gain',
 };
 
 const PLACEMENT_ALIASES = {
@@ -61184,6 +61617,7 @@ const PLACEMENT_ALIASES = {
   filter_hpf: ['hpf', 'highpass', 'high pass', 'filter', 'signal flow'],
   filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
+  gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
 };

@@ -20,7 +20,7 @@ import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget,
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
-import { commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, visibleNets } from './main.js';
+import { commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
@@ -859,7 +859,7 @@ export function syncAnalysisDock() {
   });
   followGroundMarks();
   const stale = document.getElementById('analysis-stale');
-  if (stale) stale.hidden = !latestAnalysisReport || analysisReportRevision === editor.modelRevision;
+  if (stale) stale.hidden = !latestAnalysisReport || revisionCurrent(analysisReportRevision);
 }
 
 export function setAnalysisPick(selectId) {

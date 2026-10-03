@@ -3,7 +3,7 @@ import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
-import { defaultArrowhead, polylineArrowheads } from './line-style.js';
+import { arrowheadEnds, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { sizeReplacedNameLabels } from './mos-size.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
@@ -68,7 +68,34 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply']);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+
+/** Signal-flow inputs whose wires carry an arrowhead into them without
+ *  being asked: a sum's or multiplier's inputs and a transfer function's
+ *  input (a gain's triangle already points the way). By pin ("x,y"). */
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'tf_s', 'tf_z']);
+
+function signalInputPins(circuit) {
+  const pins = new Set();
+  for (const component of circuit.components.values()) {
+    if (!AUTO_ARROW_TYPES.has(component.type)) continue;
+    for (const terminal of component.terminalDefs) {
+      if (terminal.signalRole !== 'input') continue;
+      const world = component.terminalWorld(terminal.name);
+      pins.add(`${world.x},${world.y}`);
+    }
+  }
+  return pins;
+}
+
+/** A wire's arrowhead with heads added where it ends on a signal input. */
+function withSignalArrows(value, pins, first, last) {
+  if (!pins.size) return value;
+  const ends = arrowheadEnds(value);
+  const start = ends.start || (first && pins.has(`${first.x},${first.y}`));
+  const end = ends.end || (last && pins.has(`${last.x},${last.y}`));
+  return start && end ? 'both' : start ? 'start' : end ? 'end' : value;
+}
 
 function bodyEdgePinInsets(circuit) {
   const insets = new Map();
@@ -957,6 +984,7 @@ export function svgString(circuit, opts = {}) {
   const UNPAINTED = ' stroke-opacity="0"';
   let pinInsetMap = null;
   const pinInsets = () => (pinInsetMap ||= bodyEdgePinInsets(circuit));
+  const signalPins = signalInputPins(circuit);
   for (const net of nets) {
     // A beat draws only the wire that joins what it shows (see beats.js).
     const shown = beat?.wires.get(net.id) ?? 'all';
@@ -1001,7 +1029,8 @@ export function svgString(circuit, opts = {}) {
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
         const inked = !opacity && solidStyle(netStyle);
-        const geometry = polylineArrowheads(pts, netStyle?.arrowhead, wireArrowheadOptions(pinInsets, pts, netStyle?.arrowhead));
+        const arrowhead = withSignalArrows(netStyle?.arrowhead, signalPins, pts[0], pts.at(-1));
+        const geometry = polylineArrowheads(pts, arrowhead, wireArrowheadOptions(pinInsets, pts, arrowhead));
         if (inked) addInk(inkAttrs(netStyle), polylineD(geometry.shaftPoints));
         parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, netStyle?.color, opacity));
@@ -1012,7 +1041,8 @@ export function svgString(circuit, opts = {}) {
         const d = `M ${pt(a.x, a.y)} L ${pt(b.x, b.y)}`;
         const segmentStyle = withHighlight({ ...(net.style || {}), ...(net.wireStyles[`${branch}:${i}`] || {}) }, shown !== 'all' ? FADE_INK : highlight);
         const inked = !opacity && solidStyle(segmentStyle);
-        const geometry = polylineArrowheads([a, b], segmentStyle.arrowhead, wireArrowheadOptions(pinInsets, [a, b], segmentStyle.arrowhead));
+        const arrowhead = withSignalArrows(segmentStyle.arrowhead, signalPins, i === 1 ? a : null, i === pts.length - 1 ? b : null);
+        const geometry = polylineArrowheads([a, b], arrowhead, wireArrowheadOptions(pinInsets, [a, b], arrowhead));
         // Solid wires are painted by the shared ink path below, but dashed
         // and ghosted wires paint their own element. Use the same shortened
         // shaft for those visible strokes so a dash cannot run underneath an

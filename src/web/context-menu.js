@@ -557,6 +557,10 @@ export function selectContextTarget(target) {
     if (editor.selLabels.has(target.value.id)) return;
     setSelection([]);
     setLabelSelection([target.value.id]);
+  } else if (target.kind === 'wire' && editor.selectedWires?.has(`${target.value.net.id}:${target.value.branch}:${target.value.segment}`)) {
+    // A segment of a wire selection keeps it: its menu acts on all of them
+    // (arrowheads on every Shift-selected segment, say).
+    return;
   } else if (target.kind === 'net' || target.kind === 'wire') {
     const net = contextNet(target);
     if (!net || editor.selectedNets.has(net.id)) return;

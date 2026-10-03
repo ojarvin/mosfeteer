@@ -23,6 +23,28 @@ export function isTransferFunction(component) {
   return !!component && Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type);
 }
 
+/** A gain block or a transfer-function block: a value drawn as math. */
+export function isSignalBlock(component) {
+  return isTransferFunction(component) || component?.type === 'gain';
+}
+
+/** A gain's value: one coefficient (`k`, `0.5`, `2*g_m`, `-a_1`). */
+export function parseGain(text) {
+  const tokens = coefficients(`[${String(text ?? '').trim()}]`, 'gain');
+  if (tokens.length !== 1) throw new Error('a gain is one coefficient: a number or a symbol (k, 0.5, a_1, 2*g_m)');
+  return tokens[0];
+}
+
+/** A gain's value as TeX, or a plain mark when it does not read. */
+export function gainDisplay(text) {
+  try {
+    const token = parseGain(text);
+    return `${token.startsWith('-') ? '-' : ''}${coefficientTex(token.replace(/^[-+]/, ''))}`;
+  } catch {
+    return '\\text{?}';
+  }
+}
+
 /** The coefficient tokens of one list: `[1 -2, a_1]` -> ['1', '-2', 'a_1']. */
 function coefficients(list, what) {
   const body = list.trim().replace(/^[[{]|[\]}]$/g, '').trim();

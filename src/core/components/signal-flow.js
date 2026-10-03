@@ -112,3 +112,31 @@ function transferFunctionBlock(type, variable) {
 
 export const tf_s = transferFunctionBlock('tf_s', 's');
 export const tf_z = transferFunctionBlock('tf_z', 'z');
+
+/**
+ * A gain: the block-diagram triangle, pointing the way the signal goes, with
+ * its one coefficient (a number or a symbol, `k`, `a_1`, `2*g_m`) drawn
+ * inside it as math when it fits, above it otherwise (Circuit
+ * #_syncTransferFunctionLabel). Its shape already shows the direction, so its
+ * input wire takes no automatic arrowhead.
+ */
+export const gain = defineSymbol({
+  type: 'gain',
+  description: 'Gain',
+  refPrefix: 'K',
+  terminals: [
+    { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+    { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -80, w: 160, h: 160 },
+  graphics: [
+    { kind: 'path', d: 'M -80 0 L -48 0', style: 'symbol', terminalLead: true },
+    { kind: 'path', d: 'M 52 0 L -48 -60 L -48 60 Z', style: 'emph' },
+    { kind: 'path', d: 'M 52 0 L 80 0', style: 'symbol', terminalLead: true },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: 'k',
+  allowFloatingTerminals: true,
+});

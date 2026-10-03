@@ -19,8 +19,10 @@ export const SYMBOL_CATEGORY_RULES = [
   ['Macros', /^(opamp|opamp_diff|gm|comparator|comparator_clocked|adc|dac|adc_diff|dac_diff)$/],
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
-  ['Blocks / shells', /^block$/],
-  ['Signal flow', /^(signal_(sum|multiply)|filter_(lpf|hpf|bpf|notch)|tf_[sz])$/],
+  // Block-diagram drawing parts; the signal-flow analysis reads only the
+  // next group's.
+  ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch))$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_[sz]|gain)$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each

@@ -204,7 +204,7 @@ export function cornerNames(poles, zeros) {
  * f/f_{s} for sampled systems, relative ω otherwise. Curve items carry
  * `trace`, their index. The traces' names go beside the figure, not in it.
  */
-export function responseFigure(plot, { width = 480, height = 260, fontSize = 11, maxSpanDb = 160 } = {}) {
+export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   const items = [];
   const em = fontSize;
   const { low, high } = plot.range;
@@ -214,10 +214,12 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11,
   const bottom = 2 * em;
   const pane = { x: left, y: top, w: Math.max(10, width - left - right), h: Math.max(10, height - top - bottom) };
   const x = (f) => pane.x + ((Math.log10(f) - low) / (high - low)) * pane.w;
-  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db));
-  let [dbLow, dbHigh] = niceRange(values, 20, 3);
-  if (dbHigh - dbLow > maxSpanDb) dbLow = dbHigh - maxSpanDb;
-  const step = dbHigh - dbLow > 100 ? 40 : 20;
+  // The axis fits every curve, in whole 20 dB steps; its ticks spread out on
+  // a wide range (a high-order noise shaper reaches far down).
+  const values = plot.traces.flatMap((trace) => trace.points.map((p) => p.db)).filter((db) => db > -1000);
+  const [dbLow, dbHigh] = niceRange(values, 20, 0);
+  const span = dbHigh - dbLow;
+  const step = span > 400 ? 100 : span > 200 ? 50 : span > 100 ? 40 : 20;
   const y = (db) => pane.y + ((dbHigh - clamp(db, dbLow, dbHigh)) / (dbHigh - dbLow)) * pane.h;
   items.push({ type: 'line', x1: pane.x, y1: pane.y, x2: pane.x, y2: pane.y + pane.h, role: 'axis' });
   items.push({ type: 'line', x1: pane.x, y1: pane.y + pane.h, x2: pane.x + pane.w, y2: pane.y + pane.h, role: 'axis' });

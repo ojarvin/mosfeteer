@@ -84,7 +84,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | `Shift+T` | pack the desk afresh, related designs together |
 | `+` / `-` | zoom about the middle |
 | `Shift+D` | theme |
-| Esc | clear the pick of several, then the search, then the pick; it never leaves the Atlas |
+| Esc | clear the pick of several, then the search, then the pick; it never leaves the Atlas (the symbol sheet it closes) |
 | Shift+Backspace (or Backspace) | back to the editor |
 
 ## Search and tags

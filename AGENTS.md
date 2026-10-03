@@ -79,6 +79,7 @@ The routing-sensitive symbol contract is:
 | block | `T1`…`T12` around the perimeter | default bbox `{-80,-80,160,160}`, resizable in even cell counts |
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at `(0,-40)`, `(0,40)`, `(-40,0)`, `(40,0)` | bbox `{-40,-40,80,80}`, 40-unit-radius circle with plus or multiply mark; unused terminals do not fail Design Check; optional negative inputs are owned sign labels |
 | filter blocks | `in=(-80,0)`, `out=(80,0)` | `filter_lpf`/`hpf`/`bpf`/`notch`: bbox `{-80,-80,160,160}`, a box with the response sketched inside |
+| gain | `in=(-80,0)`, `out=(80,0)` | `gain`: bbox `{-80,-80,160,160}`, a triangle pointing at `out`; its value is one coefficient, drawn as an owned math label inside it (or above, when too wide) |
 | transfer function | `in=(-w/2,0)`, `out=(w/2,0)` | `tf_s`/`tf_z`: the value is a MATLAB-style `tf([num], [den])` or a gain, in `s` highest power first and in `z` ascending powers of z^-1 (`'Variable','z'` for descending powers of z, `src/core/transfer-function.js`) drawn as an owned math label; the box (`ComponentInstance#bodySize`, at least `160x160`, whole pairs of cells) fits the equation by the model's own estimate, and a new definition reroutes its wires (`setPartValue`) |
 
 All symbol linework is textbook style: butt-ended normal symbol strokes,
@@ -324,7 +325,10 @@ selected generator to that same solve. The main implementation is in
   provenance through every row, including poles/zeros and noise.
 - The Bode tab evaluates the exact coefficients numerically in relative
   units (`src/core/analysis/bode.js`); it never solves again and never takes
-  design values. A box annotation may carry its sketch (`plot`).
+  design values. A box annotation may carry its sketch (`plot`). Its slider
+  ratios, like the signal-flow coefficients, are saved with the document
+  (`Circuit#analysisValues`); a slider move is a settings change
+  (`markSettingsChanged`): saved, never an undo entry, never staleness.
 - The GUI calls `adaptCombinedReport(analyzeSmallSignalV2(...))`, never the v2
   analyzer directly. Provenance is opt-in and only decorates live equation
   MathML; it must not leak into labels, documents, or exports.
@@ -332,8 +336,10 @@ selected generator to that same solve. The main implementation is in
 Block diagrams have their own mode in the same window
 ([`docs/signal-flow-analysis.md`](docs/signal-flow-analysis.md),
 `src/core/analysis/signal-flow.js`): `tf_s`/`tf_z` blocks, sum and multiply
-junctions, and input ports, solved exactly with the same rational algebra
-(one RHS per input). It never shares state with the small-signal form, and it
+junctions, gains, and sources (input ports or any undriven wire), solved
+exactly with the same rational algebra (one RHS per input). Wires into a
+sum's, multiplier's, or transfer function's input draw an arrowhead there
+automatically (render-time only, never stored). It never shares state with the small-signal form, and it
 refuses rather than guesses: a multiply of two signals, mixed `s` and `z`,
 an undriven or doubly driven signal.
 

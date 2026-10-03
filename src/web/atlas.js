@@ -61,7 +61,7 @@ let lastQuery = '';
 
 const HINTS = {
   workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc clears the pick · Enter or Shift+Backspace returns',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -1703,6 +1703,8 @@ export function onAtlasKey(ev) {
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
+  // The symbol sheet is a reference glanced at: Esc closes it.
+  else if (key === 'Escape' && state.source === 'symbols') void closeAtlas();
   else if (key === 'Escape') {
     state.selected = null;
     requestDraw();

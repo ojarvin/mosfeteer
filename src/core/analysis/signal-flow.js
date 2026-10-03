@@ -16,16 +16,15 @@
  * signal wire. Nothing is guessed.
  */
 
-import { add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, symbol } from './rational.js';
+import { add, integer, multiply, negate, polynomialCoefficients, power, rational, rationalFunction, substituteRational, symbol } from './rational.js';
 import { createRationalOps } from './algebra-ops.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
-import { solveLinearSystem } from './solve.js';
 import { renderExpression } from './present.js';
-import { bodeSketch, polynomialRoots } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, parseTransferFunction } from '../transfer-function.js';
+import { bodeSketch, expressionSymbols, polynomialRoots } from './bode.js';
+import { TRANSFER_FUNCTION_TYPES, parseGain, parseTransferFunction } from '../transfer-function.js';
 import { canonicalNetName } from '../model.js';
 
-const JUNCTIONS = new Set(['signal_sum', 'signal_multiply']);
+const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
 const SOURCE_TYPES = new Set(['input']);
 // Parts that may sit on a signal wire without taking part in it.
@@ -181,7 +180,9 @@ export function analyzeSignalFlow(circuit, options = {}) {
   // Unknowns: every signal a block or junction drives.
   const unknowns = [...signals.values()].filter((signal) => signal.driver && !signal.driver.source);
   const index = new Map(unknowns.map((signal, i) => [signal.key, i]));
-  const ops = createRationalOps({ variable });
+  // A big diagram's exact algebra is big: give it room, the elimination
+  // below keeps it as small as the diagram allows.
+  const ops = createRationalOps({ variable, maxOperations: 20_000_000 });
   const n = unknowns.length;
   const A = Array.from({ length: n }, () => Array(n).fill(ops.zero));
   const B = Array.from({ length: n }, () => Array(inputs.length).fill(ops.zero));
@@ -213,6 +214,14 @@ export function analyzeSignalFlow(circuit, options = {}) {
         return failure('bad-transfer-function', `${component.refdes}: ${err.message}`);
       }
       feed(row, toRational(h), signalAt(component, 'in'));
+    } else if (component.type === 'gain') {
+      let k;
+      try {
+        k = coefficientValue(parseGain(component.value));
+      } catch (err) {
+        return failure('bad-gain', `${component.refdes}: ${err.message}`);
+      }
+      feed(row, toRational(k), signalAt(component, 'in'));
     } else if (component.type === 'signal_sum') {
       for (const term of JUNCTION_INPUTS) {
         const sign = component.negativeInputs?.has(term) ? ops.neg(ops.one) : ops.one;
@@ -243,11 +252,9 @@ export function analyzeSignalFlow(circuit, options = {}) {
   const outputSource = sourceBySignal.get(output.key);
   let columns;
   if (index.has(output.key)) {
-    const solved = solveLinearSystem(A, B, { ops });
-    if (!solved.ok) return failure(solved.code || 'singular', solved.code === 'singular' || /singular/i.test(solved.error || '') ? 'the diagram has no unique solution: a loop with a gain of exactly 1 (check the signs at the sums)' : solved.error);
-    // The elimination leaves factors common to both sides (a loop's own
-    // characteristic polynomial, say): cancel them, as the engine does.
-    columns = solved.columns.map((column) => cancelCommonPolynomialFactor(column[index.get(output.key)], { variable, maxWork: 2_000_000 }));
+    const solved = eliminateSignals(A, B, index.get(output.key), ops, variable);
+    if (!solved.ok) return failure(solved.code, solved.error);
+    columns = solved.columns;
   } else if (outputSource) {
     columns = inputs.map((source) => (source.key === output.key ? ops.one : ops.zero));
   } else {
@@ -256,6 +263,81 @@ export function analyzeSignalFlow(circuit, options = {}) {
 
   const entries = inputs.map((source, column) => present(columns[column], variable, source, output));
   return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
+}
+
+/**
+ * Solve `A x = B` for one unknown by eliminating the others one at a time,
+ * the way a signal-flow graph is reduced by hand: each signal is a weighted
+ * sum of others (A's rows are `x_y - sum G x = sum S u`). A node's self-loop
+ * folds into `1 / (1 - loop)`, then the node is substituted into every
+ * equation that reads it. The next node to go is always the cheapest
+ * (fewest inputs times readers), and each new coefficient has its common
+ * factors cancelled, so the expressions stay as small as the diagram allows
+ * -- where a generic elimination order makes a large symbolic diagram's
+ * algebra explode. Returns `{ ok, columns }`, a transfer function per column
+ * of B, or `{ ok: false, code, error }`.
+ */
+export function eliminateSignals(A, B, outputIndex, ops, variable) {
+  const n = A.length;
+  const width = B[0]?.length ?? 0;
+  const cancel = (value) => cancelCommonPolynomialFactor(value, { variable, maxWork: 400_000 });
+  const G = A.map((row, y) => new Map(row.flatMap((a, x) => (x !== y && !ops.isZero(a) ? [[x, ops.neg(a)]] : []))));
+  const S = B.map((row) => new Map(row.flatMap((b, c) => (!ops.isZero(b) ? [[c, b]] : []))));
+  const readers = Array.from({ length: n }, () => new Set());
+  G.forEach((row, y) => { for (const x of row.keys()) readers[x].add(y); });
+  const alive = new Set(Array.from({ length: n }, (_, i) => i));
+  const budgetOut = () => ({ ok: false, code: 'budget', error: 'the diagram is too large to solve symbolically within the work limit: give some coefficients numbers, or split the diagram' });
+  const singular = { ok: false, code: 'singular', error: 'the diagram has no unique solution: a loop with a gain of exactly 1 (check the signs at the sums)' };
+  const exhausted = (value) => value?.budgetExceeded === true;
+  // v = (sum G x + S u) / (1 - loop).
+  const fold = (v) => {
+    const loop = G[v].get(v);
+    if (loop === undefined) return true;
+    G[v].delete(v);
+    readers[v].delete(v);
+    const d = ops.sub(ops.one, loop);
+    if (ops.isZero(d)) return false;
+    for (const [x, g] of G[v]) G[v].set(x, cancel(ops.div(g, d)));
+    for (const [c, s] of S[v]) S[v].set(c, cancel(ops.div(s, d)));
+    return true;
+  };
+  const accumulate = (map, key, value) => {
+    const sum = map.has(key) ? ops.add(map.get(key), value) : value;
+    if (ops.isZero(sum)) map.delete(key);
+    else map.set(key, cancel(sum));
+    return map.has(key);
+  };
+  while (alive.size > 1) {
+    let pick = -1;
+    let cost = Infinity;
+    for (const v of alive) {
+      if (v === outputIndex) continue;
+      const inputs = G[v].size - (G[v].has(v) ? 1 : 0);
+      const reading = readers[v].size - (readers[v].has(v) ? 1 : 0);
+      const c = inputs * reading;
+      if (c < cost) { cost = c; pick = v; }
+    }
+    const v = pick;
+    if (!fold(v)) return singular;
+    for (const y of [...readers[v]]) {
+      if (y === v || !alive.has(y)) continue;
+      const gyv = G[y].get(v);
+      G[y].delete(v);
+      for (const [x, g] of G[v]) {
+        if (accumulate(G[y], x, ops.mul(gyv, g))) readers[x].add(y);
+        else readers[x].delete(y);
+      }
+      for (const [c, s] of S[v]) accumulate(S[y], c, ops.mul(gyv, s));
+      if ([...G[y].values(), ...S[y].values()].some(exhausted)) return budgetOut();
+    }
+    for (const x of G[v].keys()) readers[x].delete(v);
+    alive.delete(v);
+  }
+  if (!fold(outputIndex)) return singular;
+  if (G[outputIndex].size) return singular;
+  const columns = Array.from({ length: width }, (_, c) => S[outputIndex].get(c) ?? ops.zero);
+  if (columns.some(exhausted)) return budgetOut();
+  return { ok: true, columns: columns.map(cancel) };
 }
 
 /** A signal by key, net name or id, or the refdes of a port on it. */
@@ -286,13 +368,15 @@ const isPlainNumber = (value) => value?.kind === 'number';
 /** Coefficient times a power of the variable, as one signed term. */
 function termTex(coefficient, powerText) {
   let tex = renderExpression(coefficient);
+  // A compound coefficient (a_1 - 1) keeps its own signs in its brackets: its
+  // leading minus belongs to its first term, not to the whole term.
+  if (coefficient.kind === 'add') return { negative: false, tex: powerText ? `\\left(${tex}\\right) ${powerText}` : tex };
   let negative = false;
   if (tex.startsWith('-')) {
     negative = true;
     tex = tex.slice(1).trim();
   }
-  const compound = coefficient.kind === 'add';
-  if (powerText) tex = tex === '1' ? powerText : `${compound ? `\\left(${tex}\\right)` : tex} ${powerText}`;
+  if (powerText) tex = tex === '1' ? powerText : `${tex} ${powerText}`;
   return { negative, tex };
 }
 
@@ -468,5 +552,34 @@ export function responsePlot(traces, variable) {
       color: trace.color,
       points: curve.points.map(({ f, db }) => ({ f, db })),
     })),
+  };
+}
+
+// ----- coefficients given values ------------------------------------------------------
+
+/** The symbols a result depends on, besides its variable (`a_1`, `k`). */
+export function resultSymbols(value, variable) {
+  const out = new Set();
+  expressionSymbols(value.numerator, variable, out);
+  expressionSymbols(value.denominator, variable, out);
+  return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/** A result with its symbols given numbers (`{ a_1: 0.5 }`), still exact. */
+export function withCoefficients(value, values) {
+  const replacements = new Map();
+  for (const [name, number] of Object.entries(values || {})) {
+    if (Number.isFinite(number)) replacements.set(name, coefficientValue(String(Number(number.toPrecision(12)))));
+  }
+  if (!replacements.size) return value;
+  return cancelCommonPolynomialFactor(substituteRational(value, replacements), { variable: value.variable });
+}
+
+/** The zeros and poles of a result, numeric once its symbols have values. */
+export function numericRootsOf(value) {
+  const variable = value.variable;
+  return {
+    zeros: numericRoots(coefficientList(value.numerator, variable)),
+    poles: numericRoots(coefficientList(value.denominator, variable)),
   };
 }

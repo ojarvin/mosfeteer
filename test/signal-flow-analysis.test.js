@@ -145,3 +145,95 @@ test('responses share one graph: a coloured trace each, kept as a plot annotatio
   const svg = svgString(circuit);
   for (const color of TRACE_COLORS.slice(0, 2)) assert.match(svg, new RegExp(`stroke="${color}"`));
 });
+
+test('a gain block scales its signal; compound symbolic coefficients keep their signs', async () => {
+  const { resultSymbols, withCoefficients, numericRootsOf, transferTex } = await import('../src/core/analysis/signal-flow.js');
+  const circuit = diagram([
+    'add input U --at -720 0', 'add signal_sum SUM1 --at -400 0', 'add gain K1 --at -80 0 --value a_1',
+    `add tf_z H1 --at 280 0 --value "${integrator}"`, 'add output Y --at 700 0',
+    'connect U.p SUM1.w', 'connect SUM1.e K1.in', 'connect K1.out H1.in', 'connect H1.out Y.p', 'connect Y.p SUM1.s',
+  ], [['SUM1', 's']]);
+  const report = analyzeSignalFlow(circuit, { output: 'Y', sources: { U: 'input' } });
+  assert.equal(report.ok, true, report.error);
+  // a_1 I / (1 + a_1 I) with I = z^-1 / (1 - z^-1).
+  assert.equal(report.entries[0].equation, '\\frac{Y}{U} = \\frac{a_{1} z^{-1}}{1 + \\left(-1 + a_{1}\\right) z^{-1}}');
+  const value = report.entries[0].value;
+  assert.deepEqual(resultSymbols(value, 'z'), ['a_1']);
+  // Given a value, it is numeric again: a pole at 1 - a_1.
+  const half = withCoefficients(value, { a_1: 0.5 });
+  assert.equal(transferTex(half, 'z'), '\\frac{\\frac{1}{2} z^{-1}}{1 - \\frac{1}{2} z^{-1}}');
+  assert.deepEqual(numericRootsOf(half).poles.map((root) => root.re), [0.5]);
+  // A gain draws its coefficient inside its triangle, and must be one coefficient.
+  const label = [...circuit.labels.values()].find((l) => l.owner === 'K1');
+  assert.deepEqual([label.text, label.offset], ['$a_{1}$', { x: 0, y: 0 }]);
+  assert.throws(() => runCommand(circuit, 'value K1 [1 2]'), /one coefficient|gain/);
+});
+
+test('wires into a signal-flow input draw an arrowhead there; a gain\'s input does not', async () => {
+  const { svgString } = await import('../src/core/render.js');
+  const heads = (circuit) => (svgString(circuit).match(/<polygon points="[^"]*" fill="[^"]*" stroke="none"\/>/g) || []).length;
+  const block = diagram(['add input U --at -400 0', 'add tf_s H1 --at 0 0', 'connect U.p H1.in']);
+  assert.equal(heads(block), 1);
+  const gain = diagram(['add input U --at -400 0', 'add gain K1 --at 0 0', 'connect U.p K1.in']);
+  assert.equal(heads(gain), 0);
+  const sum = diagram(['add input U --at -400 0', 'add input V --at 0 -300', 'add signal_sum S1 --at 0 0', 'connect U.p S1.w', 'connect V.p S1.n']);
+  assert.equal(heads(sum), 2);
+});
+
+test('a fourth-order modulator with a dozen symbols solves, and agrees with its numbers', async () => {
+  const { withCoefficients, transferTex } = await import('../src/core/analysis/signal-flow.js');
+  const values = { b_1: 0.5, b_5: 1, c_1: 0.5, c_2: 0.75, c_3: 0.5, c_4: 0.25, g_1: 0.0625, g_2: 0.125, a_1: 2, a_2: 1.5, a_3: 1, a_4: 0.5 };
+  const build = (value) => {
+    const I = '"tf([0 1], [1 -1])"';
+    const lines = [
+      'add input IN --at -1600 0', `add gain B1 --at -1360 0 --value ${value('b_1')}`, 'add signal_sum S1 --at -1120 0',
+      `add tf_z I1 --at -880 0 --value ${I}`, `add gain C2 --at -560 0 --value ${value('c_2')}`, `add tf_z I2 --at -240 0 --value ${I}`,
+      `add gain C3 --at 80 0 --value ${value('c_3')}`, 'add signal_sum S3 --at 360 0', `add tf_z I3 --at 640 0 --value ${I}`,
+      `add gain C4 --at 960 0 --value ${value('c_4')}`, `add tf_z I4 --at 1240 0 --value ${I}`, `add gain A4 --at 1560 0 --value ${value('a_4')}`,
+      'add signal_sum S4 --at 1840 0', 'add signal_sum SQ --at 2120 0', 'add input q --at 2120 -280', 'add output OUT --at 2440 0',
+      'add signal_sum S5 --at 1840 -400', 'add signal_sum S6 --at 1840 -800', 'add signal_sum S7 --at 1840 -1200',
+      `add gain A3 --at 1560 -400 --value ${value('a_3')}`, `add gain A2 --at 1560 -800 --value ${value('a_2')}`,
+      `add gain A1 --at 1560 -1200 --value ${value('a_1')}`, `add gain B5 --at 1560 -1600 --value ${value('b_5')}`,
+      `add gain G1 --at -560 -400 --value ${value('g_1')} --rot 180`, `add gain G2 --at 960 -400 --value ${value('g_2')} --rot 180`,
+      `add gain C1 --at -1120 400 --value ${value('c_1')} --rot 270`,
+      ...['IN.p B1.in', 'B1.out S1.w', 'S1.e I1.in', 'I1.out C2.in', 'C2.out I2.in', 'I2.out C3.in', 'C3.out S3.w', 'S3.e I3.in',
+        'I3.out C4.in', 'C4.out I4.in', 'I4.out A4.in', 'A4.out S4.w', 'S4.e SQ.w', 'q.p SQ.n', 'SQ.e OUT.p',
+        'S5.e S4.n', 'S6.e S5.n', 'S7.e S6.n', 'A3.out S5.w', 'A2.out S6.w', 'A1.out S7.w', 'B5.out S7.n',
+        'I3.out A3.in', 'I2.out A2.in', 'I1.out A1.in', 'IN.p B5.in',
+        'I2.out G1.in', 'G1.out S1.n', 'I4.out G2.in', 'G2.out S3.n', 'OUT.p C1.in', 'C1.out S1.s'].map((pair) => `connect ${pair}`),
+    ];
+    return diagram(lines, [['S1', 'n'], ['S1', 's'], ['S3', 'n']]);
+  };
+  const started = Date.now();
+  const symbolic = analyzeSignalFlow(build((name) => name), { output: 'OUT', sources: { IN: 'input', q: 'input' } });
+  assert.equal(symbolic.ok, true, symbolic.error);
+  assert.ok(Date.now() - started < 5000, 'solved promptly');
+  const numeric = analyzeSignalFlow(build((name) => values[name]), { output: 'OUT', sources: { IN: 'input', q: 'input' } });
+  assert.equal(numeric.ok, true, numeric.error);
+  for (const [index, entry] of symbolic.entries.entries()) {
+    assert.equal(transferTex(withCoefficients(entry.value, values), 'z'), numeric.entries[index].tex);
+  }
+});
+
+test('coefficient values and Bode ratios are kept with the document', () => {
+  const circuit = new Circuit();
+  assert.equal(circuit.toJSON().analysisValues, undefined, 'nothing saved until set');
+  circuit.analysisValues.coefficients.a_1 = 0.5;
+  circuit.analysisValues.bode = { intrinsicGain: 51, parasiticRatio: null, multipliers: { C_L: 2.2 } };
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.deepEqual(loaded.analysisValues.coefficients, { a_1: 0.5 });
+  assert.deepEqual(loaded.analysisValues.bode, { intrinsicGain: 51, parasiticRatio: null, multipliers: { C_L: 2.2 } });
+  // Junk is dropped on load.
+  const junk = Circuit.fromJSON({ ...circuit.toJSON(), analysisValues: { coefficients: { a_1: 'x', 'b c': 2, k: 3 }, bode: { intrinsicGain: -1 } } });
+  assert.deepEqual(junk.analysisValues.coefficients, { k: 3 });
+  assert.equal(junk.analysisValues.bode.intrinsicGain, null);
+});
+
+test('the response graph fits its dB axis to the curves, in whole 20 dB steps', async () => {
+  const { responseFigure } = await import('../src/core/bode-figure.js');
+  const plot = { kind: 'response', axis: 'normalized', range: { low: -4, high: Math.log10(0.5) }, traces: [
+    { label: 'a', color: '#3b74e0', points: [{ f: 1e-4, db: -317 }, { f: 0.5, db: 13 }] },
+  ] };
+  const figure = responseFigure(plot);
+  assert.deepEqual(figure.ranges.db, [-320, 20]);
+});
