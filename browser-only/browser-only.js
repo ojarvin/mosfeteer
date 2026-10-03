@@ -11529,7 +11529,8 @@ __exports.evaluate = evaluate;
 __exports.commandHelp = commandHelp;
 __exports.runCommand = runCommand;
 let Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld; __bind(() => { ({ Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } = __require("src/core/model.js")); });
-let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets } = __require("src/core/part-moves.js")); });
+let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } = __require("src/core/part-moves.js")); });
+let TRANSFER_FUNCTION_ROLE, isTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, isTransferFunction } = __require("src/core/transfer-function.js")); });
 let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
 let GRID, onGrid, snap, ceilGrid; __bind(() => { ({ GRID, onGrid, snap, ceilGrid } = __require("src/core/grid.js")); });
 let applyTransform, fmt, rectsOverlap; __bind(() => { ({ applyTransform, fmt, rectsOverlap } = __require("src/core/geometry.js")); });
@@ -11549,6 +11550,7 @@ let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapCom
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
+
 
 
 
@@ -11850,6 +11852,8 @@ function evaluate(circuit) {
     const labelBox = label.inkRect();
     for (const comp of comps) {
       if (annotated(comp)) continue;
+      // A transfer function's equation is drawn inside its own box.
+      if (label.role === TRANSFER_FUNCTION_ROLE && label.owner === comp.refdes) continue;
       if (!comp.inkTouches(labelBox)) continue;
       const compBox = comp.inkRectWorld();
       const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type})`;
@@ -11996,7 +12000,9 @@ function commandHelp() {
     '  move <refdes> <X> <Y>          - move (snapped to 40-grid)',
     '  rotate <refdes> [deg=90]       - rotate by multiples of 90',
     '  mirror <refdes> <x|y>          - flip along an axis',
-    '  value <refdes> <V>             - set value/label text',
+    '  value <refdes> <V>             - set value/label text; a transfer function (tf_s, tf_z) takes tf([num], [den]), [num], [den],',
+    '                                   or a gain (k): in s highest power first, in z ascending powers of z^-1 (tf([1 -1], [1]) is 1 - z^-1;',
+    '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  size <refdes> [W/L] [xM] [replace|beside] - a transistor\'s sizing label, W/L = M·W/L (2u/400n x4; bare numbers are μm); replace puts it in place of',
     '                                   the name label, beside under it; size <refdes> off removes it; no size prints it',
@@ -12294,8 +12300,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if (cmd === 'value' || cmd === 'setvalue') {
     const c = circuit.getComponent(pos[0]);
-    const v = pos[1];
-    circuit.setValue(c.refdes, v);
+    // A transfer function's definition may span words: tf([1], [1 2 1]).
+    const v = isTransferFunction(c) ? pos.slice(1).join(' ') : pos[1];
+    setPartValue(circuit, c.refdes, v);
     return result(`${c.refdes} value = "${v}"`, { refdes: c.refdes, value: v }, true);
   }
   if (cmd === 'link' || cmd === 'unlink') {
@@ -12992,7 +12999,7 @@ const SYMBOL_CATEGORY_RULES = [
   ['Logic', /^(inverter|buffer|tristate_(inverter|buffer)|mux2|.*_gate)$/],
   ['Sequential', /^(?:dff|latch)(?:_|$)/],
   ['Blocks / shells', /^block$/],
-  ['Signal flow', /^(signal_(sum|multiply)|filter_(lpf|hpf|bpf|notch))$/],
+  ['Signal flow', /^(signal_(sum|multiply)|filter_(lpf|hpf|bpf|notch)|tf_[sz])$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each
@@ -13461,7 +13468,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -13576,6 +13583,8 @@ const symbolTypes = {
   filter_hpf,
   filter_bpf,
   filter_notch,
+  tf_s,
+  tf_z,
 };
 
 /** Ordered list of type names (for palettes / docs). */
@@ -14265,6 +14274,8 @@ __exports.resistor = resistor;
 
 __modules["src/core/components/signal-flow.js"] = function (__require, __exports) {
 let defineSymbol; __bind(() => { ({ defineSymbol } = __require("src/core/components/defineSymbol.js")); });
+let defaultTransferFunction; __bind(() => { ({ defaultTransferFunction } = __require("src/core/transfer-function.js")); });
+
 
 
 const SIGNAL_TERMINALS = [
@@ -14348,12 +14359,45 @@ const filter_hpf = filterBlock('hpf');
 const filter_bpf = filterBlock('bpf');
 const filter_notch = filterBlock('notch');
 
+/**
+ * Transfer-function blocks: a box holding H(s) or H(z) as math, input on the
+ * left and output on the right. The value is the MATLAB-style definition
+ * (transfer-function.js); each instance sizes its box to the equation
+ * (ComponentInstance#bodySize), so this footprint is only the smallest one.
+ */
+function transferFunctionBlock(type, variable) {
+  return defineSymbol({
+    type,
+    description: `Transfer function H(${variable})`,
+    refPrefix: 'H',
+    terminals: [
+      { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+      { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+    ],
+    bbox: { x: -80, y: -80, w: 160, h: 160 },
+    graphics: [
+      { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+      { kind: 'text', x: 0, y: 14, text: `H(${variable})`, anchor: 'middle', font: 'label' },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: null,
+    defaultValue: defaultTransferFunction(type),
+    allowFloatingTerminals: true,
+  });
+}
+
+const tf_s = transferFunctionBlock('tf_s', 's');
+const tf_z = transferFunctionBlock('tf_z', 'z');
+
 __exports.signal_sum = signal_sum;
 __exports.signal_multiply = signal_multiply;
 __exports.filter_lpf = filter_lpf;
 __exports.filter_hpf = filter_hpf;
 __exports.filter_bpf = filter_bpf;
 __exports.filter_notch = filter_notch;
+__exports.tf_s = tf_s;
+__exports.tf_z = tf_z;
 };
 
 __modules["src/core/components/solder.js"] = function (__require, __exports) {
@@ -16004,7 +16048,9 @@ let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_S
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
+let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, parseTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
+
 
 
 
@@ -17637,6 +17683,20 @@ function migrateSerializedComponentAnalysis(analysis) {
   return migrated;
 }
 
+/** A transfer-function box around its equation: whole pairs of grid cells
+ *  (so the mid-side terminals stay on the grid), at least 4x4 cells. Sized
+ *  from the model's own math estimate, never a browser measurement, so a
+ *  drawing reads the same everywhere and its wires never shift on load. */
+function transferFunctionBodySize(circuit, lines) {
+  const probes = lines.map((line) => new LabelInstance(circuit, { text: `$${line}$`, math: true, align: 'center' }));
+  // A fraction is as wide as its wider line; a cell clear on each side
+  // (half a cell above and below).
+  const width = Math.max(...probes.map((probe) => probe.textWidth())) + 2 * GRID;
+  const height = probes.reduce((sum, probe) => sum + probe.textHeight(), 0) + GRID;
+  const span = (n) => Math.max(4 * GRID, Math.ceil(n / (2 * GRID)) * 2 * GRID);
+  return { w: span(width), h: span(height) };
+}
+
 class ComponentInstance {
   constructor(circuit, type, opts = {}) {
     this.circuit = circuit;
@@ -17710,8 +17770,26 @@ class ComponentInstance {
     this.joinBar = this.type === 'supply' && opts.joinBar === true;
   }
 
-  /** Dynamic terminal definitions for a resizable schematic block. */
+  /** The body of a part sized per instance: a schematic block's set size,
+   *  or a transfer-function box fitted to its equation. Null for the rest. */
+  get bodySize() {
+    if (this.type === 'block') return this.blockSize;
+    const variable = TRANSFER_FUNCTION_TYPES[this.type];
+    if (!variable) return null;
+    const key = `${this.type}\n${this.value}`;
+    if (this._tfSize?.key !== key) {
+      this._tfSize = { key, size: transferFunctionBodySize(this.circuit, transferFunctionLines(this.value, variable)) };
+    }
+    return this._tfSize.size;
+  }
+
+  /** Dynamic terminal definitions for a resizable schematic block, or a
+   *  transfer-function box (input mid-left, output mid-right). */
   get terminalDefs() {
+    if (TRANSFER_FUNCTION_TYPES[this.type]) {
+      const { w } = this.bodySize;
+      return this.def.terminals.map((terminal) => ({ ...terminal, x: Math.sign(terminal.x) * w / 2, dir: { ...terminal.dir } }));
+    }
     if (this.type !== 'block') return this.def.terminals;
     const { w, h } = this.blockSize;
     return this.blockTerminals.map((item) => {
@@ -17813,19 +17891,26 @@ class ComponentInstance {
   inkTouches(rect) {
     if (!rectsOverlap(rect, this.inkRectWorld())) return false;
     if (this.type === 'block') return true;
+    // A transfer-function box is its outline: its equation sits inside.
+    if (TRANSFER_FUNCTION_TYPES[this.type]) {
+      const b = this.bboxWorld();
+      const t = 4;
+      return [{ x: b.x - t, y: b.y - t, w: b.w + 2 * t, h: 2 * t }, { x: b.x - t, y: b.y + b.h - t, w: b.w + 2 * t, h: 2 * t },
+        { x: b.x - t, y: b.y - t, w: 2 * t, h: b.h + 2 * t }, { x: b.x + b.w - t, y: b.y - t, w: 2 * t, h: b.h + 2 * t }]
+        .some((edge) => rectsOverlap(rect, edge));
+    }
     return symbolInkParts(this.def).some((part) => rectsOverlap(rect, transformRect(this.transform, part)));
   }
 
   /** The rectangle the symbol is drawn in (symbolInkRect), in world space. */
   inkRectWorld() {
-    if (this.type === 'block') return this.bboxWorld();
+    if (this.bodySize) return this.bboxWorld();
     return transformRect(this.transform, symbolInkRect(this.def) || this.def.bbox);
   }
 
   bboxWorld() {
-    const bbox = this.type === 'block'
-      ? { x: -this.blockSize.w / 2, y: -this.blockSize.h / 2, w: this.blockSize.w, h: this.blockSize.h }
-      : this.def.bbox;
+    const body = this.bodySize;
+    const bbox = body ? { x: -body.w / 2, y: -body.h / 2, w: body.w, h: body.h } : this.def.bbox;
     return transformRect(this.transform, bbox);
   }
   setColor(color) {
@@ -18295,6 +18380,7 @@ class Circuit {
     if (!this._loading || !opts.noLabel) {
       this._syncSignalInputLabels(inst);
       this._syncSizeLabel(inst);
+      this._syncTransferFunctionLabel(inst);
     }
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
@@ -18627,6 +18713,35 @@ class Circuit {
       : { x: (name?.offset || component.def.labelOffset).x, y: (name?.offset || component.def.labelOffset).y + MOS_SIZE_OFFSET.y };
   }
 
+  /** A transfer-function block's equation, drawn as an owned math label in
+   *  the middle of its box; any other part has none. */
+  _syncTransferFunctionLabel(component) {
+    if (!component) return null;
+    const variable = TRANSFER_FUNCTION_TYPES[component.type];
+    let label = null;
+    for (const candidate of [...this.labels.values()]) {
+      if (candidate.owner !== component.refdes || candidate.role !== TRANSFER_FUNCTION_ROLE) continue;
+      if (label || !variable) this.labels.delete(candidate.id);
+      else label = candidate;
+    }
+    if (!variable) return null;
+    const text = `$${transferFunctionDisplay(component.value, variable)}$`;
+    if (!label) {
+      label = this.addLabel({
+        text, math: true, owner: component.refdes, role: TRANSFER_FUNCTION_ROLE,
+        offset: { x: 0, y: 0 }, align: 'center', selectable: false,
+        style: { color: component.style.color },
+      });
+    } else if (label._text !== text) {
+      label._text = text;
+      label._mathBox = null;
+      label.clearRenderedTextBounds();
+    }
+    label.offset = { x: 0, y: 0 };
+    this.invalidateRoutingCache();
+    return label;
+  }
+
   /** Keep a transistor's size label an idempotent projection of its size:
    * one label, its TeX derived from the size and the part's name. */
   _syncSizeLabel(component) {
@@ -18911,6 +19026,14 @@ class Circuit {
   setValue(refdes, value) {
     const c = this.getComponent(refdes);
     if (this._syncSwitchLabel(refdes, value)) return c;
+    // A transfer function must read; its box (and pins) follow the equation.
+    if (TRANSFER_FUNCTION_TYPES[c.type]) {
+      parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
+      c.value = String(value).trim();
+      this._syncTransferFunctionLabel(c);
+      this.invalidateRoutingCache();
+      return c;
+    }
     c.value = String(value);
     if (isReferenceMarker(c) && this.labelOf(refdes)) this._syncReferenceMarkerLabel(refdes, c.value);
     return c;
@@ -23060,6 +23183,7 @@ class Circuit {
     for (const component of circuit.components.values()) {
       circuit._syncSignalInputLabels(component);
       circuit._syncSizeLabel(component);
+      circuit._syncTransferFunctionLabel(component);
     }
     // A switch's value is its phase, shown as its label.
     for (const component of circuit.components.values()) {
@@ -23459,6 +23583,7 @@ __exports.captureNetTerminalPositions = captureNetTerminalPositions;
 __exports.captureComponentTerminalPositions = captureComponentTerminalPositions;
 __exports.componentTerminalMoves = componentTerminalMoves;
 __exports.rerouteTouchedNets = rerouteTouchedNets;
+__exports.setPartValue = setPartValue;
 let netTerminalPositionKey; __bind(() => { ({ netTerminalPositionKey } = __require("src/core/model.js")); });
 /**
  * Following parts with their wires: which nets a set of parts touches, where
@@ -23547,6 +23672,34 @@ function rerouteTouchedNets(circuit, refs, moved, { fresh = false, beforeTermina
     if (circuit.rerouteNet(net, routeArg) === false) return id;
   }
   return null;
+}
+
+/**
+ * Set a part's value. A transfer-function block sizes its box to its
+ * equation, so a new definition can move its pins: the nets touching it
+ * follow, as after a transform. Throws, leaving the circuit as it was, when
+ * the value does not read or a wire cannot follow.
+ */
+function setPartValue(circuit, refdes, value) {
+  const component = circuit.getComponent(refdes);
+  const before = captureComponentTerminalPositions(circuit, [refdes]);
+  const beforeTerminals = captureNetTerminalPositions(circuit, [refdes]);
+  const saved = { value: component.value, topology: circuit._snapshotNetTopology() };
+  circuit.setValue(refdes, value);
+  const moves = componentTerminalMoves(circuit, [refdes], before);
+  const moved = [...moves.get(refdes).terminals.values()].some(({ before: a, after: b }) => a.x !== b.x || a.y !== b.y);
+  if (!moved) return component;
+  const stuck = rerouteTouchedNets(circuit, [refdes], null, { fresh: true, beforeTerminals, terminalMoves: moves });
+  if (stuck !== null) {
+    const name = circuit.nets.get(stuck)?.name || stuck;
+    circuit.setValue(refdes, saved.value);
+    circuit._restoreNetTopology(saved.topology);
+    circuit.invalidateRoutingCache();
+    throw new Error(`unable to reroute ${name} around the resized ${refdes}`);
+  }
+  circuit.reconnectCoincidentNets();
+  circuit.syncJunctionSolders();
+  return component;
 }
 
 };
@@ -24470,10 +24623,12 @@ function plotAnnotationSvg(label, opacity = '') {
  * position a beat gives it. */
 function componentShapeSvg(c, def = c.def) {
   const t = c.transform;
-  const body = c.type === 'block'
-    ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
+  const size = c.bodySize;
+  const body = size
+    ? `<rect x="${fmt(-size.w / 2)}" y="${fmt(-size.h / 2)}" width="${fmt(size.w)}" height="${fmt(size.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
     : def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
-  const text = def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
+  // A sized body's text is its own (a block's caption, a transfer function's math label).
+  const text = size ? '' : def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
   return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
 }
 
@@ -24827,11 +24982,13 @@ function svgString(circuit, opts = {}) {
   for (const c of comps) {
     const t = c.transform;
     const opacity = refOpacity(c.refdes);
-    const textGraphics = defOf(c).graphics.filter((g) => g.kind === 'text');
+    // A sized body (a block, a transfer function) draws its own outline and text.
+    const sizedBody = c.bodySize;
+    const textGraphics = sizedBody ? [] : defOf(c).graphics.filter((g) => g.kind === 'text');
     const bodyGraphics = defOf(c).graphics.filter((g) => g.kind !== 'text');
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
-    if (c.type === 'block') {
-      const r = c.blockSize;
+    if (sizedBody) {
+      const r = sizedBody;
       parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
     } else {
       const leadsInked = inkLeads(c);
@@ -27609,7 +27766,7 @@ const PARTNERS = new Map([
   ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
-  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
+  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
   ...['and', 'or', 'xor'].flatMap((gate) => [2, 3].map((n) => [`${gate}${n}_gate`, `n${gate}${n}_gate`])),
 ].flatMap(([a, b]) => [[a, b], [b, a]]));
 
@@ -27822,6 +27979,7 @@ function swapComponentType(circuit, refdes, type) {
     if (samePoint(sizeLabel.offset, slot(fromDef))) sizeLabel.offset = { ...slot(toDef) };
   }
   circuit._syncSizeLabel(component);
+  circuit._syncTransferFunctionLabel(component);
   circuit.invalidateRoutingCache();
   return component;
 }
@@ -28615,6 +28773,157 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
 
 __exports.DEFAULT_SLOT_CELLS = DEFAULT_SLOT_CELLS;
 __exports.MAX_EDGE_SHIFT = MAX_EDGE_SHIFT;
+};
+
+__modules["src/core/transfer-function.js"] = function (__require, __exports) {
+__exports.isTransferFunction = isTransferFunction;
+__exports.parseTransferFunction = parseTransferFunction;
+__exports.polynomialTex = polynomialTex;
+__exports.transferFunctionTex = transferFunctionTex;
+__exports.transferFunctionLines = transferFunctionLines;
+__exports.transferFunctionDisplay = transferFunctionDisplay;
+__exports.defaultTransferFunction = defaultTransferFunction;
+/**
+ * Transfer-function blocks (`tf_s`, `tf_z`): a signal-flow box holding its
+ * transfer function as math. The function is written the MATLAB way, as a
+ * part's value:
+ *
+ *   tf([1], [1 2 1])          numerator and denominator coefficients: in s,
+ *                             highest power first; in z, ascending powers
+ *                             of z^-1 (the DSP way, MATLAB's filt), so
+ *                             tf([1 -1], [1]) is 1 - z^-1;
+ *   [1], [1 2 1]              the same without tf();
+ *   tf([1], [1 -1], 'Variable', 'z')   descending powers of z (MATLAB's tf);
+ *   k                         a plain gain: one coefficient, no lists.
+ *
+ * A coefficient is a number or a symbol (`k`, `a_1`, `2*g_m`, `-p`), so a
+ * block can carry a symbolic gain or pole. This module only reads and draws
+ * the definition; it imports nothing, so the model can size the box from it.
+ */
+
+const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z' });
+const TRANSFER_FUNCTION_ROLE = 'transfer-function';
+
+function isTransferFunction(component) {
+  return !!component && Object.hasOwn(TRANSFER_FUNCTION_TYPES, component.type);
+}
+
+/** The coefficient tokens of one list: `[1 -2, a_1]` -> ['1', '-2', 'a_1']. */
+function coefficients(list, what) {
+  const body = list.trim().replace(/^[[{]|[\]}]$/g, '').trim();
+  if (!body) throw new Error(`the ${what} has no coefficients`);
+  // Spaces separate coefficients unless they sit beside an operator, so
+  // `[1 2*a]` and `[1, 2 * a]` both read as two.
+  const tokens = body.replace(/\s*([*/^])\s*/g, '$1').split(/[\s,;]+/).filter(Boolean);
+  for (const token of tokens) {
+    if (!/^[-+]?(?:\d+(?:\.\d*)?(?:e[-+]?\d+)?|\.\d+|[A-Za-z\\][\w\\{}^.]*)(?:[*/](?:\d+(?:\.\d*)?|[A-Za-z\\][\w\\{}^.]*))*$/i.test(token)) {
+      throw new Error(`bad coefficient "${token}" in the ${what}`);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Read a definition for a block in `variable` ('s' or 'z'). Returns
+ * `{ num, den, inverse }`: coefficient tokens, highest power first -- or,
+ * with `inverse` (z^-1, the default in z), lowest power of z^-1 first.
+ * Throws on anything else.
+ */
+function parseTransferFunction(text, variable = 's') {
+  let source = String(text ?? '').trim();
+  if (!source) throw new Error('a transfer function is tf([num], [den]), or a gain');
+  const call = source.match(/^tf\s*\(([\s\S]*)\)$/i);
+  if (call) source = call[1].trim();
+  let inverse = variable === 'z';
+  const option = source.match(/,\s*'variable'\s*,\s*'([^']*)'\s*$/i);
+  if (option) {
+    const name = option[1].replace(/\s/g, '');
+    const powers = /^z\^?-1$|^z\^\{-1\}$/i.test(name) ? 'z^-1' : /^[sz]$/i.test(name) ? name.toLowerCase() : null;
+    if (!powers) throw new Error(`unknown variable "${option[1]}" ('z' or 'z^-1' in a z block)`);
+    if (powers !== variable && !(variable === 'z' && powers === 'z^-1')) throw new Error(`'Variable', '${option[1]}' does not fit an H(${variable}) block`);
+    inverse = powers === 'z^-1';
+    source = source.slice(0, option.index).trim();
+  }
+  const lists = source.match(/^([[{][^\]}]*[\]}])\s*,?\s*([[{][^\]}]*[\]}])$/);
+  if (lists) return { num: coefficients(lists[1], 'numerator'), den: coefficients(lists[2], 'denominator'), inverse };
+  if (/[[\]{}]/.test(source)) throw new Error('a transfer function is tf([num], [den]): two lists of coefficients');
+  // A gain: one coefficient over 1.
+  return { num: coefficients(`[${source}]`, 'gain'), den: ['1'], inverse };
+}
+
+const isZero = (token) => /^[-+]?0*(\.0*)?$/.test(token);
+const isOne = (token) => /^\+?0*1(\.0*)?$/.test(token);
+const isMinusOne = (token) => /^-0*1(\.0*)?$/.test(token);
+
+/** A coefficient as TeX: `2*g_m` -> `2 g_{m}`, `a/b` -> `\frac{a}{b}`. */
+function coefficientTex(token) {
+  const body = token.replace(/^\+/, '');
+  const tex = body
+    .replace(/([A-Za-z])_([A-Za-z0-9]+)/g, (match, base, sub) => `${base}_{${sub}}`)
+    .replace(/(\d)e([-+]?\d+)/gi, (match, digit, exponent) => `${digit}\\cdot 10^{${Number(exponent)}}`);
+  const parts = tex.split('/');
+  return parts.length === 2 ? `\\frac{${parts[0].replace(/\*/g, '\\,')}}{${parts[1].replace(/\*/g, '\\,')}}` : tex.replace(/\*/g, '\\,');
+}
+
+/** One term: a coefficient times the variable to a power. */
+function term(token, power, variable, inverse) {
+  const v = power === 0 ? '' : inverse ? `${variable}^{-${power}}` : power === 1 ? variable : `${variable}^{${power}}`;
+  const negative = token.startsWith('-');
+  const magnitude = negative ? token.slice(1) : token.replace(/^\+/, '');
+  let body;
+  if (v && isOne(magnitude)) body = v;
+  else body = `${coefficientTex(magnitude)}${v ? ` ${v}` : ''}`;
+  return { negative, body };
+}
+
+/** A polynomial as TeX, its terms in the order written. */
+function polynomialTex(tokens, variable, inverse = false) {
+  const last = tokens.length - 1;
+  const terms = tokens
+    .map((token, index) => (isZero(token) ? null : term(token, inverse ? index : last - index, variable, inverse)))
+    .filter(Boolean);
+  if (!terms.length) return '0';
+  return terms.map((t, index) => (index === 0 ? `${t.negative ? '-' : ''}${t.body}` : ` ${t.negative ? '-' : '+'} ${t.body}`)).join('');
+}
+
+/** The definition as display math: a fraction, or the numerator alone over 1. */
+function transferFunctionTex(text, variable) {
+  const { num, den, inverse } = parseTransferFunction(text, variable);
+  if (den.length === 1 && isOne(den[0])) return polynomialTex(num, variable, inverse);
+  // Over -1: the numerator with its signs flipped.
+  if (den.length === 1 && isMinusOne(den[0])) {
+    return polynomialTex(num.map((token) => (token.startsWith('-') ? token.slice(1) : `-${token.replace(/^\+/, '')}`)), variable, inverse);
+  }
+  const top = polynomialTex(num, variable, inverse);
+  return `\\frac{${top}}{${polynomialTex(den, variable, inverse)}}`;
+}
+
+/** The lines the block's math stacks, as TeX: the numerator and, for a
+ *  fraction, the denominator -- what its box is sized around. */
+function transferFunctionLines(text, variable) {
+  const tex = transferFunctionDisplay(text, variable);
+  const fraction = tex.match(/^\\frac\{(.*)\}\{(.*)\}$/);
+  return fraction ? [fraction[1], fraction[2]] : [tex];
+}
+
+/** The block's math: the transfer function, or a plain mark when the
+ *  definition does not read (the value keeps what was typed). */
+function transferFunctionDisplay(text, variable) {
+  try {
+    return transferFunctionTex(text, variable);
+  } catch {
+    return `H(${variable}) = \\text{?}`;
+  }
+}
+
+/** The default definition a new block starts with. */
+function defaultTransferFunction(type) {
+  // An accumulator in z: 1 / (1 - z^-1).
+  return type === 'tf_z' ? 'tf([1], [1 -1])' : 'tf([1], [1 1])';
+}
+
+__exports.TRANSFER_FUNCTION_TYPES = TRANSFER_FUNCTION_TYPES;
+__exports.TRANSFER_FUNCTION_ROLE = TRANSFER_FUNCTION_ROLE;
 };
 
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
@@ -35651,6 +35960,7 @@ __exports.figureElement = figureElement;
 __exports.syncBodePlace = syncBodePlace;
 __exports.renderBode = renderBode;
 __exports.currentPlotData = currentPlotData;
+let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
@@ -35670,6 +35980,7 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
  * zeros, and their names follow at once. Nothing here solves the circuit
  * again: only the derived coefficients are re-evaluated.
  */
+
 
 
 
@@ -35704,30 +36015,6 @@ const state = {
 const panelEl = () => document.getElementById('analysis-panel-bode');
 
 // ----- steps ---------------------------------------------------------------------
-
-/** 1-2-5 per decade, `index` 0 being 1. */
-function step125(index) {
-  const decade = Math.floor(index / 3);
-  return [1, 2, 5][((index % 3) + 3) % 3] * 10 ** decade;
-}
-
-function index125(value) {
-  const decade = Math.floor(Math.log10(value) + 1e-9);
-  const mantissa = value / 10 ** decade;
-  return decade * 3 + (mantissa >= 4.9 ? 2 : mantissa >= 1.9 ? 1 : 0);
-}
-
-/** 1-2-3-5 per decade, for g_m r_o (30 is a common starting point). */
-function step1235(index) {
-  const decade = Math.floor(index / 4);
-  return [1, 2, 3, 5][((index % 4) + 4) % 4] * 10 ** decade;
-}
-
-function index1235(value) {
-  const decade = Math.floor(Math.log10(value) + 1e-9);
-  const mantissa = value / 10 ** decade;
-  return decade * 4 + (mantissa >= 4.9 ? 3 : mantissa >= 2.9 ? 2 : mantissa >= 1.9 ? 1 : 0);
-}
 
 /** A slider's plain readout: ×0.002, ×1, ×500. */
 function ratioText(value) {
@@ -35996,15 +36283,15 @@ function renderBode(report) {
   const model = currentModel();
   // The one ratio every MOS design has.
   sliders.appendChild(slider({
-    label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: index1235(state.intrinsicGain), min: 0, max: 16,
-    text: (i) => String(step1235(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
-    onInput: (i) => { state.intrinsicGain = step1235(i); drawSketch(); },
+    label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: indexE24(state.intrinsicGain), min: 0, max: 4 * PER_DECADE,
+    text: (i) => String(stepE24(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
+    onInput: (i) => { state.intrinsicGain = stepE24(i); drawSketch(); },
   }));
   if (model?.parameters.some((parameter) => parameter.parasitic)) {
     sliders.appendChild(slider({
-      label: 'Parasitic capacitance', tex: 'C_{par}/C', index: index125(state.parasiticRatio), min: -6, max: 3,
-      text: (i) => String(Number(step125(i).toPrecision(3))), title: 'Every MOS C_gs and C_gd, in units of C',
-      onInput: (i) => { state.parasiticRatio = step125(i); drawSketch(); },
+      label: 'Parasitic capacitance', tex: 'C_{par}/C', index: indexE24(state.parasiticRatio), min: -2 * PER_DECADE, max: PER_DECADE,
+      text: (i) => String(stepE24(i)), title: 'Every MOS C_gs and C_gd, in units of C',
+      onInput: (i) => { state.parasiticRatio = stepE24(i); drawSketch(); },
     }));
   }
   const own = [...(model?.parameters || [])].filter((parameter) => !parameter.parasitic)
@@ -36013,14 +36300,14 @@ function renderBode(report) {
     sliders.appendChild(slider({
       label: parameter.name,
       tex: parameter.tex,
-      index: index125(state.multipliers[parameter.name] ?? 1),
-      min: -9,
-      max: 9,
-      text: (i) => ratioText(step125(i)),
+      index: indexE24(state.multipliers[parameter.name] ?? 1),
+      min: -3 * PER_DECADE,
+      max: 3 * PER_DECADE,
+      text: (i) => ratioText(stepE24(i)),
       components: [parameter.component],
       title: parameter.load ? 'A load on the output: starts at 10 units' : '',
       onInput: (i) => {
-        const value = step125(i);
+        const value = stepE24(i);
         if (value === 1) delete state.multipliers[parameter.name];
         else state.multipliers[parameter.name] = value;
         drawSketch();
@@ -40761,6 +41048,39 @@ async function withEmbeddedMathFont(svg) {
 
 };
 
+__modules["src/web/e-series.js"] = function (__require, __exports) {
+__exports.stepE24 = stepE24;
+__exports.indexE24 = indexE24;
+/**
+ * The E24 preferred-number series, 24 values a decade, as slider steps: the
+ * Bode sketch's sliders move through it, fine enough to place a pole by eye,
+ * and every value one a designer knows.
+ */
+
+const E24 = [1, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2, 2.2, 2.4, 2.7, 3, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1];
+const PER_DECADE = E24.length;
+
+/** The E24 value `index` steps from 1 (negative steps go below 1). */
+function stepE24(index) {
+  const decade = Math.floor(index / PER_DECADE);
+  return Number((E24[((index % PER_DECADE) + PER_DECADE) % PER_DECADE] * 10 ** decade).toPrecision(2));
+}
+
+/** The step of the E24 value nearest `value` (on a log scale). */
+function indexE24(value) {
+  if (!(value > 0)) return 0;
+  const decade = Math.floor(Math.log10(value) + 1e-9);
+  const mantissa = value / 10 ** decade;
+  const distance = (x) => Math.abs(Math.log(x / mantissa));
+  let best = 0;
+  for (let i = 1; i < PER_DECADE; i++) if (distance(E24[i]) < distance(E24[best])) best = i;
+  // 9.6 and up is nearer the next decade's 1.
+  return distance(10) < distance(E24[best]) ? (decade + 1) * PER_DECADE : decade * PER_DECADE + best;
+}
+
+__exports.PER_DECADE = PER_DECADE;
+};
+
 __modules["src/web/editor-state.js"] = function (__require, __exports) {
 /**
  * The editor's shared state, for the modules split out of main.js.
@@ -45097,6 +45417,8 @@ let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
 let MOS_SIZE_ROLE, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
+let TRANSFER_FUNCTION_TYPES, isTransferFunction, parseTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isTransferFunction, parseTransferFunction } = __require("src/core/transfer-function.js")); });
+let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -45109,6 +45431,8 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * a part's name and child labels, a supply bar's rail name, a reference
  * marker's value, and a schematic block's caption.
  */
+
+
 
 
 
@@ -45155,12 +45479,16 @@ function restoreBoxState(label, state) {
 }
 
 function inlineEditSchematicBlock(component) {
-  if (!component || component.type !== 'block' || editor.inlineInput) return;
+  if (!component || (component.type !== 'block' && !isTransferFunction(component)) || editor.inlineInput) return;
+  const transfer = isTransferFunction(component);
   const pane = document.querySelector('.canvas-pane');
   const input = document.createElement('textarea');
   input.value = component.value || '';
   input.spellcheck = false;
-  input.className = 'label-inline-editor block-inline-editor';
+  input.className = `label-inline-editor block-inline-editor${transfer ? ' tf-inline-editor' : ''}`;
+  if (transfer) input.title = component.type === 'tf_z'
+    ? "tf([num], [den]) or a gain, in ascending powers of z^-1 ('Variable', 'z' for descending powers of z). Enter applies, Esc cancels."
+    : 'tf([num], [den]) or a gain, coefficients highest power of s first. Enter applies, Esc cancels.';
   input.style.position = 'fixed';
   input.style.zIndex = '30';
   // Covers the block at the current zoom and pan, repositioned on every repaint.
@@ -45188,7 +45516,20 @@ function inlineEditSchematicBlock(component) {
     editor.inlineInput = null;
     const text = input.value.trim();
     input.remove();
-    if (apply && text && text !== component.value) commit(() => editor.circuit.setValue(component.refdes, text));
+    if (apply && text && text !== component.value) {
+      if (transfer) {
+        // The box fits the new equation, and its wires follow its pins.
+        try {
+          parseTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
+        } catch (err) {
+          logLine(`${component.refdes}: ${err.message}`, 'error');
+          render();
+          return;
+        }
+        // setPartValue leaves the drawing as it was when a wire cannot follow.
+        commit(() => setPartValue(editor.circuit, component.refdes, text));
+      } else commit(() => editor.circuit.setValue(component.refdes, text));
+    }
     render();
   };
   bindInlineEditorKeys(input, done);
@@ -45200,7 +45541,7 @@ function openComponentChildLabelEditor(component) {
     openReferenceMarkerEditor(component);
     return;
   }
-  if (component.type === 'block') {
+  if (component.type === 'block' || isTransferFunction(component)) {
     inlineEditSchematicBlock(component);
     return;
   }
@@ -59797,6 +60138,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)',
 };
 
 const PLACEMENT_ALIASES = {
@@ -59860,6 +60202,8 @@ const PLACEMENT_ALIASES = {
   filter_hpf: ['hpf', 'highpass', 'high pass', 'filter', 'signal flow'],
   filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
+  tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
+  tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
 };
 
 /** Rank a name against a query: prefix beats substring beats subsequence, and

@@ -82,7 +82,7 @@ test('insert categories keep switches and macros separate and include vccs with 
   assert.deepEqual([...groups.Macros].sort(), ['adc', 'adc_diff', 'comparator', 'comparator_clocked', 'dac', 'dac_diff', 'gm', 'opamp', 'opamp_diff']);
   assert.ok(groups.Logic.includes('mux2') && groups.Logic.includes('tristate_buffer') && groups.Logic.includes('xnor3_gate'));
   assert.ok(groups.Sequential.includes('dff') && groups.Sequential.includes('latch_enb_rstb_qb'));
-  assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply', 'filter_lpf', 'filter_hpf', 'filter_bpf', 'filter_notch']);
+  assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply', 'filter_lpf', 'filter_hpf', 'filter_bpf', 'filter_notch', 'tf_s', 'tf_z']);
   assert.equal(groups.Other, undefined, 'every registered symbol has a category');
   // The insert menu uses the same groups.
   assert.match(readFileSync(new URL('../src/web/insert-menu.js', import.meta.url), 'utf8'), /symbolCategories\(availableTypes\)/);

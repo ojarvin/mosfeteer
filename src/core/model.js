@@ -9,6 +9,7 @@ import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, parseTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -1630,6 +1631,20 @@ function migrateSerializedComponentAnalysis(analysis) {
   return migrated;
 }
 
+/** A transfer-function box around its equation: whole pairs of grid cells
+ *  (so the mid-side terminals stay on the grid), at least 4x4 cells. Sized
+ *  from the model's own math estimate, never a browser measurement, so a
+ *  drawing reads the same everywhere and its wires never shift on load. */
+function transferFunctionBodySize(circuit, lines) {
+  const probes = lines.map((line) => new LabelInstance(circuit, { text: `$${line}$`, math: true, align: 'center' }));
+  // A fraction is as wide as its wider line; a cell clear on each side
+  // (half a cell above and below).
+  const width = Math.max(...probes.map((probe) => probe.textWidth())) + 2 * GRID;
+  const height = probes.reduce((sum, probe) => sum + probe.textHeight(), 0) + GRID;
+  const span = (n) => Math.max(4 * GRID, Math.ceil(n / (2 * GRID)) * 2 * GRID);
+  return { w: span(width), h: span(height) };
+}
+
 export class ComponentInstance {
   constructor(circuit, type, opts = {}) {
     this.circuit = circuit;
@@ -1703,8 +1718,26 @@ export class ComponentInstance {
     this.joinBar = this.type === 'supply' && opts.joinBar === true;
   }
 
-  /** Dynamic terminal definitions for a resizable schematic block. */
+  /** The body of a part sized per instance: a schematic block's set size,
+   *  or a transfer-function box fitted to its equation. Null for the rest. */
+  get bodySize() {
+    if (this.type === 'block') return this.blockSize;
+    const variable = TRANSFER_FUNCTION_TYPES[this.type];
+    if (!variable) return null;
+    const key = `${this.type}\n${this.value}`;
+    if (this._tfSize?.key !== key) {
+      this._tfSize = { key, size: transferFunctionBodySize(this.circuit, transferFunctionLines(this.value, variable)) };
+    }
+    return this._tfSize.size;
+  }
+
+  /** Dynamic terminal definitions for a resizable schematic block, or a
+   *  transfer-function box (input mid-left, output mid-right). */
   get terminalDefs() {
+    if (TRANSFER_FUNCTION_TYPES[this.type]) {
+      const { w } = this.bodySize;
+      return this.def.terminals.map((terminal) => ({ ...terminal, x: Math.sign(terminal.x) * w / 2, dir: { ...terminal.dir } }));
+    }
     if (this.type !== 'block') return this.def.terminals;
     const { w, h } = this.blockSize;
     return this.blockTerminals.map((item) => {
@@ -1806,19 +1839,26 @@ export class ComponentInstance {
   inkTouches(rect) {
     if (!rectsOverlap(rect, this.inkRectWorld())) return false;
     if (this.type === 'block') return true;
+    // A transfer-function box is its outline: its equation sits inside.
+    if (TRANSFER_FUNCTION_TYPES[this.type]) {
+      const b = this.bboxWorld();
+      const t = 4;
+      return [{ x: b.x - t, y: b.y - t, w: b.w + 2 * t, h: 2 * t }, { x: b.x - t, y: b.y + b.h - t, w: b.w + 2 * t, h: 2 * t },
+        { x: b.x - t, y: b.y - t, w: 2 * t, h: b.h + 2 * t }, { x: b.x + b.w - t, y: b.y - t, w: 2 * t, h: b.h + 2 * t }]
+        .some((edge) => rectsOverlap(rect, edge));
+    }
     return symbolInkParts(this.def).some((part) => rectsOverlap(rect, transformRect(this.transform, part)));
   }
 
   /** The rectangle the symbol is drawn in (symbolInkRect), in world space. */
   inkRectWorld() {
-    if (this.type === 'block') return this.bboxWorld();
+    if (this.bodySize) return this.bboxWorld();
     return transformRect(this.transform, symbolInkRect(this.def) || this.def.bbox);
   }
 
   bboxWorld() {
-    const bbox = this.type === 'block'
-      ? { x: -this.blockSize.w / 2, y: -this.blockSize.h / 2, w: this.blockSize.w, h: this.blockSize.h }
-      : this.def.bbox;
+    const body = this.bodySize;
+    const bbox = body ? { x: -body.w / 2, y: -body.h / 2, w: body.w, h: body.h } : this.def.bbox;
     return transformRect(this.transform, bbox);
   }
   setColor(color) {
@@ -2288,6 +2328,7 @@ export class Circuit {
     if (!this._loading || !opts.noLabel) {
       this._syncSignalInputLabels(inst);
       this._syncSizeLabel(inst);
+      this._syncTransferFunctionLabel(inst);
     }
     // Touching pins connect: a newly placed component whose terminal lands on
     // another component's terminal joins that net immediately. Skipped while a
@@ -2620,6 +2661,35 @@ export class Circuit {
       : { x: (name?.offset || component.def.labelOffset).x, y: (name?.offset || component.def.labelOffset).y + MOS_SIZE_OFFSET.y };
   }
 
+  /** A transfer-function block's equation, drawn as an owned math label in
+   *  the middle of its box; any other part has none. */
+  _syncTransferFunctionLabel(component) {
+    if (!component) return null;
+    const variable = TRANSFER_FUNCTION_TYPES[component.type];
+    let label = null;
+    for (const candidate of [...this.labels.values()]) {
+      if (candidate.owner !== component.refdes || candidate.role !== TRANSFER_FUNCTION_ROLE) continue;
+      if (label || !variable) this.labels.delete(candidate.id);
+      else label = candidate;
+    }
+    if (!variable) return null;
+    const text = `$${transferFunctionDisplay(component.value, variable)}$`;
+    if (!label) {
+      label = this.addLabel({
+        text, math: true, owner: component.refdes, role: TRANSFER_FUNCTION_ROLE,
+        offset: { x: 0, y: 0 }, align: 'center', selectable: false,
+        style: { color: component.style.color },
+      });
+    } else if (label._text !== text) {
+      label._text = text;
+      label._mathBox = null;
+      label.clearRenderedTextBounds();
+    }
+    label.offset = { x: 0, y: 0 };
+    this.invalidateRoutingCache();
+    return label;
+  }
+
   /** Keep a transistor's size label an idempotent projection of its size:
    * one label, its TeX derived from the size and the part's name. */
   _syncSizeLabel(component) {
@@ -2904,6 +2974,14 @@ export class Circuit {
   setValue(refdes, value) {
     const c = this.getComponent(refdes);
     if (this._syncSwitchLabel(refdes, value)) return c;
+    // A transfer function must read; its box (and pins) follow the equation.
+    if (TRANSFER_FUNCTION_TYPES[c.type]) {
+      parseTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
+      c.value = String(value).trim();
+      this._syncTransferFunctionLabel(c);
+      this.invalidateRoutingCache();
+      return c;
+    }
     c.value = String(value);
     if (isReferenceMarker(c) && this.labelOf(refdes)) this._syncReferenceMarkerLabel(refdes, c.value);
     return c;
@@ -7053,6 +7131,7 @@ export class Circuit {
     for (const component of circuit.components.values()) {
       circuit._syncSignalInputLabels(component);
       circuit._syncSizeLabel(component);
+      circuit._syncTransferFunctionLabel(component);
     }
     // A switch's value is its phase, shown as its label.
     for (const component of circuit.components.values()) {

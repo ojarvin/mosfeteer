@@ -1,4 +1,5 @@
 import { defineSymbol } from './defineSymbol.js';
+import { defaultTransferFunction } from '../transfer-function.js';
 
 const SIGNAL_TERMINALS = [
   { name: 'n', x: 0, y: -40, direction: 'passive', signalRole: 'input', dir: { x: 0, y: -1 } },
@@ -80,3 +81,34 @@ export const filter_lpf = filterBlock('lpf');
 export const filter_hpf = filterBlock('hpf');
 export const filter_bpf = filterBlock('bpf');
 export const filter_notch = filterBlock('notch');
+
+/**
+ * Transfer-function blocks: a box holding H(s) or H(z) as math, input on the
+ * left and output on the right. The value is the MATLAB-style definition
+ * (transfer-function.js); each instance sizes its box to the equation
+ * (ComponentInstance#bodySize), so this footprint is only the smallest one.
+ */
+function transferFunctionBlock(type, variable) {
+  return defineSymbol({
+    type,
+    description: `Transfer function H(${variable})`,
+    refPrefix: 'H',
+    terminals: [
+      { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
+      { name: 'out', x: 80, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+    ],
+    bbox: { x: -80, y: -80, w: 160, h: 160 },
+    graphics: [
+      { kind: 'rect', x: -80, y: -80, w: 160, h: 160, style: 'emph' },
+      { kind: 'text', x: 0, y: 14, text: `H(${variable})`, anchor: 'middle', font: 'label' },
+    ],
+    textPos: null,
+    refPos: null,
+    labelOffset: null,
+    defaultValue: defaultTransferFunction(type),
+    allowFloatingTerminals: true,
+  });
+}
+
+export const tf_s = transferFunctionBlock('tf_s', 's');
+export const tf_z = transferFunctionBlock('tf_z', 'z');

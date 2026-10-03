@@ -1,5 +1,6 @@
 import { Circuit, canonicalNetName, normalizeTags, parseTermRef, transformComponentWorld } from './model.js';
-import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets } from './part-moves.js';
+import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, rerouteTouchedNets, setPartValue } from './part-moves.js';
+import { TRANSFER_FUNCTION_ROLE, isTransferFunction } from './transfer-function.js';
 import { getSymbol, symbolTypeNames } from './components/index.js';
 import { GRID, onGrid, snap, ceilGrid } from './grid.js';
 import { applyTransform, fmt, rectsOverlap } from './geometry.js';
@@ -299,6 +300,8 @@ export function evaluate(circuit) {
     const labelBox = label.inkRect();
     for (const comp of comps) {
       if (annotated(comp)) continue;
+      // A transfer function's equation is drawn inside its own box.
+      if (label.role === TRANSFER_FUNCTION_ROLE && label.owner === comp.refdes) continue;
       if (!comp.inkTouches(labelBox)) continue;
       const compBox = comp.inkRectWorld();
       const message = `label ${label.id} overlaps ${comp.refdes}(${comp.type})`;
@@ -445,7 +448,9 @@ export function commandHelp() {
     '  move <refdes> <X> <Y>          - move (snapped to 40-grid)',
     '  rotate <refdes> [deg=90]       - rotate by multiples of 90',
     '  mirror <refdes> <x|y>          - flip along an axis',
-    '  value <refdes> <V>             - set value/label text',
+    '  value <refdes> <V>             - set value/label text; a transfer function (tf_s, tf_z) takes tf([num], [den]), [num], [den],',
+    '                                   or a gain (k): in s highest power first, in z ascending powers of z^-1 (tf([1 -1], [1]) is 1 - z^-1;',
+    '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  size <refdes> [W/L] [xM] [replace|beside] - a transistor\'s sizing label, W/L = M·W/L (2u/400n x4; bare numbers are μm); replace puts it in place of',
     '                                   the name label, beside under it; size <refdes> off removes it; no size prints it',
@@ -743,8 +748,9 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
   if (cmd === 'value' || cmd === 'setvalue') {
     const c = circuit.getComponent(pos[0]);
-    const v = pos[1];
-    circuit.setValue(c.refdes, v);
+    // A transfer function's definition may span words: tf([1], [1 2 1]).
+    const v = isTransferFunction(c) ? pos.slice(1).join(' ') : pos[1];
+    setPartValue(circuit, c.refdes, v);
     return result(`${c.refdes} value = "${v}"`, { refdes: c.refdes, value: v }, true);
   }
   if (cmd === 'link' || cmd === 'unlink') {

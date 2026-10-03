@@ -692,10 +692,12 @@ function plotAnnotationSvg(label, opacity = '') {
  * position a beat gives it. */
 export function componentShapeSvg(c, def = c.def) {
   const t = c.transform;
-  const body = c.type === 'block'
-    ? `<rect x="${fmt(-c.blockSize.w / 2)}" y="${fmt(-c.blockSize.h / 2)}" width="${fmt(c.blockSize.w)}" height="${fmt(c.blockSize.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
+  const size = c.bodySize;
+  const body = size
+    ? `<rect x="${fmt(-size.w / 2)}" y="${fmt(-size.h / 2)}" width="${fmt(size.w)}" height="${fmt(size.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
     : def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
-  const text = def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
+  // A sized body's text is its own (a block's caption, a transfer function's math label).
+  const text = size ? '' : def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
   return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
 }
 
@@ -1049,11 +1051,13 @@ export function svgString(circuit, opts = {}) {
   for (const c of comps) {
     const t = c.transform;
     const opacity = refOpacity(c.refdes);
-    const textGraphics = defOf(c).graphics.filter((g) => g.kind === 'text');
+    // A sized body (a block, a transfer function) draws its own outline and text.
+    const sizedBody = c.bodySize;
+    const textGraphics = sizedBody ? [] : defOf(c).graphics.filter((g) => g.kind === 'text');
     const bodyGraphics = defOf(c).graphics.filter((g) => g.kind !== 'text');
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
-    if (c.type === 'block') {
-      const r = c.blockSize;
+    if (sizedBody) {
+      const r = sizedBody;
       parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
     } else {
       const leadsInked = inkLeads(c);

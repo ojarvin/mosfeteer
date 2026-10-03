@@ -9,6 +9,8 @@ import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
 import { MOS_SIZE_ROLE, formatMosSize, parseMosSize } from '../core/mos-size.js';
+import { TRANSFER_FUNCTION_TYPES, isTransferFunction, parseTransferFunction } from '../core/transfer-function.js';
+import { setPartValue } from '../core/part-moves.js';
 import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
 import { logLine } from './status-bar-ui.js';
@@ -49,12 +51,16 @@ export function restoreBoxState(label, state) {
 }
 
 export function inlineEditSchematicBlock(component) {
-  if (!component || component.type !== 'block' || editor.inlineInput) return;
+  if (!component || (component.type !== 'block' && !isTransferFunction(component)) || editor.inlineInput) return;
+  const transfer = isTransferFunction(component);
   const pane = document.querySelector('.canvas-pane');
   const input = document.createElement('textarea');
   input.value = component.value || '';
   input.spellcheck = false;
-  input.className = 'label-inline-editor block-inline-editor';
+  input.className = `label-inline-editor block-inline-editor${transfer ? ' tf-inline-editor' : ''}`;
+  if (transfer) input.title = component.type === 'tf_z'
+    ? "tf([num], [den]) or a gain, in ascending powers of z^-1 ('Variable', 'z' for descending powers of z). Enter applies, Esc cancels."
+    : 'tf([num], [den]) or a gain, coefficients highest power of s first. Enter applies, Esc cancels.';
   input.style.position = 'fixed';
   input.style.zIndex = '30';
   // Covers the block at the current zoom and pan, repositioned on every repaint.
@@ -82,7 +88,20 @@ export function inlineEditSchematicBlock(component) {
     editor.inlineInput = null;
     const text = input.value.trim();
     input.remove();
-    if (apply && text && text !== component.value) commit(() => editor.circuit.setValue(component.refdes, text));
+    if (apply && text && text !== component.value) {
+      if (transfer) {
+        // The box fits the new equation, and its wires follow its pins.
+        try {
+          parseTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
+        } catch (err) {
+          logLine(`${component.refdes}: ${err.message}`, 'error');
+          render();
+          return;
+        }
+        // setPartValue leaves the drawing as it was when a wire cannot follow.
+        commit(() => setPartValue(editor.circuit, component.refdes, text));
+      } else commit(() => editor.circuit.setValue(component.refdes, text));
+    }
     render();
   };
   bindInlineEditorKeys(input, done);
@@ -94,7 +113,7 @@ export function openComponentChildLabelEditor(component) {
     openReferenceMarkerEditor(component);
     return;
   }
-  if (component.type === 'block') {
+  if (component.type === 'block' || isTransferFunction(component)) {
     inlineEditSchematicBlock(component);
     return;
   }

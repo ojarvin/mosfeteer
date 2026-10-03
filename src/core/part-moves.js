@@ -86,3 +86,31 @@ export function rerouteTouchedNets(circuit, refs, moved, { fresh = false, before
   }
   return null;
 }
+
+/**
+ * Set a part's value. A transfer-function block sizes its box to its
+ * equation, so a new definition can move its pins: the nets touching it
+ * follow, as after a transform. Throws, leaving the circuit as it was, when
+ * the value does not read or a wire cannot follow.
+ */
+export function setPartValue(circuit, refdes, value) {
+  const component = circuit.getComponent(refdes);
+  const before = captureComponentTerminalPositions(circuit, [refdes]);
+  const beforeTerminals = captureNetTerminalPositions(circuit, [refdes]);
+  const saved = { value: component.value, topology: circuit._snapshotNetTopology() };
+  circuit.setValue(refdes, value);
+  const moves = componentTerminalMoves(circuit, [refdes], before);
+  const moved = [...moves.get(refdes).terminals.values()].some(({ before: a, after: b }) => a.x !== b.x || a.y !== b.y);
+  if (!moved) return component;
+  const stuck = rerouteTouchedNets(circuit, [refdes], null, { fresh: true, beforeTerminals, terminalMoves: moves });
+  if (stuck !== null) {
+    const name = circuit.nets.get(stuck)?.name || stuck;
+    circuit.setValue(refdes, saved.value);
+    circuit._restoreNetTopology(saved.topology);
+    circuit.invalidateRoutingCache();
+    throw new Error(`unable to reroute ${name} around the resized ${refdes}`);
+  }
+  circuit.reconnectCoincidentNets();
+  circuit.syncJunctionSolders();
+  return component;
+}
