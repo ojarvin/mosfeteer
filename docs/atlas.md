@@ -42,13 +42,14 @@ of part types, and shared net names count a little. A search packs what it finds
 clearing it puts every design back in its place.
 
 The top bar mirrors the editor's: the Mosfeteer mark, the workspace name,
-the search, **New**, and the light/dark theme toggle. **New** opens a blank
+the search, the file actions (**Folder…**, **Open…**, **New**, **Export**)
+together, then the view toggles (**Links**, the light/dark theme). **New** opens a blank
 schematic in the editor, with the name field focused. Unsaved changes in the
 current drawing trigger the usual discard prompt; canceling keeps the Atlas
 open. Name and save the new circuit to add it to the workspace. This button
 is hidden in the Symbols view.
 
-The design open in the editor -- where Esc and the header's **Back to …**
+The design open in the editor -- where Shift+Backspace and the header's **Back to …**
 button return -- carries an **OPEN** badge before its caption, and the
 button names it ("Back to amp", or "(not in this workspace)" for a new or
 unsaved drawing). The picked design, which Enter opens, has a bracket at each
@@ -73,7 +74,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | click / arrows / Tab | pick a design |
 | Ctrl- or Shift-click | add a design to the pick, or take it out (Esc clears) |
 | Ctrl+Shift+C | copy the picked designs as one image, packed together with their captions |
-| double-click / Enter | open it (after the unsaved-changes check) |
+| double-click / Enter | open it (after the unsaved-changes check); Enter with nothing picked goes back to the editor |
 | `/` or Ctrl/Cmd+F | search the designs |
 | `#` | edit the picked design's tags |
 | Ctrl/Cmd+E | export the desk as one sheet |
@@ -83,8 +84,8 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | `Shift+T` | pack the desk afresh, related designs together |
 | `+` / `-` | zoom about the middle |
 | `Shift+D` | theme |
-| Esc | clear the search, else back to the editor |
-| Backspace | back to the editor |
+| Esc | clear the pick of several, then the search, then the pick; it never leaves the Atlas |
+| Shift+Backspace (or Backspace) | back to the editor |
 
 ## Search and tags
 
@@ -100,7 +101,7 @@ clearing the search pack at once. Enter (Shift+Enter) steps through the
 designs found, and when one is left it is picked. Esc leaves the field with
 the search still on and a found design picked, so Enter opens it; the arrows
 and Tab move among the found designs, and Esc on the desk clears the search
-(the next one returns to the editor). Opening a design selects what was
+(the next one clears the pick). Opening a design selects what was
 found in it. The search stays for the session, so the next match is one
 Shift+Backspace away.
 

@@ -42,8 +42,8 @@ function exitPoint(r, toward) {
 
 /**
  * An arrow from one tile to another along the line joining their centres,
- * starting and ending `gap` outside their edges. Null when the tiles
- * overlap or sit too close for an arrow to show.
+ * starting and ending `gap` outside their edges -- less when the tiles sit
+ * close, so neighbours still get a short arrow. Null when they overlap.
  */
 export function linkArrow(from, to, gap = 0) {
   const fromCentre = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
@@ -53,8 +53,9 @@ export function linkArrow(from, to, gap = 0) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   // The tiles overlap when the exits cross over.
   const along = (b.x - a.x) * (toCentre.x - fromCentre.x) + (b.y - a.y) * (toCentre.y - fromCentre.y);
-  if (along <= 0 || length <= 2 * gap) return null;
+  if (along <= 0 || !length) return null;
   const ux = (b.x - a.x) / length;
   const uy = (b.y - a.y) / length;
-  return { x1: a.x + ux * gap, y1: a.y + uy * gap, x2: b.x - ux * gap, y2: b.y - uy * gap };
+  const g = Math.min(gap, length / 4);
+  return { x1: a.x + ux * g, y1: a.y + uy * g, x2: b.x - ux * g, y2: b.y - uy * g };
 }

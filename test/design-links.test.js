@@ -39,7 +39,9 @@ test('linkArrow runs between tile edges along the centre line, a gap outside eac
   // Diagonal: leaves through the nearer edge.
   const corner = linkArrow(left, { x: 300, y: 300, w: 100, h: 100 });
   assert.deepEqual([corner.x1, corner.y1, corner.x2, corner.y2], [100, 100, 300, 300]);
+  // Close neighbours still get a short arrow, its gaps shrunk to fit.
+  assert.deepEqual(linkArrow(left, { x: 108, y: 0, w: 100, h: 100 }, 10), { x1: 102, y1: 50, x2: 106, y2: 50 });
   // Overlapping or touching tiles have no room for an arrow.
   assert.equal(linkArrow(left, { x: 50, y: 0, w: 100, h: 100 }, 0), null);
-  assert.equal(linkArrow(left, { x: 110, y: 0, w: 100, h: 100 }, 10), null);
+  assert.equal(linkArrow(left, { x: 100, y: 0, w: 100, h: 100 }, 10), null);
 });

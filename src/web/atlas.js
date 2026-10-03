@@ -60,8 +60,8 @@ const LINKS_KEY = 'mosfeteer.atlas.links';
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then returns',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc clears the pick · Enter or Shift+Backspace returns',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -437,7 +437,7 @@ function colors() {
   };
 }
 
-/** The header's way back names the design Esc returns to, and says so when
+/** The header's way back names the design the editor returns to, and says so when
  *  that design is not on the desk (a new drawing, or one from elsewhere). */
 function syncBackButton() {
   if (!backEl || state.opening) return;
@@ -446,7 +446,7 @@ function syncBackButton() {
   const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
   if (backEl.textContent !== label) {
     backEl.textContent = label;
-    backEl.title = `Esc returns to ${name}, the design open in the editor`;
+    backEl.title = `Back to ${name}, the design open in the editor (Shift+Backspace, or Enter with nothing picked)`;
   }
 }
 
@@ -579,7 +579,6 @@ function drawLinks(ctx, palette, shown) {
   const edges = deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to));
   if (!edges.length) return;
   const tiles = new Map(shown.map(({ tile, alpha }) => [tile.id, { tile, alpha }]));
-  const head = 9;
   ctx.save();
   ctx.lineCap = 'round';
   for (const { from, to } of edges) {
@@ -594,17 +593,35 @@ function drawLinks(ctx, palette, shown) {
     ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (faded ? 0.3 : 0.9);
     ctx.strokeStyle = ctx.fillStyle = palette.accent;
     ctx.lineWidth = 2;
-    const angle = Math.atan2(arrow.y2 - arrow.y1, arrow.x2 - arrow.x1);
+    // A gentle bend, always to the same side of the way it points, so two
+    // designs linking both ways get two arrows rather than one line.
+    const dx = arrow.x2 - arrow.x1;
+    const dy = arrow.y2 - arrow.y1;
+    const length = Math.hypot(dx, dy);
+    const bend = Math.min(length * 0.18, 60);
+    const control = { x: (arrow.x1 + arrow.x2) / 2 - (dy / length) * bend, y: (arrow.y1 + arrow.y2) / 2 + (dx / length) * bend };
+    // The head points along the curve where it arrives, and takes at most
+    // half a short arrow, so a short one still shows a shaft.
+    const head = Math.min(10, length / 2);
+    const angle = Math.atan2(arrow.y2 - control.y, arrow.x2 - control.x);
     const tip = { x: arrow.x2, y: arrow.y2 };
-    const base = { x: tip.x - Math.cos(angle) * head, y: tip.y - Math.sin(angle) * head };
+    const base = { x: tip.x - Math.cos(angle) * head * 0.8, y: tip.y - Math.sin(angle) * head * 0.8 };
     ctx.beginPath();
     ctx.moveTo(arrow.x1, arrow.y1);
-    ctx.lineTo(base.x, base.y);
+    ctx.quadraticCurveTo(control.x, control.y, base.x, base.y);
     ctx.stroke();
+    // A dot where it leaves the design that links.
+    ctx.beginPath();
+    ctx.arc(arrow.x1, arrow.y1, Math.min(3, length / 8), 0, Math.PI * 2);
+    ctx.fill();
+    // A slim, swept-back head.
+    const wing = head * 0.42;
+    const back = { x: tip.x - Math.cos(angle) * head, y: tip.y - Math.sin(angle) * head };
     ctx.beginPath();
     ctx.moveTo(tip.x, tip.y);
-    ctx.lineTo(base.x + Math.sin(angle) * head * 0.45, base.y - Math.cos(angle) * head * 0.45);
-    ctx.lineTo(base.x - Math.sin(angle) * head * 0.45, base.y + Math.cos(angle) * head * 0.45);
+    ctx.lineTo(back.x + Math.sin(angle) * wing, back.y - Math.cos(angle) * wing);
+    ctx.lineTo(base.x, base.y);
+    ctx.lineTo(back.x - Math.sin(angle) * wing, back.y + Math.cos(angle) * wing);
     ctx.closePath();
     ctx.fill();
   }
@@ -652,8 +669,7 @@ function applySearch(query, { arrange = 'soon' } = {}) {
     statusEl.textContent = count ? `${count} of ${designs} · Enter steps through them` : 'No design matches';
   }
   for (const [id, el] of state.overlays) el.style.opacity = !state.matches || state.matches.has(id) ? '' : '0.18';
-  // One design left is the one being looked for: pick it, so Esc and Enter
-  // open it. Packing the desk around it brings it into view.
+  // One design left is the one being looked for: pick it, so Enter opens it. Packing the desk around it brings it into view.
   if (state.matches?.size === 1) state.selected = [...state.matches.keys()][0];
   clearTimeout(state.arrangeTimer);
   state.arrangeTimer = null;
@@ -931,7 +947,7 @@ function leaveSearch() {
   requestDraw();
 }
 
-/** Esc on the desk drops a search before it leaves the Atlas. */
+/** Esc on the desk drops a search before it clears the pick. */
 function clearSearch() {
   if (searchEl) searchEl.value = '';
   applySearch('', { arrange: 'now' });
@@ -1063,7 +1079,7 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   let room = (tile.w + ATLAS_GAP * 0.8) * k;
   let x = rect.x;
   const y = rect.y + rect.h + size * 0.6;
-  // The open design -- where Esc returns -- carries an Open badge before its
+  // The open design -- where the editor returns to -- carries an Open badge before its
   // name, whichever design is picked or hovered.
   if (entry.current) {
     ctx.font = `700 ${size * 0.8}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
@@ -1300,7 +1316,7 @@ async function reloadDesk() {
   if (!ready || !state || state.generation !== generation) return true;
   state.selected = state.tiles.find((tile) => state.entries.get(tile.id).current)?.id || null;
   if (!state.tiles.length) {
-    statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
+    statusEl.textContent = 'No designs in the workspace yet. Shift+Backspace returns to the editor.';
     requestDraw();
   } else {
     void animateView(clampView(fitAllView()));
@@ -1434,7 +1450,7 @@ async function openDesk(generation, source, animate, startup) {
     return;
   }
   if (!state.tiles.length) {
-    statusEl.textContent = 'No designs in the workspace yet. Esc returns to the editor.';
+    statusEl.textContent = 'No designs in the workspace yet. Shift+Backspace returns to the editor.';
   }
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id).current);
   // The open design starts picked; otherwise nothing is until you choose.
@@ -1678,6 +1694,8 @@ export function onAtlasKey(ev) {
   const arrows = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
   const selected = state.selected && tileById(state.selected);
   if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && key.toLowerCase() === 'c') void copyPickedAsImage();
+  // Esc takes things back one at a time and never leaves: the pick of
+  // several, then a search, then the pick (and its link arrows) itself.
   else if (key === 'Escape' && state.picked?.size) {
     state.picked = null;
     requestDraw();
@@ -1685,8 +1703,12 @@ export function onAtlasKey(ev) {
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
-  else if (key === 'Escape' || key === 'Backspace') void closeAtlas();
-  else if (key === 'Enter' && selected) void openTile(selected);
+  else if (key === 'Escape') {
+    state.selected = null;
+    requestDraw();
+  } else if (key === 'Backspace') void closeAtlas();
+  // Enter opens the picked design; with none picked, back to the editor.
+  else if (key === 'Enter') void (selected ? openTile(selected) : closeAtlas());
   else if (arrows[key]) {
     // While a search is on, the arrows and Tab move among what it found.
     const tiles = navigableTiles();

@@ -4944,6 +4944,18 @@ button.off {
   border-radius: 10px;
 }
 
+/* File actions together, then the view toggles, as in the editor toolbar. */
+.atlas-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.atlas-group[hidden],
+.atlas-group:not(:has(> button:not([hidden]))) {
+  display: none;
+}
+
 /* The header's buttons match the editor toolbar's. */
 .atlas-head button {
   height: 30px;
@@ -4951,7 +4963,7 @@ button.off {
   font-size: 0.8125rem;
 }
 
-/* Names the design Esc returns to; a long name gives way to an ellipsis. */
+/* Names the design the editor returns to; a long name gives way to an ellipsis. */
 .atlas-head .atlas-close {
   max-width: 22rem;
   overflow: hidden;
