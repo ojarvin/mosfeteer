@@ -5039,6 +5039,47 @@ button.off {
   pointer-events: none;
 }
 
+/* An empty desk's prompt: a new design, a file, a folder. */
+.atlas-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, calc(100% - 32px));
+  box-sizing: border-box;
+  padding: 20px 22px;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.atlas-empty h2 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.atlas-empty p {
+  margin: 0 0 14px;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+}
+
+.atlas-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.atlas-empty-actions button,
+.atlas-empty-back button {
+  height: 32px;
+  padding: 0 14px;
+}
+
+.atlas-empty .atlas-empty-back {
+  margin: 14px 0 0;
+}
+
 /* Reduced motion (motion.js): no zooms; the Atlas and the editor
    cross-fade, which is not motion. */
 :root[data-reduce-motion] .atlas { animation: none; transition: opacity 180ms ease-out; }

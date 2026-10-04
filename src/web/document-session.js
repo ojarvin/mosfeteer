@@ -268,7 +268,7 @@ async function clearOpenedFiles() {
   }
 }
 
-async function allowFolderAccess() {
+export async function allowFolderAccess() {
   const name = editor.workspaceState?.folder?.name || 'the folder';
   if (!await persistence.requestAccess('')) {
     const allow = await confirmChoice({
@@ -297,7 +297,10 @@ export async function restoreStartup() {
   if (folder?.locked) logLine(`The browser needs permission to open folder “${folder.name}” again: choose “Allow access to folder” in the document list.`);
   if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
   // A browser-only file waiting for permission again cannot be drawn yet.
-  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length > 1;
+  const designs = (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length;
+  // Several designs open onto the Atlas; so does browser-only mode with none
+  // open yet, where the Atlas offers a new design, a file, or a folder.
+  return !openPath && (designs > 1 || (persistence.browserOnly && designs === 0));
 }
 
 export async function saveCircuit({ saveAs = false } = {}) {

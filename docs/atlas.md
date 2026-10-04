@@ -1,9 +1,17 @@
 # Atlas view
 
 The app starts in the Atlas when the workspace (in browser-only mode, the
-open folder, or else the opened files) contains more than one circuit. With zero or one circuit it starts in
-the editor. Launching a specific file opens that file in the editor instead.
-The restored drawing and any unsaved draft remain available behind the Atlas.
+open folder, or else the opened files) contains more than one circuit, and
+in browser-only mode also when it contains none. With one circuit (or, with
+a server, none) it starts in the editor. Launching a specific file opens that
+file in the editor instead. The restored drawing and any unsaved draft remain
+available behind the Atlas.
+
+An empty desk asks what to do: **New design**, **Open design…** (in
+browser-only mode the file joins the desk, and a single one opens), **Open
+folder…** (or Change folder… with a server), **Allow access** again to a
+folder the browser no longer may read, and **Back to** the drawing on screen
+when it has anything in it.
 At startup, a dark cover stays up while the drawings load, then fades as the
 Atlas zooms in from afar to fit the workspace. Later visits keep the usual
 editor-to-Atlas zoom. Reduced-motion preferences skip the startup animation.

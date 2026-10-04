@@ -38370,7 +38370,7 @@ let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbo
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let addDocumentFiles, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ addDocumentFiles, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
+let addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
 let toggleTheme; __bind(() => { ({ toggleTheme } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -39698,13 +39698,80 @@ async function reloadDesk() {
   }
   if (!ready || !state || state.generation !== generation) return true;
   state.selected = state.tiles.find((tile) => state.entries.get(tile.id).current)?.id || null;
+  showEmptyDesk();
   if (!state.tiles.length) {
-    statusEl.textContent = 'No designs in the workspace yet. Shift+Backspace returns to the editor.';
     requestDraw();
   } else {
     void animateView(clampView(fitAllView()));
   }
   return true;
+}
+
+/**
+ * An empty desk asks what to do, rather than showing nothing: a new design,
+ * a design file, a folder of them (and the browser's permission again for a
+ * folder it no longer may read), or back to the drawing on screen when it
+ * has anything in it. Gone as soon as the desk has a design.
+ */
+function showEmptyDesk() {
+  rootEl.querySelector('.atlas-empty')?.remove();
+  if (!state || state.source !== 'workspace' || state.tiles.length) return;
+  const folder = editor.workspaceState?.folder;
+  const drawn = editor.circuit.components.size || editor.circuit.labels.size;
+  const button = (text, title, action, primary = false) => {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.textContent = text;
+    node.title = title;
+    if (primary) node.className = 'primary-action';
+    node.addEventListener('click', () => void action());
+    return node;
+  };
+  const box = document.createElement('div');
+  box.className = 'atlas-empty glass';
+  const heading = document.createElement('h2');
+  heading.textContent = 'No designs open yet';
+  const text = document.createElement('p');
+  text.textContent = persistence.browserOnly
+    ? 'Start a new design, open design files from anywhere, or open a folder of them: its designs lay out here.'
+    : 'Start a new design, or show another folder of designs as the workspace.';
+  const actions = document.createElement('div');
+  actions.className = 'atlas-empty-actions';
+  actions.append(button('New design', 'Start a new schematic', newDesign, true));
+  actions.append(button('Open design…', 'Open a design file (Ctrl/Cmd+O)', openDesign));
+  actions.append(button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'A folder of designs as the workspace', () => openOntoDesk('folder')));
+  if (folder?.locked) actions.append(button(`Allow access to “${folder.name}”…`, 'The browser needs your permission again to read this folder', allowFolderAccess));
+  box.append(heading, text, actions);
+  if (drawn) {
+    const back = document.createElement('p');
+    back.className = 'atlas-empty-back';
+    back.append(button(`Back to ${editor.currentCircuitName ? `“${editor.currentCircuitName}”` : 'the unsaved drawing'}`, 'The drawing that was on screen (Shift+Backspace)', () => closeAtlas()));
+    box.append(back);
+  }
+  statusEl.textContent = '';
+  rootEl.append(box);
+}
+
+function newDesign() {
+  if (state?.source !== 'workspace') return;
+  requestDocumentAction('Starting a new circuit', () => {
+    finishClose();
+    startNewDocument();
+  });
+}
+
+/** Open one design: browser-only files join the desk (and one opens
+ *  straight away); with a server, the file dialog opens it in the editor. */
+async function openDesign() {
+  if (state?.source !== 'workspace') return;
+  if (!persistence.browserOnly) {
+    await closeAtlas();
+    await openDocumentDialog();
+    return;
+  }
+  const added = await addDocumentFiles();
+  if (added && state?.tiles.length === 1) await openTile(state.tiles[0]);
+  else rootEl.focus({ preventScroll: true });
 }
 
 /** The header's Folder and Open buttons (and Ctrl/Cmd+O): another
@@ -39770,6 +39837,9 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
     rootEl.style.animation = 'none';
     rootEl.classList.add('preparing');
   }
+  // On startup the cover's fade is the reveal: a fade of the desk's own
+  // under it would let the editor's drawing show through both.
+  if (startup) rootEl.style.animation = 'none';
   rootEl.hidden = false;
   rootEl.classList.remove('leaving');
   rootEl.focus({ preventScroll: true });
@@ -39832,9 +39902,7 @@ async function openDesk(generation, source, animate, startup) {
     closeAtlas({ animate: false });
     return;
   }
-  if (!state.tiles.length) {
-    statusEl.textContent = 'No designs in the workspace yet. Shift+Backspace returns to the editor.';
-  }
+  showEmptyDesk();
   const currentTile = state.tiles.find((tile) => state.entries.get(tile.id).current);
   // The open design starts picked; otherwise nothing is until you choose.
   state.selected = source === 'symbols' ? null : currentTile?.id || null;
@@ -39937,6 +40005,8 @@ function finishClose({ animate = true } = {}) {
   for (const bitmap of state.bitmaps.values()) bitmap.close?.();
   state = null;
   overlayEl.replaceChildren();
+  rootEl.querySelector('.atlas-empty')?.remove();
+  rootEl.style.animation = '';
   canvasEl.focus({ preventScroll: true });
   // The editor's toolbars slide back in over the desk; then the desk gives
   // way to the editor beneath, the same drawing in the same place. A short
@@ -40068,7 +40138,7 @@ function onAtlasKey(ev) {
   if (ev.target.closest?.('dialog')) return;
   // A header button keeps focus after a click (or a dialog it opened hands
   // it back): it takes the keys that press or leave it, the desk the rest.
-  if (ev.target.closest?.('.atlas-head button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
+  if (ev.target.closest?.('.atlas-head button, .atlas-empty button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
   if (inTransition()) {
     ev.preventDefault();
     return;
@@ -40135,7 +40205,8 @@ function onWheel(ev) {
 }
 
 function onPointerDown(ev) {
-  if (!state || inTransition() || ev.target.closest?.('.atlas-head, .atlas-tags')) return;
+  // The header, tag editor, and an empty desk's prompt take their own clicks.
+  if (!state || inTransition() || ev.target.closest?.('.atlas-head, .atlas-tags, .atlas-empty')) return;
   if (ev.button === 2) {
     ev.preventDefault();
     stopAnimation();
@@ -40255,7 +40326,7 @@ function onPointerUp(ev) {
 }
 
 function onDoubleClick(ev) {
-  if (!state || inTransition()) return;
+  if (!state || inTransition() || ev.target.closest?.('.atlas-empty')) return;
   const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
   if (hit) void openTile(hit);
 }
@@ -40296,13 +40367,7 @@ function installAtlas() {
   openFolderEl?.addEventListener('click', () => void openOntoDesk('folder'));
   openFilesEl?.addEventListener('click', () => void openOntoDesk('files'));
   onDocumentListChange(reloadDesk);
-  newCircuitEl?.addEventListener('click', () => {
-    if (state?.source !== 'workspace') return;
-    requestDocumentAction('Starting a new circuit', () => {
-      finishClose();
-      startNewDocument();
-    });
-  });
+  newCircuitEl?.addEventListener('click', newDesign);
   searchEl?.addEventListener('input', () => applySearch(searchEl.value));
   // The highlighter marks show only while the search box has focus.
   searchEl?.addEventListener('focus', () => requestDraw());
@@ -45229,6 +45294,7 @@ __exports.flushDraft = flushDraft;
 __exports.restoreDraft = restoreDraft;
 __exports.displayPath = displayPath;
 __exports.onDocumentListChange = onDocumentListChange;
+__exports.allowFolderAccess = allowFolderAccess;
 __exports.restoreStartup = restoreStartup;
 __exports.saveCircuit = saveCircuit;
 __exports.hasUnsavedChanges = hasUnsavedChanges;
@@ -45559,7 +45625,10 @@ async function restoreStartup() {
   if (folder?.locked) logLine(`The browser needs permission to open folder “${folder.name}” again: choose “Allow access to folder” in the document list.`);
   if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
   // A browser-only file waiting for permission again cannot be drawn yet.
-  return !openPath && (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length > 1;
+  const designs = (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length;
+  // Several designs open onto the Atlas; so does browser-only mode with none
+  // open yet, where the Atlas offers a new design, a file, or a folder.
+  return !openPath && (designs > 1 || (persistence.browserOnly && designs === 0));
 }
 
 async function saveCircuit({ saveAs = false } = {}) {

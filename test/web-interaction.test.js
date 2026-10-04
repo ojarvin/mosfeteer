@@ -401,12 +401,17 @@ test('Atlas creates a circuit through the unsaved-changes guard and preserves na
   const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
   assert.match(html, /id="atlas-new-circuit"[^>]+type="button"[^>]+data-icon="file-plus"[^>]*>New<\/button>/);
   assert.match(atlas, /newCircuitEl.hidden = source !== 'workspace'/);
-  assert.match(atlas, /newCircuitEl\?\.addEventListener\('click', \(\) => \{\s*if \(state\?\.source !== 'workspace'\) return;\s*requestDocumentAction\('Starting a new circuit', \(\) => \{\s*finishClose\(\);\s*startNewDocument\(\);/);
+  assert.match(atlas, /newCircuitEl\?\.addEventListener\('click', newDesign\);/);
+  // The header's New and an empty desk's "New design" are the one guarded action.
+  assert.match(atlas, /function newDesign\(\) \{\s*if \(state\?\.source !== 'workspace'\) return;\s*requestDocumentAction\('Starting a new circuit', \(\) => \{\s*finishClose\(\);\s*startNewDocument\(\);/);
   assert.match(atlas, /if \(ev.target.closest\?\.\('dialog'\)\) return;/);
   // A focused header button (a click, or a closed dialog handing focus back)
   // keeps only the keys that press or leave it; every other key is the desk's.
   assert.match(atlas, /querySelector\('\.atlas-head'\)\?\.addEventListener\('mousedown', \(ev\) => \{\s*if \(ev.target.closest\('button'\)\) ev.preventDefault\(\);/);
-  assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button'\) && \(ev.key === 'Enter' \|\| ev.key === ' ' \|\| ev.key === 'Tab'\)\) return;/);
+  // So do an empty desk's prompt buttons.
+  assert.match(atlas, /if \(ev.target.closest\?\.\('\.atlas-head button, \.atlas-empty button'\) && \(ev.key === 'Enter' \|\| ev.key === ' ' \|\| ev.key === 'Tab'\)\) return;/);
+  // The desk's drag leaves the prompt's clicks alone.
+  assert.match(atlas, /ev\.target\.closest\?\.\('\.atlas-head, \.atlas-tags, \.atlas-empty'\)/);
 });
 
 test('opening a design from the Atlas flies once and loads without costing the flight a frame', () => {
@@ -661,12 +666,13 @@ test('startup paints before listing documents and restoring the requested docume
   assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreStartup/);
 });
 
-test('startup chooses Atlas only for multiple circuits without an explicit file', async () => {
+test('startup chooses Atlas for multiple circuits without an explicit file, or browser-only with none', async () => {
   const source = functionSource('restoreStartup');
-  for (const count of [0, 1, 2, 3]) {
+  for (const browserOnly of [false, true]) for (const count of [0, 1, 2, 3]) {
     for (const openPath of ['', '/workspace/requested.json']) {
       const loaded = [];
       const context = {
+        persistence: { browserOnly },
         URLSearchParams,
         window: { location: { search: openPath ? `?open=${encodeURIComponent(openPath)}` : '', pathname: '/' }, history: { replaceState() {} } },
         currentDocumentPath: null,
@@ -680,7 +686,8 @@ test('startup chooses Atlas only for multiple circuits without an explicit file'
         ], recent: [{ kind: 'circuit' }, { kind: 'circuit' }] };
       };
       const restore = vm.runInNewContext(`(${source})`, context);
-      assert.equal(await restore(), !openPath && count > 1);
+      // Browser-only with nothing open yet: the Atlas, to start or open a design.
+      assert.equal(await restore(), !openPath && (count > 1 || (browserOnly && count === 0)));
       assert.deepEqual(loaded, openPath ? [openPath] : []);
     }
   }
