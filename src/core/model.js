@@ -1,4 +1,5 @@
 import { RAIL_NAMES, railNameKey } from './rail-names.js';
+import { normalizeOptimizeSetup } from './analysis/optimize-setup.js';
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
@@ -1015,6 +1016,13 @@ export function normalizeAnalysisValues(value) {
   for (const [name, text] of Object.entries(value?.links || {})) {
     if (/^[A-Za-z][\w]{0,40}$/.test(name) && typeof text === 'string' && text.trim() && text.length <= 120) links[name] = text.trim();
   }
+  // Coefficients written as fractions (rounded to m/n units): the text, kept
+  // only while it is still the coefficient's number.
+  const fractions = {};
+  for (const [name, text] of Object.entries(value?.fractions || {})) {
+    const match = typeof text === 'string' && text.match(/^(-?\d{1,7})\/(\d{1,7})$/);
+    if (match && Number(match[2]) > 0 && Number.isFinite(coefficients[name]) && Math.abs(Number(match[1]) / Number(match[2]) - coefficients[name]) <= 1e-9 * Math.max(1, Math.abs(coefficients[name]))) fractions[name] = text;
+  }
   // The signal band on the response graph: f0 and bw in f/fs.
   const rawBand = value?.band;
   const band = rawBand && Number(rawBand.bw) > 0 ? { f0: Math.max(0, Number(rawBand.f0) || 0), bw: Number(rawBand.bw) } : null;
@@ -1029,8 +1037,12 @@ export function normalizeAnalysisValues(value) {
     ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
     ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
     ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
+    // Dither at the quantizers' inputs for the simulations: rect or tri, its amplitude in dBFS.
+    ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: { shape: rawFlow.dither.shape, amplitude: text(String(rawFlow.dither.amplitude ?? '-30')).slice(0, 20) } } : {}),
+    // The coefficient optimizer's setup (analysis/optimize-setup.js).
+    ...(rawFlow.optimize && typeof rawFlow.optimize === 'object' ? { optimize: normalizeOptimizeSetup(rawFlow.optimize) } : {}),
   } : null;
-  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
+  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -1039,12 +1051,15 @@ function analysisValuesJSON(values) {
   const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
+  const fractions = values?.fractions || {};
   const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
-  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum) ? values.flow : null;
+  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize || values.flow.dither) ? values.flow : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
+  const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
     ...(Object.keys(links).length ? { links: { ...links } } : {}),
+    ...(fractionList.length ? { fractions: Object.fromEntries(fractionList) } : {}),
     ...(band ? { band } : {}),
     ...(flow ? { flow: { ...flow, sources: { ...flow.sources } } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
@@ -1069,7 +1084,13 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot) };
+}
+
+/** What a plot was drawn from, so it can be drawn again at new numbers:
+ *  a loop plot's signal, a root locus's coefficient. */
+function sourceOf(plot) {
+  return typeof plot.source === 'string' && plot.source ? { source: plot.source.slice(0, 200) } : {};
 }
 
 /** A plot's marked frequencies: `{ f, label }`, a few. */
@@ -1097,6 +1118,7 @@ function normalizeLocusPlot(plot) {
     points,
     current: (Array.isArray(plot.current) ? plot.current : []).filter(point).slice(0, 64).map((p) => ({ re: round(p.re, 5), im: round(p.im, 5) })),
     crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
+    ...sourceOf(plot),
   };
 }
 

@@ -6274,10 +6274,22 @@ body.chrome-away [data-editor-edge="right"] {
 /* The plot area: one card, its view switch on top. */
 .signal-flow-plots {
   display: grid;
+  /* A long equation scrolls in its row instead of widening the plots. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+
+.signal-flow-plots > *,
+.signal-flow-loop-body {
+  min-width: 0;
+}
+
+.signal-flow-loop,
+.signal-flow-loop-body {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .signal-flow-graph,
@@ -6395,6 +6407,158 @@ body.chrome-away [data-editor-edge="right"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* The coefficient optimizer (optimize-ui.js). */
+.signal-flow-optimize {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.analysis-dock .signal-flow-optimize .signal-flow-spectrum-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.signal-flow-optimize > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.signal-flow-optimize-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.signal-flow-optimize-group {
+  display: grid;
+  gap: 6px;
+}
+
+.signal-flow-optimize-heading {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.signal-flow-optimize-coefficient {
+  display: grid;
+  grid-template-columns: minmax(2.5rem, auto) 5rem minmax(0, 1fr) minmax(0, 1fr) 3rem 4rem 4rem;
+  align-items: center;
+  gap: 6px;
+}
+
+.signal-flow-optimize-head {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.signal-flow-optimize-math {
+  font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", serif;
+  font-size: 1.05rem;
+}
+
+.signal-flow-optimize-linked {
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+}
+
+.signal-flow-optimize-number {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+  text-align: right;
+}
+
+.signal-flow-optimize-found {
+  font-weight: 600;
+}
+
+.analysis-dock .signal-flow-optimize-bound,
+.analysis-dock .signal-flow-optimize-coefficient select {
+  width: 100%;
+  min-width: 0;
+}
+
+.signal-flow-optimize-spec {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.analysis-dock .signal-flow-optimize-spec select {
+  width: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.analysis-dock .signal-flow-optimize-field {
+  width: 4.5rem;
+  flex: 0 0 4.5rem;
+}
+
+.signal-flow-optimize-word {
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.signal-flow-optimize-limits {
+  display: grid;
+  gap: 4px;
+}
+
+.signal-flow-optimize-limit {
+  display: grid;
+  grid-template-columns: minmax(3rem, auto) 4.5rem auto 4rem;
+  align-items: center;
+  justify-content: start;
+  gap: 6px;
+}
+
+.signal-flow-optimize-progress {
+  width: 100%;
+}
+
+.signal-flow-optimize-progress[hidden] {
+  display: none;
+}
+
+.signal-flow-optimize-result {
+  display: grid;
+  gap: 4px;
+}
+
+.signal-flow-optimize-result:empty {
+  display: none;
+}
+
+.signal-flow-optimize-fraction {
+  display: grid;
+  grid-template-columns: minmax(2.5rem, auto) 5rem 4rem 4rem 4rem;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+}
+
+.signal-flow-optimize-subhead {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.signal-flow-optimize-metric {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6rem 6rem;
+  gap: 6px;
+  font-size: 0.8125rem;
+}
+
 /* The swing sweep's controls: source, frequency, and the run button on one line. */
 .signal-flow-swing-controls {
   display: flex;
@@ -6489,6 +6653,36 @@ body.chrome-away [data-editor-edge="right"] {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.signal-flow-plots-head {
+  flex-wrap: wrap;
+}
+
+.signal-flow-update-plots {
+  height: 28px;
+  font: 0.8125rem ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Dither for the simulations: its shape and amplitude, beside the spectrum's and the swing's controls. */
+.signal-flow-dither {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.analysis-dock .signal-flow-dither select {
+  width: auto;
+  min-height: 24px;
+  padding: 2px 6px;
+}
+
+.analysis-dock .signal-flow-dither .signal-flow-dither-amplitude {
+  width: 4rem;
+}
+
+.signal-flow-dither [hidden] {
+  display: none;
 }
 
 .signal-flow-axis button,

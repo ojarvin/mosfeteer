@@ -227,15 +227,28 @@ the axis; an s result's delays shift its delayed terms. A loop holding a
 delay, or a continuous input through a sampler, has no step response here.
 
 **Simulated output spectrum** (magnitude view): one swing-simulation run at
-an amplitude (the swing's source and frequency, 16384 samples) Hann-windowed
-and drawn behind the analytic curves (`spectrum.js`). The graph is then one
-plot in the spectrum's units, dBFS per bin (a full-scale sine reads 0 dBFS;
-white noise its power in the window's noise bandwidth): each NTF (a
-quantizer's error) is moved to the noise level it predicts, white error of
-variance 1/3 (Schreier's levels) shaped by |NTF|^2, so it lies on the
-simulated floor; each STF (a real input) to where the tone would sit, the
-amplitude in dBFS plus |STF| in dB, so it runs through the tone's peak.
-With a band, the simulated SNDR and ENOB beside the predicted SQNR.
+an amplitude (the swing's source and frequency, made a whole number of
+cycles in each segment), Welch-averaged -- Hann-windowed 8192-sample
+segments overlapping by half over a 32768-sample record, seven averages --
+and drawn behind the analytic curves (`spectrum.js`). It runs again when
+the coefficients settle (a slider let go, a value typed), not on every
+tick. The graph is then one plot in the spectrum's units, dBFS per bin (a
+full-scale sine reads 0 dBFS; white noise its power in the window's noise
+bandwidth): each NTF (a quantizer's error) is moved to the noise level it
+predicts, white error of variance 1/3 (Schreier's levels, plus the dither's
+own variance) shaped by |NTF|^2, so it lies on the simulated floor; each
+STF (a real input) to where the tone would sit, the amplitude in dBFS plus
+|STF| in dB, so it runs through the tone's peak. With a band, the simulated
+SNDR and ENOB beside the predicted SQNR.
+
+**Dither** (beside the spectrum's and the swing's controls, one setting for
+both and for the optimizer's swing test, saved with the document): added
+at each quantizer's input, rectangular over (-A, A) or triangular over
+(-A, A) peaking at 0, A in dBFS (`ditherSettings`); every run draws the same
+sequence, so runs compare like for like. A loop with few levels and a
+small input idles in limit cycles -- tones and a floor that strays from the
+NTF's prediction -- which dither of about a level step breaks up (its
+variance, A^2/3 or A^2/6, adds to the quantizer's 1/3 and is shaped alike).
 
 **Root locus** (`locus.js`): a result's poles as one coefficient sweeps,
 logarithmically from a decade below its number to a decade above by default,
@@ -248,6 +261,14 @@ Selecting several plots on the drawing and dragging one's handle resizes
 them all alike, each from its own corner; a plot below (or right of)
 another selected one moves on by its growth, so a column of plots keeps its
 spacing.
+
+**Update plots** (beside the view switch) redraws every plot on the
+drawing at the coefficients' numbers now, in one undo step: a graph or step
+plot from the traces of the same names (one naming a trace no longer on the
+graph is left as it is), a loop plot at the signal it was broken at, a root
+locus over its coefficient and range (`plot.source`), a swing plot from a
+fresh sweep of the nets it shows; each keeps its coefficients' numbers
+under the legend if it had them.
 
 Annotating a graph or a swing again updates the plot of that kind already
 on the drawing -- the selected one, else the only one -- keeping its place,
@@ -264,3 +285,83 @@ display with no brackets, scale lines and column headers -- and sets
 
 Scripted: `analyze signal-flow --output NET --input PORT,... [--zero PORT,...]
 [--const PORT=VALUE,...]`.
+
+## Optimize coefficients
+
+**Optimize coefficients** (a section under the coefficients,
+`optimize.js`) searches the free coefficients for the best goal that keeps
+every limit -- for any diagram the analysis solves, so a modulator's loop
+filter and a plain filter alike. Each coefficient is **Free** or **Fixed**,
+with an optional range; a linked one follows its link, and the timing (a
+sampler's period, a delay's T, `timingSymbols`) starts fixed. A free
+coefficient moves on a log scale and keeps its sign (one at zero, or with
+a range across zero, moves linearly).
+
+The criteria:
+
+- **Specs**: a transfer function's magnitude, from a source to the output
+  picked above, over a band (the signal band set on the graph, outside it,
+  every frequency, or f1 to f2 in f/fs, s read in units of 1/Ts), measured
+  as its power average (noise in band), its peak, or its lowest point, in
+  dB. Each spec is a goal (minimize, maximize) or a limit (keep below, keep
+  above). Every transfer function a spec reads must stay stable. Lee's rule
+  for a modulator is a limit: the NTF's peak below 3.5 dB over every
+  frequency.
+- **Swing test**: the diagram simulated (the swing's simulator) with a sine
+  of a given amplitude into one source, at a set f/fs or the band's middle.
+  It must not run away, and each net with a limit (dBFS) must peak under it.
+  The integrators' outputs and the quantizers' inputs are listed for limits.
+  Near overload a loop makes rare large excursions, so one finite run's
+  peaks are chaotic in the coefficients' last digits, and a search fits
+  them to the runs it sees. So the test is the worst of four runs of 4096
+  samples (two in-band frequencies, `swingTestFrequencies`, each from two
+  phases of the sine); the search keeps each net 0.5 dB under its limit and
+  needs the loop to hold 1 dB above the amplitude too. A best point's peaks
+  still scatter by a dB or two under a change in its last digits: the
+  limits are statistical near the edge, and worth some margin. With no
+  limit on a quantizer's input, a search tends to drive the gains into it to
+  extremes; a limit a few dB over full scale keeps them sane.
+
+Candidates are ranked by feasibility first: one that meets every limit
+beats any that misses one; among those that miss, the smaller total miss
+wins (dB over each limit; a run-away at the target counts by how far below
+it the loop holds; an unstable transfer function by its pole); only feasible
+ones are ranked by their goals, summed in dB. The search is CMA-ES
+(`cmaes.js`) from the coefficients' numbers now, restarted from the best
+point with twice the population whenever a run settles, until the budget
+of candidates is spent; with no goal it ends at the first candidate that
+meets every limit. Run scores the candidates in worker threads
+(`src/web/optimize-worker.js`; in this thread when the page is opened from a
+file), with a progress bar and Stop. The best numbers come back beside the
+coefficients with each spec and the swing test at the start and at the
+best; **Apply** puts them into the coefficients (four digits), **Revert**
+undoes that. The setup is saved with the document
+(`analysisValues.flow.optimize`, `optimize-setup.js`).
+
+**Rounding to fractions** (`rounding.js`) makes each free coefficient a
+simple fraction m/n -- m units over n, whatever realizes it (a ratio of unit
+elements, a digital multiplier) -- at the least cost to the same specs. One
+setting sets how coarse: the largest n (4 ... 256), optionally powers of two
+only. The gains into one block -- followed through sums to the part they
+feed, an integrator or the quantizer (`coefficientGroups`) -- share its n,
+its one reference element, so they read m1/n, m2/n, ...; off, each
+coefficient has its own n. A coefficient's own "n <=" in the table raises
+its block's. A coefficient that is not zero never rounds to zero (that would
+be another diagram), nor across it.
+
+The search is sequential rounding with re-optimization: each block takes the
+n (up to its largest) that rounds its gains most accurately; the block
+rounded worst goes first, then the coefficients still free are re-optimized
+to win back what it cost (one may stand in for another: a resonator needs
+its product of gains), and so on; at the end each is moved by one unit, 1/n,
+while that helps. It starts from the coefficients' numbers now, so run the
+optimizer and Apply first. The result lists each block's n and each
+coefficient's fraction, value, number before and change, the specs and swing
+test before and after, and names a gain far smaller than its block-mates
+(it needs a large n there). **Apply** writes the fractions exactly; a
+coefficient keeps its fraction in its field and in plot legends
+(`analysisValues.fractions`) until it is changed, and a fraction can be
+typed (3/16).
+
+Not yet: a scaling step that fits each integrator's swing to its limit
+without touching the transfer function, and other grids (CSD digits).

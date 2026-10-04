@@ -997,6 +997,198 @@ __exports.OUTPUT_CAPACITANCE = OUTPUT_CAPACITANCE;
 __exports.DEFAULT_PARASITIC_RATIO = DEFAULT_PARASITIC_RATIO;
 };
 
+__modules["src/core/analysis/cmaes.js"] = function (__require, __exports) {
+__exports.seededRandom = seededRandom;
+__exports.symmetricEigen = symmetricEigen;
+__exports.createCmaes = createCmaes;
+/**
+ * CMA-ES (Hansen's covariance matrix adaptation evolution strategy), the
+ * black-box minimizer behind the coefficient optimizer (optimize.js): each
+ * generation samples a population from a multivariate normal, ranks it,
+ * and moves the mean, the step size, and the covariance toward the better
+ * half. It needs only the ranking of the samples, never a gradient, so a
+ * score with cliffs (a loop that goes unstable) is no obstacle. After
+ * Hansen's tutorial (purecma), with the full covariance: the problems are
+ * a few dozen coefficients at most.
+ */
+
+/** A seeded uniform generator (mulberry32): the same seed, the same run. */
+function seededRandom(seed = 1) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Standard normal samples from a uniform generator (Box-Muller). */
+function normalSampler(random) {
+  let spare = null;
+  return () => {
+    if (spare !== null) { const v = spare; spare = null; return v; }
+    let u = 0;
+    while (u <= Number.MIN_VALUE) u = random();
+    const r = Math.sqrt(-2 * Math.log(u));
+    const angle = 2 * Math.PI * random();
+    spare = r * Math.sin(angle);
+    return r * Math.cos(angle);
+  };
+}
+
+/** Eigenvalues and eigenvectors of a symmetric matrix (cyclic Jacobi):
+ *  `{ values, vectors }`, vectors[i][k] the i-th entry of the k-th. */
+function symmetricEigen(matrix) {
+  const n = matrix.length;
+  const a = matrix.map((row) => [...row]);
+  const v = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) off += a[i][j] ** 2;
+    if (off < 1e-30) break;
+    for (let p = 0; p < n; p++) {
+      for (let q = p + 1; q < n; q++) {
+        if (Math.abs(a[p][q]) < 1e-300) continue;
+        const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+        const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+        const c = 1 / Math.sqrt(t * t + 1);
+        const s = t * c;
+        for (let k = 0; k < n; k++) {
+          const akp = a[k][p];
+          const akq = a[k][q];
+          a[k][p] = c * akp - s * akq;
+          a[k][q] = s * akp + c * akq;
+        }
+        for (let k = 0; k < n; k++) {
+          const apk = a[p][k];
+          const aqk = a[q][k];
+          a[p][k] = c * apk - s * aqk;
+          a[q][k] = s * apk + c * aqk;
+        }
+        for (let k = 0; k < n; k++) {
+          const vkp = v[k][p];
+          const vkq = v[k][q];
+          v[k][p] = c * vkp - s * vkq;
+          v[k][q] = s * vkp + c * vkq;
+        }
+      }
+    }
+  }
+  return { values: a.map((row, i) => row[i]), vectors: v };
+}
+
+/**
+ * A CMA-ES run from `mean` with step size `sigma`: `ask()` gives a
+ * generation's points, `tell(points, scores)` (lower is better) updates
+ * the distribution, `stopReason()` is null while the run is worth going on.
+ * `lambda` the population (default 4 + 3 ln n), `random` a uniform
+ * generator (seededRandom).
+ */
+function createCmaes({ mean, sigma = 0.3, lambda, random = seededRandom(1) }) {
+  const n = mean.length;
+  const normal = normalSampler(random);
+  const popsize = Math.max(4, lambda || 4 + Math.floor(3 * Math.log(n)));
+  const mu = Math.floor(popsize / 2);
+  const raw = Array.from({ length: mu }, (_, i) => Math.log(mu + 0.5) - Math.log(i + 1));
+  const total = raw.reduce((s, w) => s + w, 0);
+  const weights = raw.map((w) => w / total);
+  const mueff = 1 / weights.reduce((s, w) => s + w * w, 0);
+  const cc = (4 + mueff / n) / (n + 4 + (2 * mueff) / n);
+  const cs = (mueff + 2) / (n + mueff + 5);
+  const c1 = 2 / ((n + 1.3) ** 2 + mueff);
+  const cmu = Math.min(1 - c1, (2 * (mueff - 2 + 1 / mueff)) / ((n + 2) ** 2 + mueff));
+  const damps = 1 + 2 * Math.max(0, Math.sqrt((mueff - 1) / (n + 1)) - 1) + cs;
+  const chiN = Math.sqrt(n) * (1 - 1 / (4 * n) + 1 / (21 * n * n));
+
+  const m = [...mean];
+  let step = sigma;
+  const pc = new Array(n).fill(0);
+  const ps = new Array(n).fill(0);
+  let C = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
+  let B = C.map((row) => [...row]);
+  let D = new Array(n).fill(1);
+  let invsqrtC = C.map((row) => [...row]);
+  let evaluations = 0;
+  let eigenAt = 0;
+  let generation = 0;
+  const history = []; // each generation's best score
+  let stopped = null;
+
+  const updateEigen = () => {
+    for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) C[i][j] = C[j][i];
+    const { values, vectors } = symmetricEigen(C);
+    D = values.map((v) => Math.sqrt(Math.max(v, 1e-300)));
+    B = vectors;
+    invsqrtC = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => {
+      let sum = 0;
+      for (let k = 0; k < n; k++) sum += (B[i][k] * B[j][k]) / D[k];
+      return sum;
+    }));
+    eigenAt = evaluations;
+  };
+
+  const ask = () => Array.from({ length: popsize }, () => {
+    const z = Array.from({ length: n }, () => normal());
+    const y = B.map((row) => row.reduce((sum, b, k) => sum + b * D[k] * z[k], 0));
+    return m.map((v, i) => v + step * y[i]);
+  });
+
+  const tell = (points, scores) => {
+    const order = scores.map((score, i) => [score, i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i);
+    evaluations += points.length;
+    generation += 1;
+    history.push(scores[order[0]]);
+    const old = [...m];
+    for (let i = 0; i < n; i++) m[i] = weights.reduce((sum, w, k) => sum + w * points[order[k]][i], 0);
+    const shift = m.map((v, i) => (v - old[i]) / step);
+    const whitened = invsqrtC.map((row) => row.reduce((sum, c, k) => sum + c * shift[k], 0));
+    const kps = Math.sqrt(cs * (2 - cs) * mueff);
+    for (let i = 0; i < n; i++) ps[i] = (1 - cs) * ps[i] + kps * whitened[i];
+    const psNorm = Math.hypot(...ps);
+    const hsig = psNorm / Math.sqrt(1 - (1 - cs) ** ((2 * evaluations) / popsize)) / chiN < 1.4 + 2 / (n + 1) ? 1 : 0;
+    const kpc = hsig * Math.sqrt(cc * (2 - cc) * mueff);
+    for (let i = 0; i < n; i++) pc[i] = (1 - cc) * pc[i] + kpc * shift[i];
+    const steps = order.slice(0, mu).map((index) => points[index].map((v, i) => (v - old[i]) / step));
+    const keep = 1 - c1 - cmu;
+    const lost = (1 - hsig) * cc * (2 - cc);
+    for (let i = 0; i < n; i++) {
+      for (let j = i; j < n; j++) {
+        let rankMu = 0;
+        for (let k = 0; k < mu; k++) rankMu += weights[k] * steps[k][i] * steps[k][j];
+        C[i][j] = keep * C[i][j] + c1 * (pc[i] * pc[j] + lost * C[i][j]) + cmu * rankMu;
+      }
+    }
+    step *= Math.exp(Math.min(1, (cs / damps) * (psNorm / chiN - 1)));
+    if (evaluations - eigenAt > popsize / (c1 + cmu) / n / 10) updateEigen();
+
+    // Worth going on? Hansen's usual tests, loosely.
+    const spread = step * Math.max(...D);
+    const flat = scores.every((s) => s === scores[0]) && generation > 1;
+    const window = 10 + Math.ceil((30 * n) / popsize);
+    const recent = history.slice(-window);
+    if (!Number.isFinite(step) || !(spread > 1e-9)) stopped = 'converged';
+    else if (spread > 1e8) stopped = 'diverged';
+    else if (flat) stopped = 'flat';
+    else if (history.length > window && Math.max(...recent) - Math.min(...recent) < 1e-9 * (1 + Math.abs(recent[0]))) stopped = 'stagnant';
+    else if (Math.max(...D) > 1e7 * Math.min(...D)) stopped = 'ill-conditioned';
+  };
+
+  return {
+    ask,
+    tell,
+    stopReason: () => stopped,
+    get mean() { return [...m]; },
+    get sigma() { return step; },
+    get lambda() { return popsize; },
+    get generation() { return generation; },
+    get evaluations() { return evaluations; },
+  };
+}
+
+};
+
 __modules["src/core/analysis/coefficient-links.js"] = function (__require, __exports) {
 __exports.parseCoefficientLink = parseCoefficientLink;
 __exports.linkMakesCycle = linkMakesCycle;
@@ -5895,6 +6087,541 @@ __exports.NOISE_KINDS = NOISE_KINDS;
 __exports.NOISE_PREFIXES = NOISE_PREFIXES;
 };
 
+__modules["src/core/analysis/optimize-setup.js"] = function (__require, __exports) {
+__exports.normalizeOptimizeSetup = normalizeOptimizeSetup;
+/**
+ * The coefficient optimizer's setup, as a document keeps it
+ * (`analysisValues.flow.optimize`, model.js): which coefficients are free
+ * and their ranges, the specs, the swing test, the budget. Normalizing only:
+ * no imports, so the model can read it without the analysis.
+ */
+
+const SPEC_ACTIONS = Object.freeze(['minimize', 'maximize', 'below', 'above']);
+const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest']);
+const SPEC_BANDS = Object.freeze(['signal', 'outside', 'all', 'custom']);
+const DEFAULT_EVALUATIONS = 3000;
+const MAX_DENOMINATOR = 1024;
+
+const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+const number = (value) => (value === '' || value === null || value === undefined ? null : Number(value));
+const short = (value, length = 200) => (typeof value === 'string' ? value.slice(0, length) : '');
+
+function normalizeSpec(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const action = SPEC_ACTIONS.includes(raw.action) ? raw.action : 'minimize';
+  const measure = SPEC_MEASURES.includes(raw.measure) ? raw.measure : 'average';
+  const band = SPEC_BANDS.includes(raw.band) ? raw.band : 'signal';
+  const f1 = number(raw.f1);
+  const f2 = number(raw.f2);
+  const value = number(raw.value);
+  return {
+    action,
+    measure,
+    input: short(raw.input),
+    band,
+    ...(band === 'custom' && finite(f1) ? { f1 } : {}),
+    ...(band === 'custom' && finite(f2) ? { f2 } : {}),
+    ...((action === 'below' || action === 'above') && finite(value) ? { value } : {}),
+  };
+}
+
+/** A saved setup, or a fresh one, in its normal form. */
+function normalizeOptimizeSetup(raw) {
+  const value = raw && typeof raw === 'object' ? raw : {};
+  const coefficients = {};
+  for (const [name, entry] of Object.entries(value.coefficients || {}).slice(0, 200)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const min = number(entry.min);
+    const max = number(entry.max);
+    const denominator = Math.round(number(entry.denominator));
+    const out = {
+      ...(entry.fixed === true ? { fixed: true } : entry.fixed === false ? { fixed: false } : {}),
+      ...(finite(min) ? { min } : {}),
+      ...(finite(max) ? { max } : {}),
+      // Its block's largest n when rounding (rounding.js), over the setup's.
+      ...(denominator >= 1 && denominator <= MAX_DENOMINATOR ? { denominator } : {}),
+    };
+    if (Object.keys(out).length) coefficients[short(name, 80)] = out;
+  }
+  const specs = (Array.isArray(value.specs) ? value.specs : []).slice(0, 40).map(normalizeSpec).filter(Boolean);
+  const rawSwing = value.swing && typeof value.swing === 'object' ? value.swing : {};
+  const limits = {};
+  for (const [key, limit] of Object.entries(rawSwing.limits || {}).slice(0, 200)) {
+    const db = number(limit);
+    if (finite(db)) limits[short(key)] = db;
+  }
+  const amplitude = number(rawSwing.amplitude);
+  const evaluations = Math.round(number(value.evaluations));
+  const rawRounding = value.rounding && typeof value.rounding === 'object' ? value.rounding : {};
+  const denominator = Math.round(number(rawRounding.denominator));
+  return {
+    coefficients,
+    specs,
+    swing: {
+      on: rawSwing.on === true,
+      amplitude: finite(amplitude) ? amplitude : -6,
+      input: short(rawSwing.input),
+      frequency: short(rawSwing.frequency, 40),
+      limits,
+    },
+    evaluations: evaluations >= 50 && evaluations <= 1e6 ? evaluations : DEFAULT_EVALUATIONS,
+    // Rounding to fractions m/n: the largest n, powers of two only, one n per block.
+    rounding: {
+      denominator: denominator >= 1 && denominator <= MAX_DENOMINATOR ? denominator : 32,
+      powersOfTwo: rawRounding.powersOfTwo === true,
+      shared: rawRounding.shared !== false,
+    },
+  };
+}
+
+__exports.SPEC_ACTIONS = SPEC_ACTIONS;
+__exports.SPEC_MEASURES = SPEC_MEASURES;
+__exports.SPEC_BANDS = SPEC_BANDS;
+__exports.DEFAULT_EVALUATIONS = DEFAULT_EVALUATIONS;
+__exports.MAX_DENOMINATOR = MAX_DENOMINATOR;
+};
+
+__modules["src/core/analysis/optimize.js"] = function (__require, __exports) {
+__exports.optimizationParameters = optimizationParameters;
+__exports.pointValues = pointValues;
+__exports.fitnessOf = fitnessOf;
+__exports.specIntervals = specIntervals;
+__exports.swingTestFrequencies = swingTestFrequencies;
+__exports.swingTestFrequency = swingTestFrequency;
+__exports.prepareObjective = prepareObjective;
+__exports.createOptimizer = createOptimizer;
+__exports.runOptimization = runOptimization;
+let analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients; __bind(() => { ({ analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
+let resolveCoefficients; __bind(() => { ({ resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
+let createCmaes, seededRandom; __bind(() => { ({ createCmaes, seededRandom } = __require("src/core/analysis/cmaes.js")); });
+let normalizeOptimizeSetup; __bind(() => { ({ normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
+/**
+ * Coefficient optimization for a signal-flow diagram: the free
+ * coefficients searched (CMA-ES, cmaes.js) for the best goal that meets
+ * every limit. Topology-free -- any diagram the analysis solves -- so the
+ * same specs serve a delta-sigma loop filter and an ordinary filter:
+ *
+ * - band specs: a transfer function's magnitude over a band (the signal
+ *   band, outside it, every frequency, or f1 to f2 in f/fs), measured as
+ *   its average power, its peak, or its lowest point, in dB, either as a
+ *   goal (minimize, maximize) or a limit (keep below, keep above);
+ * - the swing test: the diagram simulated (simulate.js) with a sine of a
+ *   given amplitude into one source, which must not run away, each limited
+ *   net's peak under its limit (dBFS).
+ *
+ * Every transfer function a spec reads must be stable (poles inside the
+ * unit circle, or in the left half plane). Candidates are ranked by
+ * feasibility first: one that meets every limit beats any that misses one,
+ * among those that miss the smaller total miss wins, and only feasible ones
+ * are ranked by their goals (the sum of each goal in dB, signed). Fixed
+ * coefficients keep their numbers and linked ones follow their links.
+ *
+ * `prepareObjective` scores a set of numbers and runs anywhere (the editor
+ * hands it to worker threads); `createOptimizer` is the search, asked for
+ * candidates and told their scores; `runOptimization` puts the two together
+ * in one thread.
+ */
+
+
+
+
+
+
+
+const LOWEST_F = 1e-4;
+const NYQUIST = 0.5;
+// A miss of the stability or the analysis outweighs any spec's.
+const UNSTABLE = 100;
+const BROKEN = 1000;
+// Feasible scores are goals in dB; infeasible ones sit above them all.
+const INFEASIBLE = 1e6;
+// A limit missed by less than this (dB) is met: a best point on its limit
+// stays feasible when its numbers are written to four digits.
+const SLACK = 0.01;
+const miss = (excess) => (excess > SLACK ? excess : 0);
+
+function failure(error) {
+  return { ok: false, error };
+}
+
+/**
+ * The coefficients the search moves: every one the diagram names that is
+ * neither linked nor fixed (the timing -- samplers' periods, delays -- is
+ * fixed unless set free). Each is `{ name, start, log, min, max, scale }`:
+ * a coefficient that is not zero moves on a log scale, keeping its sign
+ * (0.01 and 1 are as easy to reach from 0.1), a zero one linearly.
+ */
+function optimizationParameters(circuit, { values = {}, links = {}, setup: rawSetup } = {}) {
+  const setup = normalizeOptimizeSetup(rawSetup);
+  const timing = new Set(timingSymbols(circuit));
+  const free = [];
+  const fixed = [];
+  const linked = [];
+  for (const name of diagramSymbols(circuit)) {
+    if (Object.hasOwn(links, name)) { linked.push(name); continue; }
+    const entry = setup.coefficients[name] || {};
+    const isFixed = entry.fixed ?? timing.has(name);
+    if (isFixed) { fixed.push(name); continue; }
+    const start = Number.isFinite(values[name]) ? values[name] : 1;
+    const min = entry.min ?? null;
+    const max = entry.max ?? null;
+    // A range across zero, or a start at zero, is searched linearly.
+    const log = start !== 0 && !(min !== null && max !== null && min < 0 && max > 0) && !(start > 0 && max !== null && max <= 0) && !(start < 0 && min !== null && min >= 0);
+    const scale = log ? 1 : min !== null && max !== null && max > min ? (max - min) / 4 : Math.max(Math.abs(start), 0.1);
+    free.push({ name, start, log, min, max, scale });
+  }
+  return { free, fixed, linked };
+}
+
+/** A parameter's number at internal coordinate y. */
+const valueAt = (p, y) => (p.log ? Math.sign(p.start) * Math.abs(p.start) * Math.exp(y) : p.start + y * p.scale);
+const coordinateOf = (p, v) => (p.log ? Math.log(Math.abs(v) / Math.abs(p.start)) : (v - p.start) / p.scale);
+
+/**
+ * The search point y as numbers: each free coefficient clamped to its
+ * range (`penalty` how far outside it y went, in internal units), linked
+ * ones resolved. Returns `{ own, values, penalty }`.
+ */
+function pointValues(parameters, y, { values = {}, links = {} } = {}) {
+  const own = { ...values };
+  let penalty = 0;
+  parameters.free.forEach((p, i) => {
+    let v = valueAt(p, y[i]);
+    // A log coefficient keeps its sign, so only a bound on its side holds.
+    const lower = p.min !== null && (!p.log || Math.sign(p.min) === Math.sign(p.start)) ? p.min : null;
+    const upper = p.max !== null && (!p.log || Math.sign(p.max) === Math.sign(p.start)) ? p.max : null;
+    const clamped = Math.min(upper ?? Infinity, Math.max(lower ?? -Infinity, v));
+    if (clamped !== v) {
+      penalty += Math.abs(coordinateOf(p, clamped) - y[i]);
+      v = clamped;
+    }
+    own[p.name] = v;
+  });
+  return { own, values: resolveCoefficients(own, links), penalty };
+}
+
+/** A candidate's rank: feasible ones by their goal, the rest above them all. */
+function fitnessOf(score, penalty = 0) {
+  const miss = score.violation + 10 * penalty;
+  return miss > 0 ? INFEASIBLE + miss : score.goal;
+}
+
+/** A band spec's intervals in f/fs, or null when it has none. */
+function specIntervals(spec, band) {
+  const edges = bandEdges(band);
+  const signal = edges.length === 2 ? [edges[0], edges[1]] : edges.length === 1 ? [0, edges[0]] : null;
+  switch (spec.band) {
+    case 'signal': return signal ? [signal] : null;
+    case 'outside': {
+      if (!signal) return null;
+      return [[LOWEST_F, signal[0]], [signal[1], NYQUIST]].filter(([a, b]) => b > a);
+    }
+    case 'all': return [[LOWEST_F, NYQUIST]];
+    case 'custom': {
+      const f1 = Number(spec.f1);
+      const f2 = Number(spec.f2);
+      return f2 > f1 && f1 >= 0 ? [[f1, f2]] : null;
+    }
+    default: return null;
+  }
+}
+
+/** Frequencies to read a band at: midpoints of an even grid (for the
+ *  average, which integrates over f), and for the extremes a log grid as
+ *  well, so a narrow notch or peak near DC is not missed. */
+function bandGrid(intervals, measure) {
+  const even = [];
+  const all = [];
+  for (const [a, b] of intervals) {
+    const count = 256;
+    const h = (b - a) / count;
+    for (let i = 0; i < count; i++) even.push(a + (i + 0.5) * h);
+    if (measure !== 'average') {
+      const low = Math.max(a, LOWEST_F);
+      if (b > low) {
+        const steps = Math.max(8, Math.ceil(Math.log10(b / low) * 60));
+        for (let i = 0; i <= steps; i++) all.push(low * (b / low) ** (i / steps));
+      }
+    }
+  }
+  return measure === 'average' ? even : [...even, ...all];
+}
+
+/** A spec's measure of |H| over its grid, in dB. */
+function measureOf(value, variable, grid, measure) {
+  let sum = 0;
+  let peak = 0;
+  let lowest = Infinity;
+  for (const f of grid) {
+    const h = responseAt(value, variable, f);
+    if (!h || !h.every(Number.isFinite)) return null;
+    const power = h[0] * h[0] + h[1] * h[1];
+    sum += power;
+    if (power > peak) peak = power;
+    if (power < lowest) lowest = power;
+  }
+  const power = measure === 'average' ? sum / grid.length : measure === 'peak' ? peak : lowest;
+  return 10 * Math.log10(Math.max(power, 1e-30));
+}
+
+// The swing test: runs of this many samples at this many in-band
+// frequencies, each from these phases of the sine, the worst taken. A loop
+// near overload makes rare large excursions, so one finite run's peaks are
+// chaotic in the coefficients' last digits; a search fits them to the runs
+// it sees, and the more it sees the less it can.
+const SWING_RUNS = 2;
+const SWING_SAMPLES = 4096;
+const SWING_PHASES = [0, 2.1];
+// The search keeps each net this far (dB) under its limit: a simulated
+// peak jitters with the coefficients' last digits, and the best point sits
+// on its limit. Its peaks are reported as they are.
+const SWING_GUARD = 0.5;
+// ... and the loop must also hold this far (dB) above the target amplitude:
+// a best point on the edge of running away falls off it with its last digits.
+const SWING_MARGIN = 1;
+
+/** The swing test's frequencies: the one set, and others in the band
+ *  (halfway from it to the farther band edge, or at 1.37 times it). */
+function swingTestFrequencies(first, band, count = SWING_RUNS) {
+  const out = [first];
+  const edges = bandEdges(band);
+  const [low, high] = edges.length === 2 ? edges : edges.length === 1 ? [0, edges[0]] : [null, null];
+  while (out.length < count) {
+    const last = out[out.length - 1];
+    const next = low === null ? Math.min(0.49, last * 1.37) : last < (low + high) / 2 ? last + (high - last) / 2 : last - (last - low) / 2;
+    out.push(next);
+  }
+  return out;
+}
+
+/** The swing test's sine frequency: the one set, else the band's middle. */
+function swingTestFrequency(swing, band) {
+  const text = String(swing.frequency || '').trim();
+  const match = text.match(/^(\d+(?:\.\d*)?)\s*\/\s*(\d+(?:\.\d*)?)$/);
+  const set = match ? Number(match[1]) / Number(match[2]) : Number(text);
+  if (set > 0 && set < 0.5) return set;
+  const edges = bandEdges(band);
+  if (edges.length === 2) return (edges[0] + edges[1]) / 2;
+  if (edges.length === 1) return edges[0] / 2;
+  return 1 / 256;
+}
+
+/**
+ * Prepare to score sets of numbers. `problem`: `output`, `sources` (the
+ * analysis's settings), `band` (`{ f0, bw }`), `values` (every coefficient's
+ * number, for the sampled analysis to start from), `setup` (optimize-setup.js),
+ * `dither` (the swing test's, as simulate.js takes it), and for the swing
+ * test `swingRuns` (frequencies, 2), `swingPhases` (phases of the sine at
+ * each, 2), `swingSamples` (4096), `swingGuard` (dB kept under each limit,
+ * 0.5), `swingMargin` (dB above the amplitude it must hold at too, 1).
+ * Returns `{ ok, evaluate(values) }`, `evaluate` giving `{ violation, goal,
+ * specs (each spec's measure, dB), swing, unstable, error }`.
+ */
+function prepareObjective(circuit, problem = {}) {
+  const setup = normalizeOptimizeSetup(problem.setup);
+  const specs = setup.specs.filter((spec) => spec.input);
+  const goals = specs.filter((spec) => spec.action === 'minimize' || spec.action === 'maximize');
+  if (!specs.length && !setup.swing.on) return failure('add a spec or the swing test: there is nothing to optimize for');
+  const inputs = [...new Set(specs.map((spec) => spec.input))];
+  let entries = new Map();
+  let variable = 'z';
+  if (inputs.length) {
+    const sources = { ...(problem.sources || {}) };
+    for (const input of inputs) sources[input] = 'input';
+    const result = analyzeSignalFlow(circuit, { output: problem.output, sources, values: problem.values || {} });
+    if (!result.ok) return failure(result.error);
+    variable = result.variable;
+    entries = new Map(result.entries.map((entry) => [entry.input, entry]));
+    const missing = inputs.find((input) => !entries.has(input));
+    if (missing) return failure(`no transfer function from ${missing} to the output`);
+  }
+  const grids = [];
+  for (const spec of specs) {
+    const intervals = specIntervals(spec, problem.band);
+    if (!intervals?.length) return failure(spec.band === 'custom' ? 'a spec\'s band needs f1 < f2' : 'set the signal band (bw, and f0 for a band-pass signal) on the graph for the specs that read it');
+    if ((spec.action === 'below' || spec.action === 'above') && !Number.isFinite(spec.value)) return failure('a limit spec needs its value in dB');
+    grids.push(bandGrid(intervals, spec.measure));
+  }
+  const swing = setup.swing.on ? {
+    amplitude: setup.swing.amplitude,
+    input: setup.swing.input,
+    frequencies: swingTestFrequencies(swingTestFrequency(setup.swing, problem.band), problem.band, problem.swingRuns ?? SWING_RUNS),
+    samples: problem.swingSamples ?? SWING_SAMPLES,
+    phases: SWING_PHASES.slice(0, problem.swingPhases ?? SWING_PHASES.length),
+    limits: setup.swing.limits,
+  } : null;
+  if (swing && !swing.input) return failure('pick the source the swing test\'s sine drives');
+
+  const evaluate = (values) => {
+    let violation = 0;
+    let goal = 0;
+    const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
+    const numbers = new Map();
+    for (const input of inputs) {
+      let numeric = null;
+      try { numeric = withCoefficients(entries.get(input).value, values); } catch { numeric = null; }
+      if (!numeric) return { ...out, violation: BROKEN, goal: 0, error: `no numbers for the transfer function from ${input}` };
+      // The loop must be stable: a magnitude means nothing otherwise.
+      const roots = numericRootsOf(numeric.kind === 'mixed' ? numeric.terms[0]?.z : numeric);
+      const z = numeric.kind === 'mixed' || variable === 'z';
+      const worst = roots.poles?.length ? Math.max(...roots.poles.map((p) => (z ? Math.hypot(p.re, p.im) - 1 : p.re))) : -Infinity;
+      if (worst >= -1e-9) {
+        out.unstable = z ? worst + 1 : worst;
+        return { ...out, violation: UNSTABLE + 100 * Math.max(worst, 0), goal: 0 };
+      }
+      numbers.set(input, numeric);
+    }
+    specs.forEach((spec, i) => {
+      const db = measureOf(numbers.get(spec.input), variable, grids[i], spec.measure);
+      out.specs[i] = db;
+      if (db === null) { violation += BROKEN; return; }
+      if (spec.action === 'minimize') goal += db;
+      else if (spec.action === 'maximize') goal -= db;
+      else if (spec.action === 'below') violation += miss(db - spec.value);
+      else violation += miss(spec.value - db);
+    });
+    if (swing) {
+      // The worst of a few runs: one run's peaks are chaotic in the
+      // coefficients, and a search would fit them to it.
+      const sims = swing.frequencies.map((frequency) => prepareSimulation(circuit, { values, sources: problem.sources, input: swing.input, output: problem.output, frequency, samples: swing.samples, warmup: swing.samples / 4, dither: problem.dither }));
+      const broken = sims.find((sim) => !sim.ok);
+      if (broken) return { ...out, violation: violation + BROKEN, goal, error: broken.error };
+      const [sim] = sims;
+      const runs = sims.flatMap((each) => swing.phases.map((phase) => each.run(swing.amplitude, { phase })));
+      const run = runs.find((r) => r.overloaded) || { overloaded: false, peaks: runs[0].peaks.map((_, i) => Math.max(...runs.map((r) => r.peaks[i]))) };
+      const margin = problem.swingMargin ?? SWING_MARGIN;
+      // Holding at the target, it must hold a little above it too.
+      if (!run.overloaded && margin > 0 && sim.run(swing.amplitude + margin).overloaded) {
+        out.margin = false;
+        violation += 5;
+      }
+      if (run.overloaded) {
+        // How far below the target it holds: a slope toward stability.
+        let stableAt = null;
+        for (const drop of [3, 6, 12, 24, 48]) {
+          if (!sim.run(swing.amplitude - drop).overloaded) { stableAt = swing.amplitude - drop; break; }
+        }
+        out.swing = { overloaded: true, stableAt };
+        violation += stableAt === null ? 70 : 10 + (swing.amplitude - stableAt);
+      } else {
+        const peaks = {};
+        sim.signals.forEach((signal, i) => { peaks[signal.key] = run.peaks[i] > 0 ? 20 * Math.log10(run.peaks[i] / sim.fullScale) : -300; });
+        for (const [key, limit] of Object.entries(swing.limits)) {
+          if (Object.hasOwn(peaks, key)) violation += miss(peaks[key] - (limit - (problem.swingGuard ?? SWING_GUARD)));
+        }
+        out.swing = { overloaded: false, peaks };
+      }
+    }
+    return { ...out, violation, goal };
+  };
+  return { ok: true, evaluate, goals: goals.length, specs, swing };
+}
+
+/**
+ * The search over `parameters` (optimizationParameters): `ask()` gives the
+ * next candidates `[{ y, own, values, penalty }]` (the start point first),
+ * `tell(scores)` takes their scores in order. CMA-ES, restarted from the
+ * best point with twice the population whenever a run settles, until
+ * `evaluations` are spent; `stopEarly` (a run with no goals) ends it at
+ * the first candidate that meets every limit. `best` is the best so far:
+ * `{ y, own, values, score, fitness }`.
+ */
+function createOptimizer(parameters, { values = {}, links = {}, evaluations = 3000, seed = 1, sigma = 0.4, stopEarly = false } = {}) {
+  const n = parameters.free.length;
+  const random = seededRandom(seed);
+  let lambda = 4 + Math.floor(3 * Math.log(Math.max(n, 1)));
+  let cma = n ? createCmaes({ mean: new Array(n).fill(0), sigma, lambda, random }) : null;
+  let spent = 0;
+  let restarts = 0;
+  let best = null;
+  let pending = null;
+  let started = false;
+  let done = !n;
+  const point = (y) => ({ y, ...pointValues(parameters, y, { values, links }) });
+
+  const ask = () => {
+    if (done) return [];
+    const ys = cma.ask();
+    pending = { ys, start: !started };
+    const list = ys.map(point);
+    if (!started) list.unshift(point(new Array(n).fill(0)));
+    started = true;
+    return list;
+  };
+
+  const tell = (scores) => {
+    if (!pending) return;
+    let list = scores;
+    const candidates = pending.ys.map(point);
+    if (pending.start) {
+      consider(point(new Array(n).fill(0)), scores[0]);
+      list = scores.slice(1);
+    }
+    spent += scores.length;
+    const fitness = candidates.map((c, i) => fitnessOf(list[i], c.penalty));
+    candidates.forEach((c, i) => consider(c, list[i], fitness[i]));
+    cma.tell(pending.ys, fitness);
+    pending = null;
+    if (spent >= evaluations || (stopEarly && best && best.fitness < INFEASIBLE)) { done = true; return; }
+    if (cma.stopReason()) {
+      // A settled run: again from the best point, with a wider population.
+      restarts += 1;
+      lambda *= 2;
+      cma = createCmaes({ mean: best ? [...best.y] : new Array(n).fill(0), sigma, lambda, random });
+    }
+  };
+
+  function consider(candidate, score, fitness = fitnessOf(score, candidate.penalty)) {
+    if (!best || fitness < best.fitness) best = { ...candidate, score, fitness };
+  }
+
+  return {
+    ask,
+    tell,
+    get best() { return best; },
+    get done() { return done; },
+    stop() { done = true; },
+    get evaluations() { return spent; },
+    get budget() { return evaluations; },
+    get restarts() { return restarts; },
+    get generation() { return cma?.generation ?? 0; },
+  };
+}
+
+/** Whether a best candidate meets every limit. */
+const isFeasible = (best) => !!best && best.fitness < INFEASIBLE;
+
+/**
+ * The whole search in this thread: `problem` as for prepareObjective plus
+ * `links`, `options` as for createOptimizer (and `onGeneration(optimizer)`).
+ * Returns `{ ok, best, parameters, objective, evaluations }`.
+ */
+function runOptimization(circuit, problem, options = {}) {
+  const parameters = optimizationParameters(circuit, { values: problem.ownValues || problem.values, links: problem.links, setup: problem.setup });
+  if (!parameters.free.length) return failure('no coefficient is free to optimize: every one is fixed or linked');
+  const objective = prepareObjective(circuit, problem);
+  if (!objective.ok) return objective;
+  const setup = normalizeOptimizeSetup(problem.setup);
+  const optimizer = createOptimizer(parameters, {
+    values: problem.ownValues || problem.values,
+    links: problem.links,
+    evaluations: options.evaluations ?? setup.evaluations,
+    seed: options.seed,
+    sigma: options.sigma,
+    stopEarly: !objective.goals,
+  });
+  while (!optimizer.done) {
+    const batch = optimizer.ask();
+    optimizer.tell(batch.map((candidate) => objective.evaluate(candidate.values)));
+    options.onGeneration?.(optimizer);
+  }
+  return { ok: true, best: optimizer.best, feasible: isFeasible(optimizer.best), parameters, objective, evaluations: optimizer.evaluations };
+}
+
+__exports.isFeasible = isFeasible;
+};
+
 __modules["src/core/analysis/pipeline.js"] = function (__require, __exports) {
 __exports.resolveValue = resolveValue;
 __exports.adaptPrimitiveDescriptor = adaptPrimitiveDescriptor;
@@ -10019,6 +10746,281 @@ function processResponses(responses = {}, options = {}) {
 
 };
 
+__modules["src/core/analysis/rounding.js"] = function (__require, __exports) {
+__exports.fractionGrid = fractionGrid;
+__exports.fractionsAround = fractionsAround;
+__exports.fractionText = fractionText;
+__exports.coefficientGroups = coefficientGroups;
+__exports.runRounding = runRounding;
+let createOptimizer, fitnessOf, pointValues; __bind(() => { ({ createOptimizer, fitnessOf, pointValues } = __require("src/core/analysis/optimize.js")); });
+let coefficientValue, signalFlowGraph; __bind(() => { ({ coefficientValue, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
+let expressionSymbols; __bind(() => { ({ expressionSymbols } = __require("src/core/analysis/bode.js")); });
+let parseGain; __bind(() => { ({ parseGain } = __require("src/core/transfer-function.js")); });
+/**
+ * Coefficient rounding for the optimizer (optimize.js): each free
+ * coefficient made a simple fraction m/n, n at most a chosen denominator
+ * (or a power of two), at the least cost to the specs. Whatever realizes
+ * the coefficient -- a ratio of unit elements of any kind, or a digital
+ * multiplier -- it reads as "m units over n": the larger n may be, the finer
+ * the rounding and the more units it costs.
+ *
+ * Sequential rounding with re-optimization: the gains into one block share
+ * its n (coefficientGroups), so a block's coefficients read as m_1/n,
+ * m_2/n, ...; one group is rounded and fixed,
+ * the rest re-optimized briefly to win back what it cost, and so on until
+ * every one is a fraction; then each is moved by one unit while that helps.
+ * Each block takes the n (up to the largest allowed) that rounds its gains
+ * most accurately, and the block rounded worst goes first, so the
+ * coefficients still free can make up for it. Candidates are ranked as the optimizer ranks
+ * them (fitnessOf: every limit met first, then the goals). The search is a
+ * generator of batches to score, so the editor can score them in worker
+ * threads: it yields `{ batch, phase, step, steps }` and takes the batch's
+ * scores back.
+ */
+
+
+
+
+
+
+/** Fractions m/n (n up to `maxDenominator`, or its powers of two) from
+ *  `low` to `high` (both >= 0), with 0, sorted. */
+function fractionGrid(low, high, maxDenominator, { powersOfTwo = false } = {}) {
+  const found = new Map([[0, { m: 0, n: 1, value: 0 }]]);
+  for (let n = 1; n <= maxDenominator; n = powersOfTwo ? n * 2 : n + 1) {
+    for (let m = Math.max(0, Math.floor(low * n)); m <= Math.ceil(high * n); m++) {
+      const value = m / n;
+      if (value < low || value > high) continue;
+      // Each value in its lowest terms: the first (smallest) n reaching it.
+      if (!found.has(value)) found.set(value, { m, n, value });
+    }
+  }
+  return [...found.values()].sort((a, b) => a.value - b.value);
+}
+
+/** The fractions around a value: its grid (signed like it) and where the
+ *  value sits in it -- `below`/`above` the fractions either side. */
+function fractionsAround(value, maxDenominator, options = {}) {
+  const size = Math.abs(value);
+  const sign = value < 0 ? -1 : 1;
+  const grid = fractionGrid(size / 4, Math.max(size * 4, 2 / maxDenominator), maxDenominator, options)
+    .map((f) => ({ ...f, m: sign * f.m, value: sign * f.value }));
+  // Sorted by size, then by the signed value's side.
+  const bySize = grid.slice().sort((a, b) => Math.abs(a.value) - Math.abs(b.value));
+  let below = bySize[0];
+  let above = bySize[bySize.length - 1];
+  for (const f of bySize) {
+    if (Math.abs(f.value) <= size) below = f;
+    if (Math.abs(f.value) >= size) { above = f; break; }
+  }
+  return { grid: bySize, below, above };
+}
+
+/** A value as a fraction "m/n" when it is one with n up to `maxDenominator`
+ *  (and not an integer), else null. */
+function fractionText(value, maxDenominator = 1024) {
+  if (!Number.isFinite(value) || Number.isInteger(value)) return null;
+  for (let n = 2; n <= maxDenominator; n++) {
+    const m = Math.round(value * n);
+    if (Math.abs(m / n - value) < 1e-12 * Math.max(1, Math.abs(value))) return `${m}/${n}`;
+  }
+  return null;
+}
+
+/**
+ * Which coefficients share a denominator: the gains into one block. Each
+ * gain's output is followed through sum junctions to the first part that is
+ * not one -- an integrator, a quantizer, an output -- and the gains reaching
+ * the same part form a group (that part's one reference element sets their
+ * n). A coefficient elsewhere (inside a transfer function, or in gains
+ * reaching different parts) groups with whatever it shares a gain with.
+ * Returns `[{ into (refdes or null), names }]` over `names`.
+ */
+function coefficientGroups(circuit, names) {
+  const wanted = new Set(names);
+  const { signals } = signalFlowGraph(circuit);
+  const readersOf = new Map();
+  for (const signal of signals.values()) {
+    if (!signal.driver || signal.driver.source) continue;
+    readersOf.set(signal.driver.comp, signal.readers.map((r) => r.comp));
+  }
+  // Where a part's output ends up, past sums.
+  const destination = (refdes) => {
+    const seen = new Set();
+    let frontier = readersOf.get(refdes) || [];
+    while (frontier.length) {
+      const next = [];
+      for (const comp of frontier) {
+        if (seen.has(comp)) continue;
+        seen.add(comp);
+        if (circuit.components.get(comp)?.type === 'signal_sum') next.push(...(readersOf.get(comp) || []));
+        else return comp;
+      }
+      frontier = next;
+    }
+    return null;
+  };
+  const parent = new Map(names.map((name) => [name, name]));
+  const find = (name) => (parent.get(name) === name ? name : find(parent.get(name)));
+  const into = new Map();
+  for (const component of circuit.components.values()) {
+    if (component.type !== 'gain') continue;
+    const read = new Set();
+    try { expressionSymbols(coefficientValue(parseGain(component.value)), 's', read); } catch { continue; }
+    const mine = [...read].filter((name) => wanted.has(name));
+    if (!mine.length) continue;
+    const target = destination(component.refdes);
+    if (!target) continue;
+    const key = `into:${target}`;
+    if (!parent.has(key)) { parent.set(key, key); into.set(key, target); }
+    for (const name of mine) parent.set(find(name), find(key));
+  }
+  const groups = new Map();
+  for (const name of names) {
+    const root = find(name);
+    if (!groups.has(root)) groups.set(root, { into: into.get(root) || null, names: [] });
+    groups.get(root).names.push(name);
+  }
+  return [...groups.values()];
+}
+
+/** m for a value over n: the nearest, but never zero for a value that is
+ *  not (a path rounded away is a different diagram), its sign kept. */
+const unitsOf = (v, n) => {
+  const m = Math.round(v * n);
+  return m === 0 && v !== 0 ? Math.sign(v) : m;
+};
+
+/** A group's most accurate n up to its largest (or its powers of two): the
+ *  least average relative error over its members, the smaller n on a tie. */
+function bestDenominator(numbers, maxDenominator, powersOfTwo) {
+  let best = { n: 1, error: Infinity };
+  for (let n = 1; n <= maxDenominator; n = powersOfTwo ? n * 2 : n + 1) {
+    const error = numbers.reduce((sum, v) => sum + (v ? Math.abs(unitsOf(v, n) / n - v) / Math.abs(v) : 0), 0) / numbers.length;
+    if (error < best.error - 1e-12) best = { n, error };
+  }
+  return best;
+}
+
+/**
+ * The rounding search over `parameters` (optimizationParameters), from the
+ * numbers `values` (every coefficient's own), `links` resolved. `options`:
+ * `denominator` (the largest n), `denominators` (per coefficient: its
+ * group's is the smallest of its members'), `powersOfTwo`, `groups`
+ * (coefficientGroups; each coefficient alone when omitted), `seed`.
+ *
+ * A group is rounded at once: every member m/n over one n, the n (up to its
+ * largest) that rounds it most accurately; the group rounded worst goes
+ * first, then the rest are re-optimized; at the end each member is moved by
+ * one unit, 1/n, while that helps. Returns, when done, `{ own, values, score,
+ * fitness, fractions: { name: { m, n } }, groups, start (the unrounded score) }`.
+ */
+function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32, denominators = {}, powersOfTwo = false, groups: rawGroups = null, seed = 1 } = {}) {
+  const own = { ...values };
+  for (const p of parameters.free) own[p.name] = Number.isFinite(own[p.name]) ? own[p.name] : p.start;
+  const byName = new Map(parameters.free.map((p) => [p.name, p]));
+  const groups = (rawGroups || parameters.free.map((p) => ({ into: null, names: [p.name] })))
+    .map((g) => ({ into: g.into, names: g.names.filter((name) => byName.has(name)) }))
+    .filter((g) => g.names.length);
+  const maxOf = (group) => Math.min(...group.names.map((name) => denominators[name] || denominator));
+  const resolvedOf = (numbers) => pointValues({ free: [] }, [], { values: numbers, links }).values;
+  const inRange = (p, v) => (p.min === null || v >= p.min - 1e-12) && (p.max === null || v <= p.max + 1e-12);
+  // A group over n: each member to its nearest m/n (kept in its range).
+  const roundedAt = (group, n) => Object.fromEntries(group.names.map((name) => {
+    const p = byName.get(name);
+    let m = unitsOf(own[name], n);
+    if (!inRange(p, m / n)) m = inRange(p, (m + 1) / n) ? m + 1 : inRange(p, (m - 1) / n) ? m - 1 : m;
+    return [name, m];
+  }));
+  const remaining = [...groups];
+  const fractions = {};
+  const denominatorOf = new Map();
+  const steps = groups.length;
+
+  const [startScore] = yield { batch: [resolvedOf(own)], phase: 'start', step: 0, steps };
+  let current = { score: startScore, fitness: fitnessOf(startScore) };
+
+  while (remaining.length) {
+    // Each group at its most accurate n (up to its largest; the smaller on a
+    // tie), and the group rounded worst goes first, while the rest are still
+    // free to make up for it.
+    let chosen = null;
+    for (const group of remaining) {
+      const numbers = group.names.map((name) => own[name]);
+      const { n, error } = bestDenominator(numbers, maxOf(group), powersOfTwo);
+      if (!chosen || error > chosen.error) chosen = { group, n, error };
+    }
+    const ms = roundedAt(chosen.group, chosen.n);
+    for (const [name, m] of Object.entries(ms)) {
+      own[name] = m / chosen.n;
+      fractions[name] = { m, n: chosen.n };
+    }
+    denominatorOf.set(chosen.group, chosen.n);
+    remaining.splice(remaining.indexOf(chosen.group), 1);
+    const [score] = yield { batch: [resolvedOf(own)], phase: 'round', step: steps - remaining.length, steps };
+    current = { score, fitness: fitnessOf(score) };
+
+    // The rest re-optimized from here, briefly.
+    const rest = remaining.flatMap((g) => g.names).map((name) => byName.get(name));
+    if (rest.length) {
+      const sub = { free: rest.map((q) => ({ ...q, start: own[q.name], log: q.log && own[q.name] !== 0 })) };
+      const optimizer = createOptimizer(sub, { values: own, links, evaluations: Math.min(800, 80 * rest.length + 100), seed: seed + remaining.length, sigma: 0.15 });
+      while (!optimizer.done) {
+        const candidates = optimizer.ask();
+        optimizer.tell(yield { batch: candidates.map((c) => c.values), phase: 'reoptimize', step: steps - remaining.length, steps });
+      }
+      const found = optimizer.best;
+      if (found && found.fitness < current.fitness) {
+        for (const q of rest) own[q.name] = found.own[q.name];
+        current = { score: found.score, fitness: found.fitness };
+      }
+    }
+  }
+
+  // One unit (1/n) up or down on any member, while it helps.
+  for (let pass = 0; pass < 4; pass++) {
+    const trials = [];
+    for (const group of groups) {
+      const n = denominatorOf.get(group);
+      for (const name of group.names) {
+        for (const dm of [-1, 1]) {
+          const m = fractions[name].m + dm;
+          // Not to zero, nor across it.
+          if (m === 0 || Math.sign(m) !== Math.sign(fractions[name].m)) continue;
+          if (inRange(byName.get(name), m / n)) trials.push({ name, m, n });
+        }
+      }
+    }
+    if (!trials.length) break;
+    const scores = yield { batch: trials.map((t) => resolvedOf({ ...own, [t.name]: t.m / t.n })), phase: 'polish', step: steps, steps };
+    let best = -1;
+    for (let i = 0; i < trials.length; i++) if (fitnessOf(scores[i]) < (best < 0 ? current.fitness - 1e-9 : fitnessOf(scores[best]))) best = i;
+    if (best < 0) break;
+    const t = trials[best];
+    own[t.name] = t.m / t.n;
+    fractions[t.name] = { m: t.m, n: t.n };
+    current = { score: scores[best], fitness: fitnessOf(scores[best]) };
+  }
+  return {
+    own, values: resolvedOf(own), score: current.score, fitness: current.fitness, fractions, start: startScore,
+    groups: groups.map((g) => ({ into: g.into, names: g.names, n: denominatorOf.get(g) })),
+  };
+}
+
+/** The whole rounding in this thread, scored by `objective` (prepareObjective). */
+function runRounding(objective, parameters, options) {
+  const search = roundingSearch(parameters, options);
+  let step = search.next();
+  let evaluations = 0;
+  while (!step.done) {
+    evaluations += step.value.batch.length;
+    step = search.next(step.value.batch.map((values) => objective.evaluate(values)));
+  }
+  return { ...step.value, evaluations };
+}
+
+};
+
 __modules["src/core/analysis/sampling.js"] = function (__require, __exports) {
 __exports.expm = expm;
 __exports.samplePath = samplePath;
@@ -10248,6 +11250,8 @@ __exports.resultSymbols = resultSymbols;
 __exports.diagramSymbols = diagramSymbols;
 __exports.withCoefficients = withCoefficients;
 __exports.numericRootsOf = numericRootsOf;
+__exports.timingSymbols = timingSymbols;
+__exports.responseAt = responseAt;
 let ONE, add, integer, keyOf, multiply, negate, polynomialCoefficients, power, rational, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, substitute, substituteRational, symbol; __bind(() => { ({ ONE, add, integer, keyOf, multiply, negate, polynomialCoefficients, power, rational, rationalAdd, rationalDivide, rationalFunction, rationalMultiply, substitute, substituteRational, symbol } = __require("src/core/analysis/rational.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
@@ -11733,11 +12737,56 @@ function numericRootsOf(value) {
   };
 }
 
+/** The coefficients that set a diagram's timing rather than its gains: its
+ *  samplers' periods and the T of every delay e^{-sT} (an optimizer keeps
+ *  them as they are). */
+function timingSymbols(circuit) {
+  const out = new Set();
+  for (const component of circuit.components.values()) {
+    try {
+      if (component.type === 'sampler') expressionSymbols(coefficientValue(parseGain(component.value || 'T')), 's', out);
+      else if (TRANSFER_FUNCTION_TYPES[component.type] === 's') {
+        const value = blockTransferFunction(component);
+        const found = new Set();
+        expressionSymbols(value.numerator, 's', found);
+        expressionSymbols(value.denominator, 's', found);
+        for (const name of found) if (isDelayName(name)) expressionSymbols(DELAYS.get(name), 's', out);
+      }
+    } catch { /* a part that does not read names nothing */ }
+  }
+  return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/**
+ * A number-valued result's value at f/fs, as [re, im]: z = e^{j 2 pi f}, s =
+ * j 2 pi f (s in units of 1/Ts, its delays included), or a continuous input
+ * through a sampled loop (its z part times its s part, s = j 2 pi f / T).
+ * Null while a symbol has no number.
+ */
+function responseAt(value, variable, f) {
+  const theta = 2 * Math.PI * f;
+  if (!value) return null;
+  if (value.kind === 'mixed') {
+    const w = theta / value.period;
+    let h = [0, 0];
+    for (const term of value.terms) {
+      const zPart = rationalAt(term.z, [Math.cos(theta), Math.sin(theta)], 'z', 0);
+      const sPart = rationalAt(term.s, [0, w], 's', w);
+      if (!zPart || !sPart) return null;
+      const v = cmul(zPart, sPart);
+      h = [h[0] + v[0], h[1] + v[1]];
+    }
+    return h;
+  }
+  return variable === 'z' ? rationalAt(value, [Math.cos(theta), Math.sin(theta)], 'z', 0) : rationalAt(value, [0, theta], 's', theta);
+}
+
 __exports.quantizerErrorKey = quantizerErrorKey;
 __exports.TRACE_COLORS = TRACE_COLORS;
 };
 
 __modules["src/core/analysis/simulate.js"] = function (__require, __exports) {
+__exports.ditherSettings = ditherSettings;
 __exports.quantize = quantize;
 __exports.realize = realize;
 __exports.prepareSimulation = prepareSimulation;
@@ -11747,6 +12796,7 @@ let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js"))
 let evaluateExpression; __bind(() => { ({ evaluateExpression } = __require("src/core/analysis/bode.js")); });
 let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels } = __require("src/core/transfer-function.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
+let seededRandom; __bind(() => { ({ seededRandom } = __require("src/core/analysis/cmaes.js")); });
 /**
  * Time-domain simulation of a signal-flow diagram (the swing analysis): a
  * sine of a given amplitude into one source, every net's peak recorded --
@@ -11774,10 +12824,26 @@ let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core
 
 
 
+
 const JUNCTION_INPUTS = ['n', 's', 'w'];
 
 /** Schreier's quantizer (ds_quantize): odd levels for even N, even levels
  *  (with 0) for odd N, limited to +-(N - 1). */
+/**
+ * Dither added at each quantizer's input (`{ shape, amplitude }`, the
+ * amplitude in dBFS): 'rect' uniform over (-A, A), 'tri' triangular over
+ * (-A, A), peaking at 0 (two uniforms). Its variance, in quantizer levels
+ * squared (the white error it adds to the shaped noise beside the
+ * quantizer's 1/3): A^2/3 or A^2/6. Null without dither.
+ */
+function ditherSettings(dither, fullScale) {
+  if (!dither || !['rect', 'tri'].includes(dither.shape)) return null;
+  const db = Number(dither.amplitude);
+  if (!Number.isFinite(db)) return null;
+  const amplitude = fullScale * 10 ** (db / 20);
+  return { shape: dither.shape, amplitude, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
+}
+
 function quantize(y, levels) {
   const v = levels % 2 === 0 ? 2 * Math.floor(0.5 * y) + 1 : 2 * Math.floor(0.5 * (y + 1));
   const limit = levels - 1;
@@ -11841,7 +12907,9 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
- * `warmup`, `subSteps`. Returns `{ ok, fullScale, frequency, signals, run }`:
+ * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', amplitude
+ * (dBFS) }`, at each quantizer's input; each run draws the same sequence).
+ * Returns `{ ok, fullScale, frequency, signals, run }`:
  * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at
  * the input frequency), overloaded }`.
@@ -11877,6 +12945,7 @@ function prepareSimulation(circuit, options = {}) {
     try { levels.set(q.refdes, parseLevels(q.value)); } catch (err) { return failure('bad-levels', `${q.refdes}: ${err.message}`); }
   }
   const fullScale = quantizers.length ? Math.max(...[...levels.values()].map((n) => n - 1)) : 1;
+  const dither = ditherSettings(options.dither, fullScale);
 
   // Source settings, as the analysis reads them.
   const settings = new Map(Object.entries(options.sources || {}).map(([name, value]) => [canonicalNetName(name), value]));
@@ -12142,13 +13211,15 @@ function prepareSimulation(circuit, options = {}) {
     return input && ci.has(input.key) ? Mc[ci.get(input.key)] : null;
   });
 
-  /** One amplitude's run; `record` keeps the output's samples over the window. */
-  const run = (amplitudeDb, { record = false } = {}) => {
+  /** One amplitude's run; `record` keeps the output's samples over the
+   *  window; `phase` (radians) where the sine starts. */
+  const run = (amplitudeDb, { record = false, phase = 0 } = {}) => {
     const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
     let X = new Float64Array(size);
     let next = new Float64Array(size);
-    if (sourceValue.get(driven.key) && domain.get(driven.key) === 's') X[OSC_C] = amplitude;
+    // The oscillator's pair is (A cos, A sin) of the sine's phase.
+    if (sourceValue.get(driven.key) && domain.get(driven.key) === 's') { X[OSC_C] = amplitude * Math.cos(phase); X[OSC_S] = amplitude * Math.sin(phase); }
     X[ONE] = 1;
     let xd = new Float64Array(md);
     const p = new Float64Array(pSize);
@@ -12164,6 +13235,11 @@ function prepareSimulation(circuit, options = {}) {
     let re = 0;
     let im = 0;
     const total = warmup + window;
+    // The same dither sequence every run: amplitudes compare like for like.
+    const random = dither ? seededRandom(0x5eed) : null;
+    const ditherSample = !dither ? () => 0
+      : dither.shape === 'rect' ? () => dither.amplitude * (2 * random() - 1)
+      : () => dither.amplitude * (random() - random());
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -12177,13 +13253,13 @@ function prepareSimulation(circuit, options = {}) {
       samplerRows.forEach((row, k) => { p[k] = row ? dot(row, X) : 0; });
       for (const [key, k] of pSource) {
         const source = sourceValue.get(key);
-        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n) : source.constant;
+        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.constant;
       }
       state.set(xd, 0);
       state.set(p, md);
       for (const q of order) {
         const y = q.row ? dot(q.row, state) : 0;
-        state[q.p] = quantize(y, q.levels);
+        state[q.p] = quantize(y + ditherSample(), q.levels);
       }
       matVec(Md, state, Yd);
       // The continuous signals at nT^-, and the output, for the peaks and the tone.
@@ -12241,7 +13317,7 @@ function prepareSimulation(circuit, options = {}) {
     return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}) };
   };
 
-  return { ok: true, fullScale, frequency, period: T, signals: signalList, run };
+  return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };
 }
 
 /** The amplitudes a sweep runs, in dBFS: coarse far below full scale, a
@@ -12597,29 +13673,34 @@ function fft(re, im) {
 }
 
 /**
- * `samples` (length a power of two). Returns `{ points: [{ f, db }] }` for
- * f/fs from 1/N to 1/2, scaled so white noise of variance `variance` reads
- * 0 dB, and the raw powers for `inBand`.
+ * `samples` (length a power of two), Welch-averaged: Hann-windowed
+ * segments of `segment` samples (a power of two, the whole record by
+ * default) overlapping by half, their powers averaged, so the floor reads
+ * steady. Returns `{ points: [{ f, db }] }` for f/fs from 1/segment to 1/2,
+ * scaled so white noise of variance `variance` reads 0 dB, and the raw
+ * (averaged) powers for `inBand`; `n` is the segment, `averages` how many.
  */
-function outputSpectrum(samples, { variance = 1 / 3 } = {}) {
-  const n = samples.length;
+function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length } = {}) {
+  const n = Math.min(segment, samples.length);
   if (n < 16 || (n & (n - 1))) return null;
+  const window = Array.from({ length: n }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n));
+  const w1 = window.reduce((sum, w) => sum + w, 0);
+  const w2 = window.reduce((sum, w) => sum + w * w, 0);
+  const power = new Array(n / 2 + 1).fill(0);
   const re = new Float64Array(n);
   const im = new Float64Array(n);
-  let w2 = 0;
-  for (let i = 0; i < n; i++) {
-    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
-    re[i] = samples[i] * w;
-    w2 += w * w;
+  let averages = 0;
+  for (let start = 0; start + n <= samples.length; start += n / 2) {
+    for (let i = 0; i < n; i++) { re[i] = samples[start + i] * window[i]; im[i] = 0; }
+    fft(re, im);
+    for (let k = 0; k <= n / 2; k++) power[k] += re[k] ** 2 + im[k] ** 2;
+    averages += 1;
   }
-  fft(re, im);
-  const power = Array.from({ length: n / 2 + 1 }, (_, k) => re[k] ** 2 + im[k] ** 2);
+  for (let k = 0; k <= n / 2; k++) power[k] /= averages;
   const scale = variance * w2;
-  let w1 = 0;
-  for (let i = 0; i < n; i++) w1 += 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
   const points = [];
   for (let k = 1; k <= n / 2; k++) points.push({ f: k / n, db: 10 * Math.log10(power[k] / scale || 1e-30) });
-  return { points, power, n, w1, w2, variance };
+  return { points, power, n, w1, w2, variance, averages };
 }
 
 /**
@@ -19702,6 +20783,7 @@ __exports.normalizeAnalysisValues = normalizeAnalysisValues;
 __exports.pathHasDiagonal = pathHasDiagonal;
 __exports.diagonalDraftPath = diagonalDraftPath;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
+let normalizeOptimizeSetup; __bind(() => { ({ normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect; __bind(() => { ({ applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js")); });
 let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require("src/core/grid.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
@@ -19714,6 +20796,7 @@ let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrow
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
 let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
+
 
 
 
@@ -20731,6 +21814,13 @@ function normalizeAnalysisValues(value) {
   for (const [name, text] of Object.entries(value?.links || {})) {
     if (/^[A-Za-z][\w]{0,40}$/.test(name) && typeof text === 'string' && text.trim() && text.length <= 120) links[name] = text.trim();
   }
+  // Coefficients written as fractions (rounded to m/n units): the text, kept
+  // only while it is still the coefficient's number.
+  const fractions = {};
+  for (const [name, text] of Object.entries(value?.fractions || {})) {
+    const match = typeof text === 'string' && text.match(/^(-?\d{1,7})\/(\d{1,7})$/);
+    if (match && Number(match[2]) > 0 && Number.isFinite(coefficients[name]) && Math.abs(Number(match[1]) / Number(match[2]) - coefficients[name]) <= 1e-9 * Math.max(1, Math.abs(coefficients[name]))) fractions[name] = text;
+  }
   // The signal band on the response graph: f0 and bw in f/fs.
   const rawBand = value?.band;
   const band = rawBand && Number(rawBand.bw) > 0 ? { f0: Math.max(0, Number(rawBand.f0) || 0), bw: Number(rawBand.bw) } : null;
@@ -20745,8 +21835,12 @@ function normalizeAnalysisValues(value) {
     ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
     ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
     ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
+    // Dither at the quantizers' inputs for the simulations: rect or tri, its amplitude in dBFS.
+    ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: { shape: rawFlow.dither.shape, amplitude: text(String(rawFlow.dither.amplitude ?? '-30')).slice(0, 20) } } : {}),
+    // The coefficient optimizer's setup (analysis/optimize-setup.js).
+    ...(rawFlow.optimize && typeof rawFlow.optimize === 'object' ? { optimize: normalizeOptimizeSetup(rawFlow.optimize) } : {}),
   } : null;
-  return { coefficients, bode, links, ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
+  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -20755,12 +21849,15 @@ function analysisValuesJSON(values) {
   const hasBode = bode && (bode.intrinsicGain || bode.parasiticRatio || Object.keys(bode.multipliers || {}).length);
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
+  const fractions = values?.fractions || {};
   const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
-  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum) ? values.flow : null;
+  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize || values.flow.dither) ? values.flow : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
+  const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
     ...(Object.keys(links).length ? { links: { ...links } } : {}),
+    ...(fractionList.length ? { fractions: Object.fromEntries(fractionList) } : {}),
     ...(band ? { band } : {}),
     ...(flow ? { flow: { ...flow, sources: { ...flow.sources } } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
@@ -20785,7 +21882,13 @@ function normalizeResponsePlot(plot) {
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   const band = (Array.isArray(plot.band) ? plot.band : []).filter((f) => finite(f) && f > 0).slice(0, 2).map((f) => round(f, 6));
-  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}) };
+  return { kind: 'response', axis: plot.axis === 'normalized' ? 'normalized' : 'relative', range: { low, high }, traces, ...(band.length ? { band } : {}), ...(plot.quantity === 'phase' ? { quantity: 'phase' } : {}), ...(plot.units === 'dBFS' ? { units: 'dBFS' } : {}), ...markersOf(plot), ...(plot.role === 'loop' ? { role: 'loop' } : {}), ...sourceOf(plot) };
+}
+
+/** What a plot was drawn from, so it can be drawn again at new numbers:
+ *  a loop plot's signal, a root locus's coefficient. */
+function sourceOf(plot) {
+  return typeof plot.source === 'string' && plot.source ? { source: plot.source.slice(0, 200) } : {};
 }
 
 /** A plot's marked frequencies: `{ f, label }`, a few. */
@@ -20813,6 +21916,7 @@ function normalizeLocusPlot(plot) {
     points,
     current: (Array.isArray(plot.current) ? plot.current : []).filter(point).slice(0, 64).map((p) => ({ re: round(p.re, 5), im: round(p.im, 5) })),
     crossings: (Array.isArray(plot.crossings) ? plot.crossings : []).filter((c) => finite(c?.k) && ['stable', 'unstable'].includes(c.becomes)).slice(0, 8).map((c) => ({ k: round(c.k, 5), becomes: c.becomes })),
+    ...sourceOf(plot),
   };
 }
 
@@ -43523,7 +44627,8 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         addedLabels.push(shape.id);
       }
       for (const l of editor.clipboard.labels.filter((label) => label.kind === 'label')) {
-        const nl = editor.circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style, math: l.math, mathBox: l.mathBox || undefined });
+        const parent = l.parent ? labelMap.get(l.parent) : null;
+        const nl = editor.circuit.addLabel({ text: l.text, align: l.align, parent, ...(parent && l.role ? { role: l.role } : {}), x: l.x + dx, y: l.y + dy, style: l.style, math: l.math, mathBox: l.mathBox || undefined });
         addedLabels.push(nl.id);
       }
       const netMap = new Map();
@@ -59929,6 +61034,661 @@ function installOnboarding() {
 
 };
 
+__modules["src/web/optimize-ui.js"] = function (__require, __exports) {
+__exports.optimizeSection = optimizeSection;
+__exports.renderOptimize = renderOptimize;
+__exports.resetOptimize = resetOptimize;
+let diagramSymbols, signalFlowGraph; __bind(() => { ({ diagramSymbols, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
+let createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective } = __require("src/core/analysis/optimize.js")); });
+let normalizeOptimizeSetup; __bind(() => { ({ normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
+let coefficientGroups, roundingSearch; __bind(() => { ({ coefficientGroups, roundingSearch } = __require("src/core/analysis/rounding.js")); });
+let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
+let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+/**
+ * The signal-flow mode's coefficient optimizer (core/analysis/optimize.js):
+ * a section under the coefficients where each coefficient is set free or
+ * fixed (linked ones follow their links) with an optional range, the specs
+ * are listed -- a transfer function's magnitude over a band, as a goal or a
+ * limit -- and the swing test is set: stable at an amplitude, each limited
+ * net under its limit. Run searches in worker threads (optimize-worker.js),
+ * with a progress bar and Stop; the best numbers found come back beside
+ * the coefficients, and Apply puts them into the sliders (Revert undoes
+ * it). The setup is saved with the document (`analysisValues.flow.optimize`).
+ */
+
+
+
+
+
+
+
+
+
+let api = null;
+let root = null;
+let running = null; // { stop(), optimizer }
+let found = null; // { own (the best free numbers), score, start (its score), feasible, specs }
+let rounded = null; // { own, fractions, groups, score, start, feasible, specs, swing, before }
+let reverting = null; // { coefficients, fractions } before the last Apply
+
+const el = (tag, props = {}, children = []) => {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
+  }
+  node.append(...children);
+  return node;
+};
+
+const math = (tex, className = 'signal-flow-optimize-math') => {
+  const span = el('span', { class: className });
+  span.innerHTML = texToMathML(tex);
+  return span;
+};
+
+/** The setup in the document, made on first use: a quantizer's diagram
+ *  starts with its NTF pushed down in the signal band and the swing test on. */
+function setup() {
+  const flow = api.flow();
+  if (!flow.optimize) {
+    const { sources } = signalFlowGraph(api.circuit());
+    const quantizer = sources.find((s) => s.quantizer);
+    const input = sources.find((s) => !s.quantizer);
+    flow.optimize = normalizeOptimizeSetup({
+      specs: quantizer ? [{ action: 'minimize', measure: 'average', input: quantizer.id, band: 'signal' }] : [],
+      swing: { on: !!quantizer, amplitude: -6, input: input?.id || '' },
+    });
+  }
+  return flow.optimize;
+}
+
+function changed() {
+  api.markSettingsChanged();
+}
+
+const plainName = (name) => name.replace(/_\{([^}]*)\}/g, '_$1');
+const sourceName = (source) => (source.quantizer ? `${plainName(source.name)} (quantization error)` : plainName(source.name));
+
+/** A spec in words, its transfer function as TeX. */
+function specText(spec, sources) {
+  const source = sources.find((s) => s.id === spec.input);
+  const action = { minimize: 'Minimize', maximize: 'Maximize', below: 'Keep below', above: 'Keep above' }[spec.action];
+  const measure = { average: 'average', peak: 'peak', lowest: 'lowest' }[spec.measure];
+  const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1} to ${spec.f2}`;
+  return `${action} the ${measure} |H| from ${source ? plainName(source.name) : spec.input} ${band}${spec.value !== undefined ? ` (${spec.value} dB)` : ''}`;
+}
+
+// ----- the section ----------------------------------------------------------------------
+
+/** The section, to place under the coefficients; `hooks` reach the mode's state. */
+function optimizeSection(hooks) {
+  api = hooks;
+  root = el('details', { class: 'analysis-approximations signal-flow-optimize' }, [
+    el('summary', { text: 'Optimize coefficients' }),
+    el('div', { class: 'signal-flow-optimize-body' }),
+  ]);
+  root.addEventListener('toggle', () => { if (root.open) renderOptimize(); });
+  return root;
+}
+
+/** Rebuild the section's rows (not while a run is going: its numbers would jump). */
+function renderOptimize() {
+  if (!root?.open || running) return;
+  const body = root.querySelector('.signal-flow-optimize-body');
+  const circuit = api.circuit();
+  const { sources } = signalFlowGraph(circuit);
+  const current = setup();
+  body.replaceChildren(
+    el('p', { class: 'field-hint', text: 'Searches the free coefficients (an evolution strategy, CMA-ES, from their numbers now) for the best goal that keeps every limit: specs on a transfer function\'s magnitude, in dB, and the swing test simulated. Any diagram: a modulator\'s loop filter or a plain filter.' }),
+    coefficientTable(circuit, current),
+    specList(current, sources),
+    swingBlock(circuit, current, sources),
+    runBlock(current),
+    resultBlock(sources),
+    roundingBlock(current),
+    roundedBlock(sources),
+  );
+}
+
+function coefficientTable(circuit, current) {
+  const values = api.resolved();
+  const links = api.links();
+  const parameters = optimizationParameters(circuit, { values, links, setup: current });
+  const free = new Set(parameters.free.map((p) => p.name));
+  const rows = diagramSymbols(circuit).map((name) => {
+    const entry = current.coefficients[name] || {};
+    const linked = Object.hasOwn(links, name);
+    const update = (patch) => {
+      const next = { ...(current.coefficients[name] || {}), ...patch };
+      for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
+      if (Object.keys(next).length) current.coefficients[name] = next;
+      else delete current.coefficients[name];
+      changed();
+    };
+    const mode = linked
+      ? el('span', { class: 'signal-flow-optimize-linked', text: `= ${links[name]}`, title: 'Linked: follows its link' })
+      : el('select', { 'aria-label': `${name}: free or fixed`, onchange: (ev) => { update({ fixed: ev.target.value === 'fixed' }); renderOptimize(); } }, [
+        el('option', { value: 'free', text: 'Free' }), el('option', { value: 'fixed', text: 'Fixed' }),
+      ]);
+    if (!linked) mode.value = free.has(name) ? 'free' : 'fixed';
+    const bound = (key, label) => {
+      const input = el('input', { type: 'text', class: 'signal-flow-optimize-bound', placeholder: key, 'aria-label': `${name}: ${label}`, title: `${label} (blank: none; a coefficient keeps its sign unless its range crosses zero)`, value: entry[key] ?? '', disabled: linked || !free.has(name) });
+      input.addEventListener('change', () => {
+        const text = input.value.trim();
+        const number = Number(text);
+        input.classList.toggle('invalid', !!text && !Number.isFinite(number));
+        if (text && !Number.isFinite(number)) return;
+        update({ [key]: text ? number : undefined });
+      });
+      return input;
+    };
+    const best = found?.own && Object.hasOwn(found.own, name) ? Number(found.own[name].toPrecision(4)) : '';
+    const denominator = el('input', { type: 'text', class: 'signal-flow-optimize-bound', placeholder: String(current.rounding.denominator), 'aria-label': `${name}: largest n when rounding`, title: 'The largest n of m/n when rounding, for this coefficient\'s block (blank: the one set under Rounding); a block takes the largest set among its gains', value: entry.denominator ?? '', disabled: linked || !free.has(name) });
+    denominator.addEventListener('change', () => {
+      const text = denominator.value.trim();
+      const n = Math.round(Number(text));
+      denominator.classList.toggle('invalid', !!text && !(n >= 1 && n <= 1024));
+      if (text && !(n >= 1 && n <= 1024)) return;
+      update({ denominator: text ? n : undefined });
+    });
+    return el('div', { class: 'signal-flow-optimize-coefficient' }, [
+      math(symbolText(name)),
+      mode,
+      bound('min', 'Lowest value'),
+      bound('max', 'Highest value'),
+      denominator,
+      el('span', { class: 'signal-flow-optimize-number', text: String(Number((values[name] ?? 1).toPrecision(4))), title: 'Its number now' }),
+      el('span', { class: 'signal-flow-optimize-number signal-flow-optimize-found', text: String(best), title: best === '' ? '' : 'The best number found' }),
+    ]);
+  });
+  return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('div', { class: 'signal-flow-optimize-heading', text: 'Coefficients' }),
+    el('div', { class: 'signal-flow-optimize-coefficient signal-flow-optimize-head' }, ['', '', 'Min', 'Max', 'n ≤', 'Now', 'Found'].map((text) => el('span', { text }))),
+    ...rows,
+    el('p', { class: 'field-hint', text: 'Timing (a sampler\'s period, a delay\'s T) starts fixed; the rest free. A coefficient moves on a log scale, keeping its sign; one at zero, or with a range across zero, moves linearly.' }),
+  ]);
+}
+
+function specList(current, sources) {
+  const rows = current.specs.map((spec, index) => {
+    const save = () => { current.specs[index] = normalizeOptimizeSetup({ specs: [spec] }).specs[0]; changed(); };
+    const select = (key, options, label) => {
+      const node = el('select', { 'aria-label': label, onchange: (ev) => { spec[key] = ev.target.value; save(); renderOptimize(); } }, options.map(([value, text]) => el('option', { value, text })));
+      node.value = spec[key];
+      return node;
+    };
+    const field = (key, placeholder, label) => el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder, 'aria-label': label, value: spec[key] ?? '', onchange: (ev) => { spec[key] = ev.target.value.trim() === '' ? undefined : Number(ev.target.value); save(); } });
+    const inputs = sources.map((s) => [s.id, sourceName(s)]);
+    if (spec.input && !sources.some((s) => s.id === spec.input)) inputs.push([spec.input, `${spec.input} (gone)`]);
+    const limit = spec.action === 'below' || spec.action === 'above';
+    return el('div', { class: 'signal-flow-optimize-spec' }, [
+      select('action', [['minimize', 'Minimize'], ['maximize', 'Maximize'], ['below', 'Keep below'], ['above', 'Keep above']], 'Goal or limit'),
+      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest']], 'Measure of the magnitude over the band'),
+      el('span', { class: 'signal-flow-optimize-word', text: '|H| from' }),
+      select('input', inputs.length ? inputs : [['', '(no source)']], 'The transfer function, from this source to the output'),
+      select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band'),
+      ...(spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
+      ...(limit ? [field('value', 'dB', 'Limit, dB'), el('span', { class: 'signal-flow-optimize-word', text: 'dB' })] : []),
+      el('button', { type: 'button', class: 'signal-flow-legend-remove', text: '×', title: 'Remove this spec', 'aria-label': 'Remove this spec', onclick: () => { current.specs.splice(index, 1); changed(); renderOptimize(); } }),
+    ]);
+  });
+  const add = () => {
+    const quantizer = sources.find((s) => s.quantizer);
+    // A second spec on a modulator: Lee's rule on its NTF.
+    const spec = quantizer && current.specs.some((s) => s.input === quantizer.id)
+      ? { action: 'below', measure: 'peak', input: quantizer.id, band: 'all', value: 3.5 }
+      : { action: 'minimize', measure: 'average', input: (quantizer || sources[0])?.id || '', band: 'signal' };
+    current.specs.push(spec);
+    changed();
+    renderOptimize();
+  };
+  return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('div', { class: 'signal-flow-optimize-heading', text: 'Specs' }),
+    ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
+    el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
+    el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the one set on the graph. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
+  ]);
+}
+
+function swingBlock(circuit, current, sources) {
+  const swing = current.swing;
+  const toggle = el('input', { type: 'checkbox', 'aria-label': 'Run the swing test' });
+  toggle.checked = swing.on;
+  toggle.addEventListener('change', () => { swing.on = toggle.checked; changed(); renderOptimize(); });
+  const real = sources.filter((s) => !s.quantizer);
+  const source = el('select', { 'aria-label': 'Source the sine drives', onchange: (ev) => { swing.input = ev.target.value; changed(); renderOptimize(); } }, real.map((s) => el('option', { value: s.id, text: plainName(s.name) })));
+  if (real.some((s) => s.id === swing.input)) source.value = swing.input;
+  else if (real.length) { swing.input = real[0].id; }
+  const amplitude = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Amplitude, dBFS', value: String(swing.amplitude), onchange: (ev) => { const v = Number(ev.target.value); if (Number.isFinite(v)) { swing.amplitude = v; changed(); } } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: 'in band', 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
+  const children = [
+    el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
+    el('div', { class: 'signal-flow-swing-controls' }, [
+      el('label', { class: 'signal-flow-spectrum-toggle' }, [toggle, el('span', { text: 'Stable at' })]), amplitude, el('label', { text: 'dBFS into' }), source, el('label', { text: 'at f/fs' }), frequency,
+    ]),
+  ];
+  if (swing.on) {
+    // The nets to limit: the integrators' outputs and the quantizers'
+    // inputs, and any other already limited.
+    const sim = prepareSimulation(circuit, { values: api.resolved(), sources: api.flow().sources, input: swing.input, output: api.flow().output, samples: 64 });
+    if (!sim.ok) children.push(el('p', { class: 'analysis-error', text: sim.error }));
+    else {
+      const shown = sim.signals.filter((s) => s.role === 'state' || s.role === 'quantizer-input' || Object.hasOwn(swing.limits, s.key));
+      const peaks = found?.score?.swing?.peaks;
+      children.push(el('div', { class: 'signal-flow-optimize-limits' }, shown.map((signal) => {
+        const input = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: 'none', 'aria-label': `${signal.name}: limit, dBFS`, value: swing.limits[signal.key] ?? '' });
+        input.addEventListener('change', () => {
+          const text = input.value.trim();
+          const v = Number(text);
+          input.classList.toggle('invalid', !!text && !Number.isFinite(v));
+          if (text && !Number.isFinite(v)) return;
+          if (text) swing.limits[signal.key] = v; else delete swing.limits[signal.key];
+          changed();
+        });
+        const peak = peaks && Number.isFinite(peaks[signal.key]) ? `${peaks[signal.key].toFixed(1)}` : '';
+        return el('div', { class: 'signal-flow-optimize-limit' }, [math(signal.name), input, el('span', { class: 'signal-flow-optimize-word', text: 'dBFS' }), el('span', { class: 'signal-flow-optimize-number', text: peak, title: peak ? 'Its peak at the best numbers found, dBFS' : '' })]);
+      })));
+    }
+    const dither = api.flow().dither;
+    const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither at ${dither.amplitude} dBFS, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
+    children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, and each net with a limit must peak under it (dBFS of the quantizer's full scale). Blank: no limit.${ditherText}` }));
+  }
+  return el('div', { class: 'signal-flow-optimize-group' }, children);
+}
+
+function runBlock(current) {
+  const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'How many candidates to score at most', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
+  return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('div', { class: 'signal-flow-swing-controls' }, [
+      el('label', { text: 'Budget' }), budget, el('label', { text: 'candidates' }),
+      el('button', { type: 'button', class: 'signal-flow-optimize-run', text: 'Run', onclick: () => (running ? running.stop() : run()) }),
+    ]),
+    el('progress', { class: 'signal-flow-optimize-progress', max: '1', value: '0', hidden: true }),
+    el('p', { class: 'field-hint signal-flow-optimize-status', 'aria-live': 'polite' }),
+  ]);
+}
+
+/** Each spec and the swing test at the start and at the result: rows. */
+function scoreRows(result, sources, [startLabel, endLabel]) {
+  const specs = result.specs || [];
+  const row = (label, start, best, ok) => el('div', { class: `signal-flow-optimize-metric${ok === false ? ' analysis-error' : ''}` }, [
+    el('span', { text: label }),
+    el('span', { class: 'signal-flow-optimize-number', text: start, title: 'At the numbers it started from' }),
+    el('span', { class: 'signal-flow-optimize-number', text: best, title: `At the ${endLabel.toLowerCase()} numbers` }),
+  ]);
+  const db = (v) => (v === null || v === undefined ? '–' : `${v.toFixed(1)} dB`);
+  const limits = setup().swing.limits;
+  const over = (score) => Object.entries(limits).filter(([key, limit]) => score.swing.peaks?.[key] > limit + 0.01).length;
+  const swingText = (score) => {
+    if (!score?.swing) return score?.unstable ? 'unstable' : '–';
+    if (score.swing.overloaded) return score.swing.stableAt !== null ? `holds to ${score.swing.stableAt} dBFS` : 'runs away';
+    const count = over(score);
+    return count ? `${count} net${count === 1 ? '' : 's'} over` : 'within limits';
+  };
+  const swingOk = (score) => !!score?.swing && !score.swing.overloaded && !over(score);
+  return [
+    row('', startLabel, endLabel),
+    ...specs.map((spec, i) => {
+      const value = result.score.specs?.[i];
+      const ok = spec.action === 'below' ? value <= spec.value + 0.01 : spec.action === 'above' ? value >= spec.value - 0.01 : undefined;
+      return row(specText(spec, sources), db(result.start?.specs?.[i]), db(value), ok);
+    }),
+    ...(result.swing ? [row('Swing test', swingText(result.start), swingText(result.score), swingOk(result.score))] : []),
+  ];
+}
+
+function resultBlock(sources) {
+  const host = el('div', { class: 'signal-flow-optimize-result' });
+  if (!found) return host;
+  host.append(
+    el('div', { class: 'signal-flow-optimize-heading', text: found.feasible ? 'Found: every limit met' : 'Found: the best compromise, missing a limit' }),
+    ...scoreRows(found, sources, ['Start', 'Found']),
+    el('div', { class: 'signal-flow-graph-actions' }, [
+      el('button', { type: 'button', text: 'Revert', title: 'Put back the coefficients from before Apply', disabled: !reverting, onclick: revert }),
+      el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: 'Put the numbers found into the coefficients (rounded to 4 digits)', onclick: apply }),
+    ]),
+  );
+  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
+  return host;
+}
+
+function apply() {
+  if (!found?.own) return;
+  reverting = api.snapshotCoefficients();
+  const numbers = Object.fromEntries(Object.entries(found.own).map(([name, v]) => [name, Number(v.toPrecision(4))]));
+  api.applyCoefficients(numbers);
+  renderOptimize();
+}
+
+function revert() {
+  if (!reverting) return;
+  api.restoreCoefficients(reverting);
+  reverting = null;
+  renderOptimize();
+}
+
+// ----- rounding to fractions ------------------------------------------------------------
+
+const DENOMINATORS = [4, 8, 16, 32, 64, 128, 256];
+
+function roundingBlock(current) {
+  const options = current.rounding;
+  const denominator = el('select', { 'aria-label': 'Largest n', onchange: (ev) => { options.denominator = Number(ev.target.value); changed(); renderOptimize(); } },
+    [...new Set([...DENOMINATORS, options.denominator])].sort((a, b) => a - b).map((n) => el('option', { value: String(n), text: String(n) })));
+  denominator.value = String(options.denominator);
+  const check = (key, text, title) => {
+    const box = el('input', { type: 'checkbox', 'aria-label': text });
+    box.checked = !!options[key];
+    box.addEventListener('change', () => { options[key] = box.checked; changed(); });
+    return el('label', { class: 'signal-flow-spectrum-toggle', title }, [box, el('span', { text })]);
+  };
+  return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('div', { class: 'signal-flow-optimize-heading', text: 'Rounding to fractions' }),
+    el('p', { class: 'field-hint', text: 'Makes each free coefficient a simple fraction m/n -- m units over n, whatever the units are -- at the least cost to the specs above: a coarser n is cheaper to build and costs more performance. Starts from the coefficients\' numbers now (Apply a run first). The gains into one block share its n, so they read m1/n, m2/n, ...' }),
+    el('div', { class: 'signal-flow-swing-controls' }, [
+      el('label', { text: 'n up to' }), denominator,
+      check('powersOfTwo', 'powers of two', 'n = 1, 2, 4, 8, ...: shifts in a digital filter, binary-weighted unit arrays'),
+      check('shared', 'one n per block', 'The gains into the same block (through sums: an integrator, the quantizer) share one n, its reference element; off, each coefficient has its own'),
+      el('button', { type: 'button', class: 'signal-flow-optimize-round', text: 'Round', onclick: () => (running ? running.stop() : roundCoefficients()) }),
+    ]),
+    el('progress', { class: 'signal-flow-optimize-progress signal-flow-round-progress', max: '1', value: '0', hidden: true }),
+    el('p', { class: 'field-hint signal-flow-round-status', 'aria-live': 'polite' }),
+  ]);
+}
+
+/** The smallest n that brings a value within 5% (its block alone). */
+function denominatorFor(value, limit = 0.05) {
+  for (let n = 1; n <= 4096; n++) {
+    const m = Math.round(value * n) || Math.sign(value);
+    if (Math.abs(m / n - value) <= limit * Math.abs(value)) return n;
+  }
+  return null;
+}
+
+function roundedBlock(sources) {
+  const host = el('div', { class: 'signal-flow-optimize-result' });
+  if (!rounded) return host;
+  const rows = [];
+  const far = [];
+  const cramped = [];
+  for (const group of rounded.groups) {
+    // A gain far smaller than another into its block: it needs a large n.
+    const sizes = group.names.map((name) => Math.abs(rounded.before[name])).filter((v) => v > 0);
+    if (sizes.length > 1) {
+      const smallest = group.names.find((name) => Math.abs(rounded.before[name]) === Math.min(...sizes));
+      const need = denominatorFor(rounded.before[smallest]);
+      if (need && need > group.n) cramped.push({ name: smallest, ratio: Math.max(...sizes) / Math.min(...sizes), need, n: group.n });
+    }
+    const into = group.into ? `into ${plainName(api.circuit().labelOf?.(group.into)?.text || group.into)}` : 'on its own';
+    if (rounded.shared || group.names.length > 1) rows.push(el('div', { class: 'signal-flow-optimize-subhead', text: `${into}: n = ${group.n}` }));
+    for (const name of group.names) {
+      const f = rounded.fractions[name];
+      const was = rounded.before[name];
+      const value = f.m / f.n;
+      const change = was ? (value - was) / Math.abs(was) : 0;
+      const off = Math.abs(change) > 0.1;
+      if (off) far.push(name);
+      rows.push(el('div', { class: `signal-flow-optimize-fraction${off ? ' analysis-error' : ''}` }, [
+        math(symbolText(name)),
+        el('span', { class: 'signal-flow-optimize-number signal-flow-optimize-found', text: `${f.m}/${f.n}` }),
+        el('span', { class: 'signal-flow-optimize-number', text: String(Number(value.toPrecision(4))), title: 'Its value' }),
+        el('span', { class: 'signal-flow-optimize-number', text: String(Number(was.toPrecision(4))), title: 'Its number before rounding' }),
+        el('span', { class: 'signal-flow-optimize-number', text: `${change >= 0 ? '+' : ''}${(100 * change).toFixed(1)}%`, title: 'The change rounding made (the rest re-optimized around it)' }),
+      ]));
+    }
+  }
+  host.append(
+    el('div', { class: 'signal-flow-optimize-heading', text: rounded.feasible ? 'Rounded: every limit met' : 'Rounded: the best compromise, missing a limit' }),
+    el('div', { class: 'signal-flow-optimize-fraction signal-flow-optimize-head' }, ['', 'm/n', 'Value', 'Before', 'Change'].map((text) => el('span', { text }))),
+    ...rows,
+    ...scoreRows(rounded, sources, ['Before', 'Rounded']),
+  );
+  if (!rounded.startFeasible) {
+    host.append(el('p', { class: 'analysis-error', text: 'The numbers it started from already missed a limit, so rounding chased the limits before the goal. Run the optimizer and Apply its result first, then round.' }));
+  }
+  if (far.length) {
+    host.append(el('p', { class: 'field-hint', text: `Changed more than 10%: ${far.map(plainName).join(', ')} -- by rounding, or by re-optimizing around the coefficients rounded before them (one coefficient can stand in for another: a resonator needs its product of gains, not each).` }));
+  }
+  for (const { name, ratio, need, n } of cramped) {
+    host.append(el('p', { class: 'field-hint', text: `${plainName(name)} is ${Math.round(ratio)} times smaller than the largest gain into its block: within 5% it needs n ≥ ${need} there, where n = ${n}. Give it a larger n ≤ in the table, or turn off one n per block.` }));
+  }
+  host.append(el('div', { class: 'signal-flow-graph-actions' }, [
+    el('button', { type: 'button', text: 'Revert', title: 'Put back the coefficients from before Apply', disabled: !reverting, onclick: revert }),
+    el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: 'Put the fractions into the coefficients, exactly', onclick: applyRounded }),
+  ]));
+  return host;
+}
+
+function applyRounded() {
+  if (!rounded) return;
+  reverting = api.snapshotCoefficients();
+  const numbers = Object.fromEntries(Object.entries(rounded.fractions).map(([name, f]) => [name, f.m / f.n]));
+  const texts = Object.fromEntries(Object.entries(rounded.fractions).map(([name, f]) => [name, `${f.m}/${f.n}`]));
+  api.applyCoefficients(numbers, { fractions: texts });
+  renderOptimize();
+}
+
+function roundCoefficients() {
+  const circuit = api.circuit();
+  const current = setup();
+  const links = api.links();
+  const own = Object.fromEntries(diagramSymbols(circuit).map((name) => [name, api.coefficients()[name] ?? 1]));
+  const parameters = optimizationParameters(circuit, { values: own, links, setup: current });
+  const names = parameters.free.map((p) => p.name);
+  const options = current.rounding;
+  // A block's largest n: the largest set among its gains, else the setting.
+  const groups = options.shared ? coefficientGroups(circuit, names) : null;
+  const denominators = {};
+  for (const group of groups || names.map((name) => ({ names: [name] }))) {
+    const set = group.names.map((name) => current.coefficients[name]?.denominator).filter(Boolean);
+    if (set.length) for (const name of group.names) denominators[name] = Math.max(...set);
+  }
+  const specs = normalizeOptimizeSetup(current).specs.filter((spec) => spec.input);
+  return startRun({
+    button: '.signal-flow-optimize-round',
+    status: '.signal-flow-round-status',
+    progress: '.signal-flow-round-progress',
+    parameters,
+    async work({ pool, say, progress, stopped }) {
+      const search = roundingSearch(parameters, { values: own, links, denominator: options.denominator, denominators, powersOfTwo: options.powersOfTwo, groups, seed: Math.floor(Math.random() * 2 ** 31) });
+      let step = search.next();
+      let evaluations = 0;
+      while (!step.done) {
+        if (stopped()) return 'Stopped: nothing rounded.';
+        const { batch, phase, step: k, steps } = step.value;
+        const scores = await pool.evaluate(batch);
+        evaluations += batch.length;
+        progress((k - (phase === 'round' ? 1 : 0.5)) / Math.max(1, steps));
+        say(`${phase === 'polish' ? 'Fine-tuning by one unit' : phase === 'reoptimize' ? `Re-optimizing the rest after ${k} of ${steps}` : phase === 'round' ? `Rounding ${k} of ${steps} ${options.shared ? 'blocks' : 'coefficients'}` : 'Scoring the start'}... ${evaluations} candidates${pool.count ? ` on ${pool.count} threads` : ''}`);
+        step = search.next(scores);
+      }
+      const result = step.value;
+      rounded = {
+        ...result,
+        shared: !!groups,
+        feasible: isFeasible(result),
+        specs,
+        swing: normalizeOptimizeSetup(current).swing.on,
+        before: Object.fromEntries(names.map((name) => [name, own[name]])),
+        startFeasible: fitnessOf(result.start) < 1e6,
+      };
+      return { text: `Rounded after ${evaluations} candidates.`, error: !rounded.feasible };
+    },
+  });
+}
+
+// ----- the run --------------------------------------------------------------------------
+
+/** Score batches in worker threads; null where workers cannot run (the
+ *  page opened from a file), and the run scores in this thread instead. */
+async function workerPool(circuitJson, problem) {
+  if (typeof Worker === 'undefined' || location.protocol === 'file:') return null;
+  const count = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 2) - 1));
+  const workers = [];
+  try {
+    for (let i = 0; i < count; i++) workers.push(new Worker('optimize-worker.js', { type: 'module' }));
+  } catch {
+    workers.forEach((w) => w.terminate());
+    return null;
+  }
+  const ready = await Promise.all(workers.map((worker) => new Promise((resolve) => {
+    const done = (value) => { worker.onmessage = null; worker.onerror = null; resolve(value); };
+    worker.onmessage = ({ data }) => { if (data.type === 'ready') done(data); };
+    worker.onerror = (ev) => { ev.preventDefault?.(); done({ ok: false, broken: true }); };
+    worker.postMessage({ type: 'init', circuit: circuitJson, problem });
+  })));
+  if (ready.some((r) => r.broken)) {
+    workers.forEach((w) => w.terminate());
+    return null;
+  }
+  if (!ready[0].ok) {
+    workers.forEach((w) => w.terminate());
+    return { error: ready[0].error };
+  }
+  let id = 0;
+  return {
+    count,
+    evaluate(batch) {
+      const size = Math.ceil(batch.length / workers.length);
+      const parts = workers.map((worker, k) => batch.slice(k * size, (k + 1) * size)).map((part, k) => (part.length ? new Promise((resolve) => {
+        const ticket = ++id;
+        const listener = ({ data }) => {
+          if (data.type !== 'scores' || data.id !== ticket) return;
+          workers[k].removeEventListener('message', listener);
+          resolve(data.scores);
+        };
+        workers[k].addEventListener('message', listener);
+        workers[k].postMessage({ type: 'evaluate', id: ticket, batch: part });
+      }) : Promise.resolve([])));
+      return Promise.all(parts).then((lists) => lists.flat());
+    },
+    close() { workers.forEach((w) => w.terminate()); },
+  };
+}
+
+/** Scoring in this thread, a candidate at a time between frames. */
+function localPool(circuit, problem) {
+  const objective = prepareObjective(circuit, problem);
+  if (!objective.ok) return { error: objective.error };
+  return {
+    count: 0,
+    async evaluate(batch) {
+      const scores = [];
+      let started = performance.now();
+      for (const values of batch) {
+        scores.push(objective.evaluate(values));
+        if (performance.now() - started > 30) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          started = performance.now();
+        }
+      }
+      return scores;
+    },
+    close() {},
+  };
+}
+
+/**
+ * A search in worker threads, its button turned to Stop: `work({ pool, say,
+ * progress, stopped })` returns the closing message (text, or `{ text, error }`).
+ */
+async function startRun({ button: buttonSelector, status: statusSelector, progress: progressSelector, parameters, work }) {
+  const circuit = api.circuit();
+  const current = setup();
+  const status = root.querySelector(statusSelector);
+  const progress = root.querySelector(progressSelector);
+  const button = root.querySelector(buttonSelector);
+  const say = (text, error = false) => { status.textContent = text; status.classList.toggle('analysis-error', error); };
+  if (!parameters.free.length) { say('No coefficient is free: set one to Free.', true); return; }
+  const problem = { output: api.flow().output, sources: api.flow().sources, band: api.band(), values: api.resolved(), setup: current, dither: api.flow().dither };
+  let stopped = false;
+  running = { stop: () => { stopped = true; } };
+  const label = button.textContent;
+  button.textContent = 'Stop';
+  root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button) node.disabled = true; });
+  say('Preparing...');
+  progress.hidden = false;
+  progress.value = 0;
+  let pool = null;
+  let message = { text: '', error: false };
+  const startedAt = performance.now();
+  try {
+    pool = await workerPool(circuit.toJSON(), problem);
+    if (!pool) pool = localPool(circuit, problem);
+    if (pool.error) { message = { text: pool.error, error: true }; return; }
+    const closing = await work({ pool, say, progress: (v) => { progress.value = v; }, stopped: () => stopped });
+    message = typeof closing === 'string' ? { text: closing, error: false } : closing;
+    message.text = `${message.text.replace(/\.$/, '')} in ${((performance.now() - startedAt) / 1000).toFixed(1)} s.`;
+  } catch (error) {
+    message = { text: `The search failed: ${error.message}`, error: true };
+  } finally {
+    pool?.close?.();
+    running = null;
+    button.textContent = label;
+    renderOptimize();
+    const after = root.querySelector(statusSelector);
+    if (after) {
+      after.textContent = message.text;
+      after.classList.toggle('analysis-error', !!message.error);
+    }
+  }
+}
+
+function run() {
+  const circuit = api.circuit();
+  const current = setup();
+  const links = api.links();
+  // Own numbers for every coefficient the diagram names (1 until set).
+  const own = Object.fromEntries(diagramSymbols(circuit).map((name) => [name, api.coefficients()[name] ?? 1]));
+  const parameters = optimizationParameters(circuit, { values: own, links, setup: current });
+  return startRun({
+    button: '.signal-flow-optimize-run',
+    status: '.signal-flow-optimize-status',
+    progress: '.signal-flow-optimize-progress:not(.signal-flow-round-progress)',
+    parameters,
+    async work({ pool, say, progress, stopped }) {
+      const objectiveSpecs = normalizeOptimizeSetup(current).specs.filter((spec) => spec.input);
+      const goals = objectiveSpecs.some((spec) => spec.action === 'minimize' || spec.action === 'maximize');
+      const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals });
+      let start = null;
+      while (!optimizer.done && !stopped()) {
+        const batch = optimizer.ask();
+        const scores = await pool.evaluate(batch.map((c) => c.values));
+        if (!start) start = scores[0];
+        optimizer.tell(scores);
+        progress(optimizer.evaluations / optimizer.budget);
+        const best = optimizer.best;
+        const goalText = objectiveSpecs.map((spec, i) => (spec.action === 'minimize' || spec.action === 'maximize') && Number.isFinite(best?.score?.specs?.[i]) ? `${best.score.specs[i].toFixed(1)} dB` : null).filter(Boolean).join(', ');
+        say(`${optimizer.evaluations} of ${optimizer.budget} candidates${pool.count ? ` on ${pool.count} threads` : ''}${optimizer.restarts ? `, restart ${optimizer.restarts}` : ''} -- best: ${isFeasible(best) ? `every limit met${goalText ? `, goal ${goalText}` : ''}` : 'still missing a limit'}`);
+      }
+      const best = optimizer.best;
+      found = {
+        own: Object.fromEntries(parameters.free.map((p) => [p.name, best.own[p.name]])),
+        score: best.score,
+        start,
+        feasible: isFeasible(best),
+        specs: objectiveSpecs,
+        swing: normalizeOptimizeSetup(current).swing.on,
+      };
+      return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${isFeasible(best) ? '' : ': no candidate met every limit'}.`, error: !isFeasible(best) };
+    },
+  });
+}
+
+/** Another document: its own setup, nothing found yet. */
+function resetOptimize() {
+  running?.stop();
+  found = null;
+  rounded = null;
+  reverting = null;
+}
+
+};
+
 __modules["src/web/persistence.js"] = function (__require, __exports) {
 __exports.defaultExportDirectory = defaultExportDirectory;
 __exports.indexedDbHandleStore = indexedDbHandleStore;
@@ -61792,6 +63552,8 @@ function copyableLabelPayload(label) {
     id: label.id,
     kind: label.kind,
     parent: label.parent || null,
+    // A plot's legend stays its legend (Update plots finds it by role).
+    ...(label.role ? { role: label.role } : {}),
     text: label.text,
     align: label.align,
     x: anchor.x,
@@ -62702,6 +64464,7 @@ let analysisDialog; __bind(() => { ({ analysisDialog } = __require("src/web/elem
 let alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
+let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSection, renderOptimize, resetOptimize } = __require("src/web/optimize-ui.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
  * block diagram rather than a circuit. A switch at the top of the window
@@ -62716,6 +64479,7 @@ let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js"));
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -62755,6 +64519,15 @@ const coefficients = () => editor.circuit.analysisValues.coefficients;
 // Linked coefficients (c_1 = b_1) and every coefficient's number through them.
 const links = () => (editor.circuit.analysisValues.links ||= {});
 const resolved = () => resolveCoefficients(coefficients(), links());
+// Coefficients written as fractions m/n (rounded, or typed so): their text.
+const fractions = () => (editor.circuit.analysisValues.fractions ||= {});
+/** A coefficient as written: its fraction, else its number. */
+const coefficientText = (name, value) => fractions()[name] || String(value);
+/** A typed value: a number, or a fraction m/n. */
+function typedNumber(text) {
+  const match = text.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+  return match ? Number(match[1]) / Number(match[2]) : (text ? Number(text) : NaN);
+}
 let modeBar = null;
 let section = null;
 let actions = null; // this mode's buttons, in the window's own footer
@@ -62862,7 +64635,10 @@ function fillForm() {
     swing = null;
     swingShown = null;
     renderSwing();
+    resetOptimize();
+    optimized = false;
   }
+  renderOptimize();
 }
 
 // ----- root locus: the poles as one coefficient sweeps ----------------------------------
@@ -62926,19 +64702,7 @@ function runLocus() {
     status.textContent = 'Pick a result and a coefficient, and a range from one number to another of the same sign.';
     return;
   }
-  // The coefficient at k, everything else (and what links to it) following.
-  const valuesAt = (k) => {
-    const own = { ...coefficients(), [name]: k };
-    const numbers = resolveCoefficients(own, Object.fromEntries(Object.entries(links()).filter(([key]) => key !== name)));
-    const values = {};
-    for (const symbol of resultSymbols(entry.value, latest.variable)) values[symbol] = numbers[symbol] ?? 1;
-    return values;
-  };
-  const cache = new Map();
-  const evaluate = (k) => {
-    if (!cache.has(k)) cache.set(k, withCoefficients(entry.value, valuesAt(k)));
-    return cache.get(k);
-  };
+  const evaluate = locusEvaluator(entry, name);
   const run = ++locusRun;
   let index = 0;
   const step = () => {
@@ -62956,7 +64720,7 @@ function runLocus() {
       status.textContent = 'This result has no numeric poles to follow (a delay, or a continuous input through a sampler).';
       locus = null;
     } else {
-      locus = { plot: locusPlot(result, { parameter: symbolText(name), label: entry.label, color: TRACE_COLORS[0] }) };
+      locus = { plot: { ...locusPlot(result, { parameter: symbolText(name), label: entry.label, color: TRACE_COLORS[0] }), source: name } };
       status.textContent = result.crossings.length
         ? `${result.crossings.map((c, i) => `${i ? 'then ' : ''}${c.becomes} at ${name} = ${Number(c.k.toPrecision(3))}`).join(', ').replace(/^./, (m) => m.toUpperCase())}.`
         : `${unstableNow(result) ? 'Unstable' : 'Stable'} across the whole sweep, ${from} to ${to}.`;
@@ -62964,6 +64728,30 @@ function runLocus() {
     renderLocus();
   };
   step();
+}
+
+/** A result at each value k of one coefficient (the rest at their numbers,
+ *  what links to it following), cached. */
+function locusEvaluator(entry, name) {
+  const valuesAt = (k) => {
+    const own = { ...coefficients(), [name]: k };
+    const numbers = resolveCoefficients(own, Object.fromEntries(Object.entries(links()).filter(([key]) => key !== name)));
+    const values = {};
+    for (const symbol of resultSymbols(entry.value, latest.variable)) values[symbol] = numbers[symbol] ?? 1;
+    return values;
+  };
+  const cache = new Map();
+  return (k) => {
+    if (!cache.has(k)) cache.set(k, withCoefficients(entry.value, valuesAt(k)));
+    return cache.get(k);
+  };
+}
+
+/** The whole locus at once (updating a plot on the drawing). */
+function computeLocus(entry, name, from, to) {
+  const ks = locusSteps(from, to);
+  if (!ks.length) return null;
+  return rootLocus(locusEvaluator(entry, name), { ks, current: resolved()[name] ?? 1 });
 }
 
 const unstableNow = (result) => result.steps[0].poles.some((p) => (result.variable === 'z' ? Math.hypot(p.re, p.im) > 1 + 1e-9 : p.re > 1e-9));
@@ -63011,30 +64799,53 @@ function renderLoop() {
     const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
     loop = { key, circuit: editor.circuit, revision: editor.modelRevision, result: loopGain(editor.circuit, { breakAt: key, values }) };
   }
+  const data = loopData(key, loop.result);
   const result = loop.result;
   if (!result.ok) { body.append(el('p', { class: 'analysis-error', text: result.error })); return; }
-  // T at the coefficients' numbers.
-  const t = result.value?.kind === 'sampled' ? result.value.at(valuesFor(result.value, result.variable)) : numeric(result.value, result.variable);
-  const symbolic = result.value?.kind !== 'sampled';
-  body.append(mathRow(symbolic ? 'Loop gain' : 'Loop gain, at the coefficients above', `T(${result.variable}) = ${transferTex(symbolic ? result.value : t, result.variable, symbolic ? {} : { digits: 4 })}`));
-  if (!t) { body.append(el('p', { class: 'field-hint', text: 'This loop gain has no numbers to plot.' })); return; }
-  const curve = responseCurve(t, result.variable, { sAxis: result.variable === 'z' ? 'normalized' : sAxisSetting() });
-  const margins = loopMargins(curve);
-  const unit = curve?.axis === 'normalized' ? 'f/fs' : 'ω';
+  body.append(mathRow(data.symbolic ? 'Loop gain' : 'Loop gain, at the coefficients above', data.equation));
+  if (!data.t) { body.append(el('p', { class: 'field-hint', text: 'This loop gain has no numbers to plot.' })); return; }
+  const { margins } = data;
+  const unit = data.curve?.axis === 'normalized' ? 'f/fs' : 'ω';
   const number = (v) => String(Number(v.toPrecision(3)));
   const summary = !margins?.crossover
     ? 'No crossover: |T| never passes 1 in this range.'
     : `Crossover at ${unit} = ${number(margins.crossover)}: phase margin ${margins.phaseMargin.toFixed(1)}°${margins.gainMargin !== null ? `, gain margin ${margins.gainMargin.toFixed(1)} dB` : ''}.`;
   body.append(el('p', { class: `field-hint${margins?.phaseMargin !== null && margins?.phaseMargin < 0 ? ' analysis-error' : ''}`, text: summary }));
+  if (data.magnitude) body.append(graphSvg(data.annotated));
+  if (data.phase) body.append(graphSvg({ ...data.phase, role: 'loop', markers: data.markers.map((m) => ({ f: m.f, label: '' })) }));
+  body.append(el('div', { class: 'signal-flow-graph-actions' }, [
+    el('button', { type: 'button', text: 'Annotate loop', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
+  ]));
+}
+
+/**
+ * The loop gain at signal `key` at the coefficients' numbers: its equation,
+ * T, its curve and margins, its magnitude and phase plots, and the plot to
+ * annotate (remembering its signal). Null when the loop does not solve.
+ */
+function loopData(key, result) {
+  if (!key) return null;
+  if (!result) {
+    const numbers = resolved();
+    const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
+    result = loopGain(editor.circuit, { breakAt: key, values });
+  }
+  if (!result.ok) return null;
+  const t = result.value?.kind === 'sampled' ? result.value.at(valuesFor(result.value, result.variable)) : numeric(result.value, result.variable);
+  const symbolic = result.value?.kind !== 'sampled';
+  const equation = `T(${result.variable}) = ${transferTex(symbolic ? result.value : t, result.variable, symbolic ? {} : { digits: 4 })}`;
+  if (!t) return { result, symbolic, equation, t: null };
+  const curve = responseCurve(t, result.variable, { sAxis: result.variable === 'z' ? 'normalized' : sAxisSetting() });
+  const margins = loopMargins(curve);
   const markers = margins?.crossover ? [{ f: margins.crossover, label: `PM ${margins.phaseMargin.toFixed(0)}°` }] : [];
   const trace = { label: 'T', color: TRACE_COLORS[0], value: t, variable: result.variable };
   const magnitude = responsePlot([trace], result.variable, { sAxis: sAxisSetting() });
   const phase = responsePlot([trace], result.variable, { sAxis: sAxisSetting(), quantity: 'phase' });
-  if (magnitude) body.append(graphSvg({ ...magnitude, markers, role: 'loop' }));
-  if (phase) body.append(graphSvg({ ...phase, role: 'loop', markers: markers.map((m) => ({ f: m.f, label: '' })) }));
-  body.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate loop', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !magnitude, onclick: () => placePlot({ ...magnitude, markers, role: 'loop' }, [{ label: `T_{${String(result.signal).replace(/[{}]/g, '')}}`, color: TRACE_COLORS[0] }], currentSymbols()) }),
-  ]));
+  return {
+    result, symbolic, equation, t, curve, margins, markers, magnitude, phase,
+    annotated: magnitude ? { ...magnitude, markers, role: 'loop', source: key } : null,
+    shown: [{ label: `T_{${String(result.signal).replace(/[{}]/g, '')}}`, color: TRACE_COLORS[0] }],
+  };
 }
 
 // ----- swing: each net's peak against the input amplitude ------------------------------
@@ -63056,6 +64867,7 @@ function swingSection() {
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Sine into' }), source,
       el('label', { text: 'at f/fs' }), frequency,
+      el('span', { class: 'signal-flow-dither' }),
       el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() }),
     ]),
     el('p', { class: 'field-hint signal-flow-swing-status', 'aria-live': 'polite' }),
@@ -63071,6 +64883,7 @@ function fillSwingSources(sources) {
   if (real.some((s) => s.id === flow().swingInput)) select.value = flow().swingInput;
   // The document's frequency, or the default.
   section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '1/256';
+  section.querySelector('.signal-flow-swing .signal-flow-dither')?.replaceWith(ditherControls());
 }
 
 function swingFrequency() {
@@ -63080,8 +64893,13 @@ function swingFrequency() {
   return value > 0 && value < 0.5 ? value : 1 / 256;
 }
 
-/** Sweep the amplitude, one run a frame, drawing as it goes. */
+/** Sweep the amplitude, one run a frame, drawing as it goes; resolves
+ *  when it is done (or overtaken by a newer sweep). */
 function runSwing() {
+  return new Promise((resolve) => sweepSwing(resolve));
+}
+
+function sweepSwing(done) {
   const status = section.querySelector('.signal-flow-swing-status');
   const numbers = resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
@@ -63091,6 +64909,7 @@ function runSwing() {
     input: section.querySelector('.signal-flow-swing-source').value,
     output: flow().output,
     frequency: swingFrequency(),
+    dither: flow().dither,
   });
   const run = ++swingRun;
   if (!sim.ok) {
@@ -63098,6 +64917,7 @@ function runSwing() {
     status.textContent = sim.error;
     status.classList.add('analysis-error');
     renderSwing();
+    done(null);
     return;
   }
   status.classList.remove('analysis-error');
@@ -63108,7 +64928,7 @@ function runSwing() {
   renderCoefficients();
   let index = 0;
   const step = () => {
-    if (run !== swingRun) return;
+    if (run !== swingRun) { done(null); return; }
     const started = performance.now();
     // As many runs as fit in a frame's worth of time.
     while (index < amplitudes.length && performance.now() - started < 30) {
@@ -63128,6 +64948,7 @@ function runSwing() {
       : `Full scale ${sim.fullScale}; sine at f/fs = ${Number(sim.frequency.toPrecision(4))}, ${Math.round(sim.frequency * 4096)} cycles in 4096 samples.${swing.points.find((p) => p.overloaded) ? ` Overloads from ${swing.points.find((p) => p.overloaded).a} dBFS.` : ''}`;
     renderSwing();
     if (index < amplitudes.length) requestAnimationFrame(step);
+    else done(swing);
   };
   step();
 }
@@ -63212,8 +65033,9 @@ function currentSymbols() {
   const names = new Set();
   for (const trace of traces) for (const name of resultSymbols(trace.value, trace.variable)) names.add(name);
   if (latest?.ok) for (const entry of latest.entries) for (const name of resultSymbols(entry.value, latest.variable)) names.add(name);
-  // A swing sweep runs on every coefficient the diagram names.
-  if (swing) for (const name of diagramSymbols(editor.circuit)) names.add(name);
+  // A swing sweep runs on every coefficient the diagram names, and the
+  // optimizer moves them.
+  if (swing || optimized) for (const name of diagramSymbols(editor.circuit)) names.add(name);
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
@@ -63240,11 +65062,19 @@ function coefficientsChanged() {
     renderGraph();
     renderResults();
     swingCoefficientsChanged();
-    if (flow().spectrum?.on) { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(runSpectrum, 350); }
     if (graphView() === 'loop') { loop = null; renderLoop(); }
   });
 }
 
+let settleTimer = 0;
+/** The numbers settled (a slider let go, a value typed, numbers pasted):
+ *  what simulates long -- the spectrum -- runs again, not on every tick. */
+function coefficientsSettled({ delay = 0 } = {}) {
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => { if (flow().spectrum?.on) runSpectrum(); }, delay);
+}
+
+let optimized = false; // numbers applied from the optimizer: every coefficient gets its row
 let shownSymbols = '';
 let shownCircuit = null;
 /** The coefficient rows; kept (a slider mid-drag with them) unless the
@@ -63265,16 +65095,18 @@ function renderCoefficients({ force = false } = {}) {
     label.innerHTML = texToMathML(symbolText(name));
     const slider = el('input', { type: 'range', min: String(-3 * PER_DECADE), max: String(3 * PER_DECADE), step: '1', 'aria-label': `${name}: slide to change` });
     slider.value = String(indexE24(Math.abs(value) || 1));
-    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, value: linked ? `= ${links()[name]}` : String(value) });
+    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'A number, a fraction m/n, or = another coefficient', value: linked ? `= ${links()[name]}` : coefficientText(name, value) });
     const row = el('div', { class: 'signal-flow-coefficient', 'data-name': name }, [label, slider, field]);
     slider.addEventListener('input', () => {
       // The slider sets the size; a value typed negative keeps its sign.
       const sign = (coefficients()[name] ?? 1) < 0 ? -1 : 1;
       coefficients()[name] = sign * stepE24(Number(slider.value));
+      delete fractions()[name];
       field.value = String(coefficients()[name]);
       refreshLinkedRows();
       coefficientsChanged();
     });
+    slider.addEventListener('change', () => coefficientsSettled());
     field.addEventListener('input', () => {
       const text = field.value.trim();
       field.classList.remove('invalid');
@@ -63292,14 +65124,18 @@ function renderCoefficients({ force = false } = {}) {
         }
         links()[name] = link.text;
       } else {
-        const number = Number(text);
+        const number = typedNumber(text);
         if (!text || !Number.isFinite(number)) return;
         delete links()[name];
         coefficients()[name] = number;
+        // A fraction stays written as one.
+        if (/\//.test(text) && /^-?\d+\s*\/\s*\d+$/.test(text)) fractions()[name] = text.replace(/\s/g, '');
+        else delete fractions()[name];
         if (number) slider.value = String(indexE24(Math.abs(number)));
       }
       refreshLinkedRows();
       coefficientsChanged();
+      coefficientsSettled({ delay: 400 });
     });
     rows.append(row);
   }
@@ -63316,11 +65152,13 @@ function pasteCoefficients() {
     for (const name of names) {
       coefficients()[name] = values[name];
       delete links()[name];
+      delete fractions()[name];
     }
     const summary = [...Object.entries(vectors).map(([v, n]) => `${v}_1..${v}_${n}`), ...names.filter((n) => !Object.keys(vectors).some((v) => n.startsWith(`${v}_`)))];
     logLine(`set ${summary.join(', ')}`);
     renderCoefficients({ force: true });
     coefficientsChanged();
+    coefficientsSettled();
   };
   return el('details', { class: 'signal-flow-paste-box' }, [
     el('summary', { text: 'Paste coefficients (delta-sigma toolbox)' }),
@@ -63411,14 +65249,14 @@ function figureSvg(figure, title) {
 const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
 // What the graph shows (saved with the document): magnitude, phase, or the step response.
 const graphView = () => flow().graphView || 'magnitude';
-const graphPlot = (list) => {
+const graphPlot = (list, view = graphView()) => {
   const numbered = list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) }));
-  if (graphView() === 'step') return stepPlot(numbered);
+  if (view === 'step') return stepPlot(numbered);
   // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
   // as the noise it predicts, each STF as where the tone would sit.
   const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: '#8a8f99', points: spectrum.points }] : [];
   const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
-  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: graphView(), background, dbfs });
+  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs });
 };
 
 // ----- the simulated output's spectrum, behind the curves --------------------------------
@@ -63442,16 +65280,49 @@ function spectrumControls() {
   amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
     el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS' }),
+    ditherControls(),
     el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
+}
+
+/** Dither at the quantizers' inputs for every simulation (the spectrum,
+ *  the swing, the optimizer's swing test): none, rectangular, triangular. */
+function ditherControls() {
+  const settings = flow().dither || {};
+  const shape = el('select', { class: 'signal-flow-dither-shape', 'aria-label': 'Dither', title: 'Dither added at each quantizer\'s input: rectangular over (-A, A), or triangular over (-A, A) peaking at 0' }, [
+    el('option', { value: 'none', text: 'No dither' }), el('option', { value: 'rect', text: 'Rectangular dither' }), el('option', { value: 'tri', text: 'Triangular dither' }),
+  ]);
+  shape.value = ['rect', 'tri'].includes(settings.shape) ? settings.shape : 'none';
+  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-dither-amplitude', value: settings.amplitude ?? '-30', 'aria-label': 'Dither amplitude, dBFS', title: 'A in dBFS of the quantizer\'s full scale N - 1 (levels are 2 apart: one level step is 20 log(2/(N - 1)) dBFS)' });
+  const unit = el('label', { class: 'signal-flow-dither-unit', text: 'dBFS' });
+  amplitude.hidden = unit.hidden = shape.value === 'none';
+  const save = () => {
+    amplitude.hidden = unit.hidden = shape.value === 'none';
+    flow().dither = { shape: shape.value, amplitude: amplitude.value.trim() || '-30' };
+    markSettingsChanged();
+    // Both places show it: keep them alike, and simulate again.
+    for (const other of section.querySelectorAll('.signal-flow-dither')) if (!other.contains(shape)) other.replaceWith(ditherControls());
+    if (flow().spectrum?.on) runSpectrum();
+    if (swing) runSwing();
+  };
+  shape.addEventListener('change', save);
+  amplitude.addEventListener('change', save);
+  amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit]);
 }
 
 function spectrumStatus() {
   if (!spectrum) return '';
   if (spectrum.error) return spectrum.error;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
-  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)})` : 'set a band for its SNDR';
+  const averaged = `${spectrum.raw.averages} averages of ${spectrum.raw.n} samples`;
+  return measured ? `SNDR ${measured.sndr.toFixed(1)} dB in band (ENOB ${measured.enob.toFixed(1)}); ${averaged}` : `${averaged}; set a band for its SNDR`;
 }
+
+// The spectrum's record: 8192-sample segments overlapping by half, Welch-
+// averaged over a record four segments long (seven averages).
+const SPECTRUM_SEGMENT = 8192;
+const SPECTRUM_AVERAGES = 4;
 
 /** Simulate one run with the swing's source and frequency, and take its output's spectrum. */
 function runSpectrum() {
@@ -63466,12 +65337,15 @@ function runSpectrum() {
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
   const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer)?.id;
-  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency: swingFrequency(), samples: 16384 });
+  // A whole number of cycles in each averaged segment, so the tone sits in its bins.
+  const frequency = Math.max(1, Math.round(swingFrequency() * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
+  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT, dither: flow().dither });
   if (!sim.ok) spectrum = { error: sim.error };
   else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
   else {
     const run = sim.run(amplitude, { record: true });
-    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples);
+    // Dither adds its own white error to the quantizer's, shaped alike.
+    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 + (sim.dither?.variance || 0) });
     spectrum = raw
       ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale }
       : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
@@ -63551,7 +65425,7 @@ function renderPlots() {
     viewButton('locus', 'Locus', 'The poles as one coefficient sweeps'),
     viewButton('swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'),
     viewButton('loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins'),
-  ]));
+  ]), el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Redraw every plot on the drawing at the coefficients\' numbers now, in place (one undo step)', onclick: () => updatePlots() }));
   section.querySelector('.signal-flow-graph').hidden = !GRAPH_VIEWS.has(view);
   section.querySelector('.signal-flow-locus').hidden = view !== 'locus';
   section.querySelector('.signal-flow-swing').hidden = view !== 'swing';
@@ -63637,22 +65511,47 @@ const PLOT_LEGEND_ROLE = 'plot-legend';
  */
 function placePlot(plot, shown, used) {
   const circuit = editor.circuit;
+  // The same kind of plot (a response graph also of the same quantity).
+  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind
+    && (label.plot.quantity || '') === (plot.quantity || '') && (label.plot.role || '') === (plot.role || ''));
+  const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
+  const target = chosen || (plots.length === 1 ? plots[0] : null);
+  let written = null;
+  commit(() => { written = writePlot(target, plot, shown, used); });
+  if (!written?.box) return;
+  // Their sizes are estimates until the browser measures them: stack them
+  // then, edge to edge (each box is rounded to the grid already).
+  alignLabelColumn(written.ids, { left: written.left, top: written.top, gap: 0 });
+  setSelection([]);
+  setLabelSelection([written.box.id]);
+  logLine(target ? 'updated the plot on the drawing in place' : 'placed the graph on the drawing; drag to move it, its corners to resize');
+  render();
+}
+
+/** A plot box's legend labels: ours by role (older plots' math children too). */
+const legendOf = (box) => [...editor.circuit.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+
+/**
+ * Write a plot into `target` (its data and legend swapped, its place, size,
+ * and style kept) or a new box under the drawing; inside a commit. The
+ * coefficients' numbers go under the legend unless another plot shows the
+ * same already (`values: true/false` decides instead). Returns `{ box, ids,
+ * left, top }` for the legend's column.
+ */
+function writePlot(target, plot, shown, used, { values: withValues } = {}) {
+  const circuit = editor.circuit;
   const numbers = resolved();
   const linkTex = (name) => {
     try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
   };
   // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
   const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${Number((numbers[name] ?? 1).toPrecision(4))}`).join('\n');
-  // The same kind of plot (a response graph also of the same quantity).
-  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind
-    && (label.plot.quantity || '') === (plot.quantity || '') && (label.plot.role || '') === (plot.role || ''));
-  const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
-  const target = chosen || (plots.length === 1 ? plots[0] : null);
+  // A coefficient written as a fraction (rounded to m/n) shows as one.
+  const numberOf = (name) => (fractions()[name] && !Object.hasOwn(links(), name) ? fractions()[name] : Number((numbers[name] ?? 1).toPrecision(4)));
+  let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${numberOf(name)}`).join('\n');
   // The same numbers beside another plot already: not twice.
-  if ([...circuit.labels.values()].some((label) => label.parent && label.parent !== target?.id && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
-  // A legend label: ours by role (older plots' math children too).
-  const legendOf = (box) => [...circuit.labels.values()].filter((label) => label.parent === box.id && (label.role === PLOT_LEGEND_ROLE || (label.math && !label.role)));
+  if (withValues === false) values = '';
+  else if (withValues === undefined && [...circuit.labels.values()].some((label) => label.parent && label.parent !== target?.id && circuit.labels.get(label.parent)?.plot && label.text === values)) values = '';
   let box = target;
   let left;
   let top;
@@ -63671,33 +65570,103 @@ function placePlot(plot, shown, used) {
     top = y;
   }
   const ids = [];
+  if (target) {
+    target.plot = normalizePlot(plot);
+    for (const label of legendOf(target)) circuit.removeLabel(label.id);
+  } else {
+    const x = left - 19 * GRID;
+    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' } });
+  }
+  let y = top;
+  const add = (text, style) => {
+    const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
+    const size = label.bbox();
+    label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
+    y = label.bbox().y + label.bbox().h;
+    ids.push(label.id);
+  };
+  for (const trace of shown) add(`$${trace.label}$`, { color: trace.color });
+  if (values) add(values);
+  return { box, ids, left, top };
+}
+
+/**
+ * Every plot on the drawing redrawn at the coefficients' numbers now, as
+ * one edit: each graph and step plot from the traces of the same names
+ * (a plot naming one no longer on the graph is left as it is), a loop
+ * plot at its signal, a root locus over its coefficient and range, a swing
+ * plot from a fresh sweep of the nets it shows.
+ */
+async function updatePlots() {
+  const circuit = editor.circuit;
+  const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot);
+  if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
+  if (flow().spectrum?.on) runSpectrum();
+  if (boxes.some((box) => box.plot.kind === 'swing')) {
+    logLine('Updating plots: sweeping the swing...');
+    await runSwing();
+  }
+  if (circuit !== editor.circuit) return;
+  const updates = [];
+  const skipped = [];
+  for (const box of boxes) {
+    const update = plotUpdate(box.plot);
+    if (update) updates.push({ box, ...update });
+    else skipped.push(box);
+  }
+  const written = [];
   commit(() => {
-    if (target) {
-      target.plot = normalizePlot(plot);
-      for (const label of legendOf(target)) circuit.removeLabel(label.id);
-    } else {
-      const x = left - 19 * GRID;
-      box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' } });
+    for (const update of updates) {
+      // A plot keeps its coefficients' numbers if it had them, and only then.
+      // (The numbers are lines of "name = value"; a trace's name never is.)
+      const hadValues = legendOf(update.box).some((label) => /\s=\s/.test(String(label.text)));
+      written.push(writePlot(update.box, update.plot, update.shown, update.used, { values: hadValues }));
     }
-    let y = top;
-    const add = (text, style) => {
-      const label = circuit.addLabel({ text, math: true, parent: box.id, role: PLOT_LEGEND_ROLE, align: 'left', x: 0, y: 0, ...(style ? { style } : {}) });
-      const size = label.bbox();
-      label.moveTo(snap(left + size.w / 2), snap(y + size.h / 2));
-      y = label.bbox().y + label.bbox().h;
-      ids.push(label.id);
-    };
-    for (const trace of shown) add(`$${trace.label}$`, { color: trace.color });
-    if (values) add(values);
   });
-  if (!box) return;
-  // Their sizes are estimates until the browser measures them: stack them
-  // then, edge to edge (each box is rounded to the grid already).
-  alignLabelColumn(ids, { left, top, gap: 0 });
-  setSelection([]);
-  setLabelSelection([box.id]);
-  logLine(target ? 'updated the plot on the drawing in place' : 'placed the graph on the drawing; drag to move it, its corners to resize');
+  for (const item of written) alignLabelColumn(item.ids, { left: item.left, top: item.top, gap: 0 });
   render();
+  const kinds = (list) => list.map((box) => (box.plot.role === 'loop' ? 'loop' : box.plot.kind === 'response' ? (box.plot.quantity === 'phase' ? 'phase' : 'magnitude') : box.plot.kind));
+  logLine(`updated ${updates.length} plot${updates.length === 1 ? '' : 's'}${updates.length ? ` (${kinds(updates.map((u) => u.box)).join(', ')})` : ''}${skipped.length ? `; left ${skipped.length} as ${skipped.length === 1 ? 'it was' : 'they were'} (${kinds(skipped).join(', ')}: its traces are no longer on the graph, or derive or sweep first)` : ''}`, skipped.length && !updates.length ? 'error' : undefined);
+}
+
+/** A plot's new data at the numbers now: `{ plot, shown, used }`, or null. */
+function plotUpdate(plot) {
+  if (plot.kind === 'response' && plot.role === 'loop') {
+    const data = loopData(plot.source || flow().loopAt || loopSignals()[0]?.key);
+    return data?.magnitude ? { plot: data.annotated, shown: data.shown, used: currentSymbols() } : null;
+  }
+  if (plot.kind === 'response' || plot.kind === 'step') {
+    // Each trace by its name, keeping its colour.
+    const stored = plot.traces.filter((trace) => !trace.background);
+    const matched = stored.map((trace) => {
+      const current = traces.find((t) => t.label === trace.label);
+      return current ? { ...current, color: trace.color } : null;
+    });
+    if (!matched.length || matched.some((t) => !t)) return null;
+    const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
+    const next = graphPlot(matched, view);
+    return next ? { plot: next, shown: matched, used: [...new Set(matched.flatMap((trace) => resultSymbols(trace.value, trace.variable)))] } : null;
+  }
+  if (plot.kind === 'locus') {
+    const entry = latest?.ok ? latest.entries.find((e) => e.label === plot.label) : null;
+    const name = plot.source;
+    if (!entry || !name) return null;
+    const result = computeLocus(entry, name, plot.from, plot.to);
+    if (!result) return null;
+    const next = { ...locusPlot(result, { parameter: symbolText(name), label: entry.label, color: plot.color }), source: name };
+    return { plot: next, shown: [{ label: next.label, color: next.color }], used: currentSymbols() };
+  }
+  if (plot.kind === 'swing') {
+    if (!swing || swing.points.length < 2) return null;
+    const current = swingTraces();
+    const matched = plot.traces.map((trace) => {
+      const found = current.find((t) => t.label === trace.label);
+      return found ? { ...found, color: trace.color } : null;
+    });
+    if (!matched.length || matched.some((t) => !t)) return null;
+    return { plot: swingPlotOf(matched), shown: matched, used: currentSymbols() };
+  }
+  return null;
 }
 
 // ----- results --------------------------------------------------------------------------
@@ -63791,6 +65760,7 @@ function derive() {
   renderResults();
   renderPlots();
   if (flow().spectrum?.on && latest.ok) runSpectrum();
+  renderOptimize();
   if (!latest.ok) logLine(`Signal-flow analysis: ${latest.error}`, 'error');
 }
 
@@ -63845,6 +65815,36 @@ function installSignalFlowUi() {
       el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value -- or = b_1 (= 2*b_1, = T/2) to make one follow others.' }),
       pasteCoefficients(),
     ]),
+    optimizeSection({
+      circuit: () => editor.circuit,
+      flow,
+      coefficients,
+      links,
+      resolved,
+      band: () => editor.circuit.analysisValues.band,
+      markSettingsChanged,
+      // The numbers found, into the sliders.
+      applyCoefficients(values, { fractions: texts = {} } = {}) {
+        for (const [name, value] of Object.entries(values)) {
+          coefficients()[name] = value;
+          if (texts[name]) fractions()[name] = texts[name];
+          else delete fractions()[name];
+        }
+        optimized = true;
+        logLine(`set ${Object.entries(values).map(([name, value]) => `${name} = ${texts[name] || value}`).join(", ")}`);
+        renderCoefficients({ force: true });
+        coefficientsChanged();
+        coefficientsSettled();
+      },
+      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() } }),
+      restoreCoefficients(saved) {
+        editor.circuit.analysisValues.coefficients = { ...saved.coefficients };
+        editor.circuit.analysisValues.fractions = { ...saved.fractions };
+        renderCoefficients({ force: true });
+        coefficientsChanged();
+        coefficientsSettled();
+      },
+    }),
     // One plot area, its view picked at the top: the frequency and step
     // responses, the root locus, the swing.
     el('div', { class: 'signal-flow-plots' }, [

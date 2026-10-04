@@ -33,29 +33,34 @@ function fft(re, im) {
 }
 
 /**
- * `samples` (length a power of two). Returns `{ points: [{ f, db }] }` for
- * f/fs from 1/N to 1/2, scaled so white noise of variance `variance` reads
- * 0 dB, and the raw powers for `inBand`.
+ * `samples` (length a power of two), Welch-averaged: Hann-windowed
+ * segments of `segment` samples (a power of two, the whole record by
+ * default) overlapping by half, their powers averaged, so the floor reads
+ * steady. Returns `{ points: [{ f, db }] }` for f/fs from 1/segment to 1/2,
+ * scaled so white noise of variance `variance` reads 0 dB, and the raw
+ * (averaged) powers for `inBand`; `n` is the segment, `averages` how many.
  */
-export function outputSpectrum(samples, { variance = 1 / 3 } = {}) {
-  const n = samples.length;
+export function outputSpectrum(samples, { variance = 1 / 3, segment = samples.length } = {}) {
+  const n = Math.min(segment, samples.length);
   if (n < 16 || (n & (n - 1))) return null;
+  const window = Array.from({ length: n }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n));
+  const w1 = window.reduce((sum, w) => sum + w, 0);
+  const w2 = window.reduce((sum, w) => sum + w * w, 0);
+  const power = new Array(n / 2 + 1).fill(0);
   const re = new Float64Array(n);
   const im = new Float64Array(n);
-  let w2 = 0;
-  for (let i = 0; i < n; i++) {
-    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
-    re[i] = samples[i] * w;
-    w2 += w * w;
+  let averages = 0;
+  for (let start = 0; start + n <= samples.length; start += n / 2) {
+    for (let i = 0; i < n; i++) { re[i] = samples[start + i] * window[i]; im[i] = 0; }
+    fft(re, im);
+    for (let k = 0; k <= n / 2; k++) power[k] += re[k] ** 2 + im[k] ** 2;
+    averages += 1;
   }
-  fft(re, im);
-  const power = Array.from({ length: n / 2 + 1 }, (_, k) => re[k] ** 2 + im[k] ** 2);
+  for (let k = 0; k <= n / 2; k++) power[k] /= averages;
   const scale = variance * w2;
-  let w1 = 0;
-  for (let i = 0; i < n; i++) w1 += 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / n);
   const points = [];
   for (let k = 1; k <= n / 2; k++) points.push({ f: k / n, db: 10 * Math.log10(power[k] / scale || 1e-30) });
-  return { points, power, n, w1, w2, variance };
+  return { points, power, n, w1, w2, variance, averages };
 }
 
 /**

@@ -358,7 +358,12 @@ automatically (render-time only, never stored). It never shares state with the s
 refuses rather than guesses: a multiply of two signals, `s` and `z` meeting
 anywhere but a sampler or a DAC block, a continuous output of a sampled
 loop, a delay inside a continuous loop that is sampled, an undriven or
-doubly driven signal.
+doubly driven signal. **Optimize** searches the free coefficients (CMA-ES,
+`src/core/analysis/optimize.js`) against band specs on transfer functions
+and the swing test, feasibility first, scoring candidates in worker
+threads; the setup is document data (`analysisValues.flow.optimize`).
+Rounding (`rounding.js`) then makes the free coefficients fractions m/n,
+one n per block (`coefficientGroups`), kept as `analysisValues.fractions`.
 
 Read the focused tests before changing this pipeline. In particular, the
 analysis corpus, report-adapter, provenance, Miller, parasitics, reduction,

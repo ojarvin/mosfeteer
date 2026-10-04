@@ -10,6 +10,8 @@ export function copyableLabelPayload(label) {
     id: label.id,
     kind: label.kind,
     parent: label.parent || null,
+    // A plot's legend stays its legend (Update plots finds it by role).
+    ...(label.role ? { role: label.role } : {}),
     text: label.text,
     align: label.align,
     x: anchor.x,

@@ -1474,3 +1474,47 @@ export function numericRootsOf(value) {
     poles: numericRoots(coefficientList(value.denominator, variable)),
   };
 }
+
+/** The coefficients that set a diagram's timing rather than its gains: its
+ *  samplers' periods and the T of every delay e^{-sT} (an optimizer keeps
+ *  them as they are). */
+export function timingSymbols(circuit) {
+  const out = new Set();
+  for (const component of circuit.components.values()) {
+    try {
+      if (component.type === 'sampler') expressionSymbols(coefficientValue(parseGain(component.value || 'T')), 's', out);
+      else if (TRANSFER_FUNCTION_TYPES[component.type] === 's') {
+        const value = blockTransferFunction(component);
+        const found = new Set();
+        expressionSymbols(value.numerator, 's', found);
+        expressionSymbols(value.denominator, 's', found);
+        for (const name of found) if (isDelayName(name)) expressionSymbols(DELAYS.get(name), 's', out);
+      }
+    } catch { /* a part that does not read names nothing */ }
+  }
+  return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/**
+ * A number-valued result's value at f/fs, as [re, im]: z = e^{j 2 pi f}, s =
+ * j 2 pi f (s in units of 1/Ts, its delays included), or a continuous input
+ * through a sampled loop (its z part times its s part, s = j 2 pi f / T).
+ * Null while a symbol has no number.
+ */
+export function responseAt(value, variable, f) {
+  const theta = 2 * Math.PI * f;
+  if (!value) return null;
+  if (value.kind === 'mixed') {
+    const w = theta / value.period;
+    let h = [0, 0];
+    for (const term of value.terms) {
+      const zPart = rationalAt(term.z, [Math.cos(theta), Math.sin(theta)], 'z', 0);
+      const sPart = rationalAt(term.s, [0, w], 's', w);
+      if (!zPart || !sPart) return null;
+      const v = cmul(zPart, sPart);
+      h = [h[0] + v[0], h[1] + v[1]];
+    }
+    return h;
+  }
+  return variable === 'z' ? rationalAt(value, [Math.cos(theta), Math.sin(theta)], 'z', 0) : rationalAt(value, [0, theta], 's', theta);
+}

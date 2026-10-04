@@ -630,7 +630,8 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         addedLabels.push(shape.id);
       }
       for (const l of editor.clipboard.labels.filter((label) => label.kind === 'label')) {
-        const nl = editor.circuit.addLabel({ text: l.text, align: l.align, parent: l.parent ? labelMap.get(l.parent) : null, x: l.x + dx, y: l.y + dy, style: l.style, math: l.math, mathBox: l.mathBox || undefined });
+        const parent = l.parent ? labelMap.get(l.parent) : null;
+        const nl = editor.circuit.addLabel({ text: l.text, align: l.align, parent, ...(parent && l.role ? { role: l.role } : {}), x: l.x + dx, y: l.y + dy, style: l.style, math: l.math, mathBox: l.mathBox || undefined });
         addedLabels.push(nl.id);
       }
       const netMap = new Map();

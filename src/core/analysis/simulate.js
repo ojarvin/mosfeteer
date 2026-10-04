@@ -24,11 +24,27 @@ import { expm } from './sampling.js';
 import { evaluateExpression } from './bode.js';
 import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels } from '../transfer-function.js';
 import { canonicalNetName } from '../model.js';
+import { seededRandom } from './cmaes.js';
 
 const JUNCTION_INPUTS = ['n', 's', 'w'];
 
 /** Schreier's quantizer (ds_quantize): odd levels for even N, even levels
  *  (with 0) for odd N, limited to +-(N - 1). */
+/**
+ * Dither added at each quantizer's input (`{ shape, amplitude }`, the
+ * amplitude in dBFS): 'rect' uniform over (-A, A), 'tri' triangular over
+ * (-A, A), peaking at 0 (two uniforms). Its variance, in quantizer levels
+ * squared (the white error it adds to the shaped noise beside the
+ * quantizer's 1/3): A^2/3 or A^2/6. Null without dither.
+ */
+export function ditherSettings(dither, fullScale) {
+  if (!dither || !['rect', 'tri'].includes(dither.shape)) return null;
+  const db = Number(dither.amplitude);
+  if (!Number.isFinite(db)) return null;
+  const amplitude = fullScale * 10 ** (db / 20);
+  return { shape: dither.shape, amplitude, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
+}
+
 export function quantize(y, levels) {
   const v = levels % 2 === 0 ? 2 * Math.floor(0.5 * y) + 1 : 2 * Math.floor(0.5 * (y + 1));
   const limit = levels - 1;
@@ -92,7 +108,9 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
- * `warmup`, `subSteps`. Returns `{ ok, fullScale, frequency, signals, run }`:
+ * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', amplitude
+ * (dBFS) }`, at each quantizer's input; each run draws the same sequence).
+ * Returns `{ ok, fullScale, frequency, signals, run }`:
  * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at
  * the input frequency), overloaded }`.
@@ -128,6 +146,7 @@ export function prepareSimulation(circuit, options = {}) {
     try { levels.set(q.refdes, parseLevels(q.value)); } catch (err) { return failure('bad-levels', `${q.refdes}: ${err.message}`); }
   }
   const fullScale = quantizers.length ? Math.max(...[...levels.values()].map((n) => n - 1)) : 1;
+  const dither = ditherSettings(options.dither, fullScale);
 
   // Source settings, as the analysis reads them.
   const settings = new Map(Object.entries(options.sources || {}).map(([name, value]) => [canonicalNetName(name), value]));
@@ -393,13 +412,15 @@ export function prepareSimulation(circuit, options = {}) {
     return input && ci.has(input.key) ? Mc[ci.get(input.key)] : null;
   });
 
-  /** One amplitude's run; `record` keeps the output's samples over the window. */
-  const run = (amplitudeDb, { record = false } = {}) => {
+  /** One amplitude's run; `record` keeps the output's samples over the
+   *  window; `phase` (radians) where the sine starts. */
+  const run = (amplitudeDb, { record = false, phase = 0 } = {}) => {
     const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
     let X = new Float64Array(size);
     let next = new Float64Array(size);
-    if (sourceValue.get(driven.key) && domain.get(driven.key) === 's') X[OSC_C] = amplitude;
+    // The oscillator's pair is (A cos, A sin) of the sine's phase.
+    if (sourceValue.get(driven.key) && domain.get(driven.key) === 's') { X[OSC_C] = amplitude * Math.cos(phase); X[OSC_S] = amplitude * Math.sin(phase); }
     X[ONE] = 1;
     let xd = new Float64Array(md);
     const p = new Float64Array(pSize);
@@ -415,6 +436,11 @@ export function prepareSimulation(circuit, options = {}) {
     let re = 0;
     let im = 0;
     const total = warmup + window;
+    // The same dither sequence every run: amplitudes compare like for like.
+    const random = dither ? seededRandom(0x5eed) : null;
+    const ditherSample = !dither ? () => 0
+      : dither.shape === 'rect' ? () => dither.amplitude * (2 * random() - 1)
+      : () => dither.amplitude * (random() - random());
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -428,13 +454,13 @@ export function prepareSimulation(circuit, options = {}) {
       samplerRows.forEach((row, k) => { p[k] = row ? dot(row, X) : 0; });
       for (const [key, k] of pSource) {
         const source = sourceValue.get(key);
-        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n) : source.constant;
+        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.constant;
       }
       state.set(xd, 0);
       state.set(p, md);
       for (const q of order) {
         const y = q.row ? dot(q.row, state) : 0;
-        state[q.p] = quantize(y, q.levels);
+        state[q.p] = quantize(y + ditherSample(), q.levels);
       }
       matVec(Md, state, Yd);
       // The continuous signals at nT^-, and the output, for the peaks and the tone.
@@ -492,7 +518,7 @@ export function prepareSimulation(circuit, options = {}) {
     return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}) };
   };
 
-  return { ok: true, fullScale, frequency, period: T, signals: signalList, run };
+  return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };
 }
 
 /** The amplitudes a sweep runs, in dBFS: coarse far below full scale, a
