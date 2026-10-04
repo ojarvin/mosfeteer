@@ -80,7 +80,8 @@ async function loadModule(file) {
   // this one can call them while this one is still loading (main.js and the
   // editor modules split out of it).
   const hoisted = [];
-  for (const match of source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)) hoisted.push(`__exports.${match[1]} = ${match[1]};`);
+  // Generators too (`export function* name`).
+  for (const match of source.matchAll(/^export\s+(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/gm)) hoisted.push(`__exports.${match[1]} = ${match[1]};`);
   for (const match of source.matchAll(/^export\s+(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm)) exports.push(`__exports.${match[1]} = ${match[1]};`);
   source = source.replace(/^export\s+(?=(?:async\s+)?(?:function|const|let|var|class)\b)/gm, '');
 

@@ -10925,6 +10925,7 @@ __exports.fractionGrid = fractionGrid;
 __exports.fractionsAround = fractionsAround;
 __exports.fractionText = fractionText;
 __exports.coefficientGroups = coefficientGroups;
+__exports.roundingSearch = roundingSearch;
 __exports.runRounding = runRounding;
 __exports.ditherFraction = ditherFraction;
 let createOptimizer, fitnessOf, pointValues, scoreRequest; __bind(() => { ({ createOptimizer, fitnessOf, pointValues, scoreRequest } = __require("src/core/analysis/optimize.js")); });
