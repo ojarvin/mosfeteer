@@ -264,3 +264,17 @@ export function runRounding(objective, parameters, options) {
   }
   return { ...step.value, evaluations };
 }
+
+/**
+ * The dither's gain as a fraction of a block's n: dither of +-`steps`
+ * quantizer steps, entering the quantizer's block from the reference (the
+ * diagram's full scale, N - 1), is a gain k = 2 steps / fullScale; the
+ * smallest m/n at or above it, so the dither is at least what was set.
+ * Returns `{ m, n, gain, steps (realized) }`, or null without dither.
+ */
+export function ditherFraction(steps, fullScale, n) {
+  if (!(steps > 0) || !(fullScale > 0) || !(n >= 1)) return null;
+  const gain = (2 * steps) / fullScale;
+  const m = Math.max(1, Math.ceil(gain * n - 1e-9));
+  return { m, n, gain, steps: ((m / n) * fullScale) / 2 };
+}

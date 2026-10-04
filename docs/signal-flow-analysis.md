@@ -307,6 +307,15 @@ The criteria:
   above). Every transfer function a spec reads must stay stable. Lee's rule
   for a modulator is a limit: the NTF's peak below 3.5 dB over every
   frequency.
+- **Pole specs**: a transfer function's poles (`poleMeasures`), as the
+  highest **Q** of a complex pair or the largest **radius** |z|. A z pole is
+  read as s = ln z, so Q = |s| / (2 |Re s|): how much it rings, whatever its
+  frequency (0.5 for real poles, 0.707 a Butterworth pair), where the same
+  radius rings more the higher its frequency. Searched for in-band noise
+  alone, a loop's NTF tends to high-Q poles just past the band -- the
+  steepest rise for its out-of-band gain, at the price of ringing, a peaking
+  STF, and sensitivity to its coefficients; a limit on Q trades some
+  in-band attenuation for damping. A loop's NTF and STF share their poles.
 - **Swing test**: the diagram simulated (the swing's simulator) with a sine
   of a given amplitude into one source, at a set f/fs or the band's middle.
   It must not run away, there and 1 dB above, and each net with a limit
@@ -356,8 +365,8 @@ undoes that. The setup is saved with the document
 **Rounding to fractions** (`rounding.js`) makes each free coefficient a
 simple fraction m/n -- m units over n, whatever realizes it (a ratio of unit
 elements, a digital multiplier) -- at the least cost to the same specs. One
-setting sets how coarse: the largest n (4 ... 256), optionally powers of two
-only. The gains into one block -- followed through sums to the part they
+setting sets how coarse: the largest n (any whole number up to 1024),
+optionally powers of two only. The gains into one block -- followed through sums to the part they
 feed, an integrator or the quantizer (`coefficientGroups`) -- share its n,
 its one reference element, so they read m1/n, m2/n, ...; off, each
 coefficient has its own n. A coefficient's own "n <=" in the table raises

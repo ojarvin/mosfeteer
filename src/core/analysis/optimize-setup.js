@@ -6,7 +6,10 @@
  */
 
 export const SPEC_ACTIONS = Object.freeze(['minimize', 'maximize', 'below', 'above']);
-export const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest']);
+// A band's average, peak, or lowest |H| (dB); or its poles: the highest Q of
+// a complex pair, or the largest radius (optimize.js poleMeasures).
+export const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest', 'q', 'radius']);
+export const POLE_MEASURES = Object.freeze(['q', 'radius']);
 export const SPEC_BANDS = Object.freeze(['signal', 'outside', 'all', 'custom']);
 export const DEFAULT_EVALUATIONS = 3000;
 export const MAX_DENOMINATOR = 1024;

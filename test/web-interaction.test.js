@@ -1337,3 +1337,15 @@ test('coming back up from a linked design leaves its peek bubble as it was', () 
   assert.match(hierarchy, /if \(!target\.peeking\) \{[\s\S]*?closeLinkBubble\(target\.refdes, \{ refit: false \}\)/);
   assert.match(hierarchy, /if \(!target\.peeking\) bubbles\.delete\(target\.refdes\);/);
 });
+
+test('signal-flow results belong to their document: another one opened starts with none', () => {
+  const ui = readFileSync(new URL('../src/web/signal-flow-ui.js', import.meta.url), 'utf8');
+  const sync = ui.slice(ui.indexOf('function syncDocument()'), ui.indexOf('// ----- root locus'));
+  // Keyed by the document, not the circuit object (undo replaces that too).
+  assert.match(sync, /const key = editor\.currentDocumentPath \|\| `unsaved:\$\{editor\.currentCircuitName \|\| ''\}`;/);
+  for (const reset of ['traces = [];', 'latest = null;', 'locus = null;', 'loop = null;', 'spectrum = null;', 'swing = null;', 'resetOptimize();']) assert.ok(sync.includes(reset), reset);
+  // Deriving, annotating, and updating plots check it first.
+  for (const name of ['function derive() {', 'function annotateGraph() {', 'async function updatePlots() {']) {
+    assert.match(ui.slice(ui.indexOf(name), ui.indexOf(name) + 80), /syncDocument\(\);/);
+  }
+});

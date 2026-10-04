@@ -16,13 +16,13 @@
 import { TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
-import { expressionTex } from '../core/transfer-function.js';
+import { expressionTex, parseLevels } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { locusFigure, responseFigure, stepFigure, swingFigure } from '../core/bode-figure.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
-import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
+import { ditherSteps, prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
 import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
@@ -162,16 +162,38 @@ function fillForm() {
   problems.hidden = !issues.length;
   section.querySelector('.signal-flow-stale').hidden = !latest || revisionCurrent(derivedRevision);
   fillSwingSources(sources);
-  // Another document: its own swing, not the last one's.
-  if (swingCircuit !== editor.circuit) {
-    swingCircuit = editor.circuit;
-    swing = null;
-    swingShown = null;
-    renderSwing();
-    resetOptimize();
-    optimized = false;
-  }
+  syncDocument();
   renderOptimize();
+}
+
+let shownDocument;
+/**
+ * The results belong to the document they were derived in: another one
+ * opened (not an undo, which replaces the circuit too) starts with none --
+ * no traces, results, locus, loop, spectrum, swing, or optimizer results.
+ * Traces of two diagrams are often named alike (OUT/E_QZ1), so another's
+ * kept would be drawn at this one's numbers.
+ */
+function syncDocument() {
+  const key = editor.currentDocumentPath || `unsaved:${editor.currentCircuitName || ''}`;
+  if (key === shownDocument) return;
+  const first = shownDocument === undefined;
+  shownDocument = key;
+  if (first) return;
+  traces = [];
+  latest = null;
+  locus = null;
+  loop = null;
+  spectrum = null;
+  swing = null;
+  swingShown = null;
+  optimized = false;
+  resetOptimize();
+  renderSwing();
+  renderLocus();
+  renderCoefficients({ force: true });
+  renderResults();
+  renderPlots();
 }
 
 // ----- root locus: the poles as one coefficient sweeps ----------------------------------
@@ -388,7 +410,6 @@ let swing = null;
 let swingRun = 0; // a sweep in progress stops when a newer one starts
 let swingShown = null; // keys of the nets on the plot
 let swingTimer = 0;
-let swingCircuit = null;
 const swingColors = new Map();
 const SWING_TONE = '\u0000tone';
 
@@ -820,18 +841,31 @@ function spectrumControls() {
 
 /** Dither at the quantizers' inputs for every simulation (the spectrum,
  *  the swing, the optimizer's swing test): none, rectangular, triangular. */
+/** The largest quantizer's full scale, N - 1 (1 with none). */
+function quantizerFullScale() {
+  let fullScale = 1;
+  for (const c of editor.circuit.components.values()) {
+    if (c.type !== 'quantizer') continue;
+    try { fullScale = Math.max(fullScale, parseLevels(c.value) - 1); } catch { /* the simulation says why */ }
+  }
+  return fullScale;
+}
+
 function ditherControls() {
   const settings = flow().dither || {};
+  // In quantizer steps; an older document's dBFS shown as the steps it is.
+  const steps = ditherSteps(settings, quantizerFullScale());
+  const stepsText = settings.steps ?? (Number.isFinite(steps) ? String(Number(steps.toPrecision(3))) : '0.5');
   const shape = el('select', { class: 'signal-flow-dither-shape', 'aria-label': 'Dither', title: 'Dither added at each quantizer\'s input: rectangular over (-A, A), or triangular over (-A, A) peaking at 0' }, [
     el('option', { value: 'none', text: 'No dither' }), el('option', { value: 'rect', text: 'Rectangular dither' }), el('option', { value: 'tri', text: 'Triangular dither' }),
   ]);
   shape.value = ['rect', 'tri'].includes(settings.shape) ? settings.shape : 'none';
-  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-dither-amplitude', value: settings.amplitude ?? '-30', 'aria-label': 'Dither amplitude, dBFS', title: 'A in dBFS of the quantizer\'s full scale N - 1 (levels are 2 apart: one level step is 20 log(2/(N - 1)) dBFS)' });
-  const unit = el('label', { class: 'signal-flow-dither-unit', text: 'dBFS' });
+  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-dither-amplitude', value: stepsText, 'aria-label': 'Dither amplitude, quantizer steps', title: 'The peak, +-A, in quantizer steps (the distance between two levels) -- the same for both shapes; triangular has half the power of rectangular at the same A. The classic amounts: rectangular +-0.5 step makes the quantization error\'s mean independent of the signal; triangular +-1 step (two +-0.5-step rectangles added) its power too. In a modulator the dither is shaped like the quantization noise: more costs in-band SNR and some stable amplitude.' });
+  const unit = el('label', { class: 'signal-flow-dither-unit', text: 'steps' });
   amplitude.hidden = unit.hidden = shape.value === 'none';
   const save = () => {
     amplitude.hidden = unit.hidden = shape.value === 'none';
-    flow().dither = { shape: shape.value, amplitude: amplitude.value.trim() || '-30' };
+    flow().dither = { shape: shape.value, steps: amplitude.value.trim() || '0.5' };
     markSettingsChanged();
     // Both places show it: keep them alike, and simulate again.
     for (const other of section.querySelectorAll('.signal-flow-dither')) if (!other.contains(shape)) other.replaceWith(ditherControls());
@@ -842,6 +876,17 @@ function ditherControls() {
   amplitude.addEventListener('change', save);
   amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
   return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit]);
+}
+
+/** The simulated in-band SNDR, and the amplitude it was simulated at, as a
+ *  legend line for an annotated magnitude plot (null without a spectrum and
+ *  a band). No " = " in it: a legend's coefficient lines are told apart by
+ *  that. */
+function sndrNote() {
+  if (!spectrum?.raw) return null;
+  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
+  if (!measured) return null;
+  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: '#8a8f99' };
 }
 
 function spectrumStatus() {
@@ -1024,12 +1069,15 @@ function renderGraph() {
 /** The graph on the drawing: a plot annotation, each trace's equation a
  *  math label in its colour beside it (children of the box, moving with it). */
 function annotateGraph() {
+  syncDocument();
   const shown = shownTraces();
   const plot = graphPlot(shown);
   if (!plot) return;
   // The numbers the symbols were drawn with, under the legend.
   const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];
-  placePlot(plot, shown, used);
+  // A simulated spectrum on it: its SNDR in band under the traces.
+  const note = graphView() === 'magnitude' && plot.units === 'dBFS' ? sndrNote() : null;
+  placePlot(plot, note ? [...shown, note] : shown, used);
 }
 
 const PLOT_LEGEND_ROLE = 'plot-legend';
@@ -1131,6 +1179,7 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
  * plot from a fresh sweep of the nets it shows.
  */
 async function updatePlots() {
+  syncDocument();
   const circuit = editor.circuit;
   const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot);
   if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
@@ -1178,7 +1227,8 @@ function plotUpdate(plot) {
     if (!matched.length || matched.some((t) => !t)) return null;
     const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
     const next = graphPlot(matched, view);
-    return next ? { plot: next, shown: matched, used: [...new Set(matched.flatMap((trace) => resultSymbols(trace.value, trace.variable)))] } : null;
+    const note = next?.units === 'dBFS' ? sndrNote() : null;
+    return next ? { plot: next, shown: note ? [...matched, note] : matched, used: [...new Set(matched.flatMap((trace) => resultSymbols(trace.value, trace.variable)))] } : null;
   }
   if (plot.kind === 'locus') {
     const entry = latest?.ok ? latest.entries.find((e) => e.label === plot.label) : null;
@@ -1284,6 +1334,7 @@ function rootRow(label, roots, variable, at = '') {
 }
 
 function derive() {
+  syncDocument();
   latest = analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
@@ -1369,10 +1420,22 @@ export function installSignalFlowUi() {
         coefficientsChanged();
         coefficientsSettled();
       },
-      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() } }),
+      // The simulations' dither (rounding realizes it as a gain), shown again.
+      setDither(dither) {
+        flow().dither = dither;
+        delete flow().dither.amplitude;
+        markSettingsChanged();
+        for (const node of section.querySelectorAll('.signal-flow-dither')) node.replaceWith(ditherControls());
+      },
+      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() }, dither: flow().dither ? { ...flow().dither } : undefined }),
       restoreCoefficients(saved) {
         editor.circuit.analysisValues.coefficients = { ...saved.coefficients };
         editor.circuit.analysisValues.fractions = { ...saved.fractions };
+        // Revert puts back the dither Apply changed too.
+        if (saved.dither) {
+          flow().dither = { ...saved.dither };
+          for (const node of section.querySelectorAll('.signal-flow-dither')) node.replaceWith(ditherControls());
+        }
         renderCoefficients({ force: true });
         coefficientsChanged();
         coefficientsSettled();

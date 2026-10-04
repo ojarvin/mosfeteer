@@ -31,18 +31,30 @@ const JUNCTION_INPUTS = ['n', 's', 'w'];
 /** Schreier's quantizer (ds_quantize): odd levels for even N, even levels
  *  (with 0) for odd N, limited to +-(N - 1). */
 /**
- * Dither added at each quantizer's input (`{ shape, amplitude }`, the
- * amplitude in dBFS): 'rect' uniform over (-A, A), 'tri' triangular over
- * (-A, A), peaking at 0 (two uniforms). Its variance, in quantizer levels
- * squared (the white error it adds to the shaped noise beside the
- * quantizer's 1/3): A^2/3 or A^2/6. Null without dither.
+ * Dither added at each quantizer's input (`{ shape, steps }`): 'rect'
+ * uniform over (-A, A), 'tri' triangular over (-A, A), peaking at 0 (two
+ * uniforms), A in quantizer steps (levels 2 apart, so A = 2 steps in
+ * levels). The classic amounts: rectangular +-1/2 step makes the error's
+ * mean independent of the signal; triangular +-1 step its power too. A
+ * document from before steps gives `amplitude` in dBFS of full scale.
+ * Returns `{ shape, amplitude (levels), steps, variance }` -- the variance,
+ * in levels squared, the white error it adds beside the quantizer's 1/3:
+ * A^2/3 or A^2/6 -- or null without dither.
  */
 export function ditherSettings(dither, fullScale) {
   if (!dither || !['rect', 'tri'].includes(dither.shape)) return null;
-  const db = Number(dither.amplitude);
-  if (!Number.isFinite(db)) return null;
-  const amplitude = fullScale * 10 ** (db / 20);
-  return { shape: dither.shape, amplitude, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
+  const steps = ditherSteps(dither, fullScale);
+  if (!(steps > 0)) return null;
+  const amplitude = 2 * steps;
+  return { shape: dither.shape, amplitude, steps, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
+}
+
+/** A dither's amplitude in quantizer steps (from dBFS for an older one). */
+export function ditherSteps(dither, fullScale) {
+  const steps = Number(dither?.steps);
+  if (dither?.steps !== undefined && dither.steps !== '' && Number.isFinite(steps)) return steps;
+  const db = Number(dither?.amplitude);
+  return Number.isFinite(db) ? (fullScale * 10 ** (db / 20)) / 2 : NaN;
 }
 
 export function quantize(y, levels) {
@@ -108,8 +120,8 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
- * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', amplitude
- * (dBFS) }`, at each quantizer's input; each run draws the same sequence).
+ * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', steps }`, at
+ * each quantizer's input, ditherSettings; each run draws the same sequence).
  * Returns `{ ok, fullScale, frequency, signals, run }`:
  * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at

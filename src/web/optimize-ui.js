@@ -12,8 +12,10 @@
 
 import { diagramSymbols, signalFlowGraph } from '../core/analysis/signal-flow.js';
 import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest } from '../core/analysis/optimize.js';
-import { normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
-import { coefficientGroups, roundingSearch } from '../core/analysis/rounding.js';
+import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
+import { coefficientGroups, ditherFraction, roundingSearch } from '../core/analysis/rounding.js';
+import { ditherSteps } from '../core/analysis/simulate.js';
+import { parseLevels } from '../core/transfer-function.js';
 import { prepareSimulation } from '../core/analysis/simulate.js';
 import { symbolText } from '../core/analysis/present.js';
 import { texToMathML } from '../core/render.js';
@@ -71,6 +73,9 @@ const sourceName = (source) => (source.quantizer ? `${plainName(source.name)} (q
 function specText(spec, sources) {
   const source = sources.find((s) => s.id === spec.input);
   const action = { minimize: 'Minimize', maximize: 'Maximize', below: 'Keep below', above: 'Keep above' }[spec.action];
+  if (POLE_MEASURES.includes(spec.measure)) {
+    return `${action} the poles' ${spec.measure === 'q' ? 'highest Q' : 'largest radius'} of H from ${source ? plainName(source.name) : spec.input}${spec.value !== undefined ? ` (${spec.value})` : ''}`;
+  }
   const measure = { average: 'average', peak: 'peak', lowest: 'lowest' }[spec.measure];
   const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1} to ${spec.f2}`;
   return `${action} the ${measure} |H| from ${source ? plainName(source.name) : spec.input} ${band}${spec.value !== undefined ? ` (${spec.value} dB)` : ''}`;
@@ -179,14 +184,15 @@ function specList(current, sources) {
     const inputs = sources.map((s) => [s.id, sourceName(s)]);
     if (spec.input && !sources.some((s) => s.id === spec.input)) inputs.push([spec.input, `${spec.input} (gone)`]);
     const limit = spec.action === 'below' || spec.action === 'above';
+    const poles = POLE_MEASURES.includes(spec.measure);
     return el('div', { class: 'signal-flow-optimize-spec' }, [
       select('action', [['minimize', 'Minimize'], ['maximize', 'Maximize'], ['below', 'Keep below'], ['above', 'Keep above']], 'Goal or limit'),
-      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest']], 'Measure of the magnitude over the band'),
-      el('span', { class: 'signal-flow-optimize-word', text: '|H| from' }),
+      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest'], ['q', 'pole Q'], ['radius', 'pole radius']], 'Measure: of the magnitude over a band, or of the poles (the highest Q of a pair, the largest |z|)'),
+      el('span', { class: 'signal-flow-optimize-word', text: poles ? 'of H from' : '|H| from' }),
       select('input', inputs.length ? inputs : [['', '(no source)']], 'The transfer function, from this source to the output'),
-      select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band'),
-      ...(spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
-      ...(limit ? [field('value', 'dB', 'Limit, dB'), el('span', { class: 'signal-flow-optimize-word', text: 'dB' })] : []),
+      ...(poles ? [] : [select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band')]),
+      ...(!poles && spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
+      ...(limit ? [field('value', poles ? (spec.measure === 'q' ? 'Q' : '|z|') : 'dB', poles ? 'Limit' : 'Limit, dB'), ...(poles ? [] : [el('span', { class: 'signal-flow-optimize-word', text: 'dB' })])] : []),
       el('button', { type: 'button', class: 'signal-flow-legend-remove', text: '×', title: 'Remove this spec', 'aria-label': 'Remove this spec', onclick: () => { current.specs.splice(index, 1); changed(); renderOptimize(); } }),
     ]);
   });
@@ -205,6 +211,7 @@ function specList(current, sources) {
     ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
     el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the one set on the graph. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
+    el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of a pair of the transfer function\'s poles (a z pole read as s = ln z): how much it rings, at whatever frequency -- 0.5 for real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; the same radius rings more the higher its frequency. A loop\'s NTF and STF share their poles.' }),
   ]);
 }
 
@@ -257,7 +264,7 @@ function swingBlock(circuit, current, sources) {
       })));
     }
     const dither = api.flow().dither;
-    const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither at ${dither.amplitude} dBFS, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
+    const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''}, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
     children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
@@ -299,8 +306,11 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
     row('', startLabel, endLabel),
     ...specs.map((spec, i) => {
       const value = result.score.specs?.[i];
-      const ok = spec.action === 'below' ? value <= spec.value + 0.01 : spec.action === 'above' ? value >= spec.value - 0.01 : undefined;
-      return row(specText(spec, sources), db(result.start?.specs?.[i]), db(value), ok);
+      const poles = POLE_MEASURES.includes(spec.measure);
+      const tolerance = poles ? 1e-3 : 0.01;
+      const ok = spec.action === 'below' ? value <= spec.value + tolerance : spec.action === 'above' ? value >= spec.value - tolerance : undefined;
+      const show = (v) => (v === null || v === undefined ? '–' : poles ? (spec.measure === 'q' ? `Q ${v.toFixed(2)}` : `|z| ${v.toFixed(3)}`) : db(v));
+      return row(specText(spec, sources), show(result.start?.specs?.[i]), show(value), ok);
     }),
     ...(result.swing ? [row('Swing test', swingText(result.start), swingText(result.score), swingOk(result.score))] : []),
   ];
@@ -338,13 +348,20 @@ function revert() {
 
 // ----- rounding to fractions ------------------------------------------------------------
 
-const DENOMINATORS = [4, 8, 16, 32, 64, 128, 256];
-
 function roundingBlock(current) {
   const options = current.rounding;
-  const denominator = el('select', { 'aria-label': 'Largest n', onchange: (ev) => { options.denominator = Number(ev.target.value); changed(); renderOptimize(); } },
-    [...new Set([...DENOMINATORS, options.denominator])].sort((a, b) => a - b).map((n) => el('option', { value: String(n), text: String(n) })));
-  denominator.value = String(options.denominator);
+  // Any n from 1 to 1024.
+  const denominator = el('input', { type: 'text', inputmode: 'numeric', class: 'signal-flow-optimize-field', 'aria-label': 'Largest n', title: 'The largest n of m/n: any whole number up to 1024', value: String(options.denominator) });
+  denominator.addEventListener('change', () => {
+    const n = Math.round(Number(denominator.value));
+    const valid = n >= 1 && n <= 1024;
+    denominator.classList.toggle('invalid', !valid);
+    if (!valid) return;
+    options.denominator = n;
+    changed();
+    renderOptimize();
+  });
+
   const check = (key, text, title) => {
     const box = el('input', { type: 'checkbox', 'aria-label': text });
     box.checked = !!options[key];
@@ -406,6 +423,18 @@ function roundedBlock(sources) {
       ]));
     }
   }
+  // The dither, as one more gain into the quantizer's block.
+  const dither = roundedDither();
+  if (dither) {
+    rows.push(el('div', { class: 'signal-flow-optimize-subhead', text: `dither into ${dither.into ? plainName(api.circuit().labelOf?.(dither.into)?.text || dither.into) : 'the quantizer'}, from full scale` }));
+    rows.push(el('div', { class: 'signal-flow-optimize-fraction', title: `${dither.shape === 'rect' ? 'Rectangular' : 'Triangular'} dither of +-${Number(dither.wanted.toPrecision(3))} step needs a gain of ${Number(dither.gain.toPrecision(4))} of full scale (2 x steps / (N - 1)); the smallest fraction over its block's n at or above it gives +-${Number(dither.steps.toPrecision(3))} step. Apply sets the simulations' dither to that.` }, [
+      el('span', { class: 'signal-flow-optimize-math', text: 'dither' }),
+      el('span', { class: 'signal-flow-optimize-number signal-flow-optimize-found', text: `${dither.m}/${dither.n}` }),
+      el('span', { class: 'signal-flow-optimize-number', text: String(Number((dither.m / dither.n).toPrecision(4))), title: 'Its gain' }),
+      el('span', { class: 'signal-flow-optimize-number', text: `±${Number(dither.wanted.toPrecision(3))}`, title: 'The dither set, in steps' }),
+      el('span', { class: 'signal-flow-optimize-number', text: `±${Number(dither.steps.toPrecision(3))}`, title: 'The dither it gives, in steps' }),
+    ]));
+  }
   host.append(
     el('div', { class: 'signal-flow-optimize-heading', text: rounded.feasible ? 'Rounded: every limit met' : 'Rounded: the best compromise, missing a limit' }),
     el('div', { class: 'signal-flow-optimize-fraction signal-flow-optimize-head' }, ['', 'm/n', 'Value', 'Before', 'Change'].map((text) => el('span', { text }))),
@@ -428,11 +457,38 @@ function roundedBlock(sources) {
   return host;
 }
 
+/** The quantizers: their refdes, and the largest one's full scale (N - 1). */
+function quantizers() {
+  const refs = [];
+  let fullScale = 1;
+  for (const c of api.circuit().components.values()) {
+    if (c.type !== 'quantizer') continue;
+    refs.push(c.refdes);
+    try { fullScale = Math.max(fullScale, parseLevels(c.value) - 1); } catch { /* the simulation says why */ }
+  }
+  return { refs, fullScale };
+}
+
+/** With dither set: its gain as the smallest fraction over the quantizer
+ *  block's n (or the largest n allowed) that gives at least the dither. */
+function roundedDither() {
+  const dither = api.flow().dither;
+  if (!rounded || !dither || !['rect', 'tri'].includes(dither.shape)) return null;
+  const { refs, fullScale } = quantizers();
+  const steps = ditherSteps(dither, fullScale);
+  const block = rounded.groups.find((g) => refs.includes(g.into));
+  const fraction = ditherFraction(steps, fullScale, block?.n ?? setup().rounding.denominator);
+  return fraction ? { ...fraction, wanted: steps, into: block?.into || refs[0] || null, shape: dither.shape } : null;
+}
+
 function applyRounded() {
   if (!rounded) return;
   reverting = api.snapshotCoefficients();
   const numbers = Object.fromEntries(Object.entries(rounded.fractions).map(([name, f]) => [name, f.m / f.n]));
   const texts = Object.fromEntries(Object.entries(rounded.fractions).map(([name, f]) => [name, `${f.m}/${f.n}`]));
+  // The simulations' dither becomes what the rounded dither gain gives.
+  const dither = roundedDither();
+  if (dither && Math.abs(dither.steps - dither.wanted) > 1e-9) api.setDither({ ...api.flow().dither, steps: String(Number(dither.steps.toPrecision(6))) });
   api.applyCoefficients(numbers, { fractions: texts });
   renderOptimize();
 }

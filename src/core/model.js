@@ -1037,8 +1037,12 @@ export function normalizeAnalysisValues(value) {
     ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
     ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
     ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
-    // Dither at the quantizers' inputs for the simulations: rect or tri, its amplitude in dBFS.
-    ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: { shape: rawFlow.dither.shape, amplitude: text(String(rawFlow.dither.amplitude ?? '-30')).slice(0, 20) } } : {}),
+    // Dither at the quantizers' inputs for the simulations: rect or tri.
+    // (In quantizer steps; an older document's in dBFS, `amplitude`.)
+    ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: {
+      shape: rawFlow.dither.shape,
+      ...(rawFlow.dither.steps !== undefined ? { steps: text(String(rawFlow.dither.steps)).slice(0, 20) } : { amplitude: text(String(rawFlow.dither.amplitude ?? '-30')).slice(0, 20) }),
+    } } : {}),
     // The coefficient optimizer's setup (analysis/optimize-setup.js).
     ...(rawFlow.optimize && typeof rawFlow.optimize === 'object' ? { optimize: normalizeOptimizeSetup(rawFlow.optimize) } : {}),
   } : null;

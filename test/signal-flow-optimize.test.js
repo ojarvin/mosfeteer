@@ -326,3 +326,69 @@ test('a limit compares the 3-sigma level, the 4-sigma level, or the highest peak
   assert.equal(unstable.swing.overloaded, true);
   assert.ok(unstable.swing.held < unstable.swing.runs);
 });
+
+import { poleMeasures } from '../src/core/analysis/optimize.js';
+
+test('pole specs: the highest Q of a pole pair, the same in z and s, and the largest radius', () => {
+  // A z pair at radius 0.954, f/fs 0.0396: s = ln z, Q = |s| / (2 |Re s|).
+  const theta = 2 * Math.PI * 0.0396;
+  const pair = [{ re: 0.954 * Math.cos(theta), im: 0.954 * Math.sin(theta) }, { re: 0.954 * Math.cos(theta), im: -0.954 * Math.sin(theta) }];
+  const { q, radius } = poleMeasures([...pair, { re: 0.9, im: 0 }], true);
+  assert.ok(Math.abs(q - Math.hypot(Math.log(0.954), theta) / (2 * -Math.log(0.954))) < 1e-12);
+  assert.ok(Math.abs(radius - 0.954) < 1e-12);
+  // The same radius rings less at a lower frequency.
+  const low = 2 * Math.PI * 0.005;
+  assert.ok(poleMeasures([{ re: 0.954 * Math.cos(low), im: 0.954 * Math.sin(low) }], true).q < q);
+  // Real poles only: 0.5. An s pair -1 +- j: Q = sqrt(2)/2.
+  assert.equal(poleMeasures([{ re: 0.5, im: 0 }], true).q, 0.5);
+  assert.ok(Math.abs(poleMeasures([{ re: -1, im: 1 }, { re: -1, im: -1 }], false).q - Math.SQRT1_2) < 1e-12);
+  assert.equal(poleMeasures([{ re: -1, im: 1 }], false).radius, null);
+});
+
+test('a limit on the poles\' Q is kept by the optimizer, and the result reports it', () => {
+  const circuit = modulator();
+  const setup = { specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }, { action: 'below', measure: 'q', input: 'QZ1', value: 0.8 }] };
+  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: { k_1: 1, k_2: 2 }, setup };
+  const objective = prepareObjective(circuit, problem);
+  assert.equal(objective.ok, true, objective.error);
+  // The textbook loop's poles are at the origin (NTF (1 - z^-1)^2): Q 0.5.
+  assert.equal(objective.evaluate({ k_1: 1, k_2: 2 }).specs[1], 0.5);
+  const free = runOptimization(circuit, { ...problem, setup: { specs: [setup.specs[0]] } }, { evaluations: 300, seed: 2 });
+  const held = runOptimization(circuit, problem, { evaluations: 300, seed: 2 });
+  assert.equal(held.feasible, true);
+  assert.ok(held.best.score.specs[1] <= 0.8 + 1e-3, `Q ${held.best.score.specs[1]}`);
+  // Unlimited, the search rings harder; the limit costs some in-band shaping.
+  const freeQ = prepareObjective(circuit, problem).evaluate(free.best.values).specs[1];
+  assert.ok(freeQ > 0.8, `unlimited Q ${freeQ}`);
+  assert.ok(held.best.score.specs[0] >= free.best.score.specs[0] - 1e-9);
+  // A pole radius is for z results; normalized with the setup.
+  assert.deepEqual(normalizeOptimizeSetup({ specs: [{ action: 'below', measure: 'radius', input: 'QZ1', value: '0.9' }] }).specs[0], { action: 'below', measure: 'radius', input: 'QZ1', band: 'signal', value: 0.9 });
+});
+
+test('dither in quantizer steps (levels 2 apart); an older dBFS amplitude reads as the steps it is', () => {
+  // +-1/2 step is +-1 level: rectangular variance 1/3, the quantizer's own.
+  const half = ditherSettings({ shape: 'rect', steps: '0.5' }, 4);
+  assert.deepEqual([half.amplitude, half.steps], [1, 0.5]);
+  assert.ok(Math.abs(half.variance - 1 / 3) < 1e-12);
+  assert.ok(Math.abs(ditherSettings({ shape: 'tri', steps: 1 }, 1).variance - 4 / 6) < 1e-12);
+  // -12.04 dBFS of full scale 4 is 1 level: half a step.
+  assert.ok(Math.abs(ditherSettings({ shape: 'tri', amplitude: '-12.0412' }, 4).steps - 0.5) < 1e-4);
+  assert.equal(ditherSettings({ shape: 'rect', steps: '0' }, 4), null);
+  const circuit = modulator();
+  circuit.analysisValues.flow = { output: 'V', sources: {}, swingInput: '', swingFrequency: '', dither: { shape: 'rect', steps: '0.5' } };
+  assert.deepEqual(Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).analysisValues.flow.dither, { shape: 'rect', steps: '0.5' });
+});
+
+import { ditherFraction } from '../src/core/analysis/rounding.js';
+
+test('the dither as a rounded gain into the quantizer\'s block: the smallest m/n giving at least the dither set', () => {
+  // +-1/2 step of a 5-level quantizer (full scale 4) is a gain of 1/4.
+  assert.deepEqual(ditherFraction(0.5, 4, 28), { m: 7, n: 28, gain: 0.25, steps: 0.5 });
+  // Not exact: rounded up, so the dither is at least what was set.
+  const up = ditherFraction(0.5, 4, 10);
+  assert.deepEqual([up.m, up.n], [3, 10]);
+  assert.ok(up.steps >= 0.5 && Math.abs(up.steps - 0.6) < 1e-12);
+  // Never below one unit; nothing without dither.
+  assert.equal(ditherFraction(0.01, 4, 4).m, 1);
+  assert.equal(ditherFraction(0, 4, 16), null);
+});

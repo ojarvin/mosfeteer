@@ -6097,7 +6097,10 @@ __exports.normalizeOptimizeSetup = normalizeOptimizeSetup;
  */
 
 const SPEC_ACTIONS = Object.freeze(['minimize', 'maximize', 'below', 'above']);
-const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest']);
+// A band's average, peak, or lowest |H| (dB); or its poles: the highest Q of
+// a complex pair, or the largest radius (optimize.js poleMeasures).
+const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest', 'q', 'radius']);
+const POLE_MEASURES = Object.freeze(['q', 'radius']);
 const SPEC_BANDS = Object.freeze(['signal', 'outside', 'all', 'custom']);
 const DEFAULT_EVALUATIONS = 3000;
 const MAX_DENOMINATOR = 1024;
@@ -6179,6 +6182,7 @@ function normalizeOptimizeSetup(raw) {
 
 __exports.SPEC_ACTIONS = SPEC_ACTIONS;
 __exports.SPEC_MEASURES = SPEC_MEASURES;
+__exports.POLE_MEASURES = POLE_MEASURES;
 __exports.SPEC_BANDS = SPEC_BANDS;
 __exports.DEFAULT_EVALUATIONS = DEFAULT_EVALUATIONS;
 __exports.MAX_DENOMINATOR = MAX_DENOMINATOR;
@@ -6190,6 +6194,7 @@ __exports.optimizationParameters = optimizationParameters;
 __exports.pointValues = pointValues;
 __exports.fitnessOf = fitnessOf;
 __exports.specIntervals = specIntervals;
+__exports.poleMeasures = poleMeasures;
 __exports.swingTestFrequencies = swingTestFrequencies;
 __exports.swingTestFrequency = swingTestFrequency;
 __exports.prepareObjective = prepareObjective;
@@ -6199,7 +6204,7 @@ let analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, ti
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
 let resolveCoefficients; __bind(() => { ({ resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let createCmaes, seededRandom; __bind(() => { ({ createCmaes, seededRandom } = __require("src/core/analysis/cmaes.js")); });
-let normalizeOptimizeSetup; __bind(() => { ({ normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
+let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 /**
  * Coefficient optimization for a signal-flow diagram: the free
  * coefficients searched (CMA-ES, cmaes.js) for the best goal that meets
@@ -6369,6 +6374,27 @@ function measureOf(value, variable, grid, measure) {
   return 10 * Math.log10(Math.max(power, 1e-30));
 }
 
+/**
+ * A transfer function's poles as numbers: `q`, the highest Q of a complex
+ * pair (0.5 with none: a real pole is no resonance), and `radius`, the
+ * largest |z| (null in s). A z-plane pole maps to s = ln z (per sample), so
+ * Q = |s| / (2 |Re s|) -- the same measure in both planes, independent of
+ * the pole's frequency, where a radius means less damping the higher the
+ * frequency.
+ */
+function poleMeasures(poles, z) {
+  let q = 0.5;
+  let radius = 0;
+  for (const p of poles) {
+    const r = Math.hypot(p.re, p.im);
+    if (z) radius = Math.max(radius, r);
+    const [sigma, omega] = z ? [Math.log(Math.max(r, 1e-300)), Math.atan2(p.im, p.re)] : [p.re, p.im];
+    if (Math.abs(omega) < 1e-9 || !(sigma < 0)) continue;
+    q = Math.max(q, Math.hypot(sigma, omega) / (2 * Math.abs(sigma)));
+  }
+  return { q, radius: z ? radius : null };
+}
+
 // The swing test: runs of this many samples at this many in-band
 // frequencies, each from these phases of the sine, the worst taken. A loop
 // near overload makes rare large excursions, so one finite run's peaks are
@@ -6472,6 +6498,12 @@ function prepareObjective(circuit, problem = {}) {
   }
   const grids = [];
   for (const spec of specs) {
+    if (POLE_MEASURES.includes(spec.measure)) {
+      if ((spec.action === 'below' || spec.action === 'above') && !Number.isFinite(spec.value)) return failure(`a limit on the poles needs its ${spec.measure === 'q' ? 'Q' : 'radius'}`);
+      if (spec.measure === 'radius' && variable !== 'z') return failure('a pole radius is for a sampled result (|z|); use the pole Q for a continuous one');
+      grids.push(null);
+      continue;
+    }
     const intervals = specIntervals(spec, problem.band);
     if (!intervals?.length) return failure(spec.band === 'custom' ? 'a spec\'s band needs f1 < f2' : 'set the signal band (bw, and f0 for a band-pass signal) on the graph for the specs that read it');
     if ((spec.action === 'below' || spec.action === 'above') && !Number.isFinite(spec.value)) return failure('a limit spec needs its value in dB');
@@ -6548,6 +6580,7 @@ function prepareObjective(circuit, problem = {}) {
     let goal = 0;
     const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
     const numbers = new Map();
+    const polesOf = new Map();
     for (const input of inputs) {
       let numeric = null;
       try { numeric = withCoefficients(entries.get(input).value, values); } catch { numeric = null; }
@@ -6561,8 +6594,25 @@ function prepareObjective(circuit, problem = {}) {
         return { ...out, violation: UNSTABLE + 100 * Math.max(worst, 0), goal: 0 };
       }
       numbers.set(input, numeric);
+      polesOf.set(input, { poles: roots.poles, z });
     }
     specs.forEach((spec, i) => {
+      if (POLE_MEASURES.includes(spec.measure)) {
+        // The highest Q, or the largest radius, as dB of the goal or the
+        // limit (radius by its distance to the unit circle, 1 - r).
+        const found = polesOf.get(spec.input);
+        const measures = found?.poles ? poleMeasures(found.poles, found.z) : null;
+        const value = measures ? measures[spec.measure] : null;
+        out.specs[i] = value;
+        if (value === null) { violation += BROKEN; return; }
+        const db = spec.measure === 'q' ? 20 * Math.log10(value) : -20 * Math.log10(Math.max(1 - value, 1e-12));
+        const limitDb = Number.isFinite(spec.value) ? (spec.measure === 'q' ? 20 * Math.log10(spec.value) : -20 * Math.log10(Math.max(1 - spec.value, 1e-12))) : 0;
+        if (spec.action === 'minimize') goal += db;
+        else if (spec.action === 'maximize') goal -= db;
+        else if (spec.action === 'below') violation += miss(db - limitDb);
+        else violation += miss(limitDb - db);
+        return;
+      }
       const db = measureOf(numbers.get(spec.input), variable, grids[i], spec.measure);
       out.specs[i] = db;
       if (db === null) { violation += BROKEN; return; }
@@ -10876,6 +10926,7 @@ __exports.fractionsAround = fractionsAround;
 __exports.fractionText = fractionText;
 __exports.coefficientGroups = coefficientGroups;
 __exports.runRounding = runRounding;
+__exports.ditherFraction = ditherFraction;
 let createOptimizer, fitnessOf, pointValues, scoreRequest; __bind(() => { ({ createOptimizer, fitnessOf, pointValues, scoreRequest } = __require("src/core/analysis/optimize.js")); });
 let coefficientValue, signalFlowGraph; __bind(() => { ({ coefficientValue, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
 let expressionSymbols; __bind(() => { ({ expressionSymbols } = __require("src/core/analysis/bode.js")); });
@@ -11145,6 +11196,20 @@ function runRounding(objective, parameters, options) {
     step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
   }
   return { ...step.value, evaluations };
+}
+
+/**
+ * The dither's gain as a fraction of a block's n: dither of +-`steps`
+ * quantizer steps, entering the quantizer's block from the reference (the
+ * diagram's full scale, N - 1), is a gain k = 2 steps / fullScale; the
+ * smallest m/n at or above it, so the dither is at least what was set.
+ * Returns `{ m, n, gain, steps (realized) }`, or null without dither.
+ */
+function ditherFraction(steps, fullScale, n) {
+  if (!(steps > 0) || !(fullScale > 0) || !(n >= 1)) return null;
+  const gain = (2 * steps) / fullScale;
+  const m = Math.max(1, Math.ceil(gain * n - 1e-9));
+  return { m, n, gain, steps: ((m / n) * fullScale) / 2 };
 }
 
 };
@@ -12915,6 +12980,7 @@ __exports.TRACE_COLORS = TRACE_COLORS;
 
 __modules["src/core/analysis/simulate.js"] = function (__require, __exports) {
 __exports.ditherSettings = ditherSettings;
+__exports.ditherSteps = ditherSteps;
 __exports.quantize = quantize;
 __exports.realize = realize;
 __exports.prepareSimulation = prepareSimulation;
@@ -12958,18 +13024,30 @@ const JUNCTION_INPUTS = ['n', 's', 'w'];
 /** Schreier's quantizer (ds_quantize): odd levels for even N, even levels
  *  (with 0) for odd N, limited to +-(N - 1). */
 /**
- * Dither added at each quantizer's input (`{ shape, amplitude }`, the
- * amplitude in dBFS): 'rect' uniform over (-A, A), 'tri' triangular over
- * (-A, A), peaking at 0 (two uniforms). Its variance, in quantizer levels
- * squared (the white error it adds to the shaped noise beside the
- * quantizer's 1/3): A^2/3 or A^2/6. Null without dither.
+ * Dither added at each quantizer's input (`{ shape, steps }`): 'rect'
+ * uniform over (-A, A), 'tri' triangular over (-A, A), peaking at 0 (two
+ * uniforms), A in quantizer steps (levels 2 apart, so A = 2 steps in
+ * levels). The classic amounts: rectangular +-1/2 step makes the error's
+ * mean independent of the signal; triangular +-1 step its power too. A
+ * document from before steps gives `amplitude` in dBFS of full scale.
+ * Returns `{ shape, amplitude (levels), steps, variance }` -- the variance,
+ * in levels squared, the white error it adds beside the quantizer's 1/3:
+ * A^2/3 or A^2/6 -- or null without dither.
  */
 function ditherSettings(dither, fullScale) {
   if (!dither || !['rect', 'tri'].includes(dither.shape)) return null;
-  const db = Number(dither.amplitude);
-  if (!Number.isFinite(db)) return null;
-  const amplitude = fullScale * 10 ** (db / 20);
-  return { shape: dither.shape, amplitude, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
+  const steps = ditherSteps(dither, fullScale);
+  if (!(steps > 0)) return null;
+  const amplitude = 2 * steps;
+  return { shape: dither.shape, amplitude, steps, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
+}
+
+/** A dither's amplitude in quantizer steps (from dBFS for an older one). */
+function ditherSteps(dither, fullScale) {
+  const steps = Number(dither?.steps);
+  if (dither?.steps !== undefined && dither.steps !== '' && Number.isFinite(steps)) return steps;
+  const db = Number(dither?.amplitude);
+  return Number.isFinite(db) ? (fullScale * 10 ** (db / 20)) / 2 : NaN;
 }
 
 function quantize(y, levels) {
@@ -13035,8 +13113,8 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
- * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', amplitude
- * (dBFS) }`, at each quantizer's input; each run draws the same sequence).
+ * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', steps }`, at
+ * each quantizer's input, ditherSettings; each run draws the same sequence).
  * Returns `{ ok, fullScale, frequency, signals, run }`:
  * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at
@@ -21969,8 +22047,12 @@ function normalizeAnalysisValues(value) {
     ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
     ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
     ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
-    // Dither at the quantizers' inputs for the simulations: rect or tri, its amplitude in dBFS.
-    ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: { shape: rawFlow.dither.shape, amplitude: text(String(rawFlow.dither.amplitude ?? '-30')).slice(0, 20) } } : {}),
+    // Dither at the quantizers' inputs for the simulations: rect or tri.
+    // (In quantizer steps; an older document's in dBFS, `amplitude`.)
+    ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: {
+      shape: rawFlow.dither.shape,
+      ...(rawFlow.dither.steps !== undefined ? { steps: text(String(rawFlow.dither.steps)).slice(0, 20) } : { amplitude: text(String(rawFlow.dither.amplitude ?? '-30')).slice(0, 20) }),
+    } } : {}),
     // The coefficient optimizer's setup (analysis/optimize-setup.js).
     ...(rawFlow.optimize && typeof rawFlow.optimize === 'object' ? { optimize: normalizeOptimizeSetup(rawFlow.optimize) } : {}),
   } : null;
@@ -61243,8 +61325,10 @@ __exports.renderOptimize = renderOptimize;
 __exports.resetOptimize = resetOptimize;
 let diagramSymbols, signalFlowGraph; __bind(() => { ({ diagramSymbols, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
 let createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest } = __require("src/core/analysis/optimize.js")); });
-let normalizeOptimizeSetup; __bind(() => { ({ normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
-let coefficientGroups, roundingSearch; __bind(() => { ({ coefficientGroups, roundingSearch } = __require("src/core/analysis/rounding.js")); });
+let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
+let coefficientGroups, ditherFraction, roundingSearch; __bind(() => { ({ coefficientGroups, ditherFraction, roundingSearch } = __require("src/core/analysis/rounding.js")); });
+let ditherSteps; __bind(() => { ({ ditherSteps } = __require("src/core/analysis/simulate.js")); });
+let parseLevels; __bind(() => { ({ parseLevels } = __require("src/core/transfer-function.js")); });
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
@@ -61259,6 +61343,8 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
  * the coefficients, and Apply puts them into the sliders (Revert undoes
  * it). The setup is saved with the document (`analysisValues.flow.optimize`).
  */
+
+
 
 
 
@@ -61321,6 +61407,9 @@ const sourceName = (source) => (source.quantizer ? `${plainName(source.name)} (q
 function specText(spec, sources) {
   const source = sources.find((s) => s.id === spec.input);
   const action = { minimize: 'Minimize', maximize: 'Maximize', below: 'Keep below', above: 'Keep above' }[spec.action];
+  if (POLE_MEASURES.includes(spec.measure)) {
+    return `${action} the poles' ${spec.measure === 'q' ? 'highest Q' : 'largest radius'} of H from ${source ? plainName(source.name) : spec.input}${spec.value !== undefined ? ` (${spec.value})` : ''}`;
+  }
   const measure = { average: 'average', peak: 'peak', lowest: 'lowest' }[spec.measure];
   const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1} to ${spec.f2}`;
   return `${action} the ${measure} |H| from ${source ? plainName(source.name) : spec.input} ${band}${spec.value !== undefined ? ` (${spec.value} dB)` : ''}`;
@@ -61429,14 +61518,15 @@ function specList(current, sources) {
     const inputs = sources.map((s) => [s.id, sourceName(s)]);
     if (spec.input && !sources.some((s) => s.id === spec.input)) inputs.push([spec.input, `${spec.input} (gone)`]);
     const limit = spec.action === 'below' || spec.action === 'above';
+    const poles = POLE_MEASURES.includes(spec.measure);
     return el('div', { class: 'signal-flow-optimize-spec' }, [
       select('action', [['minimize', 'Minimize'], ['maximize', 'Maximize'], ['below', 'Keep below'], ['above', 'Keep above']], 'Goal or limit'),
-      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest']], 'Measure of the magnitude over the band'),
-      el('span', { class: 'signal-flow-optimize-word', text: '|H| from' }),
+      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest'], ['q', 'pole Q'], ['radius', 'pole radius']], 'Measure: of the magnitude over a band, or of the poles (the highest Q of a pair, the largest |z|)'),
+      el('span', { class: 'signal-flow-optimize-word', text: poles ? 'of H from' : '|H| from' }),
       select('input', inputs.length ? inputs : [['', '(no source)']], 'The transfer function, from this source to the output'),
-      select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band'),
-      ...(spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
-      ...(limit ? [field('value', 'dB', 'Limit, dB'), el('span', { class: 'signal-flow-optimize-word', text: 'dB' })] : []),
+      ...(poles ? [] : [select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band')]),
+      ...(!poles && spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
+      ...(limit ? [field('value', poles ? (spec.measure === 'q' ? 'Q' : '|z|') : 'dB', poles ? 'Limit' : 'Limit, dB'), ...(poles ? [] : [el('span', { class: 'signal-flow-optimize-word', text: 'dB' })])] : []),
       el('button', { type: 'button', class: 'signal-flow-legend-remove', text: '×', title: 'Remove this spec', 'aria-label': 'Remove this spec', onclick: () => { current.specs.splice(index, 1); changed(); renderOptimize(); } }),
     ]);
   });
@@ -61455,6 +61545,7 @@ function specList(current, sources) {
     ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
     el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the one set on the graph. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
+    el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of a pair of the transfer function\'s poles (a z pole read as s = ln z): how much it rings, at whatever frequency -- 0.5 for real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; the same radius rings more the higher its frequency. A loop\'s NTF and STF share their poles.' }),
   ]);
 }
 
@@ -61507,7 +61598,7 @@ function swingBlock(circuit, current, sources) {
       })));
     }
     const dither = api.flow().dither;
-    const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither at ${dither.amplitude} dBFS, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
+    const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''}, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
     children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
@@ -61549,8 +61640,11 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
     row('', startLabel, endLabel),
     ...specs.map((spec, i) => {
       const value = result.score.specs?.[i];
-      const ok = spec.action === 'below' ? value <= spec.value + 0.01 : spec.action === 'above' ? value >= spec.value - 0.01 : undefined;
-      return row(specText(spec, sources), db(result.start?.specs?.[i]), db(value), ok);
+      const poles = POLE_MEASURES.includes(spec.measure);
+      const tolerance = poles ? 1e-3 : 0.01;
+      const ok = spec.action === 'below' ? value <= spec.value + tolerance : spec.action === 'above' ? value >= spec.value - tolerance : undefined;
+      const show = (v) => (v === null || v === undefined ? '–' : poles ? (spec.measure === 'q' ? `Q ${v.toFixed(2)}` : `|z| ${v.toFixed(3)}`) : db(v));
+      return row(specText(spec, sources), show(result.start?.specs?.[i]), show(value), ok);
     }),
     ...(result.swing ? [row('Swing test', swingText(result.start), swingText(result.score), swingOk(result.score))] : []),
   ];
@@ -61588,13 +61682,20 @@ function revert() {
 
 // ----- rounding to fractions ------------------------------------------------------------
 
-const DENOMINATORS = [4, 8, 16, 32, 64, 128, 256];
-
 function roundingBlock(current) {
   const options = current.rounding;
-  const denominator = el('select', { 'aria-label': 'Largest n', onchange: (ev) => { options.denominator = Number(ev.target.value); changed(); renderOptimize(); } },
-    [...new Set([...DENOMINATORS, options.denominator])].sort((a, b) => a - b).map((n) => el('option', { value: String(n), text: String(n) })));
-  denominator.value = String(options.denominator);
+  // Any n from 1 to 1024.
+  const denominator = el('input', { type: 'text', inputmode: 'numeric', class: 'signal-flow-optimize-field', 'aria-label': 'Largest n', title: 'The largest n of m/n: any whole number up to 1024', value: String(options.denominator) });
+  denominator.addEventListener('change', () => {
+    const n = Math.round(Number(denominator.value));
+    const valid = n >= 1 && n <= 1024;
+    denominator.classList.toggle('invalid', !valid);
+    if (!valid) return;
+    options.denominator = n;
+    changed();
+    renderOptimize();
+  });
+
   const check = (key, text, title) => {
     const box = el('input', { type: 'checkbox', 'aria-label': text });
     box.checked = !!options[key];
@@ -61656,6 +61757,18 @@ function roundedBlock(sources) {
       ]));
     }
   }
+  // The dither, as one more gain into the quantizer's block.
+  const dither = roundedDither();
+  if (dither) {
+    rows.push(el('div', { class: 'signal-flow-optimize-subhead', text: `dither into ${dither.into ? plainName(api.circuit().labelOf?.(dither.into)?.text || dither.into) : 'the quantizer'}, from full scale` }));
+    rows.push(el('div', { class: 'signal-flow-optimize-fraction', title: `${dither.shape === 'rect' ? 'Rectangular' : 'Triangular'} dither of +-${Number(dither.wanted.toPrecision(3))} step needs a gain of ${Number(dither.gain.toPrecision(4))} of full scale (2 x steps / (N - 1)); the smallest fraction over its block's n at or above it gives +-${Number(dither.steps.toPrecision(3))} step. Apply sets the simulations' dither to that.` }, [
+      el('span', { class: 'signal-flow-optimize-math', text: 'dither' }),
+      el('span', { class: 'signal-flow-optimize-number signal-flow-optimize-found', text: `${dither.m}/${dither.n}` }),
+      el('span', { class: 'signal-flow-optimize-number', text: String(Number((dither.m / dither.n).toPrecision(4))), title: 'Its gain' }),
+      el('span', { class: 'signal-flow-optimize-number', text: `±${Number(dither.wanted.toPrecision(3))}`, title: 'The dither set, in steps' }),
+      el('span', { class: 'signal-flow-optimize-number', text: `±${Number(dither.steps.toPrecision(3))}`, title: 'The dither it gives, in steps' }),
+    ]));
+  }
   host.append(
     el('div', { class: 'signal-flow-optimize-heading', text: rounded.feasible ? 'Rounded: every limit met' : 'Rounded: the best compromise, missing a limit' }),
     el('div', { class: 'signal-flow-optimize-fraction signal-flow-optimize-head' }, ['', 'm/n', 'Value', 'Before', 'Change'].map((text) => el('span', { text }))),
@@ -61678,11 +61791,38 @@ function roundedBlock(sources) {
   return host;
 }
 
+/** The quantizers: their refdes, and the largest one's full scale (N - 1). */
+function quantizers() {
+  const refs = [];
+  let fullScale = 1;
+  for (const c of api.circuit().components.values()) {
+    if (c.type !== 'quantizer') continue;
+    refs.push(c.refdes);
+    try { fullScale = Math.max(fullScale, parseLevels(c.value) - 1); } catch { /* the simulation says why */ }
+  }
+  return { refs, fullScale };
+}
+
+/** With dither set: its gain as the smallest fraction over the quantizer
+ *  block's n (or the largest n allowed) that gives at least the dither. */
+function roundedDither() {
+  const dither = api.flow().dither;
+  if (!rounded || !dither || !['rect', 'tri'].includes(dither.shape)) return null;
+  const { refs, fullScale } = quantizers();
+  const steps = ditherSteps(dither, fullScale);
+  const block = rounded.groups.find((g) => refs.includes(g.into));
+  const fraction = ditherFraction(steps, fullScale, block?.n ?? setup().rounding.denominator);
+  return fraction ? { ...fraction, wanted: steps, into: block?.into || refs[0] || null, shape: dither.shape } : null;
+}
+
 function applyRounded() {
   if (!rounded) return;
   reverting = api.snapshotCoefficients();
   const numbers = Object.fromEntries(Object.entries(rounded.fractions).map(([name, f]) => [name, f.m / f.n]));
   const texts = Object.fromEntries(Object.entries(rounded.fractions).map(([name, f]) => [name, `${f.m}/${f.n}`]));
+  // The simulations' dither becomes what the rounded dither gain gives.
+  const dither = roundedDither();
+  if (dither && Math.abs(dither.steps - dither.wanted) > 1e-9) api.setDither({ ...api.flow().dither, steps: String(Number(dither.steps.toPrecision(6))) });
   api.applyCoefficients(numbers, { fractions: texts });
   renderOptimize();
 }
@@ -64665,13 +64805,13 @@ __exports.installSignalFlowUi = installSignalFlowUi;
 let TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
-let expressionTex; __bind(() => { ({ expressionTex } = __require("src/core/transfer-function.js")); });
+let expressionTex, parseLevels; __bind(() => { ({ expressionTex, parseLevels } = __require("src/core/transfer-function.js")); });
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
 let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
 let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
-let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
+let ditherSteps, prepareSimulation, sweepAmplitudes; __bind(() => { ({ ditherSteps, prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
 let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
@@ -64845,16 +64985,38 @@ function fillForm() {
   problems.hidden = !issues.length;
   section.querySelector('.signal-flow-stale').hidden = !latest || revisionCurrent(derivedRevision);
   fillSwingSources(sources);
-  // Another document: its own swing, not the last one's.
-  if (swingCircuit !== editor.circuit) {
-    swingCircuit = editor.circuit;
-    swing = null;
-    swingShown = null;
-    renderSwing();
-    resetOptimize();
-    optimized = false;
-  }
+  syncDocument();
   renderOptimize();
+}
+
+let shownDocument;
+/**
+ * The results belong to the document they were derived in: another one
+ * opened (not an undo, which replaces the circuit too) starts with none --
+ * no traces, results, locus, loop, spectrum, swing, or optimizer results.
+ * Traces of two diagrams are often named alike (OUT/E_QZ1), so another's
+ * kept would be drawn at this one's numbers.
+ */
+function syncDocument() {
+  const key = editor.currentDocumentPath || `unsaved:${editor.currentCircuitName || ''}`;
+  if (key === shownDocument) return;
+  const first = shownDocument === undefined;
+  shownDocument = key;
+  if (first) return;
+  traces = [];
+  latest = null;
+  locus = null;
+  loop = null;
+  spectrum = null;
+  swing = null;
+  swingShown = null;
+  optimized = false;
+  resetOptimize();
+  renderSwing();
+  renderLocus();
+  renderCoefficients({ force: true });
+  renderResults();
+  renderPlots();
 }
 
 // ----- root locus: the poles as one coefficient sweeps ----------------------------------
@@ -65071,7 +65233,6 @@ let swing = null;
 let swingRun = 0; // a sweep in progress stops when a newer one starts
 let swingShown = null; // keys of the nets on the plot
 let swingTimer = 0;
-let swingCircuit = null;
 const swingColors = new Map();
 const SWING_TONE = '\u0000tone';
 
@@ -65503,18 +65664,31 @@ function spectrumControls() {
 
 /** Dither at the quantizers' inputs for every simulation (the spectrum,
  *  the swing, the optimizer's swing test): none, rectangular, triangular. */
+/** The largest quantizer's full scale, N - 1 (1 with none). */
+function quantizerFullScale() {
+  let fullScale = 1;
+  for (const c of editor.circuit.components.values()) {
+    if (c.type !== 'quantizer') continue;
+    try { fullScale = Math.max(fullScale, parseLevels(c.value) - 1); } catch { /* the simulation says why */ }
+  }
+  return fullScale;
+}
+
 function ditherControls() {
   const settings = flow().dither || {};
+  // In quantizer steps; an older document's dBFS shown as the steps it is.
+  const steps = ditherSteps(settings, quantizerFullScale());
+  const stepsText = settings.steps ?? (Number.isFinite(steps) ? String(Number(steps.toPrecision(3))) : '0.5');
   const shape = el('select', { class: 'signal-flow-dither-shape', 'aria-label': 'Dither', title: 'Dither added at each quantizer\'s input: rectangular over (-A, A), or triangular over (-A, A) peaking at 0' }, [
     el('option', { value: 'none', text: 'No dither' }), el('option', { value: 'rect', text: 'Rectangular dither' }), el('option', { value: 'tri', text: 'Triangular dither' }),
   ]);
   shape.value = ['rect', 'tri'].includes(settings.shape) ? settings.shape : 'none';
-  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-dither-amplitude', value: settings.amplitude ?? '-30', 'aria-label': 'Dither amplitude, dBFS', title: 'A in dBFS of the quantizer\'s full scale N - 1 (levels are 2 apart: one level step is 20 log(2/(N - 1)) dBFS)' });
-  const unit = el('label', { class: 'signal-flow-dither-unit', text: 'dBFS' });
+  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-dither-amplitude', value: stepsText, 'aria-label': 'Dither amplitude, quantizer steps', title: 'The peak, +-A, in quantizer steps (the distance between two levels) -- the same for both shapes; triangular has half the power of rectangular at the same A. The classic amounts: rectangular +-0.5 step makes the quantization error\'s mean independent of the signal; triangular +-1 step (two +-0.5-step rectangles added) its power too. In a modulator the dither is shaped like the quantization noise: more costs in-band SNR and some stable amplitude.' });
+  const unit = el('label', { class: 'signal-flow-dither-unit', text: 'steps' });
   amplitude.hidden = unit.hidden = shape.value === 'none';
   const save = () => {
     amplitude.hidden = unit.hidden = shape.value === 'none';
-    flow().dither = { shape: shape.value, amplitude: amplitude.value.trim() || '-30' };
+    flow().dither = { shape: shape.value, steps: amplitude.value.trim() || '0.5' };
     markSettingsChanged();
     // Both places show it: keep them alike, and simulate again.
     for (const other of section.querySelectorAll('.signal-flow-dither')) if (!other.contains(shape)) other.replaceWith(ditherControls());
@@ -65525,6 +65699,17 @@ function ditherControls() {
   amplitude.addEventListener('change', save);
   amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
   return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit]);
+}
+
+/** The simulated in-band SNDR, and the amplitude it was simulated at, as a
+ *  legend line for an annotated magnitude plot (null without a spectrum and
+ *  a band). No " = " in it: a legend's coefficient lines are told apart by
+ *  that. */
+function sndrNote() {
+  if (!spectrum?.raw) return null;
+  const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
+  if (!measured) return null;
+  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: '#8a8f99' };
 }
 
 function spectrumStatus() {
@@ -65707,12 +65892,15 @@ function renderGraph() {
 /** The graph on the drawing: a plot annotation, each trace's equation a
  *  math label in its colour beside it (children of the box, moving with it). */
 function annotateGraph() {
+  syncDocument();
   const shown = shownTraces();
   const plot = graphPlot(shown);
   if (!plot) return;
   // The numbers the symbols were drawn with, under the legend.
   const used = [...new Set(shown.flatMap((trace) => resultSymbols(trace.value, trace.variable)))];
-  placePlot(plot, shown, used);
+  // A simulated spectrum on it: its SNDR in band under the traces.
+  const note = graphView() === 'magnitude' && plot.units === 'dBFS' ? sndrNote() : null;
+  placePlot(plot, note ? [...shown, note] : shown, used);
 }
 
 const PLOT_LEGEND_ROLE = 'plot-legend';
@@ -65814,6 +66002,7 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
  * plot from a fresh sweep of the nets it shows.
  */
 async function updatePlots() {
+  syncDocument();
   const circuit = editor.circuit;
   const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot);
   if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
@@ -65861,7 +66050,8 @@ function plotUpdate(plot) {
     if (!matched.length || matched.some((t) => !t)) return null;
     const view = plot.kind === 'step' ? 'step' : plot.quantity === 'phase' ? 'phase' : 'magnitude';
     const next = graphPlot(matched, view);
-    return next ? { plot: next, shown: matched, used: [...new Set(matched.flatMap((trace) => resultSymbols(trace.value, trace.variable)))] } : null;
+    const note = next?.units === 'dBFS' ? sndrNote() : null;
+    return next ? { plot: next, shown: note ? [...matched, note] : matched, used: [...new Set(matched.flatMap((trace) => resultSymbols(trace.value, trace.variable)))] } : null;
   }
   if (plot.kind === 'locus') {
     const entry = latest?.ok ? latest.entries.find((e) => e.label === plot.label) : null;
@@ -65967,6 +66157,7 @@ function rootRow(label, roots, variable, at = '') {
 }
 
 function derive() {
+  syncDocument();
   latest = analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
@@ -66052,10 +66243,22 @@ function installSignalFlowUi() {
         coefficientsChanged();
         coefficientsSettled();
       },
-      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() } }),
+      // The simulations' dither (rounding realizes it as a gain), shown again.
+      setDither(dither) {
+        flow().dither = dither;
+        delete flow().dither.amplitude;
+        markSettingsChanged();
+        for (const node of section.querySelectorAll('.signal-flow-dither')) node.replaceWith(ditherControls());
+      },
+      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() }, dither: flow().dither ? { ...flow().dither } : undefined }),
       restoreCoefficients(saved) {
         editor.circuit.analysisValues.coefficients = { ...saved.coefficients };
         editor.circuit.analysisValues.fractions = { ...saved.fractions };
+        // Revert puts back the dither Apply changed too.
+        if (saved.dither) {
+          flow().dither = { ...saved.dither };
+          for (const node of section.querySelectorAll('.signal-flow-dither')) node.replaceWith(ditherControls());
+        }
         renderCoefficients({ force: true });
         coefficientsChanged();
         coefficientsSettled();

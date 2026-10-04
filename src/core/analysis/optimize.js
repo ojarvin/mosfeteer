@@ -29,7 +29,7 @@ import { analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseA
 import { prepareSimulation } from './simulate.js';
 import { resolveCoefficients } from './coefficient-links.js';
 import { createCmaes, seededRandom } from './cmaes.js';
-import { normalizeOptimizeSetup } from './optimize-setup.js';
+import { POLE_MEASURES, normalizeOptimizeSetup } from './optimize-setup.js';
 
 const LOWEST_F = 1e-4;
 const NYQUIST = 0.5;
@@ -167,6 +167,27 @@ function measureOf(value, variable, grid, measure) {
   return 10 * Math.log10(Math.max(power, 1e-30));
 }
 
+/**
+ * A transfer function's poles as numbers: `q`, the highest Q of a complex
+ * pair (0.5 with none: a real pole is no resonance), and `radius`, the
+ * largest |z| (null in s). A z-plane pole maps to s = ln z (per sample), so
+ * Q = |s| / (2 |Re s|) -- the same measure in both planes, independent of
+ * the pole's frequency, where a radius means less damping the higher the
+ * frequency.
+ */
+export function poleMeasures(poles, z) {
+  let q = 0.5;
+  let radius = 0;
+  for (const p of poles) {
+    const r = Math.hypot(p.re, p.im);
+    if (z) radius = Math.max(radius, r);
+    const [sigma, omega] = z ? [Math.log(Math.max(r, 1e-300)), Math.atan2(p.im, p.re)] : [p.re, p.im];
+    if (Math.abs(omega) < 1e-9 || !(sigma < 0)) continue;
+    q = Math.max(q, Math.hypot(sigma, omega) / (2 * Math.abs(sigma)));
+  }
+  return { q, radius: z ? radius : null };
+}
+
 // The swing test: runs of this many samples at this many in-band
 // frequencies, each from these phases of the sine, the worst taken. A loop
 // near overload makes rare large excursions, so one finite run's peaks are
@@ -270,6 +291,12 @@ export function prepareObjective(circuit, problem = {}) {
   }
   const grids = [];
   for (const spec of specs) {
+    if (POLE_MEASURES.includes(spec.measure)) {
+      if ((spec.action === 'below' || spec.action === 'above') && !Number.isFinite(spec.value)) return failure(`a limit on the poles needs its ${spec.measure === 'q' ? 'Q' : 'radius'}`);
+      if (spec.measure === 'radius' && variable !== 'z') return failure('a pole radius is for a sampled result (|z|); use the pole Q for a continuous one');
+      grids.push(null);
+      continue;
+    }
     const intervals = specIntervals(spec, problem.band);
     if (!intervals?.length) return failure(spec.band === 'custom' ? 'a spec\'s band needs f1 < f2' : 'set the signal band (bw, and f0 for a band-pass signal) on the graph for the specs that read it');
     if ((spec.action === 'below' || spec.action === 'above') && !Number.isFinite(spec.value)) return failure('a limit spec needs its value in dB');
@@ -346,6 +373,7 @@ export function prepareObjective(circuit, problem = {}) {
     let goal = 0;
     const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
     const numbers = new Map();
+    const polesOf = new Map();
     for (const input of inputs) {
       let numeric = null;
       try { numeric = withCoefficients(entries.get(input).value, values); } catch { numeric = null; }
@@ -359,8 +387,25 @@ export function prepareObjective(circuit, problem = {}) {
         return { ...out, violation: UNSTABLE + 100 * Math.max(worst, 0), goal: 0 };
       }
       numbers.set(input, numeric);
+      polesOf.set(input, { poles: roots.poles, z });
     }
     specs.forEach((spec, i) => {
+      if (POLE_MEASURES.includes(spec.measure)) {
+        // The highest Q, or the largest radius, as dB of the goal or the
+        // limit (radius by its distance to the unit circle, 1 - r).
+        const found = polesOf.get(spec.input);
+        const measures = found?.poles ? poleMeasures(found.poles, found.z) : null;
+        const value = measures ? measures[spec.measure] : null;
+        out.specs[i] = value;
+        if (value === null) { violation += BROKEN; return; }
+        const db = spec.measure === 'q' ? 20 * Math.log10(value) : -20 * Math.log10(Math.max(1 - value, 1e-12));
+        const limitDb = Number.isFinite(spec.value) ? (spec.measure === 'q' ? 20 * Math.log10(spec.value) : -20 * Math.log10(Math.max(1 - spec.value, 1e-12))) : 0;
+        if (spec.action === 'minimize') goal += db;
+        else if (spec.action === 'maximize') goal -= db;
+        else if (spec.action === 'below') violation += miss(db - limitDb);
+        else violation += miss(limitDb - db);
+        return;
+      }
       const db = measureOf(numbers.get(spec.input), variable, grids[i], spec.measure);
       out.specs[i] = db;
       if (db === null) { violation += BROKEN; return; }
