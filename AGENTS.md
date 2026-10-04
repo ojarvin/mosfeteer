@@ -360,8 +360,9 @@ anywhere but a sampler or a DAC block, a continuous output of a sampled
 loop, a delay inside a continuous loop that is sampled, an undriven or
 doubly driven signal. **Optimize** searches the free coefficients (CMA-ES,
 `src/core/analysis/optimize.js`) against band specs on transfer functions
-and the swing test, feasibility first, scoring candidates in worker
-threads; the setup is document data (`analysisValues.flow.optimize`).
+and the swing test (limits on each net's 3-sigma level by default; each
+new best verified with long runs), feasibility first, scoring candidates
+in worker threads; the setup is document data (`analysisValues.flow.optimize`).
 Rounding (`rounding.js`) then makes the free coefficients fractions m/n,
 one n per block (`coefficientGroups`), kept as `analysisValues.fractions`.
 

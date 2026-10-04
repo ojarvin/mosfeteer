@@ -7,6 +7,9 @@ import { normalizeOptimizeSetup } from '../src/core/analysis/optimize-setup.js';
 import { fitnessOf, isFeasible, optimizationParameters, pointValues, prepareObjective, runOptimization, specIntervals, swingTestFrequencies, swingTestFrequency } from '../src/core/analysis/optimize.js';
 import { prepareSimulation } from '../src/core/analysis/simulate.js';
 
+// A short swing test, for the tests of the search itself.
+const QUICK = { swingRuns: 1, swingPhases: 1, swingSamples: 2048, verifySamples: 4096 };
+
 function diagram(lines, negatives = []) {
   const circuit = new Circuit();
   for (const line of lines) runCommand(circuit, line);
@@ -45,11 +48,11 @@ test('CMA-ES finds the minimum of a curved valley, the same run for the same see
 });
 
 test('the setup normalizes, and only free coefficients move: linked follow, timing stays', () => {
-  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {} }, evaluations: 3000, rounding: { denominator: 32, powersOfTwo: false, shared: true } });
+  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {}, measure: 'sigma3' }, evaluations: 3000, rounding: { denominator: 32, powersOfTwo: false, shared: true } });
   const setup = normalizeOptimizeSetup({ coefficients: { a: { fixed: true }, b: { min: '0.1', max: 'x' } }, specs: [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: '3.5' }, { action: 'bogus', band: 'custom', f1: 0.1, f2: 0.2 }], swing: { on: true, amplitude: '-2', limits: { 'net:N1': '-6', 'net:N2': 'none' } }, evaluations: 20 });
   assert.deepEqual(setup.coefficients, { a: { fixed: true }, b: { min: 0.1 } });
   assert.deepEqual(setup.specs, [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: 3.5 }, { action: 'minimize', measure: 'average', input: '', band: 'custom', f1: 0.1, f2: 0.2 }]);
-  assert.deepEqual(setup.swing, { on: true, amplitude: -2, input: '', frequency: '', limits: { 'net:N1': -6 } });
+  assert.deepEqual(setup.swing, { on: true, amplitude: -2, input: '', frequency: '', limits: { 'net:N1': -6 }, measure: 'sigma3' });
   assert.equal(setup.evaluations, 3000);
   // Saved with the document.
   const circuit = modulator();
@@ -125,14 +128,18 @@ test('the optimizer meets the limits and improves the goal, and says when the li
     specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }],
     swing: { on: true, amplitude: -6, input: 'U', limits: { [first]: 6, [second]: 12 } },
   };
-  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values, setup };
+  // A short swing test: this tests the search, not the statistics.
+  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values, setup, ...QUICK };
   const start = prepareObjective(circuit, problem).evaluate(values);
   assert.ok(start.violation > 0, 'the start misses H1\'s limit');
   const result = runOptimization(circuit, problem, { evaluations: 400, seed: 3 });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.feasible, true);
   assert.equal(result.best.score.swing.overloaded, false);
-  assert.ok(result.best.score.swing.peaks[first] <= 6 + 1e-9 && result.best.score.swing.peaks[second] <= 12 + 1e-9);
+  // The best is verified at length, its 3-sigma levels under the limits.
+  assert.equal(result.best.score.verified, true);
+  assert.equal(result.best.score.swing.held, result.best.score.swing.runs);
+  assert.ok(result.best.score.swing.levels[first] <= 6 + 0.01 && result.best.score.swing.levels[second] <= 12 + 0.01);
   // Meeting H1's limit (with the search's half-dB guard) costs a few dB of
   // the textbook loop's shaping, no more.
   assert.ok(result.best.score.specs[0] < start.specs[0] + 5, `${start.specs[0]} -> ${result.best.score.specs[0]}`);
@@ -247,7 +254,7 @@ test('rounding: every free coefficient a fraction over its block\'s n, none roun
   const circuit = scaledModulator();
   const values = { b_1: 0.43, k_1: 0.43, c_1: 0.71, k_2: 1.37 };
   const setup = { specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }], swing: { on: true, amplitude: -6, input: 'U' } };
-  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values, setup };
+  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values, setup, ...QUICK };
   const objective = prepareObjective(circuit, problem);
   const parameters = optimizationParameters(circuit, { values, setup });
   const groups = coefficientGroups(circuit, parameters.free.map((p) => p.name));
@@ -290,7 +297,7 @@ test('the swing test takes the worst of runs at two in-band frequencies, and kee
   const circuit = modulator();
   const sim = prepareSimulation(circuit, { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V' });
   const first = sim.signals.find((s) => s.role === 'state').key;
-  const problem = { output: 'V', sources: { U: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: { k_1: 1, k_2: 2 }, setup: { swing: { on: true, amplitude: -6, input: 'U' } } };
+  const problem = { output: 'V', sources: { U: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: { k_1: 1, k_2: 2 }, setup: { swing: { on: true, amplitude: -6, input: 'U', measure: 'peak' } } };
   const peak = prepareObjective(circuit, problem).evaluate({ k_1: 1, k_2: 2 }).swing.peaks[first];
   // Each run's peaks: the two-run test reads at least the one-run peak.
   const one = prepareObjective(circuit, { ...problem, swingRuns: 1 }).evaluate({ k_1: 1, k_2: 2 }).swing.peaks[first];
@@ -299,4 +306,23 @@ test('the swing test takes the worst of runs at two in-band frequencies, and kee
   const limited = (guard) => prepareObjective(circuit, { ...problem, swingGuard: guard, setup: { swing: { ...problem.setup.swing, limits: { [first]: peak + 0.3 } } } }).evaluate({ k_1: 1, k_2: 2 }).violation;
   assert.ok(limited(0.5) > 0);
   assert.equal(limited(0), 0);
+});
+
+test('a limit compares the 3-sigma level, the 4-sigma level, or the highest peak; the long test verifies', () => {
+  const circuit = modulator();
+  const sim = prepareSimulation(circuit, { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V' });
+  const first = sim.signals.find((s) => s.role === 'state').key;
+  const problem = (measure) => ({ output: 'V', sources: { U: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: { k_1: 1, k_2: 2 }, setup: { swing: { on: true, amplitude: -6, input: 'U', measure, limits: { [first]: 20 } } } });
+  const level = (measure) => prepareObjective(circuit, problem(measure)).evaluate({ k_1: 1, k_2: 2 }).swing.levels[first];
+  // Rarer is higher: 3 sigma under 4 sigma under the highest peak.
+  assert.ok(level('sigma3') < level('sigma4') && level('sigma4') <= level('peak') + 1e-9, `${level('sigma3')} ${level('sigma4')} ${level('peak')}`);
+  assert.equal(level('peak'), prepareObjective(circuit, problem('peak')).evaluate({ k_1: 1, k_2: 2 }).swing.peaks[first]);
+  // The long test: eight runs at the amplitude and two above it, all held.
+  const verified = prepareObjective(circuit, problem('sigma3')).verify({ k_1: 1, k_2: 2 });
+  assert.equal(verified.verified, true);
+  assert.deepEqual([verified.swing.runs, verified.swing.held, verified.swing.marginRuns, verified.swing.marginHeld], [8, 8, 2, 2]);
+  // An unstable loop: the long test says how many runs held.
+  const unstable = prepareObjective(circuit, { ...problem('sigma3'), setup: { swing: { ...problem('sigma3').setup.swing, amplitude: 6 } } }).verify({ k_1: 1, k_2: 2 });
+  assert.equal(unstable.swing.overloaded, true);
+  assert.ok(unstable.swing.held < unstable.swing.runs);
 });

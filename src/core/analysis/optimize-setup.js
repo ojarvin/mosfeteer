@@ -10,6 +10,7 @@ export const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest']);
 export const SPEC_BANDS = Object.freeze(['signal', 'outside', 'all', 'custom']);
 export const DEFAULT_EVALUATIONS = 3000;
 export const MAX_DENOMINATOR = 1024;
+export const SWING_LEVELS = Object.freeze(['sigma3', 'sigma4', 'peak']);
 
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
 const number = (value) => (value === '' || value === null || value === undefined ? null : Number(value));
@@ -72,6 +73,8 @@ export function normalizeOptimizeSetup(raw) {
       input: short(rawSwing.input),
       frequency: short(rawSwing.frequency, 40),
       limits,
+      // What a limit compares with: the 3-sigma or 4-sigma level, or the highest peak.
+      measure: SWING_LEVELS.includes(rawSwing.measure) ? rawSwing.measure : 'sigma3',
     },
     evaluations: evaluations >= 50 && evaluations <= 1e6 ? evaluations : DEFAULT_EVALUATIONS,
     // Rounding to fractions m/n: the largest n, powers of two only, one n per block.

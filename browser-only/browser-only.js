@@ -6101,6 +6101,7 @@ const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest']);
 const SPEC_BANDS = Object.freeze(['signal', 'outside', 'all', 'custom']);
 const DEFAULT_EVALUATIONS = 3000;
 const MAX_DENOMINATOR = 1024;
+const SWING_LEVELS = Object.freeze(['sigma3', 'sigma4', 'peak']);
 
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
 const number = (value) => (value === '' || value === null || value === undefined ? null : Number(value));
@@ -6163,6 +6164,8 @@ function normalizeOptimizeSetup(raw) {
       input: short(rawSwing.input),
       frequency: short(rawSwing.frequency, 40),
       limits,
+      // What a limit compares with: the 3-sigma or 4-sigma level, or the highest peak.
+      measure: SWING_LEVELS.includes(rawSwing.measure) ? rawSwing.measure : 'sigma3',
     },
     evaluations: evaluations >= 50 && evaluations <= 1e6 ? evaluations : DEFAULT_EVALUATIONS,
     // Rounding to fractions m/n: the largest n, powers of two only, one n per block.
@@ -6179,6 +6182,7 @@ __exports.SPEC_MEASURES = SPEC_MEASURES;
 __exports.SPEC_BANDS = SPEC_BANDS;
 __exports.DEFAULT_EVALUATIONS = DEFAULT_EVALUATIONS;
 __exports.MAX_DENOMINATOR = MAX_DENOMINATOR;
+__exports.SWING_LEVELS = SWING_LEVELS;
 };
 
 __modules["src/core/analysis/optimize.js"] = function (__require, __exports) {
@@ -6373,13 +6377,40 @@ function measureOf(value, variable, grid, measure) {
 const SWING_RUNS = 2;
 const SWING_SAMPLES = 4096;
 const SWING_PHASES = [0, 2.1];
-// The search keeps each net this far (dB) under its limit: a simulated
-// peak jitters with the coefficients' last digits, and the best point sits
-// on its limit. Its peaks are reported as they are.
-const SWING_GUARD = 0.5;
-// ... and the loop must also hold this far (dB) above the target amplitude:
-// a best point on the edge of running away falls off it with its last digits.
+// The search keeps each net this far (dB) under its limit (more for the
+// highest peak, the noisiest measure): the best point sits on its limit.
+const SWING_GUARD = { sigma3: 0.25, sigma4: 0.5, peak: 0.5 };
+// ... and the loop must also hold this far (dB) above the target amplitude.
 const SWING_MARGIN = 1;
+// A new best is verified at length: a loop runs away rarely and slowly near
+// its limit, which a short run does not live long enough to show. These
+// runs (16384 samples, four phases at each frequency, two more above the
+// amplitude) must all hold, and their levels are the ones reported.
+const VERIFY_SAMPLES = 16384;
+const VERIFY_PHASES = [0, 1.6, 3.1, 4.7];
+const VERIFY_MARGIN_PHASES = [0, 3.1];
+// What a limit compares with: the level |x| exceeds as rarely as a Gaussian
+// exceeds +-3 sigma (0.27% of samples) or +-4 sigma (0.0063%), or the
+// highest peak. The signals are not Gaussian: sigma names the rarity.
+const SWING_MEASURES = Object.freeze({ sigma3: 0.0027, sigma4: 6.334e-5, peak: 0 });
+
+/** The level a set of magnitudes exceeds in a fraction `rarity` of them
+ *  (the highest at 0). */
+function levelOf(arrays, rarity) {
+  let n = 0;
+  for (const a of arrays) n += a.length;
+  if (!n) return 0;
+  if (!rarity) {
+    let top = 0;
+    for (const a of arrays) for (let i = 0; i < a.length; i++) if (a[i] > top) top = a[i];
+    return top;
+  }
+  const all = new Float64Array(n);
+  let at = 0;
+  for (const a of arrays) { all.set(a, at); at += a.length; }
+  all.sort();
+  return all[Math.max(0, n - 1 - Math.floor(rarity * n))];
+}
 
 /** The swing test's frequencies: the one set, and others in the band
  *  (halfway from it to the farther band edge, or at 1.37 times it). */
@@ -6414,9 +6445,12 @@ function swingTestFrequency(swing, band) {
  * `dither` (the swing test's, as simulate.js takes it), and for the swing
  * test `swingRuns` (frequencies, 2), `swingPhases` (phases of the sine at
  * each, 2), `swingSamples` (4096), `swingGuard` (dB kept under each limit,
- * 0.5), `swingMargin` (dB above the amplitude it must hold at too, 1).
- * Returns `{ ok, evaluate(values) }`, `evaluate` giving `{ violation, goal,
- * specs (each spec's measure, dB), swing, unstable, error }`.
+ * by the measure), `swingMargin` (dB above the amplitude it must hold at
+ * too, 1), `verifySamples` (the long test's runs, 16384).
+ * Returns `{ ok, evaluate(values), verify(values) }`, each giving
+ * `{ violation, goal, specs (each spec's measure, dB), swing, unstable,
+ * error }`: `evaluate` the quick test a search ranks by, `verify` the long
+ * one (more runs, longer, and against the limits themselves).
  */
 function prepareObjective(circuit, problem = {}) {
   const setup = normalizeOptimizeSetup(problem.setup);
@@ -6450,10 +6484,66 @@ function prepareObjective(circuit, problem = {}) {
     samples: problem.swingSamples ?? SWING_SAMPLES,
     phases: SWING_PHASES.slice(0, problem.swingPhases ?? SWING_PHASES.length),
     limits: setup.swing.limits,
+    measure: setup.swing.measure,
+    rarity: SWING_MEASURES[setup.swing.measure],
+    guard: problem.swingGuard ?? SWING_GUARD[setup.swing.measure],
+    margin: problem.swingMargin ?? SWING_MARGIN,
   } : null;
   if (swing && !swing.input) return failure('pick the source the swing test\'s sine drives');
 
-  const evaluate = (values) => {
+  /**
+   * The swing test at `values`: runs at each frequency from each phase, the
+   * worst taken; each limited net's level (by the measure) against its
+   * limit less `guard`; the loop must hold at the amplitude, and at the
+   * margin above it in the runs from `marginPhases`. Returns `{ violation,
+   * swing: { overloaded, stableAt?, peaks (highest, dBFS), levels (by the
+   * measure, the limited nets), runs, held, marginRuns, marginHeld }, error }`.
+   */
+  const swingTest = (values, { samples, phases, marginPhases, guard }) => {
+    const sims = swing.frequencies.map((frequency) => prepareSimulation(circuit, { values, sources: problem.sources, input: swing.input, output: problem.output, frequency, samples, warmup: samples / 4, dither: problem.dither }));
+    const broken = sims.find((sim) => !sim.ok);
+    if (broken) return { error: broken.error };
+    const [sim] = sims;
+    const keys = Object.keys(swing.limits);
+    const indices = keys.map((key) => sim.signals.findIndex((signal) => signal.key === key)).filter((i) => i >= 0);
+    const runs = [];
+    for (const each of sims) {
+      for (const phase of phases) {
+        const run = each.run(swing.amplitude, { phase, levels: indices });
+        runs.push(run);
+        // A run that runs away settles it: no need for the rest.
+        if (run.overloaded) break;
+      }
+      if (runs.at(-1).overloaded) break;
+    }
+    const held = runs.filter((r) => !r.overloaded).length;
+    const total = sims.length * phases.length;
+    if (held < runs.length) {
+      // How far below the target it holds: a slope toward stability.
+      let stableAt = null;
+      for (const drop of [3, 6, 12, 24, 48]) {
+        if (!sim.run(swing.amplitude - drop).overloaded) { stableAt = swing.amplitude - drop; break; }
+      }
+      return { violation: stableAt === null ? 70 : 10 + (swing.amplitude - stableAt), swing: { overloaded: true, stableAt, runs: total, held } };
+    }
+    let violation = 0;
+    let marginHeld = 0;
+    for (const phase of marginPhases) if (!sim.run(swing.amplitude + swing.margin, { phase }).overloaded) marginHeld += 1;
+    const margin = marginHeld === marginPhases.length;
+    if (!margin) violation += 5;
+    const db = (v) => (v > 0 ? 20 * Math.log10(v / sim.fullScale) : -300);
+    const peaks = {};
+    sim.signals.forEach((signal, i) => { peaks[signal.key] = db(Math.max(...runs.map((r) => r.peaks[i]))); });
+    const levels = {};
+    for (const i of indices) {
+      const key = sim.signals[i].key;
+      levels[key] = db(levelOf(runs.map((r) => r.magnitudes[i]), swing.rarity));
+      violation += miss(levels[key] - (swing.limits[key] - guard));
+    }
+    return { violation, margin, swing: { overloaded: false, peaks, levels, runs: total, held, marginRuns: marginPhases.length, marginHeld } };
+  };
+
+  const score = (values, long) => {
     let violation = 0;
     let goal = 0;
     const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
@@ -6482,52 +6572,35 @@ function prepareObjective(circuit, problem = {}) {
       else violation += miss(spec.value - db);
     });
     if (swing) {
-      // The worst of a few runs: one run's peaks are chaotic in the
-      // coefficients, and a search would fit them to it.
-      const sims = swing.frequencies.map((frequency) => prepareSimulation(circuit, { values, sources: problem.sources, input: swing.input, output: problem.output, frequency, samples: swing.samples, warmup: swing.samples / 4, dither: problem.dither }));
-      const broken = sims.find((sim) => !sim.ok);
-      if (broken) return { ...out, violation: violation + BROKEN, goal, error: broken.error };
-      const [sim] = sims;
-      const runs = sims.flatMap((each) => swing.phases.map((phase) => each.run(swing.amplitude, { phase })));
-      const run = runs.find((r) => r.overloaded) || { overloaded: false, peaks: runs[0].peaks.map((_, i) => Math.max(...runs.map((r) => r.peaks[i]))) };
-      const margin = problem.swingMargin ?? SWING_MARGIN;
-      // Holding at the target, it must hold a little above it too.
-      if (!run.overloaded && margin > 0 && sim.run(swing.amplitude + margin).overloaded) {
-        out.margin = false;
-        violation += 5;
-      }
-      if (run.overloaded) {
-        // How far below the target it holds: a slope toward stability.
-        let stableAt = null;
-        for (const drop of [3, 6, 12, 24, 48]) {
-          if (!sim.run(swing.amplitude - drop).overloaded) { stableAt = swing.amplitude - drop; break; }
-        }
-        out.swing = { overloaded: true, stableAt };
-        violation += stableAt === null ? 70 : 10 + (swing.amplitude - stableAt);
-      } else {
-        const peaks = {};
-        sim.signals.forEach((signal, i) => { peaks[signal.key] = run.peaks[i] > 0 ? 20 * Math.log10(run.peaks[i] / sim.fullScale) : -300; });
-        for (const [key, limit] of Object.entries(swing.limits)) {
-          if (Object.hasOwn(peaks, key)) violation += miss(peaks[key] - (limit - (problem.swingGuard ?? SWING_GUARD)));
-        }
-        out.swing = { overloaded: false, peaks };
-      }
+      const tested = swingTest(values, long ? {
+        samples: problem.verifySamples ?? VERIFY_SAMPLES, phases: VERIFY_PHASES, marginPhases: VERIFY_MARGIN_PHASES, guard: 0,
+      } : { samples: swing.samples, phases: swing.phases, marginPhases: [0], guard: swing.guard });
+      if (tested.error) return { ...out, violation: violation + BROKEN, goal, error: tested.error };
+      violation += tested.violation;
+      out.swing = tested.swing;
+      if (tested.margin === false) out.margin = false;
     }
-    return { ...out, violation, goal };
+    return { ...out, violation, goal, ...(long ? { verified: true } : {}) };
   };
-  return { ok: true, evaluate, goals: goals.length, specs, swing };
+  // The quick test ranks a search's candidates; the long one verifies a
+  // new best and is what is reported.
+  return { ok: true, evaluate: (values) => score(values, false), verify: (values) => score(values, true), goals: goals.length, specs, swing };
 }
 
 /**
  * The search over `parameters` (optimizationParameters): `ask()` gives the
- * next candidates `[{ y, own, values, penalty }]` (the start point first),
- * `tell(scores)` takes their scores in order. CMA-ES, restarted from the
- * best point with twice the population whenever a run settles, until
- * `evaluations` are spent; `stopEarly` (a run with no goals) ends it at
- * the first candidate that meets every limit. `best` is the best so far:
- * `{ y, own, values, score, fitness }`.
+ * next candidates `[{ y, own, values, penalty, request }]` (the start point
+ * first), `tell(scores)` takes the scores of their `request`s in order -- a
+ * request is the numbers, for the quick test, or `{ verify: numbers }`, for
+ * the long one. CMA-ES, restarted from the best point with twice the
+ * population whenever a run settles, until `evaluations` are spent; with
+ * `verify`, each candidate that beats every one before it in the quick test
+ * is verified before it can be the best, so `best` is always verified (a
+ * short run's luck cannot win). `stopEarly` (a run with no goals) ends it at
+ * the first best that meets every limit. `best`: `{ y, own, values, score,
+ * fitness, quick (its quick score) }`; `start` the start's score.
  */
-function createOptimizer(parameters, { values = {}, links = {}, evaluations = 3000, seed = 1, sigma = 0.4, stopEarly = false } = {}) {
+function createOptimizer(parameters, { values = {}, links = {}, evaluations = 3000, seed = 1, sigma = 0.4, stopEarly = false, verify = false } = {}) {
   const n = parameters.free.length;
   const random = seededRandom(seed);
   let lambda = 4 + Math.floor(3 * Math.log(Math.max(n, 1)));
@@ -6535,59 +6608,107 @@ function createOptimizer(parameters, { values = {}, links = {}, evaluations = 30
   let spent = 0;
   let restarts = 0;
   let best = null;
+  let leader = null; // the best candidate by the quick test
+  let start = null;
   let pending = null;
   let started = false;
+  let exhausted = !n;
   let done = !n;
+  let verified = 0;
+  const queue = [];
   const point = (y) => ({ y, ...pointValues(parameters, y, { values, links }) });
 
   const ask = () => {
     if (done) return [];
+    if (queue.length) {
+      const list = queue.splice(0, 2);
+      pending = { verify: list };
+      return list.map((c) => ({ ...c, request: { verify: c.values } }));
+    }
     const ys = cma.ask();
     pending = { ys, start: !started };
     const list = ys.map(point);
-    if (!started) list.unshift(point(new Array(n).fill(0)));
+    if (!started) list.unshift({ ...point(new Array(n).fill(0)), isStart: true });
     started = true;
-    return list;
+    return list.map((c) => ({ ...c, request: c.values }));
+  };
+
+  const finish = () => {
+    if (spent >= evaluations) exhausted = true;
+    if (stopEarly && best && best.fitness < INFEASIBLE) { exhausted = true; queue.length = 0; }
+    done = exhausted && !queue.length;
   };
 
   const tell = (scores) => {
     if (!pending) return;
+    if (pending.verify) {
+      pending.verify.forEach((c, i) => {
+        verified += 1;
+        if (c.isStart) start = scores[i];
+        const fitness = fitnessOf(scores[i], c.penalty);
+        if (!best || fitness < best.fitness) best = { ...c, score: scores[i], fitness };
+      });
+      pending = null;
+      finish();
+      return;
+    }
     let list = scores;
     const candidates = pending.ys.map(point);
+    const entrants = [];
     if (pending.start) {
-      consider(point(new Array(n).fill(0)), scores[0]);
+      entrants.push({ candidate: { ...point(new Array(n).fill(0)), isStart: true }, score: scores[0] });
+      if (!verify) start = scores[0];
       list = scores.slice(1);
     }
     spent += scores.length;
     const fitness = candidates.map((c, i) => fitnessOf(list[i], c.penalty));
-    candidates.forEach((c, i) => consider(c, list[i], fitness[i]));
+    candidates.forEach((c, i) => entrants.push({ candidate: c, score: list[i], fitness: fitness[i] }));
     cma.tell(pending.ys, fitness);
     pending = null;
-    if (spent >= evaluations || (stopEarly && best && best.fitness < INFEASIBLE)) { done = true; return; }
+    // Without verifying, the best by the quick test; with it, the start is
+    // verified (it is what a result is compared with), and the generation's
+    // leader when it beats every candidate before it.
+    let leading = null;
+    for (const entry of entrants) {
+      const f = entry.fitness ?? fitnessOf(entry.score, entry.candidate.penalty);
+      if (!verify) {
+        if (!best || f < best.fitness) best = { ...entry.candidate, score: entry.score, fitness: f };
+        continue;
+      }
+      if (entry.candidate.isStart) queue.push({ ...entry.candidate, quick: entry.score });
+      if (!leading || f < leading.fitness) leading = { ...entry.candidate, quick: entry.score, fitness: f };
+    }
+    if (verify && leading && (!leader || leading.fitness < leader.fitness)) {
+      leader = leading;
+      if (!leading.isStart) queue.push(leading);
+    }
     if (cma.stopReason()) {
       // A settled run: again from the best point, with a wider population.
       restarts += 1;
       lambda *= 2;
-      cma = createCmaes({ mean: best ? [...best.y] : new Array(n).fill(0), sigma, lambda, random });
+      const from = best || leader;
+      cma = createCmaes({ mean: from ? [...from.y] : new Array(n).fill(0), sigma, lambda, random });
     }
+    finish();
   };
-
-  function consider(candidate, score, fitness = fitnessOf(score, candidate.penalty)) {
-    if (!best || fitness < best.fitness) best = { ...candidate, score, fitness };
-  }
 
   return {
     ask,
     tell,
     get best() { return best; },
+    get start() { return start; },
     get done() { return done; },
     stop() { done = true; },
     get evaluations() { return spent; },
+    get verified() { return verified; },
     get budget() { return evaluations; },
     get restarts() { return restarts; },
     get generation() { return cma?.generation ?? 0; },
   };
 }
+
+/** A request's score: the quick test, or the long one for `{ verify }`. */
+const scoreRequest = (objective, request) => (request && request.verify ? objective.verify(request.verify) : objective.evaluate(request));
 
 /** Whether a best candidate meets every limit. */
 const isFeasible = (best) => !!best && best.fitness < INFEASIBLE;
@@ -6610,15 +6731,18 @@ function runOptimization(circuit, problem, options = {}) {
     seed: options.seed,
     sigma: options.sigma,
     stopEarly: !objective.goals,
+    verify: options.verify ?? !!objective.swing,
   });
   while (!optimizer.done) {
     const batch = optimizer.ask();
-    optimizer.tell(batch.map((candidate) => objective.evaluate(candidate.values)));
+    optimizer.tell(batch.map((candidate) => scoreRequest(objective, candidate.request)));
     options.onGeneration?.(optimizer);
   }
   return { ok: true, best: optimizer.best, feasible: isFeasible(optimizer.best), parameters, objective, evaluations: optimizer.evaluations };
 }
 
+__exports.SWING_MEASURES = SWING_MEASURES;
+__exports.scoreRequest = scoreRequest;
 __exports.isFeasible = isFeasible;
 };
 
@@ -10752,7 +10876,7 @@ __exports.fractionsAround = fractionsAround;
 __exports.fractionText = fractionText;
 __exports.coefficientGroups = coefficientGroups;
 __exports.runRounding = runRounding;
-let createOptimizer, fitnessOf, pointValues; __bind(() => { ({ createOptimizer, fitnessOf, pointValues } = __require("src/core/analysis/optimize.js")); });
+let createOptimizer, fitnessOf, pointValues, scoreRequest; __bind(() => { ({ createOptimizer, fitnessOf, pointValues, scoreRequest } = __require("src/core/analysis/optimize.js")); });
 let coefficientValue, signalFlowGraph; __bind(() => { ({ coefficientValue, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
 let expressionSymbols; __bind(() => { ({ expressionSymbols } = __require("src/core/analysis/bode.js")); });
 let parseGain; __bind(() => { ({ parseGain } = __require("src/core/transfer-function.js")); });
@@ -10775,7 +10899,8 @@ let parseGain; __bind(() => { ({ parseGain } = __require("src/core/transfer-func
  * them (fitnessOf: every limit met first, then the goals). The search is a
  * generator of batches to score, so the editor can score them in worker
  * threads: it yields `{ batch, phase, step, steps }` and takes the batch's
- * scores back.
+ * scores back -- a batch item is the numbers (the quick test) or
+ * `{ verify: numbers }` (the long one: the start and the result).
  */
 
 
@@ -10937,7 +11062,9 @@ function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32
   const denominatorOf = new Map();
   const steps = groups.length;
 
-  const [startScore] = yield { batch: [resolvedOf(own)], phase: 'start', step: 0, steps };
+  // The start and the result are verified with the long test, the steps
+  // between ranked by the quick one.
+  const [startScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'start', step: 0, steps };
   let current = { score: startScore, fitness: fitnessOf(startScore) };
 
   while (remaining.length) {
@@ -10967,7 +11094,7 @@ function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32
       const optimizer = createOptimizer(sub, { values: own, links, evaluations: Math.min(800, 80 * rest.length + 100), seed: seed + remaining.length, sigma: 0.15 });
       while (!optimizer.done) {
         const candidates = optimizer.ask();
-        optimizer.tell(yield { batch: candidates.map((c) => c.values), phase: 'reoptimize', step: steps - remaining.length, steps });
+        optimizer.tell(yield { batch: candidates.map((c) => c.request), phase: 'reoptimize', step: steps - remaining.length, steps });
       }
       const found = optimizer.best;
       if (found && found.fitness < current.fitness) {
@@ -11001,8 +11128,9 @@ function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32
     fractions[t.name] = { m: t.m, n: t.n };
     current = { score: scores[best], fitness: fitnessOf(scores[best]) };
   }
+  const [finalScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'verify', step: steps, steps };
   return {
-    own, values: resolvedOf(own), score: current.score, fitness: current.fitness, fractions, start: startScore,
+    own, values: resolvedOf(own), score: finalScore, fitness: fitnessOf(finalScore), fractions, start: startScore,
     groups: groups.map((g) => ({ into: g.into, names: g.names, n: denominatorOf.get(g) })),
   };
 }
@@ -11014,7 +11142,7 @@ function runRounding(objective, parameters, options) {
   let evaluations = 0;
   while (!step.done) {
     evaluations += step.value.batch.length;
-    step = search.next(step.value.batch.map((values) => objective.evaluate(values)));
+    step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
   }
   return { ...step.value, evaluations };
 }
@@ -13212,9 +13340,14 @@ function prepareSimulation(circuit, options = {}) {
   });
 
   /** One amplitude's run; `record` keeps the output's samples over the
-   *  window; `phase` (radians) where the sine starts. */
-  const run = (amplitudeDb, { record = false, phase = 0 } = {}) => {
+   *  window, `levels` (true, or a list of signal indices) those nets'
+   *  magnitudes at each sample (`magnitudes`, by index, for quantiles);
+   *  `phase` (radians) where the sine starts. */
+  const run = (amplitudeDb, { record = false, levels = false, phase = 0 } = {}) => {
     const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
+    const wanted = levels === true ? signalList.map((_, i) => i) : Array.isArray(levels) ? levels : [];
+    const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(window) : null)) : null;
+    const leveled = magnitudes ? wanted.filter((i) => i >= 0 && i < signalList.length) : [];
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
     let X = new Float64Array(size);
     let next = new Float64Array(size);
@@ -13267,6 +13400,7 @@ function prepareSimulation(circuit, options = {}) {
       if (measuring) {
         for (let i = 0; i < cont.length; i++) { const v = Math.abs(Yc[i]); if (v > peaks[i]) peaks[i] = v; }
         for (let i = 0; i < disc.length; i++) { const v = Math.abs(Yd[i]); if (v > peaks[cont.length + i]) peaks[cont.length + i] = v; }
+        for (const i of leveled) magnitudes[i][n - warmup] = Math.abs(i < cont.length ? Yc[i] : Yd[i - cont.length]);
         if (outputIndex >= 0) {
           const y = outputIndex < cont.length ? Yc[outputIndex] : Yd[outputIndex - cont.length];
           if (recorded) recorded[n - warmup] = y;
@@ -13314,7 +13448,7 @@ function prepareSimulation(circuit, options = {}) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true };
     }
     const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
-    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}) };
+    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}) };
   };
 
   return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };
@@ -61039,7 +61173,7 @@ __exports.optimizeSection = optimizeSection;
 __exports.renderOptimize = renderOptimize;
 __exports.resetOptimize = resetOptimize;
 let diagramSymbols, signalFlowGraph; __bind(() => { ({ diagramSymbols, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
-let createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective } = __require("src/core/analysis/optimize.js")); });
+let createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest } = __require("src/core/analysis/optimize.js")); });
 let normalizeOptimizeSetup; __bind(() => { ({ normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 let coefficientGroups, roundingSearch; __bind(() => { ({ coefficientGroups, roundingSearch } = __require("src/core/analysis/rounding.js")); });
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
@@ -61110,6 +61244,7 @@ function changed() {
   api.markSettingsChanged();
 }
 
+const MEASURE_TEXT = { sigma3: '3-sigma level', sigma4: '4-sigma level', peak: 'highest peak' };
 const plainName = (name) => name.replace(/_\{([^}]*)\}/g, '_$1');
 const sourceName = (source) => (source.quantizer ? `${plainName(source.name)} (quantization error)` : plainName(source.name));
 
@@ -61264,12 +61399,17 @@ function swingBlock(circuit, current, sources) {
   if (real.some((s) => s.id === swing.input)) source.value = swing.input;
   else if (real.length) { swing.input = real[0].id; }
   const amplitude = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Amplitude, dBFS', value: String(swing.amplitude), onchange: (ev) => { const v = Number(ev.target.value); if (Number.isFinite(v)) { swing.amplitude = v; changed(); } } });
+  const measure = el('select', { 'aria-label': 'What a limit compares with', title: 'What each limit compares with. A net\'s 3-sigma level is the one its swing passes as rarely as a Gaussian passes +-3 sigma (0.27% of the samples); 4 sigma, 0.006%. The swings are not Gaussian: sigma names how rare. The highest peak is strict but noisy -- a loop near overload makes rare large excursions, so it scatters by dBs with the coefficients\' last digits.', onchange: (ev) => { swing.measure = ev.target.value; changed(); renderOptimize(); } }, [
+    el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
+  ]);
+  measure.value = swing.measure;
   const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: 'in band', 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
   const children = [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { class: 'signal-flow-spectrum-toggle' }, [toggle, el('span', { text: 'Stable at' })]), amplitude, el('label', { text: 'dBFS into' }), source, el('label', { text: 'at f/fs' }), frequency,
     ]),
+    ...(swing.on ? [el('div', { class: 'signal-flow-swing-controls' }, [el('label', { text: 'Limits on each net\'s' }), measure])] : []),
   ];
   if (swing.on) {
     // The nets to limit: the integrators' outputs and the quantizers'
@@ -61279,6 +61419,7 @@ function swingBlock(circuit, current, sources) {
     else {
       const shown = sim.signals.filter((s) => s.role === 'state' || s.role === 'quantizer-input' || Object.hasOwn(swing.limits, s.key));
       const peaks = found?.score?.swing?.peaks;
+      const levels = found?.score?.swing?.levels;
       children.push(el('div', { class: 'signal-flow-optimize-limits' }, shown.map((signal) => {
         const input = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: 'none', 'aria-label': `${signal.name}: limit, dBFS`, value: swing.limits[signal.key] ?? '' });
         input.addEventListener('change', () => {
@@ -61289,13 +61430,16 @@ function swingBlock(circuit, current, sources) {
           if (text) swing.limits[signal.key] = v; else delete swing.limits[signal.key];
           changed();
         });
-        const peak = peaks && Number.isFinite(peaks[signal.key]) ? `${peaks[signal.key].toFixed(1)}` : '';
-        return el('div', { class: 'signal-flow-optimize-limit' }, [math(signal.name), input, el('span', { class: 'signal-flow-optimize-word', text: 'dBFS' }), el('span', { class: 'signal-flow-optimize-number', text: peak, title: peak ? 'Its peak at the best numbers found, dBFS' : '' })]);
+        // At the best found: its level by the measure (if limited) and its highest peak.
+        const level = levels && Number.isFinite(levels[signal.key]) ? levels[signal.key].toFixed(1) : '';
+        const peak = peaks && Number.isFinite(peaks[signal.key]) ? peaks[signal.key].toFixed(1) : '';
+        const text = level && swing.measure !== 'peak' ? `${level} (${peak})` : peak;
+        return el('div', { class: 'signal-flow-optimize-limit' }, [math(signal.name), input, el('span', { class: 'signal-flow-optimize-word', text: 'dBFS' }), el('span', { class: 'signal-flow-optimize-number', text, title: text ? `At the best numbers found, verified at length: ${level && swing.measure !== 'peak' ? `its ${MEASURE_TEXT[swing.measure]} (its highest peak in brackets)` : 'its highest peak'}, dBFS` : '' })]);
       })));
     }
     const dither = api.flow().dither;
     const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither at ${dither.amplitude} dBFS, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
-    children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, and each net with a limit must peak under it (dBFS of the quantizer's full scale). Blank: no limit.${ditherText}` }));
+    children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
@@ -61322,14 +61466,16 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
   ]);
   const db = (v) => (v === null || v === undefined ? '–' : `${v.toFixed(1)} dB`);
   const limits = setup().swing.limits;
-  const over = (score) => Object.entries(limits).filter(([key, limit]) => score.swing.peaks?.[key] > limit + 0.01).length;
+  const over = (score) => Object.entries(limits).filter(([key, limit]) => (score.swing.levels?.[key] ?? score.swing.peaks?.[key]) > limit + 0.01).length;
   const swingText = (score) => {
     if (!score?.swing) return score?.unstable ? 'unstable' : '–';
-    if (score.swing.overloaded) return score.swing.stableAt !== null ? `holds to ${score.swing.stableAt} dBFS` : 'runs away';
+    const runs = score.swing.runs ? `${score.swing.held}/${score.swing.runs} held` : '';
+    if (score.swing.overloaded) return `${runs ? `${runs}; ` : ''}${score.swing.stableAt !== null ? `holds to ${score.swing.stableAt} dBFS` : 'runs away'}`;
     const count = over(score);
-    return count ? `${count} net${count === 1 ? '' : 's'} over` : 'within limits';
+    const margin = score.swing.marginRuns && score.swing.marginHeld < score.swing.marginRuns ? ', not 1 dB above' : '';
+    return `${runs}${margin}${count ? `, ${count} net${count === 1 ? '' : 's'} over` : ', within limits'}`;
   };
-  const swingOk = (score) => !!score?.swing && !score.swing.overloaded && !over(score);
+  const swingOk = (score) => !!score?.swing && !score.swing.overloaded && !over(score) && !(score.swing.marginHeld < score.swing.marginRuns);
   return [
     row('', startLabel, endLabel),
     ...specs.map((spec, i) => {
@@ -61503,7 +61649,7 @@ function roundCoefficients() {
         const scores = await pool.evaluate(batch);
         evaluations += batch.length;
         progress((k - (phase === 'round' ? 1 : 0.5)) / Math.max(1, steps));
-        say(`${phase === 'polish' ? 'Fine-tuning by one unit' : phase === 'reoptimize' ? `Re-optimizing the rest after ${k} of ${steps}` : phase === 'round' ? `Rounding ${k} of ${steps} ${options.shared ? 'blocks' : 'coefficients'}` : 'Scoring the start'}... ${evaluations} candidates${pool.count ? ` on ${pool.count} threads` : ''}`);
+        say(`${phase === 'polish' ? 'Fine-tuning by one unit' : phase === 'reoptimize' ? `Re-optimizing the rest after ${k} of ${steps}` : phase === 'round' ? `Rounding ${k} of ${steps} ${options.shared ? 'blocks' : 'coefficients'}` : phase === 'verify' ? 'Verifying the result at length' : 'Verifying the start at length'}... ${evaluations} candidates${pool.count ? ` on ${pool.count} threads` : ''}`);
         step = search.next(scores);
       }
       const result = step.value;
@@ -61579,8 +61725,8 @@ function localPool(circuit, problem) {
     async evaluate(batch) {
       const scores = [];
       let started = performance.now();
-      for (const values of batch) {
-        scores.push(objective.evaluate(values));
+      for (const request of batch) {
+        scores.push(scoreRequest(objective, request));
         if (performance.now() - started > 30) {
           await new Promise((resolve) => setTimeout(resolve, 0));
           started = performance.now();
@@ -61653,23 +61799,24 @@ function run() {
     async work({ pool, say, progress, stopped }) {
       const objectiveSpecs = normalizeOptimizeSetup(current).specs.filter((spec) => spec.input);
       const goals = objectiveSpecs.some((spec) => spec.action === 'minimize' || spec.action === 'maximize');
-      const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals });
-      let start = null;
+      const swingOn = normalizeOptimizeSetup(current).swing.on;
+      const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals, verify: swingOn });
       while (!optimizer.done && !stopped()) {
         const batch = optimizer.ask();
-        const scores = await pool.evaluate(batch.map((c) => c.values));
-        if (!start) start = scores[0];
+        const scores = await pool.evaluate(batch.map((c) => c.request));
         optimizer.tell(scores);
         progress(optimizer.evaluations / optimizer.budget);
         const best = optimizer.best;
         const goalText = objectiveSpecs.map((spec, i) => (spec.action === 'minimize' || spec.action === 'maximize') && Number.isFinite(best?.score?.specs?.[i]) ? `${best.score.specs[i].toFixed(1)} dB` : null).filter(Boolean).join(', ');
-        say(`${optimizer.evaluations} of ${optimizer.budget} candidates${pool.count ? ` on ${pool.count} threads` : ''}${optimizer.restarts ? `, restart ${optimizer.restarts}` : ''} -- best: ${isFeasible(best) ? `every limit met${goalText ? `, goal ${goalText}` : ''}` : 'still missing a limit'}`);
+        const verifying = batch.some((c) => c.request?.verify);
+        say(`${optimizer.evaluations} of ${optimizer.budget} candidates${pool.count ? ` on ${pool.count} threads` : ''}${optimizer.restarts ? `, restart ${optimizer.restarts}` : ''}${optimizer.verified ? `, ${optimizer.verified} verified at length` : ''}${verifying ? ' (verifying a new best)' : ''} -- best: ${!best ? 'none verified yet' : isFeasible(best) ? `every limit met${goalText ? `, goal ${goalText}` : ''}` : 'still missing a limit'}`);
       }
       const best = optimizer.best;
+      if (!best) return { text: 'Stopped before any candidate was verified.', error: true };
       found = {
         own: Object.fromEntries(parameters.free.map((p) => [p.name, best.own[p.name]])),
         score: best.score,
-        start,
+        start: optimizer.start,
         feasible: isFeasible(best),
         specs: objectiveSpecs,
         swing: normalizeOptimizeSetup(current).swing.on,

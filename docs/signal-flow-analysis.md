@@ -309,18 +309,33 @@ The criteria:
   frequency.
 - **Swing test**: the diagram simulated (the swing's simulator) with a sine
   of a given amplitude into one source, at a set f/fs or the band's middle.
-  It must not run away, and each net with a limit (dBFS) must peak under it.
-  The integrators' outputs and the quantizers' inputs are listed for limits.
-  Near overload a loop makes rare large excursions, so one finite run's
-  peaks are chaotic in the coefficients' last digits, and a search fits
-  them to the runs it sees. So the test is the worst of four runs of 4096
-  samples (two in-band frequencies, `swingTestFrequencies`, each from two
-  phases of the sine); the search keeps each net 0.5 dB under its limit and
-  needs the loop to hold 1 dB above the amplitude too. A best point's peaks
-  still scatter by a dB or two under a change in its last digits: the
-  limits are statistical near the edge, and worth some margin. With no
-  limit on a quantizer's input, a search tends to drive the gains into it to
-  extremes; a limit a few dB over full scale keeps them sane.
+  It must not run away, there and 1 dB above, and each net with a limit
+  (dBFS) must stay under it. A limit compares with the net's **3-sigma
+  level** (the default), its 4-sigma level, or its highest peak: the level
+  its swing passes as rarely as a Gaussian passes +-3 sigma (0.27% of the
+  samples), or +-4 sigma (0.0063%). The swings are not Gaussian -- sigma
+  names how rare. The integrators' outputs and the quantizers' inputs are
+  listed for limits, each with its level and, in brackets, its highest
+  peak at the best numbers.
+
+  Why not the highest peak: near overload a loop makes rare large
+  excursions, so the highest peak over a finite run is heavy-tailed. Under a
+  change of one part in 10^4 in the coefficients it moved by up to 6 dB
+  (standard deviation about 1.4 dB) where the 3-sigma level moved by 0.2
+  dB, and a search fits a noisy measure to the runs it happens to see. A
+  loop near its stable amplitude also runs away rarely and slowly: a
+  4096-sample run passed a design that ran away in every 16k-sample run 1
+  dB above the target.
+
+  So candidates are ranked by a quick test (four runs of 4096 samples: two
+  in-band frequencies, `swingTestFrequencies`, each from two phases, the
+  levels kept a quarter dB inside the limits, one run 1 dB above the
+  amplitude), and each new best is verified with a long one before it can
+  be the best: eight runs of 16384 samples (four phases at each frequency)
+  and two more 1 dB above, which must all hold, against the limits
+  themselves. The verified numbers are the ones reported ("8/8 held").
+  With no limit on a quantizer's input, a search tends to drive the gains
+  into it to extremes; a limit a few dB over full scale keeps them sane.
 
 Candidates are ranked by feasibility first: one that meets every limit
 beats any that misses one; among those that miss, the smaller total miss
@@ -355,8 +370,10 @@ rounded worst goes first, then the coefficients still free are re-optimized
 to win back what it cost (one may stand in for another: a resonator needs
 its product of gains), and so on; at the end each is moved by one unit, 1/n,
 while that helps. It starts from the coefficients' numbers now, so run the
-optimizer and Apply first. The result lists each block's n and each
-coefficient's fraction, value, number before and change, the specs and swing
+optimizer and Apply first. The start and the result are verified with the
+long test, the steps between ranked by the quick one. The result lists
+each block's n and each coefficient's fraction, value, number before and
+change, the specs and swing
 test before and after, and names a gain far smaller than its block-mates
 (it needs a large n there). **Apply** writes the fractions exactly; a
 coefficient keeps its fraction in its field and in plot legends

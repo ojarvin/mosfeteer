@@ -413,9 +413,14 @@ export function prepareSimulation(circuit, options = {}) {
   });
 
   /** One amplitude's run; `record` keeps the output's samples over the
-   *  window; `phase` (radians) where the sine starts. */
-  const run = (amplitudeDb, { record = false, phase = 0 } = {}) => {
+   *  window, `levels` (true, or a list of signal indices) those nets'
+   *  magnitudes at each sample (`magnitudes`, by index, for quantiles);
+   *  `phase` (radians) where the sine starts. */
+  const run = (amplitudeDb, { record = false, levels = false, phase = 0 } = {}) => {
     const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
+    const wanted = levels === true ? signalList.map((_, i) => i) : Array.isArray(levels) ? levels : [];
+    const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(window) : null)) : null;
+    const leveled = magnitudes ? wanted.filter((i) => i >= 0 && i < signalList.length) : [];
     const amplitude = fullScale * 10 ** (amplitudeDb / 20);
     let X = new Float64Array(size);
     let next = new Float64Array(size);
@@ -468,6 +473,7 @@ export function prepareSimulation(circuit, options = {}) {
       if (measuring) {
         for (let i = 0; i < cont.length; i++) { const v = Math.abs(Yc[i]); if (v > peaks[i]) peaks[i] = v; }
         for (let i = 0; i < disc.length; i++) { const v = Math.abs(Yd[i]); if (v > peaks[cont.length + i]) peaks[cont.length + i] = v; }
+        for (const i of leveled) magnitudes[i][n - warmup] = Math.abs(i < cont.length ? Yc[i] : Yd[i - cont.length]);
         if (outputIndex >= 0) {
           const y = outputIndex < cont.length ? Yc[outputIndex] : Yd[outputIndex - cont.length];
           if (recorded) recorded[n - warmup] = y;
@@ -515,7 +521,7 @@ export function prepareSimulation(circuit, options = {}) {
       if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true };
     }
     const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
-    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}) };
+    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}) };
   };
 
   return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };

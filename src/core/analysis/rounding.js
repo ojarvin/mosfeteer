@@ -17,10 +17,11 @@
  * them (fitnessOf: every limit met first, then the goals). The search is a
  * generator of batches to score, so the editor can score them in worker
  * threads: it yields `{ batch, phase, step, steps }` and takes the batch's
- * scores back.
+ * scores back -- a batch item is the numbers (the quick test) or
+ * `{ verify: numbers }` (the long one: the start and the result).
  */
 
-import { createOptimizer, fitnessOf, pointValues } from './optimize.js';
+import { createOptimizer, fitnessOf, pointValues, scoreRequest } from './optimize.js';
 import { coefficientValue, signalFlowGraph } from './signal-flow.js';
 import { expressionSymbols } from './bode.js';
 import { parseGain } from '../transfer-function.js';
@@ -179,7 +180,9 @@ export function* roundingSearch(parameters, { values = {}, links = {}, denominat
   const denominatorOf = new Map();
   const steps = groups.length;
 
-  const [startScore] = yield { batch: [resolvedOf(own)], phase: 'start', step: 0, steps };
+  // The start and the result are verified with the long test, the steps
+  // between ranked by the quick one.
+  const [startScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'start', step: 0, steps };
   let current = { score: startScore, fitness: fitnessOf(startScore) };
 
   while (remaining.length) {
@@ -209,7 +212,7 @@ export function* roundingSearch(parameters, { values = {}, links = {}, denominat
       const optimizer = createOptimizer(sub, { values: own, links, evaluations: Math.min(800, 80 * rest.length + 100), seed: seed + remaining.length, sigma: 0.15 });
       while (!optimizer.done) {
         const candidates = optimizer.ask();
-        optimizer.tell(yield { batch: candidates.map((c) => c.values), phase: 'reoptimize', step: steps - remaining.length, steps });
+        optimizer.tell(yield { batch: candidates.map((c) => c.request), phase: 'reoptimize', step: steps - remaining.length, steps });
       }
       const found = optimizer.best;
       if (found && found.fitness < current.fitness) {
@@ -243,8 +246,9 @@ export function* roundingSearch(parameters, { values = {}, links = {}, denominat
     fractions[t.name] = { m: t.m, n: t.n };
     current = { score: scores[best], fitness: fitnessOf(scores[best]) };
   }
+  const [finalScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'verify', step: steps, steps };
   return {
-    own, values: resolvedOf(own), score: current.score, fitness: current.fitness, fractions, start: startScore,
+    own, values: resolvedOf(own), score: finalScore, fitness: fitnessOf(finalScore), fractions, start: startScore,
     groups: groups.map((g) => ({ into: g.into, names: g.names, n: denominatorOf.get(g) })),
   };
 }
@@ -256,7 +260,7 @@ export function runRounding(objective, parameters, options) {
   let evaluations = 0;
   while (!step.done) {
     evaluations += step.value.batch.length;
-    step = search.next(step.value.batch.map((values) => objective.evaluate(values)));
+    step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
   }
   return { ...step.value, evaluations };
 }
