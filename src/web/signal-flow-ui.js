@@ -498,7 +498,7 @@ function refreshTestFrequencies() {
   const fallback = testFrequency('');
   const text = `${Number(fallback.toPrecision(3))}`;
   for (const field of section?.querySelectorAll('.signal-flow-test-frequency') || []) {
-    field.placeholder = editor.circuit.analysisValues.band ? `${text} (in band)` : text;
+    field.placeholder = text;
   }
 }
 
@@ -895,7 +895,7 @@ function spectrumControls() {
   frequency.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
   frequency.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
   const fallback = testFrequency('');
-  frequency.placeholder = `${Number(fallback.toPrecision(3))}${editor.circuit.analysisValues.band ? ' (in band)' : ''}`;
+  frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
     el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
     ditherControls(),

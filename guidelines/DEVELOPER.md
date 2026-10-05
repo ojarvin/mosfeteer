@@ -262,6 +262,18 @@ See `/tmp/opencode/` for existing examples (`mos_label_test.mjs`,
   it. If a comment explains a non-obvious invariant or trade-off, keep it.
 - **One style per file.** Match surrounding code; if the file uses tabs,
   use tabs; if `const`, then `const`.
+- **One design language for the UI.** `src/web/style.css` `:root` holds
+  the tokens every window, view, and control uses: the type scale
+  (`--text-xs` ... `--text-2xl`), the radii (`--radius-xs` ... `--radius-lg`,
+  `--radius-pill`), the control heights (`--control-h`, `--control-h-sm`),
+  `--focus-ring`, `--accent-tint`, `--shadow-window`. Write no literal font
+  size, radius, or color in a new rule. The shared patterns: a group's
+  heading is the small uppercase section label; a group of fields is one
+  bordered, faintly filled box; a segmented control's choice is raised out
+  of its track, while a toggle or chip that is on shows accent text on
+  `--accent-tint`; a highlighted menu item is a solid accent row; a dialog
+  or window ends in a row of plain-word actions (`.dialog-actions`, no
+  icons), the default one filled (`.primary-action` or `.confirm-action`).
 - **Don't fight `eval`.** It is the single source of truth for "is this
   drawing OK?". Add a new violation category there, don't paper over it in
   the renderer.

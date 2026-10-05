@@ -231,7 +231,7 @@ function swingBlock(circuit, current, sources) {
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
-  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}${api.band() ? ' (in band)' : ''}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
   const children = [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
     el('div', { class: 'signal-flow-swing-controls' }, [

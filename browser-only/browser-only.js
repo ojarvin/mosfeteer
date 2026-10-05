@@ -62168,7 +62168,7 @@ function swingBlock(circuit, current, sources) {
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
-  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}${api.band() ? ' (in band)' : ''}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
   const children = [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -65999,7 +65999,7 @@ function refreshTestFrequencies() {
   const fallback = testFrequency('');
   const text = `${Number(fallback.toPrecision(3))}`;
   for (const field of section?.querySelectorAll('.signal-flow-test-frequency') || []) {
-    field.placeholder = editor.circuit.analysisValues.band ? `${text} (in band)` : text;
+    field.placeholder = text;
   }
 }
 
@@ -66396,7 +66396,7 @@ function spectrumControls() {
   frequency.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
   frequency.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
   const fallback = testFrequency('');
-  frequency.placeholder = `${Number(fallback.toPrecision(3))}${editor.circuit.analysisValues.band ? ' (in band)' : ''}`;
+  frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
     el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
     ditherControls(),
