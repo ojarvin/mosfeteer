@@ -16,6 +16,33 @@ export const MAX_DENOMINATOR = 1024;
 export const SWING_LEVELS = Object.freeze(['sigma3', 'sigma4', 'peak']);
 
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+
+/** A frequency as typed, f/fs: a number (0.004) or a fraction (1/256); NaN otherwise. */
+export function frequencyNumber(text) {
+  const raw = String(text ?? '').trim();
+  const match = raw.match(/^(\d*\.?\d+)\s*\/\s*(\d*\.?\d+)$/);
+  return match ? Number(match[1]) / Number(match[2]) : raw === '' ? NaN : Number(raw);
+}
+
+/** The text to keep beside a frequency's number: a fraction as typed
+ *  (`1/256`), so a field shows it again; none for a plain number. */
+export function frequencyText(text) {
+  const raw = String(text ?? '').trim().replace(/\s+/g, '');
+  return /^\d*\.?\d+\/\d*\.?\d+$/.test(raw) && raw.length <= 40 ? raw : null;
+}
+
+/** The signal band, `{ f0, bw }` in f/fs, each with its typed fraction
+ *  (`text: { bw: '1/128' }`) when it was one; null without a bandwidth. */
+export function normalizeBand(raw) {
+  const bw = Number(raw?.bw);
+  if (!(bw > 0)) return null;
+  const text = {};
+  for (const key of ['f0', 'bw']) {
+    const typed = frequencyText(raw?.text?.[key]);
+    if (typed && Math.abs(frequencyNumber(typed) - (key === 'bw' ? bw : Number(raw.f0) || 0)) < 1e-12) text[key] = typed;
+  }
+  return { f0: Math.max(0, Number(raw.f0) || 0), bw, ...(Object.keys(text).length ? { text } : {}) };
+}
 const number = (value) => (value === '' || value === null || value === undefined ? null : Number(value));
 const short = (value, length = 200) => (typeof value === 'string' ? value.slice(0, length) : '');
 
@@ -24,16 +51,19 @@ function normalizeSpec(raw) {
   const action = SPEC_ACTIONS.includes(raw.action) ? raw.action : 'minimize';
   const measure = SPEC_MEASURES.includes(raw.measure) ? raw.measure : 'average';
   const band = SPEC_BANDS.includes(raw.band) ? raw.band : 'signal';
-  const f1 = number(raw.f1);
-  const f2 = number(raw.f2);
+  // A band end typed as a fraction keeps its text (f1Text) beside its number.
+  const f1 = typeof raw.f1 === 'string' ? frequencyNumber(raw.f1) : number(raw.f1);
+  const f2 = typeof raw.f2 === 'string' ? frequencyNumber(raw.f2) : number(raw.f2);
+  const f1Text = frequencyText(typeof raw.f1 === 'string' ? raw.f1 : raw.f1Text);
+  const f2Text = frequencyText(typeof raw.f2 === 'string' ? raw.f2 : raw.f2Text);
   const value = number(raw.value);
   return {
     action,
     measure,
     input: short(raw.input),
     band,
-    ...(band === 'custom' && finite(f1) ? { f1 } : {}),
-    ...(band === 'custom' && finite(f2) ? { f2 } : {}),
+    ...(band === 'custom' && finite(f1) ? { f1, ...(f1Text && Math.abs(frequencyNumber(f1Text) - f1) < 1e-12 ? { f1Text } : {}) } : {}),
+    ...(band === 'custom' && finite(f2) ? { f2, ...(f2Text && Math.abs(frequencyNumber(f2Text) - f2) < 1e-12 ? { f2Text } : {}) } : {}),
     ...((action === 'below' || action === 'above') && finite(value) ? { value } : {}),
   };
 }

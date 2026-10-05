@@ -207,8 +207,8 @@ period and at every impulse. Refused: a continuous diagram with no sampler
 (no clock), a quantizer in a loop with no delay, a delay on a continuous
 signal outside a DAC block, a block with more zeros than poles.
 
-The **signal band**, f0 and bw in f/fs, is one setting above the plot
-views: a dashed line on the response graph at bw for a baseband signal,
+The **signal band**, f0 and bw in f/fs (a number or a fraction, `1/256`,
+kept as typed: `normalizeBand`), is one setting above the plot views: a dashed line on the response graph at bw for a baseband signal,
 two at f0 +- bw/2 otherwise (`bandEdges`), the band the specs and the SQNR
 read, and where each test's sine sits unless set. Each test keeps its own
 frequency -- the swing's, the spectrum's, the optimizer's swing test --

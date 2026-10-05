@@ -33,6 +33,7 @@ import { logLine } from './status-bar-ui.js';
 import { buttonIcon } from './icons.js';
 import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js';
 import { swingTestFrequency } from '../core/analysis/optimize.js';
+import { normalizeBand } from '../core/analysis/optimize-setup.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
 const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
@@ -978,14 +979,16 @@ function fraction(text) {
 function bandControls() {
   const band = editor.circuit.analysisValues.band;
   const field = (key, label, title) => {
-    const input = el('input', { type: 'text', class: 'signal-flow-band-field', value: band?.[key] ? String(Number(band[key].toPrecision(6))) : '', placeholder: key === 'f0' ? '0' : '-', 'aria-label': label, title });
+    // A fraction shows as typed (1/256), a number as its digits.
+    const input = el('input', { type: 'text', class: 'signal-flow-band-field', value: band?.text?.[key] ?? (band?.[key] ? String(Number(band[key].toPrecision(6))) : ''), placeholder: key === 'f0' ? '0' : '-', 'aria-label': label, title });
     // Applied as typed; only the plot redraws, so the field keeps its focus.
     input.addEventListener('input', () => {
       const f0 = fraction(row.querySelector('[data-key=f0]').value || '0');
       const bwText = row.querySelector('[data-key=bw]').value.trim();
       const bw = fraction(bwText);
       if (bwText && !(bw > 0 && f0 >= 0)) return;
-      editor.circuit.analysisValues.band = bwText ? { f0: f0 || 0, bw } : undefined;
+      const f0Text = row.querySelector('[data-key=f0]').value;
+      editor.circuit.analysisValues.band = bwText ? normalizeBand({ f0: f0 || 0, bw, text: { f0: f0Text, bw: bwText } }) || undefined : undefined;
       markSettingsChanged();
       redrawGraphPlot();
       renderResults();

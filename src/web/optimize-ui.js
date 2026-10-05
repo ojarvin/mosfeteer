@@ -78,7 +78,7 @@ function specText(spec, sources) {
     return `${action} the poles' ${spec.measure === 'q' ? 'highest Q' : 'largest radius'} of H from ${source ? plainName(source.name) : spec.input}${spec.value !== undefined ? ` (${spec.value})` : ''}`;
   }
   const measure = { average: 'average', peak: 'peak', lowest: 'lowest' }[spec.measure];
-  const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1} to ${spec.f2}`;
+  const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1Text ?? spec.f1} to ${spec.f2Text ?? spec.f2}`;
   return `${action} the ${measure} |H| from ${source ? plainName(source.name) : spec.input} ${band}${spec.value !== undefined ? ` (${spec.value} dB)` : ''}`;
 }
 
@@ -181,7 +181,8 @@ function specList(current, sources) {
       node.value = spec[key];
       return node;
     };
-    const field = (key, placeholder, label) => el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder, 'aria-label': label, value: spec[key] ?? '', onchange: (ev) => { spec[key] = ev.target.value.trim() === '' ? undefined : Number(ev.target.value); save(); } });
+    // f1 and f2 take a fraction (1/256) and show it again as typed.
+    const field = (key, placeholder, label) => el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder, 'aria-label': label, value: spec[`${key}Text`] ?? spec[key] ?? '', onchange: (ev) => { const text = ev.target.value.trim(); delete spec[`${key}Text`]; spec[key] = text === '' ? undefined : text; save(); } });
     const inputs = sources.map((s) => [s.id, sourceName(s)]);
     if (spec.input && !sources.some((s) => s.id === spec.input)) inputs.push([spec.input, `${spec.input} (gone)`]);
     const limit = spec.action === 'below' || spec.action === 'above';

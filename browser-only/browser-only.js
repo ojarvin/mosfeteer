@@ -6088,6 +6088,9 @@ __exports.NOISE_PREFIXES = NOISE_PREFIXES;
 };
 
 __modules["src/core/analysis/optimize-setup.js"] = function (__require, __exports) {
+__exports.frequencyNumber = frequencyNumber;
+__exports.frequencyText = frequencyText;
+__exports.normalizeBand = normalizeBand;
 __exports.normalizeOptimizeSetup = normalizeOptimizeSetup;
 /**
  * The coefficient optimizer's setup, as a document keeps it
@@ -6107,6 +6110,33 @@ const MAX_DENOMINATOR = 1024;
 const SWING_LEVELS = Object.freeze(['sigma3', 'sigma4', 'peak']);
 
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+
+/** A frequency as typed, f/fs: a number (0.004) or a fraction (1/256); NaN otherwise. */
+function frequencyNumber(text) {
+  const raw = String(text ?? '').trim();
+  const match = raw.match(/^(\d*\.?\d+)\s*\/\s*(\d*\.?\d+)$/);
+  return match ? Number(match[1]) / Number(match[2]) : raw === '' ? NaN : Number(raw);
+}
+
+/** The text to keep beside a frequency's number: a fraction as typed
+ *  (`1/256`), so a field shows it again; none for a plain number. */
+function frequencyText(text) {
+  const raw = String(text ?? '').trim().replace(/\s+/g, '');
+  return /^\d*\.?\d+\/\d*\.?\d+$/.test(raw) && raw.length <= 40 ? raw : null;
+}
+
+/** The signal band, `{ f0, bw }` in f/fs, each with its typed fraction
+ *  (`text: { bw: '1/128' }`) when it was one; null without a bandwidth. */
+function normalizeBand(raw) {
+  const bw = Number(raw?.bw);
+  if (!(bw > 0)) return null;
+  const text = {};
+  for (const key of ['f0', 'bw']) {
+    const typed = frequencyText(raw?.text?.[key]);
+    if (typed && Math.abs(frequencyNumber(typed) - (key === 'bw' ? bw : Number(raw.f0) || 0)) < 1e-12) text[key] = typed;
+  }
+  return { f0: Math.max(0, Number(raw.f0) || 0), bw, ...(Object.keys(text).length ? { text } : {}) };
+}
 const number = (value) => (value === '' || value === null || value === undefined ? null : Number(value));
 const short = (value, length = 200) => (typeof value === 'string' ? value.slice(0, length) : '');
 
@@ -6115,16 +6145,19 @@ function normalizeSpec(raw) {
   const action = SPEC_ACTIONS.includes(raw.action) ? raw.action : 'minimize';
   const measure = SPEC_MEASURES.includes(raw.measure) ? raw.measure : 'average';
   const band = SPEC_BANDS.includes(raw.band) ? raw.band : 'signal';
-  const f1 = number(raw.f1);
-  const f2 = number(raw.f2);
+  // A band end typed as a fraction keeps its text (f1Text) beside its number.
+  const f1 = typeof raw.f1 === 'string' ? frequencyNumber(raw.f1) : number(raw.f1);
+  const f2 = typeof raw.f2 === 'string' ? frequencyNumber(raw.f2) : number(raw.f2);
+  const f1Text = frequencyText(typeof raw.f1 === 'string' ? raw.f1 : raw.f1Text);
+  const f2Text = frequencyText(typeof raw.f2 === 'string' ? raw.f2 : raw.f2Text);
   const value = number(raw.value);
   return {
     action,
     measure,
     input: short(raw.input),
     band,
-    ...(band === 'custom' && finite(f1) ? { f1 } : {}),
-    ...(band === 'custom' && finite(f2) ? { f2 } : {}),
+    ...(band === 'custom' && finite(f1) ? { f1, ...(f1Text && Math.abs(frequencyNumber(f1Text) - f1) < 1e-12 ? { f1Text } : {}) } : {}),
+    ...(band === 'custom' && finite(f2) ? { f2, ...(f2Text && Math.abs(frequencyNumber(f2Text) - f2) < 1e-12 ? { f2Text } : {}) } : {}),
     ...((action === 'below' || action === 'above') && finite(value) ? { value } : {}),
   };
 }
@@ -21298,7 +21331,7 @@ __exports.normalizeAnalysisValues = normalizeAnalysisValues;
 __exports.pathHasDiagonal = pathHasDiagonal;
 __exports.diagonalDraftPath = diagonalDraftPath;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
-let normalizeOptimizeSetup; __bind(() => { ({ normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
+let normalizeBand, normalizeOptimizeSetup; __bind(() => { ({ normalizeBand, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect; __bind(() => { ({ applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js")); });
 let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require("src/core/grid.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
@@ -22338,7 +22371,7 @@ function normalizeAnalysisValues(value) {
   }
   // The signal band on the response graph: f0 and bw in f/fs.
   const rawBand = value?.band;
-  const band = rawBand && Number(rawBand.bw) > 0 ? { f0: Math.max(0, Number(rawBand.f0) || 0), bw: Number(rawBand.bw) } : null;
+  const band = normalizeBand(rawBand);
   // The signal-flow mode's settings: output, sources' modes, the swing's source and frequency.
   const rawFlow = value?.flow;
   const text = (v) => (typeof v === 'string' ? v.slice(0, 200) : '');
@@ -22369,7 +22402,7 @@ function analysisValuesJSON(values) {
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
   const fractions = values?.fractions || {};
-  const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
+  const band = normalizeBand(values?.band);
   const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize || values.flow.dither) ? values.flow : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
   const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
@@ -61909,7 +61942,7 @@ function specText(spec, sources) {
     return `${action} the poles' ${spec.measure === 'q' ? 'highest Q' : 'largest radius'} of H from ${source ? plainName(source.name) : spec.input}${spec.value !== undefined ? ` (${spec.value})` : ''}`;
   }
   const measure = { average: 'average', peak: 'peak', lowest: 'lowest' }[spec.measure];
-  const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1} to ${spec.f2}`;
+  const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1Text ?? spec.f1} to ${spec.f2Text ?? spec.f2}`;
   return `${action} the ${measure} |H| from ${source ? plainName(source.name) : spec.input} ${band}${spec.value !== undefined ? ` (${spec.value} dB)` : ''}`;
 }
 
@@ -62012,7 +62045,8 @@ function specList(current, sources) {
       node.value = spec[key];
       return node;
     };
-    const field = (key, placeholder, label) => el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder, 'aria-label': label, value: spec[key] ?? '', onchange: (ev) => { spec[key] = ev.target.value.trim() === '' ? undefined : Number(ev.target.value); save(); } });
+    // f1 and f2 take a fraction (1/256) and show it again as typed.
+    const field = (key, placeholder, label) => el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder, 'aria-label': label, value: spec[`${key}Text`] ?? spec[key] ?? '', onchange: (ev) => { const text = ev.target.value.trim(); delete spec[`${key}Text`]; spec[key] = text === '' ? undefined : text; save(); } });
     const inputs = sources.map((s) => [s.id, sourceName(s)]);
     if (spec.input && !sources.some((s) => s.id === spec.input)) inputs.push([spec.input, `${spec.input} (gone)`]);
     const limit = spec.action === 'below' || spec.action === 'above';
@@ -65391,6 +65425,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSection, renderOptimize, resetOptimize } = __require("src/web/optimize-ui.js")); });
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
+let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analysis/optimize-setup.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
  * block diagram rather than a circuit. A switch at the top of the window
@@ -65405,6 +65440,7 @@ let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -66371,14 +66407,16 @@ function fraction(text) {
 function bandControls() {
   const band = editor.circuit.analysisValues.band;
   const field = (key, label, title) => {
-    const input = el('input', { type: 'text', class: 'signal-flow-band-field', value: band?.[key] ? String(Number(band[key].toPrecision(6))) : '', placeholder: key === 'f0' ? '0' : '-', 'aria-label': label, title });
+    // A fraction shows as typed (1/256), a number as its digits.
+    const input = el('input', { type: 'text', class: 'signal-flow-band-field', value: band?.text?.[key] ?? (band?.[key] ? String(Number(band[key].toPrecision(6))) : ''), placeholder: key === 'f0' ? '0' : '-', 'aria-label': label, title });
     // Applied as typed; only the plot redraws, so the field keeps its focus.
     input.addEventListener('input', () => {
       const f0 = fraction(row.querySelector('[data-key=f0]').value || '0');
       const bwText = row.querySelector('[data-key=bw]').value.trim();
       const bw = fraction(bwText);
       if (bwText && !(bw > 0 && f0 >= 0)) return;
-      editor.circuit.analysisValues.band = bwText ? { f0: f0 || 0, bw } : undefined;
+      const f0Text = row.querySelector('[data-key=f0]').value;
+      editor.circuit.analysisValues.band = bwText ? normalizeBand({ f0: f0 || 0, bw, text: { f0: f0Text, bw: bwText } }) || undefined : undefined;
       markSettingsChanged();
       redrawGraphPlot();
       renderResults();

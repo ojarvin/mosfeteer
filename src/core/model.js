@@ -1,5 +1,5 @@
 import { RAIL_NAMES, railNameKey } from './rail-names.js';
-import { normalizeOptimizeSetup } from './analysis/optimize-setup.js';
+import { normalizeBand, normalizeOptimizeSetup } from './analysis/optimize-setup.js';
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
@@ -1025,7 +1025,7 @@ export function normalizeAnalysisValues(value) {
   }
   // The signal band on the response graph: f0 and bw in f/fs.
   const rawBand = value?.band;
-  const band = rawBand && Number(rawBand.bw) > 0 ? { f0: Math.max(0, Number(rawBand.f0) || 0), bw: Number(rawBand.bw) } : null;
+  const band = normalizeBand(rawBand);
   // The signal-flow mode's settings: output, sources' modes, the swing's source and frequency.
   const rawFlow = value?.flow;
   const text = (v) => (typeof v === 'string' ? v.slice(0, 200) : '');
@@ -1056,7 +1056,7 @@ function analysisValuesJSON(values) {
   const sAxis = values?.sAxis === 'normalized';
   const links = values?.links || {};
   const fractions = values?.fractions || {};
-  const band = values?.band && Number(values.band.bw) > 0 ? { f0: Number(values.band.f0) || 0, bw: Number(values.band.bw) } : null;
+  const band = normalizeBand(values?.band);
   const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize || values.flow.dither) ? values.flow : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
   const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');

@@ -445,3 +445,24 @@ test('pruning: a coefficient small beside its block-mates is set to zero when th
   const kept = runRefine(prepareObjective(circuit, needs), pruneSearch(['k_3'], { own: big, start: prepareObjective(circuit, needs).verify(big) }), scoreRequest);
   assert.deepEqual(kept.zeroed, []);
 });
+
+import { frequencyNumber, normalizeBand } from '../src/core/analysis/optimize-setup.js';
+
+test('a frequency typed as a fraction keeps its text: the band and a spec\'s f1, f2', () => {
+  assert.equal(frequencyNumber('1/256'), 1 / 256);
+  assert.equal(frequencyNumber(' 0.004 '), 0.004);
+  assert.ok(Number.isNaN(frequencyNumber('a/b')));
+  // The band: numbers to compute with, the fractions to show again.
+  assert.deepEqual(normalizeBand({ f0: 1 / 64, bw: 1 / 256, text: { f0: '1/64', bw: '1 / 256' } }), { f0: 1 / 64, bw: 1 / 256, text: { f0: '1/64', bw: '1/256' } });
+  assert.deepEqual(normalizeBand({ f0: 0, bw: 0.01, text: { bw: '0.01' } }), { f0: 0, bw: 0.01 }, 'a plain number keeps no text');
+  assert.deepEqual(normalizeBand({ f0: 0, bw: 0.02, text: { bw: '1/256' } }), { f0: 0, bw: 0.02 }, 'a stale text is dropped');
+  const circuit = new Circuit();
+  circuit.analysisValues.band = normalizeBand({ f0: 0, bw: 1 / 128, text: { bw: '1/128' } });
+  assert.deepEqual(Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).analysisValues.band, { f0: 0, bw: 1 / 128, text: { bw: '1/128' } });
+  // A spec's custom band, typed as fractions (was NaN, so lost).
+  const [spec] = normalizeOptimizeSetup({ specs: [{ action: 'minimize', measure: 'peak', input: 'U', band: 'custom', f1: '1/256', f2: '0.25' }] }).specs;
+  assert.deepEqual(spec, { action: 'minimize', measure: 'peak', input: 'U', band: 'custom', f1: 1 / 256, f1Text: '1/256', f2: 0.25 });
+  assert.deepEqual(specIntervals(spec, null), [[1 / 256, 0.25]]);
+  // Saved and normalized again, it stays.
+  assert.deepEqual(normalizeOptimizeSetup({ specs: [spec] }).specs[0], spec);
+});
