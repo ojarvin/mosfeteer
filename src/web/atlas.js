@@ -61,8 +61,9 @@ const LINKS_KEY = 'mosfeteer.atlas.links';
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns · ? Learn',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns · ? Learn',
+  // The few keys that get around; Learn (?) lists them all.
+  workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? every key',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag to move · F fits all · Esc returns · ? every key',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */

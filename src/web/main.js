@@ -7964,6 +7964,10 @@ window.addEventListener('keydown', (ev) => {
     } else if (k === 'i' || k === 'b') {
       ev.preventDefault();
       toggleSelectedLabelFont(k === 'i' ? 'italic' : 'bold');
+    } else if (k === 'z' && ev.shiftKey) {
+      // Ctrl/Cmd+Shift+Z redoes, as everywhere else.
+      ev.preventDefault();
+      redo();
     } else if (k === 'z') {
       ev.preventDefault();
       if (drag?.mode === 'copyghost') cancelDrag();
@@ -8134,7 +8138,7 @@ try {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) syncActiveCircuit();
   });
-  logLine('Mosfeteer ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
+  logLine('Ready. Press ? for every key.');
 } catch (err) {
   const b = banner();
   if (b) {

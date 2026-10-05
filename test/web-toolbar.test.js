@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { INSERT_RECENT_LIMIT, componentPaletteItems, editorKeymapText, fuzzyScore, layerActionForKey, layoutAlignKey, minimalRevealScroll, placementSearchScore, withRecentType, PLACEMENT_ALIASES, PLACEMENT_LABELS } from '../src/web/toolbar.js';
 
@@ -179,4 +180,12 @@ test('radial tiles use short part names that fit, the full name kept for the too
   assert.equal(shortPlacementLabel('nand3_gate'), 'NAND3');
   assert.equal(shortPlacementLabel('dff_qb'), 'DFF CLK Q QB');
   assert.equal(PLACEMENT_LABELS.comparator_clocked, 'Clocked comparator');
+});
+
+test('Ctrl/Cmd+Shift+Z redoes, and Learn lists the Atlas keys', () => {
+  const main = readFileSync(new URL('../src/web/main.js', import.meta.url), 'utf8');
+  assert.match(main, /\} else if \(k === 'z' && ev\.shiftKey\) \{[\s\S]{0,120}redo\(\);[\s\S]{0,40}\} else if \(k === 'z'\) \{/);
+  const help = editorKeymapText();
+  assert.match(help, /Ctrl\/Cmd\+Shift\+Z.*redo|redo.*Ctrl\/Cmd\+Shift\+Z/);
+  assert.match(help, /-- atlas --/);
 });

@@ -200,7 +200,7 @@ export const EDITOR_KEYMAP = Object.freeze([
   ]],
   ['edit', [
     ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
-    ['Shift+U / Ctrl/Cmd+Y', 'redo'],
+    ['Shift+U / Ctrl/Cmd+Y / Ctrl/Cmd+Shift+Z', 'redo'],
     ['Arrow keys', 'nudge selected objects or move the cursor'],
     ['r', 'rotate selected objects 90° clockwise'],
     ['Shift+R', 'mirror selected horizontally'],
@@ -257,6 +257,19 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
+  ]],
+  ['atlas', [
+    ['drag / scroll', 'move over the desk; right-drag zooms to a box'],
+    ['click', 'pick a design (Ctrl/Shift+click several); copy as an image then copies the picked ones'],
+    ['double-click / Enter', 'open the picked design'],
+    ['/ / Ctrl/Cmd+F', 'search every design: parts, nets, text, #tags'],
+    ['#', 'edit the picked design\'s tags'],
+    ['z', 'zoom to the picked design'],
+    ['f', 'fit every design'],
+    ['l', 'show or hide the links between designs'],
+    ['Shift+T', 'repack the desk by kinship'],
+    ['Esc', 'clear the search, then the pick'],
+    ['Enter (nothing picked) / Shift+Backspace', 'back to the drawing'],
   ]],
   ['beats', [
     ['Shift+B', 'show or hide the beats window (closing it shows the whole drawing)'],

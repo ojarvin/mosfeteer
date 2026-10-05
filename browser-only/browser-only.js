@@ -38975,8 +38975,9 @@ const LINKS_KEY = 'mosfeteer.atlas.links';
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns · ? Learn',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns · ? Learn',
+  // The few keys that get around; Learn (?) lists them all.
+  workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? every key',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag to move · F fits all · Esc returns · ? every key',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -60823,6 +60824,10 @@ window.addEventListener('keydown', (ev) => {
     } else if (k === 'i' || k === 'b') {
       ev.preventDefault();
       toggleSelectedLabelFont(k === 'i' ? 'italic' : 'bold');
+    } else if (k === 'z' && ev.shiftKey) {
+      // Ctrl/Cmd+Shift+Z redoes, as everywhere else.
+      ev.preventDefault();
+      redo();
     } else if (k === 'z') {
       ev.preventDefault();
       if (drag?.mode === 'copyghost') cancelDrag();
@@ -60993,7 +60998,7 @@ try {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) syncActiveCircuit();
   });
-  logLine('Mosfeteer ready. Press ? for the keymap. Normal: i to insert, w to wire, u undo.');
+  logLine('Ready. Press ? for every key.');
 } catch (err) {
   const b = banner();
   if (b) {
@@ -69087,7 +69092,7 @@ const EDITOR_KEYMAP = Object.freeze([
   ]],
   ['edit', [
     ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
-    ['Shift+U / Ctrl/Cmd+Y', 'redo'],
+    ['Shift+U / Ctrl/Cmd+Y / Ctrl/Cmd+Shift+Z', 'redo'],
     ['Arrow keys', 'nudge selected objects or move the cursor'],
     ['r', 'rotate selected objects 90° clockwise'],
     ['Shift+R', 'mirror selected horizontally'],
@@ -69144,6 +69149,19 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
+  ]],
+  ['atlas', [
+    ['drag / scroll', 'move over the desk; right-drag zooms to a box'],
+    ['click', 'pick a design (Ctrl/Shift+click several); copy as an image then copies the picked ones'],
+    ['double-click / Enter', 'open the picked design'],
+    ['/ / Ctrl/Cmd+F', 'search every design: parts, nets, text, #tags'],
+    ['#', 'edit the picked design\'s tags'],
+    ['z', 'zoom to the picked design'],
+    ['f', 'fit every design'],
+    ['l', 'show or hide the links between designs'],
+    ['Shift+T', 'repack the desk by kinship'],
+    ['Esc', 'clear the search, then the pick'],
+    ['Enter (nothing picked) / Shift+Backspace', 'back to the drawing'],
   ]],
   ['beats', [
     ['Shift+B', 'show or hide the beats window (closing it shows the whole drawing)'],
