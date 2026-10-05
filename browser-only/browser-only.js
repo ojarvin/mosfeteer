@@ -27912,7 +27912,7 @@ class Circuit {
       net.branches = next.map((p) => clonePath(p, net.allowDiagonal));
       net.route = clonePath(net.branches[0], net.allowDiagonal);
       net.junctions = this._netJunctions(net, next);
-      this._splitDisconnectedNet(net);
+      this._keepSplitNameAtSource(this._splitDisconnectedNet(net));
     }
     // Each now-free terminal joins the wire piece that ends on it.
     this.reconnectCoincidentNets();
@@ -28167,10 +28167,11 @@ class Circuit {
 
   /** Rebuild terminal membership after geometry deletion. A deleted wire is
    * allowed to split a net into the connected components of the remaining
-   * geometry, each preserving its remaining branches. */
+   * geometry, each preserving its remaining branches. Returns the pieces,
+   * the net itself first. */
   _splitDisconnectedNet(net) {
     const paths = net.branches && net.branches.length ? net.branches : [];
-    if (!paths.length || !net.terminals.length) return;
+    if (!paths.length || !net.terminals.length) return [net];
     const terminals = net.terminals.map((t) => ({ ...t, point: this.components.get(t.comp)?.terminalWorld(t.term) }));
     // A terminal left with no wire at all is unconnected again, not a
     // one-terminal net of its own.
@@ -28181,7 +28182,7 @@ class Circuit {
       const ends = paths.map((path, i) => ({ comp: '', term: String(i), point: path[0] }));
       components.push(...splitByComponent(paths, ends).map((piece) => ({ terminals: [], paths: piece.paths })));
     }
-    if (components.length < 2 && components[0].terminals.length === net.terminals.length) return;
+    if (components.length < 2 && components[0].terminals.length === net.terminals.length) return [net];
     // The net's terminals are regrouped, so a name clash from merging them is gone.
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     const apply = (n, comp) => {
@@ -28199,6 +28200,36 @@ class Circuit {
       children.push(child);
     }
     this._redistributeNetLabels(net, children);
+    return children;
+  }
+
+  /**
+   * A net cut in series (a part spliced into it) is two signals now, not one
+   * name in two places: the name stays with the pieces that give it -- an
+   * interface port, a rail marker, a net label -- and the rest are unnamed.
+   * With no such piece, the first (the original net) keeps it.
+   */
+  _keepSplitNameAtSource(pieces) {
+    const named = pieces.filter((piece) => piece.name);
+    if (named.length < 2) return;
+    // What gives a piece its name: a port called that, a rail marker of that
+    // rail (its own value, or the rail's global name), or a net label.
+    const givesName = (piece) => piece.terminals.some(({ comp }) => {
+      const component = this.components.get(comp);
+      if (!component) return false;
+      if (INTERFACE_PIN_TYPES.has(component.type)) return canonicalNetName(this.labelOf(component.refdes)?._text || component.refdes) === canonicalNetName(piece.name);
+      if (!isReferenceMarker(component)) return false;
+      const own = referenceMarkerName(component);
+      return own ? own === canonicalNetName(piece.name) : isReferenceMarkerGlobalName(component.type, piece.name);
+    }) || [...this.labels.values()].some((label) => label.netId === piece.id);
+    const holders = named.filter(givesName);
+    const keep = new Set(holders.length ? holders : [named[0]]);
+    for (const piece of named) {
+      if (keep.has(piece)) continue;
+      piece.name = null;
+      // A port of its own names it again.
+      this._syncInterfacePinLabels(piece);
+    }
   }
 
   /** Merge managed net pieces whose explicit wire endpoints now coincide.

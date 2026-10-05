@@ -60,3 +60,32 @@ test('parts without a series pair do not splice', () => {
   const gate = circuit.addComponent('opamp', { x: 400, y: 0 });
   assert.throws(() => circuit.spliceIntoSegment(gate.refdes, net.id, 0, 1), /series terminals/);
 });
+
+test('a splice cuts a named net into two signals: the name stays where it comes from', () => {
+  const nameOf = (circuit, comp, term) => circuit.netOfTerminal({ comp, term })?.name || null;
+  // A port names the net: only its side keeps the name.
+  const ported = new Circuit();
+  ported.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  ported.addComponent('output', { refdes: 'OUT', x: 800, y: 0 });
+  const net = ported.connect('R1.b', 'OUT.p');
+  assert.equal(net.name, 'OUT');
+  const k = ported.addComponent('gain', { refdes: 'K1', x: 400, y: 0 });
+  ported.spliceIntoSegment(k.refdes, net.id, 0, 1);
+  assert.equal(nameOf(ported, 'K1', 'out'), 'OUT');
+  assert.equal(nameOf(ported, 'K1', 'in'), null);
+  // A wire between two ports carries one's name; cut, each side takes its own port's.
+  const two = new Circuit();
+  two.addComponent('input', { refdes: 'U', x: -400, y: 0 });
+  two.addComponent('output', { refdes: 'Y', x: 400, y: 0 });
+  const between = two.connect('U.p', 'Y.p');
+  two.spliceIntoSegment(two.addComponent('gain', { refdes: 'K1', x: 0, y: 0 }).refdes, between.id, 0, 1);
+  assert.deepEqual([nameOf(two, 'K1', 'in'), nameOf(two, 'K1', 'out')], ['U', 'Y']);
+  // A name with no source on either side stays on the first piece alone.
+  const plain = new Circuit();
+  plain.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  plain.addComponent('resistor', { refdes: 'R2', x: 800, y: 0 });
+  const named = plain.connect('R1.b', 'R2.a');
+  plain.renameNet(named.id, 'VX');
+  plain.spliceIntoSegment(plain.addComponent('resistor', { refdes: 'R3', x: 400, y: 0 }).refdes, named.id, 0, 1);
+  assert.equal([nameOf(plain, 'R3', 'a'), nameOf(plain, 'R3', 'b')].filter(Boolean).length, 1);
+});
