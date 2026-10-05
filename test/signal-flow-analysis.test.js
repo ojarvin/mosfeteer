@@ -544,6 +544,28 @@ function quantizedModulator(kind) {
   return diagram(lines, [['S1', 's'], ['S3', 's']]);
 }
 
+test('a delay before the DAC simulates as the DAC with its pulse delayed', () => {
+  // The same loop twice: one DAC block holding e^{-sT_d}(1 - e^{-sT})/s,
+  // and a delay block e^{-sT_d} followed by an NRZ DAC block.
+  const one = quantizedModulator('ct');
+  const split = quantizedModulator('ct');
+  split.removeComponent('D1');
+  for (const line of ['add tf_delay DL1 --at 1200 640 --rot 180', 'add tf_dac D1 --at 400 640 --rot 180',
+    'connect V.p DL1.in', 'connect DL1.out D1.in', 'connect D1.out K1.in', 'connect D1.out K2.in']) runCommand(split, line);
+  const values = { k_1: 1, k_2: 1.5, T: 1, T_d: 0.3 };
+  const run = (circuit) => {
+    const sim = prepareSimulation(circuit, { values, input: 'U', output: 'name:V', frequency: 1 / 256, samples: 2048 });
+    assert.equal(sim.ok, true, sim.error);
+    const named = (name) => sim.signals.findIndex((s) => s.name === name);
+    return [-20, -6].map((a) => {
+      const r = sim.run(a);
+      return [r.tone, r.peaks[named('H_{1}')], r.peaks[named('H_{2}')]];
+    });
+  };
+  const [a, b] = [run(one), run(split)];
+  a.flat().forEach((v, i) => assert.ok(Math.abs(v - b.flat()[i]) < 1e-9 * Math.max(1, Math.abs(v)), `${v} vs ${b.flat()[i]}`));
+});
+
 test('the quantizer rounds to Schreier\'s levels, full scale N - 1', () => {
   assert.deepEqual([-3, -0.2, 0, 0.4, 7].map((y) => quantize(y, 2)), [-1, -1, 1, 1, 1]);
   assert.deepEqual([-9, -1.2, -0.9, 0.9, 1.1, 9].map((y) => quantize(y, 3)), [-2, -2, 0, 0, 2, 2]);

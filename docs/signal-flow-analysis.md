@@ -203,7 +203,11 @@ samples, `x(t + h) = e^{Fh} x(t)` over the H(s) blocks, the DAC blocks'
 pulse terms, a sine oscillator, and a constant; each DAC block takes each
 sample as impulses into its pulse's terms at their delays, the sampler
 reads just before each `t = nT`, and peaks are taken at eight sub-steps a
-period and at every impulse. Refused: a continuous diagram with no sampler
+period and at every impulse. A DAC block that is no pulse by itself -- a
+delay `e^{-sT_d}` reading the sampled signal, say -- is folded with the H(s)
+block that alone reads it, so a delay drawn before the hold simulates as
+the delayed hold `e^{-sT_d}(1 - e^{-sT})/s`; the wire between carries
+impulses and keeps no swing. Refused: a continuous diagram with no sampler
 (no clock), a quantizer in a loop with no delay, a delay on a continuous
 signal outside a DAC block, a block with more zeros than poles.
 

@@ -25,6 +25,7 @@ import { evaluateExpression } from './bode.js';
 import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels } from '../transfer-function.js';
 import { canonicalNetName } from '../model.js';
 import { seededRandom } from './cmaes.js';
+import { rationalMultiply } from './rational.js';
 
 const JUNCTION_INPUTS = ['n', 's', 'w'];
 
@@ -205,12 +206,50 @@ export function prepareSimulation(circuit, options = {}) {
   const terms = [];
   const dacs = [];
   let m = 0;
+  // An H(s) block reading a sampled signal is a DAC. One that passes the
+  // samples on as impulses (a delay e^{-sT_d}, a gain) is no pulse yet: it
+  // is folded with the H(s) block that alone reads it, so a delay before
+  // the hold is the delayed hold e^{-sT_d}(1 - e^{-sT})/s. The wire between
+  // carries impulses only and keeps no swing of its own.
+  const readersOfSignal = (signal) => signal.readers.map((r) => ({ term: r.term, component: circuit.components.get(r.comp) }));
+  const impulsive = (value) => {
+    const split = delayTermsOf(value);
+    if (!split.ok) return false;
+    const base = realize([0], split.den);
+    return !base.n || split.terms.some((term) => realize(term.num, split.den).D);
+  };
+  const folded = new Map(); // a chain's last output key -> { value, input, first }
+  const passing = new Set(); // impulse wires inside a chain, and its later blocks' outputs before the last
   try {
     for (const signal of cont) {
       const component = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
       if (!isBlockIn(component, 's')) continue;
       const input = signalAt(component, 'in');
-      const value = numeric(component);
+      if (!input || domain.get(input.key) !== 'z') continue;
+      let value = numeric(component);
+      let out = signal;
+      while (impulsive(value)) {
+        const readers = readersOfSignal(out);
+        const next = readers.length === 1 && readers[0].term === 'in' && isBlockIn(readers[0].component, 's') ? readers[0].component : null;
+        const nextOut = next && cont.find((s) => s.driver && !s.driver.source && s.driver.comp === next.refdes);
+        if (!nextOut || sourceValue.has(out.key) || out.key === options.output) break;
+        passing.add(out.key);
+        value = rationalMultiply(value, numeric(next), { variable: 's' });
+        out = nextOut;
+      }
+      if (out !== signal) folded.set(out.key, { value, input, first: component });
+    }
+  } catch (err) {
+    return failure('unsimulatable', err.message);
+  }
+  try {
+    for (const signal of cont) {
+      const driverPart = signal.driver && !signal.driver.source ? circuit.components.get(signal.driver.comp) : null;
+      if (!isBlockIn(driverPart, 's') || passing.has(signal.key)) continue;
+      const chain = folded.get(signal.key);
+      const component = chain ? chain.first : driverPart;
+      const input = chain ? chain.input : signalAt(component, 'in');
+      const value = chain ? chain.value : numeric(component);
       if (input && domain.get(input.key) === 'z') {
         // A DAC: each sample an impulse at each of its pulse's edges, all
         // into one state in observable form (its numerators enter through
