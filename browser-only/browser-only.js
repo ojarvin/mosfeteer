@@ -44581,7 +44581,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let selectedStyleSource, pasteStyle; __bind(() => { ({ selectedStyleSource, pasteStyle } = __require("src/web/style-controls.js")); });
 let beginNetLabelPaste; __bind(() => { ({ beginNetLabelPaste } = __require("src/web/annotation-tools.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } = __require("src/web/main.js")); });
+let captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } = __require("src/web/main.js")); });
 /**
  * Copy and paste: the copied set, the copy ghost that follows the pointer
  * (and its mirrored twin), pasting, and the system clipboard exchange that
@@ -45008,6 +45008,8 @@ function commitCopyGhost({ again = true } = {}) {
   // The mirror was pasted after `beforeSnapshot`, so both halves already sit
   // inside the one history entry recorded below.
   const refs = [...ghost.refs, ...(ghost.mirror?.refs || [])];
+  // A lone part copied onto a wire is spliced into it, as a placed or moved one is.
+  if (refs.length === 1) spliceIfOnWire(editor.circuit.components.get(refs[0]));
   editor.circuit.connectCoincident(refs);
   editor.circuit.reconnectCoincidentNets();
   editor.circuit.teeTerminalsOntoWires(refs);
@@ -45268,6 +45270,8 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       editor.circuit._loading = wasLoading;
       // Coincidence is resolved once, against the complete copied topology.
       if (connect) {
+        // A lone part pasted onto a wire is spliced into it.
+        if (addedComps.length === 1) spliceIfOnWire(editor.circuit.components.get(addedComps[0]));
         editor.circuit.connectCoincident(addedComps);
         editor.circuit.teeTerminalsOntoWires(addedComps);
       }
@@ -52597,6 +52601,7 @@ __exports.symmetryTwin = symmetryTwin;
 __exports.syncSymmetryOperation = syncSymmetryOperation;
 __exports.clearSymmetry = clearSymmetry;
 __exports.setSymmetry = setSymmetry;
+__exports.spliceIfOnWire = spliceIfOnWire;
 __exports.splicePreviewTarget = splicePreviewTarget;
 __exports.placePending = placePending;
 __exports.render = render;
@@ -54970,6 +54975,11 @@ function splicePreviewTarget(ghost) {
     const comp = circuit.components.get(refdes);
     if (!comp) return null;
     return spliceTargetFor(seriesPinPoints(comp.def, comp.transform, comp.terminalDefs), refdes);
+  }
+  // A lone part's copy ghost splices on commit (copy-paste.js commitCopyGhost).
+  if (drag?.mode === 'copyghost' && drag.ghost?.refs?.length === 1 && !drag.ghost.mirror) {
+    const comp = circuit.components.get(drag.ghost.refs[0]);
+    if (comp) return spliceTargetFor(seriesPinPoints(comp.def, comp.transform, comp.terminalDefs), comp.refdes);
   }
   return null;
 }

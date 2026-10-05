@@ -2240,7 +2240,7 @@ function spliceTargetFor(points, refdes = null) {
   return spliceCandidate(points, managedWirePaths());
 }
 
-function spliceIfOnWire(comp) {
+export function spliceIfOnWire(comp) {
   if (!comp) return false;
   const points = seriesPinPoints(comp.def, comp.transform, comp.terminalDefs);
   const target = spliceTargetFor(points, comp.refdes);
@@ -2262,6 +2262,11 @@ export function splicePreviewTarget(ghost) {
     const comp = circuit.components.get(refdes);
     if (!comp) return null;
     return spliceTargetFor(seriesPinPoints(comp.def, comp.transform, comp.terminalDefs), refdes);
+  }
+  // A lone part's copy ghost splices on commit (copy-paste.js commitCopyGhost).
+  if (drag?.mode === 'copyghost' && drag.ghost?.refs?.length === 1 && !drag.ghost.mirror) {
+    const comp = circuit.components.get(drag.ghost.refs[0]);
+    if (comp) return spliceTargetFor(seriesPinPoints(comp.def, comp.transform, comp.terminalDefs), comp.refdes);
   }
   return null;
 }

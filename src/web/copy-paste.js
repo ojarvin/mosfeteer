@@ -14,7 +14,7 @@ import { logLine } from './status-bar-ui.js';
 import { selectedStyleSource, pasteStyle } from './style-controls.js';
 import { beginNetLabelPaste } from './annotation-tools.js';
 import { editor } from './editor-state.js';
-import { captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } from './main.js';
+import { captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } from './main.js';
 
 export function copySelectionSource() {
   const wireKeys = new Set(editor.selectedWires);
@@ -424,6 +424,8 @@ export function commitCopyGhost({ again = true } = {}) {
   // The mirror was pasted after `beforeSnapshot`, so both halves already sit
   // inside the one history entry recorded below.
   const refs = [...ghost.refs, ...(ghost.mirror?.refs || [])];
+  // A lone part copied onto a wire is spliced into it, as a placed or moved one is.
+  if (refs.length === 1) spliceIfOnWire(editor.circuit.components.get(refs[0]));
   editor.circuit.connectCoincident(refs);
   editor.circuit.reconnectCoincidentNets();
   editor.circuit.teeTerminalsOntoWires(refs);
@@ -684,6 +686,8 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       editor.circuit._loading = wasLoading;
       // Coincidence is resolved once, against the complete copied topology.
       if (connect) {
+        // A lone part pasted onto a wire is spliced into it.
+        if (addedComps.length === 1) spliceIfOnWire(editor.circuit.components.get(addedComps[0]));
         editor.circuit.connectCoincident(addedComps);
         editor.circuit.teeTerminalsOntoWires(addedComps);
       }
