@@ -1349,3 +1349,10 @@ test('signal-flow results belong to their document: another one opened starts wi
     assert.match(ui.slice(ui.indexOf(name), ui.indexOf(name) + 80), /syncDocument\(\);/);
   }
 });
+
+test('? opens Learn over the Atlas as over the drawing', () => {
+  const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
+  const keys = atlas.slice(atlas.indexOf('export function onAtlasKey'), atlas.indexOf('export function onAtlasKey') + 4000);
+  assert.match(keys, /else if \(key === '\?'\) showHelp\(\);/);
+  assert.match(atlas, /import \{ showHelp \} from '\.\/help\.js';/);
+});

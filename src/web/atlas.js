@@ -39,6 +39,7 @@ import { atlasSheetSvg, sheetCaption } from './atlas-sheet.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { slideChrome } from './chrome-slide.js';
 import { reducedMotion } from './motion.js';
+import { showHelp } from './help.js';
 
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
@@ -60,8 +61,8 @@ const LINKS_KEY = 'mosfeteer.atlas.links';
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns · ? Learn',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns · ? Learn',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -319,7 +320,7 @@ async function rasterize(entry, level) {
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v3`);
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v4`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob);
   // Drawing an SVG into a bitmap blocks the page; let a zoom finish first.
@@ -1770,6 +1771,8 @@ export function onAtlasKey(ev) {
     state.picked = null;
     requestDraw();
   } else if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
+  // Learn opens over the desk as it does over the drawing.
+  else if (key === '?') showHelp();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();

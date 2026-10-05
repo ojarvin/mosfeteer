@@ -41,16 +41,16 @@ export function applyExportDarkTheme(svg) {
   // exported SVG is standalone, so bake the same palette into its attributes
   // without touching the live document or its theme state.
   return String(svg)
-    .replace(/var\(--paper,\s*#fff\)/gi, '#15171c')
-    .replace(/var\(--grid,\s*#ddd\)/gi, '#2c313b')
-    .replace(/var\(--text,\s*#111\)/gi, '#dde1e8')
-    .replace(/var\(--svg-ink,\s*#111\)/gi, '#dde1e8')
-    .replace(/#e9e9e9\b/gi, '#2c313b')
-    .replace(/#eee\b/gi, '#2c313b')
-    .replace(/#fff\b/gi, '#15171c')
-    .replace(/#111\b/gi, '#dde1e8')
+    .replace(/var\(--paper,\s*#fff\)/gi, '#161618')
+    .replace(/var\(--grid,\s*#ddd\)/gi, '#2b2b30')
+    .replace(/var\(--text,\s*#111\)/gi, '#e8e8ec')
+    .replace(/var\(--svg-ink,\s*#111\)/gi, '#e8e8ec')
+    .replace(/#e9e9e9\b/gi, '#2b2b30')
+    .replace(/#eee\b/gi, '#2b2b30')
+    .replace(/#fff\b/gi, '#161618')
+    .replace(/#111\b/gi, '#e8e8ec')
     // A beat's dimmed grey, re-mixed over the dark paper.
-    .replace(/#b8b8b8\b/gi, '#515459');
+    .replace(/#b8b8b8\b/gi, '#55555a');
 }
 
 // An exported drawing leaves this page: a standalone SVG, a PNG rasterized

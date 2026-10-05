@@ -38913,6 +38913,7 @@ let atlasSheetSvg, sheetCaption; __bind(() => { ({ atlasSheetSvg, sheetCaption }
 let writeDrawingToClipboard; __bind(() => { ({ writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 let slideChrome; __bind(() => { ({ slideChrome } = __require("src/web/chrome-slide.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
+let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -38925,6 +38926,7 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
  * leaving zoom between the editor's view and the design's tile, which works
  * because a tile is the drawing at its real size.
  */
+
 
 
 
@@ -38973,8 +38975,8 @@ const LINKS_KEY = 'mosfeteer.atlas.links';
 let lastQuery = '';
 
 const HINTS = {
-  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns',
+  workspace: 'Drag or scroll to move · right-drag zooms to a box · click picks (Ctrl/Shift-click several, Ctrl+Shift+C copies them as an image) · double-click or Enter opens · / or Ctrl+F searches · # tags · Z zooms to it · F fits all · L shows or hides links · Shift+T repacks by kinship · Esc clears the search, then the pick · Enter (nothing picked) or Shift+Backspace returns · ? Learn',
+  symbols: 'Every symbol, drawn from the registry as it is now · drag or scroll to move · right-drag zooms to a box · F fits all · Esc returns · ? Learn',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -39232,7 +39234,7 @@ async function rasterize(entry, level) {
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v3`);
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v4`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob);
   // Drawing an SVG into a bitmap blocks the page; let a zoom finish first.
@@ -40683,6 +40685,8 @@ function onAtlasKey(ev) {
     state.picked = null;
     requestDraw();
   } else if (key === '/' || ((ev.ctrlKey || ev.metaKey) && key.toLowerCase() === 'f')) focusSearch();
+  // Learn opens over the desk as it does over the drawing.
+  else if (key === '?') showHelp();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'e') exportDesk();
   else if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'o' && state.source === 'workspace') void openOntoDesk('files');
   else if (key === 'Escape' && state.matches) clearSearch();
@@ -47156,16 +47160,16 @@ function applyExportDarkTheme(svg) {
   // exported SVG is standalone, so bake the same palette into its attributes
   // without touching the live document or its theme state.
   return String(svg)
-    .replace(/var\(--paper,\s*#fff\)/gi, '#15171c')
-    .replace(/var\(--grid,\s*#ddd\)/gi, '#2c313b')
-    .replace(/var\(--text,\s*#111\)/gi, '#dde1e8')
-    .replace(/var\(--svg-ink,\s*#111\)/gi, '#dde1e8')
-    .replace(/#e9e9e9\b/gi, '#2c313b')
-    .replace(/#eee\b/gi, '#2c313b')
-    .replace(/#fff\b/gi, '#15171c')
-    .replace(/#111\b/gi, '#dde1e8')
+    .replace(/var\(--paper,\s*#fff\)/gi, '#161618')
+    .replace(/var\(--grid,\s*#ddd\)/gi, '#2b2b30')
+    .replace(/var\(--text,\s*#111\)/gi, '#e8e8ec')
+    .replace(/var\(--svg-ink,\s*#111\)/gi, '#e8e8ec')
+    .replace(/#e9e9e9\b/gi, '#2b2b30')
+    .replace(/#eee\b/gi, '#2b2b30')
+    .replace(/#fff\b/gi, '#161618')
+    .replace(/#111\b/gi, '#e8e8ec')
     // A beat's dimmed grey, re-mixed over the dark paper.
-    .replace(/#b8b8b8\b/gi, '#515459');
+    .replace(/#b8b8b8\b/gi, '#55555a');
 }
 
 // An exported drawing leaves this page: a standalone SVG, a PNG rasterized
