@@ -113,8 +113,8 @@ function transferFunctionBlock(type, variable, description = `Transfer function 
 export const tf_s = transferFunctionBlock('tf_s', 's');
 export const tf_z = transferFunctionBlock('tf_z', 'z');
 // Presets: a DAC (its NRZ or RZ pulse, the way back from z to s), and delays.
-export const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC pulse (1 - e^{-sT})/s', 'DAC');
-export const tf_dac_rz = transferFunctionBlock('tf_dac_rz', 's', 'RZ DAC pulse (1 - e^{-sT/2})/s', 'DAC');
+export const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC, z to s: NRZ pulse (zero-order hold) (1 - e^{-sT})/s', 'DAC');
+export const tf_dac_rz = transferFunctionBlock('tf_dac_rz', 's', 'DAC, z to s: RZ pulse (half-period hold) (1 - e^{-sT/2})/s', 'DAC');
 export const tf_delay = transferFunctionBlock('tf_delay', 's', 'Delay e^{-sT_d}', 'DL');
 export const tf_zdelay = transferFunctionBlock('tf_zdelay', 'z', 'Delay z^{-1}', 'DL');
 
@@ -149,13 +149,15 @@ export const gain = defineSymbol({
 /**
  * A sampler: the switch that reads a continuous signal at t = nT, turning
  * an s-domain signal into a z-domain one (a quantizer's sampling in a
- * continuous-time modulator). Its value is the period T, drawn beside it.
+ * continuous-time modulator). Ideal: it passes on the numbers x(nT), with
+ * no hold (the hold is a DAC's pulse, on the way back). Its value is the
+ * period T, drawn beside it.
  * The way back, z to s, needs no part: an H(s) block reading a sampled
  * signal is the DAC, its H(s) the pulse each sample makes.
  */
 export const sampler = defineSymbol({
   type: 'sampler',
-  description: 'Sampler (s to z)',
+  description: 'Sampler, s to z (ideal: no hold)',
   refPrefix: 'SMP',
   terminals: [
     { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },

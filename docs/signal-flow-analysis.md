@@ -40,7 +40,9 @@ Each wire is one signal. The parts are:
   the output. Names are shown as written (`OUT`, `V_{OUT}`).
 
 - **Samplers** `sampler`: the switch that reads a continuous signal at
-  `t = nT`, its value the period `T`. See *Sampled loops*.
+  `t = nT`, its value the period `T`. Ideal: it passes on the numbers, with
+  no hold -- it is not a ZOH; the hold is a DAC's pulse on the way back.
+  See *Sampled loops*.
 - **Quantizers** `quantizer`: round to `N` levels (the value, default 2),
   by Schreier's convention as the delta-sigma toolbox does: the odd
   integers `±1, ±3, ... ±(N-1)` for even `N`, `0, ±2, ...` for odd `N`,
@@ -138,6 +140,21 @@ box, lined up once the browser has measured them (main.js
 `alignLabelColumn`), and the coefficients' numbers under them one a line; **Annotate equations** writes the equations under the drawing.
 
 ## Sampled loops
+
+Between s and z, at a glance (also in the window, under its intro):
+
+| Way | Part | What it is |
+| --- | --- | --- |
+| s to z | `sampler` | ideal: `x[n] = x(nT^-)`, no hold, no anti-aliasing (filter with an H(s) block before it) |
+| z to s | any H(s) block reading a sampled signal | a DAC: each sample an impulse `x[n] delta(t - nT)` into it, so its H(s) is the pulse |
+| | `tf_dac` | NRZ, the zero-order hold: `(1 - exp(-s*T))/s` |
+| | `tf_dac_rz` | RZ, held half a period: `(1 - exp(-s*T/2))/s` |
+| | typed into an H(s) block | any other pulse: `exp(-s*T_d)*(1 - exp(-s*T))/s` (excess loop delay; or a delay block drawn before the DAC), `(1 - exp(-s*T))/s^2` (a hold into an integrator) |
+| z to z | `tf_z`, `tf_zdelay` | H(z) blocks, `z^-1` |
+
+A sample-and-hold feeding continuous circuits is a sampler then an NRZ
+DAC. No transform (bilinear, matched-z) is ever applied: a continuous path
+from a DAC to a sampler is sampled exactly, as below.
 
 A sampler makes the diagram a continuous-time loop sampled into a discrete
 one, a continuous-time sigma-delta modulator say. Each signal is

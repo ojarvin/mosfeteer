@@ -6686,6 +6686,37 @@ body.chrome-away [data-editor-edge="right"] {
   font-size: 0.8125rem;
 }
 
+/* Between s and z: a short guide folded under the intro. */
+.signal-flow-guide {
+  margin: 4px 0 10px;
+}
+
+.signal-flow-guide-head {
+  margin-top: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.signal-flow-guide .field-hint {
+  margin: 3px 0;
+}
+
+.signal-flow-guide-math math {
+  display: inline math;
+  font-size: 1.05em;
+}
+
+.signal-flow-guide-math.display {
+  display: block;
+  margin: 2px 0 4px 1.5em;
+}
+
+.signal-flow-guide-math.display math {
+  display: block math;
+  text-align: left;
+  font-size: 1.15em;
+}
+
 .signal-flow-paste {
   width: 100%;
   margin-top: 6px;

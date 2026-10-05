@@ -19622,8 +19622,8 @@ function transferFunctionBlock(type, variable, description = `Transfer function 
 const tf_s = transferFunctionBlock('tf_s', 's');
 const tf_z = transferFunctionBlock('tf_z', 'z');
 // Presets: a DAC (its NRZ or RZ pulse, the way back from z to s), and delays.
-const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC pulse (1 - e^{-sT})/s', 'DAC');
-const tf_dac_rz = transferFunctionBlock('tf_dac_rz', 's', 'RZ DAC pulse (1 - e^{-sT/2})/s', 'DAC');
+const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC, z to s: NRZ pulse (zero-order hold) (1 - e^{-sT})/s', 'DAC');
+const tf_dac_rz = transferFunctionBlock('tf_dac_rz', 's', 'DAC, z to s: RZ pulse (half-period hold) (1 - e^{-sT/2})/s', 'DAC');
 const tf_delay = transferFunctionBlock('tf_delay', 's', 'Delay e^{-sT_d}', 'DL');
 const tf_zdelay = transferFunctionBlock('tf_zdelay', 'z', 'Delay z^{-1}', 'DL');
 
@@ -19658,13 +19658,15 @@ const gain = defineSymbol({
 /**
  * A sampler: the switch that reads a continuous signal at t = nT, turning
  * an s-domain signal into a z-domain one (a quantizer's sampling in a
- * continuous-time modulator). Its value is the period T, drawn beside it.
+ * continuous-time modulator). Ideal: it passes on the numbers x(nT), with
+ * no hold (the hold is a DAC's pulse, on the way back). Its value is the
+ * period T, drawn beside it.
  * The way back, z to s, needs no part: an H(s) block reading a sampled
  * signal is the DAC, its H(s) the pulse each sample makes.
  */
 const sampler = defineSymbol({
   type: 'sampler',
-  description: 'Sampler (s to z)',
+  description: 'Sampler, s to z (ideal: no hold)',
   refPrefix: 'SMP',
   terminals: [
     { name: 'in', x: -80, y: 0, direction: 'input', signalRole: 'input', dir: { x: -1, y: 0 } },
@@ -65622,6 +65624,44 @@ function setMode(next, { user = false } = {}) {
 
 // ----- the form -------------------------------------------------------------------------
 
+/**
+ * Every way between continuous time (s) and sampled time (z) the diagram
+ * offers, folded under the intro: what the sampler is (no hold), what makes
+ * a DAC (any H(s) block reading a sampled signal, its H(s) the pulse), the
+ * presets, and that nothing is converted by a transform.
+ */
+function domainsGuide() {
+  const line = (parts) => {
+    const p = el('p', { class: 'field-hint' });
+    for (const part of parts) {
+      if (typeof part === 'string') p.append(part);
+      else {
+        // In the run of the text; a pulse (a fraction) on a line of its own.
+        const math = el('span', { class: `signal-flow-guide-math${part.display ? ' display' : ''}` });
+        math.innerHTML = part.display ? texToMathML(part.tex) : texToMathML(part.tex).replace('display="block"', 'display="inline"');
+        p.append(math);
+      }
+    }
+    return p;
+  };
+  const tex = (value) => ({ tex: value });
+  const shown = (value) => ({ tex: value, display: true });
+  return el('details', { class: 'signal-flow-paste-box signal-flow-guide' }, [
+    el('summary', { text: 'Between s and z: samplers and DACs' }),
+    el('div', { class: 'signal-flow-guide-head', text: 's to z: the sampler, only' }),
+    line(['An ideal sampler: it reads the continuous signal just before each ', tex('t = nT'), ' and passes on the numbers ', tex('x[n]'), '. No hold, and no anti-aliasing: it is not a sample-and-hold or a ZOH. Its value is the period ', tex('T'), '. Put an H(s) block before it to filter what it reads.']),
+    el('div', { class: 'signal-flow-guide-head', text: 'z to s: any H(s) block reading a sampled signal is a DAC' }),
+    line(['Each sample enters it as an impulse ', tex('x[n]\\,\\delta(t - nT)'), ', so its H(s) is the DAC’s pulse. The presets:']),
+    line(['DAC (NRZ) preset, a zero-order hold for a whole period:', shown('\\frac{1 - e^{-sT}}{s}')]),
+    line(['DAC (RZ) preset, held half a period:', shown('\\frac{1 - e^{-sT/2}}{s}')]),
+    line(['Any other pulse is typed into an H(s) block. With excess loop delay (or a delay block drawn before the DAC):', shown('e^{-sT_d}\\,\\frac{1 - e^{-sT}}{s}')]),
+    line(['A hold into an integrator, as one block:', shown('\\frac{1 - e^{-sT}}{s^2}')]),
+    line(['A sample-and-hold driving continuous circuits is a sampler, then an NRZ DAC.']),
+    el('div', { class: 'signal-flow-guide-head', text: 'No transform is applied' }),
+    line(['A continuous path from a DAC to a sampler is sampled exactly at the coefficients’ numbers (its pulse response read at each ', tex('t = nT'), '): nothing is converted by the bilinear, matched-z, or any other approximation. To design in z, draw ', tex('H(z)'), ' blocks; ', tex('z^{-1}'), ' is the Delay z^-1 preset.']),
+  ]);
+}
+
 function fillForm() {
   const { signals, sources, issues } = signalFlowGraph(editor.circuit);
   const output = section.querySelector('#signal-flow-output');
@@ -66914,6 +66954,7 @@ function installSignalFlowUi() {
   const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
     el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
+    domainsGuide(),
     el('div', { class: 'analysis-grid' }, [
       el('div', { class: 'analysis-node' }, [el('label', { for: 'signal-flow-output', text: 'Output signal' }), el('div', { class: 'analysis-node-control' }, [output])]),
     ]),
@@ -68894,7 +68935,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC pulse (NRZ)', tf_dac_rz: 'DAC pulse (RZ)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler (s to z)', quantizer: 'Quantizer (N levels)',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', quantizer: 'Quantizer (N levels)',
 };
 
 const PLACEMENT_ALIASES = {
@@ -68960,11 +69001,11 @@ const PLACEMENT_ALIASES = {
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
   gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
   quantizer: ['quantizer', 'adc', 'comparator', 'levels', 'single-bit', 'multibit', 'sigma delta', 'signal flow'],
-  sampler: ['sampler', 'sample', 'switch', 'quantizer', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
+  sampler: ['sampler', 'sample', 'switch', 'ideal sampler', 'adc', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
-  tf_dac: ['dac', 'nrz', 'zero-order hold', 'zoh', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
-  tf_dac_rz: ['dac', 'rz', 'return to zero', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
+  tf_dac: ['dac', 'nrz', 'zero-order hold', 'zoh', 'hold', 'sample and hold', 'z to s', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
+  tf_dac_rz: ['dac', 'rz', 'return to zero', 'z to s', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
   tf_delay: ['delay', 'excess loop delay', 'eld', 'exp', 'signal flow'],
   tf_zdelay: ['delay', 'z^-1', 'unit delay', 'register', 'signal flow'],
 };

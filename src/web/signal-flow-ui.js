@@ -123,6 +123,44 @@ function setMode(next, { user = false } = {}) {
 
 // ----- the form -------------------------------------------------------------------------
 
+/**
+ * Every way between continuous time (s) and sampled time (z) the diagram
+ * offers, folded under the intro: what the sampler is (no hold), what makes
+ * a DAC (any H(s) block reading a sampled signal, its H(s) the pulse), the
+ * presets, and that nothing is converted by a transform.
+ */
+function domainsGuide() {
+  const line = (parts) => {
+    const p = el('p', { class: 'field-hint' });
+    for (const part of parts) {
+      if (typeof part === 'string') p.append(part);
+      else {
+        // In the run of the text; a pulse (a fraction) on a line of its own.
+        const math = el('span', { class: `signal-flow-guide-math${part.display ? ' display' : ''}` });
+        math.innerHTML = part.display ? texToMathML(part.tex) : texToMathML(part.tex).replace('display="block"', 'display="inline"');
+        p.append(math);
+      }
+    }
+    return p;
+  };
+  const tex = (value) => ({ tex: value });
+  const shown = (value) => ({ tex: value, display: true });
+  return el('details', { class: 'signal-flow-paste-box signal-flow-guide' }, [
+    el('summary', { text: 'Between s and z: samplers and DACs' }),
+    el('div', { class: 'signal-flow-guide-head', text: 's to z: the sampler, only' }),
+    line(['An ideal sampler: it reads the continuous signal just before each ', tex('t = nT'), ' and passes on the numbers ', tex('x[n]'), '. No hold, and no anti-aliasing: it is not a sample-and-hold or a ZOH. Its value is the period ', tex('T'), '. Put an H(s) block before it to filter what it reads.']),
+    el('div', { class: 'signal-flow-guide-head', text: 'z to s: any H(s) block reading a sampled signal is a DAC' }),
+    line(['Each sample enters it as an impulse ', tex('x[n]\\,\\delta(t - nT)'), ', so its H(s) is the DAC’s pulse. The presets:']),
+    line(['DAC (NRZ) preset, a zero-order hold for a whole period:', shown('\\frac{1 - e^{-sT}}{s}')]),
+    line(['DAC (RZ) preset, held half a period:', shown('\\frac{1 - e^{-sT/2}}{s}')]),
+    line(['Any other pulse is typed into an H(s) block. With excess loop delay (or a delay block drawn before the DAC):', shown('e^{-sT_d}\\,\\frac{1 - e^{-sT}}{s}')]),
+    line(['A hold into an integrator, as one block:', shown('\\frac{1 - e^{-sT}}{s^2}')]),
+    line(['A sample-and-hold driving continuous circuits is a sampler, then an NRZ DAC.']),
+    el('div', { class: 'signal-flow-guide-head', text: 'No transform is applied' }),
+    line(['A continuous path from a DAC to a sampler is sampled exactly at the coefficients’ numbers (its pulse response read at each ', tex('t = nT'), '): nothing is converted by the bilinear, matched-z, or any other approximation. To design in z, draw ', tex('H(z)'), ' blocks; ', tex('z^{-1}'), ' is the Delay z^-1 preset.']),
+  ]);
+}
+
 function fillForm() {
   const { signals, sources, issues } = signalFlowGraph(editor.circuit);
   const output = section.querySelector('#signal-flow-output');
@@ -1415,6 +1453,7 @@ export function installSignalFlowUi() {
   const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
     el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
+    domainsGuide(),
     el('div', { class: 'analysis-grid' }, [
       el('div', { class: 'analysis-node' }, [el('label', { for: 'signal-flow-output', text: 'Output signal' }), el('div', { class: 'analysis-node-control' }, [output])]),
     ]),

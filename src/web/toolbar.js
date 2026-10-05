@@ -52,7 +52,7 @@ export const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC pulse (NRZ)', tf_dac_rz: 'DAC pulse (RZ)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler (s to z)', quantizer: 'Quantizer (N levels)',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', quantizer: 'Quantizer (N levels)',
 };
 
 export const PLACEMENT_ALIASES = {
@@ -118,11 +118,11 @@ export const PLACEMENT_ALIASES = {
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
   gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
   quantizer: ['quantizer', 'adc', 'comparator', 'levels', 'single-bit', 'multibit', 'sigma delta', 'signal flow'],
-  sampler: ['sampler', 'sample', 'switch', 'quantizer', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
+  sampler: ['sampler', 'sample', 'switch', 'ideal sampler', 'adc', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
-  tf_dac: ['dac', 'nrz', 'zero-order hold', 'zoh', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
-  tf_dac_rz: ['dac', 'rz', 'return to zero', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
+  tf_dac: ['dac', 'nrz', 'zero-order hold', 'zoh', 'hold', 'sample and hold', 'z to s', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
+  tf_dac_rz: ['dac', 'rz', 'return to zero', 'z to s', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
   tf_delay: ['delay', 'excess loop delay', 'eld', 'exp', 'signal flow'],
   tf_zdelay: ['delay', 'z^-1', 'unit delay', 'register', 'signal flow'],
 };
