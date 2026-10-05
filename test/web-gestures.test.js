@@ -330,7 +330,7 @@ test('small windows: rail follows canvas height, one-row toolbar, drawer panel',
   assert.match(css, /@container canvas-pane \(max-height: 380px\) \{\s*\.mode-toolbar \{\s*width: max-content;/);
   // The toolbar never wraps; narrow windows fold buttons into More as proxies.
   assert.match(css, /^\.toolbar \{\s*flex-wrap: nowrap;/m);
-  for (const id of ['btn-new-document', 'btn-export', 'btn-grid', 'btn-guides', 'btn-crosshair', 'btn-theme']) {
+  for (const id of ['btn-new-document', 'btn-export', 'btn-grid', 'btn-guides', 'btn-crosshair']) {
     assert.match(html, new RegExp(`class="fold-only"[^>]*data-proxy-for="${id}"`));
   }
   // The panel toggle works at every size: collapse when docked, drawer when narrow.

@@ -463,7 +463,9 @@ test('the Atlas header carries the editor toolbar\'s mark and theme toggle', () 
   assert.match(atlas, /getElementById\('app-mark'\)\?\.addEventListener\('click', \(\) => void openAtlas\(\)\)/);
   assert.match(head, /id="atlas-theme"[^>]+class="icon-button"[^>]+data-icon="moon"[^>]+aria-pressed="false"/);
   const toolbar = readFileSync(new URL('../src/web/toolbar-ui.js', import.meta.url), 'utf8');
-  assert.match(toolbar, /for \(const button of themeButtons\) \{\s*button.setAttribute\('aria-pressed', String\(dark\)\);/);
+  // The editor's switch is a checkbox item in the settings menu; the Atlas's a toggle.
+  assert.match(html, /id="btn-theme" type="button" role="menuitemcheckbox"/);
+  assert.match(toolbar, /for \(const button of themeButtons\) \{[\s\S]{0,200}button.setAttribute\('aria-checked', String\(dark\)\);[\s\S]{0,80}button.setAttribute\('aria-pressed', String\(dark\)\);/);
   assert.match(toolbar, /for \(const button of themeButtons\) button.addEventListener\('click', toggleTheme\);/);
   const elements = readFileSync(new URL('../src/web/elements.js', import.meta.url), 'utf8');
   assert.match(elements, /themeButtons = \[themeBtn, document.getElementById\('atlas-theme'\)\]/);

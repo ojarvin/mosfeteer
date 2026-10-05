@@ -54,7 +54,6 @@
           <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="grid" data-proxy-for="btn-grid">Grid <kbd>#</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="guides" data-proxy-for="btn-guides">Guides <kbd>Shift+G</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="crosshair" data-proxy-for="btn-crosshair">Crosshair <kbd>Shift+C</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" class="fold-only" data-icon="moon" data-proxy-for="btn-theme">Dark theme <kbd>Shift+D</kbd></button>
           <span class="toolbar-menu-separator fold-only" role="separator"></span>
           <button id="btn-open-file" type="button" role="menuitem" data-icon="folder-open" title="Open a document file from any folder (Ctrl/Cmd+O)">Open file…</button>
           <button id="btn-save-as" type="button" role="menuitem" data-icon="save" title="Save a copy in any folder under any name (Ctrl/Cmd+Shift+S)">Save as…</button>
@@ -91,7 +90,6 @@
       <button id="btn-grid" class="icon-button" data-icon="grid" aria-pressed="true" aria-label="Grid" title="Show or hide the placement grid (#)">Grid</button>
       <button id="btn-guides" class="icon-button" data-icon="guides" aria-pressed="true" aria-label="Placement guides" title="Show or hide the spacing and alignment guides (Shift+G)">Guides</button>
       <button id="btn-crosshair" class="icon-button" data-icon="crosshair" aria-pressed="true" aria-label="Crosshair" title="Show or hide the crosshair (Shift+C)">Crosshair</button>
-      <button id="btn-theme" class="icon-button" data-icon="moon" aria-pressed="false" aria-label="Dark theme" title="Switch between light and dark themes (Shift+D)">Dark</button>
     </div>
 
     <!-- Settings: choices that are set once rather than toggled while drawing.
@@ -111,6 +109,7 @@
           </div>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Display</p>
+          <button id="btn-theme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="moon" title="Switch between light and dark themes (Shift+D)">Dark theme</button>
           <button id="btn-reduce-motion" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="motion" title="Leave out zooms, slides, and other animations, as the system's reduced-motion preference does">Reduce animations</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Input</p>

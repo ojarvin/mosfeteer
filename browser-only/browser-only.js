@@ -36564,11 +36564,12 @@ let renderBode, syncBodePlace; __bind(() => { ({ renderBode, syncBodePlace } = _
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
+let installHintFolding; __bind(() => { ({ installHintFolding } = __require("src/web/hints.js")); });
 let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets; __bind(() => { ({ commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } = __require("src/web/main.js")); });
+let beginSettingsEdit, commit, endSettingsEdit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets; __bind(() => { ({ beginSettingsEdit, commit, endSettingsEdit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } = __require("src/web/main.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 /**
  * The small-signal analysis dock: its form and remembered settings, running
@@ -36576,6 +36577,7 @@ let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floa
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -37655,7 +37657,29 @@ function applyNetAnalysis(target, attrs) {
   render();
 }
 
+/**
+ * Every control in the window brackets its adjustment for undo: pressing,
+ * focusing, or keying a control opens one, its change (a slider let go, a
+ * field committed) or a button's click closes it, after the control's own
+ * handler ran. A whole slider drag is then one undo step (main.js
+ * beginSettingsEdit).
+ */
+function installSettingsUndo(root) {
+  if (!root) return;
+  const isControl = (target) => target?.closest?.('input, select, textarea, button');
+  const begin = (ev) => { if (isControl(ev.target)) beginSettingsEdit(); };
+  const end = () => setTimeout(endSettingsEdit, 0);
+  root.addEventListener('pointerdown', begin, true);
+  root.addEventListener('focusin', begin, true);
+  root.addEventListener('keydown', begin, true);
+  root.addEventListener('change', end);
+  root.addEventListener('click', (ev) => { if (ev.target?.closest?.('button')) end(); });
+}
+
 function installAnalysisUi() {
+  // Long explanations in the window fold to their first sentence.
+  installHintFolding(analysisDialog);
+  installSettingsUndo(analysisDialog);
   for (const button of analysisTabButtons) {
     button.addEventListener('click', () => setAnalysisResultTab(button.dataset.analysisTab));
     button.addEventListener('keydown', (ev) => {
@@ -42037,6 +42061,7 @@ __exports.formatNumber = formatNumber;
 __exports.bodeAvailable = bodeAvailable;
 __exports.figureElement = figureElement;
 __exports.syncBodePlace = syncBodePlace;
+__exports.bodeSettingsRestored = bodeSettingsRestored;
 __exports.renderBode = renderBode;
 __exports.currentPlotData = currentPlotData;
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
@@ -42343,6 +42368,11 @@ function syncBodePlace(place = panelEl()?.querySelector('.bode-place')) {
 }
 
 /** Rebuild the tab for a new report (or a new quantity). */
+/** The settings came back from undo or redo: draw the sketch at its ratios again. */
+function bodeSettingsRestored() {
+  if (state.report) renderBode(state.report);
+}
+
 function renderBode(report) {
   state.report = report || null;
   const panel = panelEl();
@@ -44483,9 +44513,8 @@ function openComponentContextMenu(target, x, y) {
   appendSwitchPhaseMenu(menu, target);
   appendSizingMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
-  if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
-    appendContextItem(menu, 'Close', closeComponentContextMenu);
-  }
+  // No Close item: Escape or a click elsewhere closes the menu, as menus do.
+  appendContextDelete(menu);
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
   menu.querySelector('button:not(:disabled)')?.focus();
@@ -44593,6 +44622,13 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Send to back', () => restackSelected('back'), { shortcut: 'Shift+↓' });
   }
   if (target.kind === 'net' || target.kind === 'wire') appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
+  menu.appendChild(group);
+}
+
+/** Delete, the destructive action, last and in a group of its own. */
+function appendContextDelete(menu) {
+  const group = document.createElement('div');
+  group.className = 'context-menu-group context-menu-end';
   appendContextItem(group, 'Delete', deleteSelection, { shortcut: 'Del', danger: true });
   menu.appendChild(group);
 }
@@ -50466,6 +50502,96 @@ function installHierarchy() {
 
 };
 
+__modules["src/web/hints.js"] = function (__require, __exports) {
+__exports.foldHint = foldHint;
+__exports.installHintFolding = installHintFolding;
+/**
+ * Long explanations, folded: a hint paragraph past a sentence or two shows
+ * its first sentence and a "More" link; the rest opens in place. The
+ * reasons stay one click away instead of always filling the window.
+ *
+ * Only plain hints fold (`p.field-hint` with no other class: a status line
+ * carries its own class and always shows in full), and only when what would
+ * be hidden is worth hiding.
+ */
+
+const FOLD_FROM = 150; // characters: shorter hints show in full
+const MIN_HIDDEN = 50; // characters: never hide a short tail
+
+/** Where the first sentence ends: [text node, offset just past its stop], or null. */
+function firstSentenceEnd(paragraph) {
+  let seen = 0;
+  const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    // Only a text node directly in the paragraph splits cleanly.
+    if (node.parentNode === paragraph) {
+      const match = /[.!?]\s+(?=[A-Z(])/g;
+      match.lastIndex = Math.max(0, 40 - seen);
+      const found = match.exec(node.data);
+      if (found) return [node, found.index + 1];
+    }
+    seen += node.data.length;
+  }
+  return null;
+}
+
+/** Fold one hint paragraph (once). */
+function foldHint(paragraph) {
+  if (paragraph.dataset.folded !== undefined) return;
+  paragraph.dataset.folded = '';
+  const total = paragraph.textContent.length;
+  if (total < FOLD_FROM || paragraph.querySelector('button, input, select, a')) return;
+  const end = firstSentenceEnd(paragraph);
+  if (!end) return;
+  const [node, offset] = end;
+  const tail = node.splitText(offset);
+  const rest = document.createElement('span');
+  rest.className = 'hint-rest';
+  for (let next = tail; next;) {
+    const after = next.nextSibling;
+    rest.append(next);
+    next = after;
+  }
+  if (rest.textContent.trim().length < MIN_HIDDEN) {
+    paragraph.append(...rest.childNodes);
+    paragraph.normalize();
+    return;
+  }
+  rest.hidden = true;
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'hint-more';
+  more.textContent = 'More';
+  more.setAttribute('aria-expanded', 'false');
+  // Open, the link moves to the end of the paragraph, after what it showed.
+  more.addEventListener('click', () => {
+    const open = rest.hidden;
+    rest.hidden = !open;
+    if (open) rest.after(more);
+    else rest.before(more);
+    more.textContent = open ? 'Less' : 'More';
+    more.setAttribute('aria-expanded', String(open));
+  });
+  paragraph.append(' ', more, rest);
+}
+
+const isPlainHint = (node) => node instanceof HTMLElement && node.matches('p.field-hint') && node.classList.length === 1;
+
+/** Fold every plain hint under `root`, now and as it is rebuilt. */
+function installHintFolding(root) {
+  if (!root) return;
+  const foldAll = (scope) => {
+    if (isPlainHint(scope)) foldHint(scope);
+    for (const hint of scope.querySelectorAll?.('p.field-hint') || []) if (isPlainHint(hint)) foldHint(hint);
+  };
+  foldAll(root);
+  new MutationObserver((records) => {
+    for (const record of records) for (const node of record.addedNodes) if (node.nodeType === 1) foldAll(node);
+  }).observe(root, { childList: true, subtree: true });
+}
+
+};
+
 __modules["src/web/hover-preview.js"] = function (__require, __exports) {
 __exports.netMarkerRefs = netMarkerRefs;
 __exports.setHoverTarget = setHoverTarget;
@@ -52697,6 +52823,8 @@ __modules["src/web/main.js"] = function (__require, __exports) {
 __exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
 __exports.markSettingsChanged = markSettingsChanged;
+__exports.beginSettingsEdit = beginSettingsEdit;
+__exports.endSettingsEdit = endSettingsEdit;
 __exports.revisionCurrent = revisionCurrent;
 __exports.markModelChanged = markModelChanged;
 __exports.commit = commit;
@@ -52800,7 +52928,8 @@ __exports.activateMove = activateMove;
 __exports.activateCopy = activateCopy;
 __exports.activateAlign = activateAlign;
 __exports.selectedTransform = selectedTransform;
-let installSignalFlowUi; __bind(() => { ({ installSignalFlowUi } = __require("src/web/signal-flow-ui.js")); });
+let installSignalFlowUi, signalFlowSettingsRestored; __bind(() => { ({ installSignalFlowUi, signalFlowSettingsRestored } = __require("src/web/signal-flow-ui.js")); });
+let bodeSettingsRestored; __bind(() => { ({ bodeSettingsRestored } = __require("src/web/bode-ui.js")); });
 let captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouchingIn, rerouteTouchedNetsIn; __bind(() => { ({ captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching: netsTouchingIn, rerouteTouchedNets: rerouteTouchedNetsIn } = __require("src/core/part-moves.js")); });
 let Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } = __require("src/core/model.js")); });
 let getSymbol, seriesTerminalNames; __bind(() => { ({ getSymbol, seriesTerminalNames } = __require("src/core/components/index.js")); });
@@ -52877,6 +53006,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -53299,11 +53429,48 @@ const settingsRevisions = new Set();
 
 /** A setting saved with the document changed (a coefficient, a Bode ratio):
  *  the document is edited -- saved, and marked unsaved until then -- but
- *  nothing derived from the drawing goes stale, and no undo entry is made. */
+ *  nothing derived from the drawing goes stale. The undo entry is the
+ *  gesture's, not the tick's (beginSettingsEdit / endSettingsEdit). */
 function markSettingsChanged() {
   markModelChanged(false);
   if (settingsRevisions.size > 5000) settingsRevisions.clear();
   settingsRevisions.add(modelRevision);
+}
+
+// ----- settings edits: one undo step per gesture ------------------------------
+// A slider dragged, a field typed, a button like Apply: the analysis window
+// brackets each (analysis-ui.js) so the whole adjustment is one undo step,
+// however many ticks it made. Only a change to the settings alone is
+// recorded here; drawing edits make their own entries.
+
+let settingsBefore = null;
+
+/** The document with its settings left out: what a settings edit must not change. */
+function drawingOf(text) {
+  const data = JSON.parse(text);
+  delete data.analysisValues;
+  return JSON.stringify(data);
+}
+
+/** A settings adjustment may start: remember the document as it is. */
+function beginSettingsEdit() {
+  if (!settingsBefore) settingsBefore = snapshot();
+}
+
+/** The adjustment is done: one undo entry if it changed the settings alone. */
+function endSettingsEdit() {
+  const before = settingsBefore;
+  settingsBefore = null;
+  if (!before) return;
+  const after = snapshot();
+  if (after === before || drawingOf(after) !== drawingOf(before)) return;
+  rememberHistory(before, true);
+  future.length = 0;
+}
+
+/** Whether two snapshots differ in their settings alone. */
+function settingsOnly(a, b) {
+  return a !== b && drawingOf(a) === drawingOf(b);
 }
 
 /** Whether `revision` still describes the drawing: no edit since it but
@@ -53408,6 +53575,8 @@ let suppressNetNameChoice = false;
 
 function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now') {
   if (!startSnapshot) return;
+  // A drawing edit ends any settings adjustment open beside it.
+  settingsBefore = null;
   rememberHistory(startSnapshot, trim);
   future.length = 0;
   queueCommitFeedback(startSnapshot, feedback);
@@ -53529,11 +53698,23 @@ function undo() {
     return;
   }
   const kept = alignTool && keptAlignSelection();
-  future.push(snapshot());
-  applyJson(history.pop());
+  const current = snapshot();
+  future.push(current);
+  const target = history.pop();
+  applyJson(target);
+  settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
   render();
+}
+
+/** An undo or redo that changed the settings alone (a slider's numbers)
+ *  leaves what was derived current, and shows the numbers again. */
+function settingsRestored(from, to) {
+  if (!settingsOnly(from, to)) return;
+  settingsRevisions.add(modelRevision);
+  signalFlowSettingsRestored();
+  bodeSettingsRestored();
 }
 
 function redo() {
@@ -53545,8 +53726,11 @@ function redo() {
     return;
   }
   const kept = alignTool && keptAlignSelection();
-  rememberHistory(snapshot(), false);
-  applyJson(future.pop());
+  const current = snapshot();
+  rememberHistory(current, false);
+  const target = future.pop();
+  applyJson(target);
+  settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
   render();
@@ -65486,6 +65670,7 @@ __exports.collapsedPanels = collapsedPanels;
 };
 
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
+__exports.signalFlowSettingsRestored = signalFlowSettingsRestored;
 __exports.installSignalFlowUi = installSignalFlowUi;
 let TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
@@ -66143,10 +66328,17 @@ function renderSwing() {
 
 // ----- results --------------------------------------------------------------------------
 
+/** A result's label, a signal's subscript markup (E_{QZ1}) drawn as one. */
+function equationLabel(text) {
+  const label = el('div', { class: 'analysis-equation-label' });
+  for (const run of parseLabelRuns(text)) label.append(run.sub || run.super ? el(run.sub ? 'sub' : 'sup', { text: run.text }) : run.text);
+  return label;
+}
+
 function mathRow(label, tex) {
   const value = el('div', { class: 'analysis-equation-value', 'aria-label': tex });
   value.innerHTML = texToMathML(tex);
-  return el('div', { class: 'analysis-equation-row' }, [el('div', { class: 'analysis-equation-label', text: label }), value]);
+  return el('div', { class: 'analysis-equation-row' }, [equationLabel(label), value]);
 }
 
 // ----- coefficients ---------------------------------------------------------------------
@@ -66177,6 +66369,17 @@ function numeric(value, variable) {
 
 let redrawFrame = 0;
 /** Redraw what the coefficients feed, once a frame while a slider moves. */
+/** The settings came back from undo or redo: the form, the sliders, and
+ *  the plots show them again (what was derived still holds). */
+function signalFlowSettingsRestored() {
+  if (!section || mode !== 'signal-flow') return;
+  fillForm();
+  renderCoefficients({ force: true });
+  renderPlots();
+  coefficientsChanged();
+  coefficientsSettled();
+}
+
 function coefficientsChanged() {
   if (redrawFrame) return;
   redrawFrame = requestAnimationFrame(() => {
@@ -66908,7 +67111,7 @@ function appendTraceButton(block, entry) {
 function rootRow(label, roots, variable, at = '') {
   const unit = variable === 'z' && label === 'Poles' ? ' (stable inside |z| = 1)' : '';
   return el('div', { class: 'analysis-equation-row' }, [
-    el('div', { class: 'analysis-equation-label', text: `${label}${at}${unit}` }),
+    equationLabel(`${label}${at}${unit}`),
     el('div', { class: 'signal-flow-roots', text: roots.map(complexText).join(',  ') }),
   ]);
 }
@@ -66974,6 +67177,20 @@ function installSignalFlowUi() {
     ]),
     el('div', { class: 'signal-flow-issues', hidden: true }),
     el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
+    // The results first: what Derive found, then its plots.
+    el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
+    // One plot area, its view picked at the top: the frequency and step
+    // responses, the root locus, the swing.
+    el('div', { class: 'signal-flow-plots' }, [
+      el('div', { class: 'signal-flow-band-host' }),
+      el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
+      el('div', { class: 'signal-flow-graph' }),
+      locusSection(),
+      swingSection(),
+      loopSection(),
+    ]),
+    // The tuning comes after what it tunes: the coefficients' sliders, then
+    // the optimizer (folded until opened).
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
@@ -67022,17 +67239,6 @@ function installSignalFlowUi() {
         coefficientsSettled();
       },
     }),
-    // One plot area, its view picked at the top: the frequency and step
-    // responses, the root locus, the swing.
-    el('div', { class: 'signal-flow-plots' }, [
-      el('div', { class: 'signal-flow-band-host' }),
-      el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
-      el('div', { class: 'signal-flow-graph' }),
-      locusSection(),
-      swingSection(),
-      loopSection(),
-    ]),
-    el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
   ]);
   actions = [
     el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Write the equations under the drawing', onclick: annotate }),
@@ -68643,6 +68849,11 @@ function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   syncToolCursor();
   for (const button of themeButtons) {
+    // The settings menu's item is a checkbox; the Atlas's a toggle button.
+    if (button.getAttribute('role') === 'menuitemcheckbox') {
+      button.setAttribute('aria-checked', String(dark));
+      continue;
+    }
     button.setAttribute('aria-pressed', String(dark));
     button.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
     const icon = button.querySelector('.button-icon');
@@ -69091,8 +69302,8 @@ const EDITOR_KEYMAP = Object.freeze([
     ['l', 'persistent multi-point line annotation placement'],
   ]],
   ['edit', [
-    ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
-    ['Shift+U / Ctrl/Cmd+Y / Ctrl/Cmd+Shift+Z', 'redo'],
+    ['Ctrl/Cmd+Z / u', 'undo; insert search keeps u as text'],
+    ['Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y / Shift+U', 'redo'],
     ['Arrow keys', 'nudge selected objects or move the cursor'],
     ['r', 'rotate selected objects 90° clockwise'],
     ['Shift+R', 'mirror selected horizontally'],

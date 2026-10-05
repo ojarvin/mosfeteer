@@ -199,8 +199,8 @@ export const EDITOR_KEYMAP = Object.freeze([
     ['l', 'persistent multi-point line annotation placement'],
   ]],
   ['edit', [
-    ['u / Ctrl/Cmd+Z', 'undo; insert search keeps u as text'],
-    ['Shift+U / Ctrl/Cmd+Y / Ctrl/Cmd+Shift+Z', 'redo'],
+    ['Ctrl/Cmd+Z / u', 'undo; insert search keeps u as text'],
+    ['Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y / Shift+U', 'redo'],
     ['Arrow keys', 'nudge selected objects or move the cursor'],
     ['r', 'rotate selected objects 90° clockwise'],
     ['Shift+R', 'mirror selected horizontally'],

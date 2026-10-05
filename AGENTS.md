@@ -339,7 +339,11 @@ selected generator to that same solve. The main implementation is in
   design values. A box annotation may carry its sketch (`plot`). Its slider
   ratios, like the signal-flow coefficients, are saved with the document
   (`Circuit#analysisValues`); a slider move is a settings change
-  (`markSettingsChanged`): saved, never an undo entry, never staleness.
+  (`markSettingsChanged`): saved, never staleness, and one undo entry per
+  finished adjustment (a slider let go, a field committed, Apply), not per
+  tick -- the analysis window brackets each control's gesture
+  (`beginSettingsEdit`/`endSettingsEdit`); undoing it keeps what was derived
+  current.
 - The GUI calls `adaptCombinedReport(analyzeSmallSignalV2(...))`, never the v2
   analyzer directly. Provenance is opt-in and only decorates live equation
   MathML; it must not leak into labels, documents, or exports.

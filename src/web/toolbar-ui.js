@@ -466,6 +466,11 @@ function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   syncToolCursor();
   for (const button of themeButtons) {
+    // The settings menu's item is a checkbox; the Atlas's a toggle button.
+    if (button.getAttribute('role') === 'menuitemcheckbox') {
+      button.setAttribute('aria-checked', String(dark));
+      continue;
+    }
     button.setAttribute('aria-pressed', String(dark));
     button.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
     const icon = button.querySelector('.button-icon');

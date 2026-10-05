@@ -633,10 +633,17 @@ function renderSwing() {
 
 // ----- results --------------------------------------------------------------------------
 
+/** A result's label, a signal's subscript markup (E_{QZ1}) drawn as one. */
+function equationLabel(text) {
+  const label = el('div', { class: 'analysis-equation-label' });
+  for (const run of parseLabelRuns(text)) label.append(run.sub || run.super ? el(run.sub ? 'sub' : 'sup', { text: run.text }) : run.text);
+  return label;
+}
+
 function mathRow(label, tex) {
   const value = el('div', { class: 'analysis-equation-value', 'aria-label': tex });
   value.innerHTML = texToMathML(tex);
-  return el('div', { class: 'analysis-equation-row' }, [el('div', { class: 'analysis-equation-label', text: label }), value]);
+  return el('div', { class: 'analysis-equation-row' }, [equationLabel(label), value]);
 }
 
 // ----- coefficients ---------------------------------------------------------------------
@@ -667,6 +674,17 @@ function numeric(value, variable) {
 
 let redrawFrame = 0;
 /** Redraw what the coefficients feed, once a frame while a slider moves. */
+/** The settings came back from undo or redo: the form, the sliders, and
+ *  the plots show them again (what was derived still holds). */
+export function signalFlowSettingsRestored() {
+  if (!section || mode !== 'signal-flow') return;
+  fillForm();
+  renderCoefficients({ force: true });
+  renderPlots();
+  coefficientsChanged();
+  coefficientsSettled();
+}
+
 function coefficientsChanged() {
   if (redrawFrame) return;
   redrawFrame = requestAnimationFrame(() => {
@@ -1398,7 +1416,7 @@ function appendTraceButton(block, entry) {
 function rootRow(label, roots, variable, at = '') {
   const unit = variable === 'z' && label === 'Poles' ? ' (stable inside |z| = 1)' : '';
   return el('div', { class: 'analysis-equation-row' }, [
-    el('div', { class: 'analysis-equation-label', text: `${label}${at}${unit}` }),
+    equationLabel(`${label}${at}${unit}`),
     el('div', { class: 'signal-flow-roots', text: roots.map(complexText).join(',  ') }),
   ]);
 }
@@ -1464,6 +1482,20 @@ export function installSignalFlowUi() {
     ]),
     el('div', { class: 'signal-flow-issues', hidden: true }),
     el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
+    // The results first: what Derive found, then its plots.
+    el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
+    // One plot area, its view picked at the top: the frequency and step
+    // responses, the root locus, the swing.
+    el('div', { class: 'signal-flow-plots' }, [
+      el('div', { class: 'signal-flow-band-host' }),
+      el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
+      el('div', { class: 'signal-flow-graph' }),
+      locusSection(),
+      swingSection(),
+      loopSection(),
+    ]),
+    // The tuning comes after what it tunes: the coefficients' sliders, then
+    // the optimizer (folded until opened).
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
@@ -1512,17 +1544,6 @@ export function installSignalFlowUi() {
         coefficientsSettled();
       },
     }),
-    // One plot area, its view picked at the top: the frequency and step
-    // responses, the root locus, the swing.
-    el('div', { class: 'signal-flow-plots' }, [
-      el('div', { class: 'signal-flow-band-host' }),
-      el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
-      el('div', { class: 'signal-flow-graph' }),
-      locusSection(),
-      swingSection(),
-      loopSection(),
-    ]),
-    el('div', { class: 'signal-flow-results', 'aria-live': 'polite' }),
   ]);
   actions = [
     el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Write the equations under the drawing', onclick: annotate }),

@@ -293,6 +293,11 @@ export function syncBodePlace(place = panelEl()?.querySelector('.bode-place')) {
 }
 
 /** Rebuild the tab for a new report (or a new quantity). */
+/** The settings came back from undo or redo: draw the sketch at its ratios again. */
+export function bodeSettingsRestored() {
+  if (state.report) renderBode(state.report);
+}
+
 export function renderBode(report) {
   state.report = report || null;
   const panel = panelEl();

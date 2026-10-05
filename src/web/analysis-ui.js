@@ -17,11 +17,12 @@ import { renderBode, syncBodePlace } from './bode-ui.js';
 import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
+import { installHintFolding } from './hints.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
-import { commit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
+import { beginSettingsEdit, commit, endSettingsEdit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
@@ -1083,7 +1084,29 @@ export function applyNetAnalysis(target, attrs) {
   render();
 }
 
+/**
+ * Every control in the window brackets its adjustment for undo: pressing,
+ * focusing, or keying a control opens one, its change (a slider let go, a
+ * field committed) or a button's click closes it, after the control's own
+ * handler ran. A whole slider drag is then one undo step (main.js
+ * beginSettingsEdit).
+ */
+function installSettingsUndo(root) {
+  if (!root) return;
+  const isControl = (target) => target?.closest?.('input, select, textarea, button');
+  const begin = (ev) => { if (isControl(ev.target)) beginSettingsEdit(); };
+  const end = () => setTimeout(endSettingsEdit, 0);
+  root.addEventListener('pointerdown', begin, true);
+  root.addEventListener('focusin', begin, true);
+  root.addEventListener('keydown', begin, true);
+  root.addEventListener('change', end);
+  root.addEventListener('click', (ev) => { if (ev.target?.closest?.('button')) end(); });
+}
+
 export function installAnalysisUi() {
+  // Long explanations in the window fold to their first sentence.
+  installHintFolding(analysisDialog);
+  installSettingsUndo(analysisDialog);
   for (const button of analysisTabButtons) {
     button.addEventListener('click', () => setAnalysisResultTab(button.dataset.analysisTab));
     button.addEventListener('keydown', (ev) => {

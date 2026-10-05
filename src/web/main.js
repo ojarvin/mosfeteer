@@ -10,7 +10,8 @@
  *   WIRE     terminal letters pick/complete connections.
  */
 
-import { installSignalFlowUi } from './signal-flow-ui.js';
+import { installSignalFlowUi, signalFlowSettingsRestored } from './signal-flow-ui.js';
+import { bodeSettingsRestored } from './bode-ui.js';
 import { captureComponentTerminalPositions, captureNetTerminalPositions, componentTerminalMoves, netsTouching as netsTouchingIn, rerouteTouchedNets as rerouteTouchedNetsIn } from '../core/part-moves.js';
 import { Circuit, INTERFACE_PIN_TYPES, LABEL_FONT_SIZE, containedWireSegments, diagonalDraftPath, extractWireFragments, isReferenceMarker, netTerminalPositionKey, transformComponentWorld, transformNetLabelPlacement, transformWorldPoints } from '../core/model.js';
 import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
@@ -439,11 +440,48 @@ const settingsRevisions = new Set();
 
 /** A setting saved with the document changed (a coefficient, a Bode ratio):
  *  the document is edited -- saved, and marked unsaved until then -- but
- *  nothing derived from the drawing goes stale, and no undo entry is made. */
+ *  nothing derived from the drawing goes stale. The undo entry is the
+ *  gesture's, not the tick's (beginSettingsEdit / endSettingsEdit). */
 export function markSettingsChanged() {
   markModelChanged(false);
   if (settingsRevisions.size > 5000) settingsRevisions.clear();
   settingsRevisions.add(modelRevision);
+}
+
+// ----- settings edits: one undo step per gesture ------------------------------
+// A slider dragged, a field typed, a button like Apply: the analysis window
+// brackets each (analysis-ui.js) so the whole adjustment is one undo step,
+// however many ticks it made. Only a change to the settings alone is
+// recorded here; drawing edits make their own entries.
+
+let settingsBefore = null;
+
+/** The document with its settings left out: what a settings edit must not change. */
+function drawingOf(text) {
+  const data = JSON.parse(text);
+  delete data.analysisValues;
+  return JSON.stringify(data);
+}
+
+/** A settings adjustment may start: remember the document as it is. */
+export function beginSettingsEdit() {
+  if (!settingsBefore) settingsBefore = snapshot();
+}
+
+/** The adjustment is done: one undo entry if it changed the settings alone. */
+export function endSettingsEdit() {
+  const before = settingsBefore;
+  settingsBefore = null;
+  if (!before) return;
+  const after = snapshot();
+  if (after === before || drawingOf(after) !== drawingOf(before)) return;
+  rememberHistory(before, true);
+  future.length = 0;
+}
+
+/** Whether two snapshots differ in their settings alone. */
+function settingsOnly(a, b) {
+  return a !== b && drawingOf(a) === drawingOf(b);
 }
 
 /** Whether `revision` still describes the drawing: no edit since it but
@@ -548,6 +586,8 @@ let suppressNetNameChoice = false;
 
 export function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now') {
   if (!startSnapshot) return;
+  // A drawing edit ends any settings adjustment open beside it.
+  settingsBefore = null;
   rememberHistory(startSnapshot, trim);
   future.length = 0;
   queueCommitFeedback(startSnapshot, feedback);
@@ -669,11 +709,23 @@ export function undo() {
     return;
   }
   const kept = alignTool && keptAlignSelection();
-  future.push(snapshot());
-  applyJson(history.pop());
+  const current = snapshot();
+  future.push(current);
+  const target = history.pop();
+  applyJson(target);
+  settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
   render();
+}
+
+/** An undo or redo that changed the settings alone (a slider's numbers)
+ *  leaves what was derived current, and shows the numbers again. */
+function settingsRestored(from, to) {
+  if (!settingsOnly(from, to)) return;
+  settingsRevisions.add(modelRevision);
+  signalFlowSettingsRestored();
+  bodeSettingsRestored();
 }
 
 export function redo() {
@@ -685,8 +737,11 @@ export function redo() {
     return;
   }
   const kept = alignTool && keptAlignSelection();
-  rememberHistory(snapshot(), false);
-  applyJson(future.pop());
+  const current = snapshot();
+  rememberHistory(current, false);
+  const target = future.pop();
+  applyJson(target);
+  settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
   render();

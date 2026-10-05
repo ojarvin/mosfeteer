@@ -550,9 +550,8 @@ export function openComponentContextMenu(target, x, y) {
   appendSwitchPhaseMenu(menu, target);
   appendSizingMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
-  if (target.kind !== 'component' && target.kind !== 'net' && target.kind !== 'wire') {
-    appendContextItem(menu, 'Close', closeComponentContextMenu);
-  }
+  // No Close item: Escape or a click elsewhere closes the menu, as menus do.
+  appendContextDelete(menu);
   const rect = menu.getBoundingClientRect();
   if (rect.bottom > window.innerHeight - 4) menu.style.top = `${Math.max(4, window.innerHeight - 4 - rect.height)}px`;
   menu.querySelector('button:not(:disabled)')?.focus();
@@ -660,6 +659,13 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Send to back', () => restackSelected('back'), { shortcut: 'Shift+↓' });
   }
   if (target.kind === 'net' || target.kind === 'wire') appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
+  menu.appendChild(group);
+}
+
+/** Delete, the destructive action, last and in a group of its own. */
+function appendContextDelete(menu) {
+  const group = document.createElement('div');
+  group.className = 'context-menu-group context-menu-end';
   appendContextItem(group, 'Delete', deleteSelection, { shortcut: 'Del', danger: true });
   menu.appendChild(group);
 }

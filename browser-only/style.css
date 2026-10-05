@@ -366,6 +366,8 @@ button:focus-visible {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 /* A segmented control is one choice among its segments: the chosen one
@@ -809,6 +811,23 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* A folded explanation's "More": a quiet link at the end of its first sentence. */
+.hint-more {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  margin-left: 0.25em;
+}
+
+.hint-more:hover {
+  background: none;
+  text-decoration: underline;
 }
 
 /* A row of actions ends a dialog or a window: plain words, the default
@@ -1937,6 +1956,7 @@ button:disabled {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   line-height: 1.2;
+  font-family: var(--font-ui);
 }
 
 .analysis-equation-value {
@@ -2299,7 +2319,7 @@ button.app-mark-button:active {
 .align-distribute-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .align-controls button { min-width: 0; padding: 4px 3px; font-size: var(--text-sm); }
 .align-controls select {
- width: 100%; min-width: 0; height: 27px; font-size: var(--text-sm); 
+ width: 100%; min-width: 0; font-size: var(--text-sm); 
   height: var(--control-h);
 }
 .align-measure-label { color: var(--text-dim); font-size: var(--text-sm); }
@@ -2413,6 +2433,7 @@ button.app-mark-button:active {
   background: var(--swatch);
   border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
   border-radius: 50%;
+  min-height: 0;
 }
 
 .swatch:hover {
@@ -2604,6 +2625,7 @@ button.app-mark-button:active {
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
+  min-height: 0;
 }
 
 .list {
@@ -2976,6 +2998,7 @@ button.app-mark-button:active {
   color: var(--text-dim);
   font: var(--text-xs)/20px var(--font-mono);
   white-space: nowrap;
+  min-height: 0;
 }
 
 button.status-chip:hover {
@@ -3100,6 +3123,7 @@ button.status-chip:hover {
   color: var(--text-dim);
   background: transparent;
   border-color: transparent;
+  min-height: 0;
 }
 
 .log-drawer-head .icon-button[aria-pressed="true"] {
@@ -3399,6 +3423,20 @@ button.status-chip:hover {
   border-bottom: 1px solid var(--border);
 }
 
+/* The last group (Delete) is set off above, not below. */
+.context-menu-group.context-menu-end {
+  padding: 4px 0 0;
+  margin: 2px 0 0;
+  border-bottom: 0;
+  border-top: 1px solid var(--border);
+}
+
+.context-menu-group + .context-menu-group.context-menu-end {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: 0;
+}
+
 /* The style strip reuses the side panel's controls; these rules undo the
    menu's full-width row buttons for them. */
 .context-style-strip {
@@ -3435,6 +3473,7 @@ button.status-chip:hover {
   color: var(--text-dim);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
+  min-height: 0;
 }
 
 .component-context-menu .context-style-strip button:hover,
@@ -3469,6 +3508,7 @@ button.status-chip:hover {
   background: var(--swatch);
   border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
   border-radius: 50%;
+  min-height: 0;
 }
 
 .component-context-menu .context-style-strip .swatch:hover { transform: scale(1.12); }
@@ -4275,6 +4315,7 @@ button.off {
   font: 600 var(--text-xs)/1 var(--font-mono);
   color: var(--text-dim);
   animation: radial-hub-in 140ms ease-out both;
+  min-height: 0;
 }
 
 .radial-item {
@@ -4742,6 +4783,7 @@ button.off {
   color: var(--text-dim);
   font-size: var(--text-xl);
   line-height: 1;
+  min-height: 0;
 }
 
 .tutorial-bar {
@@ -4944,6 +4986,7 @@ button.off {
   border: 0;
   background: none;
   cursor: pointer;
+  min-height: 0;
 }
 
 .beat-dot::before {
@@ -5715,6 +5758,7 @@ circle.bode-corner {
   line-height: 1;
   cursor: pointer;
   user-select: none;
+  min-height: 0;
 }
 
 .timing-cell.level-1 {
@@ -5758,6 +5802,7 @@ circle.bode-corner {
 .timing-dialog .segmented .icon-button {
   width: 28px;
   height: 24px;
+  min-height: 0;
 }
 
 .timing-dialog .segmented-label {
@@ -6317,9 +6362,13 @@ body.chrome-away [data-editor-edge="right"] {
 
 .signal-flow-source {
   display: grid;
-  grid-template-columns: minmax(3rem, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  grid-template-columns: minmax(3rem, max-content) minmax(0, 1fr) auto;
+  column-gap: 12px;
+}
+
+.signal-flow-source select {
+  width: 100%;
 }
 
 .signal-flow-source-name {
@@ -6500,6 +6549,7 @@ body.chrome-away [data-editor-edge="right"] {
   color: var(--text-dim);
   background: transparent;
   cursor: pointer;
+  min-height: 0;
 }
 
 .signal-flow-legend-remove:hover {
@@ -6560,7 +6610,9 @@ body.chrome-away [data-editor-edge="right"] {
   margin: 0;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  container: optimize / inline-size;
+  min-width: 0;
 }
 
 .analysis-dock .signal-flow-optimize .signal-flow-spectrum-toggle {
@@ -6629,6 +6681,27 @@ body.chrome-away [data-editor-edge="right"] {
 .analysis-dock .signal-flow-optimize-bound,
 .analysis-dock .signal-flow-optimize-coefficient input {
   padding: 0 5px;
+}
+
+/* Narrow, each coefficient takes two lines: its name, Free or Fixed, its
+   number now and found; under them its range and its n. The head row
+   follows the same places. */
+@container optimize (max-width: 420px) {
+  .signal-flow-optimize-coefficient {
+    grid-template-columns: minmax(2rem, auto) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+    row-gap: 4px;
+  }
+  .signal-flow-optimize-coefficient > :nth-child(1) { grid-area: 1 / 1 / 3 / 2; }
+  .signal-flow-optimize-coefficient > :nth-child(2) { grid-area: 1 / 2; }
+  .signal-flow-optimize-coefficient > :nth-child(6) { grid-area: 1 / 3; }
+  .signal-flow-optimize-coefficient > :nth-child(7) { grid-area: 1 / 4; }
+  .signal-flow-optimize-coefficient > :nth-child(3) { grid-area: 2 / 2; }
+  .signal-flow-optimize-coefficient > :nth-child(4) { grid-area: 2 / 3; }
+  .signal-flow-optimize-coefficient > :nth-child(5) { grid-area: 2 / 4; }
+  .signal-flow-optimize-coefficient:not(.signal-flow-optimize-head) {
+    padding-bottom: 6px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  }
 }
 
 .analysis-dock .signal-flow-optimize-coefficient select {

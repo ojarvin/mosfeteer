@@ -119,8 +119,10 @@ itself is refused). Links are saved with the numbers
 coefficient as `c_1 = b_1 = 0.05`. The
 numbers are saved with the document (`analysisValues.coefficients`), as the
 Bode sketch's ratios are (`analysisValues.bode`): a slider move edits the
-document (it shows as unsaved) without making an undo entry or marking the
-derived equations stale (main.js `markSettingsChanged`).
+document (it shows as unsaved) without marking the derived equations stale
+(main.js `markSettingsChanged`), and each finished adjustment -- a slider
+let go, a value typed, the optimizer's Apply -- is one undo step; undoing
+it shows the numbers again and keeps the equations current.
 
 Responses go onto one **graph** of magnitudes, a colour per trace
 named by its ratio (`OUT/IN`) in that colour, its dB axis fitted to the
