@@ -654,7 +654,10 @@ function analyzeSampled(context, output, inputs, initialValues) {
   const domains = signalDomains(context);
   if (!domains.ok) return domains;
   const { domain } = domains;
-  if (domain.get(output.key) !== 'z') return failure('continuous-output', `${output.display} is continuous: with a sampler, take the output from a sampled signal (after the sampler)`);
+  if (domain.get(output.key) !== 'z') {
+    const suggestion = outputChoices(circuit).find((choice) => choice.sampled);
+    return failure('continuous-output', `The output picked, ${signalLabel(circuit, output)}, is continuous. With a sampler the diagram is solved in z, so the output must be a sampled signal (one after a sampler)${suggestion ? `: ${suggestion.label}, say` : ''}.`);
+  }
   const samplers = [...circuit.components.values()].filter((component) => component.type === 'sampler');
   let periods;
   try {
@@ -1411,6 +1414,37 @@ export function plotAxis(traces, sAxis = 'omega') {
  * The signal band's edges in f/fs: `bw` from DC when `f0` is 0 (one line at
  * bw), else `f0 +- bw/2` (two). Empty when no bandwidth is set.
  */
+/** A signal as the editor names it: its net's name, or an unnamed net's id
+ *  with the pin driving it (`N1 (K1.out)`). */
+export function signalLabel(circuit, signal) {
+  const named = signal.netIds.map((id) => circuit.nets.get(id)).find((net) => net?.name);
+  if (named) return named.name;
+  const driver = signal.driver && !signal.driver.source ? ` (${signal.driver.comp}.${signal.driver.term})` : '';
+  return `${signal.display}${driver}`;
+}
+
+/**
+ * The signals that can be the output, the likeliest first: with a sampler,
+ * sampled signals before continuous ones; then an output port's signal,
+ * any other port's, a quantizer's output, and the rest by name. Each is
+ * `{ key, name, label, sampled }`.
+ */
+export function outputChoices(circuit) {
+  const graph = signalFlowGraph(circuit);
+  const { signals } = graph;
+  const sampler = [...circuit.components.values()].some((c) => c.type === 'sampler');
+  const found = sampler ? signalDomains({ circuit, signals }) : null;
+  const domain = found?.ok ? found.domain : null;
+  const touches = (signal, test) => signal.netIds.some((id) => circuit.nets.get(id)?.terminals.some((t) => test(circuit.components.get(t.comp))));
+  const tier = (signal) => (touches(signal, (c) => c?.type === 'output') ? 0
+    : touches(signal, (c) => c && PASSIVE_TYPES.has(c.type) && c.type !== 'solder') ? 1
+      : circuit.components.get(signal.driver?.comp)?.type === 'quantizer' ? 2 : 3);
+  return [...signals.values()].filter((signal) => signal.driver)
+    .map((signal) => ({ key: signal.key, name: signal.display, label: signalLabel(circuit, signal), sampled: domain?.get(signal.key) === 'z', tier: tier(signal) }))
+    .sort((a, b) => (domain ? Number(b.sampled) - Number(a.sampled) : 0) || a.tier - b.tier || a.name.localeCompare(b.name, undefined, { numeric: true }))
+    .map(({ tier, ...choice }) => choice);
+}
+
 /** A band's edges and its centre, f/fs: where a response is sampled exactly. */
 export function bandFrequencies(band) {
   const f0 = Number(band?.f0) || 0;

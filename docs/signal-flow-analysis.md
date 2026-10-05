@@ -59,7 +59,11 @@ block, drives it), but SMP1.out is sampled (SMP1, a sampler, drives it)`).
 ## Sources and results
 
 Pick the output and set each source to **input**, **zero**, or a
-**constant**; every source starts as an input. Each input gets its transfer
+**constant**; every source starts as an input. The output list puts the
+likeliest first (`outputChoices`): with a sampler, sampled signals before
+continuous ones; then an output port's signal, another port's, a
+quantizer's output; an unnamed wire is shown with the pin driving it
+(`N1 (K1.out)`). Each input gets its transfer
 function to the output from one exact solve (one right-hand side per input),
 so an SDM's STF and NTF come out together. A constant matters only where it
 multiplies a signal: elsewhere superposition removes it, as for zero.

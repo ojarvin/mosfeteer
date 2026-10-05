@@ -11593,6 +11593,8 @@ __exports.complexText = complexText;
 __exports.denseCoefficients = denseCoefficients;
 __exports.responseCurve = responseCurve;
 __exports.plotAxis = plotAxis;
+__exports.signalLabel = signalLabel;
+__exports.outputChoices = outputChoices;
 __exports.bandFrequencies = bandFrequencies;
 __exports.bandEdges = bandEdges;
 __exports.bandSqnr = bandSqnr;
@@ -12267,7 +12269,10 @@ function analyzeSampled(context, output, inputs, initialValues) {
   const domains = signalDomains(context);
   if (!domains.ok) return domains;
   const { domain } = domains;
-  if (domain.get(output.key) !== 'z') return failure('continuous-output', `${output.display} is continuous: with a sampler, take the output from a sampled signal (after the sampler)`);
+  if (domain.get(output.key) !== 'z') {
+    const suggestion = outputChoices(circuit).find((choice) => choice.sampled);
+    return failure('continuous-output', `The output picked, ${signalLabel(circuit, output)}, is continuous. With a sampler the diagram is solved in z, so the output must be a sampled signal (one after a sampler)${suggestion ? `: ${suggestion.label}, say` : ''}.`);
+  }
   const samplers = [...circuit.components.values()].filter((component) => component.type === 'sampler');
   let periods;
   try {
@@ -13024,6 +13029,37 @@ function plotAxis(traces, sAxis = 'omega') {
  * The signal band's edges in f/fs: `bw` from DC when `f0` is 0 (one line at
  * bw), else `f0 +- bw/2` (two). Empty when no bandwidth is set.
  */
+/** A signal as the editor names it: its net's name, or an unnamed net's id
+ *  with the pin driving it (`N1 (K1.out)`). */
+function signalLabel(circuit, signal) {
+  const named = signal.netIds.map((id) => circuit.nets.get(id)).find((net) => net?.name);
+  if (named) return named.name;
+  const driver = signal.driver && !signal.driver.source ? ` (${signal.driver.comp}.${signal.driver.term})` : '';
+  return `${signal.display}${driver}`;
+}
+
+/**
+ * The signals that can be the output, the likeliest first: with a sampler,
+ * sampled signals before continuous ones; then an output port's signal,
+ * any other port's, a quantizer's output, and the rest by name. Each is
+ * `{ key, name, label, sampled }`.
+ */
+function outputChoices(circuit) {
+  const graph = signalFlowGraph(circuit);
+  const { signals } = graph;
+  const sampler = [...circuit.components.values()].some((c) => c.type === 'sampler');
+  const found = sampler ? signalDomains({ circuit, signals }) : null;
+  const domain = found?.ok ? found.domain : null;
+  const touches = (signal, test) => signal.netIds.some((id) => circuit.nets.get(id)?.terminals.some((t) => test(circuit.components.get(t.comp))));
+  const tier = (signal) => (touches(signal, (c) => c?.type === 'output') ? 0
+    : touches(signal, (c) => c && PASSIVE_TYPES.has(c.type) && c.type !== 'solder') ? 1
+      : circuit.components.get(signal.driver?.comp)?.type === 'quantizer' ? 2 : 3);
+  return [...signals.values()].filter((signal) => signal.driver)
+    .map((signal) => ({ key: signal.key, name: signal.display, label: signalLabel(circuit, signal), sampled: domain?.get(signal.key) === 'z', tier: tier(signal) }))
+    .sort((a, b) => (domain ? Number(b.sampled) - Number(a.sampled) : 0) || a.tier - b.tier || a.name.localeCompare(b.name, undefined, { numeric: true }))
+    .map(({ tier, ...choice }) => choice);
+}
+
 /** A band's edges and its centre, f/fs: where a response is sampled exactly. */
 function bandFrequencies(band) {
   const f0 = Number(band?.f0) || 0;
@@ -65335,7 +65371,7 @@ __exports.collapsedPanels = collapsedPanels;
 
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.installSignalFlowUi = installSignalFlowUi;
-let TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let expressionTex, parseLevels; __bind(() => { ({ expressionTex, parseLevels } = __require("src/core/transfer-function.js")); });
@@ -65482,13 +65518,10 @@ function setMode(next, { user = false } = {}) {
 function fillForm() {
   const { signals, sources, issues } = signalFlowGraph(editor.circuit);
   const output = section.querySelector('#signal-flow-output');
-  const names = [...signals.values()].filter((signal) => signal.driver).map((signal) => ({ key: signal.key, name: signal.display }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  // An output port's signal first: it is what is usually wanted.
-  const outputPorts = new Set([...editor.circuit.components.values()].filter((c) => c.type === 'output')
-    .flatMap((port) => [...signals.values()].filter((signal) => signal.netIds.some((id) => editor.circuit.nets.get(id)?.terminals.some((t) => t.comp === port.refdes)))).map((signal) => signal.key));
-  names.sort((a, b) => outputPorts.has(b.key) - outputPorts.has(a.key));
-  output.replaceChildren(...names.map(({ key, name }) => el('option', { value: key, text: name })));
+  // The likeliest output first (a port's, a sampled one with a sampler), an
+  // unnamed wire shown with the pin driving it.
+  const names = outputChoices(editor.circuit);
+  output.replaceChildren(...names.map(({ key, label }) => el('option', { value: key, text: label })));
   if (names.some(({ key }) => key === flow().output)) output.value = flow().output;
   // A first default is no edit; replacing a saved output (its signal gone) is.
   if (flow().output !== output.value) {

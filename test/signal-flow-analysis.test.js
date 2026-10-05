@@ -5,7 +5,7 @@ import { runCommand } from '../src/core/commands.js';
 import { swapComponentType } from '../src/core/swap.js';
 import { applyTransform } from '../src/core/geometry.js';
 import { TRANSFER_FUNCTION_ROLE } from '../src/core/transfer-function.js';
-import { analyzeSignalFlow, blockTransferFunction, numericRootsOf, responseCurve, resultSymbols, signalFlowGraph, withCoefficients } from '../src/core/analysis/signal-flow.js';
+import { analyzeSignalFlow, blockTransferFunction, numericRootsOf, outputChoices, responseCurve, resultSymbols, signalFlowGraph, withCoefficients } from '../src/core/analysis/signal-flow.js';
 
 function diagram(lines, negatives = []) {
   const circuit = new Circuit();
@@ -446,6 +446,17 @@ test('a sampled loop refuses what it cannot sample: a continuous output, mixed d
   const continuous = analyzeSignalFlow(circuit, { output: samplerInput.id, sources: { U: 'input' } });
   assert.equal(continuous.ok, false);
   assert.equal(continuous.code, 'continuous-output');
+  // It says the output is the trouble, names it by its driving pin, and offers a sampled one.
+  assert.match(continuous.error, new RegExp(`^The output picked, ${samplerInput.id} \\(H1\\.out\\), is continuous\\..*: V, say\\.$`));
+  // The likeliest output first: with a sampler, a sampled port's signal; continuous ones last.
+  const choices = outputChoices(circuit);
+  assert.equal(choices[0].label, 'V');
+  assert.equal(choices[0].sampled, true);
+  assert.ok(choices.findIndex((c) => !c.sampled) > choices.findLastIndex((c) => c.sampled));
+  // A plain port counts as an output too, ahead of unnamed wires.
+  const plain = diagram(['add input U --at -800 0', 'add gain K1 --at -400 0', 'add gain K2 --at 0 0', 'add port P1 --at 400 0', 'connect U.p K1.in', 'connect K1.out K2.in', 'connect K2.out P1.p']);
+  assert.equal(outputChoices(plain)[0].label, 'P_{1}');
+  assert.match(outputChoices(plain)[1].label, /^N\d+ \(K1\.out\)$/);
   // A sum adding the sampled signal to a continuous one, with no DAC between.
   const mixed = diagram([
     'add input U --at -800 0', 'add tf_s H1 --at -400 0 --value "1/s"', 'add sampler SMP1 --at 0 0', 'add signal_sum S1 --at 400 0', 'add output V --at 800 0',

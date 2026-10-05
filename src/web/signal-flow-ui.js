@@ -13,7 +13,7 @@
  * on the drawing with its legend, and Annotate equations the equations.
  */
 
-import { TRACE_COLORS, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { expressionTex, parseLevels } from '../core/transfer-function.js';
@@ -125,13 +125,10 @@ function setMode(next, { user = false } = {}) {
 function fillForm() {
   const { signals, sources, issues } = signalFlowGraph(editor.circuit);
   const output = section.querySelector('#signal-flow-output');
-  const names = [...signals.values()].filter((signal) => signal.driver).map((signal) => ({ key: signal.key, name: signal.display }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  // An output port's signal first: it is what is usually wanted.
-  const outputPorts = new Set([...editor.circuit.components.values()].filter((c) => c.type === 'output')
-    .flatMap((port) => [...signals.values()].filter((signal) => signal.netIds.some((id) => editor.circuit.nets.get(id)?.terminals.some((t) => t.comp === port.refdes)))).map((signal) => signal.key));
-  names.sort((a, b) => outputPorts.has(b.key) - outputPorts.has(a.key));
-  output.replaceChildren(...names.map(({ key, name }) => el('option', { value: key, text: name })));
+  // The likeliest output first (a port's, a sampled one with a sampler), an
+  // unnamed wire shown with the pin driving it.
+  const names = outputChoices(editor.circuit);
+  output.replaceChildren(...names.map(({ key, label }) => el('option', { value: key, text: label })));
   if (names.some(({ key }) => key === flow().output)) output.value = flow().output;
   // A first default is no edit; replacing a saved output (its signal gone) is.
   if (flow().output !== output.value) {
