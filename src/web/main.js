@@ -29,6 +29,7 @@ import { themeInkSvg } from '../core/style.js';
 import { loadDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
 import { applyTransform, distanceToSegment } from '../core/geometry.js';
+import { TRANSFER_FUNCTION_TYPES } from '../core/transfer-function.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
@@ -36,7 +37,7 @@ import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { layerActionForKey, layoutAlignKey, naturalCompare } from './toolbar.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
-import { isPinDragCandidate, spliceCandidate, wheelIntent } from './gestures.js';
+import { isPinDragCandidate, signalSpliceRotation, spliceCandidate, upstreamEnd, wheelIntent } from './gestures.js';
 import { LOG_DRAWER_CLOSED } from './status-bar.js';
 import { alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } from './layout.js';
 import { editor } from './editor-state.js';
@@ -1977,10 +1978,75 @@ installBeatsUi();
  * pendingPlace so the user can place several of the same component in a row.
  */
 /** The world transform of the armed component ghost. */
+const placementDefs = new Map();
+
+/**
+ * The symbol a new part of `type` will have once placed: its registry
+ * definition, or for a part sized per instance (a transfer-function box
+ * fitted to its default equation) that size, so the ghost, its splice, and
+ * its pin joins are where the placed part's pins will be.
+ */
+function placementDef(type) {
+  if (!placementDefs.has(type)) {
+    const def = getSymbol(type);
+    let placed = def;
+    if (Object.hasOwn(TRANSFER_FUNCTION_TYPES, type)) {
+      const { w, h } = new Circuit().addComponent(type).bodySize;
+      if (w !== def.bbox.w || h !== def.bbox.h) {
+        const box = { x: -w / 2, y: -h / 2, w, h };
+        placed = {
+          ...def,
+          bbox: box,
+          terminals: def.terminals.map((terminal) => ({ ...terminal, x: Math.sign(terminal.x) * w / 2 })),
+          graphics: def.graphics.map((g) => (g.kind === 'rect' ? { ...g, ...box } : g)),
+        };
+      }
+    }
+    placementDefs.set(type, placed);
+  }
+  return placementDefs.get(type);
+}
+
+/** A signal-flow part's input and output pins, when it has exactly those. */
+function signalPins(def) {
+  const input = def.terminals.filter((t) => t.signalRole === 'input');
+  const output = def.terminals.filter((t) => t.signalRole === 'output');
+  return def.terminals.length === 2 && input.length === 1 && output.length === 1 ? { in: input[0], out: output[0] } : null;
+}
+
+/** What drives a net, as points: a signal-flow output pin or an input port. */
+function signalDriverPoints(net) {
+  return net.terminals.flatMap(({ comp, term }) => {
+    const component = circuit.components.get(comp);
+    const def = component?.terminalDefs.find((t) => t.name === term);
+    return def?.signalRole === 'output' || component?.type === 'input' ? [component.terminalWorld(term)] : [];
+  });
+}
+
+/**
+ * A signal-flow part held over a wire, not yet turned by hand: the rotation
+ * that splices it along the wire, its input toward the signal's source.
+ */
+function signalSpliceTransform(def) {
+  const pins = signalPins(def);
+  if (!pins) return null;
+  const paths = managedWirePaths();
+  const at = (rotation) => {
+    const transform = { x: cursor.x, y: cursor.y, rotation, mirrorX: false, mirrorY: false };
+    return { in: applyTransform(transform, pins.in.x, pins.in.y), out: applyTransform(transform, pins.out.x, pins.out.y) };
+  };
+  const upstream = (target) => {
+    const net = circuit.nets.get(target.netId);
+    return net ? upstreamEnd(target, net.paths(), signalDriverPoints(net)) : null;
+  };
+  const found = signalSpliceRotation(at, paths, upstream);
+  return found ? { x: cursor.x, y: cursor.y, rotation: found.rotation, mirrorX: false, mirrorY: false } : null;
+}
+
 function pendingTransform() {
   if (pendingPlace?.kind !== 'component') return null;
   let def;
-  try { def = getSymbol(pendingPlace.type); } catch { return null; }
+  try { def = placementDef(pendingPlace.type); } catch { return null; }
   // A rail marker dropped on a pin hangs the way the pin leads out, as one
   // wired to a pin does, until it is turned by hand.
   const untouched = !pendingPlace.rotation && pendingPlace.mirrorX === null && pendingPlace.mirrorY === null;
@@ -1990,6 +2056,11 @@ function pendingTransform() {
       const { dir } = pinEscape(circuit, { comp: hit.refdes, term: hit.term });
       return { x: cursor.x, y: cursor.y, rotation: railRotation(pendingPlace.type, dir), mirrorX: false, mirrorY: false };
     }
+  }
+  // A signal-flow part over a wire lies along it the way the signal goes.
+  if (untouched) {
+    const along = signalSpliceTransform(def);
+    if (along) return along;
   }
   return {
     x: cursor.x,
@@ -2011,7 +2082,7 @@ export function placementJoinPoints() {
   let pins = [];
   if (mode === 'insert' && pendingPlace?.kind === 'component') {
     let def;
-    try { def = getSymbol(pendingPlace.type); } catch { return []; }
+    try { def = placementDef(pendingPlace.type); } catch { return []; }
     const base = pendingTransform();
     for (const transform of [base, symmetryTwin(base)].filter(Boolean)) {
       for (const t of def.terminals || []) pins.push({ ...applyTransform(transform, t.x, t.y), netId: null });
@@ -2150,11 +2221,12 @@ function managedWirePaths() {
     .flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
 }
 
-/** World points of a part's series pins under `transform`, or null. */
-function seriesPinPoints(def, transform) {
+/** World points of a part's series pins under `transform`, or null.
+ *  `terminals` are where they are on this part (a sized box moves them). */
+function seriesPinPoints(def, transform, terminals = def.terminals) {
   const names = seriesTerminalNames(def);
   if (!names) return null;
-  return def.terminals.filter((t) => names.includes(t.name)).map((t) => applyTransform(transform, t.x, t.y));
+  return terminals.filter((t) => names.includes(t.name)).map((t) => applyTransform(transform, t.x, t.y));
 }
 
 /** The segment a part's free series pins would splice into. For a placed part
@@ -2170,7 +2242,7 @@ function spliceTargetFor(points, refdes = null) {
 
 function spliceIfOnWire(comp) {
   if (!comp) return false;
-  const points = seriesPinPoints(comp.def, comp.transform);
+  const points = seriesPinPoints(comp.def, comp.transform, comp.terminalDefs);
   const target = spliceTargetFor(points, comp.refdes);
   if (!target) return false;
   const name = circuit.nets.get(target.netId)?.name || target.netId;
@@ -2189,7 +2261,7 @@ export function splicePreviewTarget(ghost) {
     const refdes = [...drag.origins.keys()][0];
     const comp = circuit.components.get(refdes);
     if (!comp) return null;
-    return spliceTargetFor(seriesPinPoints(comp.def, comp.transform), refdes);
+    return spliceTargetFor(seriesPinPoints(comp.def, comp.transform, comp.terminalDefs), refdes);
   }
   return null;
 }
@@ -2853,7 +2925,7 @@ export function renderCanvas(modelKey) {
         ? { label: true, x: cursor.x, y: cursor.y }
         : (() => {
             try {
-              const def = getSymbol(pendingPlace.type);
+              const def = placementDef(pendingPlace.type);
               return { def, ...pendingTransform() };
             } catch {
               return undefined;
@@ -2918,6 +2990,8 @@ export function renderCanvas(modelKey) {
     cursor,
     netLabelPaste: netLabelPastePreview(cursor),
     selection: [...multi],
+    // Hovered, selected, or carried (a move's or copy's ghost) parts show their signals' directions.
+    signalDirections: [...new Set([...multi, ...ghostRefs, hoverPinsRef, hoverTarget?.kind === 'component' ? hoverTarget.refdes : null])].filter(Boolean),
     emphasis: equationEmphasis,
     diagnostic: diagnosticSelection,
     alignTool: alignOverlay(),

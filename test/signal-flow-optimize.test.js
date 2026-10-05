@@ -48,7 +48,7 @@ test('CMA-ES finds the minimum of a curved valley, the same run for the same see
 });
 
 test('the setup normalizes, and only free coefficients move: linked follow, timing stays', () => {
-  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {}, measure: 'sigma3' }, evaluations: 3000, rounding: { denominator: 32, powersOfTwo: false, shared: true } });
+  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {}, measure: 'sigma3' }, evaluations: 3000, prune: true, rounding: { denominator: 32, powersOfTwo: false, shared: true } });
   const setup = normalizeOptimizeSetup({ coefficients: { a: { fixed: true }, b: { min: '0.1', max: 'x' } }, specs: [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: '3.5' }, { action: 'bogus', band: 'custom', f1: 0.1, f2: 0.2 }], swing: { on: true, amplitude: '-2', limits: { 'net:N1': '-6', 'net:N2': 'none' } }, evaluations: 20 });
   assert.deepEqual(setup.coefficients, { a: { fixed: true }, b: { min: 0.1 } });
   assert.deepEqual(setup.specs, [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: 3.5 }, { action: 'minimize', measure: 'average', input: '', band: 'custom', f1: 0.1, f2: 0.2 }]);
@@ -391,4 +391,57 @@ test('the dither as a rounded gain into the quantizer\'s block: the smallest m/n
   // Never below one unit; nothing without dither.
   assert.equal(ditherFraction(0.01, 4, 4).m, 1);
   assert.equal(ditherFraction(0, 4, 16), null);
+});
+
+import { isSensitive, pruneCandidates, pruneSearch, runRefine, sensitivitySearch } from '../src/core/analysis/refine.js';
+import { scoreRequest } from '../src/core/analysis/optimize.js';
+
+// The second-order loop with a feedforward k_3 from the input into the
+// second integrator, beside k_2: it shapes the STF only, never the NTF.
+function feedforwardModulator() {
+  const circuit = modulator();
+  for (const line of ['add gain K3 --at -400 -400 --rot 90 --value k_3', 'connect U.p K3.in', 'connect K3.out S3.n']) runCommand(circuit, line);
+  return circuit;
+}
+
+test('sensitivity: each coefficient nudged 1%, the specs\' worst change in dB per 1%', () => {
+  const circuit = feedforwardModulator();
+  const own = { k_1: 1, k_2: 2, k_3: 0.002 };
+  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: own,
+    setup: { specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }, { action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: 12.05 }] } };
+  const objective = prepareObjective(circuit, problem);
+  const parameters = optimizationParameters(circuit, { values: own, setup: problem.setup });
+  const found = runRefine(objective, sensitivitySearch(parameters, objective.specs, { own }), scoreRequest);
+  const of = (name) => found.find((entry) => entry.name === name);
+  // The NTF hangs on the feedback; the feedforward does not touch it.
+  assert.ok(of('k_1').perPercent > 0.01, `${of('k_1').perPercent}`);
+  assert.equal(of('k_3').perPercent, 0);
+  // Its peak sits just under the 12.05 dB limit (12.04): a nudge misses it, noted.
+  assert.ok(found.some((entry) => entry.breaks));
+  // Fragile is a large change or lost stability, not a limit met exactly.
+  assert.equal(isSensitive(of('k_3')), false);
+  assert.equal(isSensitive({ perPercent: 0.1, breaks: true, unstable: false }), false);
+  assert.equal(isSensitive({ perPercent: 1.5, breaks: false, unstable: false }), true);
+  assert.equal(isSensitive({ perPercent: 0, breaks: false, unstable: true }), true);
+});
+
+test('pruning: a coefficient small beside its block-mates is set to zero when the specs allow', () => {
+  const circuit = feedforwardModulator();
+  const own = { k_1: 1, k_2: 2, k_3: 0.002 };
+  const groups = coefficientGroups(circuit, ['k_1', 'k_2', 'k_3']).map((group) => group.names);
+  // k_3 goes into H2 with k_2: a thousandth of it.
+  assert.deepEqual(pruneCandidates(['k_1', 'k_2', 'k_3'], own, groups), ['k_3']);
+  assert.deepEqual(pruneCandidates(['k_1', 'k_2', 'k_3'], { ...own, k_3: 0.5 }, groups), []);
+  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: own,
+    setup: { specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }] } };
+  const objective = prepareObjective(circuit, problem);
+  const start = objective.verify(own);
+  const pruned = runRefine(objective, pruneSearch(['k_3'], { own, start }), scoreRequest);
+  assert.deepEqual(pruned.zeroed, ['k_3']);
+  assert.equal(pruned.own.k_3, 0);
+  // A coefficient a limit needs stays: the STF's in-band level kept above 6 dB needs k_3.
+  const needs = { ...problem, setup: { specs: [{ action: 'above', measure: 'lowest', input: 'U', band: 'signal', value: 6 }] } };
+  const big = { k_1: 1, k_2: 2, k_3: 3 };
+  const kept = runRefine(prepareObjective(circuit, needs), pruneSearch(['k_3'], { own: big, start: prepareObjective(circuit, needs).verify(big) }), scoreRequest);
+  assert.deepEqual(kept.zeroed, []);
 });

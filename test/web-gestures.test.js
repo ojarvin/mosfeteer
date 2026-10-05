@@ -5,7 +5,7 @@ import { getSymbol } from '../src/core/components/index.js';
 import { applyTransform } from '../src/core/geometry.js';
 import {
   arrivalDirection, easeOutCubic, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement, zoomView,
-  pinJoinPoints, radialRingRadius, radialSector, segmentsIntersect, spliceCandidate, wheelIntent,
+  pinJoinPoints, radialRingRadius, radialSector, segmentsIntersect, signalSpliceRotation, spliceCandidate, upstreamEnd, wheelIntent,
 } from '../src/web/gestures.js';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
@@ -138,6 +138,29 @@ test('splice needs both terminals on one straight segment', () => {
   assert.equal(spliceCandidate([{ x: 320, y: 0 }, { x: 480, y: 0 }], paths), null);
   assert.equal(spliceCandidate([{ x: 400, y: 40 }, { x: 400, y: 200 }], paths).segment, 2);
   assert.equal(spliceCandidate([{ x: 0, y: 0 }], paths), null);
+});
+
+test('a signal-flow part dropped on a wire lies along it, its input toward the driver', () => {
+  // A wire driven from its right end (x = 800), turning down at its left.
+  const net = [[{ x: 800, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 400 }]];
+  const paths = net.map((pts, branch) => ({ netId: 'N1', branch, pts }));
+  const upstream = (target) => upstreamEnd(target, net, [{ x: 800, y: 0 }]);
+  // A part at (400, 0): rot 0 has in at -80, out at +80 along x.
+  const pinsAt = (at) => (rotation) => {
+    const turn = { 0: [1, 0], 90: [0, 1], 180: [-1, 0], 270: [0, -1] }[rotation];
+    return { in: { x: at.x - 80 * turn[0], y: at.y - 80 * turn[1] }, out: { x: at.x + 80 * turn[0], y: at.y + 80 * turn[1] } };
+  };
+  // Signal runs right to left: turned 180, its input on the right.
+  assert.equal(signalSpliceRotation(pinsAt({ x: 400, y: 0 }), paths, upstream).rotation, 180);
+  // On the vertical run the signal goes down: turned 90.
+  assert.equal(signalSpliceRotation(pinsAt({ x: 0, y: 200 }), paths, upstream).rotation, 90);
+  // No driver known: the first rotation that fits.
+  assert.equal(signalSpliceRotation(pinsAt({ x: 400, y: 0 }), paths, () => null).rotation, 0);
+  assert.equal(signalSpliceRotation(pinsAt({ x: 400, y: 200 }), paths, upstream), null);
+  // A pin mid-way along another branch still links it to the driver.
+  const tee = [[{ x: 0, y: 0 }, { x: 800, y: 0 }], [{ x: 400, y: 0 }, { x: 400, y: 400 }]];
+  assert.equal(upstreamEnd({ branch: 1, segment: 1, a: { x: 400, y: 0 }, b: { x: 400, y: 400 } }, tee, [{ x: 800, y: 0 }]), 'a');
+  assert.equal(upstreamEnd({ branch: 1, segment: 1, a: { x: 400, y: 0 }, b: { x: 400, y: 400 } }, tee, [{ x: 400, y: 400 }]), 'b');
 });
 
 test('wheel intent follows the scroll scheme; pinch always zooms', () => {

@@ -370,7 +370,7 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
     // At the top, clear of the axis titles: left of the line in the right half, else right of it.
     const right = x(limit.a) > pane.x + pane.w / 2;
     const text = limit.kind === 'full-scale'
-      ? `${limit.label ? `${limit.label} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
+      ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
       : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
     items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
   }
@@ -381,6 +381,18 @@ export function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } =
   items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'peak (dBFS)', anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: 'input (dBFS)', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
+}
+
+/** A trace's TeX name as plot text, which knows only `_{}` and `^{}`:
+ *  `\text{tone at } V_{\text{OUT}}` reads `tone at V_{OUT}`. */
+export function plainTex(tex) {
+  let text = String(tex).replace(/\$/g, '');
+  // Innermost first, so a \text inside a subscript leaves its braces to it.
+  for (let last = null; last !== text;) {
+    last = text;
+    text = text.replace(/\\(?:text|mathrm|mathit|operatorname)\{([^{}]*)\}/g, '$1');
+  }
+  return text.replace(/\\[,;! ]/g, ' ').replace(/\\cdot/g, '·').replace(/ {2,}/g, ' ').trim();
 }
 
 /**
@@ -436,7 +448,8 @@ export function swingRunaway(traces, { excess = 3, window = 3 } = {}) {
 export function swingFullScale(traces) {
   let best = null;
   for (const trace of traces) {
-    if (trace.stepped) continue;
+    // A tone (the output at the input frequency) tracks the input by design.
+    if (trace.stepped || trace.tone) continue;
     const points = trace.points.filter((p) => Number.isFinite(p.db)).sort((p, q) => p.a - q.a);
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1];

@@ -87,7 +87,9 @@ test('a multiply by a constant is a gain; two signals multiplied are refused', (
 test('ill-formed diagrams are refused with the reason, never guessed', () => {
   const mixed = diagram(['add input U --at -400 0', 'add tf_s H1 --at 0 0', 'add tf_z H2 --at 400 0', 'add output Y --at 800 0',
     'connect U.p H1.in', 'connect H1.out H2.in', 'connect H2.out Y.p']);
-  assert.equal(analyzeSignalFlow(mixed, { output: 'Y', sources: { U: 'input' } }).code, 'mixed-domains');
+  const refused = analyzeSignalFlow(mixed, { output: 'Y', sources: { U: 'input' } });
+  assert.equal(refused.code, 'mixed-domains');
+  assert.match(refused.error, /H\(s\) blocks \(H1, continuous\) and H\(z\) blocks \(H2, sampled\)/);
   const undriven = diagram(['add tf_s H1 --at 0 0', 'add tf_s H2 --at 400 0', 'add output Y --at 800 0', 'connect H1.out H2.in', 'connect H2.out Y.p', 'add input U --at -600 -400', 'add tf_s H3 --at -300 -400', 'connect U.p H3.in']);
   const graph = signalFlowGraph(undriven);
   assert.equal(graph.issues.length, 0, 'an unconnected input is no signal');
@@ -181,6 +183,8 @@ test('wires into a signal-flow input draw an arrowhead there; a gain\'s input do
   assert.equal(heads(gain), 0);
   const sum = diagram(['add input U --at -400 0', 'add input V --at 0 -300', 'add signal_sum S1 --at 0 0', 'connect U.p S1.w', 'connect V.p S1.n']);
   assert.equal(heads(sum), 2);
+  const quantizer = diagram(['add input U --at -400 0', 'add quantizer QZ1 --at 0 0', 'connect U.p QZ1.in']);
+  assert.equal(heads(quantizer), 1);
 });
 
 test('a fourth-order modulator with a dozen symbols solves, and agrees with its numbers', async () => {
@@ -451,6 +455,8 @@ test('a sampled loop refuses what it cannot sample: a continuous output, mixed d
   const report = analyzeSignalFlow(mixed, { output: 'V', sources: { U: 'input' } });
   assert.equal(report.ok, false);
   assert.equal(report.code, 'mixed-domains');
+  // It says which signal is which, and what made it so.
+  assert.match(report.error, /S1 joins a continuous and a sampled signal: H2\.out is continuous \(H2, an H\(s\) block, drives it\), but SMP1\.out is sampled \(SMP1, a sampler, drives it\)/);
 });
 
 test('the sampler: a switch with its period beside it, swapped in with a period that reads', () => {
@@ -613,6 +619,19 @@ test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved wit
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(loaded.labels.get(box.id).plot.band, [0.01]);
   assert.deepEqual(loaded.analysisValues.band, { f0: 0.25, bw: 0.02 });
+  // The curves land exactly on the band's edges and centre: a notch there
+  // reads its true depth, not the grid's nearest step.
+  const resonator = blockTransferFunction(new Circuit().addComponent('tf_z', { value: 'tf([1 0 1], [1])' })); // 1 + z^-2: a zero at f/fs = 1/4
+  const notched = bandedPlot([{ label: 'N', color: '#3b74e0', value: resonator, variable: 'z' }], 'z', { band: { f0: 0.25, bw: 0.02 } });
+  const at = (f) => notched.traces[0].points.find((p) => Math.abs(p.f - f) < 1e-15);
+  assert.ok(at(0.24) && at(0.26) && at(0.25));
+  assert.ok(at(0.25).db < -200, `the notch's depth: ${at(0.25).db}`);
+  const points = notched.traces[0].points.map((p) => p.f);
+  assert.deepEqual(points, [...points].sort((a, b) => a - b));
+  // On ω (an s result), the edges at ω = 2 pi f.
+  const pole = blockTransferFunction(new Circuit().addComponent('tf_s', { value: 'tf([1], [1 1])' }));
+  const onOmega = bandedPlot([{ label: 'P', color: '#3b74e0', value: pole, variable: 's' }], 's', { band: { f0: 0, bw: 0.1 } });
+  assert.ok(onOmega.traces[0].points.some((p) => Math.abs(p.f - 0.2 * Math.PI) < 1e-12));
 });
 
 test('the swing plot marks where the swings run away: a net outgrowing the input, or an overload', () => {
@@ -636,6 +655,12 @@ test('the swing plot marks where the swings run away: a net outgrowing the input
   assert.ok(swingFigure({ range: { low: -60, high: 3 }, traces: [jittery, rising] }).items.some((item) => item.text === 'H_{3} full scale -3.5 dBFS'));
   // Nets at full scale from the start (a quantizer's output) never cross.
   assert.equal(swingFullScale([stepped, { points: [{ a: -20, db: 0 }, { a: 0, db: 0.5 }] }]), null);
+  // The output's tone follows the input through full scale by design: not a limit.
+  const outputTone = { ...rising, tone: true, label: '\\text{tone at } V_{\\text{OUT}}' };
+  assert.equal(swingFullScale([outputTone]), null);
+  // A TeX name is plot text in the marker, never raw TeX.
+  const named = swingFigure({ range: { low: -60, high: 3 }, traces: [{ ...rising, label: '\\text{peak } V_{\\text{X}}' }] });
+  assert.ok(named.items.some((item) => item.text === 'peak V_{X} full scale -3.5 dBFS'));
 });
 
 import { bandSqnr } from '../src/core/analysis/signal-flow.js';
@@ -648,6 +673,7 @@ test('signal-flow parts swap only among themselves; the DAC and delays are prese
   assert.ok(swapCandidates('filter_lpf').every((candidate) => /^filter_/.test(candidate)));
   const circuit = new Circuit();
   assert.equal(circuit.addComponent('tf_dac').value, '(1 - exp(-s*T))/s');
+  assert.equal(circuit.addComponent('tf_dac_rz').value, '(1 - exp(-s*T/2))/s');
   assert.equal(circuit.addComponent('tf_delay').value, 'exp(-s*T_d)');
   const zdelay = circuit.addComponent('tf_zdelay');
   assert.equal(transferTexOf(zdelay), 'z^{-1}');
@@ -660,6 +686,15 @@ test('signal-flow parts swap only among themselves; the DAC and delays are prese
   const report = analyzeSignalFlow(loop, { output: 'V', sources: { QZ1: 'input' }, values: { T: 1 } });
   assert.equal(report.ok, true, report.error);
   assert.equal(report.entries[0].equation, '\\frac{V}{E_{QZ1}} = 1 - z^{-1}');
+  // An RZ pulse puts half the charge into the integrator: L = z^-1/2 / (1 - z^-1).
+  const rz = diagram([
+    'add input U --at -1200 0', 'add signal_sum S1 --at -800 0', 'add tf_s H1 --at -400 0 --value "1/s"', 'add sampler SMP1 --at 0 0',
+    'add quantizer QZ1 --at 400 0', 'add output V --at 800 0', 'add tf_dac_rz D1 --at 0 400 --rot 180',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out SMP1.in', 'connect SMP1.out QZ1.in', 'connect QZ1.out V.p', 'connect V.p D1.in', 'connect D1.out S1.s',
+  ], [['S1', 's']]);
+  const rzReport = analyzeSignalFlow(rz, { output: 'V', sources: { QZ1: 'input' }, values: { T: 1 } });
+  assert.equal(rzReport.ok, true, rzReport.error);
+  assert.equal(rzReport.entries[0].equation, '\\frac{V}{E_{QZ1}} = \\frac{1 - z^{-1}}{1 - 0.5 z^{-1}}');
 });
 
 function transferTexOf(component) {

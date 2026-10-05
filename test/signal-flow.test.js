@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { evaluate } from '../src/core/commands.js';
 import { getSymbol } from '../src/core/components/index.js';
-import { svgString } from '../src/core/render.js';
+import { signalDirectionSvg, svgString } from '../src/core/render.js';
 
 const SIGNAL_TYPES = [
   ['signal_sum', 'SUM'],
@@ -152,4 +152,31 @@ test('signal-flow connector arrowheads meet the circle edge', () => {
     // 4.8 units beyond the terminal centerline at x=40.
     assert.match(svg, /<polygon points="44\.80 0 76\.80 18 76\.80 -18"/);
   }
+});
+
+test('the sampler arm turns off its lead at one mitred corner, and its arrowhead reads at a glance', () => {
+  const graphics = getSymbol('sampler').graphics;
+  // The lead and the arm are one wire-ink stroke: the pivot has no notch,
+  // and no symbol-width stub over the wire-width lead.
+  const arm = graphics.find((graphic) => graphic.kind === 'path' && graphic.d.startsWith('M -80 0'));
+  assert.equal(arm.terminalLead, true);
+  assert.match(arm.d, /^M -80 0 L -40 0 L /);
+  const [a, b, c] = graphics.find((graphic) => graphic.kind === 'polygon').points;
+  const area = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+  assert.ok(area >= 180, `arrowhead area ${area}`);
+});
+
+test('a hovered or selected signal-flow part shows its signals\' directions; other parts show none', () => {
+  const circuit = new Circuit();
+  const gain = circuit.addComponent('gain', { x: 0, y: 0, rotation: 180 });
+  const heads = [...signalDirectionSvg(gain).matchAll(/signal-direction-(\w+)" points="([^"]+)"/g)]
+    .map(([, role, points]) => ({ role, tip: points.split(' ')[0].split(',').map(Number) }));
+  // Turned round, its output is on the left: the arrow points further left, out of it.
+  assert.deepEqual(heads.map((head) => head.role).sort(), ['input', 'output']);
+  assert.deepEqual(heads.find((head) => head.role === 'output').tip, [-114, 0]);
+  // Its input, on the right, takes an arrow pointing into the pin.
+  assert.deepEqual(heads.find((head) => head.role === 'input').tip, [90, 0]);
+  const sum = circuit.addComponent('signal_sum', { x: 400, y: 0 });
+  assert.equal((signalDirectionSvg(sum).match(/signal-direction-input/g) || []).length, 3);
+  assert.equal(signalDirectionSvg(circuit.addComponent('resistor', { x: 800, y: 0 })), '');
 });

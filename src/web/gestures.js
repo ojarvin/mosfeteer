@@ -199,6 +199,73 @@ export function spliceCandidate(terminalPoints, paths) {
   return null;
 }
 
+/**
+ * Which end of a spliced segment the signal comes from: 'a' or 'b' (the
+ * segment's `a` and `b` as spliceCandidate returns them), or null. `paths`
+ * are the net's branches, `drivers` the points of what drives it (a
+ * signal-flow output pin or an input port). With the segment cut, the end
+ * still joined to a driver is upstream.
+ */
+export function upstreamEnd(target, paths, drivers) {
+  if (!target || !drivers?.length) return null;
+  const key = (p) => `${p.x},${p.y}`;
+  const edges = new Map();
+  const link = (p, q) => {
+    for (const [from, to] of [[p, q], [q, p]]) {
+      if (!edges.has(key(from))) edges.set(key(from), []);
+      edges.get(key(from)).push(to);
+    }
+  };
+  paths.forEach((pts, branch) => {
+    for (let i = 1; i < pts.length; i++) {
+      if (branch === target.branch && i === target.segment) continue;
+      // Whole-cell steps, so a pin or junction mid-way along a segment joins it.
+      const a = pts[i - 1];
+      const b = pts[i];
+      const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / 40;
+      if (!Number.isInteger(n) || n < 1) { link(a, b); continue; }
+      for (let k = 0; k < n; k++) link({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n }, { x: a.x + ((b.x - a.x) * (k + 1)) / n, y: a.y + ((b.y - a.y) * (k + 1)) / n });
+    }
+  });
+  const goals = new Set(drivers.map(key));
+  const reaches = (start) => {
+    const seen = new Set([key(start)]);
+    const queue = [start];
+    while (queue.length) {
+      const p = queue.shift();
+      if (goals.has(key(p))) return true;
+      for (const q of edges.get(key(p)) || []) if (!seen.has(key(q))) { seen.add(key(q)); queue.push(q); }
+    }
+    return false;
+  };
+  const fromA = reaches(target.a);
+  const fromB = reaches(target.b);
+  return fromA === fromB ? null : fromA ? 'a' : 'b';
+}
+
+/**
+ * A signal-flow part (an `in` and an `out` pin) dropped on a wire: the
+ * rotation that lays it along the wire with its input toward the signal's
+ * source, as `{ rotation, target }`, or null where none splices. `pinsAt`
+ * gives a rotation's world `{ in, out }`; `paths` are spliceCandidate's;
+ * `upstream(target)` is 'a', 'b', or null (any direction then, the first
+ * rotation that fits).
+ */
+export function signalSpliceRotation(pinsAt, paths, upstream) {
+  let fallback = null;
+  for (const rotation of [0, 90, 180, 270]) {
+    const pins = pinsAt(rotation);
+    const target = spliceCandidate([pins.in, pins.out], paths);
+    if (!target) continue;
+    const side = upstream(target);
+    if (!side) { fallback ||= { rotation, target }; continue; }
+    const from = target[side];
+    const distance = (p) => Math.abs(p.x - from.x) + Math.abs(p.y - from.y);
+    if (distance(pins.in) < distance(pins.out)) return { rotation, target };
+  }
+  return fallback;
+}
+
 /** Radius (world units) of a pin handle. It scales with the drawing like the
  * pin itself, but stays between `minPx` and `maxPx` on screen so it neither
  * vanishes when zoomed out nor swells when zoomed in. `unitsPerPx` is world

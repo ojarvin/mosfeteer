@@ -18,6 +18,7 @@ Each wire is one signal. The parts are:
   takes only a delay, `-s` times something free of `s`, and powers are
   whole, so a block stays a ratio of polynomials in `s` and its delays.
 - **Presets**: `tf_dac` (a DAC's NRZ pulse, `(1 - exp(-s*T))/s`),
+  `tf_dac_rz` (its RZ pulse, held half a period: `(1 - exp(-s*T/2))/s`),
   `tf_delay` (`exp(-s*T_d)`), and `tf_zdelay` (`z^-1`) are transfer-function
   blocks that start with that definition, editable like any other.
 - **Gains** `gain`: `y = k x`, the triangle pointing the way the signal
@@ -51,7 +52,9 @@ Each wire is one signal. The parts are:
 A signal has at most one driver: a block's `out`, a junction's `e`, or a
 sampler's `out`. Two drivers, a part on a signal wire that is none of the
 above, or `s` and `z` meeting anywhere but a sampler return a diagnostic,
-never a guessed answer.
+never a guessed answer. Where `s` and `z` meet, the diagnostic names a
+signal of each and what made it so (`H2.out is continuous (H2, an H(s)
+block, drives it), but SMP1.out is sampled (SMP1, a sampler, drives it)`).
 
 ## Sources and results
 
@@ -85,14 +88,20 @@ decade under the longest delay to two over the shortest, and on **f/fs**
 with `T` counted in sample periods (`T = 1` is one sample). A delay has
 infinitely many poles and zeros, so none are listed.
 
-A wire ending on a sum's, a multiplier's, or a transfer function's input
-draws an arrowhead into it without being asked (render.js
+A wire ending on a sum's, a multiplier's, a transfer function's, or a
+quantizer's input draws an arrowhead into it without being asked (render.js
 `withSignalArrows`), merged with any it has; a gain's triangle already
-shows the way, so its input takes none.
+shows the way, so its input takes none. In the editor, a signal-flow part
+hovered, selected, carried, or held as a placement ghost shows arrows out
+of its outputs and into its inputs (`signalDirectionSvg`, overlay only).
+A two-pin part (a gain, a block, a sampler, a quantizer) dropped unturned on
+a wire is spliced into it lying along the wire, its input toward what
+drives the signal (gestures.js `signalSpliceRotation`).
 
 Symbols in the results (`a_1`, `k`) each get a row under **Coefficients**: a
 slider through the E24 values from 0.001 to 1000 and a field for any value
-(negative too), starting at 1. The graph and the poles and zeros use these
+(negative too), starting at 1 -- and a symbol never set is 1 in the
+simulations and the optimizer too, as its slider shows. The graph and the poles and zeros use these
 numbers -- symbolic results show their roots "at the coefficients below" --
 while the equations stay symbolic; moving one redraws as it moves. Typing
 `= b_1` (or any expression of other coefficients: `= 2*b_1`, `= T/2`) in a
@@ -194,8 +203,15 @@ period and at every impulse. Refused: a continuous diagram with no sampler
 (no clock), a quantizer in a loop with no delay, a delay on a continuous
 signal outside a DAC block, a block with more zeros than poles.
 
-The response graph takes a signal band, f0 and bw in f/fs: a dashed line
-at bw for a baseband signal, two at f0 +- bw/2 otherwise (`bandEdges`). With
+The **signal band**, f0 and bw in f/fs, is one setting above the plot
+views: a dashed line on the response graph at bw for a baseband signal,
+two at f0 +- bw/2 otherwise (`bandEdges`), the band the specs and the SQNR
+read, and where each test's sine sits unless set. Each test keeps its own
+frequency -- the swing's, the spectrum's, the optimizer's swing test --
+blank meaning inside the band (its middle, `swingTestFrequency`; 1/256 with
+no band), shown as the field's placeholder. Every response curve is
+evaluated exactly at the band's edges and f0 too (`bandFrequencies`), so a
+notch or a peak there reads its true value. With
 a band, a quantizer's NTF shows its **peak SQNR** (`bandSqnr`): a
 full-scale sine, amplitude N - 1, against the quantizer's error taken as
 white with variance 1/3 (levels 2 apart) over f/fs in (-1/2, 1/2), shaped by
@@ -227,7 +243,7 @@ the axis; an s result's delays shift its delayed terms. A loop holding a
 delay, or a continuous input through a sampler, has no step response here.
 
 **Simulated output spectrum** (magnitude view): one swing-simulation run at
-an amplitude (the swing's source and frequency, made a whole number of
+an amplitude and frequency of its own (the swing's source; the frequency made a whole number of
 cycles in each segment), Welch-averaged -- Hann-windowed 8192-sample
 segments overlapping by half over a 32768-sample record, seven averages --
 and drawn behind the analytic curves (`spectrum.js`). It runs again when
@@ -361,6 +377,19 @@ coefficients with each spec and the swing test at the start and at the
 best; **Apply** puts them into the coefficients (four digits), **Revert**
 undoes that. The setup is saved with the document
 (`analysisValues.flow.optimize`, `optimize-setup.js`).
+
+After a run (`refine.js`), with **Zero coefficients that barely matter**
+on (the default): a free coefficient under 5% of the largest into its block
+(`coefficientGroups`; one alone, of the largest free one) is tried at zero,
+smallest first, with the long test; it stays zero -- a part fewer -- if
+every limit still holds and the goals lose at most 0.5 dB. Apply writes it
+and fixes it at zero, so later runs leave it out; Revert frees it again.
+Then each free coefficient's **sensitivity**: nudged by 1% of itself, the
+others held, the specs measured again (the transfer functions alone: the
+swing test's runs are too noisy to difference), the largest change listed
+in dB per 1%. One of 1 dB per 1% or more, or a nudge that loses stability,
+is marked; a nudge missing a limit the result just meets is noted ("on a
+limit"), not marked -- a best on its limit misses it at any nudge.
 
 **Rounding to fractions** (`rounding.js`) makes each free coefficient a
 simple fraction m/n -- m units over n, whatever realizes it (a ratio of unit

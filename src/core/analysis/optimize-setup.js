@@ -80,6 +80,8 @@ export function normalizeOptimizeSetup(raw) {
       measure: SWING_LEVELS.includes(rawSwing.measure) ? rawSwing.measure : 'sigma3',
     },
     evaluations: evaluations >= 50 && evaluations <= 1e6 ? evaluations : DEFAULT_EVALUATIONS,
+    // After a search, try the coefficients that barely matter at zero (refine.js).
+    prune: value.prune !== false,
     // Rounding to fractions m/n: the largest n, powers of two only, one n per block.
     rounding: {
       denominator: denominator >= 1 && denominator <= MAX_DENOMINATOR ? denominator : 32,

@@ -69,12 +69,13 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 /** Signal-flow inputs whose wires carry an arrowhead into them without
  *  being asked: a sum's or multiplier's inputs and a transfer function's
- *  input (a gain's triangle already points the way). By pin ("x,y"). */
-const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+ *  input or a quantizer's (a gain's triangle already points the way). By
+ *  pin ("x,y"). */
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 function signalInputPins(circuit) {
   const pins = new Set();
@@ -680,7 +681,7 @@ const PLOT_STROKES = {
   corner: { width: 2, dash: '4 10' },
   grid: { width: 1 },
   band: { width: 3, dash: '18 9' },
-  spectrum: { width: 2 },
+  spectrum: { width: 3 },
   marker: { width: 3, dash: '18 9' },
 };
 
@@ -1249,6 +1250,32 @@ export function svgString(circuit, opts = {}) {
 // Sky-blue center guides are measurement aids and deliberately separate from
 // the accent blue used for selection and pending edits.
 const SELECT = 'var(--accent, #2563eb)';
+
+/** A part's signal directions (editor overlay): beside each pin with a
+ *  signal role, outside the body, an arrowhead along the pin -- pointing
+ *  out of an output, into an input. Empty for a part without signal roles. */
+export function signalDirectionSvg(c) {
+  return signalDirectionArrows(c.terminalDefs, c.transform);
+}
+
+/** The same for pins `terminals` under `transform` (a placement ghost's). */
+function signalDirectionArrows(terminals, transform) {
+  const heads = [];
+  for (const terminal of terminals) {
+    if (!terminal.signalRole || !terminal.dir) continue;
+    const pin = applyTransform(transform, terminal.x, terminal.y);
+    const ahead = applyTransform(transform, terminal.x + terminal.dir.x, terminal.y + terminal.dir.y);
+    const d = { x: ahead.x - pin.x, y: ahead.y - pin.y };
+    const out = terminal.signalRole === 'output';
+    const [near, far] = [10, 34];
+    const tip = out ? far : near;
+    const base = out ? near : far;
+    const at = (along, across) => ({ x: pin.x + d.x * along - d.y * across, y: pin.y + d.y * along + d.x * across });
+    const points = [at(tip, 0), at(base, 10), at(base, -10)].map((p) => `${fmt(p.x)},${fmt(p.y)}`).join(' ');
+    heads.push(`<polygon class="signal-direction signal-direction-${out ? 'output' : 'input'}" points="${points}" fill="${SELECT}" fill-opacity="${out ? 0.9 : 0.55}" stroke="none"/>`);
+  }
+  return heads.length ? `<g class="signal-directions" pointer-events="none">${heads.join('')}</g>` : '';
+}
 const WARN = 'var(--warn, #b45309)';
 const DANGER = 'var(--danger, #c53030)';
 const NEUTRAL = 'var(--svg-faint, #7a7d85)';
@@ -1306,6 +1333,13 @@ export function editorOverlay(circuit, opts = {}) {
     const r = c.bboxWorld();
     parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
     parts.push(`<rect class="selection-outline" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
+
+  // Which way a signal-flow part's signals go, while it is hovered or
+  // selected: an arrow out of each output pin and into each input pin.
+  for (const ref of opts.signalDirections || []) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(signalDirectionSvg(c));
   }
 
   // A copied net label on its way to a wire: its name, just above the point
@@ -1815,6 +1849,8 @@ export function editorOverlay(circuit, opts = {}) {
       const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
       const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
       parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
+      // A signal-flow ghost shows which way it will pass the signal.
+      parts.push(signalDirectionArrows(g.def.terminals || [], { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }));
     }
   }
 

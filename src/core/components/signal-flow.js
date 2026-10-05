@@ -112,8 +112,9 @@ function transferFunctionBlock(type, variable, description = `Transfer function 
 
 export const tf_s = transferFunctionBlock('tf_s', 's');
 export const tf_z = transferFunctionBlock('tf_z', 'z');
-// Presets: a DAC (its NRZ pulse, the way back from z to s), and delays.
+// Presets: a DAC (its NRZ or RZ pulse, the way back from z to s), and delays.
 export const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC pulse (1 - e^{-sT})/s', 'DAC');
+export const tf_dac_rz = transferFunctionBlock('tf_dac_rz', 's', 'RZ DAC pulse (1 - e^{-sT/2})/s', 'DAC');
 export const tf_delay = transferFunctionBlock('tf_delay', 's', 'Delay e^{-sT_d}', 'DL');
 export const tf_zdelay = transferFunctionBlock('tf_zdelay', 'z', 'Delay z^{-1}', 'DL');
 
@@ -162,12 +163,13 @@ export const sampler = defineSymbol({
   ],
   bbox: { x: -80, y: -80, w: 160, h: 160 },
   graphics: [
-    { kind: 'path', d: 'M -80 0 L -40 0', style: 'symbol', terminalLead: true },
+    // The lead and the arm are one stroke in the wire's ink, so the pivot is
+    // one mitred corner of the wire's width.
+    { kind: 'path', d: 'M -80 0 L -40 0 L 21.3 -51.4', style: 'symbol', terminalLead: true },
     { kind: 'path', d: 'M 40 0 L 80 0', style: 'symbol', terminalLead: true },
-    { kind: 'path', d: 'M -40 0 L 21.3 -51.4', style: 'symbol' },
     // The arrow round the pivot, across the arm: it closes once a period.
-    { kind: 'path', d: 'M -30.3 -55.1 A 56 56 0 0 1 11.9 -21', style: 'symbol', fill: 'none' },
-    { kind: 'polygon', points: [{ x: 16.8, y: -8.9 }, { x: 17.9, y: -23.4 }, { x: 5.9, y: -18.6 }], fill: 'foreground' },
+    { kind: 'path', d: 'M -30.3 -55.1 A 56 56 0 0 1 9.9 -25.4', style: 'symbol', fill: 'none' },
+    { kind: 'polygon', points: [{ x: 0.4, y: -24.4 }, { x: 15.7, y: -5.9 }, { x: 17.6, y: -29.9 }], fill: 'foreground' },
   ],
   textPos: null,
   refPos: null,

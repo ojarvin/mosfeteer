@@ -1036,7 +1036,7 @@ export function normalizeAnalysisValues(value) {
     swingFrequency: text(rawFlow.swingFrequency),
     ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
     ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
-    ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
+    ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')), ...(rawFlow.spectrum.frequency ? { frequency: text(String(rawFlow.spectrum.frequency)) } : {}) } } : {}),
     // Dither at the quantizers' inputs for the simulations: rect or tri.
     // (In quantizer steps; an older document's in dBFS, `amplitude`.)
     ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: {
@@ -1155,6 +1155,7 @@ function normalizeSwingPlot(plot) {
       .filter((p) => finite(p?.a) && (p.db === null || finite(p.db)))
       .map((p) => ({ a: round(p.a), db: p.db === null ? null : round(p.db) })),
     ...(trace?.stepped ? { stepped: true } : {}),
+    ...(trace?.tone ? { tone: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   return { kind: 'swing', range: { low, high }, traces };

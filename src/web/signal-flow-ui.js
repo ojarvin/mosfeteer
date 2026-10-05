@@ -32,6 +32,7 @@ import { alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent,
 import { logLine } from './status-bar-ui.js';
 import { buttonIcon } from './icons.js';
 import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js';
+import { swingTestFrequency } from '../core/analysis/optimize.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
 const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
@@ -51,7 +52,16 @@ let traces = [];
 const coefficients = () => editor.circuit.analysisValues.coefficients;
 // Linked coefficients (c_1 = b_1) and every coefficient's number through them.
 const links = () => (editor.circuit.analysisValues.links ||= {});
-const resolved = () => resolveCoefficients(coefficients(), links());
+// Every symbol the diagram reads has a number: one never set shows 1 on its
+// slider, so it is 1 here too (a fresh diagram simulates and optimizes as shown).
+let symbolDefaults = { circuit: null, revision: -1, values: {} };
+function defaultCoefficients() {
+  if (symbolDefaults.circuit !== editor.circuit || symbolDefaults.revision !== editor.modelRevision) {
+    symbolDefaults = { circuit: editor.circuit, revision: editor.modelRevision, values: Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, 1])) };
+  }
+  return symbolDefaults.values;
+}
+const resolved = () => resolveCoefficients({ ...defaultCoefficients(), ...coefficients() }, links());
 // Coefficients written as fractions m/n (rounded, or typed so): their text.
 const fractions = () => (editor.circuit.analysisValues.fractions ||= {});
 /** A coefficient as written: its fraction, else its number. */
@@ -415,7 +425,7 @@ const SWING_TONE = '\u0000tone';
 
 function swingSection() {
   const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
     el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -435,16 +445,29 @@ function fillSwingSources(sources) {
   const real = sources.filter((s) => !s.quantizer);
   select.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
   if (real.some((s) => s.id === flow().swingInput)) select.value = flow().swingInput;
-  // The document's frequency, or the default.
-  section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '1/256';
+  // The document's frequency; blank, the band's own (shown as the placeholder).
+  section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '';
+  refreshTestFrequencies();
   section.querySelector('.signal-flow-swing .signal-flow-dither')?.replaceWith(ditherControls());
 }
 
+/** A test's sine frequency (f/fs): the one typed, else inside the signal
+ *  band (its middle, swingTestFrequency), else 1/256. */
+function testFrequency(text) {
+  return swingTestFrequency({ frequency: text || '' }, editor.circuit.analysisValues.band);
+}
+
+/** The test frequencies' placeholders: what a blank field runs at, from the band. */
+function refreshTestFrequencies() {
+  const fallback = testFrequency('');
+  const text = `${Number(fallback.toPrecision(3))}`;
+  for (const field of section?.querySelectorAll('.signal-flow-test-frequency') || []) {
+    field.placeholder = editor.circuit.analysisValues.band ? `${text} (in band)` : text;
+  }
+}
+
 function swingFrequency() {
-  const text = section.querySelector('.signal-flow-swing-frequency').value.trim();
-  const match = text.match(/^(\d+(?:\.\d*)?)\s*\/\s*(\d+(?:\.\d*)?)$/);
-  const value = match ? Number(match[1]) / Number(match[2]) : Number(text);
-  return value > 0 && value < 0.5 ? value : 1 / 256;
+  return testFrequency(section.querySelector('.signal-flow-swing-frequency').value.trim());
 }
 
 /** Sweep the amplitude, one run a frame, drawing as it goes; resolves
@@ -527,7 +550,7 @@ function swingTraces() {
   }));
   if (swing.points.some((p) => p.tone !== null && p.tone !== undefined)) {
     const output = swing.signals.find((s) => s.key === flow().output);
-    traces.push({ key: SWING_TONE, label: `\\text{tone at } ${output?.name || 'out'}`, color: TRACE_COLORS[traces.length % TRACE_COLORS.length], points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.tone) })) });
+    traces.push({ key: SWING_TONE, tone: true, label: `\\text{tone at } ${output?.name || 'out'}`, color: TRACE_COLORS[traces.length % TRACE_COLORS.length], points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.tone) })) });
   }
   return traces;
 }
@@ -824,16 +847,21 @@ function spectrumControls() {
   const check = el('input', { type: 'checkbox', 'aria-label': 'Simulated output spectrum' });
   check.checked = !!settings.on;
   const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field', value: settings.amplitude ?? '-6', 'aria-label': 'Sine amplitude, dBFS' });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-test-frequency signal-flow-spectrum-frequency', value: settings.frequency ?? '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004); blank: inside the signal band set above' });
   const save = () => {
-    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6' };
+    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6', ...(frequency.value.trim() ? { frequency: frequency.value.trim() } : {}) };
     markSettingsChanged();
     runSpectrum();
   };
   check.addEventListener('change', save);
   amplitude.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
   amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  frequency.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
+  frequency.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  const fallback = testFrequency('');
+  frequency.placeholder = `${Number(fallback.toPrecision(3))}${editor.circuit.analysisValues.band ? ' (in band)' : ''}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
-    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS' }),
+    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
     ditherControls(),
     el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
@@ -916,7 +944,7 @@ function runSpectrum() {
   const { sources } = signalFlowGraph(editor.circuit);
   const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
-  const frequency = Math.max(1, Math.round(swingFrequency() * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
+  const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
   const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT, dither: flow().dither });
   if (!sim.ok) spectrum = { error: sim.error };
   else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
@@ -966,6 +994,8 @@ function bandControls() {
       renderResults();
       const status = section.querySelector('.signal-flow-spectrum-status');
       if (status) status.textContent = spectrumStatus();
+      refreshTestFrequencies();
+      renderOptimize();
     });
     // Enter applies the field, not a derive.
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
@@ -973,7 +1003,7 @@ function bandControls() {
     return input;
   };
   const row = el('div', { class: 'signal-flow-band' }, [
-    el('label', { text: 'Band f0' }), field('f0', 'Band centre, f/fs', 'The band\'s centre as f/fs; 0 for a baseband signal'),
+    el('label', { text: 'Signal band: f0' }), field('f0', 'Band centre, f/fs', 'The band\'s centre as f/fs; 0 for a baseband signal'),
     el('label', { text: 'bw' }), field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'),
   ]);
   return row;
@@ -1004,6 +1034,9 @@ function renderPlots() {
     viewButton('swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'),
     viewButton('loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins'),
   ]), el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Redraw every plot on the drawing at the coefficients\' numbers now, in place (one undo step)', onclick: () => updatePlots() }));
+  // The signal band, one setting for every view: the response's band lines
+  // and SQNR, the specs, and where each test's sine sits unless it is set.
+  section.querySelector('.signal-flow-band-host').replaceChildren(bandControls());
   section.querySelector('.signal-flow-graph').hidden = !GRAPH_VIEWS.has(view);
   section.querySelector('.signal-flow-locus').hidden = view !== 'locus';
   section.querySelector('.signal-flow-swing').hidden = view !== 'swing';
@@ -1044,7 +1077,6 @@ function renderGraph() {
     ]));
   }
   if (head.children.length) host.append(head);
-  if (view !== 'step') host.append(bandControls());
   if (view === 'magnitude') host.append(spectrumControls());
   if (plot) host.append(graphSvg(plot));
   else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay, or a continuous input through a sampler).' : 'Check a trace below to plot it.' }));
@@ -1305,7 +1337,7 @@ function appendSqnr(block, entry, ntf) {
   const component = editor.circuit.components.get(entry.quantizer);
   const levels = Number(component?.value) || 2;
   if (!bandEdges(band).length) {
-    block.append(el('p', { class: 'field-hint', text: 'Set a band on the graph (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
+    block.append(el('p', { class: 'field-hint', text: 'Set the signal band above the plots (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
     return;
   }
   const sqnr = bandSqnr(ntf, levels, band);
@@ -1444,6 +1476,7 @@ export function installSignalFlowUi() {
     // One plot area, its view picked at the top: the frequency and step
     // responses, the root locus, the swing.
     el('div', { class: 'signal-flow-plots' }, [
+      el('div', { class: 'signal-flow-band-host' }),
       el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
       el('div', { class: 'signal-flow-graph' }),
       locusSection(),

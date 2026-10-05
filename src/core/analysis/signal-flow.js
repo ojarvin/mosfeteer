@@ -259,7 +259,10 @@ export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph
 
   if (parts.some((component) => component.type === 'sampler')) return analyzeSampled(context, output, inputs, options.values || {});
   const domains = new Set(parts.map((component) => TRANSFER_FUNCTION_TYPES[component.type]).filter(Boolean));
-  if (domains.size > 1) return failure('mixed-domains', 'the diagram mixes H(s) and H(z) blocks: put a sampler where the continuous signal is sampled (an H(s) block reading a sampled signal is the DAC)');
+  if (domains.size > 1) {
+    const blocks = (variable) => parts.filter((component) => TRANSFER_FUNCTION_TYPES[component.type] === variable).map((component) => component.refdes);
+    return failure('mixed-domains', `the diagram mixes H(s) blocks (${blocks('s').join(', ')}, continuous) and H(z) blocks (${blocks('z').join(', ')}, sampled) with no sampler: put one where the continuous signal is sampled (an H(s) block reading a sampled signal is the DAC)`);
+  }
   const variable = domains.has('z') ? 'z' : 's';
 
   // Unknowns: every signal a block or junction drives.
@@ -470,6 +473,10 @@ function linearSystem({ circuit, signals, sourceBySignal }, unknowns, inputKeys,
  */
 export function signalDomains({ circuit, signals }) {
   const domain = new Map();
+  // Why each signal has its domain: the part that set it (`{ comp, kind }`,
+  // kind 'drives' or 'reads'), carried through junctions, for the message
+  // when two domains meet.
+  const origin = new Map();
   const readersOf = (signal) => signal.readers.map((reader) => ({ reader, component: circuit.components.get(reader.comp) }));
   const junctionInputs = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
   const outputOf = (component) => [...signals.values()].find((signal) => signal.driver?.comp === component.refdes && !signal.driver.source);
@@ -478,29 +485,31 @@ export function signalDomains({ circuit, signals }) {
   for (const signal of signals.values()) {
     if (!signal.driver || signal.driver.source || domain.has(signal.key)) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
-    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') domain.set(signal.key, 'z');
-    else if (TRANSFER_FUNCTION_TYPES[type] === 's') domain.set(signal.key, 's');
+    const at = { comp: signal.driver.comp, kind: 'drives' };
+    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') { domain.set(signal.key, 'z'); origin.set(signal.key, at); }
+    else if (TRANSFER_FUNCTION_TYPES[type] === 's') { domain.set(signal.key, 's'); origin.set(signal.key, at); }
   }
   for (let changed = true; changed;) {
     changed = false;
-    const set = (signal, value) => {
-      if (signal && value && !domain.has(signal.key)) { domain.set(signal.key, value); changed = true; }
+    const set = (signal, value, why) => {
+      if (signal && value && !domain.has(signal.key)) { domain.set(signal.key, value); if (why) origin.set(signal.key, why); changed = true; }
     };
     for (const component of circuit.components.values()) {
       if (!PASS_THROUGH.has(component.type)) continue;
       const out = outputOf(component);
       const ins = junctionInputs(component);
-      const known = [out, ...ins].map((signal) => signal && domain.get(signal.key)).find(Boolean);
-      if (!known) continue;
-      set(out, known);
-      for (const signal of ins) set(signal, known);
+      const from = [out, ...ins].find((signal) => signal && domain.get(signal.key));
+      if (!from) continue;
+      const known = domain.get(from.key);
+      set(out, known, origin.get(from.key));
+      for (const signal of ins) set(signal, known, origin.get(from.key));
     }
     // A source read by a sampler or an H(s) block is continuous; by an H(z) block, sampled.
     for (const signal of signals.values()) {
       if (domain.has(signal.key)) continue;
       for (const { component } of readersOf(signal)) {
-        if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's');
-        else if (isBlockIn(component, 'z')) set(signal, 'z');
+        if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's', { comp: component.refdes, kind: 'reads' });
+        else if (isBlockIn(component, 'z')) set(signal, 'z', { comp: component.refdes, kind: 'reads' });
       }
     }
   }
@@ -509,19 +518,42 @@ export function signalDomains({ circuit, signals }) {
   for (const component of circuit.components.values()) {
     if (component.type === 'quantizer') domain.set(quantizerErrorKey(component.refdes), domain.get(outputOf(component)?.key) || 's');
   }
+  // A signal as the message names it: its net name, else its driver's pin.
+  const nameOf = (signal) => {
+    const named = signal.netIds.map((id) => circuit.nets.get(id)).find((net) => net?.name);
+    if (named) return named.name;
+    if (signal.driver && !signal.driver.source) return `${signal.driver.comp}.${signal.driver.term}`;
+    return signal.display;
+  };
+  const partKind = (refdes) => {
+    const type = circuit.components.get(refdes)?.type;
+    return type === 'sampler' ? 'a sampler' : TRANSFER_FUNCTION_TYPES[type] === 'z' ? 'an H(z) block' : TRANSFER_FUNCTION_TYPES[type] === 's' ? 'an H(s) block' : 'a part';
+  };
+  const describe = (signal) => {
+    const sampled = domain.get(signal.key) === 'z';
+    const why = origin.get(signal.key);
+    const reason = !why ? 'nothing makes it sampled'
+      : why.kind === 'drives' ? `${why.comp}, ${partKind(why.comp)}, drives it${why.comp === signal.driver?.comp ? '' : ' through junctions'}`
+      : `${why.comp}, ${partKind(why.comp)}, reads it`;
+    return `${nameOf(signal)} is ${sampled ? 'sampled' : 'continuous'} (${reason})`;
+  };
   // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
   for (const component of circuit.components.values()) {
     if (component.type === 'sampler' || isBlockIn(component, 'z')) {
       const input = [...signals.values()].find((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
       if (input && domain.get(input.key) !== (component.type === 'sampler' ? 's' : 'z')) {
         return failure('mixed-domains', component.type === 'sampler'
-          ? `${component.refdes} samples a signal that is already sampled`
-          : `${component.refdes} is an H(z) block reading a continuous signal: sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+          ? `${component.refdes} samples a signal that is already sampled: ${describe(input)}`
+          : `${component.refdes} is an H(z) block reading a continuous signal: ${describe(input)}; sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
       }
     } else if (PASS_THROUGH.has(component.type)) {
-      const touching = [outputOf(component), ...junctionInputs(component)].filter(Boolean).map((signal) => domain.get(signal.key));
-      if (new Set(touching).size > 1) {
-        return failure('mixed-domains', `${component.refdes} joins a continuous and a sampled signal: put a sampler (s to z), or an H(s) block as the DAC (z to s), between them`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+      // Inputs first: the signals the message names are then the ones that meet.
+      const touching = [...junctionInputs(component), outputOf(component)].filter(Boolean);
+      if (new Set(touching.map((signal) => domain.get(signal.key))).size > 1) {
+        // One of each domain is enough to see the clash.
+        const continuous = touching.find((signal) => domain.get(signal.key) === 's');
+        const sampled = touching.find((signal) => domain.get(signal.key) === 'z');
+        return failure('mixed-domains', `${component.refdes} joins a continuous and a sampled signal: ${describe(continuous)}, but ${describe(sampled)}. Put a sampler (s to z), or an H(s) block as the DAC (z to s), between them`, [{ code: 'mixed-domains', refs: [component.refdes, ...new Set([origin.get(continuous.key)?.comp, origin.get(sampled.key)?.comp].filter(Boolean))] }]);
       }
     }
   }
@@ -1074,16 +1106,33 @@ function evaluate(dense, re, im) {
  * z result, s = j 2 pi f; in z over normalized frequency f/fs from 10^-4 to
  * 1/2, z = e^{j 2 pi f}. Null when a coefficient is symbolic.
  */
-export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega' } = {}) {
+export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega', at: extra = [] } = {}) {
   if (!value) return null;
-  if (value.kind === 'mixed') return mixedCurve(value, { pointsPerDecade });
-  if (variable === 's' && hasDelays(value)) return delayedCurve(value, { pointsPerDecade, sAxis });
+  // `at`: frequencies on the curve's own axis to land on exactly (a band's
+  // edges and centre), where a grid would step past a peak or a notch.
+  if (value.kind === 'mixed') return withPointsAt(mixedCurve(value, { pointsPerDecade }), extra, (f) => mixedAt(value, f));
+  if (variable === 's' && hasDelays(value)) {
+    const normalized = sAxis === 'normalized';
+    return withPointsAt(delayedCurve(value, { pointsPerDecade, sAxis }), extra, (f) => {
+      const w = normalized ? 2 * Math.PI * f : f;
+      const top = complexAt(value.numerator, w);
+      const bottom = complexAt(value.denominator, w);
+      return top && bottom ? cmul(top, cinv(bottom)) : null;
+    });
+  }
   const num = denseCoefficients(value.numerator, variable);
   const den = denseCoefficients(value.denominator, variable);
   if (!num || !den) return null;
+  const ratioAt = (re, im) => {
+    const top = evaluate(num, re, im);
+    const bottom = evaluate(den, re, im);
+    const d = bottom.re ** 2 + bottom.im ** 2;
+    return [(top.re * bottom.re + top.im * bottom.im) / d, (top.im * bottom.re - top.re * bottom.im) / d];
+  };
   if (variable === 's' && sAxis !== 'normalized') {
     const sketch = bodeSketch(num, den, { pointsPerDecade });
-    return { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
+    const curve = { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
+    return withPointsAt(curve, extra, (w) => ratioAt(0, w));
   }
   // Over f/fs: z on the unit circle, or s up the imaginary axis.
   const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w), im: Math.sin(w) });
@@ -1105,7 +1154,34 @@ export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = '
     previous = phase;
     points.push({ f, db: 20 * Math.log10(Math.hypot(h.re, h.im) || 1e-300), phase });
   }
-  return { variable, axis: 'normalized', points };
+  return withPointsAt({ variable, axis: 'normalized', points }, extra, (f) => {
+    const w = 2 * Math.PI * f;
+    return variable === 's' ? ratioAt(0, w) : ratioAt(Math.cos(w), Math.sin(w));
+  });
+}
+
+/**
+ * A curve with points added at `fs` (within its range, not already on it),
+ * each from `hAt(f)` ([re, im], or null to skip), its phase unwrapped to
+ * the point before it.
+ */
+function withPointsAt(curve, fs, hAt) {
+  if (!curve || !fs?.length || curve.points.length < 2) return curve;
+  const points = [...curve.points];
+  const first = points[0].f;
+  const last = points[points.length - 1].f;
+  for (const f of fs) {
+    if (!(f >= first && f <= last) || points.some((p) => Math.abs(p.f - f) <= 1e-12 * f)) continue;
+    const h = hAt(f);
+    if (!h || !h.every(Number.isFinite)) continue;
+    const index = points.findIndex((p) => p.f > f);
+    const before = points[index - 1];
+    let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
+    while (phase - before.phase > 180) phase -= 360;
+    while (phase - before.phase < -180) phase += 360;
+    points.splice(index, 0, { f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+  }
+  return { ...curve, points };
 }
 
 // A complex number as [re, im].
@@ -1277,6 +1353,21 @@ function complexAtPoint(value, point, variable, w) {
  * A continuous input's response through a sampled loop, over f/fs: each
  * term's z part at z = e^{j 2 pi f} times its s part at s = j 2 pi f / T.
  */
+/** A mixed result's value at f/fs `f`, or null where a part has no number. */
+function mixedAt(value, f) {
+  const theta = 2 * Math.PI * f;
+  const w = theta / value.period;
+  let h = [0, 0];
+  for (const term of value.terms) {
+    const zPart = rationalAt(term.z, [Math.cos(theta), Math.sin(theta)], 'z', 0);
+    const sPart = rationalAt(term.s, [0, w], 's', w);
+    if (!zPart || !sPart) return null;
+    const v = cmul(zPart, sPart);
+    h = [h[0] + v[0], h[1] + v[1]];
+  }
+  return h;
+}
+
 function mixedCurve(value, { pointsPerDecade }) {
   const points = [];
   let previous = null;
@@ -1285,16 +1376,8 @@ function mixedCurve(value, { pointsPerDecade }) {
   const high = Math.log10(0.5);
   for (let i = 0; i <= Math.round((high - low) * perDecade); i++) {
     const f = 10 ** Math.min(high, low + i / perDecade);
-    const theta = 2 * Math.PI * f;
-    const w = theta / value.period;
-    let h = [0, 0];
-    for (const term of value.terms) {
-      const zPart = rationalAt(term.z, [Math.cos(theta), Math.sin(theta)], 'z', 0);
-      const sPart = rationalAt(term.s, [0, w], 's', w);
-      if (!zPart || !sPart) return null;
-      const v = cmul(zPart, sPart);
-      h = [h[0] + v[0], h[1] + v[1]];
-    }
+    const h = mixedAt(value, f);
+    if (!h) return null;
     if (!h.every(Number.isFinite)) continue;
     let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
     if (previous !== null) {
@@ -1328,6 +1411,12 @@ export function plotAxis(traces, sAxis = 'omega') {
  * The signal band's edges in f/fs: `bw` from DC when `f0` is 0 (one line at
  * bw), else `f0 +- bw/2` (two). Empty when no bandwidth is set.
  */
+/** A band's edges and its centre, f/fs: where a response is sampled exactly. */
+export function bandFrequencies(band) {
+  const f0 = Number(band?.f0) || 0;
+  return [...bandEdges(band), ...(f0 > 0 && bandEdges(band).length ? [f0] : [])];
+}
+
 export function bandEdges(band) {
   const f0 = Number(band?.f0) || 0;
   const bw = Number(band?.bw);
@@ -1372,8 +1461,10 @@ export function bandSqnr(ntf, levels, band) {
 export function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
+  // Each curve lands exactly on the band's edges and centre (on its own axis).
+  const bandPoints = (variable) => bandFrequencies(band).map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f));
   const curves = withVariable
-    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis }) }))
+    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
   if (!curves.length) return null;
   const all = curves.flatMap(({ curve }) => curve.points.map((point) => point.f));

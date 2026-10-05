@@ -20,13 +20,14 @@
  */
 
 // Every transfer-function block and its variable: the general H(s) and H(z)
-// blocks, and presets of them -- a DAC's NRZ pulse, a delay in s, a delay
-// in z -- whose definitions are as editable as any block's.
-export const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z', tf_dac: 's', tf_delay: 's', tf_zdelay: 'z' });
+// blocks, and presets of them -- a DAC's NRZ and RZ pulses, a delay in s,
+// a delay in z -- whose definitions are as editable as any block's.
+export const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z', tf_dac: 's', tf_dac_rz: 's', tf_delay: 's', tf_zdelay: 'z' });
 const PRESETS = Object.freeze({
   tf_z: 'tf([1], [1 -1])', // an accumulator: 1 / (1 - z^-1)
   tf_s: 'tf([1], [1 1])',
   tf_dac: '(1 - exp(-s*T))/s', // a sample held for a period (NRZ)
+  tf_dac_rz: '(1 - exp(-s*T/2))/s', // held for half a period, then zero (RZ)
   tf_delay: 'exp(-s*T_d)',
   tf_zdelay: 'tf([0 1], [1])', // z^-1
 });

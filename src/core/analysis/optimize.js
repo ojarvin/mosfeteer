@@ -38,6 +38,7 @@ const UNSTABLE = 100;
 const BROKEN = 1000;
 // Feasible scores are goals in dB; infeasible ones sit above them all.
 const INFEASIBLE = 1e6;
+export const INFEASIBLE_SCORE = INFEASIBLE;
 // A limit missed by less than this (dB) is met: a best point on its limit
 // stays feasible when its numbers are written to four digits.
 const SLACK = 0.01;
@@ -368,7 +369,7 @@ export function prepareObjective(circuit, problem = {}) {
     return { violation, margin, swing: { overloaded: false, peaks, levels, runs: total, held, marginRuns: marginPhases.length, marginHeld } };
   };
 
-  const score = (values, long) => {
+  const score = (values, long, withSwing = true) => {
     let violation = 0;
     let goal = 0;
     const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
@@ -414,7 +415,7 @@ export function prepareObjective(circuit, problem = {}) {
       else if (spec.action === 'below') violation += miss(db - spec.value);
       else violation += miss(spec.value - db);
     });
-    if (swing) {
+    if (swing && withSwing) {
       const tested = swingTest(values, long ? {
         samples: problem.verifySamples ?? VERIFY_SAMPLES, phases: VERIFY_PHASES, marginPhases: VERIFY_MARGIN_PHASES, guard: 0,
       } : { samples: swing.samples, phases: swing.phases, marginPhases: [0], guard: swing.guard });
@@ -427,7 +428,8 @@ export function prepareObjective(circuit, problem = {}) {
   };
   // The quick test ranks a search's candidates; the long one verifies a
   // new best and is what is reported.
-  return { ok: true, evaluate: (values) => score(values, false), verify: (values) => score(values, true), goals: goals.length, specs, swing };
+  // `measure`: the specs alone, no swing test -- deterministic, for sensitivities.
+  return { ok: true, evaluate: (values) => score(values, false), verify: (values) => score(values, true), measure: (values) => score(values, false, false), goals: goals.length, specs, swing };
 }
 
 /**
@@ -550,8 +552,10 @@ export function createOptimizer(parameters, { values = {}, links = {}, evaluatio
   };
 }
 
-/** A request's score: the quick test, or the long one for `{ verify }`. */
-export const scoreRequest = (objective, request) => (request && request.verify ? objective.verify(request.verify) : objective.evaluate(request));
+/** A request's score: the quick test, the long one for `{ verify }`, or
+ *  the specs alone for `{ specsOnly }`. */
+export const scoreRequest = (objective, request) => (request && request.verify ? objective.verify(request.verify)
+  : request && request.specsOnly ? objective.measure(request.specsOnly) : objective.evaluate(request));
 
 /** Whether a best candidate meets every limit. */
 export const isFeasible = (best) => !!best && best.fitness < INFEASIBLE;

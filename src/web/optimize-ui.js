@@ -11,9 +11,10 @@
  */
 
 import { diagramSymbols, signalFlowGraph } from '../core/analysis/signal-flow.js';
-import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest } from '../core/analysis/optimize.js';
+import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
 import { coefficientGroups, ditherFraction, roundingSearch } from '../core/analysis/rounding.js';
+import { SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch } from '../core/analysis/refine.js';
 import { ditherSteps } from '../core/analysis/simulate.js';
 import { parseLevels } from '../core/transfer-function.js';
 import { prepareSimulation } from '../core/analysis/simulate.js';
@@ -210,7 +211,7 @@ function specList(current, sources) {
     el('div', { class: 'signal-flow-optimize-heading', text: 'Specs' }),
     ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
-    el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the one set on the graph. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
+    el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the signal band set above the plots. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
     el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of a pair of the transfer function\'s poles (a z pole read as s = ln z): how much it rings, at whatever frequency -- 0.5 for real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; the same radius rings more the higher its frequency. A loop\'s NTF and STF share their poles.' }),
   ]);
 }
@@ -229,7 +230,7 @@ function swingBlock(circuit, current, sources) {
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
-  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: 'in band', 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}${api.band() ? ' (in band)' : ''}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
   const children = [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -272,7 +273,11 @@ function swingBlock(circuit, current, sources) {
 
 function runBlock(current) {
   const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'How many candidates to score at most', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
+  const prune = el('input', { type: 'checkbox', 'aria-label': 'Zero coefficients that barely matter' });
+  prune.checked = current.prune !== false;
+  prune.addEventListener('change', () => { current.prune = prune.checked; changed(); });
   return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('label', { class: 'signal-flow-spectrum-toggle', title: 'After the search, a coefficient under 5% of the largest into its block is tried at zero (smallest first, verified at length): it stays zero, one part fewer, if every limit still holds and the goals lose at most 0.5 dB. Apply then fixes it at zero.' }, [prune, el('span', { text: 'Zero coefficients that barely matter' })]),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Budget' }), budget, el('label', { text: 'candidates' }),
       el('button', { type: 'button', class: 'signal-flow-optimize-run', text: 'Run', onclick: () => (running ? running.stop() : run()) }),
@@ -328,22 +333,69 @@ function resultBlock(sources) {
     ]),
   );
   if (!found.feasible) host.append(el('p', { class: 'field-hint', text: 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
+  if (found.zeroed?.length) {
+    host.append(el('p', { class: 'field-hint signal-flow-optimize-zeroed' }, [
+      el('span', { text: 'Set to zero, as they barely mattered (every limit still met): ' }),
+      ...found.zeroed.flatMap((name, i) => [...(i ? [el('span', { text: ', ' })] : []), math(symbolText(name))]),
+      el('span', { text: '. Apply fixes them at zero; set one Free to bring it back.' }),
+    ]));
+  }
+  if (found.sensitivity?.length) host.append(sensitivityBlock(found.sensitivity, found.specs, sources));
   return host;
+}
+
+/** How much each spec moves per 1% of each coefficient, at the numbers found. */
+function sensitivityBlock(entries, specs, sources) {
+  const fragile = entries.filter(isSensitive);
+  const row = (entry) => {
+    const what = entry.unstable ? 'unstable at 1% off' : `${entry.perPercent.toFixed(2)} dB per 1%${entry.breaks ? ', on a limit' : ''}`;
+    const spec = entry.spec !== null && specs[entry.spec] ? specText(specs[entry.spec], sources) : '';
+    return el('div', { class: `signal-flow-optimize-metric${isSensitive(entry) ? ' analysis-error' : ''}` }, [
+      math(symbolText(entry.name)),
+      el('span', { class: 'signal-flow-optimize-number', text: what, title: spec ? `The spec it moves most: ${spec}` : '' }),
+    ]);
+  };
+  return el('div', { class: 'signal-flow-optimize-sensitivity' }, [
+    el('div', { class: 'signal-flow-optimize-heading', text: fragile.length ? `Sensitive to ${fragile.length === 1 ? 'one coefficient' : `${fragile.length} coefficients`}` : 'Sensitivity: none fragile' }),
+    el('p', { class: 'field-hint', text: `Each coefficient moved 1% of itself, the others held: the largest change of any spec (the transfer functions; the swing test is too noisy to difference). ${SENSITIVE_DB} dB per 1% or more, or the stability lost at 1% off, is marked: the parts realizing it must match that well. "On a limit": 1% off misses a limit the result just meets.` }),
+    ...entries.map(row),
+  ]);
 }
 
 function apply() {
   if (!found?.own) return;
   reverting = api.snapshotCoefficients();
   const numbers = Object.fromEntries(Object.entries(found.own).map(([name, v]) => [name, Number(v.toPrecision(4))]));
+  // A coefficient set to zero stays there: fixed, so the next search leaves it out.
+  const current = setup();
+  reverting.fixed = {};
+  for (const name of found.zeroed || []) {
+    reverting.fixed[name] = current.coefficients[name] ? { ...current.coefficients[name] } : null;
+    current.coefficients[name] = { ...(current.coefficients[name] || {}), fixed: true };
+  }
+  if (found.zeroed?.length) changed();
   api.applyCoefficients(numbers);
   renderOptimize();
 }
 
 function revert() {
   if (!reverting) return;
+  const current = setup();
+  for (const [name, entry] of Object.entries(reverting.fixed || {})) {
+    if (entry) current.coefficients[name] = entry;
+    else delete current.coefficients[name];
+  }
+  if (Object.keys(reverting.fixed || {}).length) changed();
   api.restoreCoefficients(reverting);
   reverting = null;
   renderOptimize();
+}
+
+/** Drive a refine generator (refine.js), scoring its batches with `pool`. */
+async function driveSearch(search, pool) {
+  let step = search.next();
+  while (!step.done) step = search.next(await pool.evaluate(step.value.batch));
+  return step.value;
 }
 
 // ----- rounding to fractions ------------------------------------------------------------
@@ -688,15 +740,35 @@ function run() {
       }
       const best = optimizer.best;
       if (!best) return { text: 'Stopped before any candidate was verified.', error: true };
+      const names = parameters.free.map((p) => p.name);
+      let final = { own: best.own, score: best.score, zeroed: [] };
+      // The coefficients that barely matter, tried at zero.
+      if (current.prune !== false && isFeasible(best) && !stopped()) {
+        const groups = coefficientGroups(circuit, names).map((group) => group.names);
+        const candidates = pruneCandidates(names, best.own, groups);
+        if (candidates.length) {
+          say(`Trying ${candidates.length === 1 ? 'a coefficient that barely matters' : `${candidates.length} coefficients that barely matter`} at zero, verified at length...`);
+          final = await driveSearch(pruneSearch(candidates, { own: best.own, start: best.score, links }), pool);
+        }
+      }
+      // How much each spec moves per 1% of each coefficient.
+      let sensitivity = [];
+      if (objectiveSpecs.length && !stopped()) {
+        say('Measuring each coefficient\'s sensitivity...');
+        sensitivity = await driveSearch(sensitivitySearch(parameters, objectiveSpecs, { own: final.own, links }), pool);
+      }
       found = {
-        own: Object.fromEntries(parameters.free.map((p) => [p.name, best.own[p.name]])),
-        score: best.score,
+        own: Object.fromEntries(names.map((name) => [name, final.own[name]])),
+        zeroed: final.zeroed,
+        sensitivity,
+        score: final.score,
         start: optimizer.start,
         feasible: isFeasible(best),
         specs: objectiveSpecs,
         swing: normalizeOptimizeSetup(current).swing.on,
       };
-      return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${isFeasible(best) ? '' : ': no candidate met every limit'}.`, error: !isFeasible(best) };
+      const zeroedText = final.zeroed.length ? `; ${final.zeroed.length === 1 ? 'one coefficient' : `${final.zeroed.length} coefficients`} set to zero` : '';
+      return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${isFeasible(best) ? zeroedText : ': no candidate met every limit'}.`, error: !isFeasible(best) };
     },
   });
 }

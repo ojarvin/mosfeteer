@@ -6291,9 +6291,9 @@ body.chrome-away [data-editor-edge="right"] {
   stroke: none;
 }
 
-/* A simulated spectrum: thin, behind the analytic curves. */
+/* A simulated spectrum: lighter than the analytic curves, behind them. */
 .signal-flow-plot .role-spectrum {
-  stroke-width: 0.75;
+  stroke-width: 1.25;
   stroke-opacity: 0.8;
 }
 
@@ -6577,6 +6577,22 @@ body.chrome-away [data-editor-edge="right"] {
 
 .signal-flow-optimize-result:empty {
   display: none;
+}
+
+/* Each coefficient's sensitivity: its name, then dB per 1%. */
+.signal-flow-optimize-sensitivity {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.signal-flow-optimize-sensitivity .signal-flow-optimize-metric {
+  grid-template-columns: minmax(2.5rem, auto) minmax(0, 1fr);
+  align-items: center;
+}
+
+.signal-flow-optimize-sensitivity .signal-flow-optimize-number {
+  text-align: left;
 }
 
 .signal-flow-optimize-fraction {

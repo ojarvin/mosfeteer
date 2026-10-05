@@ -6171,6 +6171,8 @@ function normalizeOptimizeSetup(raw) {
       measure: SWING_LEVELS.includes(rawSwing.measure) ? rawSwing.measure : 'sigma3',
     },
     evaluations: evaluations >= 50 && evaluations <= 1e6 ? evaluations : DEFAULT_EVALUATIONS,
+    // After a search, try the coefficients that barely matter at zero (refine.js).
+    prune: value.prune !== false,
     // Rounding to fractions m/n: the largest n, powers of two only, one n per block.
     rounding: {
       denominator: denominator >= 1 && denominator <= MAX_DENOMINATOR ? denominator : 32,
@@ -6245,6 +6247,7 @@ const UNSTABLE = 100;
 const BROKEN = 1000;
 // Feasible scores are goals in dB; infeasible ones sit above them all.
 const INFEASIBLE = 1e6;
+const INFEASIBLE_SCORE = INFEASIBLE;
 // A limit missed by less than this (dB) is met: a best point on its limit
 // stays feasible when its numbers are written to four digits.
 const SLACK = 0.01;
@@ -6575,7 +6578,7 @@ function prepareObjective(circuit, problem = {}) {
     return { violation, margin, swing: { overloaded: false, peaks, levels, runs: total, held, marginRuns: marginPhases.length, marginHeld } };
   };
 
-  const score = (values, long) => {
+  const score = (values, long, withSwing = true) => {
     let violation = 0;
     let goal = 0;
     const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
@@ -6621,7 +6624,7 @@ function prepareObjective(circuit, problem = {}) {
       else if (spec.action === 'below') violation += miss(db - spec.value);
       else violation += miss(spec.value - db);
     });
-    if (swing) {
+    if (swing && withSwing) {
       const tested = swingTest(values, long ? {
         samples: problem.verifySamples ?? VERIFY_SAMPLES, phases: VERIFY_PHASES, marginPhases: VERIFY_MARGIN_PHASES, guard: 0,
       } : { samples: swing.samples, phases: swing.phases, marginPhases: [0], guard: swing.guard });
@@ -6634,7 +6637,8 @@ function prepareObjective(circuit, problem = {}) {
   };
   // The quick test ranks a search's candidates; the long one verifies a
   // new best and is what is reported.
-  return { ok: true, evaluate: (values) => score(values, false), verify: (values) => score(values, true), goals: goals.length, specs, swing };
+  // `measure`: the specs alone, no swing test -- deterministic, for sensitivities.
+  return { ok: true, evaluate: (values) => score(values, false), verify: (values) => score(values, true), measure: (values) => score(values, false, false), goals: goals.length, specs, swing };
 }
 
 /**
@@ -6757,8 +6761,10 @@ function createOptimizer(parameters, { values = {}, links = {}, evaluations = 30
   };
 }
 
-/** A request's score: the quick test, or the long one for `{ verify }`. */
-const scoreRequest = (objective, request) => (request && request.verify ? objective.verify(request.verify) : objective.evaluate(request));
+/** A request's score: the quick test, the long one for `{ verify }`, or
+ *  the specs alone for `{ specsOnly }`. */
+const scoreRequest = (objective, request) => (request && request.verify ? objective.verify(request.verify)
+  : request && request.specsOnly ? objective.measure(request.specsOnly) : objective.evaluate(request));
 
 /** Whether a best candidate meets every limit. */
 const isFeasible = (best) => !!best && best.fitness < INFEASIBLE;
@@ -6791,6 +6797,7 @@ function runOptimization(circuit, problem, options = {}) {
   return { ok: true, best: optimizer.best, feasible: isFeasible(optimizer.best), parameters, objective, evaluations: optimizer.evaluations };
 }
 
+__exports.INFEASIBLE_SCORE = INFEASIBLE_SCORE;
 __exports.SWING_MEASURES = SWING_MEASURES;
 __exports.scoreRequest = scoreRequest;
 __exports.isFeasible = isFeasible;
@@ -9796,6 +9803,155 @@ function reduceNetwork(primitives, boundaryNodes, ops) {
 
 };
 
+__modules["src/core/analysis/refine.js"] = function (__require, __exports) {
+__exports.sensitivitySearch = sensitivitySearch;
+__exports.pruneCandidates = pruneCandidates;
+__exports.pruneSearch = pruneSearch;
+__exports.runRefine = runRefine;
+let INFEASIBLE_SCORE, fitnessOf; __bind(() => { ({ INFEASIBLE_SCORE, fitnessOf } = __require("src/core/analysis/optimize.js")); });
+let resolveCoefficients; __bind(() => { ({ resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
+/**
+ * After a coefficient search (optimize.js): how sensitive the result is to
+ * each coefficient, and which coefficients barely matter and can be zero.
+ *
+ * Sensitivity: each free coefficient nudged by +-1% of itself, the others
+ * held, and the specs measured again (the transfer functions alone: the
+ * swing test's runs are too noisy to difference). A coefficient's
+ * sensitivity is the largest change of any spec, in dB per 1%; a nudge
+ * that loses the loop's stability is flagged, and one that misses a limit
+ * noted (a best on its limit misses it at any nudge). A design that
+ * hangs on one coefficient to a fraction of a percent will not survive the
+ * spread of the parts that realize it.
+ *
+ * Pruning: a free coefficient that is small beside the others into its
+ * block (coefficientGroups; a lone one beside the largest free one) costs a
+ * part for little. Smallest first, each is tried at zero with the long
+ * test; it stays zero if every limit still holds and the goals lose at
+ * most `cost` dB. Zero is another diagram -- one path fewer -- so it is
+ * offered, never forced: the editor applies it and fixes it at zero.
+ *
+ * Both are generators of batches to score, as the rounding search is:
+ * they yield `{ batch }` (each item a request scoreRequest takes) and take
+ * the scores back, so the editor can score them in worker threads.
+ */
+
+
+
+
+const SENSITIVITY_STEP = 0.01;
+// A spec moving this much (dB) per 1% of a coefficient: a fragile design.
+const SENSITIVE_DB = 1;
+// A coefficient under this fraction of its block's largest is a candidate for zero.
+const PRUNE_RATIO = 0.05;
+// The most the goals may lose (dB, summed) to a coefficient set to zero.
+const PRUNE_COST = 0.5;
+
+/** A spec's value as dB: a magnitude already is; a pole Q as 20 log Q, a
+ *  radius by its distance to the unit circle (as the search ranks them). */
+function specDb(spec, value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  if (spec.measure === 'q') return 20 * Math.log10(Math.max(value, 1e-12));
+  if (spec.measure === 'radius') return -20 * Math.log10(Math.max(1 - value, 1e-12));
+  return value;
+}
+
+/**
+ * Each free coefficient's sensitivity at `own` (every coefficient's own
+ * number). `specs`: the objective's. Yields one batch: the specs at `own`,
+ * then at each nudge. Returns `[{ name, value, perPercent (dB per 1%, the
+ * worst spec), spec (its index), breaks (a nudge misses a limit the start
+ * met), unstable (a nudge makes a transfer function unstable) }]`, the most
+ * sensitive first; a coefficient at zero is left out.
+ */
+function* sensitivitySearch(parameters, specs, { own, links = {}, step = SENSITIVITY_STEP } = {}) {
+  const nudges = [];
+  for (const p of parameters.free) {
+    const value = own[p.name];
+    if (!value) continue;
+    for (const sign of [1, -1]) nudges.push({ name: p.name, value, numbers: resolveCoefficients({ ...own, [p.name]: value * (1 + sign * step) }, links) });
+  }
+  if (!nudges.length) return [];
+  const scores = yield { batch: [{ specsOnly: resolveCoefficients(own, links) }, ...nudges.map((n) => ({ specsOnly: n.numbers }))] };
+  const [base, ...rest] = scores;
+  const byName = new Map();
+  nudges.forEach((nudge, i) => {
+    const score = rest[i];
+    const entry = byName.get(nudge.name) || { name: nudge.name, value: nudge.value, perPercent: 0, spec: null, breaks: false, unstable: false };
+    if (score.unstable !== null && score.unstable !== undefined && (base.unstable === null || base.unstable === undefined)) entry.unstable = true;
+    if (score.violation > base.violation + 0.01) entry.breaks = true;
+    specs.forEach((spec, k) => {
+      const before = specDb(spec, base.specs?.[k]);
+      const after = specDb(spec, score.specs?.[k]);
+      if (before === null || after === null) return;
+      const change = Math.abs(after - before) / (step * 100);
+      if (change > entry.perPercent) { entry.perPercent = change; entry.spec = k; }
+    });
+    byName.set(nudge.name, entry);
+  });
+  return [...byName.values()].sort((a, b) => Number(b.unstable) - Number(a.unstable) || b.perPercent - a.perPercent);
+}
+
+/** Whether an entry from sensitivitySearch is one to worry about: a large
+ *  change, or stability lost. A limit missed at 1% off is not by itself --
+ *  a best on its limit (as a search's best often is) misses it at any nudge. */
+const isSensitive = (entry) => entry.unstable || entry.perPercent >= SENSITIVE_DB;
+
+/**
+ * The free coefficients small enough to try at zero, smallest (relative)
+ * first: under `ratio` of the largest in their group (`groups`, lists of
+ * names; one alone is compared with the largest free coefficient).
+ */
+function pruneCandidates(names, own, groups = [], ratio = PRUNE_RATIO) {
+  const size = (name) => Math.abs(own[name] ?? 0);
+  const largest = Math.max(0, ...names.map(size));
+  const groupOf = new Map();
+  for (const group of groups) for (const name of group) groupOf.set(name, group);
+  const out = [];
+  for (const name of names) {
+    if (!size(name)) continue;
+    const mates = (groupOf.get(name) || [name]).filter((other) => names.includes(other));
+    const reference = mates.length > 1 ? Math.max(...mates.map(size)) : largest;
+    const relative = reference > 0 ? size(name) / reference : 1;
+    if (relative < ratio) out.push({ name, relative });
+  }
+  return out.sort((a, b) => a.relative - b.relative).map((c) => c.name);
+}
+
+/**
+ * Try the candidates at zero, one at a time, from `own` whose verified
+ * score is `start`. Yields `{ batch: [{ verify }] }` per candidate. Returns
+ * `{ own, score, zeroed: [names] }` -- the start's when nothing could go.
+ * A start that misses a limit is left as it is.
+ */
+function* pruneSearch(candidates, { own, start, links = {}, cost = PRUNE_COST } = {}) {
+  let current = { own: { ...own }, score: start };
+  const zeroed = [];
+  if (!start || fitnessOf(start) >= INFEASIBLE_SCORE) return { ...current, zeroed };
+  for (const name of candidates) {
+    const trial = { ...current.own, [name]: 0 };
+    const [score] = yield { batch: [{ verify: resolveCoefficients(trial, links) }], name };
+    if (fitnessOf(score) < INFEASIBLE_SCORE && score.goal - current.score.goal <= cost) {
+      current = { own: trial, score };
+      zeroed.push(name);
+    }
+  }
+  return { ...current, zeroed };
+}
+
+/** Drive a refine generator in this thread, scoring with `objective`. */
+function runRefine(objective, search, scoreRequest) {
+  let step = search.next();
+  while (!step.done) step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
+  return step.value;
+}
+
+__exports.SENSITIVITY_STEP = SENSITIVITY_STEP;
+__exports.SENSITIVE_DB = SENSITIVE_DB;
+__exports.PRUNE_RATIO = PRUNE_RATIO;
+__exports.PRUNE_COST = PRUNE_COST;
+__exports.isSensitive = isSensitive;
+};
+
 __modules["src/core/analysis/report-adapter.js"] = function (__require, __exports) {
 __exports.adaptCombinedReport = adaptCombinedReport;
 let OWN, firstDefined; __bind(() => { ({ OWN, firstDefined } = __require("src/core/analysis/shared.js")); });
@@ -11437,6 +11593,7 @@ __exports.complexText = complexText;
 __exports.denseCoefficients = denseCoefficients;
 __exports.responseCurve = responseCurve;
 __exports.plotAxis = plotAxis;
+__exports.bandFrequencies = bandFrequencies;
 __exports.bandEdges = bandEdges;
 __exports.bandSqnr = bandSqnr;
 __exports.responsePlot = responsePlot;
@@ -11715,7 +11872,10 @@ function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph(circui
 
   if (parts.some((component) => component.type === 'sampler')) return analyzeSampled(context, output, inputs, options.values || {});
   const domains = new Set(parts.map((component) => TRANSFER_FUNCTION_TYPES[component.type]).filter(Boolean));
-  if (domains.size > 1) return failure('mixed-domains', 'the diagram mixes H(s) and H(z) blocks: put a sampler where the continuous signal is sampled (an H(s) block reading a sampled signal is the DAC)');
+  if (domains.size > 1) {
+    const blocks = (variable) => parts.filter((component) => TRANSFER_FUNCTION_TYPES[component.type] === variable).map((component) => component.refdes);
+    return failure('mixed-domains', `the diagram mixes H(s) blocks (${blocks('s').join(', ')}, continuous) and H(z) blocks (${blocks('z').join(', ')}, sampled) with no sampler: put one where the continuous signal is sampled (an H(s) block reading a sampled signal is the DAC)`);
+  }
   const variable = domains.has('z') ? 'z' : 's';
 
   // Unknowns: every signal a block or junction drives.
@@ -11926,6 +12086,10 @@ function linearSystem({ circuit, signals, sourceBySignal }, unknowns, inputKeys,
  */
 function signalDomains({ circuit, signals }) {
   const domain = new Map();
+  // Why each signal has its domain: the part that set it (`{ comp, kind }`,
+  // kind 'drives' or 'reads'), carried through junctions, for the message
+  // when two domains meet.
+  const origin = new Map();
   const readersOf = (signal) => signal.readers.map((reader) => ({ reader, component: circuit.components.get(reader.comp) }));
   const junctionInputs = (component) => [...signals.values()].filter((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
   const outputOf = (component) => [...signals.values()].find((signal) => signal.driver?.comp === component.refdes && !signal.driver.source);
@@ -11934,29 +12098,31 @@ function signalDomains({ circuit, signals }) {
   for (const signal of signals.values()) {
     if (!signal.driver || signal.driver.source || domain.has(signal.key)) continue;
     const type = circuit.components.get(signal.driver.comp)?.type;
-    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') domain.set(signal.key, 'z');
-    else if (TRANSFER_FUNCTION_TYPES[type] === 's') domain.set(signal.key, 's');
+    const at = { comp: signal.driver.comp, kind: 'drives' };
+    if (type === 'sampler' || TRANSFER_FUNCTION_TYPES[type] === 'z') { domain.set(signal.key, 'z'); origin.set(signal.key, at); }
+    else if (TRANSFER_FUNCTION_TYPES[type] === 's') { domain.set(signal.key, 's'); origin.set(signal.key, at); }
   }
   for (let changed = true; changed;) {
     changed = false;
-    const set = (signal, value) => {
-      if (signal && value && !domain.has(signal.key)) { domain.set(signal.key, value); changed = true; }
+    const set = (signal, value, why) => {
+      if (signal && value && !domain.has(signal.key)) { domain.set(signal.key, value); if (why) origin.set(signal.key, why); changed = true; }
     };
     for (const component of circuit.components.values()) {
       if (!PASS_THROUGH.has(component.type)) continue;
       const out = outputOf(component);
       const ins = junctionInputs(component);
-      const known = [out, ...ins].map((signal) => signal && domain.get(signal.key)).find(Boolean);
-      if (!known) continue;
-      set(out, known);
-      for (const signal of ins) set(signal, known);
+      const from = [out, ...ins].find((signal) => signal && domain.get(signal.key));
+      if (!from) continue;
+      const known = domain.get(from.key);
+      set(out, known, origin.get(from.key));
+      for (const signal of ins) set(signal, known, origin.get(from.key));
     }
     // A source read by a sampler or an H(s) block is continuous; by an H(z) block, sampled.
     for (const signal of signals.values()) {
       if (domain.has(signal.key)) continue;
       for (const { component } of readersOf(signal)) {
-        if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's');
-        else if (isBlockIn(component, 'z')) set(signal, 'z');
+        if (component?.type === 'sampler' || isBlockIn(component, 's')) set(signal, 's', { comp: component.refdes, kind: 'reads' });
+        else if (isBlockIn(component, 'z')) set(signal, 'z', { comp: component.refdes, kind: 'reads' });
       }
     }
   }
@@ -11965,19 +12131,42 @@ function signalDomains({ circuit, signals }) {
   for (const component of circuit.components.values()) {
     if (component.type === 'quantizer') domain.set(quantizerErrorKey(component.refdes), domain.get(outputOf(component)?.key) || 's');
   }
+  // A signal as the message names it: its net name, else its driver's pin.
+  const nameOf = (signal) => {
+    const named = signal.netIds.map((id) => circuit.nets.get(id)).find((net) => net?.name);
+    if (named) return named.name;
+    if (signal.driver && !signal.driver.source) return `${signal.driver.comp}.${signal.driver.term}`;
+    return signal.display;
+  };
+  const partKind = (refdes) => {
+    const type = circuit.components.get(refdes)?.type;
+    return type === 'sampler' ? 'a sampler' : TRANSFER_FUNCTION_TYPES[type] === 'z' ? 'an H(z) block' : TRANSFER_FUNCTION_TYPES[type] === 's' ? 'an H(s) block' : 'a part';
+  };
+  const describe = (signal) => {
+    const sampled = domain.get(signal.key) === 'z';
+    const why = origin.get(signal.key);
+    const reason = !why ? 'nothing makes it sampled'
+      : why.kind === 'drives' ? `${why.comp}, ${partKind(why.comp)}, drives it${why.comp === signal.driver?.comp ? '' : ' through junctions'}`
+      : `${why.comp}, ${partKind(why.comp)}, reads it`;
+    return `${nameOf(signal)} is ${sampled ? 'sampled' : 'continuous'} (${reason})`;
+  };
   // Where the domains meet, only a sampler (s to z) or an H(s) block (z to s) may stand.
   for (const component of circuit.components.values()) {
     if (component.type === 'sampler' || isBlockIn(component, 'z')) {
       const input = [...signals.values()].find((signal) => signal.readers.some((reader) => reader.comp === component.refdes));
       if (input && domain.get(input.key) !== (component.type === 'sampler' ? 's' : 'z')) {
         return failure('mixed-domains', component.type === 'sampler'
-          ? `${component.refdes} samples a signal that is already sampled`
-          : `${component.refdes} is an H(z) block reading a continuous signal: sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+          ? `${component.refdes} samples a signal that is already sampled: ${describe(input)}`
+          : `${component.refdes} is an H(z) block reading a continuous signal: ${describe(input)}; sample it first (a sampler)`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
       }
     } else if (PASS_THROUGH.has(component.type)) {
-      const touching = [outputOf(component), ...junctionInputs(component)].filter(Boolean).map((signal) => domain.get(signal.key));
-      if (new Set(touching).size > 1) {
-        return failure('mixed-domains', `${component.refdes} joins a continuous and a sampled signal: put a sampler (s to z), or an H(s) block as the DAC (z to s), between them`, [{ code: 'mixed-domains', refs: [component.refdes] }]);
+      // Inputs first: the signals the message names are then the ones that meet.
+      const touching = [...junctionInputs(component), outputOf(component)].filter(Boolean);
+      if (new Set(touching.map((signal) => domain.get(signal.key))).size > 1) {
+        // One of each domain is enough to see the clash.
+        const continuous = touching.find((signal) => domain.get(signal.key) === 's');
+        const sampled = touching.find((signal) => domain.get(signal.key) === 'z');
+        return failure('mixed-domains', `${component.refdes} joins a continuous and a sampled signal: ${describe(continuous)}, but ${describe(sampled)}. Put a sampler (s to z), or an H(s) block as the DAC (z to s), between them`, [{ code: 'mixed-domains', refs: [component.refdes, ...new Set([origin.get(continuous.key)?.comp, origin.get(sampled.key)?.comp].filter(Boolean))] }]);
       }
     }
   }
@@ -12530,16 +12719,33 @@ function evaluate(dense, re, im) {
  * z result, s = j 2 pi f; in z over normalized frequency f/fs from 10^-4 to
  * 1/2, z = e^{j 2 pi f}. Null when a coefficient is symbolic.
  */
-function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega' } = {}) {
+function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega', at: extra = [] } = {}) {
   if (!value) return null;
-  if (value.kind === 'mixed') return mixedCurve(value, { pointsPerDecade });
-  if (variable === 's' && hasDelays(value)) return delayedCurve(value, { pointsPerDecade, sAxis });
+  // `at`: frequencies on the curve's own axis to land on exactly (a band's
+  // edges and centre), where a grid would step past a peak or a notch.
+  if (value.kind === 'mixed') return withPointsAt(mixedCurve(value, { pointsPerDecade }), extra, (f) => mixedAt(value, f));
+  if (variable === 's' && hasDelays(value)) {
+    const normalized = sAxis === 'normalized';
+    return withPointsAt(delayedCurve(value, { pointsPerDecade, sAxis }), extra, (f) => {
+      const w = normalized ? 2 * Math.PI * f : f;
+      const top = complexAt(value.numerator, w);
+      const bottom = complexAt(value.denominator, w);
+      return top && bottom ? cmul(top, cinv(bottom)) : null;
+    });
+  }
   const num = denseCoefficients(value.numerator, variable);
   const den = denseCoefficients(value.denominator, variable);
   if (!num || !den) return null;
+  const ratioAt = (re, im) => {
+    const top = evaluate(num, re, im);
+    const bottom = evaluate(den, re, im);
+    const d = bottom.re ** 2 + bottom.im ** 2;
+    return [(top.re * bottom.re + top.im * bottom.im) / d, (top.im * bottom.re - top.re * bottom.im) / d];
+  };
   if (variable === 's' && sAxis !== 'normalized') {
     const sketch = bodeSketch(num, den, { pointsPerDecade });
-    return { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
+    const curve = { variable, axis: 'relative', points: sketch.points.map(({ w, db, phase }) => ({ f: w, db, phase })) };
+    return withPointsAt(curve, extra, (w) => ratioAt(0, w));
   }
   // Over f/fs: z on the unit circle, or s up the imaginary axis.
   const at = variable === 's' ? (w) => ({ re: 0, im: w }) : (w) => ({ re: Math.cos(w), im: Math.sin(w) });
@@ -12561,7 +12767,34 @@ function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega' 
     previous = phase;
     points.push({ f, db: 20 * Math.log10(Math.hypot(h.re, h.im) || 1e-300), phase });
   }
-  return { variable, axis: 'normalized', points };
+  return withPointsAt({ variable, axis: 'normalized', points }, extra, (f) => {
+    const w = 2 * Math.PI * f;
+    return variable === 's' ? ratioAt(0, w) : ratioAt(Math.cos(w), Math.sin(w));
+  });
+}
+
+/**
+ * A curve with points added at `fs` (within its range, not already on it),
+ * each from `hAt(f)` ([re, im], or null to skip), its phase unwrapped to
+ * the point before it.
+ */
+function withPointsAt(curve, fs, hAt) {
+  if (!curve || !fs?.length || curve.points.length < 2) return curve;
+  const points = [...curve.points];
+  const first = points[0].f;
+  const last = points[points.length - 1].f;
+  for (const f of fs) {
+    if (!(f >= first && f <= last) || points.some((p) => Math.abs(p.f - f) <= 1e-12 * f)) continue;
+    const h = hAt(f);
+    if (!h || !h.every(Number.isFinite)) continue;
+    const index = points.findIndex((p) => p.f > f);
+    const before = points[index - 1];
+    let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
+    while (phase - before.phase > 180) phase -= 360;
+    while (phase - before.phase < -180) phase += 360;
+    points.splice(index, 0, { f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+  }
+  return { ...curve, points };
 }
 
 // A complex number as [re, im].
@@ -12733,6 +12966,21 @@ function complexAtPoint(value, point, variable, w) {
  * A continuous input's response through a sampled loop, over f/fs: each
  * term's z part at z = e^{j 2 pi f} times its s part at s = j 2 pi f / T.
  */
+/** A mixed result's value at f/fs `f`, or null where a part has no number. */
+function mixedAt(value, f) {
+  const theta = 2 * Math.PI * f;
+  const w = theta / value.period;
+  let h = [0, 0];
+  for (const term of value.terms) {
+    const zPart = rationalAt(term.z, [Math.cos(theta), Math.sin(theta)], 'z', 0);
+    const sPart = rationalAt(term.s, [0, w], 's', w);
+    if (!zPart || !sPart) return null;
+    const v = cmul(zPart, sPart);
+    h = [h[0] + v[0], h[1] + v[1]];
+  }
+  return h;
+}
+
 function mixedCurve(value, { pointsPerDecade }) {
   const points = [];
   let previous = null;
@@ -12741,16 +12989,8 @@ function mixedCurve(value, { pointsPerDecade }) {
   const high = Math.log10(0.5);
   for (let i = 0; i <= Math.round((high - low) * perDecade); i++) {
     const f = 10 ** Math.min(high, low + i / perDecade);
-    const theta = 2 * Math.PI * f;
-    const w = theta / value.period;
-    let h = [0, 0];
-    for (const term of value.terms) {
-      const zPart = rationalAt(term.z, [Math.cos(theta), Math.sin(theta)], 'z', 0);
-      const sPart = rationalAt(term.s, [0, w], 's', w);
-      if (!zPart || !sPart) return null;
-      const v = cmul(zPart, sPart);
-      h = [h[0] + v[0], h[1] + v[1]];
-    }
+    const h = mixedAt(value, f);
+    if (!h) return null;
     if (!h.every(Number.isFinite)) continue;
     let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
     if (previous !== null) {
@@ -12784,6 +13024,12 @@ function plotAxis(traces, sAxis = 'omega') {
  * The signal band's edges in f/fs: `bw` from DC when `f0` is 0 (one line at
  * bw), else `f0 +- bw/2` (two). Empty when no bandwidth is set.
  */
+/** A band's edges and its centre, f/fs: where a response is sampled exactly. */
+function bandFrequencies(band) {
+  const f0 = Number(band?.f0) || 0;
+  return [...bandEdges(band), ...(f0 > 0 && bandEdges(band).length ? [f0] : [])];
+}
+
 function bandEdges(band) {
   const f0 = Number(band?.f0) || 0;
   const bw = Number(band?.bw);
@@ -12828,8 +13074,10 @@ function bandSqnr(ntf, levels, band) {
 function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
+  // Each curve lands exactly on the band's edges and centre (on its own axis).
+  const bandPoints = (variable) => bandFrequencies(band).map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f));
   const curves = withVariable
-    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis }) }))
+    .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
   if (!curves.length) return null;
   const all = curves.flatMap(({ curve }) => curve.points.map((point) => point.f));
@@ -15552,6 +15800,7 @@ __exports.cornerNames = cornerNames;
 __exports.responseFigure = responseFigure;
 __exports.stepFigure = stepFigure;
 __exports.swingFigure = swingFigure;
+__exports.plainTex = plainTex;
 __exports.swingOverload = swingOverload;
 __exports.swingRunaway = swingRunaway;
 __exports.swingFullScale = swingFullScale;
@@ -15929,7 +16178,7 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     // At the top, clear of the axis titles: left of the line in the right half, else right of it.
     const right = x(limit.a) > pane.x + pane.w / 2;
     const text = limit.kind === 'full-scale'
-      ? `${limit.label ? `${limit.label} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
+      ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
       : `runaway ${Number(limit.a.toFixed(2))} dBFS`;
     items.push({ type: 'text', x: x(limit.a) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text, anchor: right ? 'end' : 'start', role: 'marker' });
   }
@@ -15940,6 +16189,18 @@ function swingFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
   items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'peak (dBFS)', anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: 'input (dBFS)', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { db: [dbLow, dbHigh] } };
+}
+
+/** A trace's TeX name as plot text, which knows only `_{}` and `^{}`:
+ *  `\text{tone at } V_{\text{OUT}}` reads `tone at V_{OUT}`. */
+function plainTex(tex) {
+  let text = String(tex).replace(/\$/g, '');
+  // Innermost first, so a \text inside a subscript leaves its braces to it.
+  for (let last = null; last !== text;) {
+    last = text;
+    text = text.replace(/\\(?:text|mathrm|mathit|operatorname)\{([^{}]*)\}/g, '$1');
+  }
+  return text.replace(/\\[,;! ]/g, ' ').replace(/\\cdot/g, '·').replace(/ {2,}/g, ' ').trim();
 }
 
 /**
@@ -15995,7 +16256,8 @@ function swingRunaway(traces, { excess = 3, window = 3 } = {}) {
 function swingFullScale(traces) {
   let best = null;
   for (const trace of traces) {
-    if (trace.stepped) continue;
+    // A tone (the output at the input frequency) tracks the input by design.
+    if (trace.stepped || trace.tone) continue;
     const points = trace.points.filter((p) => Number.isFinite(p.db)).sort((p, q) => p.a - q.a);
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1];
@@ -17853,7 +18115,7 @@ const SYMBOL_CATEGORY_RULES = [
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
   ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch))$/],
-  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|delay|zdelay)|gain|sampler|quantizer)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer)$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each
@@ -18322,7 +18584,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_delay, tf_zdelay, gain, sampler, quantizer; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_delay, tf_zdelay, gain, sampler, quantizer } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -18440,6 +18702,7 @@ const symbolTypes = {
   tf_s,
   tf_z,
   tf_dac,
+  tf_dac_rz,
   tf_delay,
   tf_zdelay,
   gain,
@@ -19249,8 +19512,9 @@ function transferFunctionBlock(type, variable, description = `Transfer function 
 
 const tf_s = transferFunctionBlock('tf_s', 's');
 const tf_z = transferFunctionBlock('tf_z', 'z');
-// Presets: a DAC (its NRZ pulse, the way back from z to s), and delays.
+// Presets: a DAC (its NRZ or RZ pulse, the way back from z to s), and delays.
 const tf_dac = transferFunctionBlock('tf_dac', 's', 'DAC pulse (1 - e^{-sT})/s', 'DAC');
+const tf_dac_rz = transferFunctionBlock('tf_dac_rz', 's', 'RZ DAC pulse (1 - e^{-sT/2})/s', 'DAC');
 const tf_delay = transferFunctionBlock('tf_delay', 's', 'Delay e^{-sT_d}', 'DL');
 const tf_zdelay = transferFunctionBlock('tf_zdelay', 'z', 'Delay z^{-1}', 'DL');
 
@@ -19299,12 +19563,13 @@ const sampler = defineSymbol({
   ],
   bbox: { x: -80, y: -80, w: 160, h: 160 },
   graphics: [
-    { kind: 'path', d: 'M -80 0 L -40 0', style: 'symbol', terminalLead: true },
+    // The lead and the arm are one stroke in the wire's ink, so the pivot is
+    // one mitred corner of the wire's width.
+    { kind: 'path', d: 'M -80 0 L -40 0 L 21.3 -51.4', style: 'symbol', terminalLead: true },
     { kind: 'path', d: 'M 40 0 L 80 0', style: 'symbol', terminalLead: true },
-    { kind: 'path', d: 'M -40 0 L 21.3 -51.4', style: 'symbol' },
     // The arrow round the pivot, across the arm: it closes once a period.
-    { kind: 'path', d: 'M -30.3 -55.1 A 56 56 0 0 1 11.9 -21', style: 'symbol', fill: 'none' },
-    { kind: 'polygon', points: [{ x: 16.8, y: -8.9 }, { x: 17.9, y: -23.4 }, { x: 5.9, y: -18.6 }], fill: 'foreground' },
+    { kind: 'path', d: 'M -30.3 -55.1 A 56 56 0 0 1 9.9 -25.4', style: 'symbol', fill: 'none' },
+    { kind: 'polygon', points: [{ x: 0.4, y: -24.4 }, { x: 15.7, y: -5.9 }, { x: 17.6, y: -29.9 }], fill: 'foreground' },
   ],
   textPos: null,
   refPos: null,
@@ -19350,6 +19615,7 @@ __exports.filter_notch = filter_notch;
 __exports.tf_s = tf_s;
 __exports.tf_z = tf_z;
 __exports.tf_dac = tf_dac;
+__exports.tf_dac_rz = tf_dac_rz;
 __exports.tf_delay = tf_delay;
 __exports.tf_zdelay = tf_zdelay;
 __exports.gain = gain;
@@ -22047,7 +22313,7 @@ function normalizeAnalysisValues(value) {
     swingFrequency: text(rawFlow.swingFrequency),
     ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
     ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
-    ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')) } } : {}),
+    ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')), ...(rawFlow.spectrum.frequency ? { frequency: text(String(rawFlow.spectrum.frequency)) } : {}) } } : {}),
     // Dither at the quantizers' inputs for the simulations: rect or tri.
     // (In quantizer steps; an older document's in dBFS, `amplitude`.)
     ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: {
@@ -22166,6 +22432,7 @@ function normalizeSwingPlot(plot) {
       .filter((p) => finite(p?.a) && (p.db === null || finite(p.db)))
       .map((p) => ({ a: round(p.a), db: p.db === null ? null : round(p.db) })),
     ...(trace?.stepped ? { stepped: true } : {}),
+    ...(trace?.tone ? { tone: true } : {}),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
   return { kind: 'swing', range: { low, high }, traces };
@@ -29108,6 +29375,7 @@ __exports.viewportFrame = viewportFrame;
 __exports.viewportGridPath = viewportGridPath;
 __exports.viewportGridSvg = viewportGridSvg;
 __exports.svgString = svgString;
+__exports.signalDirectionSvg = signalDirectionSvg;
 __exports.editorOverlay = editorOverlay;
 let applyTransform, fmt, transformRect, transformToSvg; __bind(() => { ({ applyTransform, fmt, transformRect, transformToSvg } = __require("src/core/geometry.js")); });
 let ceilGrid, floorGrid, GRID; __bind(() => { ({ ceilGrid, floorGrid, GRID } = __require("src/core/grid.js")); });
@@ -29193,12 +29461,13 @@ function strokeWidthOf(style, base = 'symbol') {
  * filled arrowhead out by half that outline so its tip meets the visible edge
  * rather than disappearing into the body. The insets by pin ("x,y"), built
  * once per drawing, and only for a wire that has an arrowhead at all. */
-const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+const BODY_EDGE_PIN_TYPES = new Set(['block', 'signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 /** Signal-flow inputs whose wires carry an arrowhead into them without
  *  being asked: a sum's or multiplier's inputs and a transfer function's
- *  input (a gain's triangle already points the way). By pin ("x,y"). */
-const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
+ *  input or a quantizer's (a gain's triangle already points the way). By
+ *  pin ("x,y"). */
+const AUTO_ARROW_TYPES = new Set(['signal_sum', 'signal_multiply', 'quantizer', ...Object.keys(TRANSFER_FUNCTION_TYPES)]);
 
 function signalInputPins(circuit) {
   const pins = new Set();
@@ -29804,7 +30073,7 @@ const PLOT_STROKES = {
   corner: { width: 2, dash: '4 10' },
   grid: { width: 1 },
   band: { width: 3, dash: '18 9' },
-  spectrum: { width: 2 },
+  spectrum: { width: 3 },
   marker: { width: 3, dash: '18 9' },
 };
 
@@ -30373,6 +30642,32 @@ function svgString(circuit, opts = {}) {
 // Sky-blue center guides are measurement aids and deliberately separate from
 // the accent blue used for selection and pending edits.
 const SELECT = 'var(--accent, #2563eb)';
+
+/** A part's signal directions (editor overlay): beside each pin with a
+ *  signal role, outside the body, an arrowhead along the pin -- pointing
+ *  out of an output, into an input. Empty for a part without signal roles. */
+function signalDirectionSvg(c) {
+  return signalDirectionArrows(c.terminalDefs, c.transform);
+}
+
+/** The same for pins `terminals` under `transform` (a placement ghost's). */
+function signalDirectionArrows(terminals, transform) {
+  const heads = [];
+  for (const terminal of terminals) {
+    if (!terminal.signalRole || !terminal.dir) continue;
+    const pin = applyTransform(transform, terminal.x, terminal.y);
+    const ahead = applyTransform(transform, terminal.x + terminal.dir.x, terminal.y + terminal.dir.y);
+    const d = { x: ahead.x - pin.x, y: ahead.y - pin.y };
+    const out = terminal.signalRole === 'output';
+    const [near, far] = [10, 34];
+    const tip = out ? far : near;
+    const base = out ? near : far;
+    const at = (along, across) => ({ x: pin.x + d.x * along - d.y * across, y: pin.y + d.y * along + d.x * across });
+    const points = [at(tip, 0), at(base, 10), at(base, -10)].map((p) => `${fmt(p.x)},${fmt(p.y)}`).join(' ');
+    heads.push(`<polygon class="signal-direction signal-direction-${out ? 'output' : 'input'}" points="${points}" fill="${SELECT}" fill-opacity="${out ? 0.9 : 0.55}" stroke="none"/>`);
+  }
+  return heads.length ? `<g class="signal-directions" pointer-events="none">${heads.join('')}</g>` : '';
+}
 const WARN = 'var(--warn, #b45309)';
 const DANGER = 'var(--danger, #c53030)';
 const NEUTRAL = 'var(--svg-faint, #7a7d85)';
@@ -30430,6 +30725,13 @@ function editorOverlay(circuit, opts = {}) {
     const r = c.bboxWorld();
     parts.push(`<g class="selection-glow" pointer-events="none">${componentShapeSvg(c, opts.beatView?.defOf(c))}</g>`);
     parts.push(`<rect class="selection-outline" x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="${SELECT}" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" pointer-events="none"/>`);
+  }
+
+  // Which way a signal-flow part's signals go, while it is hovered or
+  // selected: an arrow out of each output pin and into each input pin.
+  for (const ref of opts.signalDirections || []) {
+    const c = circuit.components.get(ref);
+    if (c) parts.push(signalDirectionSvg(c));
   }
 
   // A copied net label on its way to a wire: its name, just above the point
@@ -30939,6 +31241,8 @@ function editorOverlay(circuit, opts = {}) {
       const body = g.def.graphics.filter((gg) => gg.kind !== 'text').map((gg) => graphicsToSvg(gg)).join('');
       const text = g.def.graphics.filter((gg) => gg.kind === 'text').map((gg) => symbolTextSvg(gg, { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY })).join('');
       parts.push(`<g transform="${t}" opacity="0.45">${body}</g>${text}`);
+      // A signal-flow ghost shows which way it will pass the signal.
+      parts.push(signalDirectionArrows(g.def.terminals || [], { x: g.x, y: g.y, rotation: g.rotation, mirrorX: g.mirrorX, mirrorY: g.mirrorY }));
     }
   }
 
@@ -33027,7 +33331,7 @@ const PARTNERS = new Map([
   ['input', 'output'], ['switch_open', 'switch_closed'], ['adc', 'dac'], ['adc_diff', 'dac_diff'],
   ['current_source', 'voltage_source'], ['vccs', 'vcvs'], ['resistor', 'capacitor'],
   ['inverter', 'buffer'], ['tristate_inverter', 'tristate_buffer'],
-  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['tf_delay', 'tf_zdelay'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
+  ['signal_sum', 'signal_multiply'], ['filter_lpf', 'filter_hpf'], ['filter_bpf', 'filter_notch'], ['tf_s', 'tf_z'], ['tf_dac', 'tf_dac_rz'], ['tf_delay', 'tf_zdelay'], ['opamp', 'opamp_diff'], ['comparator', 'comparator_clocked'],
   ...['and', 'or', 'xor'].flatMap((gate) => [2, 3].map((n) => [`${gate}${n}_gate`, `n${gate}${n}_gate`])),
 ].flatMap(([a, b]) => [[a, b], [b, a]]));
 
@@ -34078,13 +34382,14 @@ __exports.defaultTransferFunction = defaultTransferFunction;
  */
 
 // Every transfer-function block and its variable: the general H(s) and H(z)
-// blocks, and presets of them -- a DAC's NRZ pulse, a delay in s, a delay
-// in z -- whose definitions are as editable as any block's.
-const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z', tf_dac: 's', tf_delay: 's', tf_zdelay: 'z' });
+// blocks, and presets of them -- a DAC's NRZ and RZ pulses, a delay in s,
+// a delay in z -- whose definitions are as editable as any block's.
+const TRANSFER_FUNCTION_TYPES = Object.freeze({ tf_s: 's', tf_z: 'z', tf_dac: 's', tf_dac_rz: 's', tf_delay: 's', tf_zdelay: 'z' });
 const PRESETS = Object.freeze({
   tf_z: 'tf([1], [1 -1])', // an accumulator: 1 / (1 - z^-1)
   tf_s: 'tf([1], [1 1])',
   tf_dac: '(1 - exp(-s*T))/s', // a sample held for a period (NRZ)
+  tf_dac_rz: '(1 - exp(-s*T/2))/s', // held for half a period, then zero (RZ)
   tf_delay: 'exp(-s*T_d)',
   tf_zdelay: 'tf([0 1], [1])', // z^-1
 });
@@ -48508,6 +48813,8 @@ __exports.knifeCrossings = knifeCrossings;
 __exports.strokeCrossesPolyline = strokeCrossesPolyline;
 __exports.strokeCrossesRect = strokeCrossesRect;
 __exports.spliceCandidate = spliceCandidate;
+__exports.upstreamEnd = upstreamEnd;
+__exports.signalSpliceRotation = signalSpliceRotation;
 __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
 __exports.easeOutCubic = easeOutCubic;
@@ -48716,6 +49023,73 @@ function spliceCandidate(terminalPoints, paths) {
     }
   }
   return null;
+}
+
+/**
+ * Which end of a spliced segment the signal comes from: 'a' or 'b' (the
+ * segment's `a` and `b` as spliceCandidate returns them), or null. `paths`
+ * are the net's branches, `drivers` the points of what drives it (a
+ * signal-flow output pin or an input port). With the segment cut, the end
+ * still joined to a driver is upstream.
+ */
+function upstreamEnd(target, paths, drivers) {
+  if (!target || !drivers?.length) return null;
+  const key = (p) => `${p.x},${p.y}`;
+  const edges = new Map();
+  const link = (p, q) => {
+    for (const [from, to] of [[p, q], [q, p]]) {
+      if (!edges.has(key(from))) edges.set(key(from), []);
+      edges.get(key(from)).push(to);
+    }
+  };
+  paths.forEach((pts, branch) => {
+    for (let i = 1; i < pts.length; i++) {
+      if (branch === target.branch && i === target.segment) continue;
+      // Whole-cell steps, so a pin or junction mid-way along a segment joins it.
+      const a = pts[i - 1];
+      const b = pts[i];
+      const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / 40;
+      if (!Number.isInteger(n) || n < 1) { link(a, b); continue; }
+      for (let k = 0; k < n; k++) link({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n }, { x: a.x + ((b.x - a.x) * (k + 1)) / n, y: a.y + ((b.y - a.y) * (k + 1)) / n });
+    }
+  });
+  const goals = new Set(drivers.map(key));
+  const reaches = (start) => {
+    const seen = new Set([key(start)]);
+    const queue = [start];
+    while (queue.length) {
+      const p = queue.shift();
+      if (goals.has(key(p))) return true;
+      for (const q of edges.get(key(p)) || []) if (!seen.has(key(q))) { seen.add(key(q)); queue.push(q); }
+    }
+    return false;
+  };
+  const fromA = reaches(target.a);
+  const fromB = reaches(target.b);
+  return fromA === fromB ? null : fromA ? 'a' : 'b';
+}
+
+/**
+ * A signal-flow part (an `in` and an `out` pin) dropped on a wire: the
+ * rotation that lays it along the wire with its input toward the signal's
+ * source, as `{ rotation, target }`, or null where none splices. `pinsAt`
+ * gives a rotation's world `{ in, out }`; `paths` are spliceCandidate's;
+ * `upstream(target)` is 'a', 'b', or null (any direction then, the first
+ * rotation that fits).
+ */
+function signalSpliceRotation(pinsAt, paths, upstream) {
+  let fallback = null;
+  for (const rotation of [0, 90, 180, 270]) {
+    const pins = pinsAt(rotation);
+    const target = spliceCandidate([pins.in, pins.out], paths);
+    if (!target) continue;
+    const side = upstream(target);
+    if (!side) { fallback ||= { rotation, target }; continue; }
+    const from = target[side];
+    const distance = (p) => Math.abs(p.x - from.x) + Math.abs(p.y - from.y);
+    if (distance(pins.in) < distance(pins.out)) return { rotation, target };
+  }
+  return fallback;
 }
 
 /** Radius (world units) of a pin handle. It scales with the drawing like the
@@ -52293,6 +52667,7 @@ let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js"
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
 let applyTransform, distanceToSegment; __bind(() => { ({ applyTransform, distanceToSegment } = __require("src/core/geometry.js")); });
+let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
 let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
 let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js")); });
@@ -52300,7 +52675,7 @@ let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextS
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let layerActionForKey, layoutAlignKey, naturalCompare; __bind(() => { ({ layerActionForKey, layoutAlignKey, naturalCompare } = __require("src/web/toolbar.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
-let isPinDragCandidate, spliceCandidate, wheelIntent; __bind(() => { ({ isPinDragCandidate, spliceCandidate, wheelIntent } = __require("src/web/gestures.js")); });
+let isPinDragCandidate, signalSpliceRotation, spliceCandidate, upstreamEnd, wheelIntent; __bind(() => { ({ isPinDragCandidate, signalSpliceRotation, spliceCandidate, upstreamEnd, wheelIntent } = __require("src/web/gestures.js")); });
 let LOG_DRAWER_CLOSED; __bind(() => { ({ LOG_DRAWER_CLOSED } = __require("src/web/status-bar.js")); });
 let alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides; __bind(() => { ({ alignmentPlan, componentLayoutItem, distributionPlan, ghostLayoutItem, labelLayoutItem, placementGuides } = __require("src/web/layout.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -52350,6 +52725,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -54310,10 +54686,75 @@ installBeatsUi();
  * pendingPlace so the user can place several of the same component in a row.
  */
 /** The world transform of the armed component ghost. */
+const placementDefs = new Map();
+
+/**
+ * The symbol a new part of `type` will have once placed: its registry
+ * definition, or for a part sized per instance (a transfer-function box
+ * fitted to its default equation) that size, so the ghost, its splice, and
+ * its pin joins are where the placed part's pins will be.
+ */
+function placementDef(type) {
+  if (!placementDefs.has(type)) {
+    const def = getSymbol(type);
+    let placed = def;
+    if (Object.hasOwn(TRANSFER_FUNCTION_TYPES, type)) {
+      const { w, h } = new Circuit().addComponent(type).bodySize;
+      if (w !== def.bbox.w || h !== def.bbox.h) {
+        const box = { x: -w / 2, y: -h / 2, w, h };
+        placed = {
+          ...def,
+          bbox: box,
+          terminals: def.terminals.map((terminal) => ({ ...terminal, x: Math.sign(terminal.x) * w / 2 })),
+          graphics: def.graphics.map((g) => (g.kind === 'rect' ? { ...g, ...box } : g)),
+        };
+      }
+    }
+    placementDefs.set(type, placed);
+  }
+  return placementDefs.get(type);
+}
+
+/** A signal-flow part's input and output pins, when it has exactly those. */
+function signalPins(def) {
+  const input = def.terminals.filter((t) => t.signalRole === 'input');
+  const output = def.terminals.filter((t) => t.signalRole === 'output');
+  return def.terminals.length === 2 && input.length === 1 && output.length === 1 ? { in: input[0], out: output[0] } : null;
+}
+
+/** What drives a net, as points: a signal-flow output pin or an input port. */
+function signalDriverPoints(net) {
+  return net.terminals.flatMap(({ comp, term }) => {
+    const component = circuit.components.get(comp);
+    const def = component?.terminalDefs.find((t) => t.name === term);
+    return def?.signalRole === 'output' || component?.type === 'input' ? [component.terminalWorld(term)] : [];
+  });
+}
+
+/**
+ * A signal-flow part held over a wire, not yet turned by hand: the rotation
+ * that splices it along the wire, its input toward the signal's source.
+ */
+function signalSpliceTransform(def) {
+  const pins = signalPins(def);
+  if (!pins) return null;
+  const paths = managedWirePaths();
+  const at = (rotation) => {
+    const transform = { x: cursor.x, y: cursor.y, rotation, mirrorX: false, mirrorY: false };
+    return { in: applyTransform(transform, pins.in.x, pins.in.y), out: applyTransform(transform, pins.out.x, pins.out.y) };
+  };
+  const upstream = (target) => {
+    const net = circuit.nets.get(target.netId);
+    return net ? upstreamEnd(target, net.paths(), signalDriverPoints(net)) : null;
+  };
+  const found = signalSpliceRotation(at, paths, upstream);
+  return found ? { x: cursor.x, y: cursor.y, rotation: found.rotation, mirrorX: false, mirrorY: false } : null;
+}
+
 function pendingTransform() {
   if (pendingPlace?.kind !== 'component') return null;
   let def;
-  try { def = getSymbol(pendingPlace.type); } catch { return null; }
+  try { def = placementDef(pendingPlace.type); } catch { return null; }
   // A rail marker dropped on a pin hangs the way the pin leads out, as one
   // wired to a pin does, until it is turned by hand.
   const untouched = !pendingPlace.rotation && pendingPlace.mirrorX === null && pendingPlace.mirrorY === null;
@@ -54323,6 +54764,11 @@ function pendingTransform() {
       const { dir } = pinEscape(circuit, { comp: hit.refdes, term: hit.term });
       return { x: cursor.x, y: cursor.y, rotation: railRotation(pendingPlace.type, dir), mirrorX: false, mirrorY: false };
     }
+  }
+  // A signal-flow part over a wire lies along it the way the signal goes.
+  if (untouched) {
+    const along = signalSpliceTransform(def);
+    if (along) return along;
   }
   return {
     x: cursor.x,
@@ -54344,7 +54790,7 @@ function placementJoinPoints() {
   let pins = [];
   if (mode === 'insert' && pendingPlace?.kind === 'component') {
     let def;
-    try { def = getSymbol(pendingPlace.type); } catch { return []; }
+    try { def = placementDef(pendingPlace.type); } catch { return []; }
     const base = pendingTransform();
     for (const transform of [base, symmetryTwin(base)].filter(Boolean)) {
       for (const t of def.terminals || []) pins.push({ ...applyTransform(transform, t.x, t.y), netId: null });
@@ -54483,11 +54929,12 @@ function managedWirePaths() {
     .flatMap((net) => net.paths().map((pts, branch) => ({ netId: net.id, branch, pts })));
 }
 
-/** World points of a part's series pins under `transform`, or null. */
-function seriesPinPoints(def, transform) {
+/** World points of a part's series pins under `transform`, or null.
+ *  `terminals` are where they are on this part (a sized box moves them). */
+function seriesPinPoints(def, transform, terminals = def.terminals) {
   const names = seriesTerminalNames(def);
   if (!names) return null;
-  return def.terminals.filter((t) => names.includes(t.name)).map((t) => applyTransform(transform, t.x, t.y));
+  return terminals.filter((t) => names.includes(t.name)).map((t) => applyTransform(transform, t.x, t.y));
 }
 
 /** The segment a part's free series pins would splice into. For a placed part
@@ -54503,7 +54950,7 @@ function spliceTargetFor(points, refdes = null) {
 
 function spliceIfOnWire(comp) {
   if (!comp) return false;
-  const points = seriesPinPoints(comp.def, comp.transform);
+  const points = seriesPinPoints(comp.def, comp.transform, comp.terminalDefs);
   const target = spliceTargetFor(points, comp.refdes);
   if (!target) return false;
   const name = circuit.nets.get(target.netId)?.name || target.netId;
@@ -54522,7 +54969,7 @@ function splicePreviewTarget(ghost) {
     const refdes = [...drag.origins.keys()][0];
     const comp = circuit.components.get(refdes);
     if (!comp) return null;
-    return spliceTargetFor(seriesPinPoints(comp.def, comp.transform), refdes);
+    return spliceTargetFor(seriesPinPoints(comp.def, comp.transform, comp.terminalDefs), refdes);
   }
   return null;
 }
@@ -55186,7 +55633,7 @@ function renderCanvas(modelKey) {
         ? { label: true, x: cursor.x, y: cursor.y }
         : (() => {
             try {
-              const def = getSymbol(pendingPlace.type);
+              const def = placementDef(pendingPlace.type);
               return { def, ...pendingTransform() };
             } catch {
               return undefined;
@@ -55251,6 +55698,8 @@ function renderCanvas(modelKey) {
     cursor,
     netLabelPaste: netLabelPastePreview(cursor),
     selection: [...multi],
+    // Hovered, selected, or carried (a move's or copy's ghost) parts show their signals' directions.
+    signalDirections: [...new Set([...multi, ...ghostRefs, hoverPinsRef, hoverTarget?.kind === 'component' ? hoverTarget.refdes : null])].filter(Boolean),
     emphasis: equationEmphasis,
     diagnostic: diagnosticSelection,
     alignTool: alignOverlay(),
@@ -61325,9 +61774,10 @@ __exports.optimizeSection = optimizeSection;
 __exports.renderOptimize = renderOptimize;
 __exports.resetOptimize = resetOptimize;
 let diagramSymbols, signalFlowGraph; __bind(() => { ({ diagramSymbols, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
-let createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest } = __require("src/core/analysis/optimize.js")); });
+let createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest, swingTestFrequency; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest, swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 let coefficientGroups, ditherFraction, roundingSearch; __bind(() => { ({ coefficientGroups, ditherFraction, roundingSearch } = __require("src/core/analysis/rounding.js")); });
+let SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch; __bind(() => { ({ SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch } = __require("src/core/analysis/refine.js")); });
 let ditherSteps; __bind(() => { ({ ditherSteps } = __require("src/core/analysis/simulate.js")); });
 let parseLevels; __bind(() => { ({ parseLevels } = __require("src/core/transfer-function.js")); });
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
@@ -61344,6 +61794,7 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
  * the coefficients, and Apply puts them into the sliders (Revert undoes
  * it). The setup is saved with the document (`analysisValues.flow.optimize`).
  */
+
 
 
 
@@ -61545,7 +61996,7 @@ function specList(current, sources) {
     el('div', { class: 'signal-flow-optimize-heading', text: 'Specs' }),
     ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
-    el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the one set on the graph. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
+    el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the signal band set above the plots. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
     el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of a pair of the transfer function\'s poles (a z pole read as s = ln z): how much it rings, at whatever frequency -- 0.5 for real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; the same radius rings more the higher its frequency. A loop\'s NTF and STF share their poles.' }),
   ]);
 }
@@ -61564,7 +62015,7 @@ function swingBlock(circuit, current, sources) {
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
-  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: 'in band', 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}${api.band() ? ' (in band)' : ''}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
   const children = [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -61607,7 +62058,11 @@ function swingBlock(circuit, current, sources) {
 
 function runBlock(current) {
   const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'How many candidates to score at most', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
+  const prune = el('input', { type: 'checkbox', 'aria-label': 'Zero coefficients that barely matter' });
+  prune.checked = current.prune !== false;
+  prune.addEventListener('change', () => { current.prune = prune.checked; changed(); });
   return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('label', { class: 'signal-flow-spectrum-toggle', title: 'After the search, a coefficient under 5% of the largest into its block is tried at zero (smallest first, verified at length): it stays zero, one part fewer, if every limit still holds and the goals lose at most 0.5 dB. Apply then fixes it at zero.' }, [prune, el('span', { text: 'Zero coefficients that barely matter' })]),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Budget' }), budget, el('label', { text: 'candidates' }),
       el('button', { type: 'button', class: 'signal-flow-optimize-run', text: 'Run', onclick: () => (running ? running.stop() : run()) }),
@@ -61663,22 +62118,69 @@ function resultBlock(sources) {
     ]),
   );
   if (!found.feasible) host.append(el('p', { class: 'field-hint', text: 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
+  if (found.zeroed?.length) {
+    host.append(el('p', { class: 'field-hint signal-flow-optimize-zeroed' }, [
+      el('span', { text: 'Set to zero, as they barely mattered (every limit still met): ' }),
+      ...found.zeroed.flatMap((name, i) => [...(i ? [el('span', { text: ', ' })] : []), math(symbolText(name))]),
+      el('span', { text: '. Apply fixes them at zero; set one Free to bring it back.' }),
+    ]));
+  }
+  if (found.sensitivity?.length) host.append(sensitivityBlock(found.sensitivity, found.specs, sources));
   return host;
+}
+
+/** How much each spec moves per 1% of each coefficient, at the numbers found. */
+function sensitivityBlock(entries, specs, sources) {
+  const fragile = entries.filter(isSensitive);
+  const row = (entry) => {
+    const what = entry.unstable ? 'unstable at 1% off' : `${entry.perPercent.toFixed(2)} dB per 1%${entry.breaks ? ', on a limit' : ''}`;
+    const spec = entry.spec !== null && specs[entry.spec] ? specText(specs[entry.spec], sources) : '';
+    return el('div', { class: `signal-flow-optimize-metric${isSensitive(entry) ? ' analysis-error' : ''}` }, [
+      math(symbolText(entry.name)),
+      el('span', { class: 'signal-flow-optimize-number', text: what, title: spec ? `The spec it moves most: ${spec}` : '' }),
+    ]);
+  };
+  return el('div', { class: 'signal-flow-optimize-sensitivity' }, [
+    el('div', { class: 'signal-flow-optimize-heading', text: fragile.length ? `Sensitive to ${fragile.length === 1 ? 'one coefficient' : `${fragile.length} coefficients`}` : 'Sensitivity: none fragile' }),
+    el('p', { class: 'field-hint', text: `Each coefficient moved 1% of itself, the others held: the largest change of any spec (the transfer functions; the swing test is too noisy to difference). ${SENSITIVE_DB} dB per 1% or more, or the stability lost at 1% off, is marked: the parts realizing it must match that well. "On a limit": 1% off misses a limit the result just meets.` }),
+    ...entries.map(row),
+  ]);
 }
 
 function apply() {
   if (!found?.own) return;
   reverting = api.snapshotCoefficients();
   const numbers = Object.fromEntries(Object.entries(found.own).map(([name, v]) => [name, Number(v.toPrecision(4))]));
+  // A coefficient set to zero stays there: fixed, so the next search leaves it out.
+  const current = setup();
+  reverting.fixed = {};
+  for (const name of found.zeroed || []) {
+    reverting.fixed[name] = current.coefficients[name] ? { ...current.coefficients[name] } : null;
+    current.coefficients[name] = { ...(current.coefficients[name] || {}), fixed: true };
+  }
+  if (found.zeroed?.length) changed();
   api.applyCoefficients(numbers);
   renderOptimize();
 }
 
 function revert() {
   if (!reverting) return;
+  const current = setup();
+  for (const [name, entry] of Object.entries(reverting.fixed || {})) {
+    if (entry) current.coefficients[name] = entry;
+    else delete current.coefficients[name];
+  }
+  if (Object.keys(reverting.fixed || {}).length) changed();
   api.restoreCoefficients(reverting);
   reverting = null;
   renderOptimize();
+}
+
+/** Drive a refine generator (refine.js), scoring its batches with `pool`. */
+async function driveSearch(search, pool) {
+  let step = search.next();
+  while (!step.done) step = search.next(await pool.evaluate(step.value.batch));
+  return step.value;
 }
 
 // ----- rounding to fractions ------------------------------------------------------------
@@ -62023,15 +62525,35 @@ function run() {
       }
       const best = optimizer.best;
       if (!best) return { text: 'Stopped before any candidate was verified.', error: true };
+      const names = parameters.free.map((p) => p.name);
+      let final = { own: best.own, score: best.score, zeroed: [] };
+      // The coefficients that barely matter, tried at zero.
+      if (current.prune !== false && isFeasible(best) && !stopped()) {
+        const groups = coefficientGroups(circuit, names).map((group) => group.names);
+        const candidates = pruneCandidates(names, best.own, groups);
+        if (candidates.length) {
+          say(`Trying ${candidates.length === 1 ? 'a coefficient that barely matters' : `${candidates.length} coefficients that barely matter`} at zero, verified at length...`);
+          final = await driveSearch(pruneSearch(candidates, { own: best.own, start: best.score, links }), pool);
+        }
+      }
+      // How much each spec moves per 1% of each coefficient.
+      let sensitivity = [];
+      if (objectiveSpecs.length && !stopped()) {
+        say('Measuring each coefficient\'s sensitivity...');
+        sensitivity = await driveSearch(sensitivitySearch(parameters, objectiveSpecs, { own: final.own, links }), pool);
+      }
       found = {
-        own: Object.fromEntries(parameters.free.map((p) => [p.name, best.own[p.name]])),
-        score: best.score,
+        own: Object.fromEntries(names.map((name) => [name, final.own[name]])),
+        zeroed: final.zeroed,
+        sensitivity,
+        score: final.score,
         start: optimizer.start,
         feasible: isFeasible(best),
         specs: objectiveSpecs,
         swing: normalizeOptimizeSetup(current).swing.on,
       };
-      return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${isFeasible(best) ? '' : ': no candidate met every limit'}.`, error: !isFeasible(best) };
+      const zeroedText = final.zeroed.length ? `; ${final.zeroed.length === 1 ? 'one coefficient' : `${final.zeroed.length} coefficients`} set to zero` : '';
+      return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${isFeasible(best) ? zeroedText : ': no candidate met every limit'}.`, error: !isFeasible(best) };
     },
   });
 }
@@ -64822,6 +65344,7 @@ let alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, sele
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSection, renderOptimize, resetOptimize } = __require("src/web/optimize-ui.js")); });
+let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
  * block diagram rather than a circuit. A switch at the top of the window
@@ -64836,6 +65359,7 @@ let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSe
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -64875,7 +65399,16 @@ let traces = [];
 const coefficients = () => editor.circuit.analysisValues.coefficients;
 // Linked coefficients (c_1 = b_1) and every coefficient's number through them.
 const links = () => (editor.circuit.analysisValues.links ||= {});
-const resolved = () => resolveCoefficients(coefficients(), links());
+// Every symbol the diagram reads has a number: one never set shows 1 on its
+// slider, so it is 1 here too (a fresh diagram simulates and optimizes as shown).
+let symbolDefaults = { circuit: null, revision: -1, values: {} };
+function defaultCoefficients() {
+  if (symbolDefaults.circuit !== editor.circuit || symbolDefaults.revision !== editor.modelRevision) {
+    symbolDefaults = { circuit: editor.circuit, revision: editor.modelRevision, values: Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, 1])) };
+  }
+  return symbolDefaults.values;
+}
+const resolved = () => resolveCoefficients({ ...defaultCoefficients(), ...coefficients() }, links());
 // Coefficients written as fractions m/n (rounded, or typed so): their text.
 const fractions = () => (editor.circuit.analysisValues.fractions ||= {});
 /** A coefficient as written: its fraction, else its number. */
@@ -65239,7 +65772,7 @@ const SWING_TONE = '\u0000tone';
 
 function swingSection() {
   const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency', value: '1/256', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
     el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -65259,16 +65792,29 @@ function fillSwingSources(sources) {
   const real = sources.filter((s) => !s.quantizer);
   select.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
   if (real.some((s) => s.id === flow().swingInput)) select.value = flow().swingInput;
-  // The document's frequency, or the default.
-  section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '1/256';
+  // The document's frequency; blank, the band's own (shown as the placeholder).
+  section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '';
+  refreshTestFrequencies();
   section.querySelector('.signal-flow-swing .signal-flow-dither')?.replaceWith(ditherControls());
 }
 
+/** A test's sine frequency (f/fs): the one typed, else inside the signal
+ *  band (its middle, swingTestFrequency), else 1/256. */
+function testFrequency(text) {
+  return swingTestFrequency({ frequency: text || '' }, editor.circuit.analysisValues.band);
+}
+
+/** The test frequencies' placeholders: what a blank field runs at, from the band. */
+function refreshTestFrequencies() {
+  const fallback = testFrequency('');
+  const text = `${Number(fallback.toPrecision(3))}`;
+  for (const field of section?.querySelectorAll('.signal-flow-test-frequency') || []) {
+    field.placeholder = editor.circuit.analysisValues.band ? `${text} (in band)` : text;
+  }
+}
+
 function swingFrequency() {
-  const text = section.querySelector('.signal-flow-swing-frequency').value.trim();
-  const match = text.match(/^(\d+(?:\.\d*)?)\s*\/\s*(\d+(?:\.\d*)?)$/);
-  const value = match ? Number(match[1]) / Number(match[2]) : Number(text);
-  return value > 0 && value < 0.5 ? value : 1 / 256;
+  return testFrequency(section.querySelector('.signal-flow-swing-frequency').value.trim());
 }
 
 /** Sweep the amplitude, one run a frame, drawing as it goes; resolves
@@ -65351,7 +65897,7 @@ function swingTraces() {
   }));
   if (swing.points.some((p) => p.tone !== null && p.tone !== undefined)) {
     const output = swing.signals.find((s) => s.key === flow().output);
-    traces.push({ key: SWING_TONE, label: `\\text{tone at } ${output?.name || 'out'}`, color: TRACE_COLORS[traces.length % TRACE_COLORS.length], points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.tone) })) });
+    traces.push({ key: SWING_TONE, tone: true, label: `\\text{tone at } ${output?.name || 'out'}`, color: TRACE_COLORS[traces.length % TRACE_COLORS.length], points: swing.points.map((p) => ({ a: p.a, db: p.overloaded ? null : db(p.tone) })) });
   }
   return traces;
 }
@@ -65648,16 +66194,21 @@ function spectrumControls() {
   const check = el('input', { type: 'checkbox', 'aria-label': 'Simulated output spectrum' });
   check.checked = !!settings.on;
   const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field', value: settings.amplitude ?? '-6', 'aria-label': 'Sine amplitude, dBFS' });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-test-frequency signal-flow-spectrum-frequency', value: settings.frequency ?? '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004); blank: inside the signal band set above' });
   const save = () => {
-    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6' };
+    flow().spectrum = { on: check.checked, amplitude: amplitude.value.trim() || '-6', ...(frequency.value.trim() ? { frequency: frequency.value.trim() } : {}) };
     markSettingsChanged();
     runSpectrum();
   };
   check.addEventListener('change', save);
   amplitude.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
   amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  frequency.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
+  frequency.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  const fallback = testFrequency('');
+  frequency.placeholder = `${Number(fallback.toPrecision(3))}${editor.circuit.analysisValues.band ? ' (in band)' : ''}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
-    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS' }),
+    el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
     ditherControls(),
     el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
@@ -65740,7 +66291,7 @@ function runSpectrum() {
   const { sources } = signalFlowGraph(editor.circuit);
   const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
-  const frequency = Math.max(1, Math.round(swingFrequency() * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
+  const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
   const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT, dither: flow().dither });
   if (!sim.ok) spectrum = { error: sim.error };
   else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
@@ -65790,6 +66341,8 @@ function bandControls() {
       renderResults();
       const status = section.querySelector('.signal-flow-spectrum-status');
       if (status) status.textContent = spectrumStatus();
+      refreshTestFrequencies();
+      renderOptimize();
     });
     // Enter applies the field, not a derive.
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
@@ -65797,7 +66350,7 @@ function bandControls() {
     return input;
   };
   const row = el('div', { class: 'signal-flow-band' }, [
-    el('label', { text: 'Band f0' }), field('f0', 'Band centre, f/fs', 'The band\'s centre as f/fs; 0 for a baseband signal'),
+    el('label', { text: 'Signal band: f0' }), field('f0', 'Band centre, f/fs', 'The band\'s centre as f/fs; 0 for a baseband signal'),
     el('label', { text: 'bw' }), field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'),
   ]);
   return row;
@@ -65828,6 +66381,9 @@ function renderPlots() {
     viewButton('swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'),
     viewButton('loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins'),
   ]), el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Redraw every plot on the drawing at the coefficients\' numbers now, in place (one undo step)', onclick: () => updatePlots() }));
+  // The signal band, one setting for every view: the response's band lines
+  // and SQNR, the specs, and where each test's sine sits unless it is set.
+  section.querySelector('.signal-flow-band-host').replaceChildren(bandControls());
   section.querySelector('.signal-flow-graph').hidden = !GRAPH_VIEWS.has(view);
   section.querySelector('.signal-flow-locus').hidden = view !== 'locus';
   section.querySelector('.signal-flow-swing').hidden = view !== 'swing';
@@ -65868,7 +66424,6 @@ function renderGraph() {
     ]));
   }
   if (head.children.length) host.append(head);
-  if (view !== 'step') host.append(bandControls());
   if (view === 'magnitude') host.append(spectrumControls());
   if (plot) host.append(graphSvg(plot));
   else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay, or a continuous input through a sampler).' : 'Check a trace below to plot it.' }));
@@ -66129,7 +66684,7 @@ function appendSqnr(block, entry, ntf) {
   const component = editor.circuit.components.get(entry.quantizer);
   const levels = Number(component?.value) || 2;
   if (!bandEdges(band).length) {
-    block.append(el('p', { class: 'field-hint', text: 'Set a band on the graph (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
+    block.append(el('p', { class: 'field-hint', text: 'Set the signal band above the plots (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
     return;
   }
   const sqnr = bandSqnr(ntf, levels, band);
@@ -66268,6 +66823,7 @@ function installSignalFlowUi() {
     // One plot area, its view picked at the top: the frequency and step
     // responses, the root locus, the swing.
     el('div', { class: 'signal-flow-plots' }, [
+      el('div', { class: 'signal-flow-band-host' }),
       el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
       el('div', { class: 'signal-flow-graph' }),
       locusSection(),
@@ -68186,7 +68742,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC pulse (NRZ)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler (s to z)', quantizer: 'Quantizer (N levels)',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC pulse (NRZ)', tf_dac_rz: 'DAC pulse (RZ)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler (s to z)', quantizer: 'Quantizer (N levels)',
 };
 
 const PLACEMENT_ALIASES = {
@@ -68256,6 +68812,7 @@ const PLACEMENT_ALIASES = {
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],
   tf_z: ['tf', 'transfer function', 'z-domain', 'discrete', 'delay', 'accumulator', 'gain', 'signal flow'],
   tf_dac: ['dac', 'nrz', 'zero-order hold', 'zoh', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
+  tf_dac_rz: ['dac', 'rz', 'return to zero', 'pulse', 'feedback', 'sigma delta', 'signal flow'],
   tf_delay: ['delay', 'excess loop delay', 'eld', 'exp', 'signal flow'],
   tf_zdelay: ['delay', 'z^-1', 'unit delay', 'register', 'signal flow'],
 };

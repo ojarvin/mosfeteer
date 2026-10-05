@@ -80,7 +80,7 @@ The routing-sensitive symbol contract is:
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at `(0,-40)`, `(0,40)`, `(-40,0)`, `(40,0)` | bbox `{-40,-40,80,80}`, 40-unit-radius circle with plus or multiply mark; unused terminals do not fail Design Check; optional negative inputs are owned sign labels |
 | filter blocks | `in=(-80,0)`, `out=(80,0)` | `filter_lpf`/`hpf`/`bpf`/`notch`: bbox `{-80,-80,160,160}`, a box with the response sketched inside |
 | gain | `in=(-80,0)`, `out=(80,0)` | `gain`: bbox `{-80,-80,160,160}`, a triangle with its tip on `out` and its centroid on the origin; its value is one coefficient, an owned math label inside it when short (`gainFitsInside`), else above it (horizontal flow) or right of it (vertical), in world terms |
-| transfer function | `in=(-w/2,0)`, `out=(w/2,0)` | `tf_s`/`tf_z` (and the presets `tf_dac`, `tf_delay`, `tf_zdelay`, which start with a DAC pulse or a delay): the value is a MATLAB-style `tf([num], [den])` or a gain, in `s` highest power first and in `z` ascending powers of z^-1 (`'Variable','z'` for descending powers of z, `src/core/transfer-function.js`); an `s` block may instead be an expression in `s` with delays `exp(-s*T)` (or `'InputDelay', T`) drawn as an owned math label; the box (`ComponentInstance#bodySize`, at least `160x160`, whole pairs of cells) fits the equation by the model's own estimate, and a new definition reroutes its wires (`setPartValue`) |
+| transfer function | `in=(-w/2,0)`, `out=(w/2,0)` | `tf_s`/`tf_z` (and the presets `tf_dac`, `tf_dac_rz`, `tf_delay`, `tf_zdelay`, which start with a DAC's NRZ or RZ pulse or a delay): the value is a MATLAB-style `tf([num], [den])` or a gain, in `s` highest power first and in `z` ascending powers of z^-1 (`'Variable','z'` for descending powers of z, `src/core/transfer-function.js`); an `s` block may instead be an expression in `s` with delays `exp(-s*T)` (or `'InputDelay', T`) drawn as an owned math label; the box (`ComponentInstance#bodySize`, at least `160x160`, whole pairs of cells) fits the equation by the model's own estimate, and a new definition reroutes its wires (`setPartValue`) |
 | sampler | `in=(-80,0)`, `out=(80,0)` | `sampler`: bbox `{-80,-80,160,160}`, a sampling switch (s to z) whose value is its period `T`, drawn beside it like a long gain coefficient; z to s needs no part (an `H(s)` block reading a sampled signal is the DAC, its `H(s)` the pulse) |
 | quantizer | `in=(-80,0)`, `out=(80,0)` | `quantizer`: bbox `{-80,-80,160,160}`, a box with a staircase; its value is the level count `N` (default 2), drawn `N = 2` beside it; Schreier's levels, full scale `N - 1`; a gain of 1 plus its own error source (`E_{QZ1}`) in the transfer functions, rounding in the swing simulation |
 
@@ -353,8 +353,8 @@ transform choice), and the sampled side is solved in z at the coefficients'
 numbers. **Swing** simulates the diagram in time (`simulate.js`): each
 net's peak against a sine's amplitude, the continuous side integrated
 exactly between samples. Wires into a
-sum's, multiplier's, or transfer function's input draw an arrowhead there
-automatically (render-time only, never stored). It never shares state with the small-signal form, and it
+sum's, multiplier's, transfer function's, or quantizer's input draw an
+arrowhead there automatically (render-time only, never stored). It never shares state with the small-signal form, and it
 refuses rather than guesses: a multiply of two signals, `s` and `z` meeting
 anywhere but a sampler or a DAC block, a continuous output of a sampled
 loop, a delay inside a continuous loop that is sampled, an undriven or
@@ -363,8 +363,11 @@ doubly driven signal. **Optimize** searches the free coefficients (CMA-ES,
 and the swing test (limits on each net's 3-sigma level by default; each
 new best verified with long runs), feasibility first, scoring candidates
 in worker threads; the setup is document data (`analysisValues.flow.optimize`).
-Rounding (`rounding.js`) then makes the free coefficients fractions m/n,
-one n per block (`coefficientGroups`), kept as `analysisValues.fractions`.
+After a run, `refine.js` tries coefficients that barely matter at zero
+(kept only if every limit holds) and lists each one's sensitivity (dB per
+1%, from the specs alone). Rounding (`rounding.js`) then makes the free
+coefficients fractions m/n, one n per block (`coefficientGroups`), kept as
+`analysisValues.fractions`.
 
 Read the focused tests before changing this pipeline. In particular, the
 analysis corpus, report-adapter, provenance, Miller, parasitics, reduction,
