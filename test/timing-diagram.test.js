@@ -276,3 +276,18 @@ test('a signal beside switch phases is kept apart from them only when asked', ()
   // Beats come from the phases alone.
   assert.ok(timingStates(circuit).every((state) => ![...state.closed].includes('CLK')));
 });
+
+test('shifting an edge leaves the diagram where it stands', () => {
+  const circuit = clocked();
+  runCommand(circuit, 'timing φ1=00 φ2=10');
+  const names = () => [...circuit.labels.values()].filter((l) => l.timing && l.kind === 'label').map((l) => l.anchorWorld());
+  const firstWave = () => wavesOf(circuit)[0].points[0];
+  const where = names();
+  // The top row is low throughout, so the waves' own top is below the
+  // diagram's: it is drawn again where it stood, edges shifted or not.
+  for (const line of ['timing --fall φ2=-1', 'timing --rise φ1=-1', 'timing --rise φ1=1', 'timing --fall φ2=0']) {
+    runCommand(circuit, line);
+    assert.deepEqual(names(), where, line);
+  }
+  assert.ok(firstWave());
+});

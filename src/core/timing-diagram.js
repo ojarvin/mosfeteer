@@ -277,8 +277,11 @@ export function existingTimingDiagram(circuit) {
   }
   const waves = parts.filter((label) => label.kind !== 'label');
   const names = parts.filter((label) => label.kind === 'label');
-  const x = waves.length ? Math.min(...waves.map((label) => label.bbox().x)) : Math.max(...names.map((label) => label.bbox().x + label.bbox().w)) + LABEL_GAP;
-  const y = waves.length ? Math.min(...waves.map((label) => label.bbox().y)) : Math.min(...names.map((label) => label.anchorWorld().y - WAVE_HEIGHT / 2));
+  // Where it stands, from its names: they keep one place beside the waves,
+  // while a wave's own extent moves with its edges (one shifted early at
+  // the start reaches left) and its levels (a top row low throughout).
+  const x = names.length ? Math.max(...names.map((label) => label.bbox().x + label.bbox().w)) + LABEL_GAP : Math.min(...waves.map((label) => label.bbox().x));
+  const y = names.length ? Math.min(...names.map((label) => label.anchorWorld().y - WAVE_HEIGHT / 2)) : Math.min(...waves.map((label) => label.bbox().y));
   const first = parts.find((label) => label.timing.slot) || parts[0];
   // The rows' order, top to bottom, as the names stand.
   const sorted = [...names].sort((a, b) => a.anchorWorld().y - b.anchorWorld().y);

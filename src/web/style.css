@@ -5687,6 +5687,10 @@ circle.bode-corner {
 /* The timing diagram editor: a grid of slots beside the drawing. */
 .timing-dialog {
   width: min(28rem, calc(100% - 16px));
+  /* Resized from the corner like the analysis window. */
+  min-width: 18rem;
+  min-height: 12rem;
+  resize: both;
 }
 
 .renumber-dialog {
@@ -5735,9 +5739,14 @@ circle.bode-corner {
 }
 
 .timing-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  /* One grid for every row: the names one column, as wide as the longest,
+     so each row's slots start in the same place. */
+  display: grid;
+  grid-template-columns: max-content max-content max-content;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 6px;
+  justify-content: start;
   margin: 10px 0;
   padding: 8px;
   border: 1px solid var(--border);
@@ -5751,14 +5760,12 @@ circle.bode-corner {
 }
 
 .timing-grid-line {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: contents;
 }
 
 .timing-grid-name {
-  flex: 0 0 3.2rem;
   text-align: right;
+  white-space: nowrap;
 }
 
 .timing-grid-row {
@@ -5796,6 +5803,7 @@ circle.bode-corner {
 }
 
 .timing-grid-foot {
+  grid-column: 1 / -1;
   color: var(--text-dim);
   font-size: var(--text-sm);
   text-align: right;
