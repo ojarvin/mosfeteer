@@ -419,6 +419,13 @@ test('a continuous-time modulator: the sampler makes its NTF the textbook (1 - z
   // A continuous input: the loop's part times its path to the sampler, at s = j omega.
   assert.equal(byInput.U.equation, '\\frac{V}{U} = \\left(1 - z^{-1}\\right) \\cdot \\frac{1}{s}');
   assert.equal(byInput.U.continuous, true);
+  // Its step response: the ramp the integrator makes of a step, read before
+  // each t = nT and differenced by the loop -- 0, then 1 from the first sample on.
+  const step = stepResponse(withCoefficients(byInput.U.value, { T: 1, T_d: 0, k_1: 1 }));
+  assert.equal(step.unit, 'n');
+  assert.equal(step.stairs, true);
+  assert.ok(Math.abs(step.points[0].y) < 1e-9);
+  assert.ok(step.points.slice(1, 20).every((p) => Math.abs(p.y - 1) < 1e-9), JSON.stringify(step.points.slice(0, 5)));
   const second = analyzeSignalFlow(ctModulator(2), { output: 'V', sources: { U: 'input', q: 'input' }, values: { T: 1, T_d: 0, k_1: 1, k_2: 1.5 } });
   assert.equal(second.ok, true, second.error);
   const ntf = second.entries.find((entry) => entry.input === 'q');

@@ -267,7 +267,9 @@ difference equation, in samples, drawn as stairs; an s result exactly,
 through a state-space realization and matrix exponentials, its time in the
 coefficients' units or, on f/fs, in sample periods, so s and z results share
 the axis; an s result's delays shift its delayed terms. A loop holding a
-delay, or a continuous input through a sampler, has no step response here.
+delay has no step response here; a continuous input through a sampler
+steps in samples, its path's step response read before each t = nT and
+run through the sampled loop.
 
 **Simulated output spectrum** (magnitude view): one swing-simulation run at
 an amplitude and frequency of its own (the swing's source; the frequency made a whole number of

@@ -4,13 +4,15 @@
  * result exactly through a state-space realization and matrix exponentials
  * (time in the coefficients' units, or in sample periods on f/fs, so s and z
  * results share an axis), an s result with delays as its delayed terms'
- * step responses shifted. A result whose loop holds a delay, or a
- * continuous input through a sampler, has none here.
+ * step responses shifted. A continuous input through a sampler (a mixed
+ * result) steps too: its continuous path's step response, sampled exactly
+ * at each t = nT, through the sampled loop. A result whose loop holds a
+ * delay has none here.
  */
 
 import { delayTermsOf, denseCoefficients, hasDelays, numericRootsOf } from './signal-flow.js';
 import { realize } from './simulate.js';
-import { expm } from './sampling.js';
+import { expm, samplePath } from './sampling.js';
 
 const MAX_SAMPLES = 4000;
 
@@ -48,6 +50,65 @@ function zStep(value, count) {
   return y;
 }
 
+/** `x` through b/a (both ascending powers of z^-1). */
+function filter(b, a, x) {
+  const y = [];
+  for (let n = 0; n < x.length; n++) {
+    let acc = 0;
+    for (let k = 0; k < b.length; k++) if (n - k >= 0) acc += b[k] * x[n - k];
+    for (let k = 1; k < a.length; k++) if (n - k >= 0) acc -= a[k] * y[n - k];
+    y.push(acc / a[0]);
+  }
+  return y;
+}
+
+/** A z rational's coefficients in ascending powers of z^-1: { b, a }. */
+function zCoefficients(value) {
+  const num = denseCoefficients(value.numerator, 'z');
+  const den = denseCoefficients(value.denominator, 'z');
+  if (!num || !den || num.length > den.length) return null;
+  const order = den.length - 1;
+  return { b: Array.from({ length: order + 1 }, (_, k) => num[order - k] || 0), a: den.slice().reverse() };
+}
+
+/**
+ * A continuous input's step through a sampled loop, y[n] for n = 0 ..
+ * count - 1: for each term, the step into its continuous path S(s), read
+ * just before each t = nT -- the sampled impulse response of S(s)/s
+ * (samplePath) -- through its sampled part Z(z), summed. Null when a term
+ * has no numbers.
+ */
+function mixedStep(value, count) {
+  const total = new Array(count).fill(0);
+  const impulse = Array.from({ length: count }, (_, n) => (n === 0 ? 1 : 0));
+  for (const term of value.terms) {
+    const z = zCoefficients(term.z);
+    if (!z || !term.s) return null;
+    let den;
+    let terms;
+    if (hasDelays(term.s)) {
+      const split = delayTermsOf(term.s);
+      if (!split.ok) return null;
+      ({ den, terms } = split);
+    } else {
+      den = denseCoefficients(term.s.denominator, 's');
+      const num = denseCoefficients(term.s.numerator, 's');
+      if (!den || !num) return null;
+      terms = [{ delay: 0, num }];
+    }
+    let sampled;
+    try {
+      // The step is S(s)/s: one more power of s under it.
+      sampled = samplePath({ den: [0, ...den], terms }, value.period);
+    } catch {
+      return null;
+    }
+    const v = filter(sampled.num, sampled.den, impulse);
+    filter(z.b, z.a, v).forEach((y, n) => { total[n] += y; });
+  }
+  return total.every(Number.isFinite) ? total : null;
+}
+
 /** An s rational's step response at times 0, h, 2h, ... (count samples),
  *  exact: the state stepped with e^{[A B; 0 0] h}. */
 function sStep(num, den, h, count) {
@@ -82,7 +143,14 @@ function sStep(num, den, h, count) {
  * units of 1/Ts, so its time is in sample periods. Null when it has none.
  */
 export function stepResponse(value, { span = null } = {}) {
-  if (!value || value.kind === 'mixed' || !value.numerator) return null;
+  if (value?.kind === 'mixed') {
+    const spans = value.terms.map((term) => settlingSpan(term.z));
+    const settle = spans.some((span) => span === null) ? null : Math.max(0, ...spans);
+    const count = Math.min(MAX_SAMPLES, Math.max(32, Math.ceil(span ?? (settle === null ? 64 : 1.5 * settle))));
+    const y = mixedStep(value, count);
+    return y && { unit: 'n', stairs: true, points: y.map((v, n) => ({ t: n, y: v })) };
+  }
+  if (!value || !value.numerator) return null;
   if (value.variable === 'z') {
     const settle = settlingSpan(value);
     const count = Math.min(MAX_SAMPLES, Math.max(32, Math.ceil(span ?? (settle === null ? 64 : 1.5 * settle))));

@@ -33,6 +33,7 @@ import { logLine } from './status-bar-ui.js';
 import { buttonIcon } from './icons.js';
 import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js';
 import { swingTestFrequency } from '../core/analysis/optimize.js';
+import { fractionText } from '../core/analysis/rounding.js';
 import { normalizeBand } from '../core/analysis/optimize-setup.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
@@ -1135,7 +1136,7 @@ function renderGraph() {
   if (head.children.length) host.append(head);
   if (view === 'magnitude') host.append(spectrumControls());
   if (plot) host.append(graphSvg(plot));
-  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay, or a continuous input through a sampler).' : 'Check a trace below to plot it.' }));
+  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
@@ -1216,7 +1217,14 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
   // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
   const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   // A coefficient written as a fraction (rounded to m/n) shows as one.
-  const numberOf = (name) => (fractions()[name] && !Object.hasOwn(links(), name) ? fractions()[name] : Number((numbers[name] ?? 1).toPrecision(4)));
+  // A linked one too, once the coefficients are rounded: it follows
+  // fractions, so its number is one (c_1 = b_1 = 7/32), never 0.2188.
+  const rounded = Object.keys(fractions()).length > 0;
+  const numberOf = (name) => {
+    if (fractions()[name] && !Object.hasOwn(links(), name)) return fractions()[name];
+    const number = numbers[name] ?? 1;
+    return (rounded && Object.hasOwn(links(), name) && fractionText(number)) || Number(number.toPrecision(4));
+  };
   let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${numberOf(name)}`).join('\n');
   // The same numbers beside another plot already: not twice.
   if (withValues === false) values = '';

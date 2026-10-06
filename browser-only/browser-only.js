@@ -14353,15 +14353,17 @@ __exports.stepResponse = stepResponse;
 __exports.stepPlot = stepPlot;
 let delayTermsOf, denseCoefficients, hasDelays, numericRootsOf; __bind(() => { ({ delayTermsOf, denseCoefficients, hasDelays, numericRootsOf } = __require("src/core/analysis/signal-flow.js")); });
 let realize; __bind(() => { ({ realize } = __require("src/core/analysis/simulate.js")); });
-let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
+let expm, samplePath; __bind(() => { ({ expm, samplePath } = __require("src/core/analysis/sampling.js")); });
 /**
  * Step responses of signal-flow results, from the same transfer functions
  * the graph plots: a z result by its difference equation (samples n), an s
  * result exactly through a state-space realization and matrix exponentials
  * (time in the coefficients' units, or in sample periods on f/fs, so s and z
  * results share an axis), an s result with delays as its delayed terms'
- * step responses shifted. A result whose loop holds a delay, or a
- * continuous input through a sampler, has none here.
+ * step responses shifted. A continuous input through a sampler (a mixed
+ * result) steps too: its continuous path's step response, sampled exactly
+ * at each t = nT, through the sampled loop. A result whose loop holds a
+ * delay has none here.
  */
 
 
@@ -14404,6 +14406,65 @@ function zStep(value, count) {
   return y;
 }
 
+/** `x` through b/a (both ascending powers of z^-1). */
+function filter(b, a, x) {
+  const y = [];
+  for (let n = 0; n < x.length; n++) {
+    let acc = 0;
+    for (let k = 0; k < b.length; k++) if (n - k >= 0) acc += b[k] * x[n - k];
+    for (let k = 1; k < a.length; k++) if (n - k >= 0) acc -= a[k] * y[n - k];
+    y.push(acc / a[0]);
+  }
+  return y;
+}
+
+/** A z rational's coefficients in ascending powers of z^-1: { b, a }. */
+function zCoefficients(value) {
+  const num = denseCoefficients(value.numerator, 'z');
+  const den = denseCoefficients(value.denominator, 'z');
+  if (!num || !den || num.length > den.length) return null;
+  const order = den.length - 1;
+  return { b: Array.from({ length: order + 1 }, (_, k) => num[order - k] || 0), a: den.slice().reverse() };
+}
+
+/**
+ * A continuous input's step through a sampled loop, y[n] for n = 0 ..
+ * count - 1: for each term, the step into its continuous path S(s), read
+ * just before each t = nT -- the sampled impulse response of S(s)/s
+ * (samplePath) -- through its sampled part Z(z), summed. Null when a term
+ * has no numbers.
+ */
+function mixedStep(value, count) {
+  const total = new Array(count).fill(0);
+  const impulse = Array.from({ length: count }, (_, n) => (n === 0 ? 1 : 0));
+  for (const term of value.terms) {
+    const z = zCoefficients(term.z);
+    if (!z || !term.s) return null;
+    let den;
+    let terms;
+    if (hasDelays(term.s)) {
+      const split = delayTermsOf(term.s);
+      if (!split.ok) return null;
+      ({ den, terms } = split);
+    } else {
+      den = denseCoefficients(term.s.denominator, 's');
+      const num = denseCoefficients(term.s.numerator, 's');
+      if (!den || !num) return null;
+      terms = [{ delay: 0, num }];
+    }
+    let sampled;
+    try {
+      // The step is S(s)/s: one more power of s under it.
+      sampled = samplePath({ den: [0, ...den], terms }, value.period);
+    } catch {
+      return null;
+    }
+    const v = filter(sampled.num, sampled.den, impulse);
+    filter(z.b, z.a, v).forEach((y, n) => { total[n] += y; });
+  }
+  return total.every(Number.isFinite) ? total : null;
+}
+
 /** An s rational's step response at times 0, h, 2h, ... (count samples),
  *  exact: the state stepped with e^{[A B; 0 0] h}. */
 function sStep(num, den, h, count) {
@@ -14438,7 +14499,14 @@ function sStep(num, den, h, count) {
  * units of 1/Ts, so its time is in sample periods. Null when it has none.
  */
 function stepResponse(value, { span = null } = {}) {
-  if (!value || value.kind === 'mixed' || !value.numerator) return null;
+  if (value?.kind === 'mixed') {
+    const spans = value.terms.map((term) => settlingSpan(term.z));
+    const settle = spans.some((span) => span === null) ? null : Math.max(0, ...spans);
+    const count = Math.min(MAX_SAMPLES, Math.max(32, Math.ceil(span ?? (settle === null ? 64 : 1.5 * settle))));
+    const y = mixedStep(value, count);
+    return y && { unit: 'n', stairs: true, points: y.map((v, n) => ({ t: n, y: v })) };
+  }
+  if (!value || !value.numerator) return null;
   if (value.variable === 'z') {
     const settle = settlingSpan(value);
     const count = Math.min(MAX_SAMPLES, Math.max(32, Math.ceil(span ?? (settle === null ? 64 : 1.5 * settle))));
@@ -58425,7 +58493,9 @@ function finishMoveMutation(moveDrag) {
   if (!moveDrag.moved) return;
   const refs = [...moveDrag.origins.keys()];
   const previewed = moveDrag.netRoutes instanceof Map;
-  if (!moveDrag.detached && refs.length === 1) spliceIfOnWire(circuit.components.get(refs[0]));
+  // A lone part lands in series on a wire, detached or not: a part with its
+  // pins still connected never splices (spliceTargetFor).
+  if (refs.length === 1) spliceIfOnWire(circuit.components.get(refs[0]));
   if (moveDrag.detached) {
     circuit.reconnectCoincidentNets();
     circuit.teeTerminalsOntoWires(refs);
@@ -65692,6 +65762,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSection, renderOptimize, resetOptimize } = __require("src/web/optimize-ui.js")); });
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
+let fractionText; __bind(() => { ({ fractionText } = __require("src/core/analysis/rounding.js")); });
 let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analysis/optimize-setup.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
@@ -65707,6 +65778,7 @@ let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analy
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -66830,7 +66902,7 @@ function renderGraph() {
   if (head.children.length) host.append(head);
   if (view === 'magnitude') host.append(spectrumControls());
   if (plot) host.append(graphSvg(plot));
-  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay, or a continuous input through a sampler).' : 'Check a trace below to plot it.' }));
+  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
@@ -66911,7 +66983,14 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
   // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
   const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   // A coefficient written as a fraction (rounded to m/n) shows as one.
-  const numberOf = (name) => (fractions()[name] && !Object.hasOwn(links(), name) ? fractions()[name] : Number((numbers[name] ?? 1).toPrecision(4)));
+  // A linked one too, once the coefficients are rounded: it follows
+  // fractions, so its number is one (c_1 = b_1 = 7/32), never 0.2188.
+  const rounded = Object.keys(fractions()).length > 0;
+  const numberOf = (name) => {
+    if (fractions()[name] && !Object.hasOwn(links(), name)) return fractions()[name];
+    const number = numbers[name] ?? 1;
+    return (rounded && Object.hasOwn(links(), name) && fractionText(number)) || Number(number.toPrecision(4));
+  };
   let values = names.map((name) => `${symbolText(name)} = ${Object.hasOwn(links(), name) ? linkTex(name) : ''}${numberOf(name)}`).join('\n');
   // The same numbers beside another plot already: not twice.
   if (withValues === false) values = '';
