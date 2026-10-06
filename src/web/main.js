@@ -5436,7 +5436,9 @@ function finishMoveMutation(moveDrag) {
   if (!moveDrag.moved) return;
   const refs = [...moveDrag.origins.keys()];
   const previewed = moveDrag.netRoutes instanceof Map;
-  if (!moveDrag.detached && refs.length === 1) spliceIfOnWire(circuit.components.get(refs[0]));
+  // A lone part lands in series on a wire, detached or not: a part with its
+  // pins still connected never splices (spliceTargetFor).
+  if (refs.length === 1) spliceIfOnWire(circuit.components.get(refs[0]));
   if (moveDrag.detached) {
     circuit.reconnectCoincidentNets();
     circuit.teeTerminalsOntoWires(refs);

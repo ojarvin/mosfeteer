@@ -191,7 +191,7 @@ test('editor gestures are wired through the shared draft, history, and menus', a
   assert.match(main, /function connectTwo\(src, dst, points, before = snapshot\(\)\)/);
   // Splicing applies to placement and to a single-part drop.
   assert.match(main, /if \(placed\.length === 1\) spliceIfOnWire\(placed\[0\]\);/);
-  assert.match(main, /if \(!moveDrag\.detached && refs\.length === 1\) spliceIfOnWire\(/);
+  assert.match(main, /if \(refs\.length === 1\) spliceIfOnWire\(circuit\.components\.get\(refs\[0\]\)\);\n  if \(moveDrag\.detached\)/);
   // ... and to a lone part copied (the copy tool, a Ctrl-drag) or pasted onto a wire, before its pins tee in.
   assert.match(functionSource('commitCopyGhost', main), /if \(refs\.length === 1\) spliceIfOnWire\(circuit\.components\.get\(refs\[0\]\)\);\s*circuit\.connectCoincident\(refs\);/);
   assert.match(main, /if \(addedComps\.length === 1\) spliceIfOnWire\(circuit\.components\.get\(addedComps\[0\]\)\);\s*circuit\.connectCoincident\(addedComps\);/);
