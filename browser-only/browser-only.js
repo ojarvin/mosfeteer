@@ -1191,6 +1191,7 @@ function createCmaes({ mean, sigma = 0.3, lambda, random = seededRandom(1) }) {
 
 __modules["src/core/analysis/coefficient-links.js"] = function (__require, __exports) {
 __exports.parseCoefficientLink = parseCoefficientLink;
+__exports.evaluateCoefficientExpression = evaluateCoefficientExpression;
 __exports.linkMakesCycle = linkMakesCycle;
 __exports.resolveCoefficients = resolveCoefficients;
 __exports.parseCoefficientVectors = parseCoefficientVectors;
@@ -1225,6 +1226,11 @@ function parseCoefficientLink(text) {
   if (!source) throw new Error('a link needs an expression, such as = b_1');
   const ast = parseExpression(source);
   return { ast, reads: names(ast), text: source };
+}
+
+/** A parsed expression's number, its names read from `values` (NaN when one is missing). */
+function evaluateCoefficientExpression(ast, values) {
+  return evaluate(ast, (name) => (Number.isFinite(values[name]) ? values[name] : NaN));
 }
 
 function evaluate(node, lookup) {
@@ -6206,6 +6212,8 @@ function normalizeOptimizeSetup(raw) {
     evaluations: evaluations >= 50 && evaluations <= 1e6 ? evaluations : DEFAULT_EVALUATIONS,
     // After a search, try the coefficients that barely matter at zero (refine.js).
     prune: value.prune !== false,
+    // Relations the coefficients must keep, as typed: `c_1 >= c_2, c_2 >= 2*c_3`.
+    constraints: short(value.constraints, 400),
     // Rounding to fractions m/n: the largest n, powers of two only, one n per block.
     rounding: {
       denominator: denominator >= 1 && denominator <= MAX_DENOMINATOR ? denominator : 32,
@@ -6227,6 +6235,8 @@ __exports.SWING_LEVELS = SWING_LEVELS;
 __modules["src/core/analysis/optimize.js"] = function (__require, __exports) {
 __exports.optimizationParameters = optimizationParameters;
 __exports.pointValues = pointValues;
+__exports.parseConstraints = parseConstraints;
+__exports.constraintMiss = constraintMiss;
 __exports.fitnessOf = fitnessOf;
 __exports.specIntervals = specIntervals;
 __exports.poleMeasures = poleMeasures;
@@ -6237,7 +6247,7 @@ __exports.createOptimizer = createOptimizer;
 __exports.runOptimization = runOptimization;
 let analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients; __bind(() => { ({ analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
-let resolveCoefficients; __bind(() => { ({ resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
+let evaluateCoefficientExpression, parseCoefficientLink, resolveCoefficients; __bind(() => { ({ evaluateCoefficientExpression, parseCoefficientLink, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let createCmaes, seededRandom; __bind(() => { ({ createCmaes, seededRandom } = __require("src/core/analysis/cmaes.js")); });
 let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 /**
@@ -6344,6 +6354,39 @@ function pointValues(parameters, y, { values = {}, links = {} } = {}) {
     own[p.name] = v;
   });
   return { own, values: resolveCoefficients(own, links), penalty };
+}
+
+const RELATIONS = ['>=', '<=', '>', '<'];
+
+/**
+ * The constraints typed for the coefficients, `c_1 >= c_2, c_2 >= 2*c_3`
+ * (commas, semicolons, or lines between them; >= <= > <, each side an
+ * expression of coefficients as a link is): `[{ text, left, relation,
+ * right }]`. Throws, naming the one that does not read.
+ */
+function parseConstraints(text) {
+  return String(text || '').split(/[,;\n]/).map((part) => part.trim()).filter(Boolean).map((part) => {
+    const relation = RELATIONS.find((op) => part.includes(op));
+    const [leftText, rightText, extra] = relation ? part.split(relation) : [];
+    if (!relation || extra !== undefined || !leftText.trim() || !rightText.trim()) throw new Error(`the constraint "${part}" is not of the form a >= b (or <=, >, <)`);
+    try {
+      return { text: part, left: parseCoefficientLink(leftText).ast, relation, right: parseCoefficientLink(rightText).ast };
+    } catch (error) {
+      throw new Error(`the constraint "${part}": ${error.message}`);
+    }
+  });
+}
+
+/** How far `values` miss a constraint, relative to the sides' size: 0 when kept. */
+function constraintMiss(constraint, values) {
+  const left = evaluateCoefficientExpression(constraint.left, values);
+  const right = evaluateCoefficientExpression(constraint.right, values);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return 1;
+  const short = constraint.relation[0] === '>' ? right - left : left - right;
+  const scale = Math.max(Math.abs(left), Math.abs(right), 1e-12);
+  // A strict relation also misses at equality, by a hair.
+  if (constraint.relation.length === 1 && short >= 0) return Math.max(short / scale, 1e-6);
+  return short > 1e-12 * scale ? short / scale : 0;
 }
 
 /** A candidate's rank: feasible ones by their goal, the rest above them all. */
@@ -6519,6 +6562,8 @@ function prepareObjective(circuit, problem = {}) {
   const specs = setup.specs.filter((spec) => spec.input);
   const goals = specs.filter((spec) => spec.action === 'minimize' || spec.action === 'maximize');
   if (!specs.length && !setup.swing.on) return failure('add a spec or the swing test: there is nothing to optimize for');
+  let constraints;
+  try { constraints = parseConstraints(setup.constraints); } catch (error) { return failure(error.message); }
   const inputs = [...new Set(specs.map((spec) => spec.input))];
   let entries = new Map();
   let variable = 'z';
@@ -6615,6 +6660,13 @@ function prepareObjective(circuit, problem = {}) {
     let violation = 0;
     let goal = 0;
     const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
+    // The coefficients' own relations first: a candidate breaking one is
+    // infeasible, by how far it misses (1% short counts as 1 dB).
+    out.broken = 0;
+    for (const constraint of constraints) {
+      const short = constraintMiss(constraint, values);
+      if (short > 0) { violation += 1 + 100 * short; out.broken += 1; }
+    }
     const numbers = new Map();
     const polesOf = new Map();
     for (const input of inputs) {
@@ -62193,7 +62245,7 @@ __exports.renderOptimize = renderOptimize;
 __exports.resetOptimize = resetOptimize;
 let TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let openRunWindow; __bind(() => { ({ openRunWindow } = __require("src/web/optimize-window.js")); });
-let createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest, swingTestFrequency; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest, swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
+let createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 let coefficientGroups, ditherFraction, roundingSearch; __bind(() => { ({ coefficientGroups, ditherFraction, roundingSearch } = __require("src/core/analysis/rounding.js")); });
 let SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch; __bind(() => { ({ SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch } = __require("src/core/analysis/refine.js")); });
@@ -62311,6 +62363,7 @@ function renderOptimize() {
     el('p', { class: 'field-hint', text: 'Searches the free coefficients (an evolution strategy, CMA-ES, from their numbers now) for the best goal that keeps every limit: specs on a transfer function\'s magnitude, in dB, and the swing test simulated. Any diagram: a modulator\'s loop filter or a plain filter.' }),
     coefficientTable(circuit, current),
     specList(current, sources),
+    constraintsBlock(current),
     swingBlock(circuit, current, sources),
     runBlock(current),
     resultBlock(sources),
@@ -62468,6 +62521,37 @@ function swingBlock(circuit, current, sources) {
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
 
+/** Relations the coefficients must keep, typed as one list. */
+function constraintsBlock(current) {
+  const field = el('input', { type: 'text', class: 'signal-flow-optimize-constraints', placeholder: 'c_1 >= c_2, c_2 >= c_3', 'aria-label': 'Coefficient constraints', spellcheck: 'false', value: current.constraints || '' });
+  const note = el('p', { class: 'field-hint' });
+  const check = () => {
+    try {
+      const parsed = parseConstraints(field.value);
+      field.classList.remove('invalid');
+      note.textContent = parsed.length ? `${parsed.length} constraint${parsed.length === 1 ? '' : 's'}, kept like a limit: a candidate breaking one misses by how far it is short.` : 'Relations between coefficients, kept like a limit: a >= b, a <= b, > or <; each side any expression of coefficients (2*g_1). Commas between them.';
+      note.classList.remove('analysis-error');
+      return true;
+    } catch (error) {
+      field.classList.add('invalid');
+      note.textContent = error.message;
+      note.classList.add('analysis-error');
+      return false;
+    }
+  };
+  field.addEventListener('change', () => {
+    if (!check()) return;
+    current.constraints = field.value.trim();
+    changed();
+  });
+  check();
+  return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('div', { class: 'signal-flow-optimize-heading', text: 'Constraints' }),
+    field,
+    note,
+  ]);
+}
+
 function runBlock(current) {
   const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'How many candidates to score at most', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
   const prune = el('input', { type: 'checkbox', 'aria-label': 'Zero coefficients that barely matter' });
@@ -62511,6 +62595,8 @@ function gridTable(head, rows) {
   ]);
 }
 
+const brokenText = (score) => (!score || score.broken === undefined ? '–' : score.broken ? `${score.broken} broken` : 'all kept');
+
 /** Each spec and the swing test at the start and at the result: a table. */
 function scoreRows(result, sources, [startLabel, endLabel]) {
   const specs = result.specs || [];
@@ -62541,6 +62627,7 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
       return row(specText(spec, sources), show(result.start?.specs?.[i]), show(value), ok);
     }),
     ...(result.swing ? [row('Swing test', swingText(result.start), swingText(result.score), swingOk(result.score))] : []),
+    ...(setup().constraints ? [row('Constraints', brokenText(result.start), brokenText(result.score), !(result.score?.broken > 0))] : []),
   ])];
 }
 

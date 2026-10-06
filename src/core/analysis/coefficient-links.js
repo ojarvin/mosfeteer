@@ -30,6 +30,11 @@ export function parseCoefficientLink(text) {
   return { ast, reads: names(ast), text: source };
 }
 
+/** A parsed expression's number, its names read from `values` (NaN when one is missing). */
+export function evaluateCoefficientExpression(ast, values) {
+  return evaluate(ast, (name) => (Number.isFinite(values[name]) ? values[name] : NaN));
+}
+
 function evaluate(node, lookup) {
   switch (node.t) {
     case 'num': return Number(node.v);

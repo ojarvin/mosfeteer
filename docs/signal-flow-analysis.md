@@ -361,6 +361,11 @@ The criteria:
   steepest rise for its out-of-band gain, at the price of ringing, a peaking
   STF, and sensitivity to its coefficients; a limit on Q trades some
   in-band attenuation for damping. A loop's NTF and STF share their poles.
+- **Constraints**: relations the coefficients must keep, typed as one list
+  (`c_1 >= c_2, c_2 >= 2*c_3`; >=, <=, >, <; each side an expression of
+  coefficients, as a link is; `parseConstraints`). Each is a limit: a
+  candidate breaking one is infeasible by how far it falls short, relative
+  to the sides (1% short counts as 1 dB).
 - **Swing test**: the diagram simulated (the swing's simulator) with a sine
   of a given amplitude into one source, at a set f/fs or the band's middle.
   It must not run away, there and 1 dB above, and each net with a limit

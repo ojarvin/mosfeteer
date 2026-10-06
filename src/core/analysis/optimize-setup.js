@@ -112,6 +112,8 @@ export function normalizeOptimizeSetup(raw) {
     evaluations: evaluations >= 50 && evaluations <= 1e6 ? evaluations : DEFAULT_EVALUATIONS,
     // After a search, try the coefficients that barely matter at zero (refine.js).
     prune: value.prune !== false,
+    // Relations the coefficients must keep, as typed: `c_1 >= c_2, c_2 >= 2*c_3`.
+    constraints: short(value.constraints, 400),
     // Rounding to fractions m/n: the largest n, powers of two only, one n per block.
     rounding: {
       denominator: denominator >= 1 && denominator <= MAX_DENOMINATOR ? denominator : 32,

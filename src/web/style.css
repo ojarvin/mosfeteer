@@ -837,6 +837,11 @@ button:disabled {
   text-decoration: underline;
 }
 
+.analysis-dock .signal-flow-optimize-constraints {
+  width: 100%;
+  font-family: var(--font-mono);
+}
+
 /* The window a coefficient search runs in (optimize-window.js). */
 .run-window {
   width: min(26rem, calc(100% - 16px));

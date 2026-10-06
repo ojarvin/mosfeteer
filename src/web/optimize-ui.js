@@ -12,7 +12,7 @@
 
 import { TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { openRunWindow } from './optimize-window.js';
-import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
+import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
 import { coefficientGroups, ditherFraction, roundingSearch } from '../core/analysis/rounding.js';
 import { SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch } from '../core/analysis/refine.js';
@@ -107,6 +107,7 @@ export function renderOptimize() {
     el('p', { class: 'field-hint', text: 'Searches the free coefficients (an evolution strategy, CMA-ES, from their numbers now) for the best goal that keeps every limit: specs on a transfer function\'s magnitude, in dB, and the swing test simulated. Any diagram: a modulator\'s loop filter or a plain filter.' }),
     coefficientTable(circuit, current),
     specList(current, sources),
+    constraintsBlock(current),
     swingBlock(circuit, current, sources),
     runBlock(current),
     resultBlock(sources),
@@ -264,6 +265,37 @@ function swingBlock(circuit, current, sources) {
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
 
+/** Relations the coefficients must keep, typed as one list. */
+function constraintsBlock(current) {
+  const field = el('input', { type: 'text', class: 'signal-flow-optimize-constraints', placeholder: 'c_1 >= c_2, c_2 >= c_3', 'aria-label': 'Coefficient constraints', spellcheck: 'false', value: current.constraints || '' });
+  const note = el('p', { class: 'field-hint' });
+  const check = () => {
+    try {
+      const parsed = parseConstraints(field.value);
+      field.classList.remove('invalid');
+      note.textContent = parsed.length ? `${parsed.length} constraint${parsed.length === 1 ? '' : 's'}, kept like a limit: a candidate breaking one misses by how far it is short.` : 'Relations between coefficients, kept like a limit: a >= b, a <= b, > or <; each side any expression of coefficients (2*g_1). Commas between them.';
+      note.classList.remove('analysis-error');
+      return true;
+    } catch (error) {
+      field.classList.add('invalid');
+      note.textContent = error.message;
+      note.classList.add('analysis-error');
+      return false;
+    }
+  };
+  field.addEventListener('change', () => {
+    if (!check()) return;
+    current.constraints = field.value.trim();
+    changed();
+  });
+  check();
+  return el('div', { class: 'signal-flow-optimize-group' }, [
+    el('div', { class: 'signal-flow-optimize-heading', text: 'Constraints' }),
+    field,
+    note,
+  ]);
+}
+
 function runBlock(current) {
   const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'How many candidates to score at most', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
   const prune = el('input', { type: 'checkbox', 'aria-label': 'Zero coefficients that barely matter' });
@@ -307,6 +339,8 @@ function gridTable(head, rows) {
   ]);
 }
 
+const brokenText = (score) => (!score || score.broken === undefined ? '–' : score.broken ? `${score.broken} broken` : 'all kept');
+
 /** Each spec and the swing test at the start and at the result: a table. */
 function scoreRows(result, sources, [startLabel, endLabel]) {
   const specs = result.specs || [];
@@ -337,6 +371,7 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
       return row(specText(spec, sources), show(result.start?.specs?.[i]), show(value), ok);
     }),
     ...(result.swing ? [row('Swing test', swingText(result.start), swingText(result.score), swingOk(result.score))] : []),
+    ...(setup().constraints ? [row('Constraints', brokenText(result.start), brokenText(result.score), !(result.score?.broken > 0))] : []),
   ])];
 }
 

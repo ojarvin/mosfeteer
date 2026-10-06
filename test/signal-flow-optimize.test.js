@@ -48,7 +48,7 @@ test('CMA-ES finds the minimum of a curved valley, the same run for the same see
 });
 
 test('the setup normalizes, and only free coefficients move: linked follow, timing stays', () => {
-  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {}, measure: 'sigma3' }, evaluations: 3000, prune: true, rounding: { denominator: 32, powersOfTwo: false, shared: true } });
+  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {}, measure: 'sigma3' }, evaluations: 3000, prune: true, constraints: '', rounding: { denominator: 32, powersOfTwo: false, shared: true } });
   const setup = normalizeOptimizeSetup({ coefficients: { a: { fixed: true }, b: { min: '0.1', max: 'x' } }, specs: [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: '3.5' }, { action: 'bogus', band: 'custom', f1: 0.1, f2: 0.2 }], swing: { on: true, amplitude: '-2', limits: { 'net:N1': '-6', 'net:N2': 'none' } }, evaluations: 20 });
   assert.deepEqual(setup.coefficients, { a: { fixed: true }, b: { min: 0.1 } });
   assert.deepEqual(setup.specs, [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: 3.5 }, { action: 'minimize', measure: 'average', input: '', band: 'custom', f1: 0.1, f2: 0.2 }]);
@@ -465,4 +465,29 @@ test('a frequency typed as a fraction keeps its text: the band and a spec\'s f1,
   assert.deepEqual(specIntervals(spec, null), [[1 / 256, 0.25]]);
   // Saved and normalized again, it stays.
   assert.deepEqual(normalizeOptimizeSetup({ specs: [spec] }).specs[0], spec);
+});
+
+import { constraintMiss, parseConstraints } from '../src/core/analysis/optimize.js';
+
+test('coefficient constraints: typed as relations, kept by the search like a limit', () => {
+  const parsed = parseConstraints('c_1 >= c_2; c_2 >= 2*c_3\n a < b');
+  assert.deepEqual(parsed.map((c) => [c.text, c.relation]), [['c_1 >= c_2', '>='], ['c_2 >= 2*c_3', '>='], ['a < b', '<']]);
+  assert.throws(() => parseConstraints('c_1 = c_2'), /form a >= b/);
+  assert.throws(() => parseConstraints('c_1 >= s'), /c_1 >= s/);
+  // How far short, relative to the sides: 0 when kept, a hair at equality for a strict one.
+  const [kept] = parseConstraints('c_1 >= c_2');
+  assert.equal(constraintMiss(kept, { c_1: 2, c_2: 1 }), 0);
+  assert.equal(constraintMiss(kept, { c_1: 1, c_2: 2 }), 0.5);
+  assert.ok(constraintMiss(parseConstraints('a < b')[0], { a: 1, b: 1 }) > 0);
+  // The textbook loop has k_2 = 2 k_1 (stable only for k_1 < k_2); asked
+  // for k_2 >= 3 k_1, the search finds a loop that keeps it.
+  const circuit = modulator();
+  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: { k_1: 1, k_2: 2 },
+    setup: { specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }], constraints: 'k_2 >= 3*k_1' } };
+  const objective = prepareObjective(circuit, problem);
+  assert.equal(objective.evaluate({ k_1: 1, k_2: 2 }).broken, 1);
+  const result = runOptimization(circuit, problem, { evaluations: 300, seed: 2 });
+  assert.equal(result.feasible, true);
+  assert.ok(result.best.values.k_2 >= 3 * result.best.values.k_1 * (1 - 1e-9), JSON.stringify(result.best.values));
+  assert.equal(prepareObjective(circuit, { ...problem, setup: { ...problem.setup, constraints: 'k_2 => k_1' } }).ok, false);
 });

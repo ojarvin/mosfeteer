@@ -27,7 +27,7 @@
 
 import { analyzeSignalFlow, bandEdges, diagramSymbols, numericRootsOf, responseAt, timingSymbols, withCoefficients } from './signal-flow.js';
 import { prepareSimulation } from './simulate.js';
-import { resolveCoefficients } from './coefficient-links.js';
+import { evaluateCoefficientExpression, parseCoefficientLink, resolveCoefficients } from './coefficient-links.js';
 import { createCmaes, seededRandom } from './cmaes.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from './optimize-setup.js';
 
@@ -102,6 +102,39 @@ export function pointValues(parameters, y, { values = {}, links = {} } = {}) {
     own[p.name] = v;
   });
   return { own, values: resolveCoefficients(own, links), penalty };
+}
+
+const RELATIONS = ['>=', '<=', '>', '<'];
+
+/**
+ * The constraints typed for the coefficients, `c_1 >= c_2, c_2 >= 2*c_3`
+ * (commas, semicolons, or lines between them; >= <= > <, each side an
+ * expression of coefficients as a link is): `[{ text, left, relation,
+ * right }]`. Throws, naming the one that does not read.
+ */
+export function parseConstraints(text) {
+  return String(text || '').split(/[,;\n]/).map((part) => part.trim()).filter(Boolean).map((part) => {
+    const relation = RELATIONS.find((op) => part.includes(op));
+    const [leftText, rightText, extra] = relation ? part.split(relation) : [];
+    if (!relation || extra !== undefined || !leftText.trim() || !rightText.trim()) throw new Error(`the constraint "${part}" is not of the form a >= b (or <=, >, <)`);
+    try {
+      return { text: part, left: parseCoefficientLink(leftText).ast, relation, right: parseCoefficientLink(rightText).ast };
+    } catch (error) {
+      throw new Error(`the constraint "${part}": ${error.message}`);
+    }
+  });
+}
+
+/** How far `values` miss a constraint, relative to the sides' size: 0 when kept. */
+export function constraintMiss(constraint, values) {
+  const left = evaluateCoefficientExpression(constraint.left, values);
+  const right = evaluateCoefficientExpression(constraint.right, values);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return 1;
+  const short = constraint.relation[0] === '>' ? right - left : left - right;
+  const scale = Math.max(Math.abs(left), Math.abs(right), 1e-12);
+  // A strict relation also misses at equality, by a hair.
+  if (constraint.relation.length === 1 && short >= 0) return Math.max(short / scale, 1e-6);
+  return short > 1e-12 * scale ? short / scale : 0;
 }
 
 /** A candidate's rank: feasible ones by their goal, the rest above them all. */
@@ -277,6 +310,8 @@ export function prepareObjective(circuit, problem = {}) {
   const specs = setup.specs.filter((spec) => spec.input);
   const goals = specs.filter((spec) => spec.action === 'minimize' || spec.action === 'maximize');
   if (!specs.length && !setup.swing.on) return failure('add a spec or the swing test: there is nothing to optimize for');
+  let constraints;
+  try { constraints = parseConstraints(setup.constraints); } catch (error) { return failure(error.message); }
   const inputs = [...new Set(specs.map((spec) => spec.input))];
   let entries = new Map();
   let variable = 'z';
@@ -373,6 +408,13 @@ export function prepareObjective(circuit, problem = {}) {
     let violation = 0;
     let goal = 0;
     const out = { specs: specs.map(() => null), swing: null, unstable: null, error: null };
+    // The coefficients' own relations first: a candidate breaking one is
+    // infeasible, by how far it misses (1% short counts as 1 dB).
+    out.broken = 0;
+    for (const constraint of constraints) {
+      const short = constraintMiss(constraint, values);
+      if (short > 0) { violation += 1 + 100 * short; out.broken += 1; }
+    }
     const numbers = new Map();
     const polesOf = new Map();
     for (const input of inputs) {
