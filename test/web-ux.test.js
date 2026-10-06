@@ -106,3 +106,7 @@ test('a run opens its own window: the start and the best so far, progress, Stop'
   assert.match(ui, /title: 'Optimizer',/);
   assert.match(ui, /title: 'Rounding',/);
 });
+
+test('fields show what is typed: no ligatures join their characters', () => {
+  assert.match(read('style.css'), /input,\ntextarea \{\n  font-variant-ligatures: none;\n  font-feature-settings: "liga" 0, "calt" 0;/);
+});

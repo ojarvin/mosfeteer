@@ -244,6 +244,14 @@ textarea {
   padding: 6px 8px;
 }
 
+/* What is typed shows as typed: a font's ligatures (>= drawn as one
+   glyph, which some fonts leave half-blank) never join characters in a field. */
+input,
+textarea {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
 input::placeholder,
 textarea::placeholder {
   color: color-mix(in srgb, var(--text-dim) 75%, transparent);
