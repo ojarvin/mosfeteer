@@ -62350,27 +62350,18 @@ function coefficientTable(circuit, current) {
       return input;
     };
     const best = found?.own && Object.hasOwn(found.own, name) ? Number(found.own[name].toPrecision(4)) : '';
-    const denominator = el('input', { type: 'text', class: 'signal-flow-optimize-bound', placeholder: String(current.rounding.denominator), 'aria-label': `${name}: largest n when rounding`, title: 'The largest n of m/n when rounding, for this coefficient\'s block (blank: the one set under Rounding); a block takes the largest set among its gains', value: entry.denominator ?? '', disabled: linked || !free.has(name) });
-    denominator.addEventListener('change', () => {
-      const text = denominator.value.trim();
-      const n = Math.round(Number(text));
-      denominator.classList.toggle('invalid', !!text && !(n >= 1 && n <= 1024));
-      if (text && !(n >= 1 && n <= 1024)) return;
-      update({ denominator: text ? n : undefined });
-    });
     return el('div', { class: 'signal-flow-optimize-coefficient' }, [
       math(symbolText(name)),
       mode,
       bound('min', 'Lowest value'),
       bound('max', 'Highest value'),
-      denominator,
       el('span', { class: 'signal-flow-optimize-number', text: String(Number((values[name] ?? 1).toPrecision(4))), title: 'Its number now' }),
       el('span', { class: 'signal-flow-optimize-number signal-flow-optimize-found', text: String(best), title: best === '' ? '' : 'The best number found' }),
     ]);
   });
   return el('div', { class: 'signal-flow-optimize-group' }, [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Coefficients' }),
-    el('div', { class: 'signal-flow-optimize-coefficient signal-flow-optimize-head' }, ['', '', 'Min', 'Max', 'n ≤', 'Now', 'Found'].map((text) => el('span', { text }))),
+    el('div', { class: 'signal-flow-optimize-coefficient signal-flow-optimize-head' }, ['', '', 'Min', 'Max', 'Now', 'Found'].map((text) => el('span', { text }))),
     ...rows,
     el('p', { class: 'field-hint', text: 'Timing (a sampler\'s period, a delay\'s T) starts fixed; the rest free. A coefficient moves on a log scale, keeping its sign; one at zero, or with a range across zero, moves linearly.' }),
   ]);
@@ -62491,7 +62482,34 @@ function runBlock(current) {
   ]);
 }
 
-/** Each spec and the swing test at the start and at the result: rows. */
+/**
+ * Rows of cells as a table: `head` the column titles, each row an element
+ * whose children are its cells (the first one names the row), or a
+ * sub-heading (`.signal-flow-optimize-subhead`) spanning the row. A row
+ * marked as an error, and any title, carry over.
+ */
+function gridTable(head, rows) {
+  const tr = (row) => {
+    if (row.classList.contains('signal-flow-optimize-subhead')) {
+      return el('tr', { class: 'table-group' }, [el('th', { scope: 'rowgroup', colspan: String(head.length), text: row.textContent })]);
+    }
+    const cells = [...row.children].map((cell, i) => {
+      const node = el(i ? 'td' : 'th', i ? {} : { scope: 'row' });
+      if (cell.title) node.title = cell.title;
+      node.append(...cell.childNodes);
+      return node;
+    });
+    const out = el('tr', { class: row.classList.contains('analysis-error') ? 'bad' : '' }, cells);
+    if (row.title) out.title = row.title;
+    return out;
+  };
+  return el('table', { class: 'analysis-table' }, [
+    el('thead', {}, [el('tr', {}, head.map((text) => el('th', { scope: 'col', text })))]),
+    el('tbody', {}, rows.map(tr)),
+  ]);
+}
+
+/** Each spec and the swing test at the start and at the result: a table. */
 function scoreRows(result, sources, [startLabel, endLabel]) {
   const specs = result.specs || [];
   const row = (label, start, best, ok) => el('div', { class: `signal-flow-optimize-metric${ok === false ? ' analysis-error' : ''}` }, [
@@ -62511,8 +62529,7 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
     return `${runs}${margin}${count ? `, ${count} net${count === 1 ? '' : 's'} over` : ', within limits'}`;
   };
   const swingOk = (score) => !!score?.swing && !score.swing.overloaded && !over(score) && !(score.swing.marginHeld < score.swing.marginRuns);
-  return [
-    row('', startLabel, endLabel),
+  return [gridTable(['', startLabel, endLabel], [
     ...specs.map((spec, i) => {
       const value = result.score.specs?.[i];
       const poles = POLE_MEASURES.includes(spec.measure);
@@ -62522,7 +62539,7 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
       return row(specText(spec, sources), show(result.start?.specs?.[i]), show(value), ok);
     }),
     ...(result.swing ? [row('Swing test', swingText(result.start), swingText(result.score), swingOk(result.score))] : []),
-  ];
+  ])];
 }
 
 function resultBlock(sources) {
@@ -62562,7 +62579,7 @@ function sensitivityBlock(entries, specs, sources) {
   return el('div', { class: 'signal-flow-optimize-sensitivity' }, [
     el('div', { class: 'signal-flow-optimize-heading', text: fragile.length ? `Sensitive to ${fragile.length === 1 ? 'one coefficient' : `${fragile.length} coefficients`}` : 'Sensitivity: none fragile' }),
     el('p', { class: 'field-hint', text: `Each coefficient moved 1% of itself, the others held: the largest change of any spec (the transfer functions; the swing test is too noisy to difference). ${SENSITIVE_DB} dB per 1% or more, or the stability lost at 1% off, is marked: the parts realizing it must match that well. "On a limit": 1% off misses a limit the result just meets.` }),
-    ...entries.map(row),
+    gridTable(['Coefficient', 'Change'], entries.map(row)),
   ]);
 }
 
@@ -62624,6 +62641,32 @@ function roundingBlock(current) {
     box.addEventListener('change', () => { options[key] = box.checked; changed(); });
     return el('label', { class: 'signal-flow-spectrum-toggle', title }, [box, el('span', { text })]);
   };
+  // Each free coefficient's own largest n, beside the rounding it limits.
+  const circuit = api.circuit();
+  const free = optimizationParameters(circuit, { values: api.resolved(), links: api.links(), setup: current }).free.map((p) => p.name);
+  const limitRow = (name) => {
+    const entry = current.coefficients[name] || {};
+    const field = el('input', { type: 'text', inputmode: 'numeric', class: 'signal-flow-optimize-bound', placeholder: String(options.denominator), 'aria-label': `${name}: largest n when rounding`, title: 'The largest n of m/n for this coefficient\'s block (blank: n up to, above); a block takes the largest set among its gains', value: entry.denominator ?? '' });
+    field.addEventListener('change', () => {
+      const text = field.value.trim();
+      const n = Math.round(Number(text));
+      field.classList.toggle('invalid', !!text && !(n >= 1 && n <= 1024));
+      if (text && !(n >= 1 && n <= 1024)) return;
+      const next = { ...entry, denominator: text ? n : undefined };
+      if (next.denominator === undefined) delete next.denominator;
+      if (Object.keys(next).length) current.coefficients[name] = next;
+      else delete current.coefficients[name];
+      changed();
+    });
+    return el('tr', {}, [el('th', { scope: 'row' }, [math(symbolText(name))]), el('td', {}, [field])]);
+  };
+  const limits = free.length ? el('details', { class: 'signal-flow-paste-box signal-flow-round-limits', ...(free.some((name) => current.coefficients[name]?.denominator) ? { open: '' } : {}) }, [
+    el('summary', { text: `Largest n per coefficient (${free.filter((name) => current.coefficients[name]?.denominator).length} set)` }),
+    el('table', { class: 'analysis-table' }, [
+      el('thead', {}, [el('tr', {}, [el('th', { scope: 'col', text: 'Coefficient' }), el('th', { scope: 'col', text: 'n ≤' })])]),
+      el('tbody', {}, free.map(limitRow)),
+    ]),
+  ]) : null;
   return el('div', { class: 'signal-flow-optimize-group' }, [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Rounding to fractions' }),
     el('p', { class: 'field-hint', text: 'Makes each free coefficient a simple fraction m/n -- m units over n, whatever the units are -- at the least cost to the specs above: a coarser n is cheaper to build and costs more performance. Starts from the coefficients\' numbers now (Apply a run first). The gains into one block share its n, so they read m1/n, m2/n, ...' }),
@@ -62633,6 +62676,7 @@ function roundingBlock(current) {
       check('shared', 'one n per block', 'The gains into the same block (through sums: an integrator, the quantizer) share one n, its reference element; off, each coefficient has its own'),
       el('button', { type: 'button', class: 'signal-flow-optimize-round', text: 'Round', onclick: () => (running ? running.stop() : roundCoefficients()) }),
     ]),
+    ...(limits ? [limits] : []),
     el('progress', { class: 'signal-flow-optimize-progress signal-flow-round-progress', max: '1', value: '0', hidden: true }),
     el('p', { class: 'field-hint signal-flow-round-status', 'aria-live': 'polite' }),
   ]);
@@ -62693,8 +62737,7 @@ function roundedBlock(sources) {
   }
   host.append(
     el('div', { class: 'signal-flow-optimize-heading', text: rounded.feasible ? 'Rounded: every limit met' : 'Rounded: the best compromise, missing a limit' }),
-    el('div', { class: 'signal-flow-optimize-fraction signal-flow-optimize-head' }, ['', 'm/n', 'Value', 'Before', 'Change'].map((text) => el('span', { text }))),
-    ...rows,
+    gridTable(['', 'm/n', 'Value', 'Before', 'Change'], rows),
     ...scoreRows(rounded, sources, ['Before', 'Rounded']),
   );
   if (!rounded.startFeasible) {

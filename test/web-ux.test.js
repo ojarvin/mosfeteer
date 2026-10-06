@@ -83,3 +83,14 @@ test('Update plots sits in the footer beside Derive; explanations open while the
   assert.match(actions, /class: 'signal-flow-update-plots'[\s\S]*class: 'signal-flow-annotate'[\s\S]*class: 'primary-action signal-flow-derive'/);
   assert.match(read('optimize-ui.js'), /if \(node !== button && !node\.classList\.contains\('hint-more'\)\) node\.disabled = true;/);
 });
+
+test('the optimizer\'s value lists are tables, and each coefficient\'s largest n sits with the rounding', () => {
+  const ui = read('optimize-ui.js');
+  assert.match(ui, /function gridTable\(head, rows\)/);
+  assert.match(ui, /return \[gridTable\(\['', startLabel, endLabel\]/);
+  assert.match(ui, /gridTable\(\['', 'm\/n', 'Value', 'Before', 'Change'\], rows\)/);
+  assert.match(ui, /gridTable\(\['Coefficient', 'Change'\], entries\.map\(row\)\)/);
+  // n ≤ left the coefficient table for the rounding section.
+  assert.match(ui, /\['', '', 'Min', 'Max', 'Now', 'Found'\]/);
+  assert.match(ui, /el\('summary', \{ text: `Largest n per coefficient/);
+});
