@@ -47,6 +47,26 @@ test('the theme is a setting, and a narrow window keeps its controls inside', ()
   const settings = html.slice(html.indexOf('id="settings-menu"'), html.indexOf('</div>', html.indexOf('id="btn-github"')));
   assert.match(settings, /id="btn-theme" type="button" role="menuitemcheckbox"/);
   const css = read('style.css');
-  assert.match(css, /\.segmented \{[^}]*max-width: 100%;[^}]*flex-wrap: wrap;/);
   assert.match(css, /@container optimize \(max-width: 420px\)/);
+});
+
+test('every card opens with the same header, inside it; headings within a card are quieter', () => {
+  const css = read('style.css');
+  // A fieldset's legend is the card's first line, in the section-label style, in every window.
+  for (const legend of ['.analysis-dock legend', '.export-dialog legend']) {
+    const rule = css.slice(css.indexOf(`${legend} {`), css.indexOf('}', css.indexOf(`${legend} {`)));
+    assert.match(rule, /float: left;[\s\S]*width: 100%;[\s\S]*text-transform: uppercase;/);
+  }
+  // Cards without a legend carry the same header: the plots, the optimizer's summary.
+  assert.match(read('signal-flow-ui.js'), /el\('div', \{ class: 'card-heading', text: 'Plots' \}\)/);
+  const optimizer = css.slice(css.indexOf('.signal-flow-optimize > summary {'), css.indexOf('}', css.indexOf('.signal-flow-optimize > summary {')));
+  assert.match(optimizer, /text-transform: uppercase;/);
+  const sub = css.slice(css.indexOf('.signal-flow-optimize-heading {'), css.indexOf('}', css.indexOf('.signal-flow-optimize-heading {')));
+  assert.match(sub, /text-transform: none;/);
+  // One card for the signals: the output row, then the sources (both modes).
+  assert.match(read('signal-flow-ui.js'), /el\('legend', \{ text: 'Signals' \}\),\s*el\('div', \{ class: 'signal-flow-source signal-flow-output-row' \}/);
+  assert.match(read('index.html'), /<fieldset class="analysis-approximations analysis-signals">\s*<legend>Signals<\/legend>/);
+  // A scrollbar appearing never reflows the window; a segmented control shrinks rather than wrap.
+  assert.match(css, /\.analysis-scroll \{[^}]*scrollbar-gutter: stable;/);
+  assert.match(css, /\.segmented \{[^}]*flex-wrap: nowrap;/);
 });

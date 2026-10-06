@@ -67167,11 +67167,10 @@ function installSignalFlowUi() {
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
     el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
     domainsGuide(),
-    el('div', { class: 'analysis-grid' }, [
-      el('div', { class: 'analysis-node' }, [el('label', { for: 'signal-flow-output', text: 'Output signal' }), el('div', { class: 'analysis-node-control' }, [output])]),
-    ]),
+    // One card for the signals: the output, then every source, row by row.
     el('fieldset', { class: 'analysis-approximations' }, [
-      el('legend', { text: 'Sources' }),
+      el('legend', { text: 'Signals' }),
+      el('div', { class: 'signal-flow-source signal-flow-output-row' }, [el('label', { for: 'signal-flow-output', class: 'signal-flow-source-name', text: 'Output' }), output]),
       el('div', { class: 'signal-flow-sources' }),
       el('p', { class: 'field-hint', text: 'A constant matters only where it multiplies a signal; elsewhere it adds no transfer function, the same as zero.' }),
     ]),
@@ -67182,6 +67181,7 @@ function installSignalFlowUi() {
     // One plot area, its view picked at the top: the frequency and step
     // responses, the root locus, the swing.
     el('div', { class: 'signal-flow-plots' }, [
+      el('div', { class: 'card-heading', text: 'Plots' }),
       el('div', { class: 'signal-flow-band-host' }),
       el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
       el('div', { class: 'signal-flow-graph' }),

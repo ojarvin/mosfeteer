@@ -355,6 +355,8 @@
           </header>
           <div class="analysis-scroll">
             <p class="analysis-intro">Pick the input and output nets, then derive the selected transfer functions and the impedances. Poles and zeros appear when reactive components matter.</p>
+            <fieldset class="analysis-approximations analysis-signals">
+            <legend>Signals</legend>
             <div class="analysis-grid">
               <div class="analysis-node" id="analysis-input-row">
                 <label id="analysis-input-field" for="analysis-input">Input node</label>
@@ -379,6 +381,7 @@
                 <p class="field-hint" id="analysis-ac-grounds-hint">Supplies, grounds, and other DC rails already are. Add bias nets (named, by net ID, or as a pin like M5.g); every AC ground is the same 0&nbsp;V reference.</p>
               </div>
             </div>
+            </fieldset>
             <fieldset class="analysis-approximations" id="analysis-transfer-functions">
               <legend>Transfer functions</legend>
               <label><input id="analysis-tf-av" name="transferAv" type="checkbox" data-transfer-function="Av" checked /> <span><span class="math-inline">v<sub>out</sub>/v<sub>in</sub></span>, voltage gain <span class="math-inline">A<sub>v</sub></span></span></label>
