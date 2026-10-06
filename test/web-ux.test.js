@@ -76,3 +76,10 @@ test('a hint stands below what it explains, pulled up only inside a spaced conta
   assert.match(css, /\.analysis-dock \.field-hint \{[^}]*margin-top: 4px;/);
   assert.match(css, /\.analysis-dock :is\(fieldset, \.signal-flow-optimize-group, \.signal-flow-plots\) > \.field-hint \{\s*margin-top: -4px;/);
 });
+
+test('Update plots sits in the footer beside Derive; explanations open while the optimizer runs', () => {
+  const ui = read('signal-flow-ui.js');
+  const actions = ui.slice(ui.indexOf('  actions = ['), ui.indexOf('];', ui.indexOf('  actions = [')));
+  assert.match(actions, /class: 'signal-flow-update-plots'[\s\S]*class: 'signal-flow-annotate'[\s\S]*class: 'primary-action signal-flow-derive'/);
+  assert.match(read('optimize-ui.js'), /if \(node !== button && !node\.classList\.contains\('hint-more'\)\) node\.disabled = true;/);
+});

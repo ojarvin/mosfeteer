@@ -1090,7 +1090,7 @@ function renderPlots() {
     viewButton('locus', 'Locus', 'The poles as one coefficient sweeps'),
     viewButton('swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'),
     viewButton('loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins'),
-  ]), el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Redraw every plot on the drawing at the coefficients\' numbers now, in place (one undo step)', onclick: () => updatePlots() }));
+  ]));
   // The signal band, one setting for every view: the response's band lines
   // and SQNR, the specs, and where each test's sine sits unless it is set.
   section.querySelector('.signal-flow-band-host').replaceChildren(bandControls());
@@ -1554,10 +1554,12 @@ export function installSignalFlowUi() {
     }),
   ]);
   actions = [
+    // Beside Derive, at hand whatever the window shows: redraw the drawing's plots.
+    el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Redraw every plot on the drawing at the coefficients\' numbers now, in place (one undo step)', onclick: () => updatePlots() }),
     el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Write the equations under the drawing', onclick: annotate }),
     el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive every input\'s transfer function to the output (Enter)', onclick: derive }),
   ];
-  for (const button of actions) if (!button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
+  for (const button of actions) if (button.dataset.icon && !button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
   document.getElementById('analysis-submit')?.before(...actions);
   scroll.prepend(modeBar);
   modeBar.after(section);

@@ -683,7 +683,7 @@ async function startRun({ button: buttonSelector, status: statusSelector, progre
   running = { stop: () => { stopped = true; } };
   const label = button.textContent;
   button.textContent = 'Stop';
-  root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button) node.disabled = true; });
+  root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button && !node.classList.contains('hint-more')) node.disabled = true; });
   say('Preparing...');
   progress.hidden = false;
   progress.value = 0;
