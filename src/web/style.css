@@ -837,6 +837,31 @@ button:disabled {
   text-decoration: underline;
 }
 
+/* The window a coefficient search runs in (optimize-window.js). */
+.run-window {
+  width: min(26rem, calc(100% - 16px));
+}
+
+.run-window-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px 4px;
+}
+
+.run-window-plot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.run-window-progress {
+  width: 100%;
+}
+
+.run-window-actions {
+  padding: 8px 16px 14px;
+}
+
 /* A row of actions ends a dialog or a window: plain words, the default
    one filled (.primary-action, .confirm-action), a destructive default red. */
 .dialog-actions .button-icon {

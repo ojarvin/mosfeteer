@@ -401,7 +401,11 @@ point with twice the population whenever a run settles, until the budget
 of candidates is spent; with no goal it ends at the first candidate that
 meets every limit. Run scores the candidates in worker threads
 (`src/web/optimize-worker.js`; in this thread when the page is opened from a
-file), with a progress bar and Stop. The best numbers come back beside the
+file). A run -- the optimizer's or the rounding's -- opens its own small
+window (`optimize-window.js`): the specs' transfer functions at the numbers
+it started from (grey) and at its best so far (in colour, redrawn with
+each new best), the progress bar, and Stop, which turns to Close when it
+is done. The best numbers come back beside the
 coefficients with each spec and the swing test at the start and at the
 best; **Apply** puts them into the coefficients (four digits), **Revert**
 undoes that. The setup is saved with the document

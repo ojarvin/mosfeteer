@@ -1517,6 +1517,8 @@ export function installSignalFlowUi() {
       links,
       resolved,
       band: () => editor.circuit.analysisValues.band,
+      // A response plot drawn as the graph draws it (the run window's).
+      plotSvg: (plot) => graphSvg(plot),
       markSettingsChanged,
       // The numbers found, into the sliders.
       applyCoefficients(values, { fractions: texts = {} } = {}) {

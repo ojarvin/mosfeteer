@@ -10,7 +10,8 @@
  * it). The setup is saved with the document (`analysisValues.flow.optimize`).
  */
 
-import { diagramSymbols, signalFlowGraph } from '../core/analysis/signal-flow.js';
+import { TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { openRunWindow } from './optimize-window.js';
 import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
 import { coefficientGroups, ditherFraction, roundingSearch } from '../core/analysis/rounding.js';
@@ -606,11 +607,12 @@ function roundCoefficients() {
   }
   const specs = normalizeOptimizeSetup(current).specs.filter((spec) => spec.input);
   return startRun({
+    title: 'Rounding',
     button: '.signal-flow-optimize-round',
     status: '.signal-flow-round-status',
     progress: '.signal-flow-round-progress',
     parameters,
-    async work({ pool, say, progress, stopped }) {
+    async work({ pool, say, progress, stopped, best: showBest }) {
       const search = roundingSearch(parameters, { values: own, links, denominator: options.denominator, denominators, powersOfTwo: options.powersOfTwo, groups, seed: Math.floor(Math.random() * 2 ** 31) });
       let step = search.next();
       let evaluations = 0;
@@ -624,6 +626,7 @@ function roundCoefficients() {
         step = search.next(scores);
       }
       const result = step.value;
+      if (result?.values) showBest(result.values);
       rounded = {
         ...result,
         shared: !!groups,
@@ -713,7 +716,44 @@ function localPool(circuit, problem) {
  * A search in worker threads, its button turned to Stop: `work({ pool, say,
  * progress, stopped })` returns the closing message (text, or `{ text, error }`).
  */
-async function startRun({ button: buttonSelector, status: statusSelector, progress: progressSelector, parameters, work }) {
+/**
+ * The run window's plot: each spec's transfer function at the numbers the
+ * run started from (grey) and at its best so far (in colour). The diagram
+ * is solved once a run (`solved`); each set of numbers only evaluates it.
+ */
+function runPlotter() {
+  let solved;
+  const solve = () => {
+    if (solved !== undefined) return solved;
+    const inputs = [...new Set(normalizeOptimizeSetup(setup()).specs.filter((spec) => spec.input).map((spec) => spec.input))];
+    solved = null;
+    if (!inputs.length) return solved;
+    const sources = { ...api.flow().sources };
+    for (const input of inputs) sources[input] = 'input';
+    try {
+      const result = analyzeSignalFlow(api.circuit(), { output: api.flow().output, sources, values: api.resolved() });
+      if (result.ok) solved = { variable: result.variable, entries: result.entries.filter((entry) => inputs.includes(entry.input)) };
+    } catch { solved = null; }
+    return solved;
+  };
+  const traces = (values, role) => {
+    const result = values && solve();
+    if (!result) return [];
+    return result.entries.map((entry, i) => {
+      let value = null;
+      try { value = withCoefficients(entry.value, values); } catch { value = null; }
+      return value && { label: entry.label, color: role === 'start' ? '#8a8f99' : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable };
+    }).filter(Boolean);
+  };
+  return ({ start, best }) => {
+    const shown = [...traces(start, 'start'), ...traces(best, 'best')];
+    if (!shown.length) return null;
+    const plot = responsePlot(shown, shown[0].variable, { sAxis: 'normalized', band: api.band() });
+    return plot ? api.plotSvg(plot) : null;
+  };
+}
+
+async function startRun({ title, button: buttonSelector, status: statusSelector, progress: progressSelector, parameters, work }) {
   const circuit = api.circuit();
   const current = setup();
   const status = root.querySelector(statusSelector);
@@ -724,6 +764,10 @@ async function startRun({ button: buttonSelector, status: statusSelector, progre
   const problem = { output: api.flow().output, sources: api.flow().sources, band: api.band(), values: api.resolved(), setup: current, dither: api.flow().dither };
   let stopped = false;
   running = { stop: () => { stopped = true; } };
+  // The run in its own window: its plot, its progress, Stop.
+  const runWindow = openRunWindow({ title, plotAt: runPlotter(), onStop: () => running?.stop() });
+  runWindow.start(problem.values);
+  const sayBoth = (text, error = false) => { say(text, error); runWindow.say(text, error); };
   const label = button.textContent;
   button.textContent = 'Stop';
   root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button && !node.classList.contains('hint-more')) node.disabled = true; });
@@ -737,7 +781,7 @@ async function startRun({ button: buttonSelector, status: statusSelector, progre
     pool = await workerPool(circuit.toJSON(), problem);
     if (!pool) pool = localPool(circuit, problem);
     if (pool.error) { message = { text: pool.error, error: true }; return; }
-    const closing = await work({ pool, say, progress: (v) => { progress.value = v; }, stopped: () => stopped });
+    const closing = await work({ pool, say: sayBoth, progress: (v) => { progress.value = v; runWindow.progress(v); }, stopped: () => stopped, best: (values) => runWindow.best(values) });
     message = typeof closing === 'string' ? { text: closing, error: false } : closing;
     message.text = `${message.text.replace(/\.$/, '')} in ${((performance.now() - startedAt) / 1000).toFixed(1)} s.`;
   } catch (error) {
@@ -745,6 +789,7 @@ async function startRun({ button: buttonSelector, status: statusSelector, progre
   } finally {
     pool?.close?.();
     running = null;
+    runWindow.done(message.text, !!message.error);
     button.textContent = label;
     renderOptimize();
     const after = root.querySelector(statusSelector);
@@ -763,19 +808,26 @@ function run() {
   const own = Object.fromEntries(diagramSymbols(circuit).map((name) => [name, api.coefficients()[name] ?? 1]));
   const parameters = optimizationParameters(circuit, { values: own, links, setup: current });
   return startRun({
+    title: 'Optimizer',
     button: '.signal-flow-optimize-run',
     status: '.signal-flow-optimize-status',
     progress: '.signal-flow-optimize-progress:not(.signal-flow-round-progress)',
     parameters,
-    async work({ pool, say, progress, stopped }) {
+    async work({ pool, say, progress, stopped, best: showBest }) {
       const objectiveSpecs = normalizeOptimizeSetup(current).specs.filter((spec) => spec.input);
       const goals = objectiveSpecs.some((spec) => spec.action === 'minimize' || spec.action === 'maximize');
       const swingOn = normalizeOptimizeSetup(current).swing.on;
       const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals, verify: swingOn });
+      let shownBest = null;
       while (!optimizer.done && !stopped()) {
         const batch = optimizer.ask();
         const scores = await pool.evaluate(batch.map((c) => c.request));
         optimizer.tell(scores);
+        // Each new best, verified, redraws the run window's plot.
+        if (optimizer.best && optimizer.best !== shownBest) {
+          shownBest = optimizer.best;
+          showBest(shownBest.values);
+        }
         progress(optimizer.evaluations / optimizer.budget);
         const best = optimizer.best;
         const goalText = objectiveSpecs.map((spec, i) => (spec.action === 'minimize' || spec.action === 'maximize') && Number.isFinite(best?.score?.specs?.[i]) ? `${best.score.specs[i].toFixed(1)} dB` : null).filter(Boolean).join(', ');
