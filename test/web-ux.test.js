@@ -70,3 +70,9 @@ test('every card opens with the same header, inside it; headings within a card a
   assert.match(css, /\.analysis-scroll \{[^}]*scrollbar-gutter: stable;/);
   assert.match(css, /\.segmented \{[^}]*flex-wrap: nowrap;/);
 });
+
+test('a hint stands below what it explains, pulled up only inside a spaced container', () => {
+  const css = read('style.css');
+  assert.match(css, /\.analysis-dock \.field-hint \{[^}]*margin-top: 4px;/);
+  assert.match(css, /\.analysis-dock :is\(fieldset, \.signal-flow-optimize-group, \.signal-flow-plots\) > \.field-hint \{\s*margin-top: -4px;/);
+});

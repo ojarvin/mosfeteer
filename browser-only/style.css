@@ -1728,8 +1728,14 @@ button:disabled {
 }
 
 .analysis-dock .field-hint {
-  margin-top: -4px;
+  margin-top: 4px;
   font-size: var(--text-xs);
+}
+
+/* A hint stands a little below what it explains; in a container that
+   spaces its rows already, it pulls up to sit as close. */
+.analysis-dock :is(fieldset, .signal-flow-optimize-group, .signal-flow-plots) > .field-hint {
+  margin-top: -4px;
 }
 
 .analysis-result {
