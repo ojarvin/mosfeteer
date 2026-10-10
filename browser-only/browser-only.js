@@ -43674,6 +43674,7 @@ let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); 
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * The calculator: a floating window with one line to type into and the
  * results above it, no buttons. Enter works the line out (core/calculator.js:
@@ -43693,6 +43694,7 @@ let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged,
 
 
 
+
 /** Results shown without scrolling. */
 const SHOWN = 10;
 
@@ -43702,17 +43704,6 @@ let recall = -1; // Up/Down: how far back in what was typed
 
 const history = () => editor.circuit.windows.calculator?.history || [];
 
-function el(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-}
 
 function row(entry) {
   const result = el('span', { class: `calculator-result${entry.error ? ' analysis-error' : ''}`, text: entry.error ? entry.result : `= ${entry.result}` });
@@ -63653,6 +63644,7 @@ let SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch; 
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * The signal-flow mode's coefficient optimizer (core/analysis/optimize.js):
  * a section under the coefficients where each coefficient is set free or
@@ -63680,23 +63672,13 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
 
 
 
+
 let api = null;
 let root = null;
 let running = null; // { stop(), optimizer }
 let found = null; // { own (the best free numbers), score, start (its score), feasible, specs, fractions?, groups?, before?, shared? }
 let reverting = null; // { coefficients, fractions } before the last Apply
 
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-};
 
 const math = (tex, className = 'signal-flow-optimize-math') => {
   const span = el('span', { class: className });
@@ -64541,6 +64523,7 @@ __exports.openRunWindow = openRunWindow;
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * The window a coefficient search runs in (optimize-ui.js: the optimizer
  * and the rounding): one small floating window over the drawing, so it is
@@ -64556,17 +64539,7 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
 
 
 
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-};
+
 
 let open = null;
 
@@ -67035,6 +67008,7 @@ let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floa
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let thinSeries; __bind(() => { ({ thinSeries } = __require("src/core/plot-scale.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * The oscilloscope: a signal-flow diagram's nets in time, in a window of
  * their own. A sine of the amplitude (dBFS) and frequency (f/fs) set here
@@ -67065,6 +67039,7 @@ let thinSeries; __bind(() => { ({ thinSeries } = __require("src/core/plot-scale.
 
 
 
+
 let api = null; // { flow(), resolved() } from the signal-flow window
 let win = null;
 let timer = 0;
@@ -67073,17 +67048,6 @@ const colors = new Map(); // net key -> its colour while shown
 
 const state = () => editor.circuit.windows.scope || { nets: [] };
 
-function el(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-}
 
 /** A frequency typed as f/fs: 0.004, 1/256. */
 function typedFraction(text) {
@@ -68269,6 +68233,7 @@ let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSe
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let fractionText; __bind(() => { ({ fractionText } = __require("src/core/analysis/rounding.js")); });
 let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analysis/optimize-setup.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
  * block diagram rather than a circuit. A switch at the top of the window
@@ -68283,6 +68248,7 @@ let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analy
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -68352,17 +68318,6 @@ let section = null;
 let actions = null; // this mode's buttons, in the window's own footer
 let derivedRevision = -1;
 
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-};
 
 // The window's plots (plot-view.js), kept across redraws so a zoomed view
 // stays zoomed while the numbers change.

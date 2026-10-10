@@ -12,18 +12,8 @@
 import { canvasEl } from './elements.js';
 import { PLACE, floatingWindow } from './floating-window.js';
 import { createPlotView } from './plot-view.js';
+import { element as el } from './dom.js';
 
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-};
 
 let open = null;
 

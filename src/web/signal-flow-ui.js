@@ -38,6 +38,7 @@ import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js
 import { swingTestFrequency } from '../core/analysis/optimize.js';
 import { fractionText } from '../core/analysis/rounding.js';
 import { normalizeBand } from '../core/analysis/optimize-setup.js';
+import { element as el } from './dom.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
 const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
@@ -81,17 +82,6 @@ let section = null;
 let actions = null; // this mode's buttons, in the window's own footer
 let derivedRevision = -1;
 
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-};
 
 // The window's plots (plot-view.js), kept across redraws so a zoomed view
 // stays zoomed while the numbers change.

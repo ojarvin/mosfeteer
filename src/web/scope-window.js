@@ -27,6 +27,7 @@ import { floatingWindow } from './floating-window.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
 import { createPlotView } from './plot-view.js';
 import { thinSeries } from '../core/plot-scale.js';
+import { element as el } from './dom.js';
 
 let api = null; // { flow(), resolved() } from the signal-flow window
 let win = null;
@@ -36,17 +37,6 @@ const colors = new Map(); // net key -> its colour while shown
 
 const state = () => editor.circuit.windows.scope || { nets: [] };
 
-function el(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-}
 
 /** A frequency typed as f/fs: 0.004, 1/256. */
 function typedFraction(text) {

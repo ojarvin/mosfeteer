@@ -24,6 +24,7 @@ import { SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySea
 import { prepareSimulation } from '../core/analysis/simulate.js';
 import { symbolText } from '../core/analysis/present.js';
 import { texToMathML } from '../core/render.js';
+import { element as el } from './dom.js';
 
 let api = null;
 let root = null;
@@ -31,17 +32,6 @@ let running = null; // { stop(), optimizer }
 let found = null; // { own (the best free numbers), score, start (its score), feasible, specs, fractions?, groups?, before?, shared? }
 let reverting = null; // { coefficients, fractions } before the last Apply
 
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-};
 
 const math = (tex, className = 'signal-flow-optimize-math') => {
   const span = el('span', { class: className });

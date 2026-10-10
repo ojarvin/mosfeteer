@@ -16,6 +16,7 @@ import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { floatingWindow } from './floating-window.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
+import { element as el } from './dom.js';
 
 /** Results shown without scrolling. */
 const SHOWN = 10;
@@ -26,17 +27,6 @@ let recall = -1; // Up/Down: how far back in what was typed
 
 const history = () => editor.circuit.windows.calculator?.history || [];
 
-function el(tag, props = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
-    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
-  }
-  node.append(...children);
-  return node;
-}
 
 function row(entry) {
   const result = el('span', { class: `calculator-result${entry.error ? ' analysis-error' : ''}`, text: entry.error ? entry.result : `= ${entry.result}` });
