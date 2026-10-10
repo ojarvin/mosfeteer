@@ -28,6 +28,7 @@ import { pasteClipboard } from './copy-paste.js';
 import { openSwapPicker } from './insert-menu.js';
 import { referenceWindowsShown, toggleReferenceWindows } from './reference-window.js';
 import { calculatorShown, toggleCalculator } from './calculator-window.js';
+import { scopeShown, toggleScope } from './scope-window.js';
 
 const click = (id) => document.getElementById(id)?.click();
 const checked = (button) => button?.getAttribute('aria-checked') === 'true';
@@ -50,6 +51,7 @@ const ACTIONS = {
   analysis: (state) => toggleTo(state, !analysisDialog.hidden, () => toggleAnalysisDock()),
   reference: (state) => toggleTo(state, referenceWindowsShown(), toggleReferenceWindows),
   calculator: (state) => toggleTo(state, calculatorShown(), toggleCalculator),
+  scope: (state) => toggleTo(state, scopeShown(), toggleScope),
   grid: (state) => setGrid(state ?? !editor.showGrid),
   guides: (state) => setGuides(state ?? !editor.guidesVisible),
   crosshair: (state) => setCrosshair(state ?? !editor.crosshairVisible),

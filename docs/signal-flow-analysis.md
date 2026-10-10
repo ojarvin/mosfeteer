@@ -135,6 +135,18 @@ band, and again across whatever range a zoom shows (`responsePlot`'s
 `detail`), so a narrow band's ripple is drawn from its own points. A plot
 annotation keeps the whole-range figure the window had before zooming.
 
+The **Oscilloscope** (beside the plot views, `Shift+W`, or More; its own
+window, `src/web/scope-window.js`) shows the diagram's nets in time: a
+sine of the amplitude (dBFS) and frequency (f/fs, blank for the band's
+middle) set there drives one source, the diagram runs as the swing does
+(simulate.js, dither included) for 256 to 16384 samples after up to 1024
+to settle, and each checked net is a waveform -- a sampled one held
+through each period, a continuous one traced between samples too
+(`run(a, { waves })`). Full scale is marked. It runs again as the
+coefficients or its settings change; its nets and stimulus are saved with
+the design (`Circuit#windows.scope`). Its plot zooms with the plain wheel
+as well.
+
 Responses go onto one **graph** of magnitudes, a colour per trace
 named by its ratio (`OUT/IN`) in that colour, its dB axis fitted to the
 curves in whole 20 dB steps. With an s result on it, the frequency axis

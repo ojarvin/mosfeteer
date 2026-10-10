@@ -20,6 +20,7 @@ import { expressionTex, parseLevels } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
+import { installScope, scopeChanged, toggleScope } from './scope-window.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
@@ -232,6 +233,7 @@ function fillForm() {
   fillSwingSources(sources);
   syncDocument();
   renderOptimize();
+  scopeChanged();
 }
 
 let shownDocument;
@@ -738,6 +740,7 @@ function coefficientsChanged() {
     renderGraph();
     renderResults();
     swingCoefficientsChanged();
+    scopeChanged();
     if (graphView() === 'loop') { loop = null; renderLoop(); }
   });
 }
@@ -1078,7 +1081,7 @@ function renderPlots() {
     viewButton('locus', 'Locus', 'The poles as one coefficient sweeps'),
     viewButton('swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'),
     viewButton('loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins'),
-  ]));
+  ]), el('button', { type: 'button', class: 'signal-flow-scope', text: 'Oscilloscope', title: 'The nets in time, driven by a sine, in a window of their own (Shift+W)', onclick: () => toggleScope() }));
   // The signal band, one setting for every view: the response's band lines
   // and SQNR, the specs, and where each test's sine sits unless it is set.
   section.querySelector('.signal-flow-band-host').replaceChildren(bandControls());
@@ -1570,6 +1573,7 @@ export function installSignalFlowUi() {
     filledRevision = editor.modelRevision;
     fillForm();
   });
+  installScope({ flow, resolved });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;

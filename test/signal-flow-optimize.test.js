@@ -491,3 +491,24 @@ test('coefficient constraints: typed as relations, kept by the search like a lim
   assert.ok(result.best.values.k_2 >= 3 * result.best.values.k_1 * (1 - 1e-9), JSON.stringify(result.best.values));
   assert.equal(prepareObjective(circuit, { ...problem, setup: { ...problem.setup, constraints: 'k_2 => k_1' } }).ok, false);
 });
+
+test('a run traces nets for the oscilloscope: sampled once a sample, continuous between samples too', () => {
+  const sim = prepareSimulation(modulator(), { values: { k_1: 1, k_2: 2 }, sources: {}, input: 'U', output: 'name:V', samples: 256 });
+  assert.ok(sim.ok, sim.error);
+  const v = sim.signals.findIndex((s) => s.key === 'name:V');
+  const { waves } = sim.run(-6, { waves: [v] });
+  assert.equal(waves.length, 1);
+  assert.equal(waves[0].t.length, 256);
+  assert.deepEqual(waves[0].t.slice(0, 3), [0, 1, 2]);
+  assert.ok(waves[0].v.every((x) => x === 1 || x === -1), 'a single-bit output');
+  const ct = diagram(['add input U --at -1200 0', 'add signal_sum S1 --at -800 0', 'add tf_s H1 --at -400 0 --value "1/s"', 'add sampler SMP1 --at 0 0', 'add quantizer QZ1 --at 400 0', 'add output V --at 800 0',
+    'add tf_s D1 --at 0 400 --rot 180 --value "(1 - exp(-s*T))/s"', 'add gain K1 --at -400 400 --rot 180 --value k_1',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out SMP1.in', 'connect SMP1.out QZ1.in', 'connect QZ1.out V.p', 'connect V.p D1.in', 'connect D1.out K1.in', 'connect K1.out S1.s'], [['S1', 's']]);
+  const csim = prepareSimulation(ct, { values: { k_1: 1, T: 1 }, sources: {}, input: 'U', output: 'name:V', samples: 128, subSteps: 4 });
+  assert.ok(csim.ok, csim.error);
+  const h = csim.signals.findIndex((s) => s.domain === 's' && s.role === 'state');
+  const [wave] = csim.run(-6, { waves: [h] }).waves;
+  assert.ok(wave.t.length >= 4 * 128, String(wave.t.length));
+  assert.ok(wave.t.some((t) => !Number.isInteger(t)), 'points between samples');
+  assert.ok(wave.t.every((t, i) => !i || t >= wave.t[i - 1]), 'in time order');
+});

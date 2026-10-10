@@ -466,8 +466,26 @@ export function prepareSimulation(circuit, options = {}) {
   /** One amplitude's run; `record` keeps the output's samples over the
    *  window, `levels` (true, or a list of signal indices) those nets'
    *  magnitudes at each sample (`magnitudes`, by index, for quantiles);
-   *  `phase` (radians) where the sine starts. */
-  const run = (amplitudeDb, { record = false, levels = false, phase = 0 } = {}) => {
+   *  `phase` (radians) where the sine starts; `waves` (signal indices)
+   *  those nets' values over the window for the oscilloscope (`waves`, one
+   *  `{ index, t, v }` each, t in sample periods from the window's start: a
+   *  sampled net once a sample, a continuous one at the sub-steps too). */
+  const run = (amplitudeDb, { record = false, levels = false, phase = 0, waves = [] } = {}) => {
+    const traced = waves.filter((i) => i >= 0 && i < signalList.length).map((index) => ({ index, continuous: index < cont.length, t: [], v: [] }));
+    const traceSample = (n) => {
+      for (const wave of traced) {
+        wave.t.push(n);
+        wave.v.push(wave.continuous ? Yc[wave.index] : Yd[wave.index - cont.length]);
+      }
+    };
+    const traceBetween = (t) => {
+      for (const wave of traced) {
+        if (!wave.continuous) continue;
+        wave.t.push(t);
+        wave.v.push(Yc[wave.index]);
+      }
+    };
+    const wavesOut = () => (traced.length ? { waves: traced } : {});
     const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
     const wanted = levels === true ? signalList.map((_, i) => i) : Array.isArray(levels) ? levels : [];
     const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(window) : null)) : null;
@@ -525,6 +543,7 @@ export function prepareSimulation(circuit, options = {}) {
         for (let i = 0; i < cont.length; i++) { const v = Math.abs(Yc[i]); if (v > peaks[i]) peaks[i] = v; }
         for (let i = 0; i < disc.length; i++) { const v = Math.abs(Yd[i]); if (v > peaks[cont.length + i]) peaks[cont.length + i] = v; }
         for (const i of leveled) magnitudes[i][n - warmup] = Math.abs(i < cont.length ? Yc[i] : Yd[i - cont.length]);
+        traceSample(n - warmup);
         if (outputIndex >= 0) {
           const y = outputIndex < cont.length ? Yc[outputIndex] : Yd[outputIndex - cont.length];
           if (recorded) recorded[n - warmup] = y;
@@ -555,12 +574,15 @@ export function prepareSimulation(circuit, options = {}) {
           const v = history.get(term.input)[term.shift];
           for (let j = 0; j < term.dac.n; j++) X[term.dac.offset + j] += term.B[j] * v;
         }
-        if (segment.start > 0 || segment.impulses.length) track(measuring);
+        if (segment.start > 0 || segment.impulses.length) {
+          track(measuring);
+          if (measuring && segment.start > 0 && traced.length) traceBetween(n - warmup + segment.start / T);
+        }
         matVec(segment.phi, X, next);
         [X, next] = [next, X];
       }
       if (X.some((v) => !(Math.abs(v) < limit)) || xd.some((v) => !(Math.abs(v) < limit))) {
-        return { peaks: peaks.map(() => Infinity), tone: Infinity, overloaded: true };
+        return { peaks: peaks.map(() => Infinity), tone: Infinity, overloaded: true, ...wavesOut() };
       }
       if (measuring) {
         const half = halves[n - warmup < window / 2 ? 0 : 1];
@@ -569,10 +591,10 @@ export function prepareSimulation(circuit, options = {}) {
       }
     }
     for (let i = 0; i < m + md; i++) {
-      if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true };
+      if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true, ...wavesOut() };
     }
     const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
-    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}) };
+    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
 
   return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };

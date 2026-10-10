@@ -13872,8 +13872,26 @@ function prepareSimulation(circuit, options = {}) {
   /** One amplitude's run; `record` keeps the output's samples over the
    *  window, `levels` (true, or a list of signal indices) those nets'
    *  magnitudes at each sample (`magnitudes`, by index, for quantiles);
-   *  `phase` (radians) where the sine starts. */
-  const run = (amplitudeDb, { record = false, levels = false, phase = 0 } = {}) => {
+   *  `phase` (radians) where the sine starts; `waves` (signal indices)
+   *  those nets' values over the window for the oscilloscope (`waves`, one
+   *  `{ index, t, v }` each, t in sample periods from the window's start: a
+   *  sampled net once a sample, a continuous one at the sub-steps too). */
+  const run = (amplitudeDb, { record = false, levels = false, phase = 0, waves = [] } = {}) => {
+    const traced = waves.filter((i) => i >= 0 && i < signalList.length).map((index) => ({ index, continuous: index < cont.length, t: [], v: [] }));
+    const traceSample = (n) => {
+      for (const wave of traced) {
+        wave.t.push(n);
+        wave.v.push(wave.continuous ? Yc[wave.index] : Yd[wave.index - cont.length]);
+      }
+    };
+    const traceBetween = (t) => {
+      for (const wave of traced) {
+        if (!wave.continuous) continue;
+        wave.t.push(t);
+        wave.v.push(Yc[wave.index]);
+      }
+    };
+    const wavesOut = () => (traced.length ? { waves: traced } : {});
     const recorded = record && outputIndex >= 0 ? new Float64Array(window) : null;
     const wanted = levels === true ? signalList.map((_, i) => i) : Array.isArray(levels) ? levels : [];
     const magnitudes = wanted.length ? signalList.map((_, i) => (wanted.includes(i) ? new Float64Array(window) : null)) : null;
@@ -13931,6 +13949,7 @@ function prepareSimulation(circuit, options = {}) {
         for (let i = 0; i < cont.length; i++) { const v = Math.abs(Yc[i]); if (v > peaks[i]) peaks[i] = v; }
         for (let i = 0; i < disc.length; i++) { const v = Math.abs(Yd[i]); if (v > peaks[cont.length + i]) peaks[cont.length + i] = v; }
         for (const i of leveled) magnitudes[i][n - warmup] = Math.abs(i < cont.length ? Yc[i] : Yd[i - cont.length]);
+        traceSample(n - warmup);
         if (outputIndex >= 0) {
           const y = outputIndex < cont.length ? Yc[outputIndex] : Yd[outputIndex - cont.length];
           if (recorded) recorded[n - warmup] = y;
@@ -13961,12 +13980,15 @@ function prepareSimulation(circuit, options = {}) {
           const v = history.get(term.input)[term.shift];
           for (let j = 0; j < term.dac.n; j++) X[term.dac.offset + j] += term.B[j] * v;
         }
-        if (segment.start > 0 || segment.impulses.length) track(measuring);
+        if (segment.start > 0 || segment.impulses.length) {
+          track(measuring);
+          if (measuring && segment.start > 0 && traced.length) traceBetween(n - warmup + segment.start / T);
+        }
         matVec(segment.phi, X, next);
         [X, next] = [next, X];
       }
       if (X.some((v) => !(Math.abs(v) < limit)) || xd.some((v) => !(Math.abs(v) < limit))) {
-        return { peaks: peaks.map(() => Infinity), tone: Infinity, overloaded: true };
+        return { peaks: peaks.map(() => Infinity), tone: Infinity, overloaded: true, ...wavesOut() };
       }
       if (measuring) {
         const half = halves[n - warmup < window / 2 ? 0 : 1];
@@ -13975,10 +13997,10 @@ function prepareSimulation(circuit, options = {}) {
       }
     }
     for (let i = 0; i < m + md; i++) {
-      if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true };
+      if (halves[1][i] > 2 * fullScale && halves[1][i] > 2 * halves[0][i]) return { peaks: Array.from(peaks), tone: null, overloaded: true, ...wavesOut() };
     }
     const tone = outputIndex >= 0 ? (2 * Math.hypot(re, im)) / window : null;
-    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}) };
+    return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
 
   return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };
@@ -35776,11 +35798,20 @@ function normalizeWindows(value) {
     const history = (Array.isArray(calculator.history) ? calculator.history : []).map(calculatorEntry).filter(Boolean).slice(-CALCULATOR_HISTORY);
     if (history.length) windows.calculator = { history };
   }
+  // The oscilloscope: the nets it shows (signal keys) and its stimulus --
+  // the source the sine drives, its amplitude (dBFS) and frequency (f/fs)
+  // as typed, and how many samples it runs.
   const scope = object(source.scope);
   if (scope) {
     const nets = (Array.isArray(scope.nets) ? scope.nets : []).filter((net) => typeof net === 'string' && net).map((net) => net.slice(0, 200)).slice(0, 16);
-    const periods = Math.round(Number(scope.periods));
-    windows.scope = { nets, ...(periods > 0 ? { periods: Math.min(periods, 100000) } : {}) };
+    const samples = Math.round(Number(scope.samples));
+    windows.scope = {
+      nets,
+      ...(samples > 0 ? { samples: Math.max(64, Math.min(samples, 1 << 16)) } : {}),
+      ...(text(scope.input) ? { input: text(scope.input) } : {}),
+      ...(text(scope.amplitude, 40) ? { amplitude: text(scope.amplitude, 40) } : {}),
+      ...(text(scope.frequency, 40) ? { frequency: text(scope.frequency, 40) } : {}),
+    };
   }
   // The small-signal form: analysis-options.js reads (and migrates) it.
   const analysis = object(source.analysis);
@@ -44092,12 +44123,14 @@ let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
 let referenceWindowsShown, toggleReferenceWindows; __bind(() => { ({ referenceWindowsShown, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let calculatorShown, toggleCalculator; __bind(() => { ({ calculatorShown, toggleCalculator } = __require("src/web/calculator-window.js")); });
+let scopeShown, toggleScope; __bind(() => { ({ scopeShown, toggleScope } = __require("src/web/scope-window.js")); });
 /**
  * The `:` command line: history, Tab completion with a suggestion list, and
  * the editor commands (panels, view toggles, menus, dialogs). Everything else
  * goes to the shared document command language through runLine. The
  * vocabulary and completion rules are command-line.js.
  */
+
 
 
 
@@ -44142,6 +44175,7 @@ const ACTIONS = {
   analysis: (state) => toggleTo(state, !analysisDialog.hidden, () => toggleAnalysisDock()),
   reference: (state) => toggleTo(state, referenceWindowsShown(), toggleReferenceWindows),
   calculator: (state) => toggleTo(state, calculatorShown(), toggleCalculator),
+  scope: (state) => toggleTo(state, scopeShown(), toggleScope),
   grid: (state) => setGrid(state ?? !editor.showGrid),
   guides: (state) => setGuides(state ?? !editor.guidesVisible),
   crosshair: (state) => setCrosshair(state ?? !editor.crosshairVisible),
@@ -44416,6 +44450,7 @@ const EDITOR_COMMANDS = [
   { name: 'settings', aliases: ['preferences', 'prefs', 'options', 'config'], help: 'open the settings menu' },
   { name: 'panel', aliases: ['sidebar', 'side-panel', 'sidepanel', 'inspector'], toggle: true, help: 'show or hide the components, nets, and selection panel (Shift+P)' },
   { name: 'reference', aliases: ['reference-window', 'references', 'ref'], toggle: true, help: 'show or hide reference windows: another design beside this one (Shift+V)' },
+  { name: 'scope', aliases: ['oscilloscope', 'waveforms', 'time-domain'], toggle: true, help: 'show or hide the oscilloscope: a signal-flow diagram\'s nets in time (Shift+W)' },
   { name: 'calculator', aliases: ['calc', 'calculate', 'math-window'], toggle: true, help: 'show or hide the calculator: type 20*log(123), Enter works it out (Shift+E)' },
   { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
@@ -54098,6 +54133,7 @@ let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeTool
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
+let toggleScope; __bind(() => { ({ toggleScope } = __require("src/web/scope-window.js")); });
 let copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows; __bind(() => { ({ copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
@@ -54115,6 +54151,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -61333,6 +61370,12 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  // Shift+W: the oscilloscope (W for waveforms), open or closed.
+  if (key === 'W') {
+    toggleScope();
+    return;
+  }
+
   // Shift+E: the calculator (E for evaluate), open or closed.
   if (key === 'E') {
     toggleCalculator();
@@ -65553,7 +65596,8 @@ function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView
   });
   el.addEventListener('pointermove', (ev) => {
     if (box || el.classList.contains('panning')) return;
-    hover = local(ev);
+    const at = local(ev);
+    hover = { px: at.x, py: at.y };
     schedule();
   });
   el.addEventListener('pointerleave', () => { hover = null; schedule(); });
@@ -66670,6 +66714,262 @@ function installRenumberUi() {
 
 };
 
+__modules["src/web/scope-window.js"] = function (__require, __exports) {
+__exports.scopeShown = scopeShown;
+__exports.toggleScope = toggleScope;
+__exports.scopeChanged = scopeChanged;
+__exports.installScope = installScope;
+let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
+let TRACE_COLORS, diagramSymbols, hasSignalFlow, signalFlowGraph; __bind(() => { ({ TRACE_COLORS, diagramSymbols, hasSignalFlow, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
+let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
+let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
+/**
+ * The oscilloscope: a signal-flow diagram's nets in time, in a window of
+ * their own. A sine of the amplitude (dBFS) and frequency (f/fs) set here
+ * drives one source, the diagram runs at the coefficients' numbers
+ * (core/analysis/simulate.js, the swing's simulation, dither included),
+ * and the nets checked show as waveforms over the samples run -- a
+ * sampled net held through each period, a continuous one between samples
+ * as well. The plot is the analysis windows' one (plot-view.js), the
+ * plain wheel zooming here: a flat right-drag zooms time alone, a tall one
+ * the values alone.
+ *
+ * It runs again as the coefficients move and as its settings change. What
+ * it shows and how it drives the diagram are saved with the design
+ * (`Circuit#windows.scope`). `Shift+W` (W for waveforms) shows or hides it.
+ */
+
+
+
+
+
+
+
+
+
+
+
+let api = null; // { flow(), resolved() } from the signal-flow window
+let win = null;
+let timer = 0;
+const colors = new Map(); // net key -> its colour while shown
+
+const state = () => editor.circuit.windows.scope || { nets: [] };
+
+function el(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
+  }
+  node.append(...children);
+  return node;
+}
+
+/** A frequency typed as f/fs: 0.004, 1/256. */
+function typedFraction(text) {
+  const match = String(text).trim().match(/^(\d*\.?\d+)\s*\/\s*(\d*\.?\d+)$/);
+  return match ? Number(match[1]) / Number(match[2]) : Number(String(text).trim());
+}
+
+function save(change) {
+  editor.circuit.windows.scope = { ...state(), ...change };
+  markSettingsChanged();
+  schedule();
+}
+
+function build() {
+  const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the oscilloscope', title: 'Close (Shift+W)', text: '×' });
+  const plot = createPlotView({ fill: true, wheel: 'always', className: 'scope-plot' });
+  const input = el('select', { class: 'scope-input', 'aria-label': 'Source the sine drives', onchange: (ev) => save({ input: ev.target.value }) });
+  const amplitude = el('input', { type: 'text', class: 'scope-field', 'aria-label': 'Sine amplitude, dBFS', placeholder: '-6', title: 'The sine\'s amplitude in dB of full scale', onchange: (ev) => save({ amplitude: ev.target.value.trim() }) });
+  const frequency = el('input', { type: 'text', class: 'scope-field', 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band', onchange: (ev) => save({ frequency: ev.target.value.trim() }) });
+  const samples = el('select', { class: 'scope-samples', 'aria-label': 'Samples to run', onchange: (ev) => save({ samples: Number(ev.target.value) }) },
+    [256, 1024, 4096, 16384].map((n) => el('option', { value: String(n), text: `${n}` })));
+  const status = el('p', { class: 'field-hint scope-status', 'aria-live': 'polite' });
+  const nets = el('div', { class: 'scope-nets' });
+  const node = el('section', { class: 'floating-window scope-window', 'aria-labelledby': 'scope-title', hidden: true }, [
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'scope-title', class: 'floating-window-title', text: 'Oscilloscope' }), close]),
+    el('div', { class: 'scope-body' }, [
+      el('div', { class: 'scope-controls' }, [
+        el('label', { text: 'Sine into' }), input,
+        el('label', { text: 'at' }), amplitude, el('label', { text: 'dBFS,' }),
+        frequency, el('label', { text: 'f/fs,' }),
+        samples, el('label', { text: 'samples' }),
+      ]),
+      plot.el,
+      nets,
+      status,
+    ]),
+  ]);
+  node.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Escape' && ev.target.tagName !== 'INPUT') hide();
+  });
+  canvasEl.closest('.canvas-pane').append(node);
+  const chrome = floatingWindow(node, { key: 'scope', onClose: hide, resizable: true });
+  win = { el: node, plot, input, amplitude, frequency, samples, status, nets, chrome };
+}
+
+/** The controls from the design's settings, and the diagram's sources and nets. */
+function fill(sim) {
+  const settings = state();
+  const { sources } = signalFlowGraph(editor.circuit);
+  const real = sources.filter((s) => !s.quantizer);
+  win.input.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
+  const chosen = real.find((s) => s.id === settings.input) || real.find((s) => s.id === api?.flow().swingInput) || real[0];
+  if (chosen) win.input.value = chosen.id;
+  win.amplitude.value = settings.amplitude || '';
+  win.frequency.value = settings.frequency || '';
+  win.frequency.placeholder = String(Number(swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band).toPrecision(3)));
+  win.samples.value = String(settings.samples || 1024);
+  if (!sim) { win.nets.replaceChildren(); return; }
+  const shown = new Set(shownKeys(sim));
+  win.nets.replaceChildren(...sim.signals.map((signal) => {
+    const check = el('input', { type: 'checkbox', 'aria-label': `Show ${signal.name}` });
+    check.checked = shown.has(signal.key);
+    check.addEventListener('change', () => {
+      const keys = new Set(shownKeys(sim));
+      if (check.checked) keys.add(signal.key);
+      else keys.delete(signal.key);
+      save({ nets: sim.signals.map((s) => s.key).filter((key) => keys.has(key)) });
+    });
+    const name = el('span', { class: 'scope-net-name' });
+    name.innerHTML = texToMathML(signal.name);
+    const color = colors.get(signal.key);
+    if (check.checked && color) name.style.color = color;
+    return el('label', { class: 'scope-net', title: signal.domain === 's' ? 'continuous' : 'sampled' }, [check, ...(check.checked && color ? [el('span', { class: 'signal-flow-swatch', style: `background:${color}` })] : []), name]);
+  }));
+}
+
+/** The nets to show: those saved, else the output and the quantizers' inputs. */
+function shownKeys(sim) {
+  const saved = state().nets.filter((key) => sim.signals.some((s) => s.key === key));
+  if (saved.length || state().nets.length) return saved;
+  return sim.signals.filter((s) => s.role === 'output' || s.role === 'quantizer-input' || s.key === api?.flow().output).map((s) => s.key);
+}
+
+function schedule() {
+  clearTimeout(timer);
+  if (scopeShown()) timer = setTimeout(run, 60);
+}
+
+/** Run the diagram and draw what it gives. */
+function run() {
+  if (!scopeShown() || !api) return;
+  const settings = state();
+  const say = (text, error = false) => { win.status.textContent = text; win.status.classList.toggle('analysis-error', error); };
+  if (!hasSignalFlow(editor.circuit)) {
+    fill(null);
+    win.plot.set(null);
+    say('The oscilloscope shows a signal-flow diagram\'s nets: draw one (H(s), H(z), sums, gains, quantizers).');
+    return;
+  }
+  const numbers = api.resolved();
+  const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
+  const { sources } = signalFlowGraph(editor.circuit);
+  const real = sources.filter((s) => !s.quantizer);
+  const input = (real.find((s) => s.id === settings.input) || real.find((s) => s.id === api.flow().swingInput) || real[0])?.id || '';
+  const frequency = settings.frequency ? typedFraction(settings.frequency) : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
+  const samples = settings.samples || 1024;
+  const sim = prepareSimulation(editor.circuit, {
+    values, sources: api.flow().sources, input, output: api.flow().output, frequency, samples, warmup: Math.min(samples, 1024), dither: api.flow().dither,
+  });
+  if (!sim.ok) {
+    fill(null);
+    win.plot.set(null);
+    say(sim.error, true);
+    return;
+  }
+  const keys = shownKeys(sim);
+  const used = new Set();
+  for (const key of keys) {
+    let color = colors.get(key);
+    if (!color || used.has(color)) color = TRACE_COLORS.find((c) => !used.has(c)) || TRACE_COLORS[0];
+    colors.set(key, color);
+    used.add(color);
+  }
+  fill(sim);
+  const indices = keys.map((key) => sim.signals.findIndex((s) => s.key === key)).filter((i) => i >= 0);
+  const amplitude = Number.isFinite(Number(settings.amplitude)) && settings.amplitude !== '' ? Number(settings.amplitude) : -6;
+  const result = sim.run(amplitude, { waves: indices });
+  const series = (result.waves || []).map((wave) => {
+    const signal = sim.signals[wave.index];
+    return {
+      label: signal.name,
+      color: colors.get(signal.key),
+      role: 'curve',
+      stairs: !wave.continuous,
+      points: wave.t.map((t, i) => [t, Number.isFinite(wave.v[i]) ? wave.v[i] : null]),
+    };
+  });
+  win.plot.set({
+    key: 'scope',
+    title: 'Waveforms',
+    x: { scale: 'linear', label: 'n (t/T_{s})', range: [0, Math.max(1, samples - 1)] },
+    y: { scale: 'linear', label: 'value', include: [0] },
+    series,
+    vlines: [],
+    hlines: [{ y: 0, role: 'zero' }, ...(sim.fullScale ? [{ y: sim.fullScale, role: 'band' }, { y: -sim.fullScale, role: 'band' }] : [])],
+  });
+  const cycles = sim.frequency * samples;
+  say(`${result.overloaded ? 'The loop ran away: shown up to there. ' : ''}A ${amplitude} dBFS sine at f/fs = ${Number(sim.frequency.toPrecision(4))} (${Math.round(cycles)} cycles in ${samples} samples, after ${Math.min(samples, 1024)} to settle); full scale ±${sim.fullScale}.`, result.overloaded);
+}
+
+function syncButton() {
+  document.getElementById('btn-window-scope')?.setAttribute('aria-checked', String(scopeShown()));
+}
+
+function scopeShown() {
+  return !!win && !win.el.hidden;
+}
+
+function show() {
+  if (!win) build();
+  win.el.hidden = false;
+  win.chrome.place();
+  syncButton();
+  run();
+}
+
+function hide() {
+  if (!win || win.el.hidden) return;
+  win.el.hidden = true;
+  syncButton();
+  canvasEl.focus({ preventScroll: true });
+}
+
+/** Shift+W: show or hide the oscilloscope. */
+function toggleScope() {
+  if (scopeShown()) hide();
+  else show();
+}
+
+/** The coefficients or the diagram moved: run again. */
+function scopeChanged() {
+  schedule();
+}
+
+/** `deps`: the signal-flow window's `{ flow(), resolved() }`. */
+function installScope(deps) {
+  api = deps;
+  document.getElementById('btn-window-scope')?.addEventListener('click', toggleScope);
+  onDocumentShown(() => {
+    colors.clear();
+    win?.plot.set(null);
+    schedule();
+  });
+}
+
+};
+
 __modules["src/web/selection.js"] = function (__require, __exports) {
 __exports.copyableLabelPayload = copyableLabelPayload;
 __exports.selectedSetMoveSource = selectedSetMoveSource;
@@ -67591,6 +67891,7 @@ let expressionTex, parseLevels; __bind(() => { ({ expressionTex, parseLevels } =
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let locusSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, responseSpec, stepSpec, swingSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
+let installScope, scopeChanged, toggleScope; __bind(() => { ({ installScope, scopeChanged, toggleScope } = __require("src/web/scope-window.js")); });
 let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
 let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
@@ -67621,6 +67922,7 @@ let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analy
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -67841,6 +68143,7 @@ function fillForm() {
   fillSwingSources(sources);
   syncDocument();
   renderOptimize();
+  scopeChanged();
 }
 
 let shownDocument;
@@ -68347,6 +68650,7 @@ function coefficientsChanged() {
     renderGraph();
     renderResults();
     swingCoefficientsChanged();
+    scopeChanged();
     if (graphView() === 'loop') { loop = null; renderLoop(); }
   });
 }
@@ -68687,7 +68991,7 @@ function renderPlots() {
     viewButton('locus', 'Locus', 'The poles as one coefficient sweeps'),
     viewButton('swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'),
     viewButton('loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins'),
-  ]));
+  ]), el('button', { type: 'button', class: 'signal-flow-scope', text: 'Oscilloscope', title: 'The nets in time, driven by a sine, in a window of their own (Shift+W)', onclick: () => toggleScope() }));
   // The signal band, one setting for every view: the response's band lines
   // and SQNR, the specs, and where each test's sine sits unless it is set.
   section.querySelector('.signal-flow-band-host').replaceChildren(bandControls());
@@ -69179,6 +69483,7 @@ function installSignalFlowUi() {
     filledRevision = editor.modelRevision;
     fillForm();
   });
+  installScope({ flow, resolved });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;
@@ -71281,6 +71586,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
     ['Shift+S', 'show or hide the small-signal analysis window'],
     ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
+    ['Shift+W', 'show or hide the oscilloscope: a signal-flow diagram\'s nets in time; drag pans, right-drag zooms (a flat stroke time only), the wheel zooms'],
     ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],

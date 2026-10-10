@@ -875,6 +875,64 @@ button:disabled {
   padding: 8px 16px 14px;
 }
 
+/* The oscilloscope (scope-window.js): its stimulus, the plot, the nets. */
+.scope-window {
+  width: min(40rem, calc(100% - 16px));
+  height: min(30rem, calc(100% - 16px));
+  min-height: 18rem;
+}
+
+.scope-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+}
+
+.scope-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+
+.scope-controls label {
+  color: var(--text-dim);
+}
+
+.scope-field {
+  width: 5.5em;
+  height: var(--control-h-sm);
+}
+
+.scope-plot {
+  flex: 1 1 auto;
+  min-height: 8rem;
+}
+
+.scope-nets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  max-height: 5.5em;
+  overflow-y: auto;
+  font-size: var(--text-sm);
+}
+
+.scope-net {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.scope-status {
+  margin: 0;
+}
+
 /* The calculator (calculator-window.js): past results over one line. */
 .calculator-window {
   width: min(24rem, calc(100% - 16px));

@@ -361,7 +361,8 @@ export function createPlotView({ height = 230, fill = false, wheel = 'modifier',
   });
   el.addEventListener('pointermove', (ev) => {
     if (box || el.classList.contains('panning')) return;
-    hover = local(ev);
+    const at = local(ev);
+    hover = { px: at.x, py: at.y };
     schedule();
   });
   el.addEventListener('pointerleave', () => { hover = null; schedule(); });

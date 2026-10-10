@@ -58,11 +58,20 @@ export function normalizeWindows(value) {
     const history = (Array.isArray(calculator.history) ? calculator.history : []).map(calculatorEntry).filter(Boolean).slice(-CALCULATOR_HISTORY);
     if (history.length) windows.calculator = { history };
   }
+  // The oscilloscope: the nets it shows (signal keys) and its stimulus --
+  // the source the sine drives, its amplitude (dBFS) and frequency (f/fs)
+  // as typed, and how many samples it runs.
   const scope = object(source.scope);
   if (scope) {
     const nets = (Array.isArray(scope.nets) ? scope.nets : []).filter((net) => typeof net === 'string' && net).map((net) => net.slice(0, 200)).slice(0, 16);
-    const periods = Math.round(Number(scope.periods));
-    windows.scope = { nets, ...(periods > 0 ? { periods: Math.min(periods, 100000) } : {}) };
+    const samples = Math.round(Number(scope.samples));
+    windows.scope = {
+      nets,
+      ...(samples > 0 ? { samples: Math.max(64, Math.min(samples, 1 << 16)) } : {}),
+      ...(text(scope.input) ? { input: text(scope.input) } : {}),
+      ...(text(scope.amplitude, 40) ? { amplitude: text(scope.amplitude, 40) } : {}),
+      ...(text(scope.frequency, 40) ? { frequency: text(scope.frequency, 40) } : {}),
+    };
   }
   // The small-signal form: analysis-options.js reads (and migrates) it.
   const analysis = object(source.analysis);
