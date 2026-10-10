@@ -509,3 +509,32 @@ coefficient keeps its fraction in its field and in plot legends
 typed (3/16).
 
 Not yet: other grids (CSD digits).
+
+## Invariants
+
+Block diagrams have their own mode in the analysis window
+(`src/core/analysis/signal-flow.js`): `tf_s`/`tf_z` blocks, sum and multiply
+junctions, gains, and sources (input ports or any undriven wire), solved
+exactly with the same rational algebra (one RHS per input). A `sampler`
+splits a continuous-time loop from a sampled one: the continuous side is
+solved exactly, its paths from sampled signals are sampled exactly
+(`src/core/analysis/sampling.js`, the DAC pulse being part of the path, no
+transform choice), and the sampled side is solved in z at the coefficients'
+numbers. **Swing** simulates the diagram in time (`simulate.js`): each
+net's peak against a sine's amplitude, the continuous side integrated
+exactly between samples. Wires into a
+sum's, multiplier's, transfer function's, or quantizer's input draw an
+arrowhead there automatically (render-time only, never stored). It never shares state with the small-signal form, and it
+refuses rather than guesses: a multiply of two signals, `s` and `z` meeting
+anywhere but a sampler or a DAC block, a continuous output of a sampled
+loop, a delay inside a continuous loop that is sampled, an undriven or
+doubly driven signal. **Optimize** searches the free coefficients (CMA-ES,
+`src/core/analysis/optimize.js`) against band specs on transfer functions
+and the swing test (limits on each net's 3-sigma level by default; each
+new best verified with long runs), feasibility first, scoring candidates
+in worker threads; the setup is document data (`analysisValues.flow.optimize`).
+After a run, `refine.js` tries coefficients that barely matter at zero
+(kept only if every limit holds) and lists each one's sensitivity (dB per
+1%, from the specs alone). Rounding (`rounding.js`) then makes the free
+coefficients fractions m/n, one n per block (`coefficientGroups`), kept as
+`analysisValues.fractions`.

@@ -93,7 +93,7 @@ Use `addNetLabel`, `renameNet`, and `renameNetLabel` for electrical-label and
 net-name changes; do not write `net.name` from editor code. Net-label text is
 derived from its physical net name, and removing one occurrence leaves the net
 and its name intact. Net labels are placed where their box touches their
-drawable wire (see `AGENTS.md`); the editor's
+drawable wire (see `docs/model.md`); the editor's
 `Shift+L` tool requires an unambiguous physical wire, using one selected/highlighted
 net to resolve a crossing. `Shift+N` places one free annotation and then
 returns to selection; `a` and `b` likewise place one arrow or box annotation.

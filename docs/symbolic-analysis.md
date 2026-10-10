@@ -307,3 +307,56 @@ identities compose into one fraction; multiplying factors in poles and zeros
 are collected in its numerator, while proven parallel branches remain visible. Fraction spacing is measured in
 consistent units before final label placement and remains stable across zoom
 and reload.
+
+## Pipeline invariants
+
+The v2 pipeline builds one exact full-RLC MNA model for `Z_in(s)`, `Z_out(s)`,
+and `A_v(s)`, then presents derived equations. The optional `Z_m`, `G_m`, and
+`A_i` transfer functions (`transferFunctions`) come from the same two solve
+columns, never from another solve. Noise (`noise`) adds one RHS column per
+selected generator to that same solve. The main implementation is in
+`src/core/analysis/`; the user-facing contract is above.
+
+- Independent DC current sources open, voltage sources short, and DC
+  power/reference rails share AC ground. Capacitors contribute `sC`; inductors
+  use an MNA branch-current stamp.
+- A selected input/output port is never silently made the AC reference. Whole
+  virtual-name groups follow the selected node. Unused input ports are held at
+  AC ground. Ambiguous, singular, floating, or unsupported selections return a
+  diagnostic rather than a guessed equation.
+- Opamps are VCVSs, ideal (a nullor, folded out of the system before the
+  solve, `reduceNullors`) unless a part's model is finite gain `A` or a single
+  pole `omega_t/s`; MNA stamps the inverse gain. A `gm` cell is a VCCS.
+- Loop gain is a return ratio at a picked opamp or transistor
+  (`loop-gain.js`): one more solve of the selected model, the element's
+  output from a unit test source and the input shorted, never Miller-split.
+- Three-terminal MOS bulk is implicitly tied to VSS/VDD; four-terminal MOS
+  uses its actual bulk. Body effect may be omitted without reconnecting the
+  bulk. `r_o → infinity` and infinite resistor attributes remove branches
+  before solving when safe; triode uses its separate `r_{ds}` model.
+- Model simplifications affect conversion/solving: body effect, channel-length
+  modulation, Miller reduction, and MOS parasitics. Equation approximations
+  affect presentation only: high intrinsic gain and dominant pole. The
+  normalized option defaults and labels are in `src/web/analysis-options.js`.
+- `reduceNetwork` pre-reduces parallel branches only. It records equivalence
+  proofs used by presentation; do not add series pre-reduction to the solver.
+  `report-adapter.js` re-renders every displayed AC/DC row, so pass its
+  equivalence options, named sub-expressions (`definitions.js`), and
+  provenance through every row, including poles/zeros and noise.
+- The Bode tab evaluates the exact coefficients numerically in relative
+  units (`src/core/analysis/bode.js`); it never solves again and never takes
+  design values. A box annotation may carry its sketch (`plot`). Its slider
+  ratios, like the signal-flow coefficients, are saved with the document
+  (`Circuit#analysisValues`); a slider move is a settings change
+  (`markSettingsChanged`): saved, never staleness, and one undo entry per
+  finished adjustment (a slider let go, a field committed, Apply), not per
+  tick -- the analysis window brackets each control's gesture
+  (`beginSettingsEdit`/`endSettingsEdit`); undoing it keeps what was derived
+  current.
+- The GUI calls `adaptCombinedReport(analyzeSmallSignalV2(...))`, never the v2
+  analyzer directly. Provenance is opt-in and only decorates live equation
+  MathML; it must not leak into labels, documents, or exports.
+
+Read the focused tests before changing this pipeline. In particular, the
+analysis corpus, report-adapter, provenance, Miller, parasitics, reduction,
+and topology tests encode behavior that prose cannot safely replace.

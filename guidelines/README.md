@@ -50,5 +50,5 @@ Both roles share the visual quality bar — see [style-guide.md](./style-guide.m
   `chromium --remote-debugging-port=<port>` and CDP via `Runtime.evaluate`.
 - CLI commands set the active circuit and the browser auto-loads changed
   revisions through live sync. Mutated commands persist
-  `<workspace>/<name>.json`; see `AGENTS.md` for the sync and
+  `<workspace>/<name>.json`; see `docs/editor.md` for the sync and
   persistence contract.

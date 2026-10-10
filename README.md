@@ -109,7 +109,7 @@ npm run serve   # dev server with auto-restart at http://127.0.0.1:47280/
 npm test
 ```
 
-- [`AGENTS.md`](AGENTS.md): editor behavior and the symbol specification
+- [`docs/model.md`](docs/model.md) · [`docs/editor.md`](docs/editor.md): the symbol specification and model rules, and editor behavior
 - [`docs/atlas.md`](docs/atlas.md) · [`docs/hierarchy.md`](docs/hierarchy.md) · [`docs/beats.md`](docs/beats.md): the Atlas, linked designs, and beats
 - [`docs/topological-small-signal.md`](docs/topological-small-signal.md): how the analysis works
 

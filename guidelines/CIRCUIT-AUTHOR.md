@@ -13,7 +13,7 @@ modify the requested circuit and to inspect its saved state.
 
 **Allowed:**
 
-- read this guide, `style-guide.md`, `AGENTS.md` when an exact behavior matters,
+- read this guide, `style-guide.md`, `AGENTS.md` and `docs/model.md` when an exact behavior matters,
   the requested circuit's `<workspace>/<name>.json`, its rendering
   from the `svg` command, and any `circuits/<name>/learnings.md`;
 - use `add`, `move`, `rotate`, `mirror`, `connect`, `net`, `disconnect`,
@@ -69,7 +69,7 @@ Companion docs:
 - [style-guide.md](./style-guide.md) — the visual / electrical standard your
   output must meet.
 - [README.md](./README.md) — repo layout and the developer-vs-author split.
-- `AGENTS.md` — cross-cutting symbol, label, net, and routing invariants;
+- `docs/model.md` — the symbol, label, net, and routing contracts (summarized in `AGENTS.md`);
   consult the component definitions/tests when you need an exact number.
 
 ## Authoring workflow
@@ -143,7 +143,7 @@ sch> eval
 sch> quit
 ```
 
-The browser live-syncs changed active-circuit revisions while visible; CLI commands set the active circuit, and mutated commands persist `<workspace>/<name>.json`. See `AGENTS.md` for the authoritative sync contract. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
+The browser live-syncs changed active-circuit revisions while visible; CLI commands set the active circuit, and mutated commands persist `<workspace>/<name>.json`. See `docs/editor.md` for the authoritative sync contract. A bare CLI invocation enters a circuit picker after a moment; use the named-circuit form above.
 
 ## Start so the user sees you live
 
