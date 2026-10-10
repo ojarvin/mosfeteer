@@ -23,6 +23,7 @@ export const EDITOR_COMMANDS = [
   { name: 'settings', aliases: ['preferences', 'prefs', 'options', 'config'], help: 'open the settings menu' },
   { name: 'panel', aliases: ['sidebar', 'side-panel', 'sidepanel', 'inspector'], toggle: true, help: 'show or hide the components, nets, and selection panel (Shift+P)' },
   { name: 'reference', aliases: ['reference-window', 'references', 'ref'], toggle: true, help: 'show or hide reference windows: another design beside this one (Shift+V)' },
+  { name: 'calculator', aliases: ['calc', 'calculate', 'math-window'], toggle: true, help: 'show or hide the calculator: type 20*log(123), Enter works it out (Shift+E)' },
   { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
   { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },

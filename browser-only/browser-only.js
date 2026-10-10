@@ -16835,6 +16835,254 @@ function busMarkD({ x, y }) {
 __exports.BUS_COUNT_SIZE = BUS_COUNT_SIZE;
 };
 
+__modules["src/core/calculator.js"] = function (__require, __exports) {
+__exports.calculate = calculate;
+__exports.formatResult = formatResult;
+__exports.siResult = siResult;
+__exports.replayNames = replayNames;
+/**
+ * The calculator's arithmetic: one line typed the way a search bar takes it
+ * (`20*log(123)`, `123e-12`, `2pi*1k`, `sqrt(2)/2`), evaluated to a number.
+ *
+ * - Numbers: `12`, `1.5`, `.5`, `123e-12`, with an SI suffix straight after
+ *   (`4.7k`, `10u` or `10µ`, `1.5meg`, `2p`): f p n u m k meg M G T.
+ * - Operators: `+ - * /`, `^` (or `**`, right-associative, above unary
+ *   minus: `-2^2` is -4), `!` factorial, `%` percent after a number
+ *   (`5%` is 0.05) and modulo between two (`10 % 3`), and implicit
+ *   multiplication (`2pi`, `3(4+5)`, `(1+2)(3+4)`). `×`, `÷`, `−` work too.
+ * - Functions: `log` is base 10 (`ln` is natural, `log2`, `log10`), `exp`,
+ *   `sqrt`, `cbrt`, `abs`, the trigonometric functions in radians and their
+ *   inverses and hyperbolics, `floor`, `ceil`, `round`, `sign`, `min`,
+ *   `max`, `hypot`, `atan2`; `db(x)` is 20 log10|x| and `undb(x)` back.
+ * - Names: `pi` (`π`), `e`, `ans` (the last result), and any name given a
+ *   value with `name = expression`.
+ */
+
+const SI = { f: 1e-15, p: 1e-12, n: 1e-9, u: 1e-6, 'µ': 1e-6, 'μ': 1e-6, m: 1e-3, k: 1e3, K: 1e3, meg: 1e6, Meg: 1e6, MEG: 1e6, M: 1e6, G: 1e9, T: 1e12 };
+
+function factorial(n) {
+  if (!Number.isInteger(n) || n < 0) throw new Error('! takes a whole number from 0 up');
+  if (n > 170) return Infinity;
+  let value = 1;
+  for (let k = 2; k <= n; k++) value *= k;
+  return value;
+}
+
+const FUNCTIONS = {
+  log: Math.log10, log10: Math.log10, lg: Math.log10, ln: Math.log, log2: Math.log2, exp: Math.exp,
+  sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs, sign: Math.sign,
+  sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan,
+  arcsin: Math.asin, arccos: Math.acos, arctan: Math.atan,
+  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh, asinh: Math.asinh, acosh: Math.acosh, atanh: Math.atanh,
+  floor: Math.floor, ceil: Math.ceil, round: Math.round, trunc: Math.trunc,
+  min: Math.min, max: Math.max, hypot: Math.hypot, atan2: Math.atan2,
+  db: (x) => 20 * Math.log10(Math.abs(x)), undb: (x) => 10 ** (x / 20),
+  fact: factorial,
+};
+
+const CONSTANTS = { pi: Math.PI, 'π': Math.PI, e: Math.E, tau: 2 * Math.PI };
+
+const NAME = /^[A-Za-z_π][\w]*/;
+
+function tokenize(text) {
+  const source = String(text).replace(/×/g, '*').replace(/÷/g, '/').replace(/[−–]/g, '-').replace(/\*\*/g, '^');
+  const tokens = [];
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (/\s/.test(ch)) { i++; continue; }
+    const number = source.slice(i).match(/^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/i);
+    if (number) {
+      let value = Number(number[0]);
+      i += number[0].length;
+      // An SI suffix straight after the number, unless the letters spell a
+      // name of their own (2pi, 2e, 3ans: implicit multiplication).
+      const letters = source.slice(i).match(/^[A-Za-zµμ]+/)?.[0];
+      if (letters && !(letters in CONSTANTS) && !(letters in FUNCTIONS) && letters !== 'ans') {
+        const suffix = ['meg', 'Meg', 'MEG'].find((s) => letters === s) || (letters.length === 1 && letters in SI ? letters : null);
+        if (suffix) {
+          value *= SI[suffix];
+          i += suffix.length;
+        }
+      }
+      tokens.push({ type: 'number', value });
+      continue;
+    }
+    const name = source.slice(i).match(NAME);
+    if (name) {
+      tokens.push({ type: 'name', value: name[0] });
+      i += name[0].length;
+      continue;
+    }
+    if ('+-*/^()!%,='.includes(ch)) {
+      tokens.push({ type: ch });
+      i++;
+      continue;
+    }
+    throw new Error(`"${ch}" is not something the calculator reads`);
+  }
+  return tokens;
+}
+
+/** Parse and evaluate `tokens` with `names` ({ name: number }). */
+function evaluateTokens(tokens, names) {
+  let at = 0;
+  const peek = () => tokens[at];
+  const next = () => tokens[at++];
+  const expect = (type) => {
+    const token = next();
+    if (token?.type !== type) throw new Error(token ? `expected "${type}" before "${token.value ?? token.type}"` : `expected "${type}" at the end`);
+  };
+  // A factor may follow with no operator: a number, a name, or "(".
+  const startsFactor = (token) => token && (token.type === 'number' || token.type === 'name' || token.type === '(');
+
+  function sum() {
+    let value = product();
+    while (peek()?.type === '+' || peek()?.type === '-') {
+      const op = next().type;
+      const right = product();
+      value = op === '+' ? value + right : value - right;
+    }
+    return value;
+  }
+  function product() {
+    let value = unary();
+    for (;;) {
+      const token = peek();
+      if (token?.type === '*' || token?.type === '/') {
+        next();
+        const right = unary();
+        value = token.type === '*' ? value * right : value / right;
+      } else if (token?.type === '%' && startsFactor(tokens[at + 1])) {
+        next();
+        value %= unary();
+      } else if (startsFactor(token)) {
+        value *= unary();
+      } else return value;
+    }
+  }
+  function unary() {
+    if (peek()?.type === '-') { next(); return -unary(); }
+    if (peek()?.type === '+') { next(); return unary(); }
+    return power();
+  }
+  function power() {
+    const base = postfix();
+    if (peek()?.type === '^') {
+      next();
+      return base ** unary();
+    }
+    return base;
+  }
+  function postfix() {
+    let value = primary();
+    for (;;) {
+      if (peek()?.type === '!') { next(); value = factorial(value); } else if (peek()?.type === '%' && !startsFactor(tokens[at + 1])) { next(); value /= 100; } else return value;
+    }
+  }
+  function primary() {
+    const token = next();
+    if (!token) throw new Error('the expression ends too soon');
+    if (token.type === 'number') return token.value;
+    if (token.type === '(') {
+      const value = sum();
+      expect(')');
+      return value;
+    }
+    if (token.type === 'name') {
+      const name = token.value;
+      if (peek()?.type === '(' && FUNCTIONS[name]) {
+        next();
+        const args = [];
+        if (peek()?.type !== ')') {
+          args.push(sum());
+          while (peek()?.type === ',') { next(); args.push(sum()); }
+        }
+        expect(')');
+        return FUNCTIONS[name](...args);
+      }
+      if (peek()?.type === '(' && !(name in CONSTANTS) && !Object.prototype.hasOwnProperty.call(names, name)) throw new Error(`"${name}" is not a function the calculator knows`);
+      if (Object.prototype.hasOwnProperty.call(names, name)) return names[name];
+      if (name in CONSTANTS) return CONSTANTS[name];
+      if (FUNCTIONS[name]) {
+        // A function with its argument written without parentheses: ln 2.
+        return FUNCTIONS[name](power());
+      }
+      throw new Error(name === 'ans' ? 'there is no earlier result for ans' : `"${name}" has no value (give it one: ${name} = 1.5)`);
+    }
+    throw new Error(`"${token.type}" cannot start a value`);
+  }
+
+  const value = sum();
+  if (at < tokens.length) {
+    const token = tokens[at];
+    throw new Error(`unexpected "${token.value ?? token.type}"`);
+  }
+  return value;
+}
+
+/**
+ * Evaluate one line. `names` holds the values of `ans` and of names given
+ * earlier; an assignment (`x = 2k`) returns its name with the value.
+ * Returns `{ value, name? }`; throws an Error that says what is wrong.
+ */
+function calculate(line, names = {}) {
+  const text = String(line ?? '').trim();
+  if (!text) throw new Error('nothing to calculate');
+  const assignment = text.match(/^([A-Za-z_][\w]*)\s*=(?!=)\s*(.+)$/);
+  if (assignment) {
+    const [, name] = assignment;
+    if (name in FUNCTIONS || name in CONSTANTS || name === 'ans') throw new Error(`"${name}" is a built-in name`);
+    return { name, value: evaluateTokens(tokenize(assignment[2]), names) };
+  }
+  return { value: evaluateTokens(tokenize(text), names) };
+}
+
+/** A result as the calculator shows it: up to 12 significant digits,
+ *  powers of ten for the very small and the very large. */
+function formatResult(value) {
+  if (Number.isNaN(value)) return 'not a number';
+  if (value === Infinity) return '∞';
+  if (value === -Infinity) return '-∞';
+  if (value === 0) return '0';
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1e-4 && magnitude < 1e15) {
+    return String(Number(value.toPrecision(12)));
+  }
+  const [mantissa, exponent] = value.toExponential(11).split('e');
+  return `${String(Number(mantissa))}e${Number(exponent)}`;
+}
+
+const PREFIXES = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p'], [1e-15, 'f']];
+
+/** The value with an SI prefix (`4.7k`, `1.5p`), when one says it more
+ *  plainly than the number; null otherwise. */
+function siResult(value) {
+  const magnitude = Math.abs(value);
+  if (!Number.isFinite(value) || value === 0 || magnitude < 1e-15 || magnitude >= 1e15) return null;
+  const [scale, prefix] = PREFIXES.find(([s]) => magnitude >= s * (1 - 1e-12)) || PREFIXES.at(-1);
+  if (!prefix) return null;
+  return `${Number((value / scale).toPrecision(6))}${prefix}`;
+}
+
+/**
+ * The names a history of lines leaves set: each line run in order, `ans`
+ * following the last good result. Lines that fail are skipped.
+ */
+function replayNames(lines) {
+  const names = {};
+  for (const line of lines) {
+    try {
+      const { name, value } = calculate(line, names);
+      if (name) names[name] = value;
+      names.ans = value;
+    } catch { /* a line that failed then fails now */ }
+  }
+  return names;
+}
+
+};
+
 __modules["src/core/commands.js"] = function (__require, __exports) {
 __exports.splitArgs = splitArgs;
 __exports.parseArgs = parseArgs;
@@ -42779,6 +43027,186 @@ function placeSketch(existing) {
 
 };
 
+__modules["src/web/calculator-window.js"] = function (__require, __exports) {
+__exports.calculateLine = calculateLine;
+__exports.calculatorShown = calculatorShown;
+__exports.toggleCalculator = toggleCalculator;
+__exports.installCalculator = installCalculator;
+let calculate, formatResult, replayNames, siResult; __bind(() => { ({ calculate, formatResult, replayNames, siResult } = __require("src/core/calculator.js")); });
+let CALCULATOR_HISTORY; __bind(() => { ({ CALCULATOR_HISTORY } = __require("src/core/window-state.js")); });
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
+/**
+ * The calculator: a floating window with one line to type into and the
+ * results above it, no buttons. Enter works the line out (core/calculator.js:
+ * `20*log(123)`, `123e-12`, `4.7k`, `R = 10k`, `ans`); the last ten results
+ * show, older ones scroll. Up and Down step through what was typed, and a
+ * click on a result puts its value in the line. The results are saved with
+ * the design (`Circuit#windows.calculator`), names given in them included,
+ * so another design has its own and this one keeps them when it is closed
+ * and opened again. `Shift+E` shows or hides it.
+ */
+
+
+
+
+
+
+
+
+/** Results shown without scrolling. */
+const SHOWN = 10;
+
+let win = null; // { el, list, input, chrome }
+let names = {}; // ans and the names given, from the design's results
+let recall = -1; // Up/Down: how far back in what was typed
+
+const history = () => editor.circuit.windows.calculator?.history || [];
+
+function el(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (value !== false && value !== null && value !== undefined) node.setAttribute(key, value === true ? '' : value);
+  }
+  node.append(...children);
+  return node;
+}
+
+function row(entry) {
+  const result = el('span', { class: `calculator-result${entry.error ? ' analysis-error' : ''}`, text: entry.error ? entry.result : `= ${entry.result}` });
+  const item = el('li', { class: 'calculator-entry' }, [el('span', { class: 'calculator-input', text: entry.input }), result]);
+  if (!entry.error) {
+    item.title = 'Click to put this value in the line';
+    item.addEventListener('click', () => insert(entry.result.split(' ')[0]));
+  }
+  return item;
+}
+
+function renderList() {
+  if (!win) return;
+  const entries = history();
+  win.list.replaceChildren(...entries.map(row));
+  win.empty.hidden = entries.length > 0;
+  win.list.scrollTop = win.list.scrollHeight;
+}
+
+/** Put text into the line at the caret. */
+function insert(text) {
+  const { input } = win;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  input.focus();
+  input.setSelectionRange(start + text.length, start + text.length);
+}
+
+/** Work out one line and keep it with the design. */
+function calculateLine(line) {
+  const text = String(line).trim();
+  if (!text) return null;
+  let entry;
+  try {
+    const { name, value } = calculate(text, names);
+    const shown = formatResult(value);
+    const si = siResult(value);
+    entry = { input: text, result: si && si !== shown ? `${shown} (${si})` : shown };
+    if (name) names[name] = value;
+    names.ans = value;
+  } catch (err) {
+    entry = { input: text, result: err.message, error: true };
+  }
+  const state = editor.circuit.windows;
+  state.calculator = { history: [...history(), entry].slice(-CALCULATOR_HISTORY) };
+  markSettingsChanged();
+  renderList();
+  return entry;
+}
+
+function onKey(ev) {
+  ev.stopPropagation();
+  const { input } = win;
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    if (calculateLine(input.value)) input.value = '';
+    recall = -1;
+  } else if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+    const typed = history().map((entry) => entry.input);
+    if (!typed.length) return;
+    ev.preventDefault();
+    recall = ev.key === 'ArrowUp' ? Math.min(typed.length - 1, recall + 1) : recall - 1;
+    input.value = recall < 0 ? '' : typed[typed.length - 1 - recall];
+    recall = Math.max(-1, recall);
+  } else if (ev.key === 'Escape') {
+    ev.preventDefault();
+    if (input.value) input.value = '';
+    else hide();
+  }
+}
+
+function build() {
+  const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the calculator', title: 'Close (Shift+E)', text: '×' });
+  const list = el('ol', { class: 'calculator-list', 'aria-live': 'polite' });
+  const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2.' });
+  const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
+  const node = el('section', { class: 'floating-window calculator-window', 'aria-labelledby': 'calculator-title', hidden: true }, [
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), close]),
+    el('div', { class: 'calculator-body' }, [empty, list, input]),
+  ]);
+  node.style.setProperty('--calculator-rows', String(SHOWN));
+  input.addEventListener('keydown', onKey);
+  canvasEl.closest('.canvas-pane').append(node);
+  const chrome = floatingWindow(node, { key: 'calculator', onClose: hide, resizable: true });
+  win = { el: node, list, empty, input, chrome };
+}
+
+function syncButton() {
+  document.getElementById('btn-window-calculator')?.setAttribute('aria-pressed', String(calculatorShown()));
+}
+
+function calculatorShown() {
+  return !!win && !win.el.hidden;
+}
+
+function show() {
+  if (!win) build();
+  win.el.hidden = false;
+  renderList();
+  win.chrome.place();
+  win.input.focus();
+  syncButton();
+}
+
+function hide() {
+  if (!win || win.el.hidden) return;
+  win.el.hidden = true;
+  syncButton();
+  canvasEl.focus({ preventScroll: true });
+}
+
+/** Shift+E: show or hide the calculator. */
+function toggleCalculator() {
+  if (calculatorShown()) hide();
+  else show();
+}
+
+function installCalculator() {
+  document.getElementById('btn-window-calculator')?.addEventListener('click', toggleCalculator);
+  // Each design has its own results, and the names they gave.
+  onDocumentShown(() => {
+    names = replayNames(history().filter((entry) => !entry.error).map((entry) => entry.input));
+    recall = -1;
+    if (win) win.input.value = '';
+    renderList();
+  });
+}
+
+};
+
 __modules["src/web/canvas-view.js"] = function (__require, __exports) {
 __exports.paneSize = paneSize;
 __exports.viewFromCenter = viewFromCenter;
@@ -43241,12 +43669,14 @@ let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.
 let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy-paste.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
 let referenceWindowsShown, toggleReferenceWindows; __bind(() => { ({ referenceWindowsShown, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
+let calculatorShown, toggleCalculator; __bind(() => { ({ calculatorShown, toggleCalculator } = __require("src/web/calculator-window.js")); });
 /**
  * The `:` command line: history, Tab completion with a suggestion list, and
  * the editor commands (panels, view toggles, menus, dialogs). Everything else
  * goes to the shared document command language through runLine. The
  * vocabulary and completion rules are command-line.js.
  */
+
 
 
 
@@ -43289,6 +43719,7 @@ const ACTIONS = {
   panel: (state) => setSidePanelVisible(state ?? !sidePanelVisible()),
   analysis: (state) => toggleTo(state, !analysisDialog.hidden, () => toggleAnalysisDock()),
   reference: (state) => toggleTo(state, referenceWindowsShown(), toggleReferenceWindows),
+  calculator: (state) => toggleTo(state, calculatorShown(), toggleCalculator),
   grid: (state) => setGrid(state ?? !editor.showGrid),
   guides: (state) => setGuides(state ?? !editor.guidesVisible),
   crosshair: (state) => setCrosshair(state ?? !editor.crosshairVisible),
@@ -43563,6 +43994,7 @@ const EDITOR_COMMANDS = [
   { name: 'settings', aliases: ['preferences', 'prefs', 'options', 'config'], help: 'open the settings menu' },
   { name: 'panel', aliases: ['sidebar', 'side-panel', 'sidepanel', 'inspector'], toggle: true, help: 'show or hide the components, nets, and selection panel (Shift+P)' },
   { name: 'reference', aliases: ['reference-window', 'references', 'ref'], toggle: true, help: 'show or hide reference windows: another design beside this one (Shift+V)' },
+  { name: 'calculator', aliases: ['calc', 'calculate', 'math-window'], toggle: true, help: 'show or hide the calculator: type 20*log(123), Enter works it out (Shift+E)' },
   { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
   { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },
@@ -51039,6 +51471,7 @@ const ICON_PATHS = {
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
   timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
+  calculator: '<rect x="5.5" y="3.5" width="13" height="17" rx="2"/><path d="M8.5 7.5h7"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01" stroke-width="2.4" stroke-linecap="round"/>',
   renumber: '<path d="M4 4h3v6M4 10h6"/><path d="M11 11l8 8m0-5v5h-5"/>',
   stub: '<path d="M4.5 12h6"/><circle cx="4" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M11 8.5h6.5l3 3.5-3 3.5H11z" fill="currentColor" fill-opacity=".16"/>',
   align: '<path d="M4 3v18"/><rect x="7" y="6" width="11" height="4" rx="1"/><rect x="7" y="14" width="7" height="4" rx="1"/><path d="m20 12-2-2m2 2-2 2"/>',
@@ -53242,6 +53675,7 @@ let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickA
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
+let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows; __bind(() => { ({ copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
@@ -53259,6 +53693,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -60024,6 +60459,7 @@ let suppressContextMenuUntil = 0;
 installContextMenu();
 installHierarchy();
 installReferenceWindows();
+installCalculator();
 installRenumberUi();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
@@ -60472,6 +60908,12 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'J') {
     joinSelectedLines();
+    return;
+  }
+
+  // Shift+E: the calculator (E for evaluate), open or closed.
+  if (key === 'E') {
+    toggleCalculator();
     return;
   }
 
@@ -69992,6 +70434,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
     ['Shift+S', 'show or hide the small-signal analysis window'],
     ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
+    ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],

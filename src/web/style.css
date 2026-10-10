@@ -875,6 +875,74 @@ button:disabled {
   padding: 8px 16px 14px;
 }
 
+/* The calculator (calculator-window.js): past results over one line. */
+.calculator-window {
+  width: min(24rem, calc(100% - 16px));
+  min-height: 0;
+}
+
+.calculator-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+}
+
+.calculator-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(var(--calculator-rows, 10) * 2.6em);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  font: var(--text-md)/1.4 var(--font-mono);
+}
+
+.calculator-window[style*="height"] .calculator-list {
+  max-height: none;
+}
+
+.calculator-entry {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 12px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.calculator-entry:hover {
+  background: var(--bg-hover);
+}
+
+.calculator-input {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.calculator-result {
+  margin-left: auto;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.calculator-result.analysis-error {
+  font-weight: 400;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.calculator-line {
+  flex: none;
+  height: var(--control-h);
+  font: var(--text-md) var(--font-mono);
+}
+
 /* A row of actions ends a dialog or a window: plain words, the default
    one filled (.primary-action, .confirm-action), a destructive default red. */
 .dialog-actions .button-icon {

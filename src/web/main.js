@@ -79,6 +79,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
+import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
@@ -6782,6 +6783,7 @@ let suppressContextMenuUntil = 0;
 installContextMenu();
 installHierarchy();
 installReferenceWindows();
+installCalculator();
 installRenumberUi();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
@@ -7230,6 +7232,12 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'J') {
     joinSelectedLines();
+    return;
+  }
+
+  // Shift+E: the calculator (E for evaluate), open or closed.
+  if (key === 'E') {
+    toggleCalculator();
     return;
   }
 
