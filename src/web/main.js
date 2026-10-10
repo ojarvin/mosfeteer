@@ -229,8 +229,11 @@ let latestSmallSignalModel = null;
 let analysisPick = null;
 // Windows that show something of the design (window-state.js) follow it:
 // each is told once another document (or another version of it) is shown.
+// A load counts (applyJson with `document: true`); undo, redo, and the
+// working copies a drag makes do not.
 const documentShownHandlers = [];
-let shownWindows = null;
+let documentGeneration = 0;
+let shownGeneration = -1;
 
 installAnalysisUi();
 installSignalFlowUi();
@@ -542,6 +545,8 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
     startSnapshot,
   };
   circuit = loadDocument(JSON.parse(startSnapshot));
+  // The working copy shares the windows' state: it is the same document.
+  circuit.windows = previewTransaction.baseCircuit.windows;
   circuit.adoptTextMetrics(previewTransaction.baseCircuit);
   previewRevision += 1;
   circuit.invalidateRoutingCache();
@@ -652,6 +657,7 @@ export function applyJson(blob, { document: replacesDocument = false } = {}) {
   const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
   if (!replacesDocument && previous) circuit.windows = previous.windows;
+  if (replacesDocument) documentGeneration += 1;
   // Labels whose text is unchanged keep their measured size, instead of
   // every label being measured again (a forced layout each).
   circuit.adoptTextMetrics(previous);
@@ -2491,8 +2497,8 @@ export function onDocumentShown(handler) {
 }
 
 function syncShownDocument() {
-  if (circuit.windows === shownWindows) return;
-  shownWindows = circuit.windows;
+  if (documentGeneration === shownGeneration) return;
+  shownGeneration = documentGeneration;
   for (const handler of documentShownHandlers) handler();
 }
 

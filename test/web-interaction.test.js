@@ -1344,14 +1344,11 @@ test('coming back up from a linked design leaves its peek bubble as it was', () 
 
 test('signal-flow results belong to their document: another one opened starts with none', () => {
   const ui = readFileSync(new URL('../src/web/signal-flow-ui.js', import.meta.url), 'utf8');
-  const sync = ui.slice(ui.indexOf('function syncDocument()'), ui.indexOf('// ----- root locus'));
-  // Keyed by the document, not the circuit object (undo replaces that too).
-  assert.match(sync, /const key = editor\.currentDocumentPath \|\| `unsaved:\$\{editor\.currentCircuitName \|\| ''\}`;/);
-  for (const reset of ['traces = [];', 'latest = null;', 'locus = null;', 'loop = null;', 'spectrum = null;', 'swing = null;', 'resetOptimize();']) assert.ok(sync.includes(reset), reset);
-  // Deriving, annotating, and updating plots check it first.
-  for (const name of ['function derive() {', 'function annotateGraph() {', 'async function updatePlots() {']) {
-    assert.match(ui.slice(ui.indexOf(name), ui.indexOf(name) + 80), /syncDocument\(\);/);
-  }
+  const clear = ui.slice(ui.indexOf('function clearResults()'), ui.indexOf('// ----- root locus'));
+  for (const reset of ['traces = [];', 'latest = null;', 'locus = null;', 'loop = null;', 'spectrum = null;', 'swing = null;', 'resetOptimize();']) assert.ok(clear.includes(reset), reset);
+  // Cleared when another document is shown (main.js onDocumentShown), only then.
+  assert.match(ui, /onDocumentShown\(\(\) => \{\s*chosenThisSession = false;\s*clearResults\(\);/);
+  assert.equal(ui.match(/clearResults\(\);/g).length, 1);
 });
 
 test('? opens Learn over the Atlas as over the drawing', () => {
@@ -1359,4 +1356,15 @@ test('? opens Learn over the Atlas as over the drawing', () => {
   const keys = atlas.slice(atlas.indexOf('export function onAtlasKey'), atlas.indexOf('export function onAtlasKey') + 4000);
   assert.match(keys, /else if \(key === '\?'\) showHelp\(\);/);
   assert.match(atlas, /import \{ showHelp \} from '\.\/help\.js';/);
+});
+
+test('windows reset only when another document is loaded, not for a drag\'s working copy', () => {
+  const main = editorSource();
+  assert.match(main, /if \(replacesDocument\) documentGeneration \+= 1;/);
+  assert.match(main, /if \(documentGeneration === shownGeneration\) return;/);
+  // The drag's copy of the circuit shares the windows' state.
+  assert.match(main, /circuit = loadDocument\(JSON\.parse\(startSnapshot\)\);\s*\/\/[^\n]*\n\s*circuit\.windows = previewTransaction\.baseCircuit\.windows;/);
+  // The signal-flow window has no path-based reset of its own any more.
+  const flow = readFileSync(new URL('../src/web/signal-flow-ui.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(flow, /function syncDocument\(/);
 });

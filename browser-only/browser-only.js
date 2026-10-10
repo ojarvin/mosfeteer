@@ -54505,8 +54505,11 @@ let latestSmallSignalModel = null;
 let analysisPick = null;
 // Windows that show something of the design (window-state.js) follow it:
 // each is told once another document (or another version of it) is shown.
+// A load counts (applyJson with `document: true`); undo, redo, and the
+// working copies a drag makes do not.
 const documentShownHandlers = [];
-let shownWindows = null;
+let documentGeneration = 0;
+let shownGeneration = -1;
 
 installAnalysisUi();
 installSignalFlowUi();
@@ -54818,6 +54821,8 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
     startSnapshot,
   };
   circuit = loadDocument(JSON.parse(startSnapshot));
+  // The working copy shares the windows' state: it is the same document.
+  circuit.windows = previewTransaction.baseCircuit.windows;
   circuit.adoptTextMetrics(previewTransaction.baseCircuit);
   previewRevision += 1;
   circuit.invalidateRoutingCache();
@@ -54928,6 +54933,7 @@ function applyJson(blob, { document: replacesDocument = false } = {}) {
   const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
   if (!replacesDocument && previous) circuit.windows = previous.windows;
+  if (replacesDocument) documentGeneration += 1;
   // Labels whose text is unchanged keep their measured size, instead of
   // every label being measured again (a forced layout each).
   circuit.adoptTextMetrics(previous);
@@ -56767,8 +56773,8 @@ function onDocumentShown(handler) {
 }
 
 function syncShownDocument() {
-  if (circuit.windows === shownWindows) return;
-  shownWindows = circuit.windows;
+  if (documentGeneration === shownGeneration) return;
+  shownGeneration = documentGeneration;
   for (const handler of documentShownHandlers) handler();
 }
 
@@ -68224,27 +68230,17 @@ function fillForm() {
   problems.hidden = !issues.length;
   section.querySelector('.signal-flow-stale').hidden = !latest || revisionCurrent(derivedRevision);
   fillSwingSources(sources);
-  syncDocument();
   renderOptimize();
   scopeChanged();
 }
 
-let shownDocument;
 /**
  * The results belong to the document they were derived in: another one
- * opened (not an undo, which replaces the circuit too) starts with none --
- * no traces, results, locus, loop, spectrum, swing, or optimizer results.
- * Traces of two diagrams are often named alike (OUT/E_QZ1), so another's
- * kept would be drawn at this one's numbers.
+ * shown (onDocumentShown; not an undo, which keeps the windows' state)
+ * starts with none -- no traces, results, locus, loop, spectrum, swing, or
+ * optimizer results. Traces of two diagrams are often named alike
+ * (OUT/E_QZ1), so another's kept would be drawn at this one's numbers.
  */
-function syncDocument() {
-  const key = editor.currentDocumentPath || `unsaved:${editor.currentCircuitName || ''}`;
-  if (key === shownDocument) return;
-  const first = shownDocument === undefined;
-  shownDocument = key;
-  if (!first) clearResults();
-}
-
 function clearResults() {
   for (const view of Object.values(plotViews)) view.set(null);
   traces = [];
@@ -68693,6 +68689,8 @@ function currentSymbols() {
   // A swing sweep runs on every coefficient the diagram names, and the
   // optimizer moves them.
   if (swing || optimized) for (const name of diagramSymbols(editor.circuit)) names.add(name);
+  // The dither's gains shape every simulation though no result holds them.
+  for (const name of ditherSymbols(editor.circuit)) names.add(name);
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
@@ -69101,7 +69099,6 @@ function renderGraph() {
 /** The graph on the drawing: a plot annotation, each trace's equation a
  *  math label in its colour beside it (children of the box, moving with it). */
 function annotateGraph() {
-  syncDocument();
   const shown = shownTraces();
   const plot = graphPlot(shown);
   if (!plot) return;
@@ -69220,7 +69217,6 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
  * plot from a fresh sweep of the nets it shows.
  */
 async function updatePlots() {
-  syncDocument();
   const circuit = editor.circuit;
   const boxes = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot);
   if (!boxes.length) { logLine('No plots on the drawing to update.'); return; }
@@ -69375,7 +69371,6 @@ function rootRow(label, roots, variable, at = '') {
 }
 
 function derive() {
-  syncDocument();
   latest = analyzeSignalFlow(editor.circuit, { output: flow().output, sources: flow().sources, values: resolved() });
   derivedRevision = editor.modelRevision;
   section.querySelector('.signal-flow-stale').hidden = true;
@@ -69516,7 +69511,6 @@ function installSignalFlowUi() {
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;
-    shownDocument = editor.currentDocumentPath || `unsaved:${editor.currentCircuitName || ''}`;
     clearResults();
     if (!analysisDialog.hidden) setMode(suggestedMode());
   });
