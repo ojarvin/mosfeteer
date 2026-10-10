@@ -441,8 +441,10 @@ function colors() {
     text: read('--text', '#17181c'),
     dim: read('--text-dim', '#5a6372'),
     accent: read('--accent', '#1a56db'),
-    // A lifted design's card, and the shadow it casts.
-    card: read('--bg-panel', '#ffffff'),
+    // A lifted design's card -- the paper its drawing was rendered on, so
+    // what the drawing fills with paper (a plot, a block) blends in -- and
+    // the shadow it casts.
+    card: read('--paper', '#fff'),
     shadow: document.documentElement.classList.contains('dark') ? 'rgba(0, 0, 0, 0.7)' : 'rgba(20, 24, 34, 0.28)',
   };
 }
@@ -623,7 +625,7 @@ function liftedPoint(point, flat, id) {
   return { x: cx + (point.x - cx) * grow, y: cy + (point.y - cy) * grow };
 }
 
-/** The card a lifted design rests on: the panel's colour, raised on a
+/** The card a lifted design rests on: the drawing's own paper, raised on a
  *  shadow that deepens and spreads as it rises; its rim a hairline in
  *  drawing units, so it stays fine however far out the desk is zoomed (the
  *  picked one's in the accent). */
