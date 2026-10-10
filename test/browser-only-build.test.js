@@ -49,6 +49,6 @@ test('browser-only bundle publishes every exported function, generators included
   }
   assert.deepEqual(missing, []);
   // The rounding search, a generator, runs from the bundle.
-  const { roundingSearch } = require('src/core/analysis/rounding.js');
-  assert.equal(typeof roundingSearch({ free: [] }, {}).next, 'function');
+  const { polishSearch } = require('src/core/analysis/rounding.js');
+  assert.equal(typeof polishSearch({ free: [] }, { own: {}, snapped: { fractions: {}, groups: [] } }).next, 'function');
 });

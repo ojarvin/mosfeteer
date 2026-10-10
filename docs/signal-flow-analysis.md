@@ -303,8 +303,7 @@ the coefficients settle (a slider let go, a value typed), not on every
 tick. The graph is then one plot in the spectrum's units, dBFS per bin (a
 full-scale sine reads 0 dBFS; white noise its power in the window's noise
 bandwidth): each NTF (a quantizer's error) is moved to the noise level it
-predicts, white error of variance 1/3 (Schreier's levels, plus the dither's
-own variance) shaped by |NTF|^2, so it lies on the simulated floor; each
+predicts, white error of variance 1/3 (Schreier's levels) shaped by |NTF|^2, so it lies on the simulated floor; each
 STF (a real input) to where the tone would sit, the amplitude in dBFS plus
 |STF| in dB, so it runs through the tone's peak. With a band, the simulated
 SNDR and ENOB beside the predicted SQNR.
@@ -320,10 +319,10 @@ simulations (swing, spectrum, oscilloscope, the optimizer's swing test)
 draw its numbers, the same sequence every run so runs compare like for
 like. It feeds the sampled side only. A loop with few levels and a small
 input idles in limit cycles -- tones and a floor that strays from the
-NTF's prediction -- which dither of about a level step breaks up. A design
-from before dither sources keeps its dither setting at the quantizers'
-input (`flow.dither`, `ditherSettings`, its variance in the spectrum's
-prediction) until it is set to No dither; its controls show only then.
+NTF's prediction -- which dither of about a level step breaks up. A dither
+source starts as **Zero** among the sources (it is noise, not a signal);
+set it to Input for its own transfer function. The dither setting of
+designs from before dither sources (`flow.dither`) is no longer read.
 
 **Root locus** (`locus.js`): a result's poles as one coefficient sweeps,
 logarithmically from a decade below its number to a decade above by default,
@@ -467,36 +466,32 @@ in dB per 1%. One of 1 dB per 1% or more, or a nudge that loses stability,
 is marked; a nudge missing a limit the result just meets is noted ("on a
 limit"), not marked -- a best on its limit misses it at any nudge.
 
-**Fractions** (`rounding.js`, part of a run when *Make the free
-coefficients fractions m/n* is on, `rounding.on`) make each free
-coefficient a simple fraction m/n -- m units over n, whatever realizes it
-(a ratio of unit elements, a digital multiplier) -- at the least cost to
-the same specs, limits, constraints, and swing test. The run searches, zeroes what barely
-matters, then rounds from the numbers it found, and reports the fractions:
-what it finds is what can be built. One setting sets how coarse: **n ≤**
-a largest n (any whole number up to 1024; the most accurate n up to it is
-taken, optionally powers of two only) or **n =** exactly that n
-(`rounding.fixed`). The gains into one block -- followed through sums to
-the part they feed, an integrator or the quantizer (`coefficientGroups`),
-a dither source's gain among them -- share its n, its one reference
-element, so they read m1/n, m2/n, ...; off, each coefficient has its own n.
-A coefficient's own n in the table (≤ or =, `denominator`,
-`denominatorFixed`) overrides the setting for its block: the largest set
-among the block's gains, exactly if any of them is set exactly. A
-coefficient that is not zero never rounds to zero (that would be another
-diagram), nor across it.
+**Fractions** (`rounding.js`, when *Make the free coefficients fractions
+m/n* is on, `rounding.on`) keep each free coefficient a simple fraction
+m/n -- m units over n, whatever realizes it (a ratio of unit elements, a
+digital multiplier) -- during the search itself: every candidate the
+search proposes is snapped to fractions (`fractionSnapper`, in
+`pointValues`) before it is scored, so the specs, limits, constraints,
+and swing test are only ever weighed on numbers that can be built, and the
+best found is one. One setting sets how coarse: **n ≤** a largest n (any
+whole number up to 1024; each candidate's block takes the n up to it that
+fits its gains best, optionally powers of two only) or **n =** exactly
+that n (`rounding.fixed`). The gains into one block -- followed through
+sums to the part they feed, an integrator or the quantizer
+(`coefficientGroups`), a dither source's gain among them -- share its n,
+its one reference element, so they read m1/n, m2/n, ...; off, each
+coefficient has its own n. A coefficient's own n in the table (≤ or =,
+`denominator`, `denominatorFixed`) overrides the setting for its block:
+the largest set among the block's gains, exactly if any of them is set
+exactly. A coefficient that is not zero never snaps to zero (that would be
+another diagram), nor across it. The search moves on in the continuous
+coordinates underneath, so flat stretches between fractions only slow it.
 
-The search is sequential rounding with re-optimization: each block takes the
-n (up to its largest) that rounds its gains most accurately; the block
-rounded worst goes first, then the coefficients still free are re-optimized
-to win back what it cost (one may stand in for another: a resonator needs
-its product of gains), and so on; at the end each is moved by one unit, 1/n,
-while that helps. The start and the result are verified with the
-long test, the steps between ranked by the quick one. The result lists
-each block's n and each coefficient's fraction, value, number before and
-change, the specs and swing
-test before and after, and names a gain far smaller than its block-mates
-(it needs a large n there). **Apply** then writes the fractions exactly; a
+After the search (and the zeroing), `polishSearch` moves each by one unit,
+1/n, while that helps, the start and the result verified with the long
+test. The result lists each block's n and each coefficient's fraction and
+value, and names a single unit far smaller than a gain beside it (a larger
+n would set it finer). **Apply** writes the fractions exactly; a
 coefficient keeps its fraction in its field and in plot legends
 (`analysisValues.fractions`) until it is changed, and a fraction can be
 typed (3/16).

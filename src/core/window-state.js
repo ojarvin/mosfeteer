@@ -67,6 +67,8 @@ export function normalizeWindows(value) {
     const samples = Math.round(Number(scope.samples));
     windows.scope = {
       nets,
+      // The nets were picked (none, too); without it the scope picks its own.
+      ...(scope.chosen === true ? { chosen: true } : {}),
       ...(samples > 0 ? { samples: Math.max(64, Math.min(samples, 1 << 16)) } : {}),
       ...(text(scope.input) ? { input: text(scope.input) } : {}),
       ...(text(scope.amplitude, 40) ? { amplitude: text(scope.amplitude, 40) } : {}),

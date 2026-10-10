@@ -109,7 +109,7 @@ function fill(sim) {
       const keys = new Set(shownKeys(sim));
       if (check.checked) keys.add(signal.key);
       else keys.delete(signal.key);
-      save({ nets: sim.signals.map((s) => s.key).filter((key) => keys.has(key)) });
+      save({ nets: sim.signals.map((s) => s.key).filter((key) => keys.has(key)), chosen: true });
     });
     const name = el('span', { class: 'scope-net-name' });
     name.innerHTML = texToMathML(signal.name);
@@ -119,10 +119,11 @@ function fill(sim) {
   }));
 }
 
-/** The nets to show: those saved, else the output and the quantizers' inputs. */
+/** The nets to show: those picked (none, if all were unchecked), else the
+ *  output and the quantizers' inputs. */
 function shownKeys(sim) {
   const saved = state().nets.filter((key) => sim.signals.some((s) => s.key === key));
-  if (saved.length || state().nets.length) return saved;
+  if (state().chosen || saved.length) return saved;
   return sim.signals.filter((s) => s.role === 'output' || s.role === 'quantizer-input' || s.key === api?.flow().output).map((s) => s.key);
 }
 

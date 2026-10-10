@@ -10,7 +10,7 @@ test('window state is saved with the design and read back', () => {
   assert.equal('windows' in circuit.toJSON(), false, 'none: nothing saved');
   circuit.windows.references = { items: [{ path: '/w/bias.json', name: 'bias' }, { picture: { src: PNG, aspect: 2, width: 400 } }], hidden: true };
   circuit.windows.calculator = { history: [{ input: '20*log(10)', result: '20' }] };
-  circuit.windows.scope = { nets: ['net:N1'], samples: 512, input: 'U', amplitude: '-6', frequency: '1/64' };
+  circuit.windows.scope = { nets: [], chosen: true, samples: 512, input: 'U', amplitude: '-6', frequency: '1/64' };
   const back = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(back.windows, circuit.windows);
 });

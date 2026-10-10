@@ -171,29 +171,7 @@ test('a plain filter: a passband kept within a dB, the stopband pushed down', ()
   assert.ok(result.best.score.specs[2] < start.specs[2] - 10, `${start.specs[2]} -> ${result.best.score.specs[2]}`);
 });
 
-import { ditherSettings } from '../src/core/analysis/simulate.js';
 import { outputSpectrum } from '../src/core/analysis/spectrum.js';
-
-test('dither at the quantizer: rectangular or triangular, its amplitude in dBFS, the same sequence every run', () => {
-  assert.equal(ditherSettings(null, 4), null);
-  assert.equal(ditherSettings({ shape: 'none', amplitude: -12 }, 4), null);
-  const rect = ditherSettings({ shape: 'rect', amplitude: '-12.0412' }, 4);
-  assert.ok(Math.abs(rect.amplitude - 1) < 1e-4 && Math.abs(rect.variance - 1 / 3) < 1e-4);
-  assert.ok(Math.abs(ditherSettings({ shape: 'tri', amplitude: 0 }, 1).variance - 1 / 6) < 1e-12);
-  // A small input to the single-bit loop: dithered, the quantizer's output
-  // still takes only its levels, and two runs agree sample for sample.
-  const circuit = modulator();
-  const dithered = prepareSimulation(circuit, { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V', samples: 1024, dither: { shape: 'tri', amplitude: -6 } });
-  const plain = prepareSimulation(circuit, { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V', samples: 1024 });
-  const a = dithered.run(-40, { record: true }).samples;
-  assert.deepEqual([...new Set(a)].sort(), [-1, 1]);
-  assert.deepEqual(dithered.run(-40, { record: true }).samples, a);
-  assert.notDeepEqual(plain.run(-40, { record: true }).samples, a);
-  // The optimizer's swing test takes it too.
-  const problem = { output: 'V', sources: { U: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: { k_1: 1, k_2: 2 }, setup: { swing: { on: true, amplitude: -6, input: 'U' } } };
-  const peaksOf = (dither) => prepareObjective(circuit, { ...problem, dither }).evaluate({ k_1: 1, k_2: 2 }).swing.peaks;
-  assert.notDeepEqual(peaksOf({ shape: 'rect', amplitude: -3 }), peaksOf(null));
-});
 
 test('the spectrum averages half-overlapping segments (Welch): a steadier floor at the same level', () => {
   const random = seededRandom(5);
@@ -215,16 +193,16 @@ test('the spectrum averages half-overlapping segments (Welch): a steadier floor 
   assert.ok(stats(averaged).spread < 0.6 * stats(one).spread, `${stats(averaged).spread} vs ${stats(one).spread}`);
 });
 
-test('the simulations\' dither and a plot\'s source are saved with the document', () => {
+test('a plot\'s source is saved with the document; the old dither setting is not read', () => {
   const circuit = modulator();
   circuit.analysisValues.flow = { output: 'V', sources: {}, swingInput: '', swingFrequency: '', dither: { shape: 'tri', amplitude: '-20' } };
   circuit.addAnnotation('box', { x: 0, y: 400, end: { x: 400, y: 800 }, plot: { kind: 'response', axis: 'normalized', range: { low: -4, high: -0.3 }, traces: [{ label: 'T', color: '#3b74e0', points: [{ f: 0.001, db: 10 }, { f: 0.1, db: -10 }] }], role: 'loop', source: 'net:N7' } });
   const back = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
-  assert.deepEqual(back.analysisValues.flow.dither, { shape: 'tri', amplitude: '-20' });
+  assert.equal(back.analysisValues.flow.dither, undefined);
   assert.equal([...back.labels.values()].find((label) => label.plot)?.plot.source, 'net:N7');
 });
 
-import { coefficientGroups, fractionGrid, fractionText, runRounding } from '../src/core/analysis/rounding.js';
+import { coefficientGroups, fractionGrid, fractionSnapper, fractionText, polishSearch } from '../src/core/analysis/rounding.js';
 
 // The second-order loop with a gain c_1 between the integrators: H2 reads c_1 and k_2.
 function scaledModulator() {
@@ -250,39 +228,50 @@ test('the gains into one block share its denominator: through sums to the part t
   assert.deepEqual(byInto, { H1: ['b_1', 'k_1'], H2: ['c_1', 'k_2'] });
 });
 
-test('rounding: every free coefficient a fraction over its block\'s n, none rounded away, the specs kept', () => {
+test('fractions: a block\'s gains snap over its one n -- the most accurate up to the largest, or one set exactly', () => {
   const circuit = scaledModulator();
-  const values = { b_1: 0.43, k_1: 0.43, c_1: 0.71, k_2: 1.37 };
-  const setup = { specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }], swing: { on: true, amplitude: -6, input: 'U' } };
-  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values, setup, ...QUICK };
-  const objective = prepareObjective(circuit, problem);
-  const parameters = optimizationParameters(circuit, { values, setup });
+  const parameters = optimizationParameters(circuit, { values: { b_1: 0.43, k_1: 0.43, c_1: 0.71, k_2: 1.37 } });
   const groups = coefficientGroups(circuit, parameters.free.map((p) => p.name));
-  const result = runRounding(objective, parameters, { values, denominator: 8, groups, seed: 2 });
-  assert.equal(isFeasible(result), true);
-  for (const group of result.groups) {
+  const own = { b_1: 0.43, k_1: 0.43, c_1: 0.71, k_2: 1.37 };
+  const snapped = fractionSnapper(parameters, { denominator: 8, groups })(own);
+  for (const group of snapped.groups) {
     assert.ok(group.n >= 1 && group.n <= 8);
     for (const name of group.names) {
-      const f = result.fractions[name];
-      assert.equal(f.n, group.n, `${name} over its block's n`);
-      assert.ok(f.m !== 0, `${name} is not rounded away`);
-      assert.equal(result.own[name], f.m / f.n);
+      assert.equal(snapped.fractions[name].n, group.n, `${name} over its block's n`);
+      assert.equal(snapped.own[name], snapped.fractions[name].m / group.n);
     }
   }
-  // Powers of two only; a block's own larger n.
-  const binary = runRounding(objective, parameters, { values, denominator: 8, groups, powersOfTwo: true, seed: 2 });
-  for (const group of binary.groups) assert.ok([1, 2, 4, 8].includes(group.n));
-  const finer = runRounding(objective, parameters, { values, denominator: 2, denominators: { c_1: 64, k_2: 64 }, groups, seed: 2 });
-  assert.ok(finer.groups.find((g) => g.into === 'H1').n <= 2);
-  // One coefficient alone: a fraction of its own.
-  const alone = runRounding(objective, parameters, { values, denominator: 16, seed: 2 });
-  assert.equal(alone.groups.length, 4);
-  // An n set exactly: a block's own, or every block's.
-  const exact = runRounding(objective, parameters, { values, denominator: 8, exact: { k_2: 12 }, groups, seed: 2 });
+  // Exactly n for one block (a member's own), or for every block.
+  const exact = fractionSnapper(parameters, { denominator: 8, exact: { k_2: 12 }, groups })(own);
   assert.equal(exact.groups.find((g) => g.into === 'H2').n, 12);
   assert.ok(exact.groups.find((g) => g.into === 'H1').n <= 8);
-  const everyFixed = runRounding(objective, parameters, { values, denominator: 10, fixed: true, groups, seed: 2 });
-  assert.deepEqual(everyFixed.groups.map((g) => g.n), [10, 10]);
+  assert.deepEqual(fractionSnapper(parameters, { denominator: 10, fixed: true, groups })(own).groups.map((g) => g.n), [10, 10]);
+  for (const g of fractionSnapper(parameters, { denominator: 8, powersOfTwo: true, groups })(own).groups) assert.ok([1, 2, 4, 8].includes(g.n));
+  // Never to zero: a tiny gain keeps one unit.
+  assert.equal(fractionSnapper(parameters, { denominator: 4, fixed: true })({ ...own, c_1: 0.01 }).fractions.c_1.m, 1);
+});
+
+test('a search kept to fractions weighs only fractions, and finds one that meets the specs; polishing moves a unit at a time', () => {
+  const circuit = scaledModulator();
+  const values = { b_1: 0.43, k_1: 0.43, c_1: 0.71, k_2: 1.37 };
+  const setup = { specs: [{ action: 'minimize', measure: 'average', input: 'QZ1', band: 'signal' }], swing: { on: true, amplitude: -6, input: 'U' }, evaluations: 300 };
+  const problem = { output: 'V', sources: { U: 'input', QZ1: 'input' }, band: { f0: 0, bw: 1 / 64 }, values, setup, ...QUICK };
+  const parameters = optimizationParameters(circuit, { values, setup });
+  const groups = coefficientGroups(circuit, parameters.free.map((p) => p.name));
+  const snap = fractionSnapper(parameters, { denominator: 8, groups });
+  const result = runOptimization(circuit, problem, { seed: 3, snap });
+  assert.equal(result.feasible, true);
+  // The best is on fractions already: snapping it again changes nothing.
+  const again = snap(result.best.own);
+  for (const p of parameters.free) assert.equal(again.own[p.name], result.best.own[p.name], `${p.name} = ${result.best.own[p.name]}`);
+  const objective = prepareObjective(circuit, problem);
+  const snapped = snap(result.best.own);
+  const search = polishSearch(parameters, { own: result.best.own, snapped });
+  let step = search.next();
+  while (!step.done) step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
+  const polished = step.value;
+  assert.ok(polished.fitness <= fitnessOf(polished.start) + 1e-9);
+  for (const [name, f] of Object.entries(polished.fractions)) assert.equal(polished.own[name], f.m / f.n);
 });
 
 test('a coefficient written as a fraction is saved as one, while it is still its number', () => {
@@ -369,20 +358,6 @@ test('a limit on the poles\' Q is kept by the optimizer, and the result reports 
   assert.ok(held.best.score.specs[0] >= free.best.score.specs[0] - 1e-9);
   // A pole radius is for z results; normalized with the setup.
   assert.deepEqual(normalizeOptimizeSetup({ specs: [{ action: 'below', measure: 'radius', input: 'QZ1', value: '0.9' }] }).specs[0], { action: 'below', measure: 'radius', input: 'QZ1', band: 'signal', value: 0.9 });
-});
-
-test('dither in quantizer steps (levels 2 apart); an older dBFS amplitude reads as the steps it is', () => {
-  // +-1/2 step is +-1 level: rectangular variance 1/3, the quantizer's own.
-  const half = ditherSettings({ shape: 'rect', steps: '0.5' }, 4);
-  assert.deepEqual([half.amplitude, half.steps], [1, 0.5]);
-  assert.ok(Math.abs(half.variance - 1 / 3) < 1e-12);
-  assert.ok(Math.abs(ditherSettings({ shape: 'tri', steps: 1 }, 1).variance - 4 / 6) < 1e-12);
-  // -12.04 dBFS of full scale 4 is 1 level: half a step.
-  assert.ok(Math.abs(ditherSettings({ shape: 'tri', amplitude: '-12.0412' }, 4).steps - 0.5) < 1e-4);
-  assert.equal(ditherSettings({ shape: 'rect', steps: '0' }, 4), null);
-  const circuit = modulator();
-  circuit.analysisValues.flow = { output: 'V', sources: {}, swingInput: '', swingFrequency: '', dither: { shape: 'rect', steps: '0.5' } };
-  assert.deepEqual(Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).analysisValues.flow.dither, { shape: 'rect', steps: '0.5' });
 });
 
 import { isSensitive, pruneCandidates, pruneSearch, runRefine, sensitivitySearch } from '../src/core/analysis/refine.js';
@@ -546,4 +521,12 @@ test('a swing limit aimed at is a goal too: each dB a net stays under it is lost
   assert.equal(level.violation, 0);
   assert.equal(level.goal, 0);
   assert.ok(Math.abs(goal.goal - (20 - goal.swing.levels[state])) < 1e-9, `${goal.goal} vs ${goal.swing.levels[state]}`);
+});
+
+test('the dither\'s gains are named, though no transfer function holds them', async () => {
+  const { ditherSymbols } = await import('../src/core/analysis/signal-flow.js');
+  const circuit = diagram(['add dither DTH1 --at 0 0', 'add gain KD --at 240 0 --value d_1', 'add gain KE --at 480 0 --value 2*e_1', 'add signal_sum S4 --at 720 0',
+    'connect DTH1.out KD.in', 'connect KD.out KE.in', 'connect KE.out S4.w']);
+  assert.deepEqual(ditherSymbols(circuit), ['d_1', 'e_1']);
+  assert.deepEqual(ditherSymbols(modulator()), []);
 });

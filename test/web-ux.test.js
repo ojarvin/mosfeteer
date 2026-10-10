@@ -88,7 +88,7 @@ test('the optimizer\'s value lists are tables, and each coefficient\'s n sits wi
   const ui = read('optimize-ui.js');
   assert.match(ui, /function gridTable\(head, rows\)/);
   assert.match(ui, /return \[gridTable\(\['', startLabel, endLabel\]/);
-  assert.match(ui, /gridTable\(\['', 'm\/n', 'Value', 'Before', 'Change'\], rows\)/);
+  assert.match(ui, /gridTable\(\['', 'm\/n', 'Value'\], rows\)/);
   assert.match(ui, /gridTable\(\['Coefficient', 'Change'\], entries\.map\(row\)\)/);
   // n (≤ or =) left the coefficient table for the fractions.
   assert.match(ui, /\['', '', 'Min', 'Max', 'Now', 'Found'\]/);
@@ -109,7 +109,9 @@ test('a run opens its own window: the start and the best so far, progress, Stop'
   assert.match(ui, /title: 'Optimizer',/);
   // Rounding is part of the run, not a run of its own.
   assert.doesNotMatch(ui, /title: 'Rounding',/);
-  assert.match(ui, /if \(options\.on && !stopped\(\)\) \{/);
+  // Fractions are kept during the search: each candidate snapped before it is scored.
+  assert.match(ui, /const snap = current\.rounding\.on \? fractionsFor\(circuit, parameters, current\) : null;/);
+  assert.match(ui, /stopEarly: !goals, verify: swingOn, snap \}\)/);
 });
 
 test('fields show what is typed: no ligatures join their characters', () => {

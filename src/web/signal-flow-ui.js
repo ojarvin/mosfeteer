@@ -13,10 +13,10 @@
  * on the drawing with its legend, and Annotate equations the equations.
  */
 
-import { MUTED_TRACE_COLOR, TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
-import { expressionTex, parseLevels } from '../core/transfer-function.js';
+import { expressionTex } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
@@ -24,7 +24,7 @@ import { installScope, scopeChanged, toggleScope } from './scope-window.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
-import { ditherSteps, prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
+import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js';
 import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
@@ -205,7 +205,8 @@ function fillForm() {
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
-    const value = flow().sources[source.id] ?? 'input';
+    // A dither source is noise, not a signal: zero unless set to input.
+    const value = flow().sources[source.id] ?? (source.dither ? 'zero' : 'input');
     flow().sources[source.id] = value;
     const kind = typeof value === 'object' ? 'constant' : value;
     const select = el('select', { 'aria-label': `${source.name}: input, zero, or constant` }, [
@@ -511,7 +512,6 @@ function swingSection() {
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Sine into' }), source,
       el('label', { text: 'at f/fs' }), frequency,
-      el('span', { class: 'signal-flow-dither' }),
       el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() }),
     ]),
     el('p', { class: 'field-hint signal-flow-swing-status', 'aria-live': 'polite' }),
@@ -528,7 +528,6 @@ function fillSwingSources(sources) {
   // The document's frequency; blank, the band's own (shown as the placeholder).
   section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '';
   refreshTestFrequencies();
-  section.querySelector('.signal-flow-swing .signal-flow-dither')?.replaceWith(ditherControls());
 }
 
 /** A test's sine frequency (f/fs): the one typed, else inside the signal
@@ -566,7 +565,6 @@ function sweepSwing(done) {
     input: section.querySelector('.signal-flow-swing-source').value,
     output: flow().output,
     frequency: swingFrequency(),
-    dither: flow().dither,
   });
   const run = ++swingRun;
   if (!sim.ok) {
@@ -908,53 +906,8 @@ function spectrumControls() {
   frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
     el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
-    ditherControls(),
     el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
-}
-
-/** Dither at the quantizers' inputs for every simulation (the spectrum,
- *  the swing, the optimizer's swing test): none, rectangular, triangular. */
-/** The largest quantizer's full scale, N - 1 (1 with none). */
-function quantizerFullScale() {
-  let fullScale = 1;
-  for (const c of editor.circuit.components.values()) {
-    if (c.type !== 'quantizer') continue;
-    try { fullScale = Math.max(fullScale, parseLevels(c.value) - 1); } catch { /* the simulation says why */ }
-  }
-  return fullScale;
-}
-
-/** The dither setting from before dither sources: shown only for a design
- *  that has it (its simulations keep it until it is turned off); a design's
- *  dither is a dither source in the diagram now. */
-function ditherControls() {
-  const settings = flow().dither || {};
-  if (!['rect', 'tri'].includes(settings.shape)) return el('span', { class: 'signal-flow-dither', hidden: true });
-  // In quantizer steps; an older document's dBFS shown as the steps it is.
-  const steps = ditherSteps(settings, quantizerFullScale());
-  const stepsText = settings.steps ?? (Number.isFinite(steps) ? String(Number(steps.toPrecision(3))) : '0.5');
-  const shape = el('select', { class: 'signal-flow-dither-shape', 'aria-label': 'Dither', title: 'Dither added at each quantizer\'s input: rectangular over (-A, A), or triangular over (-A, A) peaking at 0' }, [
-    el('option', { value: 'none', text: 'No dither' }), el('option', { value: 'rect', text: 'Rectangular dither' }), el('option', { value: 'tri', text: 'Triangular dither' }),
-  ]);
-  shape.value = ['rect', 'tri'].includes(settings.shape) ? settings.shape : 'none';
-  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-dither-amplitude', value: stepsText, 'aria-label': 'Dither amplitude, quantizer steps', title: 'The peak, +-A, in quantizer steps (the distance between two levels) -- the same for both shapes; triangular has half the power of rectangular at the same A. The classic amounts: rectangular +-0.5 step makes the quantization error\'s mean independent of the signal; triangular +-1 step (two +-0.5-step rectangles added) its power too. In a modulator the dither is shaped like the quantization noise: more costs in-band SNR and some stable amplitude.' });
-  const unit = el('label', { class: 'signal-flow-dither-unit', text: 'steps' });
-  amplitude.hidden = unit.hidden = shape.value === 'none';
-  const save = () => {
-    amplitude.hidden = unit.hidden = shape.value === 'none';
-    flow().dither = { shape: shape.value, steps: amplitude.value.trim() || '0.5' };
-    markSettingsChanged();
-    // Both places show it: keep them alike, and simulate again.
-    for (const other of section.querySelectorAll('.signal-flow-dither')) if (!other.contains(shape)) other.replaceWith(ditherControls());
-    if (flow().spectrum?.on) runSpectrum();
-    if (swing) runSwing();
-  };
-  shape.addEventListener('change', save);
-  amplitude.addEventListener('change', save);
-  amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
-  const note = el('span', { class: 'field-hint signal-flow-dither-note', text: 'An older setting: draw a dither source instead (Insert: dither) with a gain after it, and set this to No dither.' });
-  return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit, note]);
 }
 
 /** The simulated in-band SNDR, and the amplitude it was simulated at, as a
@@ -996,13 +949,12 @@ function runSpectrum() {
   const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer && !s.dither)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
   const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
-  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT, dither: flow().dither });
+  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT });
   if (!sim.ok) spectrum = { error: sim.error };
   else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
   else {
     const run = sim.run(amplitude, { record: true });
-    // Dither adds its own white error to the quantizer's, shaped alike.
-    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 + (sim.dither?.variance || 0) });
+    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 });
     spectrum = raw
       ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale }
       : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
@@ -1215,7 +1167,9 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
     try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
   };
   // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
-  const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  // The dither's gains too: no transfer function shows them, yet they set
+  // what every simulation draws.
+  const names = [...new Set([...used, ...ditherSymbols(circuit)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   // A coefficient written as a fraction (rounded to m/n) shows as one.
   // A linked one too, once the coefficients are rounded: it follows
   // fractions, so its number is one (c_1 = b_1 = 7/32), never 0.2188.
@@ -1533,15 +1487,10 @@ export function installSignalFlowUi() {
         coefficientsChanged();
         coefficientsSettled();
       },
-      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() }, dither: flow().dither ? { ...flow().dither } : undefined }),
+      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() } }),
       restoreCoefficients(saved) {
         editor.circuit.analysisValues.coefficients = { ...saved.coefficients };
         editor.circuit.analysisValues.fractions = { ...saved.fractions };
-        // Revert puts back the dither Apply changed too.
-        if (saved.dither) {
-          flow().dither = { ...saved.dither };
-          for (const node of section.querySelectorAll('.signal-flow-dither')) node.replaceWith(ditherControls());
-        }
         renderCoefficients({ force: true });
         coefficientsChanged();
         coefficientsSettled();

@@ -6349,10 +6349,12 @@ const coordinateOf = (p, v) => (p.log ? Math.log(Math.abs(v) / Math.abs(p.start)
 
 /**
  * The search point y as numbers: each free coefficient clamped to its
- * range (`penalty` how far outside it y went, in internal units), linked
- * ones resolved. Returns `{ own, values, penalty }`.
+ * range (`penalty` how far outside it y went, in internal units), then
+ * given to `snap` when the coefficients are kept to fractions
+ * (rounding.js fractionSnapper), linked ones resolved. Returns `{ own,
+ * values, penalty, fractions? }`.
  */
-function pointValues(parameters, y, { values = {}, links = {} } = {}) {
+function pointValues(parameters, y, { values = {}, links = {}, snap = null } = {}) {
   const own = { ...values };
   let penalty = 0;
   parameters.free.forEach((p, i) => {
@@ -6367,6 +6369,10 @@ function pointValues(parameters, y, { values = {}, links = {} } = {}) {
     }
     own[p.name] = v;
   });
+  if (snap) {
+    const snapped = snap(own);
+    return { own: snapped.own, values: resolveCoefficients(snapped.own, links), penalty, fractions: snapped.fractions };
+  }
   return { own, values: resolveCoefficients(own, links), penalty };
 }
 
@@ -6561,7 +6567,7 @@ function swingTestFrequency(swing, band) {
  * Prepare to score sets of numbers. `problem`: `output`, `sources` (the
  * analysis's settings), `band` (`{ f0, bw }`), `values` (every coefficient's
  * number, for the sampled analysis to start from), `setup` (optimize-setup.js),
- * `dither` (the swing test's, as simulate.js takes it), and for the swing
+ * and for the swing
  * test `swingRuns` (frequencies, 2), `swingPhases` (phases of the sine at
  * each, 2), `swingSamples` (4096), `swingGuard` (dB kept under each limit,
  * by the measure), `swingMargin` (dB above the amplitude it must hold at
@@ -6628,7 +6634,7 @@ function prepareObjective(circuit, problem = {}) {
    * measure, the limited nets), runs, held, marginRuns, marginHeld }, error }`.
    */
   const swingTest = (values, { samples, phases, marginPhases, guard }) => {
-    const sims = swing.frequencies.map((frequency) => prepareSimulation(circuit, { values, sources: problem.sources, input: swing.input, output: problem.output, frequency, samples, warmup: samples / 4, dither: problem.dither }));
+    const sims = swing.frequencies.map((frequency) => prepareSimulation(circuit, { values, sources: problem.sources, input: swing.input, output: problem.output, frequency, samples, warmup: samples / 4 }));
     const broken = sims.find((sim) => !sim.ok);
     if (broken) return { error: broken.error };
     const [sim] = sims;
@@ -6757,9 +6763,11 @@ function prepareObjective(circuit, problem = {}) {
  * is verified before it can be the best, so `best` is always verified (a
  * short run's luck cannot win). `stopEarly` (a run with no goals) ends it at
  * the first best that meets every limit. `best`: `{ y, own, values, score,
- * fitness, quick (its quick score) }`; `start` the start's score.
+ * fitness, quick (its quick score) }`; `start` the start's score. With
+ * `snap` (rounding.js fractionSnapper) every candidate is snapped to
+ * fractions before it is scored, so the search weighs only those.
  */
-function createOptimizer(parameters, { values = {}, links = {}, evaluations = 3000, seed = 1, sigma = 0.4, stopEarly = false, verify = false } = {}) {
+function createOptimizer(parameters, { values = {}, links = {}, evaluations = 3000, seed = 1, sigma = 0.4, stopEarly = false, verify = false, snap = null } = {}) {
   const n = parameters.free.length;
   const random = seededRandom(seed);
   let lambda = 4 + Math.floor(3 * Math.log(Math.max(n, 1)));
@@ -6775,7 +6783,7 @@ function createOptimizer(parameters, { values = {}, links = {}, evaluations = 30
   let done = !n;
   let verified = 0;
   const queue = [];
-  const point = (y) => ({ y, ...pointValues(parameters, y, { values, links }) });
+  const point = (y) => ({ y, ...pointValues(parameters, y, { values, links, snap }) });
 
   const ask = () => {
     if (done) return [];
@@ -6893,6 +6901,7 @@ function runOptimization(circuit, problem, options = {}) {
     sigma: options.sigma,
     stopEarly: !objective.goals,
     verify: options.verify ?? !!objective.swing,
+    snap: options.snap,
   });
   while (!optimizer.done) {
     const batch = optimizer.ask();
@@ -11186,34 +11195,31 @@ __exports.fractionGrid = fractionGrid;
 __exports.fractionsAround = fractionsAround;
 __exports.fractionText = fractionText;
 __exports.coefficientGroups = coefficientGroups;
-__exports.roundingSearch = roundingSearch;
-__exports.runRounding = runRounding;
-let createOptimizer, fitnessOf, pointValues, scoreRequest; __bind(() => { ({ createOptimizer, fitnessOf, pointValues, scoreRequest } = __require("src/core/analysis/optimize.js")); });
+__exports.fractionSnapper = fractionSnapper;
+__exports.polishSearch = polishSearch;
+let fitnessOf; __bind(() => { ({ fitnessOf } = __require("src/core/analysis/optimize.js")); });
+let resolveCoefficients; __bind(() => { ({ resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let coefficientValue, signalFlowGraph; __bind(() => { ({ coefficientValue, signalFlowGraph } = __require("src/core/analysis/signal-flow.js")); });
 let expressionSymbols; __bind(() => { ({ expressionSymbols } = __require("src/core/analysis/bode.js")); });
 let parseGain; __bind(() => { ({ parseGain } = __require("src/core/transfer-function.js")); });
 /**
- * Coefficient rounding for the optimizer (optimize.js): each free
- * coefficient made a simple fraction m/n, n at most a chosen denominator
- * (or a power of two), at the least cost to the specs. Whatever realizes
- * the coefficient -- a ratio of unit elements of any kind, or a digital
- * multiplier -- it reads as "m units over n": the larger n may be, the finer
- * the rounding and the more units it costs.
+ * Fractions for the optimizer (optimize.js): each free coefficient a
+ * simple fraction m/n, n at most a chosen denominator (or a power of two),
+ * or exactly a chosen n. Whatever realizes the coefficient -- a ratio of
+ * unit elements of any kind, or a digital multiplier -- it reads as "m
+ * units over n": the larger n may be, the finer the steps and the more
+ * units it costs.
  *
- * Sequential rounding with re-optimization: the gains into one block share
- * its n (coefficientGroups), so a block's coefficients read as m_1/n,
- * m_2/n, ...; one group is rounded and fixed,
- * the rest re-optimized briefly to win back what it cost, and so on until
- * every one is a fraction; then each is moved by one unit while that helps.
- * Each block takes the n (up to the largest allowed) that rounds its gains
- * most accurately, and the block rounded worst goes first, so the
- * coefficients still free can make up for it. Candidates are ranked as the optimizer ranks
- * them (fitnessOf: every limit met first, then the goals). The search is a
- * generator of batches to score, so the editor can score them in worker
- * threads: it yields `{ batch, phase, step, steps }` and takes the batch's
- * scores back -- a batch item is the numbers (the quick test) or
- * `{ verify: numbers }` (the long one: the start and the result).
+ * The fractions are kept during the search, not made after it: every
+ * candidate the search proposes is snapped to the nearest fractions
+ * (`fractionSnapper`) before it is scored, so the search only ever weighs
+ * numbers that can be built, and the best it finds is one. The gains into
+ * one block share its n (coefficientGroups), so a block's coefficients read
+ * m_1/n, m_2/n, ...; a block's n is the one (up to its largest) that its
+ * gains snap to most accurately, or the n set for it exactly. After the
+ * search, `polishSearch` moves each by one unit while that helps.
  */
+
 
 
 
@@ -11343,106 +11349,80 @@ function bestDenominator(numbers, maxDenominator, powersOfTwo) {
 }
 
 /**
- * The rounding search over `parameters` (optimizationParameters), from the
- * numbers `values` (every coefficient's own), `links` resolved. `options`:
- * `denominator` (the largest n; with `fixed`, the n), `denominators` (per
- * coefficient: its group's is the smallest of its members'), `exact` (per
- * coefficient, an n its group must have: the largest of its members'),
- * `powersOfTwo`, `groups` (coefficientGroups; each coefficient alone when
- * omitted), `seed`.
- *
- * A group is rounded at once: every member m/n over one n, the n (up to its
- * largest) that rounds it most accurately; the group rounded worst goes
- * first, then the rest are re-optimized; at the end each member is moved by
- * one unit, 1/n, while that helps. Returns, when done, `{ own, values, score,
- * fitness, fractions: { name: { m, n } }, groups, start (the unrounded score) }`.
+ * The snapping of free numbers to fractions, for `parameters`
+ * (optimizationParameters). `options`: `denominator` (the largest n; with
+ * `fixed`, the n), `denominators` (per coefficient: its group's largest is
+ * the smallest of its members'), `exact` (per coefficient, an n its group
+ * must have: the largest of its members'), `powersOfTwo`, `groups`
+ * (coefficientGroups; each coefficient alone when omitted). Returns
+ * `snap(own)` giving `{ own (the free ones snapped, the rest as they were),
+ * fractions: { name: { m, n } }, groups: [{ into, names, n }] }`. A number
+ * that is not zero never snaps to zero (that is another diagram), nor
+ * across it, and stays within its range where a neighbouring m allows.
  */
-function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32, fixed = false, denominators = {}, exact = {}, powersOfTwo = false, groups: rawGroups = null, seed = 1 } = {}) {
-  const own = { ...values };
-  for (const p of parameters.free) own[p.name] = Number.isFinite(own[p.name]) ? own[p.name] : p.start;
+function fractionSnapper(parameters, { denominator = 32, fixed = false, denominators = {}, exact = {}, powersOfTwo = false, groups: rawGroups = null } = {}) {
   const byName = new Map(parameters.free.map((p) => [p.name, p]));
   const groups = (rawGroups || parameters.free.map((p) => ({ into: null, names: [p.name] })))
     .map((g) => ({ into: g.into, names: g.names.filter((name) => byName.has(name)) }))
     .filter((g) => g.names.length);
   const maxOf = (group) => Math.min(...group.names.map((name) => denominators[name] || denominator));
-  // A group's n when it is set exactly: a member's own, else the setting's.
   const exactOf = (group) => {
     const set = group.names.map((name) => exact[name]).filter((n) => n >= 1);
     return set.length ? Math.max(...set) : fixed ? maxOf(group) : null;
   };
-  const resolvedOf = (numbers) => pointValues({ free: [] }, [], { values: numbers, links }).values;
   const inRange = (p, v) => (p.min === null || v >= p.min - 1e-12) && (p.max === null || v <= p.max + 1e-12);
-  // A group over n: each member to its nearest m/n (kept in its range).
-  const roundedAt = (group, n) => Object.fromEntries(group.names.map((name) => {
-    const p = byName.get(name);
-    let m = unitsOf(own[name], n);
-    if (!inRange(p, m / n)) m = inRange(p, (m + 1) / n) ? m + 1 : inRange(p, (m - 1) / n) ? m - 1 : m;
-    return [name, m];
-  }));
-  const remaining = [...groups];
-  const fractions = {};
-  const denominatorOf = new Map();
-  const steps = groups.length;
-
-  // The start and the result are verified with the long test, the steps
-  // between ranked by the quick one.
-  const [startScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'start', step: 0, steps };
-  let current = { score: startScore, fitness: fitnessOf(startScore) };
-
-  while (remaining.length) {
-    // Each group at its most accurate n (up to its largest; the smaller on a
-    // tie), and the group rounded worst goes first, while the rest are still
-    // free to make up for it.
-    let chosen = null;
-    for (const group of remaining) {
+  return (values) => {
+    const own = { ...values };
+    const fractions = {};
+    const out = groups.map((group) => {
       const numbers = group.names.map((name) => own[name]);
-      const set = exactOf(group);
-      const { n, error } = set ? { n: set, error: errorAt(numbers, set) } : bestDenominator(numbers, maxOf(group), powersOfTwo);
-      if (!chosen || error > chosen.error) chosen = { group, n, error };
-    }
-    const ms = roundedAt(chosen.group, chosen.n);
-    for (const [name, m] of Object.entries(ms)) {
-      own[name] = m / chosen.n;
-      fractions[name] = { m, n: chosen.n };
-    }
-    denominatorOf.set(chosen.group, chosen.n);
-    remaining.splice(remaining.indexOf(chosen.group), 1);
-    const [score] = yield { batch: [resolvedOf(own)], phase: 'round', step: steps - remaining.length, steps };
-    current = { score, fitness: fitnessOf(score) };
-
-    // The rest re-optimized from here, briefly.
-    const rest = remaining.flatMap((g) => g.names).map((name) => byName.get(name));
-    if (rest.length) {
-      const sub = { free: rest.map((q) => ({ ...q, start: own[q.name], log: q.log && own[q.name] !== 0 })) };
-      const optimizer = createOptimizer(sub, { values: own, links, evaluations: Math.min(800, 80 * rest.length + 100), seed: seed + remaining.length, sigma: 0.15 });
-      while (!optimizer.done) {
-        const candidates = optimizer.ask();
-        optimizer.tell(yield { batch: candidates.map((c) => c.request), phase: 'reoptimize', step: steps - remaining.length, steps });
-      }
-      const found = optimizer.best;
-      if (found && found.fitness < current.fitness) {
-        for (const q of rest) own[q.name] = found.own[q.name];
-        current = { score: found.score, fitness: found.fitness };
-      }
-    }
-  }
-
-  // One unit (1/n) up or down on any member, while it helps.
-  for (let pass = 0; pass < 4; pass++) {
-    const trials = [];
-    for (const group of groups) {
-      const n = denominatorOf.get(group);
+      const n = exactOf(group) || bestDenominator(numbers, maxOf(group), powersOfTwo).n;
       for (const name of group.names) {
+        const p = byName.get(name);
+        let m = unitsOf(own[name], n);
+        if (!inRange(p, m / n) && own[name] !== 0) m = inRange(p, (m + 1) / n) && m + 1 !== 0 ? m + 1 : inRange(p, (m - 1) / n) && m - 1 !== 0 ? m - 1 : m;
+        own[name] = m / n;
+        fractions[name] = { m, n };
+      }
+      return { into: group.into, names: group.names, n };
+    });
+    return { own, fractions, groups: out };
+  };
+}
+
+/**
+ * After a search on fractions: each coefficient moved by one unit (1/n)
+ * up or down while that helps, never to zero nor across it. A generator of
+ * batches to score, as the optimizer's: it yields `{ batch, phase, step,
+ * steps }` and takes the scores back -- a batch item is the numbers (the
+ * quick test) or `{ verify: numbers }` (the long one: the start and the
+ * result). `own` are the numbers found (on fractions), `snapped` the
+ * snapper's `{ fractions, groups }` for them. Returns `{ own, values, score,
+ * fitness, fractions, groups, start }`.
+ */
+function* polishSearch(parameters, { own: found, snapped, links = {}, passes = 4 } = {}) {
+  const byName = new Map(parameters.free.map((p) => [p.name, p]));
+  const inRange = (p, v) => (p.min === null || v >= p.min - 1e-12) && (p.max === null || v <= p.max + 1e-12);
+  const own = { ...found };
+  const fractions = { ...snapped.fractions };
+  const resolvedOf = (numbers) => resolveCoefficients(numbers, links);
+  const [startScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'start', step: 0, steps: passes };
+  let current = { score: startScore, fitness: fitnessOf(startScore) };
+  for (let pass = 0; pass < passes; pass++) {
+    const trials = [];
+    for (const group of snapped.groups) {
+      for (const name of group.names) {
+        const f = fractions[name];
+        if (!f || f.m === 0) continue;
         for (const dm of [-1, 1]) {
-          const m = fractions[name].m + dm;
-          // Not to zero, nor across it.
-          if (m === 0 || Math.sign(m) !== Math.sign(fractions[name].m)) continue;
-          if (inRange(byName.get(name), m / n)) trials.push({ name, m, n });
+          const m = f.m + dm;
+          if (m === 0 || Math.sign(m) !== Math.sign(f.m)) continue;
+          if (inRange(byName.get(name), m / f.n)) trials.push({ name, m, n: f.n });
         }
       }
     }
     if (!trials.length) break;
-    const scores = yield { batch: trials.map((t) => resolvedOf({ ...own, [t.name]: t.m / t.n })), phase: 'polish', step: steps, steps };
+    const scores = yield { batch: trials.map((t) => resolvedOf({ ...own, [t.name]: t.m / t.n })), phase: 'polish', step: pass + 1, steps: passes };
     let best = -1;
     for (let i = 0; i < trials.length; i++) if (fitnessOf(scores[i]) < (best < 0 ? current.fitness - 1e-9 : fitnessOf(scores[best]))) best = i;
     if (best < 0) break;
@@ -11451,23 +11431,8 @@ function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32
     fractions[t.name] = { m: t.m, n: t.n };
     current = { score: scores[best], fitness: fitnessOf(scores[best]) };
   }
-  const [finalScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'verify', step: steps, steps };
-  return {
-    own, values: resolvedOf(own), score: finalScore, fitness: fitnessOf(finalScore), fractions, start: startScore,
-    groups: groups.map((g) => ({ into: g.into, names: g.names, n: denominatorOf.get(g) })),
-  };
-}
-
-/** The whole rounding in this thread, scored by `objective` (prepareObjective). */
-function runRounding(objective, parameters, options) {
-  const search = roundingSearch(parameters, options);
-  let step = search.next();
-  let evaluations = 0;
-  while (!step.done) {
-    evaluations += step.value.batch.length;
-    step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
-  }
-  return { ...step.value, evaluations };
+  const [finalScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'verify', step: passes, steps: passes };
+  return { own, values: resolvedOf(own), score: finalScore, fitness: fitnessOf(finalScore), fractions, groups: snapped.groups, start: startScore };
 }
 
 };
@@ -11702,6 +11667,7 @@ __exports.bandEdges = bandEdges;
 __exports.bandSqnr = bandSqnr;
 __exports.responsePlot = responsePlot;
 __exports.resultSymbols = resultSymbols;
+__exports.ditherSymbols = ditherSymbols;
 __exports.diagramSymbols = diagramSymbols;
 __exports.withCoefficients = withCoefficients;
 __exports.numericRootsOf = numericRootsOf;
@@ -13306,6 +13272,35 @@ function resultSymbols(value, variable) {
   return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
+/**
+ * The coefficients that set how much dither reaches the loop: those of the
+ * gains a dither source's signal passes through (gain after gain) before
+ * it meets anything else. They appear in no transfer function while the
+ * dither is a zero source, yet they shape every simulation.
+ */
+function ditherSymbols(circuit) {
+  const { signals } = signalFlowGraph(circuit);
+  const out = new Set();
+  const list = [...signals.values()];
+  let frontier = list.filter((signal) => signal.driver?.source && circuit.components.get(signal.driver.comp)?.type === 'dither');
+  const seen = new Set();
+  while (frontier.length) {
+    const next = [];
+    for (const signal of frontier) {
+      if (seen.has(signal.key)) continue;
+      seen.add(signal.key);
+      for (const reader of signal.readers) {
+        const part = circuit.components.get(reader.comp);
+        if (part?.type !== 'gain') continue;
+        try { expressionSymbols(coefficientValue(parseGain(part.value)), 's', out); } catch { /* not a coefficient */ }
+        next.push(...list.filter((s) => s.driver && !s.driver.source && s.driver.comp === part.refdes));
+      }
+    }
+    frontier = next;
+  }
+  return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
 /** Every coefficient a diagram's parts name: its blocks' (a delay's T
  *  included), its gains', its samplers' periods. */
 function diagramSymbols(circuit) {
@@ -13408,8 +13403,6 @@ __exports.MUTED_TRACE_COLOR = MUTED_TRACE_COLOR;
 };
 
 __modules["src/core/analysis/simulate.js"] = function (__require, __exports) {
-__exports.ditherSettings = ditherSettings;
-__exports.ditherSteps = ditherSteps;
 __exports.quantize = quantize;
 __exports.realize = realize;
 __exports.prepareSimulation = prepareSimulation;
@@ -13454,33 +13447,6 @@ const JUNCTION_INPUTS = ['n', 's', 'w'];
 
 /** Schreier's quantizer (ds_quantize): odd levels for even N, even levels
  *  (with 0) for odd N, limited to +-(N - 1). */
-/**
- * Dither added at each quantizer's input (`{ shape, steps }`): 'rect'
- * uniform over (-A, A), 'tri' triangular over (-A, A), peaking at 0 (two
- * uniforms), A in quantizer steps (levels 2 apart, so A = 2 steps in
- * levels). The classic amounts: rectangular +-1/2 step makes the error's
- * mean independent of the signal; triangular +-1 step its power too. A
- * document from before steps gives `amplitude` in dBFS of full scale.
- * Returns `{ shape, amplitude (levels), steps, variance }` -- the variance,
- * in levels squared, the white error it adds beside the quantizer's 1/3:
- * A^2/3 or A^2/6 -- or null without dither.
- */
-function ditherSettings(dither, fullScale) {
-  if (!dither || !['rect', 'tri'].includes(dither.shape)) return null;
-  const steps = ditherSteps(dither, fullScale);
-  if (!(steps > 0)) return null;
-  const amplitude = 2 * steps;
-  return { shape: dither.shape, amplitude, steps, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
-}
-
-/** A dither's amplitude in quantizer steps (from dBFS for an older one). */
-function ditherSteps(dither, fullScale) {
-  const steps = Number(dither?.steps);
-  if (dither?.steps !== undefined && dither.steps !== '' && Number.isFinite(steps)) return steps;
-  const db = Number(dither?.amplitude);
-  return Number.isFinite(db) ? (fullScale * 10 ** (db / 20)) / 2 : NaN;
-}
-
 function quantize(y, levels) {
   const v = levels % 2 === 0 ? 2 * Math.floor(0.5 * y) + 1 : 2 * Math.floor(0.5 * (y + 1));
   const limit = levels - 1;
@@ -13544,8 +13510,8 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
- * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', steps }`, at
- * each quantizer's input, ditherSettings; each run draws the same sequence).
+ * `warmup`, `subSteps`. Dither is a dither source in the diagram: each
+ * draws its own sequence, the same every run.
  * Returns `{ ok, fullScale, frequency, signals, run }`:
  * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at
@@ -13582,7 +13548,6 @@ function prepareSimulation(circuit, options = {}) {
     try { levels.set(q.refdes, parseLevels(q.value)); } catch (err) { return failure('bad-levels', `${q.refdes}: ${err.message}`); }
   }
   const fullScale = quantizers.length ? Math.max(...[...levels.values()].map((n) => n - 1)) : 1;
-  const dither = ditherSettings(options.dither, fullScale);
 
   // Source settings, as the analysis reads them.
   const settings = new Map(Object.entries(options.sources || {}).map(([name, value]) => [canonicalNetName(name), value]));
@@ -13942,17 +13907,13 @@ function prepareSimulation(circuit, options = {}) {
     let re = 0;
     let im = 0;
     const total = warmup + window;
-    // The same dither sequence every run: amplitudes compare like for like.
-    const random = dither ? seededRandom(0x5eed) : null;
-    // Each dither source its own sequence, the same every run.
+    // Each dither source its own sequence, the same every run: amplitudes
+    // compare like for like.
     const sourceDither = new Map([...pSource.keys()].filter((key) => sourceValue.get(key).dither).map((key, i) => {
       const { shape, amplitude: a } = sourceValue.get(key).dither;
       const draw = seededRandom(0xd17e + 7919 * i);
       return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
     }));
-    const ditherSample = !dither ? () => 0
-      : dither.shape === 'rect' ? () => dither.amplitude * (2 * random() - 1)
-      : () => dither.amplitude * (random() - random());
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -13972,7 +13933,7 @@ function prepareSimulation(circuit, options = {}) {
       state.set(p, md);
       for (const q of order) {
         const y = q.row ? dot(q.row, state) : 0;
-        state[q.p] = quantize(y + ditherSample(), q.levels);
+        state[q.p] = quantize(y, q.levels);
       }
       matVec(Md, state, Yd);
       // The continuous signals at nT^-, and the output, for the peaks and the tone.
@@ -14035,7 +13996,7 @@ function prepareSimulation(circuit, options = {}) {
     return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
 
-  return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };
+  return { ok: true, fullScale, frequency, period: T, signals: signalList, run };
 }
 
 /** The amplitudes a sweep runs, in dBFS: coarse far below full scale, a
@@ -22953,12 +22914,6 @@ function normalizeAnalysisValues(value) {
     ...(['phase', 'step', 'locus', 'swing', 'loop'].includes(rawFlow.graphView) ? { graphView: rawFlow.graphView } : {}),
     ...(typeof rawFlow.loopAt === 'string' && rawFlow.loopAt ? { loopAt: rawFlow.loopAt.slice(0, 200) } : {}),
     ...(rawFlow.spectrum && typeof rawFlow.spectrum === 'object' ? { spectrum: { on: !!rawFlow.spectrum.on, amplitude: text(String(rawFlow.spectrum.amplitude ?? '-6')), ...(rawFlow.spectrum.frequency ? { frequency: text(String(rawFlow.spectrum.frequency)) } : {}) } } : {}),
-    // Dither at the quantizers' inputs for the simulations: rect or tri.
-    // (In quantizer steps; an older document's in dBFS, `amplitude`.)
-    ...(rawFlow.dither && typeof rawFlow.dither === 'object' && ['none', 'rect', 'tri'].includes(rawFlow.dither.shape) ? { dither: {
-      shape: rawFlow.dither.shape,
-      ...(rawFlow.dither.steps !== undefined ? { steps: text(String(rawFlow.dither.steps)).slice(0, 20) } : { amplitude: text(String(rawFlow.dither.amplitude ?? '-30')).slice(0, 20) }),
-    } } : {}),
     // The coefficient optimizer's setup (analysis/optimize-setup.js).
     ...(rawFlow.optimize && typeof rawFlow.optimize === 'object' ? { optimize: normalizeOptimizeSetup(rawFlow.optimize) } : {}),
   } : null;
@@ -22973,7 +22928,7 @@ function analysisValuesJSON(values) {
   const links = values?.links || {};
   const fractions = values?.fractions || {};
   const band = normalizeBand(values?.band);
-  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize || values.flow.dither) ? values.flow : null;
+  const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize) ? values.flow : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
   const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
   return { analysisValues: {
@@ -35946,6 +35901,8 @@ function normalizeWindows(value) {
     const samples = Math.round(Number(scope.samples));
     windows.scope = {
       nets,
+      // The nets were picked (none, too); without it the scope picks its own.
+      ...(scope.chosen === true ? { chosen: true } : {}),
       ...(samples > 0 ? { samples: Math.max(64, Math.min(samples, 1 << 16)) } : {}),
       ...(text(scope.input) ? { input: text(scope.input) } : {}),
       ...(text(scope.amplitude, 40) ? { amplitude: text(scope.amplitude, 40) } : {}),
@@ -63496,7 +63453,7 @@ let MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, response
 let openRunWindow; __bind(() => { ({ openRunWindow } = __require("src/web/optimize-window.js")); });
 let createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
-let coefficientGroups, roundingSearch; __bind(() => { ({ coefficientGroups, roundingSearch } = __require("src/core/analysis/rounding.js")); });
+let coefficientGroups, fractionSnapper, polishSearch; __bind(() => { ({ coefficientGroups, fractionSnapper, polishSearch } = __require("src/core/analysis/rounding.js")); });
 let SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch; __bind(() => { ({ SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch } = __require("src/core/analysis/refine.js")); });
 let prepareSimulation; __bind(() => { ({ prepareSimulation } = __require("src/core/analysis/simulate.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
@@ -63510,10 +63467,10 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
  * net under its limit. Run searches in worker threads (optimize-worker.js),
  * with a progress bar and Stop; the best numbers found come back beside
  * the coefficients, and Apply puts them into the sliders (Revert undoes
- * it). With fractions on, the run goes on to make the free coefficients
- * fractions m/n (rounding.js: n up to a largest, or exactly an n, per
- * block or per coefficient), re-optimizing around each, so what it finds
- * is what can be built. The setup is saved with the document
+ * it). With fractions on, the search keeps the free coefficients fractions
+ * m/n (rounding.js: n up to a largest, or exactly an n, per block or per
+ * coefficient) -- each candidate snapped before it is scored -- so what it
+ * finds is what can be built. The setup is saved with the document
  * (`analysisValues.flow.optimize`).
  */
 
@@ -63773,11 +63730,8 @@ function swingBlock(circuit, current, sources) {
           el('span', { class: 'signal-flow-optimize-number', text, title: text ? `At the best numbers found, verified at length: ${level && swing.measure !== 'peak' ? `its ${MEASURE_TEXT[swing.measure]} (its highest peak in brackets)` : 'its highest peak'}, dBFS` : '' })]);
       })));
     }
-    const dither = api.flow().dither;
     const sources = [...api.circuit().components.values()].filter((c) => c.type === 'dither').map((c) => c.refdes);
-    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.`
-      : dither && dither.shape !== 'none' ? ` With the older ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''} at the quantizer.`
-        : ' No dither: draw a dither source, with a gain after it, for some.';
+    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.` : ' No dither: draw a dither source, with a gain after it, for some.';
     children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
@@ -63905,7 +63859,7 @@ function resultBlock(sources) {
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Put the fractions into the coefficients, exactly' : 'Put the numbers found into the coefficients (rounded to 4 digits)', onclick: apply }),
     ]),
   );
-  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions && found.searchFeasible ? 'The search met every limit, but its fractions miss one: allow a larger n (or n = a finer one), or turn off one n per block.' : 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
+  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No candidate on fractions met every limit: allow a larger n (or n = a finer one), turn off one n per block, loosen a limit, or run again.' : 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
   if (found.zeroed?.length) {
     host.append(el('p', { class: 'field-hint signal-flow-optimize-zeroed' }, [
       el('span', { text: 'Set to zero, as they barely mattered (every limit still met): ' }),
@@ -63966,6 +63920,27 @@ function revert() {
   api.restoreCoefficients(reverting);
   reverting = null;
   renderOptimize();
+}
+
+/** The snapping to fractions the setup asks for (rounding.js): the gains
+ *  into one block share an n unless that is off; a block takes the
+ *  largest n set among its gains, exactly if any is set exactly. */
+function fractionsFor(circuit, parameters, current) {
+  const options = current.rounding;
+  const names = parameters.free.map((p) => p.name);
+  const groups = options.shared ? coefficientGroups(circuit, names) : null;
+  const denominators = {};
+  const exact = {};
+  for (const group of groups || names.map((name) => ({ names: [name] }))) {
+    const set = group.names.map((name) => current.coefficients[name]).filter((entry) => entry?.denominator);
+    if (!set.length) continue;
+    const n = Math.max(...set.map((entry) => entry.denominator));
+    for (const name of group.names) {
+      if (set.some((entry) => entry.denominatorFixed)) exact[name] = n;
+      else denominators[name] = n;
+    }
+  }
+  return fractionSnapper(parameters, { denominator: options.denominator, fixed: options.fixed, denominators, exact, powersOfTwo: options.powersOfTwo, groups });
 }
 
 /** Drive a refine generator (refine.js), scoring its batches with `pool`. */
@@ -64038,7 +64013,7 @@ function fractionsBlock(current) {
     const setCount = free.filter((name) => current.coefficients[name]?.denominator).length;
     children.push(
       el('div', { class: 'signal-flow-swing-controls' }, [
-        el('label', { text: 'n' }), kind, field,
+        el('span', { class: 'signal-flow-optimize-fractions-n' }, [el('label', { text: 'n' }), kind, field]),
         check('powersOfTwo', 'powers of two', 'n = 1, 2, 4, 8, ...: shifts in a digital filter, binary-weighted unit arrays (with ≤)'),
         check('shared', 'one n per block', 'The gains into the same block (through sums: an integrator, the quantizer) share one n, its reference element; off, each coefficient has its own'),
       ]),
@@ -64051,56 +64026,31 @@ function fractionsBlock(current) {
       ])] : []),
     );
   }
-  children.push(el('p', { class: 'field-hint', text: 'After the search the run makes each free coefficient a simple fraction m/n -- m units over n, whatever the units are -- at the least cost to the specs: the gains into one block share its n (m1/n, m2/n, ...), the block rounded worst goes first and the rest are re-optimized around it, then each moves by one unit while that helps. n ≤ takes the most accurate n up to it; n = that n exactly. A block takes the largest n set among its gains.' }));
+  children.push(el('p', { class: 'field-hint', text: 'The search keeps each free coefficient a simple fraction m/n -- m units over n, whatever the units are: every candidate is snapped to fractions before it is scored, so the limits, constraints, and goals are weighed on numbers that can be built, and then each moves by one unit while that helps. The gains into one block share its n (m1/n, m2/n, ...). n ≤ takes the n up to it that fits each candidate best; n = that n exactly. A block takes the largest n set among its gains.' }));
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
 
-/** The smallest n that brings a value within 5% (its block alone). */
-function denominatorFor(value, limit = 0.05) {
-  for (let n = 1; n <= 4096; n++) {
-    const m = Math.round(value * n) || Math.sign(value);
-    if (Math.abs(m / n - value) <= limit * Math.abs(value)) return n;
-  }
-  return null;
-}
-
-/** The fractions found, by block, against the numbers before rounding. */
+/** The fractions found, by block: each coefficient's m/n and value. */
 function fractionsTable(result) {
   const rows = [];
-  const far = [];
-  const cramped = [];
+  const coarse = [];
   for (const group of result.groups) {
-    // A gain far smaller than another into its block: it needs a large n.
-    const sizes = group.names.map((name) => Math.abs(result.before[name])).filter((v) => v > 0);
-    if (sizes.length > 1) {
-      const smallest = group.names.find((name) => Math.abs(result.before[name]) === Math.min(...sizes));
-      const need = denominatorFor(result.before[smallest]);
-      if (need && need > group.n) cramped.push({ name: smallest, ratio: Math.max(...sizes) / Math.min(...sizes), need, n: group.n });
-    }
     const into = group.into ? `into ${plainName(api.circuit().labelOf?.(group.into)?.text || group.into)}` : 'on its own';
     if (result.shared || group.names.length > 1) rows.push(el('div', { class: 'signal-flow-optimize-subhead', text: `${into}: n = ${group.n}` }));
     for (const name of group.names) {
       const f = result.fractions[name];
-      const was = result.before[name];
-      const value = f.m / f.n;
-      const change = was ? (value - was) / Math.abs(was) : 0;
-      const off = Math.abs(change) > 0.1;
-      if (off) far.push(name);
-      rows.push(el('div', { class: `signal-flow-optimize-fraction${off ? ' analysis-error' : ''}` }, [
+      if (!f) continue;
+      // One unit beside a far larger block-mate: its n leaves it no finer step.
+      if (Math.abs(f.m) === 1 && group.names.some((other) => Math.abs(result.fractions[other]?.m || 0) >= 8)) coarse.push({ name, n: f.n });
+      rows.push(el('div', { class: 'signal-flow-optimize-fraction' }, [
         math(symbolText(name)),
         el('span', { class: 'signal-flow-optimize-number signal-flow-optimize-found', text: `${f.m}/${f.n}` }),
-        el('span', { class: 'signal-flow-optimize-number', text: String(Number(value.toPrecision(4))), title: 'Its value' }),
-        el('span', { class: 'signal-flow-optimize-number', text: String(Number(was.toPrecision(4))), title: 'Its number found before rounding' }),
-        el('span', { class: 'signal-flow-optimize-number', text: `${change >= 0 ? '+' : ''}${(100 * change).toFixed(1)}%`, title: 'The change rounding made (the rest re-optimized around it)' }),
+        el('span', { class: 'signal-flow-optimize-number', text: String(Number((f.m / f.n).toPrecision(4))), title: 'Its value' }),
       ]));
     }
   }
-  const notes = [];
-  if (far.length) notes.push(el('p', { class: 'field-hint', text: `Changed more than 10%: ${far.map(plainName).join(', ')} -- by rounding, or by re-optimizing around the coefficients rounded before them (one coefficient can stand in for another: a resonator needs its product of gains, not each).` }));
-  for (const { name, ratio, need, n } of cramped) {
-    notes.push(el('p', { class: 'field-hint', text: `${plainName(name)} is ${Math.round(ratio)} times smaller than the largest gain into its block: within 5% it needs n ≥ ${need} there, where n = ${n}. Give it a larger n in the table, or turn off one n per block.` }));
-  }
-  return [gridTable(['', 'm/n', 'Value', 'Before', 'Change'], rows), ...notes];
+  const notes = coarse.map(({ name, n }) => el('p', { class: 'field-hint', text: `${plainName(name)} is a single unit of n = ${n}, far smaller than a gain beside it: a larger n for its block would let it be set finer.` }));
+  return [gridTable(['', 'm/n', 'Value'], rows), ...notes];
 }
 
 // ----- the run --------------------------------------------------------------------------
@@ -64221,24 +64171,36 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
   const status = root.querySelector(statusSelector);
   const progress = root.querySelector(progressSelector);
   const button = root.querySelector(buttonSelector);
-  const say = (text, error = false) => { status.textContent = text; status.classList.toggle('analysis-error', error); };
+  const say = (text, error = false) => {
+    const here = root.querySelector(statusSelector) || status;
+    here.textContent = text;
+    here.classList.toggle('analysis-error', error);
+  };
   if (!parameters.free.length) { say('No coefficient is free: set one to Free.', true); return; }
-  const problem = { output: api.flow().output, sources: api.flow().sources, band: api.band(), values: api.resolved(), setup: current, dither: api.flow().dither };
+  const problem = { output: api.flow().output, sources: api.flow().sources, band: api.band(), values: api.resolved(), setup: current };
   let stopped = false;
   running = { stop: () => { stopped = true; } };
-  // The run in its own window: its plot, its progress, Stop.
-  // The window shows the progress while it is open; closed, the run goes
-  // on and its progress is back here.
+  // The run in its own window: its plot, its progress, its status, Stop.
+  // While the window is open they show there alone; closed, the run goes
+  // on and they are back here.
+  let latest = { text: 'Preparing...', error: false };
   const runWindow = openRunWindow({
     title, plotAt: runPlotter(), onStop: () => running?.stop(),
-    onClose: () => { if (running) root.querySelector(progressSelector).hidden = false; },
+    onClose: () => {
+      if (running) root.querySelector(progressSelector).hidden = false;
+      say(latest.text, latest.error);
+    },
   });
   runWindow.start(problem.values);
-  const sayBoth = (text, error = false) => { say(text, error); runWindow.say(text, error); };
+  const sayBoth = (text, error = false) => {
+    latest = { text, error };
+    if (runWindow.isOpen()) runWindow.say(text, error);
+    else say(text, error);
+  };
   const label = button.textContent;
   button.textContent = 'Stop';
   root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button && !node.classList.contains('hint-more')) node.disabled = true; });
-  say('Preparing...');
+  sayBoth('Preparing...');
   progress.hidden = runWindow.isOpen();
   progress.value = 0;
   let pool = null;
@@ -64256,14 +64218,11 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
   } finally {
     pool?.close?.();
     running = null;
+    latest = { text: message.text, error: !!message.error };
     runWindow.done(message.text, !!message.error);
     button.textContent = label;
     renderOptimize();
-    const after = root.querySelector(statusSelector);
-    if (after) {
-      after.textContent = message.text;
-      after.classList.toggle('analysis-error', !!message.error);
-    }
+    if (!runWindow.isOpen()) say(message.text, !!message.error);
   }
 }
 
@@ -64284,7 +64243,10 @@ function run() {
       const objectiveSpecs = normalizeOptimizeSetup(current).specs.filter((spec) => spec.input);
       const goals = objectiveSpecs.some((spec) => spec.action === 'minimize' || spec.action === 'maximize') || Object.keys(normalizeOptimizeSetup(current).swing.targets).length > 0;
       const swingOn = normalizeOptimizeSetup(current).swing.on;
-      const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals, verify: swingOn });
+      // Kept to fractions, every candidate is snapped to them before it is
+      // scored: the search weighs only numbers that can be built.
+      const snap = current.rounding.on ? fractionsFor(circuit, parameters, current) : null;
+      const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals, verify: swingOn, snap });
       let shownBest = null;
       while (!optimizer.done && !stopped()) {
         const batch = optimizer.ask();
@@ -64314,43 +64276,14 @@ function run() {
           final = await driveSearch(pruneSearch(candidates, { own: best.own, start: best.score, links }), pool);
         }
       }
-      // Then fractions m/n, when asked for: from the numbers found, the
-      // coefficients set to zero staying there.
-      const options = current.rounding;
+      // On fractions: each moved a unit at a time while that helps.
       let fractioned = null;
-      let roundEvaluations = 0;
-      if (options.on && !stopped()) {
-        const kept = names.filter((name) => !final.zeroed.includes(name));
-        const rest = { ...parameters, free: parameters.free.filter((p) => kept.includes(p.name)).map((p) => ({ ...p, start: final.own[p.name] })) };
-        const groups = options.shared ? coefficientGroups(circuit, kept) : null;
-        // A block's own n: the largest set among its gains, exactly if any is.
-        const denominators = {};
-        const exact = {};
-        for (const group of groups || kept.map((name) => ({ names: [name] }))) {
-          const set = group.names.map((name) => current.coefficients[name]).filter((entry) => entry?.denominator);
-          if (!set.length) continue;
-          const n = Math.max(...set.map((entry) => entry.denominator));
-          for (const name of group.names) {
-            if (set.some((entry) => entry.denominatorFixed)) exact[name] = n;
-            else denominators[name] = n;
-          }
-        }
-        const search = roundingSearch(rest, { values: { ...own, ...final.own }, links, denominator: options.denominator, fixed: options.fixed, denominators, exact, powersOfTwo: options.powersOfTwo, groups, seed: Math.floor(Math.random() * 2 ** 31) });
-        let step = search.next();
-        while (!step.done && !stopped()) {
-          const { batch, phase, step: k, steps } = step.value;
-          const scores = await pool.evaluate(batch);
-          roundEvaluations += batch.length;
-          progress(Math.min(1, (k - (phase === 'round' ? 1 : 0.5)) / Math.max(1, steps)));
-          say(`Fractions: ${phase === 'polish' ? 'fine-tuning by one unit' : phase === 'reoptimize' ? `re-optimizing the rest after ${k} of ${steps}` : phase === 'round' ? `rounding ${k} of ${steps} ${options.shared ? 'blocks' : 'coefficients'}` : phase === 'verify' ? 'verifying the result at length' : 'verifying the start at length'}... ${roundEvaluations} candidates${pool.count ? ` on ${pool.count} threads` : ''}`);
-          step = search.next(scores);
-        }
-        if (step.done && step.value?.values) {
-          const result = step.value;
-          showBest(result.values);
-          fractioned = { ...result, before: Object.fromEntries(kept.map((name) => [name, final.own[name]])), shared: !!groups };
-          final = { ...final, own: { ...final.own, ...result.own }, score: result.score };
-        }
+      if (snap && !stopped()) {
+        say('Fractions: fine-tuning each by one unit...');
+        const result = await driveSearch(polishSearch(parameters, { own: final.own, snapped: snap(final.own), links }), pool);
+        fractioned = result;
+        final = { ...final, own: { ...final.own, ...result.own }, score: result.score };
+        showBest(result.values);
       }
       // How much each spec moves per 1% of each coefficient.
       let sensitivity = [];
@@ -64358,7 +64291,7 @@ function run() {
         say('Measuring each coefficient\'s sensitivity...');
         sensitivity = await driveSearch(sensitivitySearch(parameters, objectiveSpecs, { own: final.own, links }), pool);
       }
-      const feasible = fractioned ? isFeasible(fractioned) : isFeasible(best);
+      const feasible = isFeasible(fractioned || best);
       found = {
         own: Object.fromEntries(names.map((name) => [name, final.own[name]])),
         zeroed: final.zeroed,
@@ -64366,13 +64299,12 @@ function run() {
         score: final.score,
         start: optimizer.start,
         feasible,
-        searchFeasible: isFeasible(best),
         specs: objectiveSpecs,
         swing: normalizeOptimizeSetup(current).swing.on,
-        ...(fractioned ? { fractions: fractioned.fractions, groups: fractioned.groups, before: fractioned.before, shared: fractioned.shared } : {}),
+        ...(fractioned ? { fractions: fractioned.fractions, groups: fractioned.groups, shared: current.rounding.shared } : {}),
       };
       const zeroedText = final.zeroed.length ? `; ${final.zeroed.length === 1 ? 'one coefficient' : `${final.zeroed.length} coefficients`} set to zero` : '';
-      const fractionText = fractioned ? `, then ${roundEvaluations} making them fractions` : options.on && stopped() ? ' (stopped before the fractions)' : '';
+      const fractionText = snap ? ', every one on fractions' : '';
       return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${fractionText}${feasible ? zeroedText : ': no candidate met every limit'}.`, error: !feasible };
     },
   });
@@ -66983,7 +66915,7 @@ function fill(sim) {
       const keys = new Set(shownKeys(sim));
       if (check.checked) keys.add(signal.key);
       else keys.delete(signal.key);
-      save({ nets: sim.signals.map((s) => s.key).filter((key) => keys.has(key)) });
+      save({ nets: sim.signals.map((s) => s.key).filter((key) => keys.has(key)), chosen: true });
     });
     const name = el('span', { class: 'scope-net-name' });
     name.innerHTML = texToMathML(signal.name);
@@ -66993,10 +66925,11 @@ function fill(sim) {
   }));
 }
 
-/** The nets to show: those saved, else the output and the quantizers' inputs. */
+/** The nets to show: those picked (none, if all were unchecked), else the
+ *  output and the quantizers' inputs. */
 function shownKeys(sim) {
   const saved = state().nets.filter((key) => sim.signals.some((s) => s.key === key));
-  if (saved.length || state().nets.length) return saved;
+  if (state().chosen || saved.length) return saved;
   return sim.signals.filter((s) => s.role === 'output' || s.role === 'quantizer-input' || s.key === api?.flow().output).map((s) => s.key);
 }
 
@@ -68028,10 +67961,10 @@ __exports.collapsedPanels = collapsedPanels;
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.signalFlowSettingsRestored = signalFlowSettingsRestored;
 __exports.installSignalFlowUi = installSignalFlowUi;
-let MUTED_TRACE_COLOR, TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ MUTED_TRACE_COLOR, TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ MUTED_TRACE_COLOR, TRACE_COLORS, ditherSymbols, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
-let expressionTex, parseLevels; __bind(() => { ({ expressionTex, parseLevels } = __require("src/core/transfer-function.js")); });
+let expressionTex; __bind(() => { ({ expressionTex } = __require("src/core/transfer-function.js")); });
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let locusSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, responseSpec, stepSpec, swingSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
@@ -68039,7 +67972,7 @@ let installScope, scopeChanged, toggleScope; __bind(() => { ({ installScope, sco
 let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
 let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
-let ditherSteps, prepareSimulation, sweepAmplitudes; __bind(() => { ({ ditherSteps, prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
+let prepareSimulation, sweepAmplitudes; __bind(() => { ({ prepareSimulation, sweepAmplitudes } = __require("src/core/analysis/simulate.js")); });
 let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
@@ -68259,7 +68192,8 @@ function fillForm() {
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
-    const value = flow().sources[source.id] ?? 'input';
+    // A dither source is noise, not a signal: zero unless set to input.
+    const value = flow().sources[source.id] ?? (source.dither ? 'zero' : 'input');
     flow().sources[source.id] = value;
     const kind = typeof value === 'object' ? 'constant' : value;
     const select = el('select', { 'aria-label': `${source.name}: input, zero, or constant` }, [
@@ -68565,7 +68499,6 @@ function swingSection() {
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Sine into' }), source,
       el('label', { text: 'at f/fs' }), frequency,
-      el('span', { class: 'signal-flow-dither' }),
       el('button', { type: 'button', class: 'signal-flow-swing-run', text: 'Simulate', onclick: () => runSwing() }),
     ]),
     el('p', { class: 'field-hint signal-flow-swing-status', 'aria-live': 'polite' }),
@@ -68582,7 +68515,6 @@ function fillSwingSources(sources) {
   // The document's frequency; blank, the band's own (shown as the placeholder).
   section.querySelector('.signal-flow-swing-frequency').value = flow().swingFrequency || '';
   refreshTestFrequencies();
-  section.querySelector('.signal-flow-swing .signal-flow-dither')?.replaceWith(ditherControls());
 }
 
 /** A test's sine frequency (f/fs): the one typed, else inside the signal
@@ -68620,7 +68552,6 @@ function sweepSwing(done) {
     input: section.querySelector('.signal-flow-swing-source').value,
     output: flow().output,
     frequency: swingFrequency(),
-    dither: flow().dither,
   });
   const run = ++swingRun;
   if (!sim.ok) {
@@ -68962,53 +68893,8 @@ function spectrumControls() {
   frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
     el('label', { class: 'signal-flow-spectrum-toggle' }, [check, el('span', { text: 'Simulated output spectrum at' })]), amplitude, el('label', { text: 'dBFS, f/fs' }), frequency,
-    ditherControls(),
     el('span', { class: 'field-hint signal-flow-spectrum-status', text: spectrumStatus() }),
   ]);
-}
-
-/** Dither at the quantizers' inputs for every simulation (the spectrum,
- *  the swing, the optimizer's swing test): none, rectangular, triangular. */
-/** The largest quantizer's full scale, N - 1 (1 with none). */
-function quantizerFullScale() {
-  let fullScale = 1;
-  for (const c of editor.circuit.components.values()) {
-    if (c.type !== 'quantizer') continue;
-    try { fullScale = Math.max(fullScale, parseLevels(c.value) - 1); } catch { /* the simulation says why */ }
-  }
-  return fullScale;
-}
-
-/** The dither setting from before dither sources: shown only for a design
- *  that has it (its simulations keep it until it is turned off); a design's
- *  dither is a dither source in the diagram now. */
-function ditherControls() {
-  const settings = flow().dither || {};
-  if (!['rect', 'tri'].includes(settings.shape)) return el('span', { class: 'signal-flow-dither', hidden: true });
-  // In quantizer steps; an older document's dBFS shown as the steps it is.
-  const steps = ditherSteps(settings, quantizerFullScale());
-  const stepsText = settings.steps ?? (Number.isFinite(steps) ? String(Number(steps.toPrecision(3))) : '0.5');
-  const shape = el('select', { class: 'signal-flow-dither-shape', 'aria-label': 'Dither', title: 'Dither added at each quantizer\'s input: rectangular over (-A, A), or triangular over (-A, A) peaking at 0' }, [
-    el('option', { value: 'none', text: 'No dither' }), el('option', { value: 'rect', text: 'Rectangular dither' }), el('option', { value: 'tri', text: 'Triangular dither' }),
-  ]);
-  shape.value = ['rect', 'tri'].includes(settings.shape) ? settings.shape : 'none';
-  const amplitude = el('input', { type: 'text', class: 'signal-flow-band-field signal-flow-dither-amplitude', value: stepsText, 'aria-label': 'Dither amplitude, quantizer steps', title: 'The peak, +-A, in quantizer steps (the distance between two levels) -- the same for both shapes; triangular has half the power of rectangular at the same A. The classic amounts: rectangular +-0.5 step makes the quantization error\'s mean independent of the signal; triangular +-1 step (two +-0.5-step rectangles added) its power too. In a modulator the dither is shaped like the quantization noise: more costs in-band SNR and some stable amplitude.' });
-  const unit = el('label', { class: 'signal-flow-dither-unit', text: 'steps' });
-  amplitude.hidden = unit.hidden = shape.value === 'none';
-  const save = () => {
-    amplitude.hidden = unit.hidden = shape.value === 'none';
-    flow().dither = { shape: shape.value, steps: amplitude.value.trim() || '0.5' };
-    markSettingsChanged();
-    // Both places show it: keep them alike, and simulate again.
-    for (const other of section.querySelectorAll('.signal-flow-dither')) if (!other.contains(shape)) other.replaceWith(ditherControls());
-    if (flow().spectrum?.on) runSpectrum();
-    if (swing) runSwing();
-  };
-  shape.addEventListener('change', save);
-  amplitude.addEventListener('change', save);
-  amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
-  const note = el('span', { class: 'field-hint signal-flow-dither-note', text: 'An older setting: draw a dither source instead (Insert: dither) with a gain after it, and set this to No dither.' });
-  return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit, note]);
 }
 
 /** The simulated in-band SNDR, and the amplitude it was simulated at, as a
@@ -69050,13 +68936,12 @@ function runSpectrum() {
   const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer && !s.dither)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
   const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
-  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT, dither: flow().dither });
+  const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT });
   if (!sim.ok) spectrum = { error: sim.error };
   else if (!Number.isFinite(amplitude)) spectrum = { error: 'the amplitude is a number of dBFS' };
   else {
     const run = sim.run(amplitude, { record: true });
-    // Dither adds its own white error to the quantizer's, shaped alike.
-    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 + (sim.dither?.variance || 0) });
+    const raw = run.overloaded || !run.samples ? null : outputSpectrum(run.samples, { segment: SPECTRUM_SEGMENT, variance: 1 / 3 });
     spectrum = raw
       ? { raw, points: plotSpectrum({ ...raw, points: dbfsSpectrum(raw, sim.fullScale) }, sim.frequency), frequency: sim.frequency, amplitude, fullScale: sim.fullScale }
       : { error: run.overloaded ? `the loop runs away at ${amplitude} dBFS` : 'no output to take the spectrum of' };
@@ -69269,7 +69154,9 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
     try { return `${expressionTex(parseCoefficientLink(links()[name]).ast)} = `; } catch { return ''; }
   };
   // One order for every plot: the coefficients sorted by name (a_1, a_2, b_1, ...).
-  const names = [...new Set(used)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  // The dither's gains too: no transfer function shows them, yet they set
+  // what every simulation draws.
+  const names = [...new Set([...used, ...ditherSymbols(circuit)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   // A coefficient written as a fraction (rounded to m/n) shows as one.
   // A linked one too, once the coefficients are rounded: it follows
   // fractions, so its number is one (c_1 = b_1 = 7/32), never 0.2188.
@@ -69587,15 +69474,10 @@ function installSignalFlowUi() {
         coefficientsChanged();
         coefficientsSettled();
       },
-      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() }, dither: flow().dither ? { ...flow().dither } : undefined }),
+      snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() } }),
       restoreCoefficients(saved) {
         editor.circuit.analysisValues.coefficients = { ...saved.coefficients };
         editor.circuit.analysisValues.fractions = { ...saved.fractions };
-        // Revert puts back the dither Apply changed too.
-        if (saved.dither) {
-          flow().dither = { ...saved.dither };
-          for (const node of section.querySelectorAll('.signal-flow-dither')) node.replaceWith(ditherControls());
-        }
         renderCoefficients({ force: true });
         coefficientsChanged();
         coefficientsSettled();

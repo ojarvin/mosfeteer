@@ -1,27 +1,23 @@
 /**
- * Coefficient rounding for the optimizer (optimize.js): each free
- * coefficient made a simple fraction m/n, n at most a chosen denominator
- * (or a power of two), at the least cost to the specs. Whatever realizes
- * the coefficient -- a ratio of unit elements of any kind, or a digital
- * multiplier -- it reads as "m units over n": the larger n may be, the finer
- * the rounding and the more units it costs.
+ * Fractions for the optimizer (optimize.js): each free coefficient a
+ * simple fraction m/n, n at most a chosen denominator (or a power of two),
+ * or exactly a chosen n. Whatever realizes the coefficient -- a ratio of
+ * unit elements of any kind, or a digital multiplier -- it reads as "m
+ * units over n": the larger n may be, the finer the steps and the more
+ * units it costs.
  *
- * Sequential rounding with re-optimization: the gains into one block share
- * its n (coefficientGroups), so a block's coefficients read as m_1/n,
- * m_2/n, ...; one group is rounded and fixed,
- * the rest re-optimized briefly to win back what it cost, and so on until
- * every one is a fraction; then each is moved by one unit while that helps.
- * Each block takes the n (up to the largest allowed) that rounds its gains
- * most accurately, and the block rounded worst goes first, so the
- * coefficients still free can make up for it. Candidates are ranked as the optimizer ranks
- * them (fitnessOf: every limit met first, then the goals). The search is a
- * generator of batches to score, so the editor can score them in worker
- * threads: it yields `{ batch, phase, step, steps }` and takes the batch's
- * scores back -- a batch item is the numbers (the quick test) or
- * `{ verify: numbers }` (the long one: the start and the result).
+ * The fractions are kept during the search, not made after it: every
+ * candidate the search proposes is snapped to the nearest fractions
+ * (`fractionSnapper`) before it is scored, so the search only ever weighs
+ * numbers that can be built, and the best it finds is one. The gains into
+ * one block share its n (coefficientGroups), so a block's coefficients read
+ * m_1/n, m_2/n, ...; a block's n is the one (up to its largest) that its
+ * gains snap to most accurately, or the n set for it exactly. After the
+ * search, `polishSearch` moves each by one unit while that helps.
  */
 
-import { createOptimizer, fitnessOf, pointValues, scoreRequest } from './optimize.js';
+import { fitnessOf } from './optimize.js';
+import { resolveCoefficients } from './coefficient-links.js';
 import { coefficientValue, signalFlowGraph } from './signal-flow.js';
 import { expressionSymbols } from './bode.js';
 import { parseGain } from '../transfer-function.js';
@@ -149,106 +145,80 @@ function bestDenominator(numbers, maxDenominator, powersOfTwo) {
 }
 
 /**
- * The rounding search over `parameters` (optimizationParameters), from the
- * numbers `values` (every coefficient's own), `links` resolved. `options`:
- * `denominator` (the largest n; with `fixed`, the n), `denominators` (per
- * coefficient: its group's is the smallest of its members'), `exact` (per
- * coefficient, an n its group must have: the largest of its members'),
- * `powersOfTwo`, `groups` (coefficientGroups; each coefficient alone when
- * omitted), `seed`.
- *
- * A group is rounded at once: every member m/n over one n, the n (up to its
- * largest) that rounds it most accurately; the group rounded worst goes
- * first, then the rest are re-optimized; at the end each member is moved by
- * one unit, 1/n, while that helps. Returns, when done, `{ own, values, score,
- * fitness, fractions: { name: { m, n } }, groups, start (the unrounded score) }`.
+ * The snapping of free numbers to fractions, for `parameters`
+ * (optimizationParameters). `options`: `denominator` (the largest n; with
+ * `fixed`, the n), `denominators` (per coefficient: its group's largest is
+ * the smallest of its members'), `exact` (per coefficient, an n its group
+ * must have: the largest of its members'), `powersOfTwo`, `groups`
+ * (coefficientGroups; each coefficient alone when omitted). Returns
+ * `snap(own)` giving `{ own (the free ones snapped, the rest as they were),
+ * fractions: { name: { m, n } }, groups: [{ into, names, n }] }`. A number
+ * that is not zero never snaps to zero (that is another diagram), nor
+ * across it, and stays within its range where a neighbouring m allows.
  */
-export function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32, fixed = false, denominators = {}, exact = {}, powersOfTwo = false, groups: rawGroups = null, seed = 1 } = {}) {
-  const own = { ...values };
-  for (const p of parameters.free) own[p.name] = Number.isFinite(own[p.name]) ? own[p.name] : p.start;
+export function fractionSnapper(parameters, { denominator = 32, fixed = false, denominators = {}, exact = {}, powersOfTwo = false, groups: rawGroups = null } = {}) {
   const byName = new Map(parameters.free.map((p) => [p.name, p]));
   const groups = (rawGroups || parameters.free.map((p) => ({ into: null, names: [p.name] })))
     .map((g) => ({ into: g.into, names: g.names.filter((name) => byName.has(name)) }))
     .filter((g) => g.names.length);
   const maxOf = (group) => Math.min(...group.names.map((name) => denominators[name] || denominator));
-  // A group's n when it is set exactly: a member's own, else the setting's.
   const exactOf = (group) => {
     const set = group.names.map((name) => exact[name]).filter((n) => n >= 1);
     return set.length ? Math.max(...set) : fixed ? maxOf(group) : null;
   };
-  const resolvedOf = (numbers) => pointValues({ free: [] }, [], { values: numbers, links }).values;
   const inRange = (p, v) => (p.min === null || v >= p.min - 1e-12) && (p.max === null || v <= p.max + 1e-12);
-  // A group over n: each member to its nearest m/n (kept in its range).
-  const roundedAt = (group, n) => Object.fromEntries(group.names.map((name) => {
-    const p = byName.get(name);
-    let m = unitsOf(own[name], n);
-    if (!inRange(p, m / n)) m = inRange(p, (m + 1) / n) ? m + 1 : inRange(p, (m - 1) / n) ? m - 1 : m;
-    return [name, m];
-  }));
-  const remaining = [...groups];
-  const fractions = {};
-  const denominatorOf = new Map();
-  const steps = groups.length;
-
-  // The start and the result are verified with the long test, the steps
-  // between ranked by the quick one.
-  const [startScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'start', step: 0, steps };
-  let current = { score: startScore, fitness: fitnessOf(startScore) };
-
-  while (remaining.length) {
-    // Each group at its most accurate n (up to its largest; the smaller on a
-    // tie), and the group rounded worst goes first, while the rest are still
-    // free to make up for it.
-    let chosen = null;
-    for (const group of remaining) {
+  return (values) => {
+    const own = { ...values };
+    const fractions = {};
+    const out = groups.map((group) => {
       const numbers = group.names.map((name) => own[name]);
-      const set = exactOf(group);
-      const { n, error } = set ? { n: set, error: errorAt(numbers, set) } : bestDenominator(numbers, maxOf(group), powersOfTwo);
-      if (!chosen || error > chosen.error) chosen = { group, n, error };
-    }
-    const ms = roundedAt(chosen.group, chosen.n);
-    for (const [name, m] of Object.entries(ms)) {
-      own[name] = m / chosen.n;
-      fractions[name] = { m, n: chosen.n };
-    }
-    denominatorOf.set(chosen.group, chosen.n);
-    remaining.splice(remaining.indexOf(chosen.group), 1);
-    const [score] = yield { batch: [resolvedOf(own)], phase: 'round', step: steps - remaining.length, steps };
-    current = { score, fitness: fitnessOf(score) };
-
-    // The rest re-optimized from here, briefly.
-    const rest = remaining.flatMap((g) => g.names).map((name) => byName.get(name));
-    if (rest.length) {
-      const sub = { free: rest.map((q) => ({ ...q, start: own[q.name], log: q.log && own[q.name] !== 0 })) };
-      const optimizer = createOptimizer(sub, { values: own, links, evaluations: Math.min(800, 80 * rest.length + 100), seed: seed + remaining.length, sigma: 0.15 });
-      while (!optimizer.done) {
-        const candidates = optimizer.ask();
-        optimizer.tell(yield { batch: candidates.map((c) => c.request), phase: 'reoptimize', step: steps - remaining.length, steps });
-      }
-      const found = optimizer.best;
-      if (found && found.fitness < current.fitness) {
-        for (const q of rest) own[q.name] = found.own[q.name];
-        current = { score: found.score, fitness: found.fitness };
-      }
-    }
-  }
-
-  // One unit (1/n) up or down on any member, while it helps.
-  for (let pass = 0; pass < 4; pass++) {
-    const trials = [];
-    for (const group of groups) {
-      const n = denominatorOf.get(group);
+      const n = exactOf(group) || bestDenominator(numbers, maxOf(group), powersOfTwo).n;
       for (const name of group.names) {
+        const p = byName.get(name);
+        let m = unitsOf(own[name], n);
+        if (!inRange(p, m / n) && own[name] !== 0) m = inRange(p, (m + 1) / n) && m + 1 !== 0 ? m + 1 : inRange(p, (m - 1) / n) && m - 1 !== 0 ? m - 1 : m;
+        own[name] = m / n;
+        fractions[name] = { m, n };
+      }
+      return { into: group.into, names: group.names, n };
+    });
+    return { own, fractions, groups: out };
+  };
+}
+
+/**
+ * After a search on fractions: each coefficient moved by one unit (1/n)
+ * up or down while that helps, never to zero nor across it. A generator of
+ * batches to score, as the optimizer's: it yields `{ batch, phase, step,
+ * steps }` and takes the scores back -- a batch item is the numbers (the
+ * quick test) or `{ verify: numbers }` (the long one: the start and the
+ * result). `own` are the numbers found (on fractions), `snapped` the
+ * snapper's `{ fractions, groups }` for them. Returns `{ own, values, score,
+ * fitness, fractions, groups, start }`.
+ */
+export function* polishSearch(parameters, { own: found, snapped, links = {}, passes = 4 } = {}) {
+  const byName = new Map(parameters.free.map((p) => [p.name, p]));
+  const inRange = (p, v) => (p.min === null || v >= p.min - 1e-12) && (p.max === null || v <= p.max + 1e-12);
+  const own = { ...found };
+  const fractions = { ...snapped.fractions };
+  const resolvedOf = (numbers) => resolveCoefficients(numbers, links);
+  const [startScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'start', step: 0, steps: passes };
+  let current = { score: startScore, fitness: fitnessOf(startScore) };
+  for (let pass = 0; pass < passes; pass++) {
+    const trials = [];
+    for (const group of snapped.groups) {
+      for (const name of group.names) {
+        const f = fractions[name];
+        if (!f || f.m === 0) continue;
         for (const dm of [-1, 1]) {
-          const m = fractions[name].m + dm;
-          // Not to zero, nor across it.
-          if (m === 0 || Math.sign(m) !== Math.sign(fractions[name].m)) continue;
-          if (inRange(byName.get(name), m / n)) trials.push({ name, m, n });
+          const m = f.m + dm;
+          if (m === 0 || Math.sign(m) !== Math.sign(f.m)) continue;
+          if (inRange(byName.get(name), m / f.n)) trials.push({ name, m, n: f.n });
         }
       }
     }
     if (!trials.length) break;
-    const scores = yield { batch: trials.map((t) => resolvedOf({ ...own, [t.name]: t.m / t.n })), phase: 'polish', step: steps, steps };
+    const scores = yield { batch: trials.map((t) => resolvedOf({ ...own, [t.name]: t.m / t.n })), phase: 'polish', step: pass + 1, steps: passes };
     let best = -1;
     for (let i = 0; i < trials.length; i++) if (fitnessOf(scores[i]) < (best < 0 ? current.fitness - 1e-9 : fitnessOf(scores[best]))) best = i;
     if (best < 0) break;
@@ -257,21 +227,6 @@ export function* roundingSearch(parameters, { values = {}, links = {}, denominat
     fractions[t.name] = { m: t.m, n: t.n };
     current = { score: scores[best], fitness: fitnessOf(scores[best]) };
   }
-  const [finalScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'verify', step: steps, steps };
-  return {
-    own, values: resolvedOf(own), score: finalScore, fitness: fitnessOf(finalScore), fractions, start: startScore,
-    groups: groups.map((g) => ({ into: g.into, names: g.names, n: denominatorOf.get(g) })),
-  };
-}
-
-/** The whole rounding in this thread, scored by `objective` (prepareObjective). */
-export function runRounding(objective, parameters, options) {
-  const search = roundingSearch(parameters, options);
-  let step = search.next();
-  let evaluations = 0;
-  while (!step.done) {
-    evaluations += step.value.batch.length;
-    step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
-  }
-  return { ...step.value, evaluations };
+  const [finalScore] = yield { batch: [{ verify: resolvedOf(own) }], phase: 'verify', step: passes, steps: passes };
+  return { own, values: resolvedOf(own), score: finalScore, fitness: fitnessOf(finalScore), fractions, groups: snapped.groups, start: startScore };
 }

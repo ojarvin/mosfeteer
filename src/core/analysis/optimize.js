@@ -85,10 +85,12 @@ const coordinateOf = (p, v) => (p.log ? Math.log(Math.abs(v) / Math.abs(p.start)
 
 /**
  * The search point y as numbers: each free coefficient clamped to its
- * range (`penalty` how far outside it y went, in internal units), linked
- * ones resolved. Returns `{ own, values, penalty }`.
+ * range (`penalty` how far outside it y went, in internal units), then
+ * given to `snap` when the coefficients are kept to fractions
+ * (rounding.js fractionSnapper), linked ones resolved. Returns `{ own,
+ * values, penalty, fractions? }`.
  */
-export function pointValues(parameters, y, { values = {}, links = {} } = {}) {
+export function pointValues(parameters, y, { values = {}, links = {}, snap = null } = {}) {
   const own = { ...values };
   let penalty = 0;
   parameters.free.forEach((p, i) => {
@@ -103,6 +105,10 @@ export function pointValues(parameters, y, { values = {}, links = {} } = {}) {
     }
     own[p.name] = v;
   });
+  if (snap) {
+    const snapped = snap(own);
+    return { own: snapped.own, values: resolveCoefficients(snapped.own, links), penalty, fractions: snapped.fractions };
+  }
   return { own, values: resolveCoefficients(own, links), penalty };
 }
 
@@ -297,7 +303,7 @@ export function swingTestFrequency(swing, band) {
  * Prepare to score sets of numbers. `problem`: `output`, `sources` (the
  * analysis's settings), `band` (`{ f0, bw }`), `values` (every coefficient's
  * number, for the sampled analysis to start from), `setup` (optimize-setup.js),
- * `dither` (the swing test's, as simulate.js takes it), and for the swing
+ * and for the swing
  * test `swingRuns` (frequencies, 2), `swingPhases` (phases of the sine at
  * each, 2), `swingSamples` (4096), `swingGuard` (dB kept under each limit,
  * by the measure), `swingMargin` (dB above the amplitude it must hold at
@@ -364,7 +370,7 @@ export function prepareObjective(circuit, problem = {}) {
    * measure, the limited nets), runs, held, marginRuns, marginHeld }, error }`.
    */
   const swingTest = (values, { samples, phases, marginPhases, guard }) => {
-    const sims = swing.frequencies.map((frequency) => prepareSimulation(circuit, { values, sources: problem.sources, input: swing.input, output: problem.output, frequency, samples, warmup: samples / 4, dither: problem.dither }));
+    const sims = swing.frequencies.map((frequency) => prepareSimulation(circuit, { values, sources: problem.sources, input: swing.input, output: problem.output, frequency, samples, warmup: samples / 4 }));
     const broken = sims.find((sim) => !sim.ok);
     if (broken) return { error: broken.error };
     const [sim] = sims;
@@ -493,9 +499,11 @@ export function prepareObjective(circuit, problem = {}) {
  * is verified before it can be the best, so `best` is always verified (a
  * short run's luck cannot win). `stopEarly` (a run with no goals) ends it at
  * the first best that meets every limit. `best`: `{ y, own, values, score,
- * fitness, quick (its quick score) }`; `start` the start's score.
+ * fitness, quick (its quick score) }`; `start` the start's score. With
+ * `snap` (rounding.js fractionSnapper) every candidate is snapped to
+ * fractions before it is scored, so the search weighs only those.
  */
-export function createOptimizer(parameters, { values = {}, links = {}, evaluations = 3000, seed = 1, sigma = 0.4, stopEarly = false, verify = false } = {}) {
+export function createOptimizer(parameters, { values = {}, links = {}, evaluations = 3000, seed = 1, sigma = 0.4, stopEarly = false, verify = false, snap = null } = {}) {
   const n = parameters.free.length;
   const random = seededRandom(seed);
   let lambda = 4 + Math.floor(3 * Math.log(Math.max(n, 1)));
@@ -511,7 +519,7 @@ export function createOptimizer(parameters, { values = {}, links = {}, evaluatio
   let done = !n;
   let verified = 0;
   const queue = [];
-  const point = (y) => ({ y, ...pointValues(parameters, y, { values, links }) });
+  const point = (y) => ({ y, ...pointValues(parameters, y, { values, links, snap }) });
 
   const ask = () => {
     if (done) return [];
@@ -629,6 +637,7 @@ export function runOptimization(circuit, problem, options = {}) {
     sigma: options.sigma,
     stopEarly: !objective.goals,
     verify: options.verify ?? !!objective.swing,
+    snap: options.snap,
   });
   while (!optimizer.done) {
     const batch = optimizer.ask();

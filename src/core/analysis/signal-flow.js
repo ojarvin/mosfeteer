@@ -1588,6 +1588,35 @@ export function resultSymbols(value, variable) {
   return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
+/**
+ * The coefficients that set how much dither reaches the loop: those of the
+ * gains a dither source's signal passes through (gain after gain) before
+ * it meets anything else. They appear in no transfer function while the
+ * dither is a zero source, yet they shape every simulation.
+ */
+export function ditherSymbols(circuit) {
+  const { signals } = signalFlowGraph(circuit);
+  const out = new Set();
+  const list = [...signals.values()];
+  let frontier = list.filter((signal) => signal.driver?.source && circuit.components.get(signal.driver.comp)?.type === 'dither');
+  const seen = new Set();
+  while (frontier.length) {
+    const next = [];
+    for (const signal of frontier) {
+      if (seen.has(signal.key)) continue;
+      seen.add(signal.key);
+      for (const reader of signal.readers) {
+        const part = circuit.components.get(reader.comp);
+        if (part?.type !== 'gain') continue;
+        try { expressionSymbols(coefficientValue(parseGain(part.value)), 's', out); } catch { /* not a coefficient */ }
+        next.push(...list.filter((s) => s.driver && !s.driver.source && s.driver.comp === part.refdes));
+      }
+    }
+    frontier = next;
+  }
+  return [...out].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
 /** Every coefficient a diagram's parts name: its blocks' (a delay's T
  *  included), its gains', its samplers' periods. */
 export function diagramSymbols(circuit) {

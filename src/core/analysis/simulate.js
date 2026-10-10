@@ -31,33 +31,6 @@ const JUNCTION_INPUTS = ['n', 's', 'w'];
 
 /** Schreier's quantizer (ds_quantize): odd levels for even N, even levels
  *  (with 0) for odd N, limited to +-(N - 1). */
-/**
- * Dither added at each quantizer's input (`{ shape, steps }`): 'rect'
- * uniform over (-A, A), 'tri' triangular over (-A, A), peaking at 0 (two
- * uniforms), A in quantizer steps (levels 2 apart, so A = 2 steps in
- * levels). The classic amounts: rectangular +-1/2 step makes the error's
- * mean independent of the signal; triangular +-1 step its power too. A
- * document from before steps gives `amplitude` in dBFS of full scale.
- * Returns `{ shape, amplitude (levels), steps, variance }` -- the variance,
- * in levels squared, the white error it adds beside the quantizer's 1/3:
- * A^2/3 or A^2/6 -- or null without dither.
- */
-export function ditherSettings(dither, fullScale) {
-  if (!dither || !['rect', 'tri'].includes(dither.shape)) return null;
-  const steps = ditherSteps(dither, fullScale);
-  if (!(steps > 0)) return null;
-  const amplitude = 2 * steps;
-  return { shape: dither.shape, amplitude, steps, variance: dither.shape === 'rect' ? amplitude ** 2 / 3 : amplitude ** 2 / 6 };
-}
-
-/** A dither's amplitude in quantizer steps (from dBFS for an older one). */
-export function ditherSteps(dither, fullScale) {
-  const steps = Number(dither?.steps);
-  if (dither?.steps !== undefined && dither.steps !== '' && Number.isFinite(steps)) return steps;
-  const db = Number(dither?.amplitude);
-  return Number.isFinite(db) ? (fullScale * 10 ** (db / 20)) / 2 : NaN;
-}
-
 export function quantize(y, levels) {
   const v = levels % 2 === 0 ? 2 * Math.floor(0.5 * y) + 1 : 2 * Math.floor(0.5 * (y + 1));
   const limit = levels - 1;
@@ -121,8 +94,8 @@ function matVec(M, x, out) {
  * constant holds it, the rest are zero), `input` (the source the sine
  * drives), `output` (a signal key for the output tone), `frequency` (f/fs
  * of the sine, made coherent with the window), `samples` (the window),
- * `warmup`, `subSteps`, `dither` (`{ shape: 'rect' | 'tri', steps }`, at
- * each quantizer's input, ditherSettings; each run draws the same sequence).
+ * `warmup`, `subSteps`. Dither is a dither source in the diagram: each
+ * draws its own sequence, the same every run.
  * Returns `{ ok, fullScale, frequency, signals, run }`:
  * `signals` `[{ key, name, domain, role }]`, `run(amplitude)` (dBFS) gives
  * `{ peaks (per signal, over the window), tone (the output's amplitude at
@@ -159,7 +132,6 @@ export function prepareSimulation(circuit, options = {}) {
     try { levels.set(q.refdes, parseLevels(q.value)); } catch (err) { return failure('bad-levels', `${q.refdes}: ${err.message}`); }
   }
   const fullScale = quantizers.length ? Math.max(...[...levels.values()].map((n) => n - 1)) : 1;
-  const dither = ditherSettings(options.dither, fullScale);
 
   // Source settings, as the analysis reads them.
   const settings = new Map(Object.entries(options.sources || {}).map(([name, value]) => [canonicalNetName(name), value]));
@@ -519,17 +491,13 @@ export function prepareSimulation(circuit, options = {}) {
     let re = 0;
     let im = 0;
     const total = warmup + window;
-    // The same dither sequence every run: amplitudes compare like for like.
-    const random = dither ? seededRandom(0x5eed) : null;
-    // Each dither source its own sequence, the same every run.
+    // Each dither source its own sequence, the same every run: amplitudes
+    // compare like for like.
     const sourceDither = new Map([...pSource.keys()].filter((key) => sourceValue.get(key).dither).map((key, i) => {
       const { shape, amplitude: a } = sourceValue.get(key).dither;
       const draw = seededRandom(0xd17e + 7919 * i);
       return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
     }));
-    const ditherSample = !dither ? () => 0
-      : dither.shape === 'rect' ? () => dither.amplitude * (2 * random() - 1)
-      : () => dither.amplitude * (random() - random());
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
     const track = (measuring) => {
@@ -549,7 +517,7 @@ export function prepareSimulation(circuit, options = {}) {
       state.set(p, md);
       for (const q of order) {
         const y = q.row ? dot(q.row, state) : 0;
-        state[q.p] = quantize(y + ditherSample(), q.levels);
+        state[q.p] = quantize(y, q.levels);
       }
       matVec(Md, state, Yd);
       // The continuous signals at nT^-, and the output, for the peaks and the tone.
@@ -612,7 +580,7 @@ export function prepareSimulation(circuit, options = {}) {
     return { peaks: Array.from(peaks), tone, overloaded: false, ...(recorded ? { samples: recorded } : {}), ...(magnitudes ? { magnitudes } : {}), ...wavesOut() };
   };
 
-  return { ok: true, fullScale, frequency, period: T, signals: signalList, run, dither };
+  return { ok: true, fullScale, frequency, period: T, signals: signalList, run };
 }
 
 /** The amplitudes a sweep runs, in dBFS: coarse far below full scale, a

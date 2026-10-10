@@ -7,10 +7,10 @@
  * net under its limit. Run searches in worker threads (optimize-worker.js),
  * with a progress bar and Stop; the best numbers found come back beside
  * the coefficients, and Apply puts them into the sliders (Revert undoes
- * it). With fractions on, the run goes on to make the free coefficients
- * fractions m/n (rounding.js: n up to a largest, or exactly an n, per
- * block or per coefficient), re-optimizing around each, so what it finds
- * is what can be built. The setup is saved with the document
+ * it). With fractions on, the search keeps the free coefficients fractions
+ * m/n (rounding.js: n up to a largest, or exactly an n, per block or per
+ * coefficient) -- each candidate snapped before it is scored -- so what it
+ * finds is what can be built. The setup is saved with the document
  * (`analysisValues.flow.optimize`).
  */
 
@@ -18,7 +18,7 @@ import { MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, res
 import { openRunWindow } from './optimize-window.js';
 import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
-import { coefficientGroups, roundingSearch } from '../core/analysis/rounding.js';
+import { coefficientGroups, fractionSnapper, polishSearch } from '../core/analysis/rounding.js';
 import { SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch } from '../core/analysis/refine.js';
 import { prepareSimulation } from '../core/analysis/simulate.js';
 import { symbolText } from '../core/analysis/present.js';
@@ -270,11 +270,8 @@ function swingBlock(circuit, current, sources) {
           el('span', { class: 'signal-flow-optimize-number', text, title: text ? `At the best numbers found, verified at length: ${level && swing.measure !== 'peak' ? `its ${MEASURE_TEXT[swing.measure]} (its highest peak in brackets)` : 'its highest peak'}, dBFS` : '' })]);
       })));
     }
-    const dither = api.flow().dither;
     const sources = [...api.circuit().components.values()].filter((c) => c.type === 'dither').map((c) => c.refdes);
-    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.`
-      : dither && dither.shape !== 'none' ? ` With the older ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''} at the quantizer.`
-        : ' No dither: draw a dither source, with a gain after it, for some.';
+    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.` : ' No dither: draw a dither source, with a gain after it, for some.';
     children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
@@ -402,7 +399,7 @@ function resultBlock(sources) {
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Put the fractions into the coefficients, exactly' : 'Put the numbers found into the coefficients (rounded to 4 digits)', onclick: apply }),
     ]),
   );
-  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions && found.searchFeasible ? 'The search met every limit, but its fractions miss one: allow a larger n (or n = a finer one), or turn off one n per block.' : 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
+  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No candidate on fractions met every limit: allow a larger n (or n = a finer one), turn off one n per block, loosen a limit, or run again.' : 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
   if (found.zeroed?.length) {
     host.append(el('p', { class: 'field-hint signal-flow-optimize-zeroed' }, [
       el('span', { text: 'Set to zero, as they barely mattered (every limit still met): ' }),
@@ -463,6 +460,27 @@ function revert() {
   api.restoreCoefficients(reverting);
   reverting = null;
   renderOptimize();
+}
+
+/** The snapping to fractions the setup asks for (rounding.js): the gains
+ *  into one block share an n unless that is off; a block takes the
+ *  largest n set among its gains, exactly if any is set exactly. */
+function fractionsFor(circuit, parameters, current) {
+  const options = current.rounding;
+  const names = parameters.free.map((p) => p.name);
+  const groups = options.shared ? coefficientGroups(circuit, names) : null;
+  const denominators = {};
+  const exact = {};
+  for (const group of groups || names.map((name) => ({ names: [name] }))) {
+    const set = group.names.map((name) => current.coefficients[name]).filter((entry) => entry?.denominator);
+    if (!set.length) continue;
+    const n = Math.max(...set.map((entry) => entry.denominator));
+    for (const name of group.names) {
+      if (set.some((entry) => entry.denominatorFixed)) exact[name] = n;
+      else denominators[name] = n;
+    }
+  }
+  return fractionSnapper(parameters, { denominator: options.denominator, fixed: options.fixed, denominators, exact, powersOfTwo: options.powersOfTwo, groups });
 }
 
 /** Drive a refine generator (refine.js), scoring its batches with `pool`. */
@@ -535,7 +553,7 @@ function fractionsBlock(current) {
     const setCount = free.filter((name) => current.coefficients[name]?.denominator).length;
     children.push(
       el('div', { class: 'signal-flow-swing-controls' }, [
-        el('label', { text: 'n' }), kind, field,
+        el('span', { class: 'signal-flow-optimize-fractions-n' }, [el('label', { text: 'n' }), kind, field]),
         check('powersOfTwo', 'powers of two', 'n = 1, 2, 4, 8, ...: shifts in a digital filter, binary-weighted unit arrays (with ≤)'),
         check('shared', 'one n per block', 'The gains into the same block (through sums: an integrator, the quantizer) share one n, its reference element; off, each coefficient has its own'),
       ]),
@@ -548,56 +566,31 @@ function fractionsBlock(current) {
       ])] : []),
     );
   }
-  children.push(el('p', { class: 'field-hint', text: 'After the search the run makes each free coefficient a simple fraction m/n -- m units over n, whatever the units are -- at the least cost to the specs: the gains into one block share its n (m1/n, m2/n, ...), the block rounded worst goes first and the rest are re-optimized around it, then each moves by one unit while that helps. n ≤ takes the most accurate n up to it; n = that n exactly. A block takes the largest n set among its gains.' }));
+  children.push(el('p', { class: 'field-hint', text: 'The search keeps each free coefficient a simple fraction m/n -- m units over n, whatever the units are: every candidate is snapped to fractions before it is scored, so the limits, constraints, and goals are weighed on numbers that can be built, and then each moves by one unit while that helps. The gains into one block share its n (m1/n, m2/n, ...). n ≤ takes the n up to it that fits each candidate best; n = that n exactly. A block takes the largest n set among its gains.' }));
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
 
-/** The smallest n that brings a value within 5% (its block alone). */
-function denominatorFor(value, limit = 0.05) {
-  for (let n = 1; n <= 4096; n++) {
-    const m = Math.round(value * n) || Math.sign(value);
-    if (Math.abs(m / n - value) <= limit * Math.abs(value)) return n;
-  }
-  return null;
-}
-
-/** The fractions found, by block, against the numbers before rounding. */
+/** The fractions found, by block: each coefficient's m/n and value. */
 function fractionsTable(result) {
   const rows = [];
-  const far = [];
-  const cramped = [];
+  const coarse = [];
   for (const group of result.groups) {
-    // A gain far smaller than another into its block: it needs a large n.
-    const sizes = group.names.map((name) => Math.abs(result.before[name])).filter((v) => v > 0);
-    if (sizes.length > 1) {
-      const smallest = group.names.find((name) => Math.abs(result.before[name]) === Math.min(...sizes));
-      const need = denominatorFor(result.before[smallest]);
-      if (need && need > group.n) cramped.push({ name: smallest, ratio: Math.max(...sizes) / Math.min(...sizes), need, n: group.n });
-    }
     const into = group.into ? `into ${plainName(api.circuit().labelOf?.(group.into)?.text || group.into)}` : 'on its own';
     if (result.shared || group.names.length > 1) rows.push(el('div', { class: 'signal-flow-optimize-subhead', text: `${into}: n = ${group.n}` }));
     for (const name of group.names) {
       const f = result.fractions[name];
-      const was = result.before[name];
-      const value = f.m / f.n;
-      const change = was ? (value - was) / Math.abs(was) : 0;
-      const off = Math.abs(change) > 0.1;
-      if (off) far.push(name);
-      rows.push(el('div', { class: `signal-flow-optimize-fraction${off ? ' analysis-error' : ''}` }, [
+      if (!f) continue;
+      // One unit beside a far larger block-mate: its n leaves it no finer step.
+      if (Math.abs(f.m) === 1 && group.names.some((other) => Math.abs(result.fractions[other]?.m || 0) >= 8)) coarse.push({ name, n: f.n });
+      rows.push(el('div', { class: 'signal-flow-optimize-fraction' }, [
         math(symbolText(name)),
         el('span', { class: 'signal-flow-optimize-number signal-flow-optimize-found', text: `${f.m}/${f.n}` }),
-        el('span', { class: 'signal-flow-optimize-number', text: String(Number(value.toPrecision(4))), title: 'Its value' }),
-        el('span', { class: 'signal-flow-optimize-number', text: String(Number(was.toPrecision(4))), title: 'Its number found before rounding' }),
-        el('span', { class: 'signal-flow-optimize-number', text: `${change >= 0 ? '+' : ''}${(100 * change).toFixed(1)}%`, title: 'The change rounding made (the rest re-optimized around it)' }),
+        el('span', { class: 'signal-flow-optimize-number', text: String(Number((f.m / f.n).toPrecision(4))), title: 'Its value' }),
       ]));
     }
   }
-  const notes = [];
-  if (far.length) notes.push(el('p', { class: 'field-hint', text: `Changed more than 10%: ${far.map(plainName).join(', ')} -- by rounding, or by re-optimizing around the coefficients rounded before them (one coefficient can stand in for another: a resonator needs its product of gains, not each).` }));
-  for (const { name, ratio, need, n } of cramped) {
-    notes.push(el('p', { class: 'field-hint', text: `${plainName(name)} is ${Math.round(ratio)} times smaller than the largest gain into its block: within 5% it needs n ≥ ${need} there, where n = ${n}. Give it a larger n in the table, or turn off one n per block.` }));
-  }
-  return [gridTable(['', 'm/n', 'Value', 'Before', 'Change'], rows), ...notes];
+  const notes = coarse.map(({ name, n }) => el('p', { class: 'field-hint', text: `${plainName(name)} is a single unit of n = ${n}, far smaller than a gain beside it: a larger n for its block would let it be set finer.` }));
+  return [gridTable(['', 'm/n', 'Value'], rows), ...notes];
 }
 
 // ----- the run --------------------------------------------------------------------------
@@ -718,24 +711,36 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
   const status = root.querySelector(statusSelector);
   const progress = root.querySelector(progressSelector);
   const button = root.querySelector(buttonSelector);
-  const say = (text, error = false) => { status.textContent = text; status.classList.toggle('analysis-error', error); };
+  const say = (text, error = false) => {
+    const here = root.querySelector(statusSelector) || status;
+    here.textContent = text;
+    here.classList.toggle('analysis-error', error);
+  };
   if (!parameters.free.length) { say('No coefficient is free: set one to Free.', true); return; }
-  const problem = { output: api.flow().output, sources: api.flow().sources, band: api.band(), values: api.resolved(), setup: current, dither: api.flow().dither };
+  const problem = { output: api.flow().output, sources: api.flow().sources, band: api.band(), values: api.resolved(), setup: current };
   let stopped = false;
   running = { stop: () => { stopped = true; } };
-  // The run in its own window: its plot, its progress, Stop.
-  // The window shows the progress while it is open; closed, the run goes
-  // on and its progress is back here.
+  // The run in its own window: its plot, its progress, its status, Stop.
+  // While the window is open they show there alone; closed, the run goes
+  // on and they are back here.
+  let latest = { text: 'Preparing...', error: false };
   const runWindow = openRunWindow({
     title, plotAt: runPlotter(), onStop: () => running?.stop(),
-    onClose: () => { if (running) root.querySelector(progressSelector).hidden = false; },
+    onClose: () => {
+      if (running) root.querySelector(progressSelector).hidden = false;
+      say(latest.text, latest.error);
+    },
   });
   runWindow.start(problem.values);
-  const sayBoth = (text, error = false) => { say(text, error); runWindow.say(text, error); };
+  const sayBoth = (text, error = false) => {
+    latest = { text, error };
+    if (runWindow.isOpen()) runWindow.say(text, error);
+    else say(text, error);
+  };
   const label = button.textContent;
   button.textContent = 'Stop';
   root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button && !node.classList.contains('hint-more')) node.disabled = true; });
-  say('Preparing...');
+  sayBoth('Preparing...');
   progress.hidden = runWindow.isOpen();
   progress.value = 0;
   let pool = null;
@@ -753,14 +758,11 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
   } finally {
     pool?.close?.();
     running = null;
+    latest = { text: message.text, error: !!message.error };
     runWindow.done(message.text, !!message.error);
     button.textContent = label;
     renderOptimize();
-    const after = root.querySelector(statusSelector);
-    if (after) {
-      after.textContent = message.text;
-      after.classList.toggle('analysis-error', !!message.error);
-    }
+    if (!runWindow.isOpen()) say(message.text, !!message.error);
   }
 }
 
@@ -781,7 +783,10 @@ function run() {
       const objectiveSpecs = normalizeOptimizeSetup(current).specs.filter((spec) => spec.input);
       const goals = objectiveSpecs.some((spec) => spec.action === 'minimize' || spec.action === 'maximize') || Object.keys(normalizeOptimizeSetup(current).swing.targets).length > 0;
       const swingOn = normalizeOptimizeSetup(current).swing.on;
-      const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals, verify: swingOn });
+      // Kept to fractions, every candidate is snapped to them before it is
+      // scored: the search weighs only numbers that can be built.
+      const snap = current.rounding.on ? fractionsFor(circuit, parameters, current) : null;
+      const optimizer = createOptimizer(parameters, { values: own, links, evaluations: current.evaluations, seed: Math.floor(Math.random() * 2 ** 31), stopEarly: !goals, verify: swingOn, snap });
       let shownBest = null;
       while (!optimizer.done && !stopped()) {
         const batch = optimizer.ask();
@@ -811,43 +816,14 @@ function run() {
           final = await driveSearch(pruneSearch(candidates, { own: best.own, start: best.score, links }), pool);
         }
       }
-      // Then fractions m/n, when asked for: from the numbers found, the
-      // coefficients set to zero staying there.
-      const options = current.rounding;
+      // On fractions: each moved a unit at a time while that helps.
       let fractioned = null;
-      let roundEvaluations = 0;
-      if (options.on && !stopped()) {
-        const kept = names.filter((name) => !final.zeroed.includes(name));
-        const rest = { ...parameters, free: parameters.free.filter((p) => kept.includes(p.name)).map((p) => ({ ...p, start: final.own[p.name] })) };
-        const groups = options.shared ? coefficientGroups(circuit, kept) : null;
-        // A block's own n: the largest set among its gains, exactly if any is.
-        const denominators = {};
-        const exact = {};
-        for (const group of groups || kept.map((name) => ({ names: [name] }))) {
-          const set = group.names.map((name) => current.coefficients[name]).filter((entry) => entry?.denominator);
-          if (!set.length) continue;
-          const n = Math.max(...set.map((entry) => entry.denominator));
-          for (const name of group.names) {
-            if (set.some((entry) => entry.denominatorFixed)) exact[name] = n;
-            else denominators[name] = n;
-          }
-        }
-        const search = roundingSearch(rest, { values: { ...own, ...final.own }, links, denominator: options.denominator, fixed: options.fixed, denominators, exact, powersOfTwo: options.powersOfTwo, groups, seed: Math.floor(Math.random() * 2 ** 31) });
-        let step = search.next();
-        while (!step.done && !stopped()) {
-          const { batch, phase, step: k, steps } = step.value;
-          const scores = await pool.evaluate(batch);
-          roundEvaluations += batch.length;
-          progress(Math.min(1, (k - (phase === 'round' ? 1 : 0.5)) / Math.max(1, steps)));
-          say(`Fractions: ${phase === 'polish' ? 'fine-tuning by one unit' : phase === 'reoptimize' ? `re-optimizing the rest after ${k} of ${steps}` : phase === 'round' ? `rounding ${k} of ${steps} ${options.shared ? 'blocks' : 'coefficients'}` : phase === 'verify' ? 'verifying the result at length' : 'verifying the start at length'}... ${roundEvaluations} candidates${pool.count ? ` on ${pool.count} threads` : ''}`);
-          step = search.next(scores);
-        }
-        if (step.done && step.value?.values) {
-          const result = step.value;
-          showBest(result.values);
-          fractioned = { ...result, before: Object.fromEntries(kept.map((name) => [name, final.own[name]])), shared: !!groups };
-          final = { ...final, own: { ...final.own, ...result.own }, score: result.score };
-        }
+      if (snap && !stopped()) {
+        say('Fractions: fine-tuning each by one unit...');
+        const result = await driveSearch(polishSearch(parameters, { own: final.own, snapped: snap(final.own), links }), pool);
+        fractioned = result;
+        final = { ...final, own: { ...final.own, ...result.own }, score: result.score };
+        showBest(result.values);
       }
       // How much each spec moves per 1% of each coefficient.
       let sensitivity = [];
@@ -855,7 +831,7 @@ function run() {
         say('Measuring each coefficient\'s sensitivity...');
         sensitivity = await driveSearch(sensitivitySearch(parameters, objectiveSpecs, { own: final.own, links }), pool);
       }
-      const feasible = fractioned ? isFeasible(fractioned) : isFeasible(best);
+      const feasible = isFeasible(fractioned || best);
       found = {
         own: Object.fromEntries(names.map((name) => [name, final.own[name]])),
         zeroed: final.zeroed,
@@ -863,13 +839,12 @@ function run() {
         score: final.score,
         start: optimizer.start,
         feasible,
-        searchFeasible: isFeasible(best),
         specs: objectiveSpecs,
         swing: normalizeOptimizeSetup(current).swing.on,
-        ...(fractioned ? { fractions: fractioned.fractions, groups: fractioned.groups, before: fractioned.before, shared: fractioned.shared } : {}),
+        ...(fractioned ? { fractions: fractioned.fractions, groups: fractioned.groups, shared: current.rounding.shared } : {}),
       };
       const zeroedText = final.zeroed.length ? `; ${final.zeroed.length === 1 ? 'one coefficient' : `${final.zeroed.length} coefficients`} set to zero` : '';
-      const fractionText = fractioned ? `, then ${roundEvaluations} making them fractions` : options.on && stopped() ? ' (stopped before the fractions)' : '';
+      const fractionText = snap ? ', every one on fractions' : '';
       return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${fractionText}${feasible ? zeroedText : ': no candidate met every limit'}.`, error: !feasible };
     },
   });
