@@ -20528,6 +20528,8 @@ function designIndex(circuit) {
       text: words.filter(Boolean).join(' '),
       type: component.type,
       boxes: [box(component.bboxWorld())],
+      // The design it links to: the Atlas draws the link from this part.
+      ...(component.link ? { link: component.link } : {}),
     });
   }
   for (const net of circuit.nets.values()) {
@@ -20579,6 +20581,7 @@ __exports.normalizeTags = normalizeTags;
 __modules["src/core/design-links.js"] = function (__require, __exports) {
 __exports.linkGraph = linkGraph;
 __exports.linkArrow = linkArrow;
+__exports.linkCurve = linkCurve;
 /**
  * The workspace's links as a graph: which designs a design's parts link to
  * (its children) and which designs link to it (where it is used). A link
@@ -20639,6 +20642,47 @@ function linkArrow(from, to, gap = 0) {
   const uy = (b.y - a.y) / length;
   const g = Math.min(gap, length / 4);
   return { x1: a.x + ux * g, y1: a.y + uy * g, x2: b.x - ux * g, y2: b.y - uy * g };
+}
+
+/**
+ * A link drawn from a point (the part that links, in screen units) to a
+ * design's frame `to` ({ x, y, w, h }): a cubic curve that leaves toward
+ * the frame and arrives square to the side facing the point, at the point's
+ * own height (or width) on that side, kept within its middle so arrows to
+ * one design spread out without crowding its corners. `gap` keeps the head
+ * off the frame. Returns `{ start, c1, c2, end, direction }` (direction the
+ * unit vector the head points along), or null when the point is inside the
+ * frame.
+ */
+function linkCurve(from, to, gap = 6) {
+  const left = to.x - from.x;
+  const right = from.x - (to.x + to.w);
+  const above = to.y - from.y;
+  const below = from.y - (to.y + to.h);
+  const outside = Math.max(left, right, above, below);
+  if (outside <= 0) return null;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  let end;
+  let normal;
+  if (outside === left || outside === right) {
+    const y = clamp(from.y, to.y + to.h * 0.2, to.y + to.h * 0.8);
+    normal = { x: outside === left ? -1 : 1, y: 0 };
+    end = { x: outside === left ? to.x - gap : to.x + to.w + gap, y };
+  } else {
+    const x = clamp(from.x, to.x + to.w * 0.2, to.x + to.w * 0.8);
+    normal = { x: 0, y: outside === above ? -1 : 1 };
+    end = { x, y: outside === above ? to.y - gap : to.y + to.h + gap };
+  }
+  const length = Math.hypot(end.x - from.x, end.y - from.y);
+  const reach = Math.min(length * 0.45, 160);
+  const towards = { x: (end.x - from.x) / (length || 1), y: (end.y - from.y) / (length || 1) };
+  return {
+    start: { ...from },
+    c1: { x: from.x + towards.x * reach, y: from.y + towards.y * reach },
+    c2: { x: end.x + normal.x * reach, y: end.y + normal.y * reach },
+    end,
+    direction: { x: -normal.x, y: -normal.y },
+  };
 }
 
 };
@@ -39966,7 +40010,7 @@ let symbolSheet; __bind(() => { ({ symbolSheet } = __require("src/core/symbol-sh
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
-let linkArrow, linkGraph; __bind(() => { ({ linkArrow, linkGraph } = __require("src/core/design-links.js")); });
+let linkArrow, linkCurve, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkGraph } = __require("src/core/design-links.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
@@ -40201,7 +40245,7 @@ const EMPTY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${8 * GRID}" h
 async function drawingFor(documentInfo, current) {
   if (current) return { svg: drawingSvg(editor.circuit), index: designIndex(editor.circuit), revision: null };
   const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v3');
-  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v2');
+  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v3');
   const [cached, cachedIndex] = key ? await Promise.all([cacheGet(key), cacheGet(indexKey)]) : [null, null];
   if (cached && cachedIndex) return { svg: cached, index: cachedIndex, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
@@ -40555,10 +40599,15 @@ function deskLinks() {
   return state.links.graph;
 }
 
-/** The picked designs' links: an arrow from a design to each design its
- *  parts link to, and to it from each design using it. Nothing is drawn
- *  with no design picked, nor while the desk is in a transition (its
- *  names and picks are gone then too). */
+/**
+ * The picked designs' links, drawn the way a reader follows them: from the
+ * part that links (a ring on it) to the design it names, which is outlined,
+ * the curve arriving square to the side facing the part with a clear head.
+ * A design using a picked one is linked to it the same way, from its part.
+ * Each curve runs over a halo of the paper, so it reads cleanly across
+ * drawings. Nothing is drawn with no design picked, nor while the desk is
+ * in a transition (its names and picks are gone then too).
+ */
 function drawLinks(ctx, palette, shown) {
   if (state.source !== 'workspace' || state.quiet || !linksShown()) return;
   const focus = new Set([state.selected, ...(state.picked || [])].filter(Boolean));
@@ -40566,51 +40615,85 @@ function drawLinks(ctx, palette, shown) {
   const edges = deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to));
   if (!edges.length) return;
   const tiles = new Map(shown.map(({ tile, alpha }) => [tile.id, { tile, alpha }]));
+  // The drawing and its name on screen, a little out from them.
+  const PAD = 10;
+  const frameOf = (tile) => {
+    const r = worldToScreen({ ...tile, h: tile.h + ATLAS_CAPTION });
+    return { x: r.x - PAD, y: r.y - PAD, w: r.w + 2 * PAD, h: r.h + 2 * PAD };
+  };
+  const fadedOf = (from, to) => !!state.matches && !(state.matches.has(from) && state.matches.has(to));
   ctx.save();
   ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // The designs at the far ends, outlined: where the arrows go is plain.
+  const ends = new Map();
+  for (const { from, to } of edges) {
+    for (const id of [from, to]) if (!focus.has(id) && tiles.has(id)) ends.set(id, Math.min(ends.get(id) ?? 1, fadedOf(from, to) ? 0.3 : 1));
+  }
+  for (const [id, fade] of ends) {
+    const { tile, alpha } = tiles.get(id);
+    const f = frameOf(tile);
+    ctx.globalAlpha = alpha * fade * 0.7;
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.roundRect?.(f.x, f.y, f.w, f.h, 8) ?? ctx.rect(f.x, f.y, f.w, f.h);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
   for (const { from, to } of edges) {
     const a = tiles.get(from);
     const b = tiles.get(to);
     if (!a || !b) continue;
-    // A tile and its caption, so an arrow never runs through a name.
-    const box = (tile) => worldToScreen({ ...tile, h: tile.h + ATLAS_CAPTION });
-    const arrow = linkArrow(box(a.tile), box(b.tile), 10);
-    if (!arrow) continue;
-    const faded = state.matches && !(state.matches.has(from) && state.matches.has(to));
-    ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (faded ? 0.3 : 0.9);
-    ctx.strokeStyle = ctx.fillStyle = palette.accent;
-    ctx.lineWidth = 2;
-    // A gentle bend, always to the same side of the way it points, so two
-    // designs linking both ways get two arrows rather than one line.
-    const dx = arrow.x2 - arrow.x1;
-    const dy = arrow.y2 - arrow.y1;
-    const length = Math.hypot(dx, dy);
-    const bend = Math.min(length * 0.18, 60);
-    const control = { x: (arrow.x1 + arrow.x2) / 2 - (dy / length) * bend, y: (arrow.y1 + arrow.y2) / 2 + (dx / length) * bend };
-    // The head points along the curve where it arrives, and takes at most
-    // half a short arrow, so a short one still shows a shaft.
-    const head = Math.min(10, length / 2);
-    const angle = Math.atan2(arrow.y2 - control.y, arrow.x2 - control.x);
-    const tip = { x: arrow.x2, y: arrow.y2 };
-    const base = { x: tip.x - Math.cos(angle) * head * 0.8, y: tip.y - Math.sin(angle) * head * 0.8 };
-    ctx.beginPath();
-    ctx.moveTo(arrow.x1, arrow.y1);
-    ctx.quadraticCurveTo(control.x, control.y, base.x, base.y);
-    ctx.stroke();
-    // A dot where it leaves the design that links.
-    ctx.beginPath();
-    ctx.arc(arrow.x1, arrow.y1, Math.min(3, length / 8), 0, Math.PI * 2);
-    ctx.fill();
-    // A slim, swept-back head.
-    const wing = head * 0.42;
-    const back = { x: tip.x - Math.cos(angle) * head, y: tip.y - Math.sin(angle) * head };
-    ctx.beginPath();
-    ctx.moveTo(tip.x, tip.y);
-    ctx.lineTo(back.x + Math.sin(angle) * wing, back.y - Math.cos(angle) * wing);
-    ctx.lineTo(base.x, base.y);
-    ctx.lineTo(back.x - Math.sin(angle) * wing, back.y + Math.cos(angle) * wing);
-    ctx.closePath();
-    ctx.fill();
+    const source = state.entries.get(from);
+    const target = state.entries.get(to);
+    // From each part that links (an index from before parts kept their
+    // links: from the design's frame, toward the other).
+    const parts = (source?.index?.items || []).filter((item) => item.kind === 'part' && item.link === target?.name && item.boxes?.[0]);
+    const dx = a.tile.x - (source?.box?.x ?? a.tile.x);
+    const dy = a.tile.y - (source?.box?.y ?? a.tile.y);
+    const starts = parts.length
+      ? parts.map((item) => worldToScreen({ x: item.boxes[0].x + item.boxes[0].w / 2 + dx, y: item.boxes[0].y + item.boxes[0].h / 2 + dy, w: 0, h: 0 }))
+      : (() => { const arrow = linkArrow(frameOf(a.tile), frameOf(b.tile), 0); return arrow ? [{ x: arrow.x1, y: arrow.y1 }] : []; })();
+    ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1);
+    for (const start of starts) {
+      const curve = linkCurve({ x: start.x, y: start.y }, frameOf(b.tile), 3);
+      if (!curve) continue;
+      const head = 11;
+      const base = { x: curve.end.x - curve.direction.x * head * 0.85, y: curve.end.y - curve.direction.y * head * 0.85 };
+      const path = () => {
+        ctx.beginPath();
+        ctx.moveTo(curve.start.x, curve.start.y);
+        ctx.bezierCurveTo(curve.c1.x, curve.c1.y, curve.c2.x, curve.c2.y, base.x, base.y);
+      };
+      // The paper's halo, then the line.
+      ctx.strokeStyle = palette.paper;
+      ctx.lineWidth = 6;
+      path();
+      ctx.stroke();
+      ctx.strokeStyle = palette.accent;
+      ctx.lineWidth = 2;
+      path();
+      ctx.stroke();
+      // A ring on the part that links.
+      ctx.beginPath();
+      ctx.arc(curve.start.x, curve.start.y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = palette.paper;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // The head, square to the frame.
+      const wing = { x: -curve.direction.y * head * 0.45, y: curve.direction.x * head * 0.45 };
+      const back = { x: curve.end.x - curve.direction.x * head, y: curve.end.y - curve.direction.y * head };
+      ctx.beginPath();
+      ctx.moveTo(curve.end.x, curve.end.y);
+      ctx.lineTo(back.x + wing.x, back.y + wing.y);
+      ctx.lineTo(back.x - wing.x, back.y - wing.y);
+      ctx.closePath();
+      ctx.fillStyle = palette.accent;
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
@@ -40922,7 +41005,7 @@ async function saveTags(entry, text) {
       const revision = saved?.revision || null;
       if (revision) {
         await cachePut(renderingKey(entry.path, revision, 'svg-v3'), entry.svg);
-        await cachePut(renderingKey(entry.path, revision, 'index-v2'), index);
+        await cachePut(renderingKey(entry.path, revision, 'index-v3'), index);
         for (const level of ['small', 'large']) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
           if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);
@@ -51393,7 +51476,7 @@ const linkLists = new Map(); // path -> { revision, links }
 async function linksOfDocument(doc) {
   const known = linkLists.get(doc.path);
   if (known && doc.revision && known.revision === doc.revision) return known.links;
-  const key = doc.revision && renderingKey(doc.path, doc.revision, 'index-v2');
+  const key = doc.revision && renderingKey(doc.path, doc.revision, 'index-v3');
   let index = key ? await cacheGet(key) : null;
   if (!index) {
     index = designIndex(loadDocument((await persistence.load(doc.path)).state));

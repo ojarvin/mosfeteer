@@ -45,3 +45,16 @@ test('linkArrow runs between tile edges along the centre line, a gap outside eac
   assert.equal(linkArrow(left, { x: 50, y: 0, w: 100, h: 100 }, 0), null);
   assert.equal(linkArrow(left, { x: 100, y: 0, w: 100, h: 100 }, 10), null);
 });
+
+test('a link curve leaves the part and arrives square to the side of the design facing it', async () => {
+  const { linkCurve } = await import('../src/core/design-links.js');
+  const frame = { x: 100, y: 100, w: 200, h: 100 };
+  const fromLeft = linkCurve({ x: 0, y: 150 }, frame, 6);
+  assert.deepEqual(fromLeft.end, { x: 94, y: 150 });
+  assert.deepEqual(fromLeft.direction, { x: 1, y: -0 });
+  const fromBelow = linkCurve({ x: 500, y: 600 }, frame, 6);
+  assert.equal(fromBelow.end.y, 206);
+  assert.equal(fromBelow.end.x, 260, 'kept within the middle of the side');
+  assert.deepEqual(fromBelow.direction, { x: -0, y: -1 });
+  assert.equal(linkCurve({ x: 150, y: 150 }, frame), null, 'inside the frame: no curve');
+});

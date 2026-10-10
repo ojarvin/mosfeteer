@@ -37,9 +37,12 @@ centre, else moves to the nearest free spot), and a new design is placed near
 its kin. `Shift+T` forgets the places and packs the desk afresh in
 neighbourhoods of related designs.
 
-A picked design shows its links (`src/core/design-links.js`): accent arrows
-from it to the designs its parts link to, and to it from the designs that
-use it. With nothing picked, and while the desk is in a transition, no
+A picked design shows its links (`src/core/design-links.js`): an accent
+curve from each part that links (a ring on the part) to the design it
+names, which is outlined, the curve arriving square to the side facing the
+part with its head (`linkCurve`); the designs using the picked one link to
+it the same way, from their parts. Each curve runs over a halo of the
+paper, so it reads across drawings. With nothing picked, and while the desk is in a transition, no
 arrows show. **Links** in the top bar, or `L`, turns them off or on; the
 choice is kept in this browser.
 

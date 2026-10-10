@@ -525,7 +525,7 @@ const linkLists = new Map(); // path -> { revision, links }
 async function linksOfDocument(doc) {
   const known = linkLists.get(doc.path);
   if (known && doc.revision && known.revision === doc.revision) return known.links;
-  const key = doc.revision && renderingKey(doc.path, doc.revision, 'index-v2');
+  const key = doc.revision && renderingKey(doc.path, doc.revision, 'index-v3');
   let index = key ? await cacheGet(key) : null;
   if (!index) {
     index = designIndex(loadDocument((await persistence.load(doc.path)).state));

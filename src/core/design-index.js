@@ -50,6 +50,8 @@ export function designIndex(circuit) {
       text: words.filter(Boolean).join(' '),
       type: component.type,
       boxes: [box(component.bboxWorld())],
+      // The design it links to: the Atlas draws the link from this part.
+      ...(component.link ? { link: component.link } : {}),
     });
   }
   for (const net of circuit.nets.values()) {
