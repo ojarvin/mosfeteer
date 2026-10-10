@@ -39047,7 +39047,7 @@ let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbo
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
+let addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
 let toggleTheme; __bind(() => { ({ toggleTheme } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -39969,8 +39969,25 @@ async function saveTags(entry, text) {
   if (tagsText(tags) === tagsText(entry.index?.tags)) return;
   try {
     if (entry.current) {
+      // The open design is saved with its new tags as any other would be:
+      // whole when nothing else is unsaved, else only its tags go to the file.
+      const clean = !hasUnsavedChanges();
       setDocumentTags(text);
       entry.index = designIndex(editor.circuit);
+      if (!editor.currentDocumentPath) logLine(`${entry.name}: tags set; save the design to keep them`);
+      else if (clean) await saveCircuit();
+      else {
+        editor.syncGeneration += 1;
+        const data = await persistence.load(editor.currentDocumentPath);
+        const document = { ...data.state };
+        if (tags.length) document.tags = tags;
+        else delete document.tags;
+        const saved = await persistence.save({ path: editor.currentDocumentPath }, document, { overwrite: true });
+        editor.lastSeenRevision = saved?.revision || null;
+        editor.lastCircuitTag = saved?.etag || null;
+        editor.syncGeneration += 1;
+        logLine(`${entry.name}: ${tags.length ? tags.map((tag) => `#${tag}`).join(' ') : 'tags cleared'} (saved to the file; the design's other changes are still unsaved)`);
+      }
     } else {
       const data = await persistence.load(entry.path);
       const document = { ...data.state };
@@ -57719,8 +57736,12 @@ function canvasMouseDown(ev) {
   if (mode === 'normal' && !labelMode && !wire && !directWire && !moveMode && !copyMode && !deleteMode && !pickAt(startWorld)) {
     const bubble = linkBubbleAt(startWorld);
     if (bubble) {
-      if (ev.detail >= 2) void enterLinkedDesign(circuit.components.get(bubble.refdes));
-      else {
+      if (ev.detail >= 2) {
+        // The native dblclick that follows lands on the entered design's
+        // paper; it must not open the insert menu there.
+        bubbleDoubleClickAt = performance.now();
+        void enterLinkedDesign(circuit.components.get(bubble.refdes));
+      } else {
         setSelection(bubble.refdeses);
         drag = { mode: 'bubblemove', refdes: bubble.refdes, frame: linkBubbleFrame(bubble.refdes), startWorld, startClient, moved: false };
         try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
@@ -59906,7 +59927,10 @@ window.addEventListener('blur', () => {
 // Double-click edits the active document's object. Components edit their owned
 // child label; reference markers create the same provisional child label when
 // one is missing.
+let bubbleDoubleClickAt = -Infinity;
 canvasEl.addEventListener('dblclick', (ev) => {
+  if (performance.now() - bubbleDoubleClickAt < 1000) return;
+  if (linkBubbleAt(clientToWorld(ev.clientX, ev.clientY))) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(w);
   if (label) inlineEditLabel(label);
@@ -64072,8 +64096,31 @@ function withResponseMeta(data, response, notModified = false) {
   return data;
 }
 
-async function httpJson(fetchImpl, url, options = {}) {
-  const response = await fetchImpl(url, { cache: 'no-store', ...options });
+/** Waits between tries while the server cannot be reached: a `--watch`
+ *  server restarting after a source change is back within a second or two. */
+const UNREACHABLE_RETRY_MS = [250, 500, 1000, 1500, 2000, 3000];
+
+/** `fetch`, tried again while the server cannot be reached at all (the
+ *  browser's bare "Failed to fetch"), then failing with an error that says so. */
+async function fetchRetrying(fetchImpl, url, options, waits, sleep) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetchImpl(url, options);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      if (attempt >= waits.length) {
+        const error = new Error('the Mosfeteer server is not responding; check that it is still running, then try again');
+        error.code = 'unreachable';
+        error.cause = err;
+        throw error;
+      }
+      await sleep(waits[attempt]);
+    }
+  }
+}
+
+async function httpJsonOnce(fetchImpl, url, options = {}, { waits = UNREACHABLE_RETRY_MS, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const response = await fetchRetrying(fetchImpl, url, { cache: 'no-store', ...options }, waits, sleep);
   if (response.status === 304) return withResponseMeta({}, response, true);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -64092,9 +64139,10 @@ const jsonBody = (method, value) => ({
   body: JSON.stringify(value),
 });
 
-function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) {
+function createPersistenceAdapter({ fetchImpl = globalThis.fetch, retry } = {}) {
   if (browserOnlyRequested()) return createBrowserPersistenceAdapter();
   if (typeof fetchImpl !== 'function') throw new Error('persistence requires fetch');
+  const httpJson = (impl, url, options) => httpJsonOnce(impl, url, options, retry);
   const query = (params) => new URLSearchParams(params).toString();
   return {
     liveSync: true,
@@ -64118,6 +64166,7 @@ function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) {
 }
 
 __exports.validDocumentName = validDocumentName;
+__exports.UNREACHABLE_RETRY_MS = UNREACHABLE_RETRY_MS;
 };
 
 __modules["src/web/radial-menu.js"] = function (__require, __exports) {

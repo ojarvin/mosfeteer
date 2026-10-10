@@ -4607,8 +4607,12 @@ function canvasMouseDown(ev) {
   if (mode === 'normal' && !labelMode && !wire && !directWire && !moveMode && !copyMode && !deleteMode && !pickAt(startWorld)) {
     const bubble = linkBubbleAt(startWorld);
     if (bubble) {
-      if (ev.detail >= 2) void enterLinkedDesign(circuit.components.get(bubble.refdes));
-      else {
+      if (ev.detail >= 2) {
+        // The native dblclick that follows lands on the entered design's
+        // paper; it must not open the insert menu there.
+        bubbleDoubleClickAt = performance.now();
+        void enterLinkedDesign(circuit.components.get(bubble.refdes));
+      } else {
         setSelection(bubble.refdeses);
         drag = { mode: 'bubblemove', refdes: bubble.refdes, frame: linkBubbleFrame(bubble.refdes), startWorld, startClient, moved: false };
         try { canvasEl.setPointerCapture?.(ev.pointerId); } catch {}
@@ -6794,7 +6798,10 @@ window.addEventListener('blur', () => {
 // Double-click edits the active document's object. Components edit their owned
 // child label; reference markers create the same provisional child label when
 // one is missing.
+let bubbleDoubleClickAt = -Infinity;
 canvasEl.addEventListener('dblclick', (ev) => {
+  if (performance.now() - bubbleDoubleClickAt < 1000) return;
+  if (linkBubbleAt(clientToWorld(ev.clientX, ev.clientY))) return;
   const w = clientToWorld(ev.clientX, ev.clientY);
   const label = pickLabel(w);
   if (label) inlineEditLabel(label);
