@@ -4,7 +4,9 @@
  * plain that this is the run. It shows the specs' transfer functions at the
  * numbers the run started from (grey) and at its best so far (in colour),
  * redrawn as each new best is found, with the progress bar, the status
- * line, and Stop -- which turns to Close when the run is over.
+ * line, and Stop -- which turns to Close when the run is over. Closing the
+ * window leaves the run going; its progress then shows in the analysis
+ * window again (`onClose`).
  */
 
 import { canvasEl } from './elements.js';
@@ -27,11 +29,11 @@ let open = null;
 /**
  * Open the run window. `title` names the run ("Optimizer", "Rounding");
  * `plotAt(values, role)` returns the plot's SVG element for the numbers
- * given -- role 'start' or 'best' -- or null; `onStop` stops the run.
- * Returns `{ say(text, error), progress(fraction), best(values), done(text,
- * error) }`.
+ * given -- role 'start' or 'best' -- or null; `onStop` stops the run;
+ * `onClose` is told when the window closes. Returns `{ say(text, error),
+ * progress(fraction), best(values), done(text, error), isOpen() }`.
  */
-export function openRunWindow({ title, plotAt, onStop }) {
+export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   open?.dispose();
   let finished = false;
   let startValues = null;
@@ -43,15 +45,18 @@ export function openRunWindow({ title, plotAt, onStop }) {
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'run-window-title', class: 'floating-window-title', text: title }),
-      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close (stops the run)', text: '×' }),
+      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close (the run goes on; Stop stops it)', text: '×' }),
     ]),
     el('div', { class: 'run-window-body' }, [plot, legend, bar, status]),
     el('div', { class: 'dialog-actions run-window-actions' }, [stop]),
   ]);
+  let closed = false;
   function dispose() {
-    if (!finished) onStop();
+    if (closed) return;
+    closed = true;
     dialog.remove();
     if (open?.dialog === dialog) open = null;
+    onClose();
   }
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
@@ -72,6 +77,7 @@ export function openRunWindow({ title, plotAt, onStop }) {
     start(values) { startValues = values; draw(null); },
     say(text, error = false) { status.textContent = text; status.classList.toggle('analysis-error', error); },
     progress(fraction) { bar.value = fraction; },
+    isOpen: () => !closed,
     best(values) { draw(values); },
     done(text, error = false) {
       finished = true;

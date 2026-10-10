@@ -63067,14 +63067,19 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
   let stopped = false;
   running = { stop: () => { stopped = true; } };
   // The run in its own window: its plot, its progress, Stop.
-  const runWindow = openRunWindow({ title, plotAt: runPlotter(), onStop: () => running?.stop() });
+  // The window shows the progress while it is open; closed, the run goes
+  // on and its progress is back here.
+  const runWindow = openRunWindow({
+    title, plotAt: runPlotter(), onStop: () => running?.stop(),
+    onClose: () => { if (running) root.querySelector(progressSelector).hidden = false; },
+  });
   runWindow.start(problem.values);
   const sayBoth = (text, error = false) => { say(text, error); runWindow.say(text, error); };
   const label = button.textContent;
   button.textContent = 'Stop';
   root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button && !node.classList.contains('hint-more')) node.disabled = true; });
   say('Preparing...');
-  progress.hidden = false;
+  progress.hidden = runWindow.isOpen();
   progress.value = 0;
   let pool = null;
   let message = { text: '', error: false };
@@ -63083,7 +63088,7 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
     pool = await workerPool(circuit.toJSON(), problem);
     if (!pool) pool = localPool(circuit, problem);
     if (pool.error) { message = { text: pool.error, error: true }; return; }
-    const closing = await work({ pool, say: sayBoth, progress: (v) => { progress.value = v; runWindow.progress(v); }, stopped: () => stopped, best: (values) => runWindow.best(values) });
+    const closing = await work({ pool, say: sayBoth, progress: (v) => { root.querySelectorAll(progressSelector).forEach((bar) => { bar.value = v; }); runWindow.progress(v); }, stopped: () => stopped, best: (values) => runWindow.best(values) });
     message = typeof closing === 'string' ? { text: closing, error: false } : closing;
     message.text = `${message.text.replace(/\.$/, '')} in ${((performance.now() - startedAt) / 1000).toFixed(1)} s.`;
   } catch (error) {
@@ -63191,7 +63196,9 @@ let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require
  * plain that this is the run. It shows the specs' transfer functions at the
  * numbers the run started from (grey) and at its best so far (in colour),
  * redrawn as each new best is found, with the progress bar, the status
- * line, and Stop -- which turns to Close when the run is over.
+ * line, and Stop -- which turns to Close when the run is over. Closing the
+ * window leaves the run going; its progress then shows in the analysis
+ * window again (`onClose`).
  */
 
 
@@ -63214,11 +63221,11 @@ let open = null;
 /**
  * Open the run window. `title` names the run ("Optimizer", "Rounding");
  * `plotAt(values, role)` returns the plot's SVG element for the numbers
- * given -- role 'start' or 'best' -- or null; `onStop` stops the run.
- * Returns `{ say(text, error), progress(fraction), best(values), done(text,
- * error) }`.
+ * given -- role 'start' or 'best' -- or null; `onStop` stops the run;
+ * `onClose` is told when the window closes. Returns `{ say(text, error),
+ * progress(fraction), best(values), done(text, error), isOpen() }`.
  */
-function openRunWindow({ title, plotAt, onStop }) {
+function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   open?.dispose();
   let finished = false;
   let startValues = null;
@@ -63230,15 +63237,18 @@ function openRunWindow({ title, plotAt, onStop }) {
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'run-window-title', class: 'floating-window-title', text: title }),
-      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close (stops the run)', text: '×' }),
+      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close (the run goes on; Stop stops it)', text: '×' }),
     ]),
     el('div', { class: 'run-window-body' }, [plot, legend, bar, status]),
     el('div', { class: 'dialog-actions run-window-actions' }, [stop]),
   ]);
+  let closed = false;
   function dispose() {
-    if (!finished) onStop();
+    if (closed) return;
+    closed = true;
     dialog.remove();
     if (open?.dialog === dialog) open = null;
+    onClose();
   }
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
@@ -63259,6 +63269,7 @@ function openRunWindow({ title, plotAt, onStop }) {
     start(values) { startValues = values; draw(null); },
     say(text, error = false) { status.textContent = text; status.classList.toggle('analysis-error', error); },
     progress(fraction) { bar.value = fraction; },
+    isOpen: () => !closed,
     best(values) { draw(values); },
     done(text, error = false) {
       finished = true;

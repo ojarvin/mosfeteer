@@ -800,14 +800,19 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
   let stopped = false;
   running = { stop: () => { stopped = true; } };
   // The run in its own window: its plot, its progress, Stop.
-  const runWindow = openRunWindow({ title, plotAt: runPlotter(), onStop: () => running?.stop() });
+  // The window shows the progress while it is open; closed, the run goes
+  // on and its progress is back here.
+  const runWindow = openRunWindow({
+    title, plotAt: runPlotter(), onStop: () => running?.stop(),
+    onClose: () => { if (running) root.querySelector(progressSelector).hidden = false; },
+  });
   runWindow.start(problem.values);
   const sayBoth = (text, error = false) => { say(text, error); runWindow.say(text, error); };
   const label = button.textContent;
   button.textContent = 'Stop';
   root.querySelectorAll('.signal-flow-optimize-body select, .signal-flow-optimize-body input, .signal-flow-optimize-body button').forEach((node) => { if (node !== button && !node.classList.contains('hint-more')) node.disabled = true; });
   say('Preparing...');
-  progress.hidden = false;
+  progress.hidden = runWindow.isOpen();
   progress.value = 0;
   let pool = null;
   let message = { text: '', error: false };
@@ -816,7 +821,7 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
     pool = await workerPool(circuit.toJSON(), problem);
     if (!pool) pool = localPool(circuit, problem);
     if (pool.error) { message = { text: pool.error, error: true }; return; }
-    const closing = await work({ pool, say: sayBoth, progress: (v) => { progress.value = v; runWindow.progress(v); }, stopped: () => stopped, best: (values) => runWindow.best(values) });
+    const closing = await work({ pool, say: sayBoth, progress: (v) => { root.querySelectorAll(progressSelector).forEach((bar) => { bar.value = v; }); runWindow.progress(v); }, stopped: () => stopped, best: (values) => runWindow.best(values) });
     message = typeof closing === 'string' ? { text: closing, error: false } : closing;
     message.text = `${message.text.replace(/\.$/, '')} in ${((performance.now() - startedAt) / 1000).toFixed(1)} s.`;
   } catch (error) {
