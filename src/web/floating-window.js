@@ -8,6 +8,8 @@
  * the side panel as one of its sections.
  */
 
+import { reducedMotion } from './motion.js';
+
 const PLACE_KEY = (key) => `mosfeteer.window.${key}`;
 const MARGIN = 8;
 
@@ -80,7 +82,7 @@ const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d=
  * floats it where it was. A click on a docked window's title bar folds it
  * to that bar. Where a window is, docked or not, is kept per window in this
  * browser. Returns { place() }, to call after showing it (it also comes to
- * the front), and dispose(), for a window that is removed rather than hidden.
+ * the front, popping into place), and dispose(), for a window that is removed rather than hidden.
  */
 export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = false }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
@@ -338,8 +340,21 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
   observers[1]?.observe(el);
   if (stored?.docked) setDocked(true, { remember: false });
   syncDockButton();
+  // Shown, a floating window pops up into place: from a touch smaller and
+  // lower, quick out and soft in, so it reads as arriving rather than
+  // switched on. Docked, it simply appears in its column.
+  let shownAt = 0;
+  const arrive = () => {
+    if (docked() || el.hidden || reducedMotion() || typeof el.animate !== 'function') return;
+    if (performance.now() - shownAt < 400) return;
+    shownAt = performance.now();
+    el.animate([
+      { opacity: 0, transform: 'translateY(8px) scale(0.96)' },
+      { opacity: 1, transform: 'none' },
+    ], { duration: 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+  };
   return {
-    place: () => { raise(); apply(); },
+    place: () => { raise(); apply(); arrive(); },
     docked,
     dispose: () => observers.forEach((observer) => observer.disconnect()),
   };

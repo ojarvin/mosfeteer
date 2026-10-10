@@ -295,6 +295,20 @@ export function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
 
+/** A quick start that settles softly: the view moves most of the way at
+ *  once, so a short animation still reads, and lands without a bump. */
+export function easeOutQuint(t) {
+  const clamped = Math.min(1, Math.max(0, t));
+  return 1 - (1 - clamped) ** 5;
+}
+
+/** In and out, the middle swift: a camera flight that leaves and arrives
+ *  gently but crosses the distance fast. Symmetric, so half way is half way. */
+export function easeInOutQuart(t) {
+  const clamped = Math.min(1, Math.max(0, t));
+  return clamped < 0.5 ? 8 * clamped ** 4 : 1 - (-2 * clamped + 2) ** 4 / 2;
+}
+
 /**
  * A view between `from` and `to` at `t` (0..1) as one camera move: the
  * scale changes geometrically (each moment zooms by the same factor) about
@@ -302,7 +316,7 @@ export function easeInOutCubic(t) {
  * a design heads straight for it instead of drifting. Views of one size pan.
  */
 export function zoomView(from, to, t) {
-  const k = easeInOutCubic(t);
+  const k = easeInOutQuart(t);
   const ratio = to.w / from.w;
   if (Math.abs(ratio - 1) < 1e-6) {
     return { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k, w: to.w, h: to.h };
@@ -315,7 +329,7 @@ export function zoomView(from, to, t) {
 }
 
 export function lerpView(from, to, t) {
-  const k = easeOutCubic(t);
+  const k = easeOutQuint(t);
   return {
     x: from.x + (to.x - from.x) * k,
     y: from.y + (to.y - from.y) * k,

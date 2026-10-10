@@ -7,7 +7,7 @@ import { Circuit } from '../core/model.js';
 import { commitFeedbackDiff, commitFeedbackSvg, isEmptyFeedback } from './commit-feedback.js';
 import { editor } from './editor-state.js';
 
-const COMMIT_FEEDBACK_MS = 650;
+const COMMIT_FEEDBACK_MS = 480;
 
 let commitFeedbackBursts = [];
 

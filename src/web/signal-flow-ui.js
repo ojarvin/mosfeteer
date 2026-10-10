@@ -20,6 +20,7 @@ import { expressionTex } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
+import { arriving } from './motion.js';
 import { installScope, scopeChanged, toggleScope } from './scope-window.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
@@ -1381,6 +1382,7 @@ function derive() {
   if (latest.ok) for (const entry of latest.entries) addTrace(entry, latest.variable, latest.output);
   renderCoefficients();
   renderResults();
+  arriving(section.querySelector('.signal-flow-results'));
   renderPlots();
   if (flow().spectrum?.on && latest.ok) runSpectrum();
   renderOptimize();

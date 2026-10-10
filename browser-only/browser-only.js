@@ -37590,12 +37590,14 @@ let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js"));
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let beginSettingsEdit, commit, endSettingsEdit, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets; __bind(() => { ({ beginSettingsEdit, commit, endSettingsEdit, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } = __require("src/web/main.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
 /**
  * The small-signal analysis dock: its form and remembered settings, running
  * the analysis, the equations, log, netlist, and model tabs, picking a
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -38828,6 +38830,7 @@ function installAnalysisUi() {
     const stale = document.getElementById('analysis-stale');
     if (stale) stale.hidden = true;
     renderAnalysisResult(report);
+    arriving(analysisEquation);
     if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
     requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
     logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
@@ -39974,7 +39977,7 @@ let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/desig
 let linkArrow, linkCurve, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkGraph } = __require("src/core/design-links.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
-let easeInOutCubic, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutCubic, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
+let easeInOutQuart, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutQuart, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
@@ -40061,19 +40064,24 @@ const MAX_VECTOR_TILES = 6;
 /** Large images decoded at once (each is up to ~6 MB of pixels). */
 const MAX_LARGE_BITMAPS = 24;
 const ZOOM_IN_PX_PER_UNIT = 3; // the editor's closest zoom: 120 px per grid cell
-const ENTER_MS = 650;
-const REVEAL_MS = 350;
+const ENTER_MS = 480;
+/** Each design's own reveal: it fades and grows in this long, after a delay
+ *  that ripples out from the middle of the view (REVEAL_STEP_MS a design,
+ *  at most REVEAL_SPREAD_MS), so the desk assembles rather than blinks on. */
+const REVEAL_MS = 340;
+const REVEAL_STEP_MS = 28;
+const REVEAL_SPREAD_MS = 520;
 /** A wheel zoom counts as motion until the wheel has been still this long. */
 const WHEEL_SETTLE_MS = 150;
-const OPEN_MS = 450;
+const OPEN_MS = 340;
 /** A design's image arriving after the desk shows fades in this long. */
-const ARRIVE_MS = 220;
+const ARRIVE_MS = 160;
 /** The desk's fade into the editor (style.css .atlas.leaving). */
 const LEAVE_MS = 180;
 /** A search packs the designs it found together once typing pauses this
  *  long; each keystroke only marks and fades. */
 const ARRANGE_DELAY_MS = 400;
-const ARRANGE_MS = 380;
+const ARRANGE_MS = 300;
 
 let state = null;
 
@@ -40488,9 +40496,14 @@ function draw() {
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
-  const reveal = state.revealAt ? Math.min(1, (performance.now() - state.revealAt) / REVEAL_MS) : 1;
-  if (reveal < 1) requestDraw();
-  for (const { tile, alpha, rect, detail } of placed) {
+  for (const { tile, alpha, rect: placedRect, detail } of placed) {
+    const reveal = tileReveal(tile);
+    // Revealing, a design grows into its place from a little smaller.
+    const grow = 0.9 + 0.1 * easeOutBack(reveal);
+    const rect = reveal < 1 ? {
+      x: placedRect.x + (placedRect.w * (1 - grow)) / 2, y: placedRect.y + (placedRect.h * (1 - grow)) / 2,
+      w: placedRect.w * grow, h: placedRect.h * grow,
+    } : placedRect;
     const entry = state.entries.get(tile.id);
     const found = state.matches?.get(tile.id);
     // A search fades every design it does not find; what it finds in one is
@@ -40499,7 +40512,7 @@ function draw() {
     const fade = (state.matches && !found ? 0.18 : 1) * alpha;
     ctx.globalAlpha = alpha;
     if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
-    ctx.globalAlpha = (entry.current ? 1 : reveal) * fade;
+    ctx.globalAlpha = (entry.current ? 1 : Math.min(1, reveal * 1.6)) * fade;
     const level = detail === 'small' ? 'small' : 'large';
     const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
       state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
@@ -40520,8 +40533,8 @@ function draw() {
       const key = bitmapKey(entry, need);
       if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
-    ctx.globalAlpha = alpha;
-    drawCaption(ctx, tile, entry, rect, palette);
+    ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6);
+    drawCaption(ctx, tile, entry, placedRect, palette);
   }
   ctx.globalAlpha = 1;
   drawLinks(ctx, palette, shown);
@@ -40531,6 +40544,26 @@ function draw() {
   state.wanted = wanted;
   void pump();
   syncVectorOverlays(vector, moving);
+}
+
+/** How far a design's reveal has come (1 at rest): designs nearer the
+ *  middle of the view go first, the rest after them in turn. */
+function tileReveal(tile) {
+  if (!state.revealAt) return 1;
+  if (!state.revealOrder || state.revealOrder.at !== state.revealAt) {
+    const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
+    const ranked = [...state.tiles].sort((a, b) => Math.hypot(a.x + a.w / 2 - centre.x, a.y + a.h / 2 - centre.y) - Math.hypot(b.x + b.w / 2 - centre.x, b.y + b.h / 2 - centre.y));
+    state.revealOrder = { at: state.revealAt, delay: new Map(ranked.map((t, i) => [t.id, Math.min(i * REVEAL_STEP_MS, REVEAL_SPREAD_MS)])) };
+  }
+  const t = (performance.now() - state.revealAt - (state.revealOrder.delay.get(tile.id) ?? 0)) / REVEAL_MS;
+  if (t < 1) requestDraw();
+  return Math.max(0, Math.min(1, t));
+}
+
+/** Out past 1 and back: a small overshoot as a design settles. */
+function easeOutBack(t) {
+  const c = 1.4;
+  return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2;
 }
 
 // ----- links -------------------------------------------------------------------
@@ -40798,7 +40831,7 @@ function scattered(tile) {
   const scatter = state.scatter;
   if (!scatter || tile.id === scatter.focus.id) return tile;
   const t = scatter.animation ? scatter.animation.t : 1;
-  const k = easeInOutCubic(scatter.outward ? t : 1 - t);
+  const k = easeInOutQuart(scatter.outward ? t : 1 - t);
   if (k <= 0) return tile;
   const dx = tile.x + tile.w / 2 - scatter.centre.x;
   const dy = tile.y + tile.h / 2 - scatter.centre.y;
@@ -41588,11 +41621,14 @@ async function openDesk(generation, source, animate, startup) {
       y: target.y - target.h * (factor - 1) / 2,
       w: target.w * factor, h: target.h * factor,
     });
-    state.revealAt = 0;
+    // The designs assemble as the camera settles.
+    state.revealAt = performance.now();
     draw();
-    await Promise.all([revealStartup(), animateView(target, 1100)]);
+    await Promise.all([revealStartup(), animateView(target, 760)]);
   } else if (state.fromEditor) {
-    // The others wait parted beyond the edges until the camera pulls back.
+    // The others wait parted beyond the edges until the camera pulls back:
+    // that gathering is their entrance, not a reveal of their own.
+    state.revealAt = 0;
     const openTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
     if (openTile) partDesk(openTile, false, state.view, { t: 0 });
     draw();
@@ -43967,7 +44003,7 @@ function cancelViewAnimation() {
   viewAnimation = 0;
 }
 
-function animateViewTo(target, ms = 200) {
+function animateViewTo(target, ms = 260) {
   cancelViewAnimation();
   const from = { ...editor.view };
   const to = { x: target.x, y: target.y, w: target.w, h: target.h };
@@ -45152,7 +45188,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 
 
 
-const COMMIT_FEEDBACK_MS = 650;
+const COMMIT_FEEDBACK_MS = 480;
 
 let commitFeedbackBursts = [];
 
@@ -49769,6 +49805,7 @@ function installFindReplace() {
 __modules["src/web/floating-window.js"] = function (__require, __exports) {
 __exports.floatingWindowPosition = floatingWindowPosition;
 __exports.floatingWindow = floatingWindow;
+let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
  * Floating windows: the beats, the timing diagram editor, the small-signal
  * analysis, and reference windows float over the drawing, where the side
@@ -49778,6 +49815,8 @@ __exports.floatingWindow = floatingWindow;
  * browser), inside the pane and clear of the tool rail -- or, docked, in
  * the side panel as one of its sections.
  */
+
+
 
 const PLACE_KEY = (key) => `mosfeteer.window.${key}`;
 const MARGIN = 8;
@@ -49851,7 +49890,7 @@ const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d=
  * floats it where it was. A click on a docked window's title bar folds it
  * to that bar. Where a window is, docked or not, is kept per window in this
  * browser. Returns { place() }, to call after showing it (it also comes to
- * the front), and dispose(), for a window that is removed rather than hidden.
+ * the front, popping into place), and dispose(), for a window that is removed rather than hidden.
  */
 function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = false }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
@@ -50109,8 +50148,21 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
   observers[1]?.observe(el);
   if (stored?.docked) setDocked(true, { remember: false });
   syncDockButton();
+  // Shown, a floating window pops up into place: from a touch smaller and
+  // lower, quick out and soft in, so it reads as arriving rather than
+  // switched on. Docked, it simply appears in its column.
+  let shownAt = 0;
+  const arrive = () => {
+    if (docked() || el.hidden || reducedMotion() || typeof el.animate !== 'function') return;
+    if (performance.now() - shownAt < 400) return;
+    shownAt = performance.now();
+    el.animate([
+      { opacity: 0, transform: 'translateY(8px) scale(0.96)' },
+      { opacity: 1, transform: 'none' },
+    ], { duration: 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+  };
   return {
-    place: () => { raise(); apply(); },
+    place: () => { raise(); apply(); arrive(); },
     docked,
     dispose: () => observers.forEach((observer) => observer.disconnect()),
   };
@@ -50323,6 +50375,8 @@ __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
 __exports.easeOutCubic = easeOutCubic;
 __exports.easeInOutCubic = easeInOutCubic;
+__exports.easeOutQuint = easeOutQuint;
+__exports.easeInOutQuart = easeInOutQuart;
 __exports.zoomView = zoomView;
 __exports.lerpView = lerpView;
 __exports.pinJoinPoints = pinJoinPoints;
@@ -50625,6 +50679,20 @@ function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
 
+/** A quick start that settles softly: the view moves most of the way at
+ *  once, so a short animation still reads, and lands without a bump. */
+function easeOutQuint(t) {
+  const clamped = Math.min(1, Math.max(0, t));
+  return 1 - (1 - clamped) ** 5;
+}
+
+/** In and out, the middle swift: a camera flight that leaves and arrives
+ *  gently but crosses the distance fast. Symmetric, so half way is half way. */
+function easeInOutQuart(t) {
+  const clamped = Math.min(1, Math.max(0, t));
+  return clamped < 0.5 ? 8 * clamped ** 4 : 1 - (-2 * clamped + 2) ** 4 / 2;
+}
+
 /**
  * A view between `from` and `to` at `t` (0..1) as one camera move: the
  * scale changes geometrically (each moment zooms by the same factor) about
@@ -50632,7 +50700,7 @@ function easeInOutCubic(t) {
  * a design heads straight for it instead of drifting. Views of one size pan.
  */
 function zoomView(from, to, t) {
-  const k = easeInOutCubic(t);
+  const k = easeInOutQuart(t);
   const ratio = to.w / from.w;
   if (Math.abs(ratio - 1) < 1e-6) {
     return { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k, w: to.w, h: to.h };
@@ -50645,7 +50713,7 @@ function zoomView(from, to, t) {
 }
 
 function lerpView(from, to, t) {
-  const k = easeOutCubic(t);
+  const k = easeOutQuint(t);
   return {
     x: from.x + (to.x - from.x) * k,
     y: from.y + (to.y - from.y) * k,
@@ -62898,6 +62966,7 @@ __modules["src/web/motion.js"] = function (__require, __exports) {
 __exports.reducedMotion = reducedMotion;
 __exports.reduceMotionSetting = reduceMotionSetting;
 __exports.setReduceMotionSetting = setReduceMotionSetting;
+__exports.arriving = arriving;
 /**
  * Reduced motion: the system's preference, or the app's own setting
  * (Settings → Reduce animations). While either asks for it the root element
@@ -62935,6 +63004,19 @@ function syncReducedMotion() {
 
 query?.addEventListener?.('change', syncReducedMotion);
 syncReducedMotion();
+
+/** Mark `el` as arriving for `ms`: the stylesheet staggers its children in
+ *  while it is (`.arriving`), so content redrawn later -- by a slider, say --
+ *  does not play its entrance again. */
+function arriving(el, ms = 700) {
+  if (!el || reducedMotion()) return;
+  el.classList.remove('arriving');
+  // A fresh start for the animation when it arrives again before it ended.
+  void el.offsetWidth;
+  el.classList.add('arriving');
+  clearTimeout(el._arrivingTimer);
+  el._arrivingTimer = setTimeout(() => el.classList.remove('arriving'), ms);
+}
 
 };
 
@@ -63497,6 +63579,7 @@ __exports.renderOptimize = renderOptimize;
 __exports.resetOptimize = resetOptimize;
 let MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients; __bind(() => { ({ MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let openRunWindow; __bind(() => { ({ openRunWindow } = __require("src/web/optimize-window.js")); });
+let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
 let createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 let coefficientGroups, fractionSnapper, polishSearch; __bind(() => { ({ coefficientGroups, fractionSnapper, polishSearch } = __require("src/core/analysis/rounding.js")); });
@@ -63519,6 +63602,7 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
  * finds is what can be built. The setup is saved with the document
  * (`analysisValues.flow.optimize`).
  */
+
 
 
 
@@ -64268,6 +64352,7 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
     runWindow.done(message.text, !!message.error);
     button.textContent = label;
     renderOptimize();
+    arriving(root.querySelector('.signal-flow-optimize-result'));
     if (!runWindow.isOpen()) say(message.text, !!message.error);
   }
 }
@@ -68014,6 +68099,7 @@ let expressionTex; __bind(() => { ({ expressionTex } = __require("src/core/trans
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
 let locusSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, responseSpec, stepSpec, swingSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
+let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
 let installScope, scopeChanged, toggleScope; __bind(() => { ({ installScope, scopeChanged, toggleScope } = __require("src/web/scope-window.js")); });
 let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
@@ -68045,6 +68131,7 @@ let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analy
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -69414,6 +69501,7 @@ function derive() {
   if (latest.ok) for (const entry of latest.entries) addTrace(entry, latest.variable, latest.output);
   renderCoefficients();
   renderResults();
+  arriving(section.querySelector('.signal-flow-results'));
   renderPlots();
   if (flow().spectrum?.on && latest.ok) runSpectrum();
   renderOptimize();

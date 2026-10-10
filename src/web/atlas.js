@@ -22,7 +22,7 @@ import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkGraph } from '../core/design-links.js';
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
-import { easeInOutCubic, wheelIntent, lerpView, zoomView } from './gestures.js';
+import { easeInOutQuart, wheelIntent, lerpView, zoomView } from './gestures.js';
 import { editor } from './editor-state.js';
 import {
   addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument,
@@ -71,19 +71,24 @@ const MAX_VECTOR_TILES = 6;
 /** Large images decoded at once (each is up to ~6 MB of pixels). */
 const MAX_LARGE_BITMAPS = 24;
 const ZOOM_IN_PX_PER_UNIT = 3; // the editor's closest zoom: 120 px per grid cell
-const ENTER_MS = 650;
-const REVEAL_MS = 350;
+const ENTER_MS = 480;
+/** Each design's own reveal: it fades and grows in this long, after a delay
+ *  that ripples out from the middle of the view (REVEAL_STEP_MS a design,
+ *  at most REVEAL_SPREAD_MS), so the desk assembles rather than blinks on. */
+const REVEAL_MS = 340;
+const REVEAL_STEP_MS = 28;
+const REVEAL_SPREAD_MS = 520;
 /** A wheel zoom counts as motion until the wheel has been still this long. */
 const WHEEL_SETTLE_MS = 150;
-const OPEN_MS = 450;
+const OPEN_MS = 340;
 /** A design's image arriving after the desk shows fades in this long. */
-const ARRIVE_MS = 220;
+const ARRIVE_MS = 160;
 /** The desk's fade into the editor (style.css .atlas.leaving). */
 const LEAVE_MS = 180;
 /** A search packs the designs it found together once typing pauses this
  *  long; each keystroke only marks and fades. */
 const ARRANGE_DELAY_MS = 400;
-const ARRANGE_MS = 380;
+const ARRANGE_MS = 300;
 
 let state = null;
 
@@ -498,9 +503,14 @@ function draw() {
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
-  const reveal = state.revealAt ? Math.min(1, (performance.now() - state.revealAt) / REVEAL_MS) : 1;
-  if (reveal < 1) requestDraw();
-  for (const { tile, alpha, rect, detail } of placed) {
+  for (const { tile, alpha, rect: placedRect, detail } of placed) {
+    const reveal = tileReveal(tile);
+    // Revealing, a design grows into its place from a little smaller.
+    const grow = 0.9 + 0.1 * easeOutBack(reveal);
+    const rect = reveal < 1 ? {
+      x: placedRect.x + (placedRect.w * (1 - grow)) / 2, y: placedRect.y + (placedRect.h * (1 - grow)) / 2,
+      w: placedRect.w * grow, h: placedRect.h * grow,
+    } : placedRect;
     const entry = state.entries.get(tile.id);
     const found = state.matches?.get(tile.id);
     // A search fades every design it does not find; what it finds in one is
@@ -509,7 +519,7 @@ function draw() {
     const fade = (state.matches && !found ? 0.18 : 1) * alpha;
     ctx.globalAlpha = alpha;
     if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
-    ctx.globalAlpha = (entry.current ? 1 : reveal) * fade;
+    ctx.globalAlpha = (entry.current ? 1 : Math.min(1, reveal * 1.6)) * fade;
     const level = detail === 'small' ? 'small' : 'large';
     const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
       state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
@@ -530,8 +540,8 @@ function draw() {
       const key = bitmapKey(entry, need);
       if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
-    ctx.globalAlpha = alpha;
-    drawCaption(ctx, tile, entry, rect, palette);
+    ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6);
+    drawCaption(ctx, tile, entry, placedRect, palette);
   }
   ctx.globalAlpha = 1;
   drawLinks(ctx, palette, shown);
@@ -541,6 +551,26 @@ function draw() {
   state.wanted = wanted;
   void pump();
   syncVectorOverlays(vector, moving);
+}
+
+/** How far a design's reveal has come (1 at rest): designs nearer the
+ *  middle of the view go first, the rest after them in turn. */
+function tileReveal(tile) {
+  if (!state.revealAt) return 1;
+  if (!state.revealOrder || state.revealOrder.at !== state.revealAt) {
+    const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
+    const ranked = [...state.tiles].sort((a, b) => Math.hypot(a.x + a.w / 2 - centre.x, a.y + a.h / 2 - centre.y) - Math.hypot(b.x + b.w / 2 - centre.x, b.y + b.h / 2 - centre.y));
+    state.revealOrder = { at: state.revealAt, delay: new Map(ranked.map((t, i) => [t.id, Math.min(i * REVEAL_STEP_MS, REVEAL_SPREAD_MS)])) };
+  }
+  const t = (performance.now() - state.revealAt - (state.revealOrder.delay.get(tile.id) ?? 0)) / REVEAL_MS;
+  if (t < 1) requestDraw();
+  return Math.max(0, Math.min(1, t));
+}
+
+/** Out past 1 and back: a small overshoot as a design settles. */
+function easeOutBack(t) {
+  const c = 1.4;
+  return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2;
 }
 
 // ----- links -------------------------------------------------------------------
@@ -808,7 +838,7 @@ function scattered(tile) {
   const scatter = state.scatter;
   if (!scatter || tile.id === scatter.focus.id) return tile;
   const t = scatter.animation ? scatter.animation.t : 1;
-  const k = easeInOutCubic(scatter.outward ? t : 1 - t);
+  const k = easeInOutQuart(scatter.outward ? t : 1 - t);
   if (k <= 0) return tile;
   const dx = tile.x + tile.w / 2 - scatter.centre.x;
   const dy = tile.y + tile.h / 2 - scatter.centre.y;
@@ -1598,11 +1628,14 @@ async function openDesk(generation, source, animate, startup) {
       y: target.y - target.h * (factor - 1) / 2,
       w: target.w * factor, h: target.h * factor,
     });
-    state.revealAt = 0;
+    // The designs assemble as the camera settles.
+    state.revealAt = performance.now();
     draw();
-    await Promise.all([revealStartup(), animateView(target, 1100)]);
+    await Promise.all([revealStartup(), animateView(target, 760)]);
   } else if (state.fromEditor) {
-    // The others wait parted beyond the edges until the camera pulls back.
+    // The others wait parted beyond the edges until the camera pulls back:
+    // that gathering is their entrance, not a reveal of their own.
+    state.revealAt = 0;
     const openTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
     if (openTile) partDesk(openTile, false, state.view, { t: 0 });
     draw();

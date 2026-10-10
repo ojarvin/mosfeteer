@@ -24,6 +24,7 @@ import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { beginSettingsEdit, commit, endSettingsEdit, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
+import { arriving } from './motion.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
 const analysisLoopElement = document.getElementById('analysis-loop-element');
@@ -1236,6 +1237,7 @@ export function installAnalysisUi() {
     const stale = document.getElementById('analysis-stale');
     if (stale) stale.hidden = true;
     renderAnalysisResult(report);
+    arriving(analysisEquation);
     if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
     requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
     logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');

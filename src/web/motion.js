@@ -35,3 +35,16 @@ function syncReducedMotion() {
 
 query?.addEventListener?.('change', syncReducedMotion);
 syncReducedMotion();
+
+/** Mark `el` as arriving for `ms`: the stylesheet staggers its children in
+ *  while it is (`.arriving`), so content redrawn later -- by a slider, say --
+ *  does not play its entrance again. */
+export function arriving(el, ms = 700) {
+  if (!el || reducedMotion()) return;
+  el.classList.remove('arriving');
+  // A fresh start for the animation when it arrives again before it ended.
+  void el.offsetWidth;
+  el.classList.add('arriving');
+  clearTimeout(el._arrivingTimer);
+  el._arrivingTimer = setTimeout(() => el.classList.remove('arriving'), ms);
+}

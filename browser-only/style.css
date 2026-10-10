@@ -77,6 +77,16 @@
   --control-h-sm: 24px;
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
   --shadow-window: 0 12px 40px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
+  /* Motion: quick out, soft landing; a spring for things that pop; three
+     short times. Entrances that list several things stagger them a little
+     each (--stagger), so a group arrives as a group, not as one block. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
+  --motion-fast: 90ms;
+  --motion: 150ms;
+  --motion-slow: 240ms;
+  --stagger: 22ms;
   color-scheme: light;
   /* Native checkboxes/radios otherwise pick up the OS/browser accent color
      (which can be anything, including purple) instead of the app's own. */
@@ -192,7 +202,7 @@ button {
   padding: 0 12px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background-color 120ms var(--ease-out), border-color 120ms var(--ease-out), color 120ms var(--ease-out);
 }
 
 
@@ -582,7 +592,7 @@ button:focus-visible {
   padding: 0 2px 0 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  transition: border-color 140ms ease, background-color 140ms ease;
+  transition: border-color 140ms var(--ease-out), background-color 140ms var(--ease-out);
 }
 
 /* Tags and the Atlas sit by the name: what this design is, and where the
@@ -2023,7 +2033,7 @@ button:disabled {
   border-right: 2px solid var(--text-dim);
   border-bottom: 2px solid var(--text-dim);
   transform: rotate(-45deg);
-  transition: transform 0.12s ease;
+  transition: transform 120ms var(--ease-out);
 }
 
 .analysis-equation-group[open] > summary::before {
@@ -2769,7 +2779,7 @@ button.app-mark-button:active {
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
   border-top: 5px solid currentColor;
-  transition: transform 120ms ease;
+  transition: transform 120ms var(--ease-out);
 }
 
 .panel-group.collapsed .panel-toggle::before {
@@ -3116,7 +3126,7 @@ button.app-mark-button:active {
   letter-spacing: 0.04em;
   color: var(--text-dim);
   background: var(--bg-elevated);
-  transition: color 160ms ease, background-color 160ms ease;
+  transition: color 160ms var(--ease-out), background-color 160ms var(--ease-out);
 }
 
 .status-mode:not(.normal) {
@@ -3246,7 +3256,7 @@ button.status-chip:hover {
 }
 
 .status-message.fresh {
-  animation: status-message-fresh 4s ease-out both;
+  animation: status-message-fresh 4s var(--ease-out) both;
 }
 
 @keyframes status-message-fresh {
@@ -3284,7 +3294,7 @@ button.status-chip:hover {
   border-radius: var(--radius-lg);
   box-shadow: var(--glass-shadow);
   overflow: hidden;
-  animation: log-drawer-in 140ms ease-out;
+  animation: log-drawer-in 140ms var(--ease-out);
   transform-origin: bottom right;
 }
 
@@ -3970,7 +3980,7 @@ button.off {
   gap: 2px;
   padding: 4px;
   border-radius: var(--radius-md);
-  animation: rail-flyout-in 120ms ease-out;
+  animation: rail-flyout-in 120ms var(--ease-out);
   transform-origin: left center;
 }
 
@@ -4036,7 +4046,7 @@ button.off {
 /* Tool selection feedback: colors ease in, a press dips, and the newly
    active tool's icon gives one small pop. */
 :is(.mode-toolbar, .rail-flyout) .mode-control {
-  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 90ms ease;
+  transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), transform 90ms var(--ease-out);
 }
 
 :is(.mode-toolbar, .rail-flyout) .mode-control:active {
@@ -4064,7 +4074,7 @@ button.off {
    so a keyboard switch is confirmed in peripheral vision. */
 :is(.mode-toolbar, .rail-flyout) .mode-control.tool-flash {
   --tool-flash: var(--accent);
-  animation: tool-flash 600ms ease-out;
+  animation: tool-flash 450ms var(--ease-out);
 }
 
 :is(.mode-toolbar, .rail-flyout) .mode-control[data-action="delete"].tool-flash {
@@ -4187,14 +4197,14 @@ button.off {
     width: min(20rem, 88%);
     transform: translateX(100%);
     visibility: hidden;
-    transition: transform 180ms ease, visibility 0s linear 180ms;
+    transition: transform 180ms var(--ease-out), visibility 0s linear 180ms;
   }
 
   body.side-panel-open .side-panel {
     transform: none;
     visibility: visible;
     box-shadow: -8px 0 24px rgba(20, 24, 34, 0.28);
-    transition: transform 180ms ease;
+    transition: transform 180ms var(--ease-out);
   }
 
   .side-panel-resizer {
@@ -4239,7 +4249,7 @@ button.off {
    inline styles), so these overrides must win over both. */
 .landing-glow {
   opacity: 0;
-  animation: landing-flash 600ms ease-out;
+  animation: landing-flash 450ms var(--ease-out);
 }
 
 .landing-glow * {
@@ -4270,12 +4280,12 @@ button.off {
   stroke-width: 20;
   stroke-linecap: round;
   stroke-linejoin: round;
-  animation: landing-flash 600ms ease-out;
+  animation: landing-flash 450ms var(--ease-out);
 }
 
 .landing-dot {
   fill: var(--ok);
-  animation: landing-flash 480ms ease-out;
+  animation: landing-flash 480ms var(--ease-out);
 }
 
 .landing-ripple {
@@ -4285,12 +4295,12 @@ button.off {
   vector-effect: non-scaling-stroke;
   transform-box: fill-box;
   transform-origin: center;
-  animation: landing-ripple 460ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  animation: landing-ripple 360ms cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 .landing-removed {
   opacity: 0;
-  animation: landing-trail 260ms ease-out;
+  animation: landing-trail 260ms var(--ease-out);
 }
 
 /* Deleted objects vanish at once; a soft red halo of their shape trails off. */
@@ -4385,7 +4395,7 @@ button.off {
 
 /* Reduced motion: the system preference or Settings (motion.js). */
 :root:not([data-reduce-motion]) .analysis-equation-value [data-node] {
-  transition: background 90ms ease-out;
+  transition: background 90ms var(--ease-out);
 }
 
 /* ----- quick-add menu (drop a pin-drag wire in empty space) ------ */
@@ -4397,7 +4407,7 @@ button.off {
   padding: 6px;
   border-radius: var(--radius-lg);
   font-size: var(--text-md);
-  animation: quick-add-in 120ms ease-out;
+  animation: quick-add-in 120ms var(--ease-out);
   transform-origin: top left;
 }
 
@@ -4505,7 +4515,7 @@ button.off {
   border-radius: var(--radius-pill);
   font: 600 var(--text-xs)/1 var(--font-mono);
   color: var(--text-dim);
-  animation: radial-hub-in 140ms ease-out both;
+  animation: radial-hub-in 140ms var(--ease-out) both;
   min-height: 0;
 }
 
@@ -4537,7 +4547,7 @@ button.off {
     rotate(calc(var(--radial-sweep) * -1))
     scale(calc((0.45 + 0.55 * var(--radial-t)) * var(--radial-pop)));
   animation: radial-item-in 300ms cubic-bezier(0.22, 1, 0.36, 1) var(--radial-delay, 0ms) both;
-  transition: background-color 90ms ease, color 90ms ease, --radial-pop 90ms ease;
+  transition: background-color 90ms var(--ease-out), color 90ms var(--ease-out), --radial-pop 90ms var(--ease-out);
 }
 
 .radial-item .button-icon {
@@ -4640,7 +4650,7 @@ button.off {
 
 /* The tile picked pulses once as the menu goes. */
 .radial-chosen .radial-item {
-  animation: radial-chosen 260ms ease-out both;
+  animation: radial-chosen 260ms var(--ease-out) both;
 }
 
 @keyframes radial-chosen {
@@ -4813,7 +4823,7 @@ button.off {
   vector-effect: non-scaling-stroke;
   transform-box: fill-box;
   transform-origin: center;
-  animation: snap-pulse 420ms ease-out forwards;
+  animation: snap-pulse 320ms var(--ease-out) forwards;
 }
 
 @keyframes snap-pulse {
@@ -4847,7 +4857,7 @@ button.off {
   color: var(--text);
   font-size: var(--text-md);
   line-height: 1.4;
-  animation: tip-card-in 180ms ease-out;
+  animation: tip-card-in 180ms var(--ease-out);
 }
 
 .tip-card[hidden] {
@@ -4990,7 +5000,7 @@ button.off {
   height: 100%;
   width: 0;
   background: var(--accent);
-  transition: width 320ms ease-out;
+  transition: width 320ms var(--ease-out);
 }
 
 .tutorial-step h3 {
@@ -5012,7 +5022,7 @@ button.off {
 .tutorial-cheer {
   margin-bottom: 6px;
   font-weight: 600;
-  animation: tutorial-cheer 900ms ease-out;
+  animation: tutorial-cheer 900ms var(--ease-out);
   color: var(--ok);
 }
 
@@ -5244,7 +5254,7 @@ button.off {
   background: var(--paper);
   outline: none;
   touch-action: none;
-  animation: atlas-in 180ms ease-out;
+  animation: atlas-in 180ms var(--ease-out);
 }
 
 .atlas[hidden] {
@@ -5253,7 +5263,7 @@ button.off {
 
 .atlas.leaving {
   opacity: 0;
-  transition: opacity 180ms ease-in;
+  transition: opacity 180ms var(--ease-in);
   pointer-events: none;
 }
 
@@ -5476,7 +5486,7 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 }
 
 .presenter-frame.entering {
-  animation: presenter-in 220ms ease-out;
+  animation: presenter-in 220ms var(--ease-out);
 }
 
 @keyframes presenter-in {
@@ -5800,7 +5810,7 @@ circle.bode-corner {
 }
 
 .link-bubble.leaving {
-  animation: link-bubble-out 180ms ease-in both;
+  animation: link-bubble-out 180ms var(--ease-in) both;
   pointer-events: none;
 }
 
@@ -6175,7 +6185,7 @@ circle.bode-corner {
    transforms some of them already have. */
 [data-editor-edge],
 [data-atlas-edge] {
-  transition: translate 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease;
+  transition: translate 180ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms var(--ease-out);
 }
 
 body.chrome-instant [data-editor-edge],
@@ -6426,7 +6436,7 @@ body.chrome-away [data-editor-edge="right"] {
   border-right: 4px solid transparent;
   border-top: 5px solid currentColor;
   color: var(--text-dim);
-  transition: transform 120ms ease;
+  transition: transform 120ms var(--ease-out);
 }
 
 .side-panel > .floating-window.docked.folded .floating-window-header::before {
@@ -7449,4 +7459,67 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-axis button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* ----- Entrances: menus, results, and rows arrive, staggered ---------------- */
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(5px); }
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+}
+
+.toolbar-menu:not([hidden]),
+.component-context-menu:not([hidden]) {
+  animation: menu-in var(--motion) var(--var(--ease-out)) both;
+  transform-origin: top left;
+}
+
+#document-menu:not([hidden]) {
+  transform-origin: top right;
+}
+
+/* Each item a beat after the one above it. */
+.toolbar-menu:not([hidden]) > *,
+.component-context-menu:not([hidden]) > *,
+.component-context-menu:not([hidden]) .context-menu-group > * {
+  animation: rise-in var(--motion-slow) var(--var(--ease-out)) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(2) { --i: 1; }
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(3) { --i: 2; }
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(4) { --i: 3; }
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(5) { --i: 4; }
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(6) { --i: 5; }
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(7) { --i: 6; }
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(8) { --i: 7; }
+:is(.toolbar-menu, .component-context-menu, .context-menu-group) > :nth-child(n + 9) { --i: 8; }
+
+/* Derived results: each card rises in after the one before -- once, as
+   they arrive (motion.js arriving), not each time a slider redraws them. */
+.signal-flow-results.arriving > *,
+#analysis-equation.arriving > .analysis-equation-group,
+.signal-flow-optimize-result.arriving > * {
+  animation: rise-in var(--motion-slow) var(--var(--ease-out)) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+:is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > :nth-child(2) { --i: 1; }
+:is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > :nth-child(3) { --i: 2; }
+:is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > :nth-child(4) { --i: 3; }
+:is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > :nth-child(5) { --i: 4; }
+:is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > :nth-child(n + 6) { --i: 5; }
+
+/* A new calculator result slides in at the bottom. */
+.calculator-entry:last-child {
+  animation: rise-in var(--motion-slow) var(--ease-spring) both;
+}
+
+:root[data-reduce-motion] :is(.toolbar-menu, .component-context-menu, .calculator-entry),
+:root[data-reduce-motion] :is(.toolbar-menu, .component-context-menu, .context-menu-group) > *,
+:root[data-reduce-motion] :is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > * {
+  animation: none;
 }

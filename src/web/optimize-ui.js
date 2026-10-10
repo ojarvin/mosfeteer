@@ -16,6 +16,7 @@
 
 import { MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { openRunWindow } from './optimize-window.js';
+import { arriving } from './motion.js';
 import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
 import { coefficientGroups, fractionSnapper, polishSearch } from '../core/analysis/rounding.js';
@@ -762,6 +763,7 @@ async function startRun({ title, button: buttonSelector, status: statusSelector,
     runWindow.done(message.text, !!message.error);
     button.textContent = label;
     renderOptimize();
+    arriving(root.querySelector('.signal-flow-optimize-result'));
     if (!runWindow.isOpen()) say(message.text, !!message.error);
   }
 }
