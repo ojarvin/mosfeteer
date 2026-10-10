@@ -22,7 +22,7 @@ import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget,
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
-import { beginSettingsEdit, commit, endSettingsEdit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
+import { beginSettingsEdit, commit, endSettingsEdit, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
@@ -222,13 +222,30 @@ export function analysisFormScope() {
   return editor.currentDocumentPath || '';
 }
 
+/** The form is saved with the design (`Circuit#windows`, window-state.js);
+ *  a change to it is a settings change. */
 function persistAnalysisForm() {
-  try { localStorage.setItem(analysisFormStorageKey(analysisFormScope()), JSON.stringify(analysisFormValues())); } catch { /* storage unavailable */ }
+  const values = analysisFormValues();
+  const state = editor.circuit.windows;
+  if (JSON.stringify(values) === JSON.stringify(state.analysis || null)) return;
+  state.analysis = values;
+  markSettingsChanged();
+}
+
+/** The design's saved form. A design saved before the form was kept in it
+ *  has it in this browser, by its file: taken from there once. */
+function savedAnalysisForm() {
+  if (editor.circuit.windows.analysis) return editor.circuit.windows.analysis;
+  try {
+    const key = analysisFormStorageKey(analysisFormScope());
+    const saved = JSON.parse(localStorage.getItem(key) || 'null');
+    localStorage.removeItem(key);
+    return saved && typeof saved === 'object' ? saved : null;
+  } catch { return null; }
 }
 
 function restoreAnalysisForm(defaults = {}) {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(analysisFormScope())) || 'null'); } catch { /* storage unavailable */ }
+  const saved = savedAnalysisForm();
   if (!saved) {
     const options = analysisOptionDefaults();
     if (analysisAcGrounds) analysisAcGrounds.value = '';
@@ -804,7 +821,6 @@ function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (!restored) groundUnusedInputPorts(null, analysisInput?.value);
   analysisInputPrevious = analysisInput?.value || '';
   if (!restored && targetNetId && analysisTarget && [...analysisTarget.options].some((option) => option.value === targetNetId)) analysisTarget.value = targetNetId;
-  persistAnalysisForm();
   renderAnalysisResult(latestAnalysisReport);
   if (analysisAnnotate) analysisAnnotate.hidden = !latestAnalysisReport?.ok;
   const context = document.getElementById('analysis-bias-context');
@@ -1103,7 +1119,24 @@ function installSettingsUndo(root) {
   root.addEventListener('click', (ev) => { if (ev.target?.closest?.('button')) end(); });
 }
 
+/** Another document is shown: no result from the last one, and an open
+ *  window shows this one's own form. */
+function showDocumentAnalysis() {
+  clearLatestAnalysisResult();
+  setAnalysisPick(null);
+  clearEquationEmphasis();
+  if (!isAnalysisDockOpen()) return;
+  const defaults = fillAnalysisDialog(suggestedAnalysisTarget());
+  const restored = restoreAnalysisForm(defaults);
+  prefillAnalysisAttributes();
+  if (!restored) groundUnusedInputPorts(null, analysisInput?.value);
+  analysisInputPrevious = analysisInput?.value || '';
+  renderAnalysisResult(null);
+  analysisDockRevision = editor.modelRevision;
+}
+
 export function installAnalysisUi() {
+  onDocumentShown(showDocumentAnalysis);
   // Long explanations in the window fold to their first sentence.
   installHintFolding(analysisDialog);
   installSettingsUndo(analysisDialog);

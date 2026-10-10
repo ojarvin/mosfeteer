@@ -225,6 +225,11 @@ let equationEmphasis = [];
 let latestSmallSignalModel = null;
 
 let analysisPick = null;
+// Windows that show something of the design (window-state.js) follow it:
+// each is told once another document (or another version of it) is shown.
+const documentShownHandlers = [];
+let shownWindows = null;
+
 installAnalysisUi();
 installSignalFlowUi();
 
@@ -460,6 +465,7 @@ let settingsBefore = null;
 function drawingOf(text) {
   const data = JSON.parse(text);
   delete data.analysisValues;
+  delete data.windows;
   return JSON.stringify(data);
 }
 
@@ -617,7 +623,10 @@ installCopyPaste();
 
 let toolbarFitKey = '';
 
-export function applyJson(blob) {
+/** Replace the circuit with a snapshot. Undo, redo, and a cancelled edit
+ *  keep the windows' state (window-state.js) as it is; `document: true` is
+ *  another document (or another version of it) shown, its own windows' with it. */
+export function applyJson(blob, { document: replacesDocument = false } = {}) {
   if (previewTransaction) cancelPreviewTransaction();
   // Loads, undo, and redo replace the document; they are not new commits.
   pendingFeedbackSnapshot = null;
@@ -640,6 +649,7 @@ export function applyJson(blob) {
   resetCheckState();
   const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
+  if (!replacesDocument && previous) circuit.windows = previous.windows;
   // Labels whose text is unchanged keep their measured size, instead of
   // every label being measured again (a forced layout each).
   circuit.adoptTextMetrics(previous);
@@ -2472,7 +2482,20 @@ function syncEmptyState() {
   card.querySelector('[data-empty-action="place"] .empty-state-text').textContent = 'Insert a component';
 }
 
+
+/** Call `handler()` whenever another document is shown, after it is in place. */
+export function onDocumentShown(handler) {
+  documentShownHandlers.push(handler);
+}
+
+function syncShownDocument() {
+  if (circuit.windows === shownWindows) return;
+  shownWindows = circuit.windows;
+  for (const handler of documentShownHandlers) handler();
+}
+
 export function render() {
+  syncShownDocument();
   syncDocumentSurface();
   syncEmptyState();
   syncTutorial();
@@ -8174,7 +8197,7 @@ installMarkupShortcuts();
 // ----- boot ------------------------------------------------------------
 
 window.__run = (line) => { runLine(line); };
-window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); fitView(); };
+window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json), { document: true }); fitView(); };
 window.__circuit = () => ({
   kind: 'circuit',
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),

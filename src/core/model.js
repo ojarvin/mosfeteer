@@ -1,4 +1,5 @@
 import { RAIL_NAMES, railNameKey } from './rail-names.js';
+import { normalizeWindows, windowsJSON } from './window-state.js';
 import { normalizeBand, normalizeOptimizeSetup } from './analysis/optimize-setup.js';
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
@@ -2470,6 +2471,8 @@ export class Circuit {
     // Numbers the analysis plots with, kept with the drawing: the
     // signal-flow coefficients (a_1 -> 0.5) and the Bode sketch's ratios.
     this.analysisValues = { coefficients: {}, bode: null, links: {} };
+    // What the editor's windows show for this design (window-state.js).
+    this.windows = {};
     this._routingEnvCache = new Map();
   }
 
@@ -7232,6 +7235,7 @@ export class Circuit {
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
       ...analysisValuesJSON(this.analysisValues),
+      ...windowsJSON(this.windows),
     };
   }
 
@@ -7248,6 +7252,7 @@ export class Circuit {
     circuit.beats = beatsFromJSON(data.beats);
     circuit.tags = normalizeTags(data.tags);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
+    circuit.windows = normalizeWindows(data.windows);
     // A rail's group is keyed by its V_{..} spelling; older documents keyed
     // it by the plain one (`name:VSS`).
     const railKey = (key) => (key.startsWith('name:') ? `name:${railNameKey(key.slice(5))}` : key);

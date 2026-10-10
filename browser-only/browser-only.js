@@ -21481,6 +21481,7 @@ __exports.normalizeAnalysisValues = normalizeAnalysisValues;
 __exports.pathHasDiagonal = pathHasDiagonal;
 __exports.diagonalDraftPath = diagonalDraftPath;
 let RAIL_NAMES, railNameKey; __bind(() => { ({ RAIL_NAMES, railNameKey } = __require("src/core/rail-names.js")); });
+let normalizeWindows, windowsJSON; __bind(() => { ({ normalizeWindows, windowsJSON } = __require("src/core/window-state.js")); });
 let normalizeBand, normalizeOptimizeSetup; __bind(() => { ({ normalizeBand, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
 let applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect; __bind(() => { ({ applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } = __require("src/core/geometry.js")); });
 let snap, snapPoint, GRID; __bind(() => { ({ snap, snapPoint, GRID } = __require("src/core/grid.js")); });
@@ -21494,6 +21495,7 @@ let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrow
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
 let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
+
 
 
 
@@ -23966,6 +23968,8 @@ class Circuit {
     // Numbers the analysis plots with, kept with the drawing: the
     // signal-flow coefficients (a_1 -> 0.5) and the Bode sketch's ratios.
     this.analysisValues = { coefficients: {}, bode: null, links: {} };
+    // What the editor's windows show for this design (window-state.js).
+    this.windows = {};
     this._routingEnvCache = new Map();
   }
 
@@ -28728,6 +28732,7 @@ class Circuit {
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
       ...analysisValuesJSON(this.analysisValues),
+      ...windowsJSON(this.windows),
     };
   }
 
@@ -28744,6 +28749,7 @@ class Circuit {
     circuit.beats = beatsFromJSON(data.beats);
     circuit.tags = normalizeTags(data.tags);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
+    circuit.windows = normalizeWindows(data.windows);
     // A rail's group is keyed by its V_{..} spelling; older documents keyed
     // it by the plain one (`name:VSS`).
     const railKey = (key) => (key.startsWith('name:') ? `name:${railNameKey(key.slice(5))}` : key);
@@ -35022,6 +35028,92 @@ __exports.isBlockIn = isBlockIn;
 __exports.TRANSFER_FUNCTION_ROLE = TRANSFER_FUNCTION_ROLE;
 };
 
+__modules["src/core/window-state.js"] = function (__require, __exports) {
+__exports.normalizeWindows = normalizeWindows;
+__exports.windowsJSON = windowsJSON;
+/**
+ * What the editor's windows show for one design, saved with it
+ * (`Circuit#windows`), so another design opens with its own and this one
+ * comes back as it was left: the reference windows (designs by path and
+ * name, or pasted pictures), the calculator's past results, the oscilloscope's
+ * nets, and the small-signal analysis form.
+ *
+ * It is window state, not drawing: an undo or redo keeps it as it is
+ * (main.js `applyJson`), and changing it is a settings change that marks the
+ * design unsaved but leaves what was derived current.
+ */
+
+/** Past results the calculator keeps. */
+const CALCULATOR_HISTORY = 50;
+/** A pasted picture larger than this (as a data URL) is shown but not saved. */
+const MAX_WINDOW_PICTURE = 4_000_000;
+
+const text = (value, max = 200) => (typeof value === 'string' ? value.slice(0, max) : '');
+const object = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : null);
+
+function referenceItem(item) {
+  const value = object(item);
+  if (!value) return null;
+  const picture = object(value.picture);
+  if (picture) {
+    const src = typeof picture.src === 'string' && picture.src.length <= MAX_WINDOW_PICTURE && /^data:image\/(png|jpeg|webp);base64,/.test(picture.src) ? picture.src : '';
+    const aspect = Number(picture.aspect);
+    if (!src || !(aspect > 0) || !Number.isFinite(aspect)) return null;
+    const width = Number(picture.width);
+    return { picture: { src, aspect, ...(width > 0 && Number.isFinite(width) ? { width } : {}) } };
+  }
+  const path = text(value.path, 4096);
+  const name = text(value.name);
+  return path || name ? { path, name } : null;
+}
+
+function calculatorEntry(entry) {
+  const value = object(entry);
+  if (!value || typeof value.input !== 'string' || !value.input.trim()) return null;
+  return {
+    input: text(value.input, 500),
+    result: text(value.result, 500),
+    ...(value.error === true ? { error: true } : {}),
+  };
+}
+
+/** Window state as saved: only what each window keeps, bounded. */
+function normalizeWindows(value) {
+  const source = object(value) || {};
+  const windows = {};
+  const references = object(source.references);
+  if (references) {
+    const items = (Array.isArray(references.items) ? references.items : []).slice(0, 12).map(referenceItem).filter(Boolean);
+    if (items.length || references.hidden) windows.references = { items, ...(references.hidden ? { hidden: true } : {}) };
+  }
+  const calculator = object(source.calculator);
+  if (calculator) {
+    const history = (Array.isArray(calculator.history) ? calculator.history : []).map(calculatorEntry).filter(Boolean).slice(-CALCULATOR_HISTORY);
+    if (history.length) windows.calculator = { history };
+  }
+  const scope = object(source.scope);
+  if (scope) {
+    const nets = (Array.isArray(scope.nets) ? scope.nets : []).filter((net) => typeof net === 'string' && net).map((net) => net.slice(0, 200)).slice(0, 16);
+    const periods = Math.round(Number(scope.periods));
+    windows.scope = { nets, ...(periods > 0 ? { periods: Math.min(periods, 100000) } : {}) };
+  }
+  // The small-signal form: analysis-options.js reads (and migrates) it.
+  const analysis = object(source.analysis);
+  if (analysis && JSON.stringify(analysis).length <= 100_000) windows.analysis = JSON.parse(JSON.stringify(analysis));
+  return windows;
+}
+
+/** The document field for the window state: `{ windows }`, or nothing
+ *  when there is none. */
+function windowsJSON(windows) {
+  const value = normalizeWindows(windows);
+  return Object.keys(value).length ? { windows: value } : {};
+}
+
+__exports.CALCULATOR_HISTORY = CALCULATOR_HISTORY;
+__exports.MAX_WINDOW_PICTURE = MAX_WINDOW_PICTURE;
+};
+
 __modules["src/core/wireedit.js"] = function (__require, __exports) {
 __exports.wireRunAt = wireRunAt;
 __exports.collapseCollinear = collapseCollinear;
@@ -36680,7 +36772,7 @@ let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, anal
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let beginSettingsEdit, commit, endSettingsEdit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets; __bind(() => { ({ beginSettingsEdit, commit, endSettingsEdit, namedGroupNets, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } = __require("src/web/main.js")); });
+let beginSettingsEdit, commit, endSettingsEdit, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets; __bind(() => { ({ beginSettingsEdit, commit, endSettingsEdit, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } = __require("src/web/main.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 /**
  * The small-signal analysis dock: its form and remembered settings, running
@@ -36906,13 +36998,30 @@ function analysisFormScope() {
   return editor.currentDocumentPath || '';
 }
 
+/** The form is saved with the design (`Circuit#windows`, window-state.js);
+ *  a change to it is a settings change. */
 function persistAnalysisForm() {
-  try { localStorage.setItem(analysisFormStorageKey(analysisFormScope()), JSON.stringify(analysisFormValues())); } catch { /* storage unavailable */ }
+  const values = analysisFormValues();
+  const state = editor.circuit.windows;
+  if (JSON.stringify(values) === JSON.stringify(state.analysis || null)) return;
+  state.analysis = values;
+  markSettingsChanged();
+}
+
+/** The design's saved form. A design saved before the form was kept in it
+ *  has it in this browser, by its file: taken from there once. */
+function savedAnalysisForm() {
+  if (editor.circuit.windows.analysis) return editor.circuit.windows.analysis;
+  try {
+    const key = analysisFormStorageKey(analysisFormScope());
+    const saved = JSON.parse(localStorage.getItem(key) || 'null');
+    localStorage.removeItem(key);
+    return saved && typeof saved === 'object' ? saved : null;
+  } catch { return null; }
 }
 
 function restoreAnalysisForm(defaults = {}) {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(analysisFormStorageKey(analysisFormScope())) || 'null'); } catch { /* storage unavailable */ }
+  const saved = savedAnalysisForm();
   if (!saved) {
     const options = analysisOptionDefaults();
     if (analysisAcGrounds) analysisAcGrounds.value = '';
@@ -37488,7 +37597,6 @@ function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (!restored) groundUnusedInputPorts(null, analysisInput?.value);
   analysisInputPrevious = analysisInput?.value || '';
   if (!restored && targetNetId && analysisTarget && [...analysisTarget.options].some((option) => option.value === targetNetId)) analysisTarget.value = targetNetId;
-  persistAnalysisForm();
   renderAnalysisResult(latestAnalysisReport);
   if (analysisAnnotate) analysisAnnotate.hidden = !latestAnalysisReport?.ok;
   const context = document.getElementById('analysis-bias-context');
@@ -37787,7 +37895,24 @@ function installSettingsUndo(root) {
   root.addEventListener('click', (ev) => { if (ev.target?.closest?.('button')) end(); });
 }
 
+/** Another document is shown: no result from the last one, and an open
+ *  window shows this one's own form. */
+function showDocumentAnalysis() {
+  clearLatestAnalysisResult();
+  setAnalysisPick(null);
+  clearEquationEmphasis();
+  if (!isAnalysisDockOpen()) return;
+  const defaults = fillAnalysisDialog(suggestedAnalysisTarget());
+  const restored = restoreAnalysisForm(defaults);
+  prefillAnalysisAttributes();
+  if (!restored) groundUnusedInputPorts(null, analysisInput?.value);
+  analysisInputPrevious = analysisInput?.value || '';
+  renderAnalysisResult(null);
+  analysisDockRevision = editor.modelRevision;
+}
+
 function installAnalysisUi() {
+  onDocumentShown(showDocumentAnalysis);
   // Long explanations in the window fold to their first sentence.
   installHintFolding(analysisDialog);
   installSettingsUndo(analysisDialog);
@@ -46141,7 +46266,7 @@ function restoreDraft() {
       editor.lastSavedSnapshot = snapshot();
       return;
     }
-    applyJson(JSON.stringify(draft.state));
+    applyJson(JSON.stringify(draft.state), { document: true });
     editor.draftRestored = true;
     editor.currentCircuitName = draft.name || '';
     editor.currentDocumentPath = typeof draft.path === 'string' && draft.path ? draft.path : null;
@@ -46436,7 +46561,7 @@ async function loadCircuit(path, quiet = false, options = {}) {
     // restore a different document kind.
     editor.history = [];
     editor.future = [];
-    applyJson(JSON.stringify(data.state));
+    applyJson(JSON.stringify(data.state), { document: true });
     clearLatestAnalysisResult();
     setSelection([]);
     editor.cursor = { x: 0, y: 0 };
@@ -46468,7 +46593,7 @@ function openUnsavedDocument(state, name) {
   dropTutorial();
   editor.history = [];
   editor.future = [];
-  applyJson(JSON.stringify(state));
+  applyJson(JSON.stringify(state), { document: true });
   clearLatestAnalysisResult();
   setSelection([]);
   editor.cursor = { x: 0, y: 0 };
@@ -46997,7 +47122,7 @@ async function syncActiveCircuitOnce() {
       }
       return;
     }
-    applyJson(remoteSnapshot);
+    applyJson(remoteSnapshot, { document: true });
     editor.lastSavedSnapshot = snapshot();
     editor.remoteConflictLogged = false;
     fitView();
@@ -47030,7 +47155,7 @@ function startNewDocument() {
   editor.currentDocumentDir = null;
   editor.history = [];
   editor.future = [];
-  applyJson(JSON.stringify(createDocument().toJSON()));
+  applyJson(JSON.stringify(createDocument().toJSON()), { document: true });
   clearLatestAnalysisResult();
   editor.lastSavedSnapshot = snapshot();
   lastSeenActive = null;
@@ -47097,7 +47222,7 @@ async function checkOpenFileChanged() {
   let data;
   try { data = await persistence.load(path); } catch { return; }
   if (path !== editor.currentDocumentPath || snapshot() !== editor.lastSavedSnapshot) return;
-  applyJson(JSON.stringify(loadDocument(data.state).toJSON()));
+  applyJson(JSON.stringify(loadDocument(data.state).toJSON()), { document: true });
   editor.lastSavedSnapshot = snapshot();
   editor.lastSeenRevision = data.revision || null;
   editor.remoteConflictLogged = false;
@@ -53006,6 +53131,7 @@ __exports.setSymmetry = setSymmetry;
 __exports.spliceIfOnWire = spliceIfOnWire;
 __exports.splicePreviewTarget = splicePreviewTarget;
 __exports.placePending = placePending;
+__exports.onDocumentShown = onDocumentShown;
 __exports.render = render;
 __exports.draftRoutePath = draftRoutePath;
 __exports.alignLabelColumn = alignLabelColumn;
@@ -53341,6 +53467,11 @@ let equationEmphasis = [];
 let latestSmallSignalModel = null;
 
 let analysisPick = null;
+// Windows that show something of the design (window-state.js) follow it:
+// each is told once another document (or another version of it) is shown.
+const documentShownHandlers = [];
+let shownWindows = null;
+
 installAnalysisUi();
 installSignalFlowUi();
 
@@ -53576,6 +53707,7 @@ let settingsBefore = null;
 function drawingOf(text) {
   const data = JSON.parse(text);
   delete data.analysisValues;
+  delete data.windows;
   return JSON.stringify(data);
 }
 
@@ -53733,7 +53865,10 @@ installCopyPaste();
 
 let toolbarFitKey = '';
 
-function applyJson(blob) {
+/** Replace the circuit with a snapshot. Undo, redo, and a cancelled edit
+ *  keep the windows' state (window-state.js) as it is; `document: true` is
+ *  another document (or another version of it) shown, its own windows' with it. */
+function applyJson(blob, { document: replacesDocument = false } = {}) {
   if (previewTransaction) cancelPreviewTransaction();
   // Loads, undo, and redo replace the document; they are not new commits.
   pendingFeedbackSnapshot = null;
@@ -53756,6 +53891,7 @@ function applyJson(blob) {
   resetCheckState();
   const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
+  if (!replacesDocument && previous) circuit.windows = previous.windows;
   // Labels whose text is unchanged keep their measured size, instead of
   // every label being measured again (a forced layout each).
   circuit.adoptTextMetrics(previous);
@@ -55588,7 +55724,20 @@ function syncEmptyState() {
   card.querySelector('[data-empty-action="place"] .empty-state-text').textContent = 'Insert a component';
 }
 
+
+/** Call `handler()` whenever another document is shown, after it is in place. */
+function onDocumentShown(handler) {
+  documentShownHandlers.push(handler);
+}
+
+function syncShownDocument() {
+  if (circuit.windows === shownWindows) return;
+  shownWindows = circuit.windows;
+  for (const handler of documentShownHandlers) handler();
+}
+
 function render() {
+  syncShownDocument();
   syncDocumentSurface();
   syncEmptyState();
   syncTutorial();
@@ -61290,7 +61439,7 @@ installMarkupShortcuts();
 // ----- boot ------------------------------------------------------------
 
 window.__run = (line) => { runLine(line); };
-window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json)); fitView(); };
+window.__load = (json) => { applyJson(typeof json === 'string' ? json : JSON.stringify(json), { document: true }); fitView(); };
 window.__circuit = () => ({
   kind: 'circuit',
   comps: [...circuit.components.values()].map((c) => ({ refdes: c.refdes, type: c.type, x: c.transform.x, y: c.transform.y, rot: c.transform.rotation, mx: c.transform.mirrorX, my: c.transform.mirrorY })),
@@ -64558,6 +64707,8 @@ let appendDesignChoices, workspaceDesigns; __bind(() => { ({ appendDesignChoices
 let openMenuAt; __bind(() => { ({ openMenuAt } = __require("src/web/context-menu.js")); });
 let storedImage, takePastedPictures; __bind(() => { ({ storedImage, takePastedPictures } = __require("src/web/copy-paste.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
+let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
+let MAX_WINDOW_PICTURE; __bind(() => { ({ MAX_WINDOW_PICTURE } = __require("src/core/window-state.js")); });
 let pngDataUrlBlob, writeDrawingToClipboard; __bind(() => { ({ pngDataUrlBlob, writeDrawingToClipboard } = __require("src/web/clipboard.js")); });
 /**
  * Reference windows: another design of the workspace shown beside the
@@ -64575,9 +64726,10 @@ let pngDataUrlBlob, writeDrawingToClipboard; __bind(() => { ({ pngDataUrlBlob, w
  * copy button (or Ctrl+C with the pointer over the window) puts what the
  * window shows back on the clipboard as a picture.
  *
- * Which designs (or pictures) the windows show is remembered in this
- * browser; nothing is saved in a document. `Shift+V` shows or hides them, opening a first one
- * (with its design picker) when there is none.
+ * Which designs (or pictures) the windows show is saved with the design
+ * being edited (`Circuit#windows`, window-state.js): another design opens
+ * with its own windows, or none. `Shift+V` shows or hides them, opening a
+ * first one (with its design picker) when there is none.
  */
 
 
@@ -64595,7 +64747,8 @@ let pngDataUrlBlob, writeDrawingToClipboard; __bind(() => { ({ pngDataUrlBlob, w
 
 
 
-const STORE_KEY = 'mosfeteer.references';
+
+
 /** How often a shown window asks whether its design's file changed. */
 const POLL_MS = 2000;
 /** The closest zoom, in screen pixels per drawing unit (the editor's). */
@@ -64603,8 +64756,6 @@ const MAX_SCALE = 3;
 const FIT_MARGIN = 0.06;
 
 const windows = []; // { el, slot, doc | pasted, picture, view, fitted, etag, revision, chrome }
-/** A pasted picture larger than this (as a data URL) is shown but not remembered. */
-const MAX_REMEMBERED_PICTURE = 1_500_000;
 let hidden = false;
 let pollTimer = null;
 
@@ -64613,23 +64764,43 @@ const dark = () => document.documentElement.classList.contains('dark');
 
 // ----- remembering ------------------------------------------------------------------
 
+let restoring = false;
+
+/** Keep what the windows show in the design, a settings change when it is new. */
 function remember() {
-  const entry = (win, pictures) => (win.doc ? { path: win.doc.path, name: win.doc.name }
-    : win.pasted && pictures && win.pasted.src.length <= MAX_REMEMBERED_PICTURE ? { picture: win.pasted } : null);
-  const write = (pictures) => localStorage.setItem(STORE_KEY, JSON.stringify({ hidden, windows: windows.map((win) => entry(win, pictures)) }));
-  try {
-    write(true);
-  } catch {
-    // Storage full with pictures: keep at least the designs.
-    try { write(false); } catch { /* remembered for this visit only */ }
-  }
+  if (restoring) return;
+  const entry = (win) => (win.doc ? { path: win.doc.path, name: win.doc.name }
+    : win.pasted && win.pasted.src.length <= MAX_WINDOW_PICTURE ? { picture: win.pasted } : null);
+  const items = windows.map(entry).filter(Boolean);
+  const next = items.length || hidden ? { items, ...(hidden ? { hidden: true } : {}) } : null;
+  const state = editor.circuit.windows;
+  if (JSON.stringify(next) === JSON.stringify(state.references || null)) return;
+  if (next) state.references = next;
+  else delete state.references;
+  markSettingsChanged();
 }
 
-function remembered() {
+/** The open design's windows, as it was saved: the ones shown now close. */
+function restoreWindows() {
+  restoring = true;
   try {
-    const value = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    return value && Array.isArray(value.windows) ? value : null;
-  } catch { return null; }
+    for (const win of [...windows]) closeWindow(win);
+    const saved = editor.circuit.windows.references;
+    hidden = !!saved?.hidden;
+    for (const entry of saved?.items || []) {
+      if (entry.picture) {
+        const win = createWindow();
+        if (win) setPicture(win, entry.picture);
+      } else {
+        // A design moved with the workspace is found again by its name.
+        const found = workspaceDesigns().find((doc) => doc.path === entry.path) || workspaceDesigns().find((doc) => doc.name === entry.name);
+        createWindow(found ? { path: found.path, name: found.name } : entry);
+      }
+    }
+  } finally {
+    restoring = false;
+  }
+  syncButton();
 }
 
 // ----- the picture ------------------------------------------------------------------
@@ -65114,17 +65285,9 @@ function installReferenceWindows() {
   });
   // A theme change swaps every picture for its other theme.
   new MutationObserver(() => windows.forEach(draw)).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-  const saved = remembered();
-  if (saved) {
-    hidden = !!saved.hidden;
-    for (const entry of saved.windows) {
-      if (entry?.path) createWindow(entry);
-      else if (typeof entry?.picture?.src === 'string' && /^data:image\/(png|jpeg|webp);/.test(entry.picture.src)) {
-        const win = createWindow();
-        if (win) setPicture(win, entry.picture);
-      }
-    }
-  }
+  // Before window state was saved with designs, it was this browser's.
+  try { localStorage.removeItem('mosfeteer.references'); } catch { /* storage unavailable */ }
+  onDocumentShown(restoreWindows);
   syncButton();
 }
 
@@ -66136,7 +66299,7 @@ let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let analysisDialog; __bind(() => { ({ analysisDialog } = __require("src/web/elements.js")); });
-let alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } = __require("src/web/main.js")); });
+let alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection; __bind(() => { ({ alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSection, renderOptimize, resetOptimize } = __require("src/web/optimize-ui.js")); });
@@ -66371,7 +66534,10 @@ function syncDocument() {
   if (key === shownDocument) return;
   const first = shownDocument === undefined;
   shownDocument = key;
-  if (first) return;
+  if (!first) clearResults();
+}
+
+function clearResults() {
   traces = [];
   latest = null;
   locus = null;
@@ -67723,6 +67889,13 @@ function installSignalFlowUi() {
     if (filledRevision === editor.modelRevision) return;
     filledRevision = editor.modelRevision;
     fillForm();
+  });
+  // Another document starts clean: its own mode, none of the last one's results.
+  onDocumentShown(() => {
+    chosenThisSession = false;
+    shownDocument = editor.currentDocumentPath || `unsaved:${editor.currentCircuitName || ''}`;
+    clearResults();
+    if (!analysisDialog.hidden) setMode(suggestedMode());
   });
   // Each opening picks the mode the drawing suggests, unless it was chosen.
   new MutationObserver(() => {

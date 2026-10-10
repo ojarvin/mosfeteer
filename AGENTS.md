@@ -433,6 +433,14 @@ modules split out of it reach that state through the `editor` accessor
 loads. A module's `installX()` runs its load-time wiring where `main.js` calls
 it, so the call's position keeps the original load order.
 
+What the editor's windows show for a design is saved with it
+(`Circuit#windows`, `src/core/window-state.js`): the reference windows
+(pasted pictures included) and the small-signal form. It is not drawing: undo and redo keep it
+(`applyJson` replaces it only with `{ document: true }`), and a change to it
+is a settings change. Every window resets to the shown document's own state
+through `onDocumentShown` (main.js), so nothing of one design is left
+showing in another.
+
 The browser exposes `window.__circuit()`, `window.__run(command)`, and
 `window.__load(state)` for isolated verification. Headless browser tests must
 use one persistent CDP connection, temporary ports/directories, real mouse

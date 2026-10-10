@@ -97,10 +97,12 @@ test('the optimizer\'s value lists are tables, and each coefficient\'s largest n
 
 test('a run opens its own window: the start and the best so far, progress, Stop', () => {
   const win = read('optimize-window.js');
-  assert.match(win, /export function openRunWindow\(\{ title, plotAt, onStop \}\)/);
+  assert.match(win, /export function openRunWindow\(\{ title, plotAt, onStop, onClose = \(\) => \{\} \}\)/);
   assert.match(win, /stop\.textContent = 'Close';/);
   const ui = read('optimize-ui.js');
-  assert.match(ui, /const runWindow = openRunWindow\(\{ title, plotAt: runPlotter\(\), onStop: \(\) => running\?\.stop\(\) \}\);/);
+  assert.match(ui, /const runWindow = openRunWindow\(\{\s*title, plotAt: runPlotter\(\), onStop: \(\) => running\?\.stop\(\),/);
+  // Closing the window leaves the run going, its progress back in the analysis window.
+  assert.match(ui, /progress\.hidden = runWindow\.isOpen\(\);/);
   // Only the latest best is drawn beside the start.
   assert.match(ui, /if \(optimizer\.best && optimizer\.best !== shownBest\) \{\s*shownBest = optimizer\.best;\s*showBest\(shownBest\.values\);/);
   assert.match(ui, /title: 'Optimizer',/);

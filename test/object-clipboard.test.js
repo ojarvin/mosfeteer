@@ -59,7 +59,7 @@ test('damaged or foreign-version copied objects are refused before any paste', (
 
 test('Ctrl/Cmd+C publishes copies and Ctrl/Cmd+V is read from the browser paste event', async () => {
   const main = editorSource();
-  assert.match(main, /k === 'c' && !ev\.shiftKey\) \{\s*ev\.preventDefault\(\);\s*if \(copySelection\(\)\) publishObjectClipboard\(\);/);
+  assert.match(main, /k === 'c' && !ev\.shiftKey\) \{\s*ev\.preventDefault\(\);\s*if \(copyHoveredReference\(\)\) return;\s*if \(copySelection\(\)\) publishObjectClipboard\(\);/);
   // Ctrl/Cmd+C and V are the clipboard keys; the old y and p are gone.
   assert.doesNotMatch(main, /key === 'y'\)|key === 'p'\) \{\s*pasteClipboard/);
   // Ctrl/Cmd+V must not prevent the default, or no paste event follows.

@@ -110,7 +110,7 @@ export function restoreDraft() {
       editor.lastSavedSnapshot = snapshot();
       return;
     }
-    applyJson(JSON.stringify(draft.state));
+    applyJson(JSON.stringify(draft.state), { document: true });
     editor.draftRestored = true;
     editor.currentCircuitName = draft.name || '';
     editor.currentDocumentPath = typeof draft.path === 'string' && draft.path ? draft.path : null;
@@ -405,7 +405,7 @@ async function loadCircuit(path, quiet = false, options = {}) {
     // restore a different document kind.
     editor.history = [];
     editor.future = [];
-    applyJson(JSON.stringify(data.state));
+    applyJson(JSON.stringify(data.state), { document: true });
     clearLatestAnalysisResult();
     setSelection([]);
     editor.cursor = { x: 0, y: 0 };
@@ -437,7 +437,7 @@ function openUnsavedDocument(state, name) {
   dropTutorial();
   editor.history = [];
   editor.future = [];
-  applyJson(JSON.stringify(state));
+  applyJson(JSON.stringify(state), { document: true });
   clearLatestAnalysisResult();
   setSelection([]);
   editor.cursor = { x: 0, y: 0 };
@@ -966,7 +966,7 @@ async function syncActiveCircuitOnce() {
       }
       return;
     }
-    applyJson(remoteSnapshot);
+    applyJson(remoteSnapshot, { document: true });
     editor.lastSavedSnapshot = snapshot();
     editor.remoteConflictLogged = false;
     fitView();
@@ -999,7 +999,7 @@ export function startNewDocument() {
   editor.currentDocumentDir = null;
   editor.history = [];
   editor.future = [];
-  applyJson(JSON.stringify(createDocument().toJSON()));
+  applyJson(JSON.stringify(createDocument().toJSON()), { document: true });
   clearLatestAnalysisResult();
   editor.lastSavedSnapshot = snapshot();
   lastSeenActive = null;
@@ -1066,7 +1066,7 @@ async function checkOpenFileChanged() {
   let data;
   try { data = await persistence.load(path); } catch { return; }
   if (path !== editor.currentDocumentPath || snapshot() !== editor.lastSavedSnapshot) return;
-  applyJson(JSON.stringify(loadDocument(data.state).toJSON()));
+  applyJson(JSON.stringify(loadDocument(data.state).toJSON()), { document: true });
   editor.lastSavedSnapshot = snapshot();
   editor.lastSeenRevision = data.revision || null;
   editor.remoteConflictLogged = false;

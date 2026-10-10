@@ -14,9 +14,10 @@
  * copy button (or Ctrl+C with the pointer over the window) puts what the
  * window shows back on the clipboard as a picture.
  *
- * Which designs (or pictures) the windows show is remembered in this
- * browser; nothing is saved in a document. `Shift+V` shows or hides them, opening a first one
- * (with its design picker) when there is none.
+ * Which designs (or pictures) the windows show is saved with the design
+ * being edited (`Circuit#windows`, window-state.js): another design opens
+ * with its own windows, or none. `Shift+V` shows or hides them, opening a
+ * first one (with its design picker) when there is none.
  */
 
 import { loadDocument } from '../core/document.js';
@@ -32,9 +33,10 @@ import { appendDesignChoices, workspaceDesigns } from './hierarchy.js';
 import { openMenuAt } from './context-menu.js';
 import { storedImage, takePastedPictures } from './copy-paste.js';
 import { logLine } from './status-bar-ui.js';
+import { markSettingsChanged, onDocumentShown } from './main.js';
+import { MAX_WINDOW_PICTURE } from '../core/window-state.js';
 import { pngDataUrlBlob, writeDrawingToClipboard } from './clipboard.js';
 
-const STORE_KEY = 'mosfeteer.references';
 /** How often a shown window asks whether its design's file changed. */
 const POLL_MS = 2000;
 /** The closest zoom, in screen pixels per drawing unit (the editor's). */
@@ -42,8 +44,6 @@ const MAX_SCALE = 3;
 const FIT_MARGIN = 0.06;
 
 const windows = []; // { el, slot, doc | pasted, picture, view, fitted, etag, revision, chrome }
-/** A pasted picture larger than this (as a data URL) is shown but not remembered. */
-const MAX_REMEMBERED_PICTURE = 1_500_000;
 let hidden = false;
 let pollTimer = null;
 
@@ -52,23 +52,43 @@ const dark = () => document.documentElement.classList.contains('dark');
 
 // ----- remembering ------------------------------------------------------------------
 
+let restoring = false;
+
+/** Keep what the windows show in the design, a settings change when it is new. */
 function remember() {
-  const entry = (win, pictures) => (win.doc ? { path: win.doc.path, name: win.doc.name }
-    : win.pasted && pictures && win.pasted.src.length <= MAX_REMEMBERED_PICTURE ? { picture: win.pasted } : null);
-  const write = (pictures) => localStorage.setItem(STORE_KEY, JSON.stringify({ hidden, windows: windows.map((win) => entry(win, pictures)) }));
-  try {
-    write(true);
-  } catch {
-    // Storage full with pictures: keep at least the designs.
-    try { write(false); } catch { /* remembered for this visit only */ }
-  }
+  if (restoring) return;
+  const entry = (win) => (win.doc ? { path: win.doc.path, name: win.doc.name }
+    : win.pasted && win.pasted.src.length <= MAX_WINDOW_PICTURE ? { picture: win.pasted } : null);
+  const items = windows.map(entry).filter(Boolean);
+  const next = items.length || hidden ? { items, ...(hidden ? { hidden: true } : {}) } : null;
+  const state = editor.circuit.windows;
+  if (JSON.stringify(next) === JSON.stringify(state.references || null)) return;
+  if (next) state.references = next;
+  else delete state.references;
+  markSettingsChanged();
 }
 
-function remembered() {
+/** The open design's windows, as it was saved: the ones shown now close. */
+function restoreWindows() {
+  restoring = true;
   try {
-    const value = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    return value && Array.isArray(value.windows) ? value : null;
-  } catch { return null; }
+    for (const win of [...windows]) closeWindow(win);
+    const saved = editor.circuit.windows.references;
+    hidden = !!saved?.hidden;
+    for (const entry of saved?.items || []) {
+      if (entry.picture) {
+        const win = createWindow();
+        if (win) setPicture(win, entry.picture);
+      } else {
+        // A design moved with the workspace is found again by its name.
+        const found = workspaceDesigns().find((doc) => doc.path === entry.path) || workspaceDesigns().find((doc) => doc.name === entry.name);
+        createWindow(found ? { path: found.path, name: found.name } : entry);
+      }
+    }
+  } finally {
+    restoring = false;
+  }
+  syncButton();
 }
 
 // ----- the picture ------------------------------------------------------------------
@@ -553,16 +573,8 @@ export function installReferenceWindows() {
   });
   // A theme change swaps every picture for its other theme.
   new MutationObserver(() => windows.forEach(draw)).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-  const saved = remembered();
-  if (saved) {
-    hidden = !!saved.hidden;
-    for (const entry of saved.windows) {
-      if (entry?.path) createWindow(entry);
-      else if (typeof entry?.picture?.src === 'string' && /^data:image\/(png|jpeg|webp);/.test(entry.picture.src)) {
-        const win = createWindow();
-        if (win) setPicture(win, entry.picture);
-      }
-    }
-  }
+  // Before window state was saved with designs, it was this browser's.
+  try { localStorage.removeItem('mosfeteer.references'); } catch { /* storage unavailable */ }
+  onDocumentShown(restoreWindows);
   syncButton();
 }

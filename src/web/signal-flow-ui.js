@@ -28,7 +28,7 @@ import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { editor } from './editor-state.js';
 import { analysisDialog } from './elements.js';
-import { alignLabelColumn, commit, markSettingsChanged, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } from './main.js';
+import { alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } from './main.js';
 import { logLine } from './status-bar-ui.js';
 import { buttonIcon } from './icons.js';
 import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js';
@@ -226,7 +226,10 @@ function syncDocument() {
   if (key === shownDocument) return;
   const first = shownDocument === undefined;
   shownDocument = key;
-  if (first) return;
+  if (!first) clearResults();
+}
+
+function clearResults() {
   traces = [];
   latest = null;
   locus = null;
@@ -1578,6 +1581,13 @@ export function installSignalFlowUi() {
     if (filledRevision === editor.modelRevision) return;
     filledRevision = editor.modelRevision;
     fillForm();
+  });
+  // Another document starts clean: its own mode, none of the last one's results.
+  onDocumentShown(() => {
+    chosenThisSession = false;
+    shownDocument = editor.currentDocumentPath || `unsaved:${editor.currentCircuitName || ''}`;
+    clearResults();
+    if (!analysisDialog.hidden) setMode(suggestedMode());
   });
   // Each opening picks the mode the drawing suggests, unless it was chosen.
   new MutationObserver(() => {

@@ -110,7 +110,7 @@ test('a picture pasted over a reference window shows there, not on the drawing',
   // A reference window takes it only with the pointer over it.
   assert.match(reference, /takePastedPictures\(\(file\) => \{\s*const win = hovered && !hidden/);
   assert.match(reference, /storedImage\(file\)\.then\(\(image\) => \{\s*if \(windows\.includes\(win\)\) setPicture\(win, image\)/);
-  // Remembered when small enough; restored only as a raster data URL.
-  assert.match(reference, /win\.pasted\.src\.length <= MAX_REMEMBERED_PICTURE/);
-  assert.match(reference, /\/\^data:image\\\/\(png\|jpeg\|webp\);\/\.test\(entry\.picture\.src\)/);
+  // Saved with the design when small enough (window-state.js keeps only raster data URLs).
+  assert.match(reference, /win\.pasted\.src\.length <= MAX_WINDOW_PICTURE/);
+  assert.match(reference, /onDocumentShown\(restoreWindows\);/);
 });
