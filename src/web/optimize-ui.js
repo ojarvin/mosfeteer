@@ -10,7 +10,7 @@
  * it). The setup is saved with the document (`analysisValues.flow.optimize`).
  */
 
-import { TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { openRunWindow } from './optimize-window.js';
 import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
@@ -777,7 +777,7 @@ function runPlotter() {
     return result.entries.map((entry, i) => {
       let value = null;
       try { value = withCoefficients(entry.value, values); } catch { value = null; }
-      return value && { label: entry.label, color: role === 'start' ? '#8a8f99' : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable };
+      return value && { label: entry.label, color: role === 'start' ? MUTED_TRACE_COLOR : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable };
     }).filter(Boolean);
   };
   return ({ start, best }) => {

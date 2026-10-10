@@ -4242,6 +4242,7 @@ __modules["src/core/analysis/locus.js"] = function (__require, __exports) {
 __exports.locusSteps = locusSteps;
 __exports.rootLocus = rootLocus;
 __exports.locusPlot = locusPlot;
+let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let numericRootsOf; __bind(() => { ({ numericRootsOf } = __require("src/core/analysis/signal-flow.js")); });
 /**
  * Root locus against one coefficient: a result's poles as that coefficient
@@ -4249,6 +4250,8 @@ let numericRootsOf; __bind(() => { ({ numericRootsOf } = __require("src/core/ana
  * what k_1 does this loop go unstable?". In z the stability boundary is the
  * unit circle, in s the j omega axis.
  */
+
+
 
 
 
@@ -4293,7 +4296,7 @@ function rootLocus(evaluate, { from, to, current, steps = 120, ks = locusSteps(f
 }
 
 /** The locus as a plot annotation keeps it: points coloured by their k. */
-function locusPlot(locus, { parameter, label, color = '#3b74e0' } = {}) {
+function locusPlot(locus, { parameter, label, color = COLOR_PALETTE.cobalt } = {}) {
   if (!locus) return null;
   const n = locus.steps.length;
   return {
@@ -11697,6 +11700,7 @@ let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core
 let bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots; __bind(() => { ({ bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } = __require("src/core/analysis/bode.js")); });
 let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
+let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
 let samplePath; __bind(() => { ({ samplePath } = __require("src/core/analysis/sampling.js")); });
 /**
  * Signal-flow analysis: transfer functions of a block diagram drawn from
@@ -11715,6 +11719,7 @@ let samplePath; __bind(() => { ({ samplePath } = __require("src/core/analysis/sa
  * are a loop mixing s and z, a doubly driven signal, and any other part on a
  * signal wire. Nothing is guessed.
  */
+
 
 
 
@@ -13096,7 +13101,11 @@ function mixedCurve(value, { pointsPerDecade }) {
 // ----- plots of several responses -----------------------------------------------------
 
 /** Trace colors: distinct hues that read on light and dark paper alike. */
-const TRACE_COLORS = Object.freeze(['#3b74e0', '#e0533b', '#2e9e5b', '#c98a12', '#9356d6', '#1aa0a8', '#d6458f', '#6b7a8f']);
+// Plot traces take the drawing's highlight palette (style.js), in an order
+// that keeps neighbours apart, so a trace and the net it follows can share
+// a colour; grey marks what is behind or before them.
+const TRACE_COLORS = Object.freeze(['cobalt', 'red', 'emerald', 'orange', 'purple', 'teal', 'pink', 'brown'].map((token) => COLOR_PALETTE[token]));
+const MUTED_TRACE_COLOR = COLOR_PALETTE.gray;
 
 /**
  * A plot of several magnitude responses on one pair of axes, as a plot
@@ -13346,6 +13355,7 @@ function responseAt(value, variable, f) {
 
 __exports.quantizerErrorKey = quantizerErrorKey;
 __exports.TRACE_COLORS = TRACE_COLORS;
+__exports.MUTED_TRACE_COLOR = MUTED_TRACE_COLOR;
 };
 
 __modules["src/core/analysis/simulate.js"] = function (__require, __exports) {
@@ -62846,7 +62856,7 @@ __modules["src/web/optimize-ui.js"] = function (__require, __exports) {
 __exports.optimizeSection = optimizeSection;
 __exports.renderOptimize = renderOptimize;
 __exports.resetOptimize = resetOptimize;
-let TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients; __bind(() => { ({ MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let openRunWindow; __bind(() => { ({ openRunWindow } = __require("src/web/optimize-window.js")); });
 let createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency; __bind(() => { ({ createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let POLE_MEASURES, normalizeOptimizeSetup; __bind(() => { ({ POLE_MEASURES, normalizeOptimizeSetup } = __require("src/core/analysis/optimize-setup.js")); });
@@ -63636,7 +63646,7 @@ function runPlotter() {
     return result.entries.map((entry, i) => {
       let value = null;
       try { value = withCoefficients(entry.value, values); } catch { value = null; }
-      return value && { label: entry.label, color: role === 'start' ? '#8a8f99' : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable };
+      return value && { label: entry.label, color: role === 'start' ? MUTED_TRACE_COLOR : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable };
     }).filter(Boolean);
   };
   return ({ start, best }) => {
@@ -66726,7 +66736,7 @@ __exports.collapsedPanels = collapsedPanels;
 __modules["src/web/signal-flow-ui.js"] = function (__require, __exports) {
 __exports.signalFlowSettingsRestored = signalFlowSettingsRestored;
 __exports.installSignalFlowUi = installSignalFlowUi;
-let TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let MUTED_TRACE_COLOR, TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients; __bind(() => { ({ MUTED_TRACE_COLOR, TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let expressionTex, parseLevels; __bind(() => { ({ expressionTex, parseLevels } = __require("src/core/transfer-function.js")); });
@@ -67639,7 +67649,7 @@ const graphPlot = (list, view = graphView()) => {
   if (view === 'step') return stepPlot(numbered);
   // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
   // as the noise it predicts, each STF as where the tone would sit.
-  const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: '#8a8f99', points: spectrum.points }] : [];
+  const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: MUTED_TRACE_COLOR, points: spectrum.points }] : [];
   const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
   return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs });
 };
@@ -67722,7 +67732,7 @@ function sndrNote() {
   if (!spectrum?.raw) return null;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
   if (!measured) return null;
-  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: '#8a8f99' };
+  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: MUTED_TRACE_COLOR };
 }
 
 function spectrumStatus() {

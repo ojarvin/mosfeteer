@@ -23,6 +23,7 @@ import { renderExpression } from './present.js';
 import { bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } from './bode.js';
 import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } from '../transfer-function.js';
 import { canonicalNetName } from '../model.js';
+import { COLOR_PALETTE } from '../style.js';
 import { samplePath } from './sampling.js';
 
 const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
@@ -1396,7 +1397,11 @@ function mixedCurve(value, { pointsPerDecade }) {
 // ----- plots of several responses -----------------------------------------------------
 
 /** Trace colors: distinct hues that read on light and dark paper alike. */
-export const TRACE_COLORS = Object.freeze(['#3b74e0', '#e0533b', '#2e9e5b', '#c98a12', '#9356d6', '#1aa0a8', '#d6458f', '#6b7a8f']);
+// Plot traces take the drawing's highlight palette (style.js), in an order
+// that keeps neighbours apart, so a trace and the net it follows can share
+// a colour; grey marks what is behind or before them.
+export const TRACE_COLORS = Object.freeze(['cobalt', 'red', 'emerald', 'orange', 'purple', 'teal', 'pink', 'brown'].map((token) => COLOR_PALETTE[token]));
+export const MUTED_TRACE_COLOR = COLOR_PALETTE.gray;
 
 /**
  * A plot of several magnitude responses on one pair of axes, as a plot

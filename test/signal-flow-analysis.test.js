@@ -875,3 +875,11 @@ test('a sampled loop breaks only at a sampled signal, a quantizer\'s output offe
   const continuous = [...signalFlowGraph(circuit).signals.values()].find((s) => s.driver?.comp === 'H1');
   assert.equal(loopGain(circuit, { breakAt: continuous.key, values: { T: 1, T_d: 0, k_1: 1, k_2: 1.5 } }).code, 'continuous-break');
 });
+
+test('plot traces take the highlight palette, so a trace and a highlighted net agree', async () => {
+  const { TRACE_COLORS, MUTED_TRACE_COLOR } = await import('../src/core/analysis/signal-flow.js');
+  const { COLOR_PALETTE } = await import('../src/core/style.js');
+  const palette = new Set(Object.values(COLOR_PALETTE));
+  for (const color of [...TRACE_COLORS, MUTED_TRACE_COLOR]) assert.ok(palette.has(color), color);
+  assert.equal(new Set(TRACE_COLORS).size, TRACE_COLORS.length);
+});

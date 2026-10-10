@@ -13,7 +13,7 @@
  * on the drawing with its legend, and Annotate equations the equations.
  */
 
-import { TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
+import { MUTED_TRACE_COLOR, TRACE_COLORS, outputChoices, analyzeSignalFlow, bandEdges, bandSqnr, complexText, diagramSymbols, hasSignalFlow, loopBreakSignals, loopGain, loopMargins, responseCurve, transferTex, numericRootsOf, responsePlot, resultSymbols, sampledEquation, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { expressionTex, parseLevels } from '../core/transfer-function.js';
@@ -889,7 +889,7 @@ const graphPlot = (list, view = graphView()) => {
   if (view === 'step') return stepPlot(numbered);
   // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
   // as the noise it predicts, each STF as where the tone would sit.
-  const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: '#8a8f99', points: spectrum.points }] : [];
+  const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: MUTED_TRACE_COLOR, points: spectrum.points }] : [];
   const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
   return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs });
 };
@@ -972,7 +972,7 @@ function sndrNote() {
   if (!spectrum?.raw) return null;
   const measured = inBand(spectrum.raw, spectrum.frequency, bandEdges(editor.circuit.analysisValues.band));
   if (!measured) return null;
-  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: '#8a8f99' };
+  return { label: `\\text{SNDR }${measured.sndr.toFixed(1)}\\text{ dB at }${spectrum.amplitude}\\text{ dBFS}`, color: MUTED_TRACE_COLOR };
 }
 
 function spectrumStatus() {

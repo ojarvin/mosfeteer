@@ -5,6 +5,8 @@
  * unit circle, in s the j omega axis.
  */
 
+import { COLOR_PALETTE } from '../style.js';
+
 import { numericRootsOf } from './signal-flow.js';
 
 const unstable = (variable, poles) => poles.some((p) => (variable === 'z' ? Math.hypot(p.re, p.im) > 1 + 1e-9 : p.re > 1e-9));
@@ -48,7 +50,7 @@ export function rootLocus(evaluate, { from, to, current, steps = 120, ks = locus
 }
 
 /** The locus as a plot annotation keeps it: points coloured by their k. */
-export function locusPlot(locus, { parameter, label, color = '#3b74e0' } = {}) {
+export function locusPlot(locus, { parameter, label, color = COLOR_PALETTE.cobalt } = {}) {
   if (!locus) return null;
   const n = locus.steps.length;
   return {
