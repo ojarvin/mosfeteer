@@ -92,7 +92,7 @@ function build() {
 function fill(sim) {
   const settings = state();
   const { sources } = signalFlowGraph(editor.circuit);
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   win.input.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
   const chosen = real.find((s) => s.id === settings.input) || real.find((s) => s.id === api?.flow().swingInput) || real[0];
   if (chosen) win.input.value = chosen.id;
@@ -145,7 +145,7 @@ function run() {
   const numbers = api.resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   const input = (real.find((s) => s.id === settings.input) || real.find((s) => s.id === api.flow().swingInput) || real[0])?.id || '';
   const frequency = settings.frequency ? typedFraction(settings.frequency) : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
   const samples = settings.samples || 1024;

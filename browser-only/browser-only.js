@@ -11733,7 +11733,8 @@ let samplePath; __bind(() => { ({ samplePath } = __require("src/core/analysis/sa
 
 const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
-const SOURCE_TYPES = new Set(['input']);
+// Parts that drive a signal from outside the diagram: an input port, a dither source.
+const SOURCE_TYPES = new Set(['input', 'dither']);
 // Parts that may sit on a signal wire without taking part in it.
 const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput']);
 
@@ -11806,7 +11807,10 @@ function signalFlowGraph(circuit) {
     signal.driver = signal.drivers.length === 1 ? signal.drivers[0] : null;
     // A source: an input port, or a wire that is read but nothing drives.
     const port = signal.drivers.find((driver) => driver.source);
-    if (port) sources.push({ id: port.comp, key: signal.key, name: signal.display });
+    const ditherPart = port && circuit.components.get(port.comp)?.type === 'dither';
+    // A dither source's unnamed wire goes by the source, as math: DTH1 -> DTH_{1}.
+    if (ditherPart) sources.push({ id: port.comp, key: signal.key, name: signal.display === signal.netIds[0] ? port.comp.replace(/^([A-Za-z]+)_?(\d+)$/, '$1_{$2}') : signal.display, dither: true });
+    else if (port) sources.push({ id: port.comp, key: signal.key, name: signal.display });
     else if (!signal.drivers.length && signal.readers.length) sources.push({ id: signal.display, key: signal.key, name: signal.display });
     delete signal.drivers;
     delete signal.others;
@@ -13400,7 +13404,7 @@ __exports.sweepAmplitudes = sweepAmplitudes;
 let blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients; __bind(() => { ({ blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
 let expm; __bind(() => { ({ expm } = __require("src/core/analysis/sampling.js")); });
 let evaluateExpression; __bind(() => { ({ evaluateExpression } = __require("src/core/analysis/bode.js")); });
-let TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels } = __require("src/core/transfer-function.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
 let seededRandom; __bind(() => { ({ seededRandom } = __require("src/core/analysis/cmaes.js")); });
 let rationalMultiply; __bind(() => { ({ rationalMultiply } = __require("src/core/analysis/rational.js")); });
@@ -13570,7 +13574,7 @@ function prepareSimulation(circuit, options = {}) {
   // Source settings, as the analysis reads them.
   const settings = new Map(Object.entries(options.sources || {}).map(([name, value]) => [canonicalNetName(name), value]));
   const modeOf = (source) => settings.get(canonicalNetName(source.id)) ?? settings.get(canonicalNetName(source.name)) ?? settings.get(source.key);
-  const realSources = sources.filter((source) => !source.quantizer);
+  const realSources = sources.filter((source) => !source.quantizer && !source.dither);
   const driven = realSources.find((source) => source.id === options.input) || null;
   if (!driven) return failure('no-input', 'pick the source the sine drives');
   const sourceValue = new Map();
@@ -13581,6 +13585,14 @@ function prepareSimulation(circuit, options = {}) {
       try { constant = num(mode.constant); } catch { return failure('bad-constant', `${source.name}: a constant must be a number or a coefficient`); }
     }
     sourceValue.set(source.key, { driven: source === driven, constant });
+  }
+  // Dither sources draw their numbers, whatever the analysis does with them.
+  for (const source of sources.filter((s) => s.dither)) {
+    try {
+      sourceValue.set(source.key, { driven: false, constant: 0, dither: parseDither(circuit.components.get(source.id)?.value) });
+    } catch (err) {
+      return failure('bad-dither', `${source.id}: ${err.message}`);
+    }
   }
 
   const signalAt = (component, term) => [...signals.values()].find((signal) => signal.readers.some((r) => r.comp === component.refdes && r.term === term)) || null;
@@ -13694,6 +13706,7 @@ function prepareSimulation(circuit, options = {}) {
     for (const [i, signal] of cont.entries()) {
       const source = sourceValue.get(signal.key);
       if (source) {
+        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: a dither source draws a number a sample, so it must feed the sampled side (after the sampler)`);
         if (source.driven) Hc[i][OSC_S] = 1;
         else Hc[i][ONE] = source.constant;
         continue;
@@ -13918,6 +13931,12 @@ function prepareSimulation(circuit, options = {}) {
     const total = warmup + window;
     // The same dither sequence every run: amplitudes compare like for like.
     const random = dither ? seededRandom(0x5eed) : null;
+    // Each dither source its own sequence, the same every run.
+    const sourceDither = new Map([...pSource.keys()].filter((key) => sourceValue.get(key).dither).map((key, i) => {
+      const { shape, amplitude: a } = sourceValue.get(key).dither;
+      const draw = seededRandom(0xd17e + 7919 * i);
+      return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
+    }));
     const ditherSample = !dither ? () => 0
       : dither.shape === 'rect' ? () => dither.amplitude * (2 * random() - 1)
       : () => dither.amplitude * (random() - random());
@@ -13934,7 +13953,7 @@ function prepareSimulation(circuit, options = {}) {
       samplerRows.forEach((row, k) => { p[k] = row ? dot(row, X) : 0; });
       for (const [key, k] of pSource) {
         const source = sourceValue.get(key);
-        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.constant;
+        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.dither ? sourceDither.get(key)() : source.constant;
       }
       state.set(xd, 0);
       state.set(p, md);
@@ -18656,7 +18675,7 @@ const SYMBOL_CATEGORY_RULES = [
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
   ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch))$/],
-  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer|dither)$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each
@@ -19125,7 +19144,7 @@ let solder; __bind(() => { ({ solder } = __require("src/core/components/solder.j
 let switch_open, switch_closed; __bind(() => { ({ switch_open, switch_closed } = __require("src/core/components/switch.js")); });
 let block; __bind(() => { ({ block } = __require("src/core/components/block.js")); });
 let mux2; __bind(() => { ({ mux2 } = __require("src/core/components/mux.js")); });
-let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer } = __require("src/core/components/signal-flow.js")); });
+let signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither; __bind(() => { ({ signal_sum, signal_multiply, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither } = __require("src/core/components/signal-flow.js")); });
 
 
 
@@ -19249,6 +19268,7 @@ const symbolTypes = {
   gain,
   sampler,
   quantizer,
+  dither,
 };
 
 /** Ordered list of type names (for palettes / docs). */
@@ -20122,6 +20142,34 @@ const sampler = defineSymbol({
 });
 
 /**
+ * A dither source: random numbers into a sampled signal, one a sample --
+ * rectangular (uniform over +-A) or triangular (two uniforms added, over
+ * +-A, peaking at 0). Its value is the shape and A (`rect 1`, `tri 0.5`),
+ * drawn beside it; how much reaches the loop is a gain after it, a
+ * coefficient like any other. The transfer functions take it as a source
+ * (its own transfer function to the output, as an input port's); the
+ * simulations draw its numbers.
+ */
+const dither = defineSymbol({
+  type: 'dither',
+  description: 'Dither source (rectangular or triangular)',
+  refPrefix: 'DTH',
+  terminals: [
+    { name: 'out', x: 40, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -40, y: -40, w: 80, h: 80 },
+  graphics: [
+    { kind: 'circle', cx: 0, cy: 0, r: 40, style: 'emph' },
+    { kind: 'path', d: 'M -24 4 L -16 -14 L -8 12 L 0 -18 L 8 10 L 16 -8 L 24 6', style: 'symbol', fill: 'none' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: 'rect 1',
+  allowFloatingTerminals: true,
+});
+
+/**
  * A quantizer: rounds a sampled signal to N levels, Schreier's convention
  * (the delta-sigma toolbox): the odd integers +-1, +-3, ... +-(N-1) for even
  * N, the even ones 0, +-2, ... for odd N, saturating beyond; full scale is
@@ -20163,6 +20211,7 @@ __exports.tf_delay = tf_delay;
 __exports.tf_zdelay = tf_zdelay;
 __exports.gain = gain;
 __exports.sampler = sampler;
+__exports.dither = dither;
 __exports.quantizer = quantizer;
 };
 
@@ -21805,7 +21854,7 @@ let LABEL_FONT_SIZES, labelFontSize, strokeWidth; __bind(() => { ({ LABEL_FONT_S
 let cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments; __bind(() => { ({ cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } = __require("src/core/wiring.js")); });
 let defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue; __bind(() => { ({ defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } = __require("src/core/line-style.js")); });
 let SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey; __bind(() => { ({ SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } = __require("src/core/beats.js")); });
-let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines; __bind(() => { ({ TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } = __require("src/core/mos-size.js")); });
 
 
@@ -24684,7 +24733,9 @@ class Circuit {
     }
     if (!variable) return null;
     const quantizer = component.type === 'quantizer';
-    const text = `$${quantizer ? `N = ${component.value}` : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    const dither = component.type === 'dither';
+    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}`; };
+    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centred on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
@@ -24694,7 +24745,7 @@ class Circuit {
     // Inside a triangle, every coefficient is set a size smaller, so a signed
     // name (-g_1) clears the edges as a plain one (b_1) does.
     // A sampler's period and a quantizer's levels always go beside it.
-    const sampler = component.type === 'sampler' || quantizer;
+    const sampler = component.type === 'sampler' || quantizer || dither;
     const inside = gain && !sampler && gainFitsInside(component.value);
     const width = inside ? 'thin' : 'normal';
     if (gain && !inside) {
@@ -25015,6 +25066,7 @@ class Circuit {
     // the equation.
     if (TRANSFER_FUNCTION_TYPES[c.type] || isCoefficientBlock(c)) {
       if (c.type === 'quantizer') value = String(parseLevels(value));
+      else if (c.type === 'dither') value = ditherValueText(parseDither(value));
       else if (isCoefficientBlock(c)) parseGain(value);
       else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
@@ -34249,7 +34301,7 @@ let SYMBOL_CATEGORY_RULES; __bind(() => { ({ SYMBOL_CATEGORY_RULES } = __require
 let ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName; __bind(() => { ({ ComponentInstance, MOS_ANALYSIS_TYPES, REFERENCE_MARKER_TYPES, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerName } = __require("src/core/model.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let PIN_RAIL_TYPES, railHang, railRotation; __bind(() => { ({ PIN_RAIL_TYPES, railHang, railRotation } = __require("src/core/pin-rails.js")); });
-let TRANSFER_FUNCTION_TYPES, parseGain, parseLevels, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseGain, parseLevels, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, parseDither, parseGain, parseLevels, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let MOS_SIZE_OFFSET, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE_TYPES } = __require("src/core/mos-size.js")); });
 /**
  * Swapping a placed part for another type in place: nmos for pmos, a resistor
@@ -34272,6 +34324,7 @@ let MOS_SIZE_OFFSET, MOS_SIZE_TYPES; __bind(() => { ({ MOS_SIZE_OFFSET, MOS_SIZE
 function valueReads(type, value) {
   try {
     if (type === 'quantizer') parseLevels(value);
+    else if (type === 'dither') parseDither(value);
     else if (type === 'gain' || type === 'sampler') parseGain(value);
     else if (TRANSFER_FUNCTION_TYPES[type]) readTransferFunction(value, TRANSFER_FUNCTION_TYPES[type]);
     return true;
@@ -35312,6 +35365,7 @@ __exports.MAX_EDGE_SHIFT = MAX_EDGE_SHIFT;
 __modules["src/core/transfer-function.js"] = function (__require, __exports) {
 __exports.isTransferFunction = isTransferFunction;
 __exports.isCoefficientBlock = isCoefficientBlock;
+__exports.parseDither = parseDither;
 __exports.parseLevels = parseLevels;
 __exports.isSignalBlock = isSignalBlock;
 __exports.parseGain = parseGain;
@@ -35371,8 +35425,35 @@ function isTransferFunction(component) {
 /** A part whose value is one coefficient, drawn as math: a gain's k, a
  *  sampler's period T. */
 function isCoefficientBlock(component) {
-  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer';
+  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither';
 }
+
+/**
+ * A dither source's value: its shape and amplitude A, `rect 1` (uniform
+ * over +-A; `uniform`, `rectangular`) or `tri 0.5` (triangular over +-A),
+ * A a positive number (`1/2` too; a `±` is read past). Returns
+ * `{ shape: 'rect' | 'tri', amplitude }`.
+ */
+function parseDither(text) {
+  const words = String(text ?? '').toLowerCase().replace(/±|\+\/-|\+-/g, ' ').replace(/[,()=]/g, ' ').split(/\s+/).filter(Boolean);
+  let shape = 'rect';
+  let amplitude = null;
+  for (const word of words) {
+    if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
+    else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
+    else if (/^(a|amplitude)$/.test(word)) continue;
+    else {
+      const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
+      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5');
+      amplitude = Number(match[1]) / (match[2] ? Number(match[2]) : 1);
+    }
+  }
+  if (!(amplitude > 0) || !Number.isFinite(amplitude)) throw new Error('a dither source needs an amplitude above 0: rect 1, tri 0.5');
+  return { shape, amplitude };
+}
+
+/** A dither source's value as stored: `rect 1`. */
+const ditherValueText = ({ shape, amplitude }) => `${shape} ${Number(amplitude.toPrecision(12))}`;
 
 /** A quantizer's level count: a whole number of at least 2. */
 function parseLevels(text) {
@@ -35733,6 +35814,7 @@ function defaultTransferFunction(type) {
 __exports.TRANSFER_FUNCTION_TYPES = TRANSFER_FUNCTION_TYPES;
 __exports.isBlockIn = isBlockIn;
 __exports.TRANSFER_FUNCTION_ROLE = TRANSFER_FUNCTION_ROLE;
+__exports.ditherValueText = ditherValueText;
 };
 
 __modules["src/core/window-state.js"] = function (__require, __exports) {
@@ -52908,7 +52990,7 @@ let supplyBars; __bind(() => { ({ supplyBars } = __require("src/core/supply-bars
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let setSharedLabel, sharedLabelPeers; __bind(() => { ({ setSharedLabel, sharedLabelPeers } = __require("src/core/shared-labels.js")); });
 let MOS_SIZE_ROLE, formatMosSize, parseMosSize; __bind(() => { ({ MOS_SIZE_ROLE, formatMosSize, parseMosSize } = __require("src/core/mos-size.js")); });
-let TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseGain, parseLevels, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseGain, parseLevels, readTransferFunction } = __require("src/core/transfer-function.js")); });
+let TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, readTransferFunction; __bind(() => { ({ TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, readTransferFunction } = __require("src/core/transfer-function.js")); });
 let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let labelFontSize; __bind(() => { ({ labelFontSize } = __require("src/core/style.js")); });
 let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
@@ -52979,6 +53061,8 @@ function inlineEditSchematicBlock(component) {
   input.className = `label-inline-editor block-inline-editor${transfer ? ' tf-inline-editor' : ''}`;
   if (transfer) input.title = component.type === 'quantizer'
     ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
+    : component.type === 'dither'
+    ? 'The shape and the amplitude A: rect 1 (uniform over +-A) or tri 0.5 (triangular over +-A). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
@@ -53018,6 +53102,7 @@ function inlineEditSchematicBlock(component) {
         // The box fits the new equation, and its wires follow its pins.
         try {
           if (component.type === 'quantizer') parseLevels(text);
+          else if (component.type === 'dither') parseDither(text);
           else if (isCoefficientBlock(component)) parseGain(text);
           else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {
@@ -63378,7 +63463,7 @@ function setup() {
   if (!flow.optimize) {
     const { sources } = signalFlowGraph(api.circuit());
     const quantizer = sources.find((s) => s.quantizer);
-    const input = sources.find((s) => !s.quantizer);
+    const input = sources.find((s) => !s.quantizer && !s.dither);
     flow.optimize = normalizeOptimizeSetup({
       specs: quantizer ? [{ action: 'minimize', measure: 'average', input: quantizer.id, band: 'signal' }] : [],
       swing: { on: !!quantizer, amplitude: -6, input: input?.id || '' },
@@ -63539,7 +63624,7 @@ function swingBlock(circuit, current, sources) {
   const toggle = el('input', { type: 'checkbox', 'aria-label': 'Run the swing test' });
   toggle.checked = swing.on;
   toggle.addEventListener('change', () => { swing.on = toggle.checked; changed(); renderOptimize(); });
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   const source = el('select', { 'aria-label': 'Source the sine drives', onchange: (ev) => { swing.input = ev.target.value; changed(); renderOptimize(); } }, real.map((s) => el('option', { value: s.id, text: plainName(s.name) })));
   if (real.some((s) => s.id === swing.input)) source.value = swing.input;
   else if (real.length) { swing.input = real[0].id; }
@@ -63583,7 +63668,10 @@ function swingBlock(circuit, current, sources) {
       })));
     }
     const dither = api.flow().dither;
-    const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''}, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
+    const sources = [...api.circuit().components.values()].filter((c) => c.type === 'dither').map((c) => c.refdes);
+    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.`
+      : dither && dither.shape !== 'none' ? ` With the older ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''} at the quantizer.`
+        : ' No dither: draw a dither source, with a gain after it, for some.';
     children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
@@ -66822,7 +66910,7 @@ function build() {
 function fill(sim) {
   const settings = state();
   const { sources } = signalFlowGraph(editor.circuit);
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   win.input.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
   const chosen = real.find((s) => s.id === settings.input) || real.find((s) => s.id === api?.flow().swingInput) || real[0];
   if (chosen) win.input.value = chosen.id;
@@ -66875,7 +66963,7 @@ function run() {
   const numbers = api.resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   const input = (real.find((s) => s.id === settings.input) || real.find((s) => s.id === api.flow().swingInput) || real[0])?.id || '';
   const frequency = settings.frequency ? typedFraction(settings.frequency) : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
   const samples = settings.samples || 1024;
@@ -68134,6 +68222,7 @@ function fillForm() {
     const name = el('span', { class: 'signal-flow-source-name', text: source.name });
     // A quantizer's error source: E_{QZ1}, as math.
     if (source.quantizer) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s quantization error (its linear model: a gain of 1 plus this)`; }
+    if (source.dither) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s dither: as an input here; the simulations draw its numbers`; }
     table.append(el('div', { class: 'signal-flow-source' }, [name, select, constant]));
   }
   const problems = section.querySelector('.signal-flow-issues');
@@ -68431,7 +68520,7 @@ function swingSection() {
 function fillSwingSources(sources) {
   const select = section.querySelector('.signal-flow-swing-source');
   if (!select) return;
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   select.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
   if (real.some((s) => s.id === flow().swingInput)) select.value = flow().swingInput;
   // The document's frequency; blank, the band's own (shown as the placeholder).
@@ -68834,8 +68923,12 @@ function quantizerFullScale() {
   return fullScale;
 }
 
+/** The dither setting from before dither sources: shown only for a design
+ *  that has it (its simulations keep it until it is turned off); a design's
+ *  dither is a dither source in the diagram now. */
 function ditherControls() {
   const settings = flow().dither || {};
+  if (!['rect', 'tri'].includes(settings.shape)) return el('span', { class: 'signal-flow-dither', hidden: true });
   // In quantizer steps; an older document's dBFS shown as the steps it is.
   const steps = ditherSteps(settings, quantizerFullScale());
   const stepsText = settings.steps ?? (Number.isFinite(steps) ? String(Number(steps.toPrecision(3))) : '0.5');
@@ -68858,7 +68951,8 @@ function ditherControls() {
   shape.addEventListener('change', save);
   amplitude.addEventListener('change', save);
   amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
-  return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit]);
+  const note = el('span', { class: 'field-hint signal-flow-dither-note', text: 'An older setting: draw a dither source instead (Insert: dither) with a gain after it, and set this to No dither.' });
+  return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit, note]);
 }
 
 /** The simulated in-band SNDR, and the amplitude it was simulated at, as a
@@ -68897,7 +68991,7 @@ function runSpectrum() {
   const numbers = resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
-  const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer)?.id;
+  const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer && !s.dither)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
   const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
   const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT, dither: flow().dither });
@@ -71449,6 +71543,7 @@ const PLACEMENT_ALIASES = {
   filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
   gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
+  dither: ['dither', 'noise', 'random', 'source', 'tpdf', 'rpdf', 'sigma delta', 'signal flow'],
   quantizer: ['quantizer', 'adc', 'comparator', 'levels', 'single-bit', 'multibit', 'sigma delta', 'signal flow'],
   sampler: ['sampler', 'sample', 'switch', 'ideal sampler', 'adc', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],

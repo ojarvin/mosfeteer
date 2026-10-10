@@ -309,14 +309,21 @@ STF (a real input) to where the tone would sit, the amplitude in dBFS plus
 |STF| in dB, so it runs through the tone's peak. With a band, the simulated
 SNDR and ENOB beside the predicted SQNR.
 
-**Dither** (beside the spectrum's and the swing's controls, one setting for
-both and for the optimizer's swing test, saved with the document): added
-at each quantizer's input, rectangular over (-A, A) or triangular over
-(-A, A) peaking at 0, A in dBFS (`ditherSettings`); every run draws the same
-sequence, so runs compare like for like. A loop with few levels and a
-small input idles in limit cycles -- tones and a floor that strays from the
-NTF's prediction -- which dither of about a level step breaks up (its
-variance, A^2/3 or A^2/6, adds to the quantizer's 1/3 and is shaped alike).
+**Dither** is a part of the diagram: a **dither source** (`dither`, value
+`rect 1` or `tri 0.5`: its shape and A) draws a number a sample,
+rectangular over (-A, A) or triangular over (-A, A) peaking at 0, and a
+gain after it sets how much reaches the loop where it is wired (into the
+quantizer's sum, say) -- a coefficient like any other, so the optimizer and
+its fractions treat it as the gains into that block (one n per block).
+The transfer functions take it as a source, an input of its own; the
+simulations (swing, spectrum, oscilloscope, the optimizer's swing test)
+draw its numbers, the same sequence every run so runs compare like for
+like. It feeds the sampled side only. A loop with few levels and a small
+input idles in limit cycles -- tones and a floor that strays from the
+NTF's prediction -- which dither of about a level step breaks up. A design
+from before dither sources keeps its dither setting at the quantizers'
+input (`flow.dither`, `ditherSettings`, its variance in the spectrum's
+prediction) until it is set to No dither; its controls show only then.
 
 **Root locus** (`locus.js`): a result's poles as one coefficient sweeps,
 logarithmically from a decade below its number to a decade above by default,

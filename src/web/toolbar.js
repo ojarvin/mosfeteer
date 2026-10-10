@@ -117,6 +117,7 @@ export const PLACEMENT_ALIASES = {
   filter_bpf: ['bpf', 'bandpass', 'band pass', 'filter', 'signal flow'],
   filter_notch: ['notch', 'band stop', 'bandstop', 'band reject', 'filter', 'signal flow'],
   gain: ['gain', 'amplifier', 'coefficient', 'scale', 'triangle', 'signal flow'],
+  dither: ['dither', 'noise', 'random', 'source', 'tpdf', 'rpdf', 'sigma delta', 'signal flow'],
   quantizer: ['quantizer', 'adc', 'comparator', 'levels', 'single-bit', 'multibit', 'sigma delta', 'signal flow'],
   sampler: ['sampler', 'sample', 'switch', 'ideal sampler', 'adc', 's to z', 'continuous-time', 'sigma delta', 'signal flow'],
   tf_s: ['tf', 'transfer function', 'laplace', 's-domain', 'gain', 'integrator', 'block', 'signal flow'],

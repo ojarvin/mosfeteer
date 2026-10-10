@@ -224,6 +224,7 @@ function fillForm() {
     const name = el('span', { class: 'signal-flow-source-name', text: source.name });
     // A quantizer's error source: E_{QZ1}, as math.
     if (source.quantizer) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s quantization error (its linear model: a gain of 1 plus this)`; }
+    if (source.dither) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s dither: as an input here; the simulations draw its numbers`; }
     table.append(el('div', { class: 'signal-flow-source' }, [name, select, constant]));
   }
   const problems = section.querySelector('.signal-flow-issues');
@@ -521,7 +522,7 @@ function swingSection() {
 function fillSwingSources(sources) {
   const select = section.querySelector('.signal-flow-swing-source');
   if (!select) return;
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   select.replaceChildren(...real.map((s) => el('option', { value: s.id, text: s.name })));
   if (real.some((s) => s.id === flow().swingInput)) select.value = flow().swingInput;
   // The document's frequency; blank, the band's own (shown as the placeholder).
@@ -924,8 +925,12 @@ function quantizerFullScale() {
   return fullScale;
 }
 
+/** The dither setting from before dither sources: shown only for a design
+ *  that has it (its simulations keep it until it is turned off); a design's
+ *  dither is a dither source in the diagram now. */
 function ditherControls() {
   const settings = flow().dither || {};
+  if (!['rect', 'tri'].includes(settings.shape)) return el('span', { class: 'signal-flow-dither', hidden: true });
   // In quantizer steps; an older document's dBFS shown as the steps it is.
   const steps = ditherSteps(settings, quantizerFullScale());
   const stepsText = settings.steps ?? (Number.isFinite(steps) ? String(Number(steps.toPrecision(3))) : '0.5');
@@ -948,7 +953,8 @@ function ditherControls() {
   shape.addEventListener('change', save);
   amplitude.addEventListener('change', save);
   amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
-  return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit]);
+  const note = el('span', { class: 'field-hint signal-flow-dither-note', text: 'An older setting: draw a dither source instead (Insert: dither) with a gain after it, and set this to No dither.' });
+  return el('span', { class: 'signal-flow-dither' }, [shape, amplitude, unit, note]);
 }
 
 /** The simulated in-band SNDR, and the amplitude it was simulated at, as a
@@ -987,7 +993,7 @@ function runSpectrum() {
   const numbers = resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
-  const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer)?.id;
+  const input = section.querySelector('.signal-flow-swing-source')?.value || flow().swingInput || sources.find((s) => !s.quantizer && !s.dither)?.id;
   // A whole number of cycles in each averaged segment, so the tone sits in its bins.
   const frequency = Math.max(1, Math.round(testFrequency(settings.frequency) * SPECTRUM_SEGMENT)) / SPECTRUM_SEGMENT;
   const sim = prepareSimulation(editor.circuit, { values, sources: flow().sources, input, output: flow().output, frequency, samples: SPECTRUM_AVERAGES * SPECTRUM_SEGMENT, dither: flow().dither });

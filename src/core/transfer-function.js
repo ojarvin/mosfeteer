@@ -43,8 +43,35 @@ export function isTransferFunction(component) {
 /** A part whose value is one coefficient, drawn as math: a gain's k, a
  *  sampler's period T. */
 export function isCoefficientBlock(component) {
-  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer';
+  return component?.type === 'gain' || component?.type === 'sampler' || component?.type === 'quantizer' || component?.type === 'dither';
 }
+
+/**
+ * A dither source's value: its shape and amplitude A, `rect 1` (uniform
+ * over +-A; `uniform`, `rectangular`) or `tri 0.5` (triangular over +-A),
+ * A a positive number (`1/2` too; a `±` is read past). Returns
+ * `{ shape: 'rect' | 'tri', amplitude }`.
+ */
+export function parseDither(text) {
+  const words = String(text ?? '').toLowerCase().replace(/±|\+\/-|\+-/g, ' ').replace(/[,()=]/g, ' ').split(/\s+/).filter(Boolean);
+  let shape = 'rect';
+  let amplitude = null;
+  for (const word of words) {
+    if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
+    else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
+    else if (/^(a|amplitude)$/.test(word)) continue;
+    else {
+      const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
+      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5');
+      amplitude = Number(match[1]) / (match[2] ? Number(match[2]) : 1);
+    }
+  }
+  if (!(amplitude > 0) || !Number.isFinite(amplitude)) throw new Error('a dither source needs an amplitude above 0: rect 1, tri 0.5');
+  return { shape, amplitude };
+}
+
+/** A dither source's value as stored: `rect 1`. */
+export const ditherValueText = ({ shape, amplitude }) => `${shape} ${Number(amplitude.toPrecision(12))}`;
 
 /** A quantizer's level count: a whole number of at least 2. */
 export function parseLevels(text) {

@@ -28,7 +28,8 @@ import { samplePath } from './sampling.js';
 
 const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
-const SOURCE_TYPES = new Set(['input']);
+// Parts that drive a signal from outside the diagram: an input port, a dither source.
+const SOURCE_TYPES = new Set(['input', 'dither']);
 // Parts that may sit on a signal wire without taking part in it.
 const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput']);
 
@@ -101,7 +102,10 @@ export function signalFlowGraph(circuit) {
     signal.driver = signal.drivers.length === 1 ? signal.drivers[0] : null;
     // A source: an input port, or a wire that is read but nothing drives.
     const port = signal.drivers.find((driver) => driver.source);
-    if (port) sources.push({ id: port.comp, key: signal.key, name: signal.display });
+    const ditherPart = port && circuit.components.get(port.comp)?.type === 'dither';
+    // A dither source's unnamed wire goes by the source, as math: DTH1 -> DTH_{1}.
+    if (ditherPart) sources.push({ id: port.comp, key: signal.key, name: signal.display === signal.netIds[0] ? port.comp.replace(/^([A-Za-z]+)_?(\d+)$/, '$1_{$2}') : signal.display, dither: true });
+    else if (port) sources.push({ id: port.comp, key: signal.key, name: signal.display });
     else if (!signal.drivers.length && signal.readers.length) sources.push({ id: signal.display, key: signal.key, name: signal.display });
     delete signal.drivers;
     delete signal.others;

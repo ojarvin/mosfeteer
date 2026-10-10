@@ -22,7 +22,7 @@
 import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients } from './signal-flow.js';
 import { expm } from './sampling.js';
 import { evaluateExpression } from './bode.js';
-import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, parseLevels } from '../transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels } from '../transfer-function.js';
 import { canonicalNetName } from '../model.js';
 import { seededRandom } from './cmaes.js';
 import { rationalMultiply } from './rational.js';
@@ -164,7 +164,7 @@ export function prepareSimulation(circuit, options = {}) {
   // Source settings, as the analysis reads them.
   const settings = new Map(Object.entries(options.sources || {}).map(([name, value]) => [canonicalNetName(name), value]));
   const modeOf = (source) => settings.get(canonicalNetName(source.id)) ?? settings.get(canonicalNetName(source.name)) ?? settings.get(source.key);
-  const realSources = sources.filter((source) => !source.quantizer);
+  const realSources = sources.filter((source) => !source.quantizer && !source.dither);
   const driven = realSources.find((source) => source.id === options.input) || null;
   if (!driven) return failure('no-input', 'pick the source the sine drives');
   const sourceValue = new Map();
@@ -175,6 +175,14 @@ export function prepareSimulation(circuit, options = {}) {
       try { constant = num(mode.constant); } catch { return failure('bad-constant', `${source.name}: a constant must be a number or a coefficient`); }
     }
     sourceValue.set(source.key, { driven: source === driven, constant });
+  }
+  // Dither sources draw their numbers, whatever the analysis does with them.
+  for (const source of sources.filter((s) => s.dither)) {
+    try {
+      sourceValue.set(source.key, { driven: false, constant: 0, dither: parseDither(circuit.components.get(source.id)?.value) });
+    } catch (err) {
+      return failure('bad-dither', `${source.id}: ${err.message}`);
+    }
   }
 
   const signalAt = (component, term) => [...signals.values()].find((signal) => signal.readers.some((r) => r.comp === component.refdes && r.term === term)) || null;
@@ -288,6 +296,7 @@ export function prepareSimulation(circuit, options = {}) {
     for (const [i, signal] of cont.entries()) {
       const source = sourceValue.get(signal.key);
       if (source) {
+        if (source.dither) throw new Error(`the dither on ${signal.display} feeds continuous signals: a dither source draws a number a sample, so it must feed the sampled side (after the sampler)`);
         if (source.driven) Hc[i][OSC_S] = 1;
         else Hc[i][ONE] = source.constant;
         continue;
@@ -512,6 +521,12 @@ export function prepareSimulation(circuit, options = {}) {
     const total = warmup + window;
     // The same dither sequence every run: amplitudes compare like for like.
     const random = dither ? seededRandom(0x5eed) : null;
+    // Each dither source its own sequence, the same every run.
+    const sourceDither = new Map([...pSource.keys()].filter((key) => sourceValue.get(key).dither).map((key, i) => {
+      const { shape, amplitude: a } = sourceValue.get(key).dither;
+      const draw = seededRandom(0xd17e + 7919 * i);
+      return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
+    }));
     const ditherSample = !dither ? () => 0
       : dither.shape === 'rect' ? () => dither.amplitude * (2 * random() - 1)
       : () => dither.amplitude * (random() - random());
@@ -528,7 +543,7 @@ export function prepareSimulation(circuit, options = {}) {
       samplerRows.forEach((row, k) => { p[k] = row ? dot(row, X) : 0; });
       for (const [key, k] of pSource) {
         const source = sourceValue.get(key);
-        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.constant;
+        p[k] = source.driven ? amplitude * Math.sin(2 * Math.PI * frequency * n + phase) : source.dither ? sourceDither.get(key)() : source.constant;
       }
       state.set(xd, 0);
       state.set(p, md);

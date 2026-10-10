@@ -22,7 +22,7 @@ export const SYMBOL_CATEGORY_RULES = [
   // Block-diagram drawing parts; the signal-flow analysis reads only the
   // next group's.
   ['Block diagram', /^(block|filter_(lpf|hpf|bpf|notch))$/],
-  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer)$/],
+  ['Signal flow', /^(signal_(sum|multiply)|tf_(s|z|dac|dac_rz|delay|zdelay)|gain|sampler|quantizer|dither)$/],
 ];
 
 /** Where a category's families start a new row on the symbol sheet: each

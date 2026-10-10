@@ -512,3 +512,29 @@ test('a run traces nets for the oscilloscope: sampled once a sample, continuous 
   assert.ok(wave.t.some((t) => !Number.isInteger(t)), 'points between samples');
   assert.ok(wave.t.every((t, i) => !i || t >= wave.t[i - 1]), 'in time order');
 });
+
+test('a dither source: a source in the transfer functions, random numbers in the simulation', async () => {
+  const { signalFlowGraph } = await import('../src/core/analysis/signal-flow.js');
+  const { parseDither } = await import('../src/core/transfer-function.js');
+  assert.deepEqual(parseDither('tri ±1/2'), { shape: 'tri', amplitude: 0.5 });
+  assert.deepEqual(parseDither('uniform 2'), { shape: 'rect', amplitude: 2 });
+  assert.throws(() => parseDither('rect'), /amplitude/);
+  // Dither into the quantizer's sum, through a gain d_1.
+  const integrator = '"tf([0 1], [1 -1])"';
+  const circuit = diagram(['add input U --at -1600 0', 'add signal_sum S1 --at -1200 0', `add tf_z H1 --at -800 0 --value ${integrator}`, 'add signal_sum S3 --at -400 0', `add tf_z H2 --at 0 0 --value ${integrator}`,
+    'add signal_sum S4 --at 400 0', 'add quantizer QZ1 --at 800 0', 'add output V --at 1200 0', 'add gain K1 --at -800 400 --rot 180 --value k_1', 'add gain K2 --at 0 400 --rot 180 --value k_2',
+    'add dither DTH1 --at 0 -480 --value "rect 1"', 'add gain KD --at 400 -320 --rot 90 --value d_1',
+    'connect U.p S1.w', 'connect S1.e H1.in', 'connect H1.out S3.w', 'connect S3.e H2.in', 'connect H2.out S4.w', 'connect S4.e QZ1.in', 'connect QZ1.out V.p', 'connect K1.out S1.s', 'connect K2.out S3.s',
+    'connect V.p K1.in', 'connect V.p K2.in', 'connect DTH1.out KD.in', 'connect KD.out S4.n'], [['S1', 's'], ['S3', 's']]);
+  const { sources } = signalFlowGraph(circuit);
+  const dither = sources.find((s) => s.dither);
+  assert.equal(dither.id, 'DTH1');
+  assert.equal(dither.name, 'DTH_{1}');
+  // The sine cannot drive it; the runs differ with and without it, the same each time.
+  assert.equal(prepareSimulation(circuit, { values: { k_1: 1, k_2: 2, d_1: 0.5 }, sources: {}, input: 'DTH1', output: 'name:V' }).ok, false);
+  const run = (d) => prepareSimulation(circuit, { values: { k_1: 1, k_2: 2, d_1: d }, sources: {}, input: 'U', output: 'name:V', samples: 1024 }).run(-6, { record: true }).samples;
+  const quiet = run(0);
+  const dithered = run(0.5);
+  assert.notDeepEqual(Array.from(quiet), Array.from(dithered));
+  assert.deepEqual(Array.from(dithered), Array.from(run(0.5)));
+});

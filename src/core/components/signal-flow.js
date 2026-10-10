@@ -181,6 +181,34 @@ export const sampler = defineSymbol({
 });
 
 /**
+ * A dither source: random numbers into a sampled signal, one a sample --
+ * rectangular (uniform over +-A) or triangular (two uniforms added, over
+ * +-A, peaking at 0). Its value is the shape and A (`rect 1`, `tri 0.5`),
+ * drawn beside it; how much reaches the loop is a gain after it, a
+ * coefficient like any other. The transfer functions take it as a source
+ * (its own transfer function to the output, as an input port's); the
+ * simulations draw its numbers.
+ */
+export const dither = defineSymbol({
+  type: 'dither',
+  description: 'Dither source (rectangular or triangular)',
+  refPrefix: 'DTH',
+  terminals: [
+    { name: 'out', x: 40, y: 0, direction: 'output', signalRole: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -40, y: -40, w: 80, h: 80 },
+  graphics: [
+    { kind: 'circle', cx: 0, cy: 0, r: 40, style: 'emph' },
+    { kind: 'path', d: 'M -24 4 L -16 -14 L -8 12 L 0 -18 L 8 10 L 16 -8 L 24 6', style: 'symbol', fill: 'none' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: null,
+  defaultValue: 'rect 1',
+  allowFloatingTerminals: true,
+});
+
+/**
  * A quantizer: rounds a sampled signal to N levels, Schreier's convention
  * (the delta-sigma toolbox): the odd integers +-1, +-3, ... +-(N-1) for even
  * N, the even ones 0, +-2, ... for odd N, saturating beyond; full scale is

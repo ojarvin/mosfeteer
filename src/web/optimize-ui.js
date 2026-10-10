@@ -54,7 +54,7 @@ function setup() {
   if (!flow.optimize) {
     const { sources } = signalFlowGraph(api.circuit());
     const quantizer = sources.find((s) => s.quantizer);
-    const input = sources.find((s) => !s.quantizer);
+    const input = sources.find((s) => !s.quantizer && !s.dither);
     flow.optimize = normalizeOptimizeSetup({
       specs: quantizer ? [{ action: 'minimize', measure: 'average', input: quantizer.id, band: 'signal' }] : [],
       swing: { on: !!quantizer, amplitude: -6, input: input?.id || '' },
@@ -215,7 +215,7 @@ function swingBlock(circuit, current, sources) {
   const toggle = el('input', { type: 'checkbox', 'aria-label': 'Run the swing test' });
   toggle.checked = swing.on;
   toggle.addEventListener('change', () => { swing.on = toggle.checked; changed(); renderOptimize(); });
-  const real = sources.filter((s) => !s.quantizer);
+  const real = sources.filter((s) => !s.quantizer && !s.dither);
   const source = el('select', { 'aria-label': 'Source the sine drives', onchange: (ev) => { swing.input = ev.target.value; changed(); renderOptimize(); } }, real.map((s) => el('option', { value: s.id, text: plainName(s.name) })));
   if (real.some((s) => s.id === swing.input)) source.value = swing.input;
   else if (real.length) { swing.input = real[0].id; }
@@ -259,7 +259,10 @@ function swingBlock(circuit, current, sources) {
       })));
     }
     const dither = api.flow().dither;
-    const ditherText = dither && dither.shape !== 'none' ? ` With ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''}, as set for the spectrum and the swing.` : ' No dither (set it with the spectrum or the swing).';
+    const sources = [...api.circuit().components.values()].filter((c) => c.type === 'dither').map((c) => c.refdes);
+    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.`
+      : dither && dither.shape !== 'none' ? ` With the older ${dither.shape === 'rect' ? 'rectangular' : 'triangular'} dither of +-${dither.steps ?? `${dither.amplitude} dBFS`}${dither.steps !== undefined ? ' step' : ''} at the quantizer.`
+        : ' No dither: draw a dither source, with a gain after it, for some.';
     children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);

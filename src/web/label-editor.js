@@ -9,7 +9,7 @@ import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
 import { MOS_SIZE_ROLE, formatMosSize, parseMosSize } from '../core/mos-size.js';
-import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseGain, parseLevels, readTransferFunction } from '../core/transfer-function.js';
+import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, readTransferFunction } from '../core/transfer-function.js';
 import { setPartValue } from '../core/part-moves.js';
 import { labelFontSize } from '../core/style.js';
 import { snap } from '../core/grid.js';
@@ -60,6 +60,8 @@ export function inlineEditSchematicBlock(component) {
   input.className = `label-inline-editor block-inline-editor${transfer ? ' tf-inline-editor' : ''}`;
   if (transfer) input.title = component.type === 'quantizer'
     ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
+    : component.type === 'dither'
+    ? 'The shape and the amplitude A: rect 1 (uniform over +-A) or tri 0.5 (triangular over +-A). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
@@ -99,6 +101,7 @@ export function inlineEditSchematicBlock(component) {
         // The box fits the new equation, and its wires follow its pins.
         try {
           if (component.type === 'quantizer') parseLevels(text);
+          else if (component.type === 'dither') parseDither(text);
           else if (isCoefficientBlock(component)) parseGain(text);
           else readTransferFunction(text, TRANSFER_FUNCTION_TYPES[component.type]);
         } catch (err) {

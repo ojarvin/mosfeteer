@@ -11,7 +11,7 @@ import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneFixedPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pathSegments, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
-import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, gainDisplay, gainFitsInside, isCoefficientBlock, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -2875,7 +2875,9 @@ export class Circuit {
     }
     if (!variable) return null;
     const quantizer = component.type === 'quantizer';
-    const text = `$${quantizer ? `N = ${component.value}` : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
+    const dither = component.type === 'dither';
+    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}`; };
+    const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centred on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
@@ -2885,7 +2887,7 @@ export class Circuit {
     // Inside a triangle, every coefficient is set a size smaller, so a signed
     // name (-g_1) clears the edges as a plain one (b_1) does.
     // A sampler's period and a quantizer's levels always go beside it.
-    const sampler = component.type === 'sampler' || quantizer;
+    const sampler = component.type === 'sampler' || quantizer || dither;
     const inside = gain && !sampler && gainFitsInside(component.value);
     const width = inside ? 'thin' : 'normal';
     if (gain && !inside) {
@@ -3206,6 +3208,7 @@ export class Circuit {
     // the equation.
     if (TRANSFER_FUNCTION_TYPES[c.type] || isCoefficientBlock(c)) {
       if (c.type === 'quantizer') value = String(parseLevels(value));
+      else if (c.type === 'dither') value = ditherValueText(parseDither(value));
       else if (isCoefficientBlock(c)) parseGain(value);
       else readTransferFunction(value, TRANSFER_FUNCTION_TYPES[c.type]);
       c.value = String(value).trim();
