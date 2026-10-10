@@ -42,11 +42,14 @@ comparison. A picked design lifts off the desk: it eases up onto a card
 larger than the flat drawing, on a deep soft shadow, its rim a hairline in
 drawing units (the accent's); the designs it links to and those using it
 lift a little less, on cards of their own, and every other design dims. Letting go lays them flat
-again (`drawCard`, each design easing on its own).
+again (`drawCard`, each design easing on its own, stacked by where it is
+heading so neighbours trade places smoothly).
 
 A picked design shows its links (`src/core/design-links.js`) as beams of
 light (`drawBeam`): a translucent curved band from each part that links,
-a bright point there, widening and fading as it reaches the design it
+which a soft spotlight lights (the beam starts at its edge, never over
+it), widening -- in drawing units, so in proportion at any zoom -- and
+fading as it reaches the design it
 names and arriving square to the side facing the part (`linkCurve`) --
 its taper says which way it goes; the designs using the picked one send
 theirs the same way. On a dark desk the beams add up as light does. With nothing picked, and while the desk is in a transition, no

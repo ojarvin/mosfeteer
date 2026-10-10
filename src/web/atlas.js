@@ -507,8 +507,9 @@ function draw() {
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
   updateLifts();
-  // Lifted designs are drawn last, over the ones lying flat.
-  placed.sort((a, b) => liftOf(a.tile.id).lift - liftOf(b.tile.id).lift);
+  // Lifted designs are drawn last, over the ones lying flat -- ordered by
+  // where each is heading, so two trading places do not swap mid-way.
+  placed.sort((a, b) => (liftOf(a.tile.id).target ?? 0) - (liftOf(b.tile.id).target ?? 0) || liftOf(a.tile.id).lift - liftOf(b.tile.id).lift);
   for (const { tile, alpha, rect: flatRect, detail } of placed) {
     const reveal = tileReveal(tile);
     const { lift, dim } = liftOf(tile.id);
@@ -588,7 +589,7 @@ function updateLifts() {
       if (focus.has(to) && !focus.has(from)) related.add(from);
     }
   }
-  const rate = reducedMotion() ? 1 : 1 - Math.exp(-dt / 55);
+  const rate = reducedMotion() ? 1 : 1 - Math.exp(-dt / 85);
   let moving = false;
   for (const tile of state.tiles) {
     const target = { lift: focus.has(tile.id) ? 1 : related.has(tile.id) ? RELATED_LIFT : 0, dim: focus.size && !focus.has(tile.id) && !related.has(tile.id) ? 1 : 0 };
@@ -599,6 +600,7 @@ function updateLifts() {
       next[key] = Math.abs(value - target[key]) < 0.004 ? target[key] : value;
       if (next[key] !== target[key]) moving = true;
     }
+    next.target = target.lift;
     state.lifts.set(tile.id, next);
   }
   if (moving) requestDraw();
@@ -746,9 +748,17 @@ function drawLinks(ctx, palette, shown) {
     const dx = a.tile.x - (source?.box?.x ?? a.tile.x);
     const dy = a.tile.y - (source?.box?.y ?? a.tile.y);
     const flat = worldToScreen(a.tile);
+    // Each part that links, on screen where the lift has carried it: its
+    // centre and its box.
     const starts = parts.length
-      ? parts.map((item) => liftedPoint(worldToScreen({ x: item.boxes[0].x + item.boxes[0].w / 2 + dx, y: item.boxes[0].y + item.boxes[0].h / 2 + dy, w: 0, h: 0 }), flat, from))
-      : (() => { const arrow = linkArrow(frameOf(a.tile), frameOf(b.tile), 0); return arrow ? [{ x: arrow.x1, y: arrow.y1 }] : []; })();
+      ? parts.map((item) => {
+        const box = item.boxes[0];
+        const corner = (x, y) => liftedPoint(worldToScreen({ x: x + dx, y: y + dy, w: 0, h: 0 }), flat, from);
+        const p0 = corner(box.x, box.y);
+        const p1 = corner(box.x + box.w, box.y + box.h);
+        return { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2, box: { x: p0.x, y: p0.y, w: p1.x - p0.x, h: p1.y - p0.y } };
+      })
+      : (() => { const arrow = linkArrow(frameOf(a.tile), frameOf(b.tile), 0); return arrow ? [{ x: arrow.x1, y: arrow.y1, box: null }] : []; })();
     // The beams come up with the lift, and go with it.
     const rising = Math.max(liftOf(from).lift, liftOf(to).lift);
     ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1) * rising;
@@ -767,18 +777,20 @@ function withAlpha(color, alpha) {
 }
 
 /**
- * A link as a beam of light: a curved band that leaves the linking part as
- * a bright point and widens and fades as it reaches the design it names,
- * sinking into that design's card rather than ending in a head -- which
- * way it goes reads from its taper. Drawn additively on a dark desk, so
- * where beams cross they brighten, as light does.
+ * A link as a beam of light: a curved band that leaves the linking part --
+ * lit by a soft spotlight, never covered -- and widens and fades as it
+ * reaches the design it names, sinking into that design's card rather than
+ * ending in a head; which way it goes reads from its taper. Its width is in
+ * drawing units, so it keeps its proportion to the drawings at any zoom.
+ * Drawn additively on a dark desk, so where beams cross they brighten, as
+ * light does.
  */
 function drawBeam(ctx, start, frame, palette) {
   const curve = linkCurve({ x: start.x, y: start.y }, frame, -Math.min(18, Math.min(frame.w, frame.h) * 0.08));
   if (!curve) return;
-  const along = Math.abs(curve.direction.x) > 0 ? frame.h : frame.w;
-  const narrow = 1.5;
-  const wide = Math.max(10, Math.min(64, along * 0.28));
+  const k = scale();
+  const narrow = Math.max(0.8, 0.12 * GRID * k);
+  const wide = Math.max(4, Math.min(1.6 * GRID * k, (Math.abs(curve.direction.x) > 0 ? frame.h : frame.w) * 0.2));
   const bezier = (t) => {
     const u = 1 - t;
     const { start: p0, c1, c2, end: p3 } = curve;
@@ -787,29 +799,50 @@ function drawBeam(ctx, start, frame, palette) {
       y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y,
     };
   };
-  const steps = 40;
-  const points = Array.from({ length: steps + 1 }, (_, i) => bezier(i / steps));
+  // The beam begins where it leaves the part's box: the part stays clear.
+  const box = start.box;
+  const inside = (p) => box && p.x > box.x && p.x < box.x + box.w && p.y > box.y && p.y < box.y + box.h;
+  const steps = 48;
+  let first = 0;
+  while (first < steps - 4 && inside(bezier(first / steps))) first += 1;
+  const points = [];
+  for (let i = first; i <= steps; i++) points.push({ t: (i - first) / (steps - first), ...bezier(i / steps) });
   const left = [];
   const right = [];
   points.forEach((p, i) => {
     const a = points[Math.max(0, i - 1)];
-    const b = points[Math.min(steps, i + 1)];
+    const b = points[Math.min(points.length - 1, i + 1)];
     const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
     const nx = -(b.y - a.y) / len;
     const ny = (b.x - a.x) / len;
-    const t = i / steps;
-    const half = (narrow + (wide - narrow) * t ** 1.7) / 2;
+    const half = (narrow + (wide - narrow) * p.t ** 1.6) / 2;
     left.push({ x: p.x + nx * half, y: p.y + ny * half });
     right.push({ x: p.x - nx * half, y: p.y - ny * half });
   });
   const dark = theme() === 'dark';
+  const from = points[0];
   ctx.save();
   if (dark) ctx.globalCompositeOperation = 'lighter';
-  const gradient = ctx.createLinearGradient(curve.start.x, curve.start.y, curve.end.x, curve.end.y);
-  gradient.addColorStop(0, withAlpha(palette.accent, dark ? 0.75 : 0.55));
-  gradient.addColorStop(0.55, withAlpha(palette.accent, dark ? 0.3 : 0.2));
+  // The spotlight: a soft pool of light over the part that links, its
+  // centre as faint as its edge is gone, so the symbol reads through it.
+  if (box) {
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h / 2;
+    const r = Math.max(box.w, box.h) * 0.75 + 4;
+    const pool = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    pool.addColorStop(0, withAlpha(palette.accent, dark ? 0.16 : 0.1));
+    pool.addColorStop(0.6, withAlpha(palette.accent, dark ? 0.1 : 0.06));
+    pool.addColorStop(1, withAlpha(palette.accent, 0));
+    ctx.fillStyle = pool;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, r * Math.max(0.6, box.w / Math.max(box.w, box.h)) + 4, r * Math.max(0.6, box.h / Math.max(box.w, box.h)) + 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const gradient = ctx.createLinearGradient(from.x, from.y, curve.end.x, curve.end.y);
+  gradient.addColorStop(0, withAlpha(palette.accent, dark ? 0.55 : 0.4));
+  gradient.addColorStop(0.55, withAlpha(palette.accent, dark ? 0.24 : 0.16));
   // A little light left where it meets the design, so it lands there.
-  gradient.addColorStop(1, withAlpha(palette.accent, dark ? 0.14 : 0.1));
+  gradient.addColorStop(1, withAlpha(palette.accent, dark ? 0.12 : 0.08));
   ctx.fillStyle = gradient;
   ctx.beginPath();
   ctx.moveTo(left[0].x, left[0].y);
@@ -818,26 +851,17 @@ function drawBeam(ctx, start, frame, palette) {
   ctx.closePath();
   ctx.fill();
   // Its bright core, fading sooner.
-  const core = ctx.createLinearGradient(curve.start.x, curve.start.y, curve.end.x, curve.end.y);
-  core.addColorStop(0, withAlpha(palette.accent, 0.9));
-  core.addColorStop(0.6, withAlpha(palette.accent, 0.15));
+  const core = ctx.createLinearGradient(from.x, from.y, curve.end.x, curve.end.y);
+  core.addColorStop(0, withAlpha(palette.accent, 0.75));
+  core.addColorStop(0.6, withAlpha(palette.accent, 0.12));
   core.addColorStop(1, withAlpha(palette.accent, 0));
   ctx.strokeStyle = core;
-  ctx.lineWidth = 1.2;
+  ctx.lineWidth = Math.max(0.6, Math.min(1.4, 0.05 * GRID * k));
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
+  ctx.moveTo(from.x, from.y);
   for (const p of points.slice(1)) ctx.lineTo(p.x, p.y);
   ctx.stroke();
-  // The source: a small glow on the part that links.
-  const glow = ctx.createRadialGradient(curve.start.x, curve.start.y, 0, curve.start.x, curve.start.y, 12);
-  glow.addColorStop(0, withAlpha(palette.accent, 0.95));
-  glow.addColorStop(0.35, withAlpha(palette.accent, 0.45));
-  glow.addColorStop(1, withAlpha(palette.accent, 0));
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(curve.start.x, curve.start.y, 12, 0, Math.PI * 2);
-  ctx.fill();
   ctx.restore();
 }
 
