@@ -10,7 +10,9 @@
  * follows the design's file as it is saved.
  *
  * A picture pasted (Ctrl+V) with the pointer over a window shows there
- * instead of a design: a datasheet figure, a sketch, a scope capture.
+ * instead of a design: a datasheet figure, a sketch, a scope capture. The
+ * copy button (or Ctrl+C with the pointer over the window) puts what the
+ * window shows back on the clipboard as a picture.
  *
  * Which designs (or pictures) the windows show is remembered in this
  * browser; nothing is saved in a document. `Shift+V` shows or hides them, opening a first one
@@ -30,6 +32,7 @@ import { appendDesignChoices, workspaceDesigns } from './hierarchy.js';
 import { openMenuAt } from './context-menu.js';
 import { storedImage, takePastedPictures } from './copy-paste.js';
 import { logLine } from './status-bar-ui.js';
+import { pngDataUrlBlob, writeDrawingToClipboard } from './clipboard.js';
 
 const STORE_KEY = 'mosfeteer.references';
 /** How often a shown window asks whether its design's file changed. */
@@ -78,7 +81,7 @@ async function pictureOf(circuit) {
   if (!match) return null;
   const [light, darkSvg] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
   const [x, y, w, h] = match.slice(1).map(Number);
-  return { box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(darkSvg) } };
+  return { svg, box: { x, y, w, h }, href: { light: dataUrl(light), dark: dataUrl(darkSvg) } };
 }
 
 function showMessage(win, text) {
@@ -288,6 +291,7 @@ function createWindow(doc = null) {
   title.title = 'Show another design in this window';
   const fitButton = headerButton('reference-fit', 'fit', 'Fit', 'Fit the whole design in the window (f with the pointer over it, or double-click it); right-drag zooms to a box');
   const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap: open this design in the editor, and show the one open now in this window');
+  const copy = headerButton('reference-copy', 'copy', 'Copy the picture', 'Copy what this window shows to the clipboard as a picture (Ctrl+C with the pointer over it)');
   const another = headerButton('reference-new', 'plus', 'Another reference window', 'Open another reference window');
   const close = document.createElement('button');
   close.type = 'button';
@@ -295,7 +299,7 @@ function createWindow(doc = null) {
   close.setAttribute('aria-label', 'Close the reference window');
   close.title = 'Close this reference window';
   close.textContent = '×';
-  header.append(title, fitButton, swap, another, close);
+  header.append(title, fitButton, copy, swap, another, close);
   const viewport = document.createElement('div');
   viewport.className = 'reference-viewport';
   const image = document.createElement('img');
@@ -327,6 +331,7 @@ function createWindow(doc = null) {
     if (next) openPicker(next);
   });
   fitButton.addEventListener('click', () => fit(win));
+  copy.addEventListener('click', () => copyPicture(win));
   swap.addEventListener('click', () => void swapWithEditor(win));
   installViewport(win);
   el.addEventListener('pointerenter', () => { hovered = win; });
@@ -386,6 +391,52 @@ async function swapWithEditor(win) {
   const current = { path, name: editor.currentCircuitName };
   if (!await openDocumentPath(shown.path)) return;
   setDocument(win, current);
+}
+
+/** A picture as a PNG blob: a PNG as it is, any other kind drawn into a
+ *  canvas at its own size. */
+async function pngOf(src) {
+  if (src.startsWith('data:image/png;base64,')) return pngDataUrlBlob(src);
+  const image = new Image();
+  image.src = src;
+  await image.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  canvas.getContext('2d').drawImage(image, 0, 0);
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('could not encode the picture'))), 'image/png'));
+}
+
+/** Put what the window shows on the clipboard: its design as the drawing's
+ *  own copy draws it, or the pasted picture. */
+function copyPicture(win) {
+  if (!win.picture) {
+    logLine('This window shows nothing to copy yet.');
+    return;
+  }
+  const what = win.doc ? win.doc.name : 'the pasted picture';
+  let write;
+  try {
+    if (win.pasted) {
+      if (!navigator.clipboard?.write || typeof ClipboardItem !== 'function') throw new Error('image clipboard is unavailable in this browser');
+      const png = pngOf(win.pasted.src);
+      png.catch(() => {});
+      write = navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    } else {
+      write = writeDrawingToClipboard(win.picture.svg);
+    }
+  } catch (err) {
+    logLine(`Could not copy ${what}: ${err.message}`, 'error');
+    return;
+  }
+  write.then(() => logLine(`Copied ${what} as a picture`), (err) => logLine(`Could not copy ${what}: ${err.message}`, 'error'));
+}
+
+/** Ctrl+C over a reference window copies its picture. Returns whether it did. */
+export function copyHoveredReference() {
+  if (!hovered || hidden || !windows.includes(hovered) || !hovered.picture) return false;
+  copyPicture(hovered);
+  return true;
 }
 
 function closeWindow(win) {

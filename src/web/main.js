@@ -79,7 +79,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
-import { fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
+import { copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
 import { refreshCopyGhostBase, copySelection, startCopyGhost, moveCopyGhost, dropCopyGhostMirror, commitCopyGhost, publishObjectClipboard, armObjectPaste, pasteClipboard, installCopyPaste } from './copy-paste.js';
@@ -8052,6 +8052,7 @@ window.addEventListener('keydown', (ev) => {
       selectAll();
     } else if (k === 'c' && !ev.shiftKey) {
       ev.preventDefault();
+      if (copyHoveredReference()) return;
       if (copySelection()) publishObjectClipboard();
     } else if (k === 'v') {
       // Left to the browser, whose paste event carries the system clipboard.
