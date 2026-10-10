@@ -74,14 +74,8 @@ function netProblem(net) {
   if (!text(net.id)) return 'a net has no id';
   if (!optional(net.name, text)) return `net ${net.id} has a bad name`;
   if (!Array.isArray(net.terminals) || !net.terminals.every(endpoint)) return `net ${net.id} has bad terminals`;
-  if (net.routingMode === 'fixed') {
-    const entries = net.fixedPaths;
-    if (!Array.isArray(entries) || !entries.every((entry) => isObject(entry) && path(entry.points)
-      && optional(entry.start, endpoint) && optional(entry.end, endpoint))) return `net ${net.id} has bad wires`;
-  } else {
-    if (!optional(net.route, path) || !optional(net.branches, (branches) => Array.isArray(branches) && branches.every(path))) return `net ${net.id} has bad wires`;
-    if (!Array.isArray(net.junctions) || !net.junctions.every(point)) return `net ${net.id} has bad junctions`;
-  }
+  if (!optional(net.route, path) || !optional(net.branches, (branches) => Array.isArray(branches) && branches.every(path))) return `net ${net.id} has bad wires`;
+  if (!Array.isArray(net.junctions) || !net.junctions.every(point)) return `net ${net.id} has bad junctions`;
   if (!optional(net.netLabels, netLabelsValid)) return `net ${net.id} has bad labels`;
   return null;
 }

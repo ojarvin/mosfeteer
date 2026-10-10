@@ -19,7 +19,7 @@ import { deleteSelection, nearestTerminal, wireSegmentAt, netsTouching, placemen
  *  a free wire end, with a ring that stays while it would. */
 export function syncSnapPulse() {
   if (!editor.snapLayerEl) return;
-  const source = (editor.wire || editor.directWire)?.source;
+  const source = editor.wire?.source;
   let points = [];
   if (source) {
     const target = nearestTerminal(editor.cursor);

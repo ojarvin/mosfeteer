@@ -159,7 +159,6 @@ test('component drag snapshots restore segment styles with route geometry', () =
     ${source}
     return { captureNetGeometry, translateNetGeometry };
   })()`, {
-    cloneFixedPaths: (entries) => entries,
     cloneWireStyles: (styles) => Object.fromEntries(Object.entries(styles || {}).map(([key, style]) => [key, { ...style }])),
     captureRouteGeometry: (net, move = (point) => ({ ...point })) => ({
       route: net.route ? net.route.map(move) : null,
@@ -168,7 +167,6 @@ test('component drag snapshots restore segment styles with route geometry', () =
     }),
   });
   const net = {
-    routingMode: 'managed',
     route: [{ x: 0, y: 0 }, { x: 0, y: 400 }],
     branches: [[{ x: 0, y: 0 }, { x: 0, y: 400 }]],
     junctions: [],
@@ -657,7 +655,7 @@ test('wire previews exclude the destination net and transformed nets keep termin
   const transform = main.slice(main.indexOf('function transformMixedSelection('), main.indexOf('/** Re-route every net', main.indexOf('function transformMixedSelection(')));
   assert.match(transform, /componentTerminalMoves\(circuit, refs, beforeComponents\)/);
   // The editor and the commands reroute through one helper (core/part-moves.js).
-  assert.match(readFileSync(new URL('../src/core/part-moves.js', import.meta.url), 'utf8'), /net\.routingMode === 'fixed' \? \(fresh \? 'refresh' : moved\)/);
+  assert.match(readFileSync(new URL('../src/core/part-moves.js', import.meta.url), 'utf8'), /terminalMoves \|\| \(fresh \? 'refresh' : moved\)/);
 });
 
 test('startup paints before listing documents and restoring the requested document', () => {
@@ -999,10 +997,10 @@ test('tools switch straight from inside another tool, dropping its uncommitted w
   // Re-picking Wire keeps a half-drawn wire; anything else is dropped first.
   assert.match(body('activateWire'), /if \(hasWireDraft\(\)\) \{[^}]*return; \}\s*leaveActiveInteraction\(\);/);
   const leave = body('leaveActiveInteraction');
-  for (const part of [/cancelDrag\(\)/, /wire = null;/, /directWire = null;/, /pendingPlace = null;/, /mode = 'normal';/]) assert.match(leave, part);
+  for (const part of [/cancelDrag\(\)/, /wire = null;/, /pendingPlace = null;/, /mode = 'normal';/]) assert.match(leave, part);
 
   const pick = vm.runInNewContext(`(${body('toolSwitchForKey')}\n})`, {
-    get wire() { return state.wire; }, get directWire() { return null; }, get mode() { return state.mode; },
+    get wire() { return state.wire; }, get mode() { return state.mode; },
     get pendingPlace() { return state.pendingPlace; }, get drag() { return null; },
     hasModalPlacement: () => false, wireTerminalLetter: (key) => state.terminals.includes(key),
     activatePlace: 'place', activateWire: 'wire', activateMove: () => {}, activateCopy: 'copy', activateAlign: 'align', activateHighlight: 'hl',
@@ -1037,7 +1035,7 @@ test('view toggles answer in every mode but the insert search', () => {
   assert.doesNotMatch(view, /key === 'd'/);
   assert.doesNotMatch(view, /key === 'c'(?! && shiftKey)/);
   // Routed before the per-mode handlers, and no longer duplicated inside one.
-  assert.match(main, /if \(viewKey\(key, ev\.shiftKey\)\) \{[\s\S]{0,60}return;\s*\}\s*\n\s*const toolSwitch = toolSwitchForKey\(key, ev\.shiftKey\);[\s\S]{0,120}return;\s*\}\s*\n\s*if \(directWire\)/);
+  assert.match(main, /if \(viewKey\(key, ev\.shiftKey\)\) \{[\s\S]{0,60}return;\s*\}\s*\n\s*const toolSwitch = toolSwitchForKey\(key, ev\.shiftKey\);[\s\S]{0,120}return;\s*\}\s*\n\s*if \(wire\)/);
   const normal = functionSource('onNormalKey', main);
   assert.doesNotMatch(normal, /setGrid\(!showGrid\)|toggleTheme\(\)|setCrosshair\(!crosshairVisible\)/);
 });

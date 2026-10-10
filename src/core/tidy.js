@@ -120,7 +120,7 @@ function rerouteFresh(circuit, netIds) {
   const done = [];
   for (const id of netIds) {
     const net = circuit.nets.get(id);
-    if (!net || net.routingMode === 'fixed' || net.terminals.length < 2) continue;
+    if (!net || net.terminals.length < 2) continue;
     const orthogonal = circuit.rerouteOrthogonalBranches(net);
     if (orthogonal !== null) {
       if (orthogonal) done.push(id);
@@ -149,7 +149,7 @@ export function snapComponentToGrid(circuit, refdes) {
 function reroutable(circuit, ids) {
   return ids.filter((id) => {
     const net = circuit.nets.get(id);
-    return net && net.routingMode !== 'fixed' && net.terminals.length >= 2;
+    return net && net.terminals.length >= 2;
   });
 }
 

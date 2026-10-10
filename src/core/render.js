@@ -1032,9 +1032,6 @@ export function svgString(circuit, opts = {}) {
       // The editor keeps the whole net, faded, as the thing to click.
       if (!beatFade) continue;
     }
-    // Fixed paths are already the complete authored geometry. Keep the legacy
-    // managed fallback so multi-terminal managed nets retain their old
-    // rendering behavior.
     const paths = drawnNetPaths(net);
     const opacity = ghostNets.has(net.id) ? GHOST : '';
     // What the beat keeps is drawn over this, so the whole net is the faint
@@ -1042,10 +1039,7 @@ export function svgString(circuit, opts = {}) {
     if (shown !== 'all') netStyle = withHighlight(netStyle, FADE_INK);
     for (const [branch, pts] of paths.entries()) {
       if (!pts || pts.length < 2) continue;
-      const wireKind = net.routingMode === 'fixed' ? 'fixed' : 'managed';
-      const wireHelp = net.routingMode === 'fixed'
-        ? 'Fixed/direct wire — drag vertices, segments, or junctions'
-        : 'Managed wire — drag orthogonal segments';
+      const wireHelp = 'Managed wire — drag orthogonal segments';
       const segmentStyles = net.wireStyles && Object.keys(net.wireStyles).some((key) => key.startsWith(`${branch}:`));
       if (!segmentStyles) {
         const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
@@ -1053,7 +1047,7 @@ export function svgString(circuit, opts = {}) {
         const arrowhead = withSignalArrows(netStyle?.arrowhead, signalPins, pts[0], pts.at(-1));
         const geometry = polylineArrowheads(pts, arrowhead, wireArrowheadOptions(pinInsets, pts, arrowhead));
         if (inked) addInk(inkAttrs(netStyle), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(`<path class="wire-managed" d="${d}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="1" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}`)}" ${styleAttrs(netStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, netStyle?.color, opacity));
         continue;
       }
@@ -1070,7 +1064,7 @@ export function svgString(circuit, opts = {}) {
         // endpoint arrowhead.
         const paintedD = inked ? d : polylineD(geometry.shaftPoints);
         if (inked) addInk(inkAttrs(segmentStyle), polylineD(geometry.shaftPoints));
-        parts.push(`<path class="wire-${wireKind}" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
+        parts.push(`<path class="wire-managed" d="${paintedD}" fill="none"${opacity} data-net-id="${escapeSvg(net.id)}" data-wire-branch="${branch}" data-wire-segment="${i}" role="button" tabindex="0" aria-label="${escapeSvg(`${wireHelp} on ${net.name || net.id}, segment ${i}`)}" ${styleAttrs(segmentStyle, 'wire')}${inked ? UNPAINTED : ''}><title>${escapeSvg(wireHelp)}</title></path>`);
         parts.push(arrowheadsSvg(geometry.heads, segmentStyle.color, opacity));
       }
     }
@@ -1757,21 +1751,12 @@ export function editorOverlay(circuit, opts = {}) {
     }
   }
 
-  if (opts.directWirePreview) {
-    const { from, pts } = opts.directWirePreview;
-    if (from && pts && pts.length >= 2) {
-      const d = pts.map((p, i) => (i === 0 ? `M ${pt(p.x, p.y)}` : `L ${pt(p.x, p.y)}`)).join(' ');
-      parts.push(`<path class="direct-wire-preview" d="${d}" fill="none" stroke="${SELECT}" stroke-width="4" stroke-dasharray="10 6" stroke-linecap="round"/>`);
-      for (const p of pts.slice(1, -1)) parts.push(`<circle cx="${fmt(p.x)}" cy="${fmt(p.y)}" r="5" fill="var(--paper, #fff)" stroke="${SELECT}" stroke-width="2"/>`);
-    }
-  }
-
   if (opts.cursor) {
     const { x, y } = opts.cursor;
-    const color = opts.directWirePreview || opts.wireMode ? SELECT : '#7a7d85';
+    const color = opts.wireMode ? SELECT : '#7a7d85';
     const radius = opts.wireMode ? 8 : 4;
     parts.push(`<circle cx="${fmt(x)}" cy="${fmt(y)}" r="${radius}" fill="none" stroke="${color}" stroke-width="${opts.wireMode ? 2 : 1.5}"/>`);
-    if (opts.wireMode && !opts.wirePreview && !opts.directWirePreview) {
+    if (opts.wireMode && !opts.wirePreview) {
       parts.push(`<path d="M ${fmt(x - 14)} ${fmt(y)} L ${fmt(x + 14)} ${fmt(y)} M ${fmt(x)} ${fmt(y - 14)} L ${fmt(x)} ${fmt(y + 14)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="3 2"/>`);
     }
   }

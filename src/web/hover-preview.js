@@ -57,7 +57,7 @@ export function updateCanvasHover(w) {
     return;
   }
   const quiet = editor.mode === 'insert' || (editor.labelMode && editor.labelMode !== 'highlight') || editor.quickAdd;
-  const selecting = !quiet && !editor.wire && !editor.directWire && !editor.moveMode && !editor.copyMode && !editor.deleteMode;
+  const selecting = !quiet && !editor.wire && !editor.moveMode && !editor.copyMode && !editor.deleteMode;
   const hit = selecting ? pickAt(w) : null;
   const hitComponent = hit?.refdes ? editor.circuit.components.get(hit.refdes) : null;
   // A selected block shows resize handles on its outline; pin handles there

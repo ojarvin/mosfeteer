@@ -737,7 +737,6 @@ export function renameBeatHighlightKey(circuit, from, to) {
 
 /** The polylines a net draws: the same choice the renderer makes. */
 export function drawnNetPaths(net) {
-  if (net.routingMode === 'fixed') return net.paths();
   if (net.branches) return net.branches;
   if (!net.route && net.terminals.length >= 3) {
     return steinerBranches(net.terminalWorlds(), { rects: [], pins: new Map(), wires: [] });

@@ -182,7 +182,7 @@ test('wire appearance survives a fragment split inside an authored segment', () 
   });
   circuit.nets.set(net.id, net);
   const svg = selectionDrawing(circuit, { wireKeys: ['TEE:0:1'] });
-  const red = [...svg.matchAll(/<path class="wire-fixed"[^>]+stroke="#ff0000"[^>]+stroke-dasharray/g)];
+  const red = [...svg.matchAll(/<path class="wire-managed"[^>]+stroke="#ff0000"[^>]+stroke-dasharray/g)];
   assert.equal(red.length, 2);
 });
 

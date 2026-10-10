@@ -18,13 +18,10 @@ export function createDocument(kind = 'circuit') {
   if (kind === 'circuit' || kind === 'schematic') return new Circuit();
   throw new Error(`unknown document kind "${kind}"`);
 }
-/** Load a saved document. Schematics are normalized to the app's single wire
- * model: legacy fixed nets become managed nets with protected diagonals. */
+/** Load a saved document. */
 export function loadDocument(data) {
   documentKind(data);
-  const circuit = Circuit.fromJSON(data);
-  circuit.convertFixedNets();
-  return circuit;
+  return Circuit.fromJSON(data);
 }
 export function renderDocument(document, options = {}) { return svgString(document, options); }
 

@@ -123,11 +123,6 @@ export function renderStatus() {
         : `WIRE (${editor.wire.routeStyle || editor.routeMode}): click a terminal or point to start`),
     );
   }
-  if (editor.directWire) {
-    parts.push(editor.directWire.source
-      ? `${editor.directWire.source.fixed ? 'fixed endpoint suffix' : `${editor.directWire.routeMode || editor.routeMode} direct path`}${editor.directWire.points.length ? ` · ${editor.directWire.points.length} point${editor.directWire.points.length === 1 ? '' : 's'}` : ''} · click waypoints / terminal / wire · Enter · Esc cancel`
-      : 'click a terminal or open fixed endpoint to start · Esc cancel');
-  }
   if (editor.selectedNets.size) parts.push(`nets ${editor.selectedNets.size}`);
   if (editor.lastCheckReport && (editor.diagnosticSelection.components.size || editor.diagnosticSelection.nets.size || editor.diagnosticSelection.labels.size)) {
     parts.push(`check focus ${editor.diagnosticSelection.components.size + editor.diagnosticSelection.nets.size + editor.diagnosticSelection.labels.size}`);
@@ -144,8 +139,7 @@ export function renderStatus() {
   statusEl.textContent = fields.hint;
   renderKeyHints(!fields.hint);
   statusEl.className = `status ${interaction.key}`;
-  if (editor.directWire) statusEl.classList.add('direct-wire');
-  else if (editor.wire) statusEl.classList.add('wire');
+  if (editor.wire) statusEl.classList.add('wire');
   else if (editor.mode === 'insert') statusEl.classList.add('insert');
   if (statusModeEl) {
     statusModeEl.textContent = fields.mode;
@@ -165,7 +159,7 @@ export function renderStatus() {
  *  has the space. Kept out of the live status region, which it would flood. */
 function renderKeyHints(show) {
   if (!statusKeysEl) return;
-  const busy = editor.mode !== 'normal' || editor.wire || editor.directWire || editor.labelMode
+  const busy = editor.mode !== 'normal' || editor.wire || editor.labelMode
     || editor.alignTool || editor.analysisPick || editor.symmetry || editor.inlineInput || editor.quickAdd
     || (editor.drag && !editor.movePending && !editor.copyPending);
   const hints = show && !busy ? contextKeyHints({

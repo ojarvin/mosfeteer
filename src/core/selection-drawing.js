@@ -2,7 +2,7 @@ import { Circuit, Net } from './model.js';
 import { renderDocument } from './document.js';
 import { resolveCopySelection } from './selection.js';
 import { GRID } from './grid.js';
-import { junctionPoints, pointOnPath } from './wiring.js';
+import { cloneLiteralPath, junctionPoints, pointOnPath } from './wiring.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 
 export const DRAWING_EXPORT_OPTIONS = Object.freeze({
@@ -30,9 +30,11 @@ function schematicSubset(circuit, selection) {
     const net = new Net(drawing, {
       id: keepId ? fragment.net.id : `${fragment.net.id}-selection-${i}`, name: fragment.net.name,
       style: fragment.net.style, drawOrder: fragment.net.drawOrder,
-      routingMode: 'fixed', fixedPaths: fragment.paths.map((points) => ({ points })),
-      junctions: fragment.junctions,
+      allowDiagonal: true, junctions: fragment.junctions,
     });
+    // Drawn as cut, every point kept: segment indices match `fragment.paths`.
+    net.branches = fragment.paths.map((points) => cloneLiteralPath(points));
+    net.route = net.branches[0] || null;
     // Fragment branch indices differ from the source. Carry each authored
     // segment's appearance to its new identity.
     const sourcePaths = fragment.net.paths();

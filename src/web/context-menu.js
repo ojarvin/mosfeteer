@@ -45,7 +45,7 @@ function contextMatches(target, candidate, criterion) {
   if (criterion === 'type') {
     if (target.kind === 'component') return candidate.value.type === target.value.type;
     if (target.kind === 'net') return candidate.value.name === target.value.name;
-    if (target.kind === 'wire') return !!candidate.value.net.routingMode === !!target.value.net.routingMode;
+    if (target.kind === 'wire') return true;
     return candidate.value.kind === target.value.kind &&
       !!candidate.value.owner === !!target.value.owner &&
       !!candidate.value.netId === !!target.value.netId;

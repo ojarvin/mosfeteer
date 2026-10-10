@@ -370,7 +370,6 @@ export function layerActionForKey({
   altKey = false,
   mode = 'normal',
   wire = false,
-  directWire = false,
   drag = false,
   moveMode = null,
   copyMode = false,
@@ -379,7 +378,7 @@ export function layerActionForKey({
   textEntry = false,
 } = {}) {
   if (textEntry || !shiftKey || ctrlKey || metaKey || altKey || mode !== 'normal'
-      || wire || directWire || drag || moveMode || copyMode || deleteMode || labelMode) return null;
+      || wire || drag || moveMode || copyMode || deleteMode || labelMode) return null;
   if (key === 'ArrowUp') return 'bring-front';
   if (key === 'ArrowDown') return 'send-back';
   return null;
@@ -397,10 +396,10 @@ const LAYOUT_ALIGN_KEYS = {
  * aligned set centres that axis (`repeat`). Idle normal editor only. */
 export function layoutAlignKey({
   key, shiftKey = false, ctrlKey = false, metaKey = false, altKey = false,
-  mode = 'normal', wire = false, directWire = false, drag = false,
+  mode = 'normal', wire = false, drag = false,
   moveMode = null, copyMode = false, deleteMode = false, labelMode = null, textEntry = false,
 } = {}) {
   if (textEntry || !shiftKey || !(ctrlKey || metaKey) || altKey || mode !== 'normal'
-      || wire || directWire || drag || moveMode || copyMode || deleteMode || labelMode) return null;
+      || wire || drag || moveMode || copyMode || deleteMode || labelMode) return null;
   return LAYOUT_ALIGN_KEYS[key] || null;
 }

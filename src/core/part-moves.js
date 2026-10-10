@@ -79,9 +79,7 @@ export function rerouteTouchedNets(circuit, refs, moved, { fresh = false, before
     if (!net) continue;
     const unchanged = fresh && beforeTerminals?.has(id)
       && beforeTerminals.get(id) === netTerminalPositionKey(circuit, net);
-    const routeArg = unchanged ? null
-      : net.routingMode === 'fixed' ? (fresh ? 'refresh' : moved)
-        : terminalMoves || (fresh ? 'refresh' : moved);
+    const routeArg = unchanged ? null : terminalMoves || (fresh ? 'refresh' : moved);
     if (circuit.rerouteNet(net, routeArg) === false) return id;
   }
   return null;

@@ -57,23 +57,6 @@ test('shortNetsAt does nothing where fewer than three wire arms meet', () => {
   assert.equal(c.nets.size, 2);
 });
 
-test('shortNetsAt also joins a fixed (literal) net, keeping every path literal', () => {
-  const { c, h, v } = crossing();
-  // A fixed diagonal-free literal path for the vertical net.
-  c._setFixedPaths(v, [{ points: [{ x: 400, y: -80 }, { x: 400, y: 480 }], start: { comp: 'R3', term: 'b' }, end: { comp: 'R4', term: 'a' } }], []);
-  const net = c.shortNetsAt({ x: 400, y: 200 });
-  assert.ok(net);
-  assert.equal(c.nets.size, 1);
-  assert.equal(net.routingMode, 'fixed');
-  assert.equal(net.terminals.length, 4);
-  assert.ok(net.fixedPaths.every((entry) => entry.points.length >= 2));
-  assert.ok(net.junctions.some((p) => p.x === 400 && p.y === 200));
-  assert.ok([...c.components.values()].some((comp) => comp.type === 'solder' && comp.transform.x === 400 && comp.transform.y === 200));
-  const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
-  assert.equal(reloaded.nets.size, 1);
-  assert.ok(h);
-});
-
 test('a gate bus drawn straight through MOS gates puts no dot on the gates it passes', () => {
   const c = new Circuit();
   for (const line of ['add nmos M1 --at 400 400', 'add nmos M2 --at 800 400', 'add nmos M3 --at 1200 400',

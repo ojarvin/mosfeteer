@@ -14,12 +14,12 @@ const buffer = () => ({
     { id: 'L2', kind: 'arrow', parent: null, text: '', align: 'left', x: 0, y: 40, end: { x: 80, y: 40 }, points: null, style: {}, math: false, mathBox: null },
   ],
   nets: [{
-    id: 'n1', name: 'out', routingMode: 'managed', drawOrder: 0,
+    id: 'n1', name: 'out', drawOrder: 0,
     terminals: [{ comp: 'M1', term: 'd' }, { comp: 'R1', term: 'a' }],
-    route: [{ x: 120, y: 40 }, { x: 120, y: 0 }], branches: null, junctions: [], fixedPaths: null,
+    route: [{ x: 120, y: 40 }, { x: 120, y: 0 }], branches: null, junctions: [],
     netLabels: [{ netId: 'n1', text: 'out', align: 'left', netSide: null, x: 160, y: 40 }],
   }],
-  fragments: [{ name: null, routingMode: 'managed', allowDiagonal: false, drawOrder: 0, paths: [[{ x: 0, y: 200 }, { x: 80, y: 200 }]], junctions: [] }],
+  fragments: [{ name: null, allowDiagonal: false, drawOrder: 0, paths: [[{ x: 0, y: 200 }, { x: 80, y: 200 }]], junctions: [] }],
   anchor: { x: 120, y: 40 },
   style: null,
 });
@@ -94,7 +94,7 @@ test('a copied net keeps its diagonal legs, and a paste that fails leaves the do
   const paste = readFileSync(new URL('../src/web/copy-paste.js', import.meta.url), 'utf8');
   const capture = paste.slice(paste.indexOf('const nets = parts.nets.map((net) => ({'), paste.indexOf('const fragments = parts.fragments.map'));
   assert.match(capture, /allowDiagonal: net\.allowDiagonal,/);
-  assert.match(paste, /createWireNet\(\{ name: pastedNetName\(n, refMap\), routingMode: n\.routingMode, allowDiagonal: n\.allowDiagonal,/);
+  assert.match(paste, /createWireNet\(\{ name: pastedNetName\(n, refMap\), allowDiagonal: n\.allowDiagonal,/);
   // All or nothing.
   assert.match(paste, /catch \(err\) \{\s*applyJson\(before\);/);
   assert.match(paste, /if \(!pasteClipboard\(\{ recordHistory: false, connect: false \}\)\) return false;/);

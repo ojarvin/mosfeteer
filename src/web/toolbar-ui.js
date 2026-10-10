@@ -285,7 +285,6 @@ export function syncInteractionUI() {
   }
   canvasEl.classList.toggle(state.canvasClass, true);
   canvasEl.classList.toggle('wire-mode', !!editor.wire || state.canvasClass === 'wire-mode');
-  canvasEl.classList.toggle('direct-wire-mode', !!editor.directWire || state.canvasClass === 'direct-wire-mode');
   syncRailFlyout(state);
   syncToolCursor(state);
   return state;

@@ -176,12 +176,6 @@ export function swapComponentType(circuit, refdes, type) {
       for (const terminal of net.terminals) {
         if (terminal.comp === component.refdes) terminal.term = map.get(terminal.term);
       }
-      if (net.routingMode !== 'fixed') continue;
-      for (const path of net.fixedPaths) {
-        for (const end of [path.start, path.end]) {
-          if (end?.comp === component.refdes && map.has(end.term)) end.term = map.get(end.term);
-        }
-      }
     }
 
     const fresh = new ComponentInstance(circuit, type, { refdes: component.refdes });

@@ -838,7 +838,6 @@ async function deleteSavedCircuit() {
     clearLatestAnalysisResult();
     markModelChanged(false);
     resetCheckState();
-    editor.directWire = null;
     editor.wire = null;
     editor.terminalSnap = false;
     clearSymmetry();

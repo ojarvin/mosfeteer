@@ -14,7 +14,7 @@ import { logLine } from './status-bar-ui.js';
 import { selectedStyleSource, pasteStyle } from './style-controls.js';
 import { beginNetLabelPaste } from './annotation-tools.js';
 import { editor } from './editor-state.js';
-import { applyJson, captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } from './main.js';
+import { applyJson, captureNetGeometry, captureRouteGeometry, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } from './main.js';
 
 export function copySelectionSource() {
   const wireKeys = new Set(editor.selectedWires);
@@ -151,18 +151,16 @@ export function copySelection({ quiet = false } = {}) {
   const nets = parts.nets.map((net) => ({
     id: net.id,
     name: net.name,
-    routingMode: net.routingMode,
     // A net drawn with diagonal legs keeps them: without the flag its copy
     // would read them as broken orthogonal wire.
     allowDiagonal: net.allowDiagonal,
     drawOrder: net.drawOrder,
     terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
     ...captureRouteGeometry(net),
-    fixedPaths: net.routingMode === 'fixed' ? cloneFixedPaths(net.fixedPaths) : null,
     netLabels: editor.circuit.netLabels(net).map(netLabelPayload),
   }));
   const fragments = parts.fragments.map(({ net, paths, junctions, netLabels = [] }) => ({
-    name: net.name, routingMode: net.routingMode, allowDiagonal: net.allowDiagonal,
+    name: net.name, allowDiagonal: net.allowDiagonal,
     drawOrder: net.drawOrder, paths, junctions, netLabels: netLabels.map(netLabelPayload),
   }));
   // Grid-snapped anchor = bbox centre of the selection, so paste re-centres it
@@ -180,7 +178,7 @@ export function copySelection({ quiet = false } = {}) {
   for (const c of comps) addRect(c.bboxWorld());
   for (const l of freeLabels) addRect(l.bbox());
   for (const net of [...nets, ...fragments]) {
-    const paths = net.paths || (net.path ? [net.path] : (net.branches || net.fixedPaths?.map((e) => e.points) || (net.route ? [net.route] : [])));
+    const paths = net.paths || (net.path ? [net.path] : (net.branches || (net.route ? [net.route] : [])));
     for (const path of paths) for (const p of path) addRect({ x: p.x, y: p.y, w: 0, h: 0 });
   }
   if (!Number.isFinite(x0)) x0 = y0 = x1 = y1 = 0;
@@ -257,12 +255,8 @@ function translateCopyGhost(ghost, dx, dy) {
     const net = editor.circuit.nets.get(id);
     if (!net) continue;
     const move = (p) => ({ x: p.x + dx, y: p.y + dy });
-    if (net.routingMode === 'fixed') {
-      for (const entry of net.fixedPaths) entry.points = entry.points.map(move);
-    } else {
-      if (net.route) net.route = net.route.map(move);
-      if (net.branches) net.branches = net.branches.map((path) => path.map(move));
-    }
+    if (net.route) net.route = net.route.map(move);
+    if (net.branches) net.branches = net.branches.map((path) => path.map(move));
     net.junctions = net.junctions.map(move);
   }
   editor.circuit.invalidateRoutingCache();
@@ -641,22 +635,15 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       }
       const netMap = new Map();
       for (const n of editor.clipboard.nets) {
-      const fixedPaths = n.routingMode === 'fixed' ? n.fixedPaths.map((e) => ({
-        points: e.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
-        start: e.start && refMap.has(e.start.comp) ? { comp: refMap.get(e.start.comp), term: e.start.term } : null,
-        end: e.end && refMap.has(e.end.comp) ? { comp: refMap.get(e.end.comp), term: e.end.term } : null,
-      })) : null;
-      const net = editor.circuit.createWireNet({ name: pastedNetName(n, refMap), routingMode: n.routingMode, allowDiagonal: n.allowDiagonal, drawOrder: n.drawOrder, fixedPaths });
+      const net = editor.circuit.createWireNet({ name: pastedNetName(n, refMap), allowDiagonal: n.allowDiagonal, drawOrder: n.drawOrder });
       netMap.set(n.id, net);
       for (const t of n.terminals) {
         const newRef = refMap.get(t.comp);
         if (newRef) net.terminals.push({ comp: newRef, term: t.term });
       }
-        if (n.routingMode !== 'fixed') {
-          net.route = n.route ? n.route.map((p) => ({ x: p.x + dx, y: p.y + dy })) : null;
-          net.junctions = n.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-          net.branches = n.branches ? n.branches.map((b) => b.map((p) => ({ x: p.x + dx, y: p.y + dy }))) : null;
-        }
+        net.route = n.route ? n.route.map((p) => ({ x: p.x + dx, y: p.y + dy })) : null;
+        net.junctions = n.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+        net.branches = n.branches ? n.branches.map((b) => b.map((p) => ({ x: p.x + dx, y: p.y + dy }))) : null;
         for (const label of n.netLabels || []) {
           const anchor = { x: label.x + dx, y: label.y + dy };
           const targetNet = netMap.get(label.netId) || net;
@@ -669,9 +656,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       const pastedWireKeys = [];
       for (const fragment of editor.clipboard.fragments || []) {
       const paths = fragment.paths.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })));
-      const net = editor.circuit.createWireNet(fragment.routingMode === 'fixed'
-        ? { name: fragment.name, routingMode: 'fixed', drawOrder: fragment.drawOrder, fixedPaths: paths.map((path) => ({ points: path, start: null, end: null })), junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
-        : { name: fragment.name, routingMode: 'managed', allowDiagonal: fragment.allowDiagonal, drawOrder: fragment.drawOrder, branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
+      const net = editor.circuit.createWireNet({ name: fragment.name, allowDiagonal: fragment.allowDiagonal, drawOrder: fragment.drawOrder, branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
         for (let branch = 0; branch < paths.length; branch++) {
           for (let segment = 1; segment < paths[branch].length; segment++) {
             if (paths[branch][segment - 1].x === paths[branch][segment].x && paths[branch][segment - 1].y === paths[branch][segment].y) continue;

@@ -5,8 +5,7 @@
 The managed wiring model is a topological graph with orthogonal, grid-aligned
 geometry. Deliberate diagonal segments are allowed inside managed nets and are
 protected one segment at a time: the autorouter never replaces them, while the
-orthogonal parts of the same net route normally. Legacy fixed nets (fully
-literal paths) are converted to this form when a document loads. Electrical
+orthogonal parts of the same net route normally. Electrical
 connectivity is independent from component placement and from the visual route
 chosen for a net. A route may be changed without changing the terminal set, and
 a topology operation may preserve every existing path unless the user explicitly
@@ -36,7 +35,7 @@ no-waypoint request already connected by explicit topology is a no-op; an
 explicit target path can instead split that path and record a deliberate
 same-net join at a crossing. Existing geometry otherwise changes only through
 an explicit wire edit, transform, reroute, or another operation whose purpose
-is to repair geometry; fixed paths remain protected.
+is to repair geometry.
 
 ## Automatic routing
 
@@ -108,7 +107,6 @@ so they can be removed when topology changes.
 
 - every managed wire point is on the 40-unit grid;
 - every managed branch is orthogonal and has no duplicate/collinear interior points;
-- every fixed-path point is on the 40-unit grid; fixed paths may be diagonal;
 - branch endpoints that represent terminals equal the live terminal position;
 - no committed segment enters a component body or overlaps another net's wire;
 - all terminal connectivity is represented by exactly one net;

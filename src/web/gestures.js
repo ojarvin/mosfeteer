@@ -358,7 +358,7 @@ export function pinJoinPoints(circuit, pins, carried = new Set()) {
   }
   const carriedNets = new Set(pins.map((pin) => pin.netId).filter(Boolean));
   for (const net of circuit.nets.values()) {
-    if (net.routingMode === 'fixed' || carriedNets.has(net.id)) continue;
+    if (carriedNets.has(net.id)) continue;
     const paths = net.paths();
     paths.forEach((path, index) => {
       if (path.length < 2) return;
@@ -370,7 +370,7 @@ export function pinJoinPoints(circuit, pins, carried = new Set()) {
       }
     });
   }
-  const managed = [...circuit.nets.values()].filter((net) => net.routingMode !== 'fixed' && !carriedNets.has(net.id));
+  const managed = [...circuit.nets.values()].filter((net) => !carriedNets.has(net.id));
   const points = new Map();
   for (const pin of pins) {
     const there = targets.get(`${pin.x},${pin.y}`);

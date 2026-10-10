@@ -301,7 +301,7 @@ it toward the semantic drain. Three-terminal `nmos`/`pmos` keep `{x:40,y:0}`.
 The component definitions and symbol tests are authoritative for full per-symbol
 geometry; the rules for how to lay them out are in `style-guide.md`.
 
-### Schematic browser editing hotkeys and fixed paths
+### Schematic browser editing hotkeys
 
 - `Ctrl/Cmd+C` copies the selected set; `Ctrl/Cmd+V` pastes it at the cursor with fresh ids.
   A copy also goes on the system clipboard, so `Ctrl/Cmd+V` pastes it into
@@ -328,11 +328,6 @@ geometry; the rules for how to lay them out are in `style-guide.md`.
 - While placing a component or copying a selection, hold `Alt` to pin a mirror
   axis and place the mirrored pair in one gesture. `Ctrl/Cmd+R` remains the
   explicit vertical-mirror transform; `Alt` is not a wire-symmetry mode.
-- Persisted nets with `routingMode: "fixed"` remain loadable, including
-  diagonal paths. Use the `net` command's fixed-path operations when inspecting
-  or deliberately editing them; managed routing does not convert a fixed net.
-- Moving a component re-anchors fixed-path endpoints without
-  autorouting; moving a complete selected set translates fixed paths with it.
 - `explain eval` is read-only and groups evaluator issues with repair hints for
   agent workflows. `explain connect A.t B.t` is a non-mutating dry run of the
   two-terminal router and reports its path, length, bends, and pin escapes.

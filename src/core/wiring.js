@@ -18,10 +18,10 @@ export function clonePath(path = [], allowDiagonal = false) {
   return allowDiagonal ? normalizePath(path, true) : normalizePath(orthogonalizePath(path));
 }
 
-/** Clone a protected direct-wire path without changing its shape. Direct wires
- * are still grid-snapped, but unlike managed paths their diagonal segments and
- * intentional intermediate collinear points are part of the saved geometry. */
-export function cloneFixedPath(path = []) {
+/** Clone a path without changing its shape: grid-snapped, consecutive
+ * duplicates dropped, but its diagonal segments and intermediate collinear
+ * points kept (clonePath normalizes them away). */
+export function cloneLiteralPath(path = []) {
   const out = [];
   for (const raw of path || []) {
     const p = { x: snap(raw.x), y: snap(raw.y) };
@@ -576,9 +576,7 @@ export function validateWiring(net) {
     for (const p of path) {
       if (p.x % GRID || p.y % GRID) errors.push(`branch ${bi} has off-grid point (${p.x},${p.y})`);
     }
-    if (net.routingMode !== 'fixed') {
-      try { wireSegments(path, net.allowDiagonal === true); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
-    }
+    try { wireSegments(path, net.allowDiagonal === true); } catch (err) { errors.push(`branch ${bi}: ${err.message}`); }
   }
   return errors;
 }

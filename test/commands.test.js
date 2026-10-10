@@ -441,7 +441,6 @@ test('cross creates two matched diagonal routes with one unsoldered central cros
   assert.equal(c.nets.size, 2);
   const nets = [...c.nets.values()];
   for (const net of nets) {
-    assert.equal(net.routingMode, 'managed');
     assert.equal(net.allowDiagonal, true);
     assert.equal(net.paths().length, 1);
     assert.equal(net.paths()[0].length, 2);
@@ -472,21 +471,6 @@ test('cross rejects non-rectangular or non-diagonal endpoint pairings', () => {
   const c = crossCircuit();
   assert.throws(() => runCommand(c, 'cross R1.a R3.a R2.a R4.a'), /invalid cross-coupling endpoints/);
   assert.equal(c.nets.size, 0);
-});
-
-test('fixed geometry commands edit legacy fixed paths without converting them to managed wires', () => {
-  const c = crossCircuit();
-  const net = c.wireDirectTo('R1.a', 'R2.a', [], { fixed: true });
-  const start = net.fixedPaths[0].start;
-  const end = net.fixedPaths[0].end;
-  runCommand(c, `net ${net.id} path 0 0 -160 80 0 240 160`);
-  runCommand(c, `net ${net.id} vertex 0 1 120 0`);
-  assert.equal(net.routingMode, 'fixed');
-  assert.deepEqual(net.fixedPaths[0].start, start);
-  assert.deepEqual(net.fixedPaths[0].end, end);
-  assert.deepEqual(net.fixedPaths[0].points, [
-    { x: 0, y: -160 }, { x: 120, y: 0 }, { x: 240, y: 160 },
-  ]);
 });
 
 test('a pin-attached diagonal stretches with its pin and restores when moved back', () => {
@@ -722,7 +706,6 @@ test('automatic routing rejects blocked paths while explicit orthogonal waypoint
     'R1.a', explicit.getComponent('R2').terminalWorld('a'),
     [{ x: 320, y: 0 }], { routeStyle: 'orthogonal' },
   );
-  assert.equal(net.routingMode, 'managed');
   assert.equal(net.allowDiagonal, false);
   assert.ok(evaluate(explicit).wireThroughBBoxes.some((x) => x.includes('through R1(resistor) bbox')));
 });
@@ -735,7 +718,6 @@ test('explicit diagonal waypoints preserve body drills for Check to report', () 
     'R1.a', c.getComponent('R2').terminalWorld('a'),
     [{ x: 200, y: -80 }, { x: 440, y: 80 }], { routeStyle: 'diagonal' },
   );
-  assert.equal(net.routingMode, 'managed');
   assert.equal(net.allowDiagonal, true);
   assert.ok(net.paths().some((path) => path.some((p, i) => i > 0 && p.x !== path[i - 1].x && p.y !== path[i - 1].y)));
   assert.ok(evaluate(c).wireThroughBBoxes.some((x) => x.includes('through R1(resistor) bbox')));
@@ -757,17 +739,6 @@ test('evaluate reports positive-span diagonal overlap between distinct nets', ()
     y1: 400,
   });
   assert.ok(rep.issues.some((issue) => issue.kind === 'cross-net-overlap'));
-});
-
-test('renaming and dropping terminals update fixed path anchors', () => {
-  const c = fresh();
-  c.addComponent('resistor', { refdes: 'R1', x: 80, y: 0 });
-  c.addComponent('resistor', { refdes: 'R2', x: 480, y: 400 });
-  const n = c.wireDirectTo('R1.b', 'R2.a', [], { fixed: true });
-  runCommand(c, 'rename R1 R9');
-  assert.deepEqual(n.fixedPaths[0].start, { comp: 'R9', term: 'b' });
-  runCommand(c, `net ${n.id} drop R9.b`);
-  assert.equal(n.fixedPaths[0].start, null);
 });
 
 test('evaluate() emits machine-usable issues for component overlap and dangling pins', () => {

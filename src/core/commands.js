@@ -136,7 +136,7 @@ const ISSUE_HINTS = {
   'label-component-overlap': 'Move the label into open space; keep its anchor attached if it is an electrical net label.',
   'label-overlap': 'Separate the labels or adjust their alignment so their text does not overlap.',
   'wire-through-body': 'Reroute the net around the component body; only a shared MOS gate bus may use the documented exception.',
-  'managed-diagonal': 'Redraw this net with F3 set to orthogonal; reserve diagonal geometry for deliberate fixed routes.',
+  'managed-diagonal': 'Redraw this net with F3 set to orthogonal; keep diagonal geometry for deliberately drawn diagonals.',
   'grid-violation': 'Move or edit the object onto the 40-unit grid.',
   'cross-net-overlap': 'Choose one physical net and move the other collinear span; crossings may cross transversely but must not overlap.',
   'malformed-net-label': 'Retarget the label to a drawable point on a named physical net, or convert it to a free annotation.',
@@ -339,8 +339,8 @@ export function evaluate(circuit) {
   // managed geometry (notably a diagonal route) would be silently repaired and
   // reported as clean.
   const evaluationPaths = (net) => {
-    if (net.routingMode === 'managed' && net.branches?.length) return net.branches;
-    if (net.routingMode === 'managed' && net.route?.length >= 2) return [net.route];
+    if (net.branches?.length) return net.branches;
+    if (net.route?.length >= 2) return [net.route];
     return net.paths();
   };
   const nets = [];
@@ -370,7 +370,7 @@ export function evaluate(circuit) {
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1];
         const b = pts[i];
-        if (a.x !== b.x && a.y !== b.y && net.routingMode === 'managed' && !net.allowDiagonal) {
+        if (a.x !== b.x && a.y !== b.y && !net.allowDiagonal) {
           const message = `net ${net.id} diagonal (${a.x},${a.y})-(${b.x},${b.y})`;
           const refs = [...new Set([...refsAt(a), ...refsAt(b)])];
           diagonalViolations.push(message);
@@ -476,7 +476,7 @@ export function commandHelp() {
     '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
-    '  net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction ... - manage a net',
+    '  net <id> add|drop|name|label|bitcount|rm|segment-rm ... - manage a net',
     '  net <id> bitcount on|off       - show a bus net\'s bit count beside its slashes',
     '                                   net N1 add R1.a ; net N1 drop R2.b ;',
     '                                   net N1 name OUT ; net N1 rm',
@@ -1306,7 +1306,6 @@ function netCommand(circuit, pos, result) {
     for (let i = 0; i < net.terminals.length; i++) {
       const t = net.terminals[i];
       if (`${t.comp}.${t.term}` === pos[2]) {
-        circuit._dropFixedAnchor(net, t);
         net.terminals.splice(i, 1);
         if (net.terminals.length === 0) circuit.removeNet(net);
         else if (net.terminals.length > 1) routeNet(circuit, net);
@@ -1335,41 +1334,9 @@ function netCommand(circuit, pos, result) {
     const remaining = circuit.nets.get(net.id);
     return result(`deleted segment ${branch}:${segment} from net ${net.id}`, remaining?.toJSON() || null, true);
   }
-  if (op === 'vertex' || op === 'vertex-set') {
-    const path = Number(pos[2]);
-    const vertex = Number(pos[3]);
-    const x = Number(pos[4]);
-    const y = Number(pos[5]);
-    if (![path, vertex, x, y].every(Number.isFinite) || !Number.isInteger(path) || !Number.isInteger(vertex)) {
-      throw new Error('usage: net <id> vertex PATH VERTEX X Y');
-    }
-    circuit.setFixedPathVertex(net.id, path, vertex, { x, y });
-    return result(`moved fixed vertex ${path}:${vertex} on net ${net.id}`, net.toJSON(), true);
-  }
-  if (op === 'path' || op === 'path-set') {
-    const path = Number(pos[2]);
-    const coords = pos.slice(3).map(Number);
-    if (!Number.isInteger(path) || path < 0 || coords.length < 4 || coords.length % 2 !== 0 || !coords.every(Number.isFinite)) {
-      throw new Error('usage: net <id> path PATH X1 Y1 X2 Y2 [...]');
-    }
-    const points = [];
-    for (let i = 0; i < coords.length; i += 2) points.push({ x: coords[i], y: coords[i + 1] });
-    circuit.setFixedPath(net.id, path, points);
-    return result(`replaced fixed path ${path} on net ${net.id}`, net.toJSON(), true);
-  }
-  if (op === 'junction' || op === 'junction-set') {
-    const junction = Number(pos[2]);
-    const x = Number(pos[3]);
-    const y = Number(pos[4]);
-    if (!Number.isInteger(junction) || !Number.isFinite(x) || !Number.isFinite(y)) {
-      throw new Error('usage: net <id> junction INDEX X Y');
-    }
-    circuit.setFixedJunction(net.id, junction, { x, y });
-    return result(`moved fixed junction ${junction} on net ${net.id}`, net.toJSON(), true);
-  }
   if (op === 'rm') {
     circuit.removeNet(net);
     return result(`removed net ${net.id}`, null, true);
   }
-  throw new Error('usage: net <id> add|drop|name|label|rm|segment-rm|path|vertex|junction');
+  throw new Error('usage: net <id> add|drop|name|label|bitcount|rm|segment-rm');
 }

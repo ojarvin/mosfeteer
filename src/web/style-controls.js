@@ -6,6 +6,7 @@
 
 import { defaultArrowhead, polylineArrowheadStyles, polylineArrowheadValue, arrowheadEnds } from '../core/line-style.js';
 import { colorToken } from '../core/style.js';
+import { Net } from '../core/model.js';
 import { componentContextMenuEl } from './elements.js';
 import { ICON_PATHS } from './icons.js';
 import { logLine } from './status-bar-ui.js';
@@ -74,7 +75,7 @@ export function styleDefaults(field) {
 
 function arrowheadKind(object) {
   if (object?.kind === 'arrow' || object?.kind === 'line') return object.kind;
-  if (object?.routingMode) return 'wire';
+  if (object instanceof Net) return 'wire';
   return null;
 }
 
@@ -106,7 +107,7 @@ export function wireStyleValue(net, key, field) {
 
 function objectStyleValue(object, field) {
   if (field === 'arrowhead' && supportsArrowhead(object)) {
-    if (object?.routingMode) {
+    if (object instanceof Net) {
       return object.paths?.().length === 1
         ? singlePathArrowheadValue(object)
         : object.style?.arrowhead || defaultArrowhead('wire');
@@ -204,13 +205,13 @@ function applyStyleToSelected(style) {
     for (const obj of objects) {
       const next = { ...(obj.style || {}) };
       for (const field of ['color', 'lineStyle', 'width', 'arrowhead']) {
-        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj.routingMode) &&
+        if (style[field] !== undefined && (field !== 'lineStyle' || ['arrow', 'box', 'line'].includes(obj.kind) || obj instanceof Net) &&
             (field !== 'arrowhead' || supportsArrowhead(obj))) {
           next[field] = style[field];
         }
       }
       if (style.color !== undefined && typeof obj.setColor === 'function') obj.setColor(style.color);
-      if (obj.routingMode) applyNetStyle(obj, next);
+      if (obj instanceof Net) applyNetStyle(obj, next);
       else obj.style = { ...(obj.style || {}), ...next };
     }
     for (const { net, key } of wireTargets) {
@@ -243,10 +244,10 @@ function applySelectedStyle(field, value) {
   const next = value || styleDefaults(field);
   commit(() => {
     for (const obj of objects) {
-      if (field === 'lineStyle' && !['arrow', 'box', 'line'].includes(obj.kind) && !obj.routingMode) continue;
+      if (field === 'lineStyle' && !['arrow', 'box', 'line'].includes(obj.kind) && !(obj instanceof Net)) continue;
       if (field === 'arrowhead' && !supportsArrowhead(obj)) continue;
       if (field === 'color' && typeof obj.setColor === 'function') obj.setColor(next);
-      else if (obj.routingMode) applyNetStyle(obj, { [field]: next });
+      else if (obj instanceof Net) applyNetStyle(obj, { [field]: next });
       else obj.style = { ...(obj.style || {}), [field]: next };
     }
     for (const { net, key } of wireTargets) {
