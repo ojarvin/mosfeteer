@@ -25,7 +25,7 @@ import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeInOutCubic, wheelIntent, lerpView, zoomView } from './gestures.js';
 import { editor } from './editor-state.js';
 import {
-  addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, startNewDocument,
+  addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument,
 } from './document-session.js';
 import { fittedView } from './canvas-view.js';
 import { toggleTheme } from './toolbar-ui.js';
@@ -908,8 +908,25 @@ async function saveTags(entry, text) {
   if (tagsText(tags) === tagsText(entry.index?.tags)) return;
   try {
     if (entry.current) {
+      // The open design is saved with its new tags as any other would be:
+      // whole when nothing else is unsaved, else only its tags go to the file.
+      const clean = !hasUnsavedChanges();
       setDocumentTags(text);
       entry.index = designIndex(editor.circuit);
+      if (!editor.currentDocumentPath) logLine(`${entry.name}: tags set; save the design to keep them`);
+      else if (clean) await saveCircuit();
+      else {
+        editor.syncGeneration += 1;
+        const data = await persistence.load(editor.currentDocumentPath);
+        const document = { ...data.state };
+        if (tags.length) document.tags = tags;
+        else delete document.tags;
+        const saved = await persistence.save({ path: editor.currentDocumentPath }, document, { overwrite: true });
+        editor.lastSeenRevision = saved?.revision || null;
+        editor.lastCircuitTag = saved?.etag || null;
+        editor.syncGeneration += 1;
+        logLine(`${entry.name}: ${tags.length ? tags.map((tag) => `#${tag}`).join(' ') : 'tags cleared'} (saved to the file; the design's other changes are still unsaved)`);
+      }
     } else {
       const data = await persistence.load(entry.path);
       const document = { ...data.state };
