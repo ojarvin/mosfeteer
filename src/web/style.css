@@ -854,7 +854,7 @@ button:disabled {
   text-decoration: underline;
 }
 
-.analysis-dock .signal-flow-optimize-constraints {
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-constraints {
   width: 100%;
   font-family: var(--font-mono);
 }
@@ -893,72 +893,97 @@ button:disabled {
   padding: 8px 16px 14px;
 }
 
-/* The oscilloscope (scope-window.js): its stimulus, the plot, the nets. */
-.scope-window {
+/* The Plots window (plots-window.js): a signal-flow diagram's plots, a tab
+   per view; the time view (time-plot.js) fills the window's height. */
+.plots-window {
   width: min(40rem, calc(100% - 16px));
-  height: min(30rem, calc(100% - 16px));
+  height: min(34rem, calc(100% - 16px));
+  min-width: 300px;
   min-height: 18rem;
 }
 
-.scope-body {
+.plots-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+}
+
+.signal-flow-plots-view {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   gap: 8px;
   min-height: 0;
-  padding: 10px 12px 12px;
 }
 
-.scope-controls {
+.signal-flow-plots-view > * {
+  min-width: 0;
+}
+
+.signal-flow-time {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--text-sm);
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 16rem;
 }
 
-.scope-controls label {
-  color: var(--text-dim);
+.signal-flow-time[hidden] {
+  display: none;
 }
 
-.scope-field {
-  width: 5.5em;
-  height: var(--control-h-sm);
-}
-
-.scope-plot {
+.time-plot {
   flex: 1 1 auto;
   min-height: 8rem;
 }
 
-.scope-nets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  max-height: 5.5em;
-  overflow-y: auto;
+/* The nets a plot shows (net-picker.js): columns that wrap, all in view. */
+.net-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+  gap: 2px 10px;
   font-size: var(--text-sm);
 }
 
-.scope-net {
-  display: inline-flex;
+:is(.analysis-dock, .plots-window) .net-pick {
+  display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  min-height: 22px;
+  min-width: 0;
+  color: var(--text);
   cursor: pointer;
 }
 
-.scope-status {
+.net-pick-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.net-pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time-status {
   flex: 1 1 auto;
   margin: 0;
 }
 
-.scope-actions {
+.time-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.scope-annotate {
+.time-annotate {
   flex: none;
 }
 
@@ -1764,7 +1789,7 @@ button:disabled {
 }
 
 /* The analysis window is tall and resizable from its corner. */
-.analysis-dock {
+:is(.analysis-dock, .plots-window) {
   width: min(440px, calc(100% - 16px));
   height: calc(100% - 16px);
   min-width: 300px;
@@ -1811,13 +1836,13 @@ button:disabled {
   min-width: 0;
 }
 
-.analysis-dock .analysis-pick {
+:is(.analysis-dock, .plots-window) .analysis-pick {
   flex: none;
   height: 30px;
   color: var(--text-dim);
 }
 
-.analysis-dock .analysis-pick[aria-pressed="true"] {
+:is(.analysis-dock, .plots-window) .analysis-pick[aria-pressed="true"] {
   color: var(--accent);
   border-color: transparent;
   background: var(--accent-tint);
@@ -1865,20 +1890,20 @@ button:disabled {
   gap: 8px;
 }
 
-.analysis-dock label {
+:is(.analysis-dock, .plots-window) label {
   color: var(--text-dim);
   font-size: var(--text-sm);
 }
 
-.analysis-dock label {
+:is(.analysis-dock, .plots-window) label {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.analysis-dock input,
-.analysis-dock select,
-.analysis-dock textarea {
+:is(.analysis-dock, .plots-window) input,
+:is(.analysis-dock, .plots-window) select,
+:is(.analysis-dock, .plots-window) textarea {
   width: 100%;
   box-sizing: border-box;
   color: var(--text);
@@ -1888,19 +1913,29 @@ button:disabled {
   background: var(--bg-panel);
 }
 
-.analysis-dock input,
-.analysis-dock select {
+:is(.analysis-dock, .plots-window) input,
+:is(.analysis-dock, .plots-window) select {
   min-height: var(--control-h);
   padding: 0 8px;
 }
 
-.analysis-dock textarea {
+/* A checkbox or radio keeps its own size, whatever the fields around it. */
+:is(.analysis-dock, .plots-window) input:is([type="checkbox"], [type="radio"]) {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+:is(.analysis-dock, .plots-window) textarea {
   resize: vertical;
   min-height: 64px;
   padding: 6px;
 }
 
-.analysis-dock legend {
+:is(.analysis-dock, .plots-window) legend {
   float: left;
   width: 100%;
   margin: 0 0 2px;
@@ -1912,7 +1947,7 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.analysis-dock fieldset {
+:is(.analysis-dock, .plots-window) fieldset {
   display: grid;
   gap: 8px;
   margin: 0;
@@ -1922,44 +1957,44 @@ button:disabled {
   padding: 10px 12px;
 }
 
-.analysis-dock fieldset label {
+:is(.analysis-dock, .plots-window) fieldset label {
   color: var(--text-dim);
 }
 
-.analysis-dock .analysis-approximations label {
+:is(.analysis-dock, .plots-window) .analysis-approximations label {
   flex-direction: row;
   align-items: center;
   gap: 7px;
 }
 
-.analysis-dock .analysis-approximations input[type="checkbox"] {
+:is(.analysis-dock, .plots-window) .analysis-approximations input[type="checkbox"] {
   width: auto;
   min-height: 0;
 }
 
-.analysis-dock .analysis-noise-sources {
+:is(.analysis-dock, .plots-window) .analysis-noise-sources {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
 }
 
-.analysis-dock .analysis-noise-sources[hidden] {
+:is(.analysis-dock, .plots-window) .analysis-noise-sources[hidden] {
   display: none;
 }
 
-.analysis-dock .math-inline {
+:is(.analysis-dock, .plots-window) .math-inline {
   color: var(--text);
   font-family: "Latin Modern Math", "Computer Modern", "CMU Serif", "STIX Two Math", "Cambria Math", "DejaVu Serif", serif;
 }
 
-.analysis-dock .field-hint {
+:is(.analysis-dock, .plots-window) .field-hint {
   margin-top: 4px;
   font-size: var(--text-xs);
 }
 
 /* A hint stands a little below what it explains; in a container that
    spaces its rows already, it pulls up to sit as close. */
-.analysis-dock :is(fieldset, .signal-flow-optimize-group, .signal-flow-plots) > .field-hint {
+:is(.analysis-dock, .plots-window) :is(fieldset, .signal-flow-optimize-group, .signal-flow-plots) > .field-hint {
   margin-top: -4px;
 }
 
@@ -2100,7 +2135,7 @@ button:disabled {
   font-weight: 400;
 }
 
-.analysis-dock .analysis-annotate-toggle {
+:is(.analysis-dock, .plots-window) .analysis-annotate-toggle {
   flex: none;
   width: auto;
   min-height: 0;
@@ -2109,7 +2144,7 @@ button:disabled {
   cursor: pointer;
 }
 
-.analysis-dock .analysis-equation-label .analysis-annotate-toggle {
+:is(.analysis-dock, .plots-window) .analysis-equation-label .analysis-annotate-toggle {
   margin-right: 6px;
   vertical-align: -2px;
 }
@@ -2231,7 +2266,7 @@ button:disabled {
   font: var(--text-sm)/1.45 var(--font-ui);
 }
 
-.analysis-dock .math-inline {
+:is(.analysis-dock, .plots-window) .math-inline {
   font-size: 1.15em;
 }
 
@@ -6544,7 +6579,7 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 /* "Loop gain at" stays on one line beside its select. */
-.analysis-dock .analysis-loop-row {
+:is(.analysis-dock, .plots-window) .analysis-loop-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -6741,8 +6776,8 @@ body.chrome-away [data-editor-edge="right"] {
   cursor: pointer;
 }
 
-.analysis-dock .signal-flow-optimize-nkind,
-.analysis-dock .signal-flow-swing-controls .signal-flow-optimize-nkind {
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-nkind,
+:is(.analysis-dock, .plots-window) .signal-flow-swing-controls .signal-flow-optimize-nkind {
   flex: none;
   width: 3.4em;
   min-width: 0;
@@ -6759,8 +6794,8 @@ body.chrome-away [data-editor-edge="right"] {
   gap: 4px;
 }
 
-.analysis-dock .signal-flow-round-limits .signal-flow-optimize-bound,
-.analysis-dock .signal-flow-optimize-fractions-n .signal-flow-optimize-bound {
+:is(.analysis-dock, .plots-window) .signal-flow-round-limits .signal-flow-optimize-bound,
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-fractions-n .signal-flow-optimize-bound {
   flex: none;
   width: 4.5em;
   min-height: var(--control-h-sm);
@@ -6908,7 +6943,7 @@ body.chrome-away [data-editor-edge="right"] {
   top: 44px;
 }
 
-/* The plot area: one card, its view switch on top. */
+/* The plots card: the signal band, and the button to the Plots window. */
 .signal-flow-plots {
   display: grid;
   /* A long equation scrolls in its row instead of widening the plots. */
@@ -6923,6 +6958,22 @@ body.chrome-away [data-editor-edge="right"] {
 .signal-flow-plots > *,
 .signal-flow-loop-body {
   min-width: 0;
+}
+
+.signal-flow-plots-open {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.signal-flow-plots-open .field-hint {
+  margin: 0;
+}
+
+.signal-flow-plots-empty[hidden],
+.signal-flow-plots-head[hidden] {
+  display: none;
 }
 
 .signal-flow-loop,
@@ -7057,7 +7108,7 @@ body.chrome-away [data-editor-edge="right"] {
   padding: 10px 12px;
 }
 
-.analysis-dock .signal-flow-optimize .signal-flow-spectrum-toggle {
+:is(.analysis-dock, .plots-window) .signal-flow-optimize .signal-flow-spectrum-toggle {
   display: inline-flex;
   flex-direction: row;
   align-items: center;
@@ -7124,8 +7175,8 @@ body.chrome-away [data-editor-edge="right"] {
   font-weight: 600;
 }
 
-.analysis-dock .signal-flow-optimize-bound,
-.analysis-dock .signal-flow-optimize-coefficient input {
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-bound,
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-coefficient input {
   padding: 0 5px;
 }
 
@@ -7149,7 +7200,7 @@ body.chrome-away [data-editor-edge="right"] {
   }
 }
 
-.analysis-dock .signal-flow-optimize-coefficient select {
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-coefficient select {
   width: 100%;
   min-width: 0;
 }
@@ -7161,13 +7212,13 @@ body.chrome-away [data-editor-edge="right"] {
   gap: 4px 6px;
 }
 
-.analysis-dock .signal-flow-optimize-spec select {
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-spec select {
   width: auto;
   flex: 0 1 auto;
   min-width: 0;
 }
 
-.analysis-dock .signal-flow-optimize-field {
+:is(.analysis-dock, .plots-window) .signal-flow-optimize-field {
   width: 4.5rem;
   flex: 0 0 4.5rem;
 }
@@ -7245,65 +7296,48 @@ body.chrome-away [data-editor-edge="right"] {
   font-size: var(--text-md);
 }
 
-/* The swing sweep's controls: source, frequency, and the run button on one line. */
-.signal-flow-swing-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-}
-
-.analysis-dock .signal-flow-swing-controls select {
-  flex: 1 1 5rem;
-  width: auto;
-  min-width: 5rem;
-}
-
-.analysis-dock .signal-flow-swing-controls .signal-flow-locus-range,
-.analysis-dock .signal-flow-swing-controls .signal-flow-swing-frequency {
-  flex: 0 0 5.5rem;
-  width: 5.5rem;
-}
-
+/* An inline row of fields -- the swing's, the locus's, the loop's, the time
+   view's, the signal band, the spectrum: words and small fields on one line,
+   wrapping as a sentence does. Every such field has one size. */
+.signal-flow-swing-controls,
 .signal-flow-band {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.signal-flow-spectrum {
-  justify-content: flex-start;
   flex-wrap: wrap;
-}
-
-.analysis-dock .signal-flow-spectrum .signal-flow-spectrum-toggle {
-  display: inline-flex;
-  flex-direction: row;
   align-items: center;
-  gap: 6px;
-}
-
-.analysis-dock .signal-flow-spectrum-toggle input {
-  width: auto;
-  min-height: 0;
-}
-
-.signal-flow-band label {
-  color: var(--text-dim);
+  gap: 4px 6px;
   font-size: var(--text-sm);
 }
 
-.analysis-dock .signal-flow-band .signal-flow-band-field {
-  width: 4.5rem;
-  min-height: 24px;
-  padding: 2px 6px;
-}
-
-.signal-flow-swing-controls label {
+:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) label {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
   color: var(--text-dim);
   white-space: nowrap;
 }
+
+:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) :is(input[type="text"], select, button) {
+  flex: none;
+  height: var(--control-h-sm);
+  min-height: 0;
+  padding: 0 6px;
+  font-size: var(--text-sm);
+}
+
+:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) input[type="text"] {
+  width: 5rem;
+}
+
+:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) select {
+  width: auto;
+  max-width: 11rem;
+}
+
+:is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) button {
+  padding: 0 10px;
+}
+
 
 .signal-flow-swing-plot .signal-flow-plot {
   margin-top: 6px;

@@ -1090,7 +1090,7 @@ function normalizeStepPlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : []).filter((p) => finite(p?.t) && finite(p?.y)).slice(0, 4000).map((p) => ({ t: round(p.t, 6), y: round(p.y, 6) })),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  // A waveform (the oscilloscope's) is drawn as a step response is, in time.
+  // A waveform (the time-domain plot's) is drawn as a step response is, in time.
   return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
 }
 

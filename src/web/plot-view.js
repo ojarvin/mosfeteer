@@ -1,7 +1,7 @@
 /**
  * The one interactive plot every analysis view uses (responses, steps,
  * swing, root locus, loop gain, Bode, the optimizer's run, the
- * oscilloscope). It draws a spec (core/plot-spec.js) as SVG at its own
+ * time view). It draws a spec (core/plot-spec.js) as SVG at its own
  * size and lets it be looked into:
  *
  * - drag pans;

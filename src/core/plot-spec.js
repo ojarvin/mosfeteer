@@ -151,7 +151,7 @@ export function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText 
 }
 
 /**
- * Waveforms in time (the oscilloscope): each net's samples against the
+ * Waveforms in time (the time-domain plot): each net's samples against the
  * sample index n, or time t in units of T_s. `traces`: `[{ label, color,
  * values, stairs }]`; `start` is the first sample's n.
  */

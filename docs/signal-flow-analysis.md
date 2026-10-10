@@ -125,8 +125,19 @@ document (it shows as unsaved) without marking the derived equations stale
 let go, a value typed, the optimizer's Apply -- is one undo step; undoing
 it shows the numbers again and keeps the equations current.
 
-Every plot in the window -- the graph, the step, swing, locus, and loop
-views, the optimizer's run, the Bode tab -- is one interactive plot
+The plots are in a window of their own, **Plots** (`Shift+W`, its
+toolbar button, or More; `src/web/plots-window.js`), a tab per view:
+Magnitude, Phase, Step, Locus, Swing, Loop, and Time. Derive opens it,
+unless it was closed since it was last shown; **Show plots** in the
+analysis window's Plots card (which holds the signal band) opens it too.
+The Loop tab is offered only for a diagram with feedback
+(`feedbackSignals`), and only signals on a loop are offered to break it;
+the simulated output spectrum (on the Magnitude tab) only for a diagram
+with a quantizer. The swing's and the time view's nets are picked in one
+picker (`src/web/net-picker.js`), every net in view.
+
+Every plot -- the graph, the step, swing, locus, loop, and time views, the
+optimizer's run, the Bode tab -- is one interactive plot
 (`src/web/plot-view.js`, its specs in `src/core/plot-spec.js`): drag pans,
 right-drag zooms to a box (a flat stroke along x only, a tall one along y
 only), a right-click steps back out, Ctrl+wheel or a pinch zooms, a
@@ -136,8 +147,7 @@ band, and again across whatever range a zoom shows (`responsePlot`'s
 `detail`), so a narrow band's ripple is drawn from its own points. A plot
 annotation keeps the whole-range figure the window had before zooming.
 
-The **Oscilloscope** (beside the plot views, `Shift+W`, or More; its own
-window, `src/web/scope-window.js`) shows the diagram's nets in time: a
+The **Time** tab (`src/web/time-plot.js`) shows the diagram's nets in time: a
 sine of the amplitude (dBFS) and frequency (f/fs, blank for the band's
 middle) set there drives one source, the diagram runs as the swing does
 (simulate.js, dither included) for 256 to 16384 samples after up to 1024
@@ -327,7 +337,7 @@ measures rewards dither -- the transfer functions do not hold its gain and
 the swing test only grows with it -- so fix that gain rather than leave it
 free (a free one is driven down, or zeroed as one that barely matters).
 The transfer functions take it as a source, an input of its own; the
-simulations (swing, spectrum, oscilloscope, the optimizer's swing test)
+simulations (swing, spectrum, time view, the optimizer's swing test)
 draw its numbers, the same sequence every run so runs compare like for
 like. It feeds the sampled side only. A loop with few levels and a small
 input idles in limit cycles -- tones and a floor that strays from the
@@ -348,7 +358,7 @@ them all alike, each from its own corner; a plot below (or right of)
 another selected one moves on by its growth, so a column of plots keeps its
 spacing.
 
-**Update plots** (beside the view switch) redraws every plot on the
+**Update plots** (in the analysis window's footer, beside Derive) redraws every plot on the
 drawing at the coefficients' numbers now, in one undo step: a graph or step
 plot from the traces of the same names (one naming a trace no longer on the
 graph is left as it is), a loop plot at the signal it was broken at, a root

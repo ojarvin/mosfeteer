@@ -2,8 +2,8 @@
  * What the editor's windows show for one design, saved with it
  * (`Circuit#windows`), so another design opens with its own and this one
  * comes back as it was left: the reference windows (designs by path and
- * name, or pasted pictures), the calculator's past results, the oscilloscope's
- * nets, and the small-signal analysis form.
+ * name, or pasted pictures), the calculator's past results, the time-domain
+ * plot's nets and stimulus, and the small-signal analysis form.
  *
  * It is window state, not drawing: an undo or redo keeps it as it is
  * (main.js `applyJson`), and changing it is a settings change that marks the
@@ -58,7 +58,7 @@ export function normalizeWindows(value) {
     const history = (Array.isArray(calculator.history) ? calculator.history : []).map(calculatorEntry).filter(Boolean).slice(-CALCULATOR_HISTORY);
     if (history.length) windows.calculator = { history };
   }
-  // The oscilloscope: the nets it shows (signal keys) and its stimulus --
+  // The time-domain plot (kept as `scope`): the nets it shows (signal keys) and its stimulus --
   // the source the sine drives, its amplitude (dBFS) and frequency (f/fs)
   // as typed, and how many samples it runs.
   const scope = object(source.scope);
@@ -67,7 +67,7 @@ export function normalizeWindows(value) {
     const samples = Math.round(Number(scope.samples));
     windows.scope = {
       nets,
-      // The nets were picked (none, too); without it the scope picks its own.
+      // The nets were picked (none, too); without it the plot picks its own.
       ...(scope.chosen === true ? { chosen: true } : {}),
       ...(samples > 0 ? { samples: Math.max(64, Math.min(samples, 1 << 16)) } : {}),
       ...(text(scope.input) ? { input: text(scope.input) } : {}),
@@ -75,7 +75,7 @@ export function normalizeWindows(value) {
       ...(text(scope.frequency, 40) ? { frequency: text(scope.frequency, 40) } : {}),
     };
   }
-  // The small-signal form: analysis-options.js reads (and migrates) it.
+  // The small-signal form: analysis-options.js reads it.
   const analysis = object(source.analysis);
   if (analysis && JSON.stringify(analysis).length <= 100_000) windows.analysis = JSON.parse(JSON.stringify(analysis));
   return windows;

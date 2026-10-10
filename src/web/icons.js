@@ -76,6 +76,7 @@ export const ICON_PATHS = {
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
   timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
+  plots: '<path d="M4 3.5v16.5h16.5"/><path d="M7 15.5c2.5-7 4.5-7 6.5-2.5s3 3 5.5-5"/>',
   calculator: '<rect x="5.5" y="3.5" width="13" height="17" rx="2"/><path d="M8.5 7.5h7"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01" stroke-width="2.4" stroke-linecap="round"/>',
   renumber: '<path d="M4 4h3v6M4 10h6"/><path d="M11 11l8 8m0-5v5h-5"/>',
   stub: '<path d="M4.5 12h6"/><circle cx="4" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M11 8.5h6.5l3 3.5-3 3.5H11z" fill="currentColor" fill-opacity=".16"/>',

@@ -42,13 +42,14 @@ test('beats, timing, and analysis are floating windows with one title bar and a 
 
 test('the toolbar groups the windows, and More lists them too', () => {
   const group = html.slice(html.indexOf('class="toolbar-cluster window-cluster"'), html.indexOf('class="toolbar-cluster view-cluster"'));
-  assert.deepEqual([...group.matchAll(/<button id="([^"]+)"/g)].map((m) => m[1]), ['btn-window-beats', 'btn-window-timing', 'btn-analysis', 'btn-window-reference', 'btn-window-calculator']);
+  assert.deepEqual([...group.matchAll(/<button id="([^"]+)"/g)].map((m) => m[1]), ['btn-window-beats', 'btn-window-timing', 'btn-analysis', 'btn-window-plots', 'btn-window-reference', 'btn-window-calculator']);
   const more = html.slice(html.indexOf('id="document-menu"'), html.indexOf('class="toolbar-spacer"'));
   assert.match(more, /id="btn-beats"/);
   assert.match(more, /id="btn-timing-diagram"/);
   assert.match(more, /data-proxy-for="btn-analysis"[^>]*>Small-signal analysis/);
   assert.match(more, /data-proxy-for="btn-window-reference"[^>]*>Reference windows/);
   assert.match(more, /data-proxy-for="btn-window-calculator"[^>]*>Calculator/);
+  assert.match(more, /data-proxy-for="btn-window-plots"[^>]*>Plots/);
   // A folded toolbar drops the group: More has every window.
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
   assert.match(css, /data-compact~="fold"\] :is\([^)]*\.window-cluster/);

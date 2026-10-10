@@ -53,7 +53,7 @@ test('the theme is a setting, and a narrow window keeps its controls inside', ()
 test('every card opens with the same header, inside it; headings within a card are quieter', () => {
   const css = read('style.css');
   // A fieldset's legend is the card's first line, in the section-label style, in every window.
-  for (const legend of ['.analysis-dock legend', '.export-dialog legend']) {
+  for (const legend of [':is(.analysis-dock, .plots-window) legend', '.export-dialog legend']) {
     const rule = css.slice(css.indexOf(`${legend} {`), css.indexOf('}', css.indexOf(`${legend} {`)));
     assert.match(rule, /float: left;[\s\S]*width: 100%;[\s\S]*text-transform: uppercase;/);
   }
@@ -73,8 +73,8 @@ test('every card opens with the same header, inside it; headings within a card a
 
 test('a hint stands below what it explains, pulled up only inside a spaced container', () => {
   const css = read('style.css');
-  assert.match(css, /\.analysis-dock \.field-hint \{[^}]*margin-top: 4px;/);
-  assert.match(css, /\.analysis-dock :is\(fieldset, \.signal-flow-optimize-group, \.signal-flow-plots\) > \.field-hint \{\s*margin-top: -4px;/);
+  assert.match(css, /:is\(\.analysis-dock, \.plots-window\) \.field-hint \{[^}]*margin-top: 4px;/);
+  assert.match(css, /:is\(\.analysis-dock, \.plots-window\) :is\(fieldset, \.signal-flow-optimize-group, \.signal-flow-plots\) > \.field-hint \{\s*margin-top: -4px;/);
 });
 
 test('Update plots sits in the footer beside Derive; explanations open while the optimizer runs', () => {

@@ -255,7 +255,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
     ['Shift+S', 'show or hide the small-signal analysis window'],
     ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
-    ['Shift+W', 'show or hide the oscilloscope: a signal-flow diagram\'s nets in time; drag pans, right-drag zooms (a flat stroke time only), the wheel zooms'],
+    ['Shift+W', 'show or hide the plots of a signal-flow diagram: responses, step, root locus, swing, loop gain, and the nets in time; drag pans, right-drag zooms, double-click fits'],
     ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall, clear starts afresh'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],

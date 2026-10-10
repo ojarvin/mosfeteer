@@ -291,6 +291,43 @@ export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph
   return { ok: true, variable, output: { key: output.key, name: output.display }, entries, issues: [] };
 }
 
+/** The keys of the signals on a feedback loop: those from which a path
+ *  through the diagram's parts leads back to themselves. */
+export function feedbackSignals(circuit, graph = signalFlowGraph(circuit)) {
+  const drives = new Map(); // a part -> the signals it drives
+  for (const signal of graph.signals.values()) {
+    if (!signal.driver || signal.driver.source) continue;
+    if (!drives.has(signal.driver.comp)) drives.set(signal.driver.comp, []);
+    drives.get(signal.driver.comp).push(signal.key);
+  }
+  const next = new Map([...graph.signals.values()].map((signal) => [signal.key, signal.readers.flatMap((reader) => drives.get(reader.comp) || [])]));
+  const onLoop = new Set();
+  for (const start of next.keys()) {
+    const seen = new Set();
+    const stack = [...next.get(start)];
+    while (stack.length) {
+      const key = stack.pop();
+      if (key === start) { onLoop.add(start); break; }
+      if (seen.has(key)) continue;
+      seen.add(key);
+      stack.push(...(next.get(key) || []));
+    }
+  }
+  return onLoop;
+}
+
+/** The signals a loop can be broken at: driven ones on a feedback loop,
+ *  sampled ones only in a diagram with a sampler; a quantizer's output first.
+ *  None for a diagram without feedback. */
+export function loopBreakSignals(circuit) {
+  const graph = signalFlowGraph(circuit);
+  const looped = feedbackSignals(circuit, graph);
+  const domains = [...circuit.components.values()].some((c) => c.type === 'sampler') ? signalDomains({ circuit, signals: graph.signals }) : null;
+  const driven = [...graph.signals.values()].filter((s) => looped.has(s.key) && s.driver && !s.driver.source && (!domains?.ok || domains.domain.get(s.key) === 'z'));
+  const quantized = driven.filter((s) => circuit.components.get(s.driver.comp)?.type === 'quantizer');
+  return [...quantized, ...driven.filter((s) => !quantized.includes(s))];
+}
+
 /**
  * The loop gain at a signal: the loop broken there, 1 injected into what
  * reads it (every source at zero), and T = -(what its driver returns), the
@@ -300,15 +337,6 @@ export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph
  * T, an exact rational, or for a sampled loop a sampled result -- or a
  * failure.
  */
-/** The signals a loop can be broken at: driven ones, sampled ones only in
- *  a diagram with a sampler; a quantizer's output first. */
-export function loopBreakSignals(circuit) {
-  const graph = signalFlowGraph(circuit);
-  const domains = [...circuit.components.values()].some((c) => c.type === 'sampler') ? signalDomains({ circuit, signals: graph.signals }) : null;
-  const driven = [...graph.signals.values()].filter((s) => s.driver && !s.driver.source && (!domains?.ok || domains.domain.get(s.key) === 'z'));
-  const quantized = driven.filter((s) => circuit.components.get(s.driver.comp)?.type === 'quantizer');
-  return [...quantized, ...driven.filter((s) => !quantized.includes(s))];
-}
 
 export function loopGain(circuit, { breakAt, values = {} } = {}) {
   const graph = signalFlowGraph(circuit);

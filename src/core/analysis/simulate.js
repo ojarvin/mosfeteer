@@ -448,7 +448,7 @@ export function prepareSimulation(circuit, options = {}) {
    *  window, `levels` (true, or a list of signal indices) those nets'
    *  magnitudes at each sample (`magnitudes`, by index, for quantiles);
    *  `phase` (radians) where the sine starts; `waves` (signal indices)
-   *  those nets' values over the window for the oscilloscope (`waves`, one
+   *  those nets' values over the window for the time-domain plot (`waves`, one
    *  `{ index, t, v }` each, t in sample periods from the window's start: a
    *  sampled net once a sample, a continuous one at the sub-steps too). */
   const run = (amplitudeDb, { record = false, levels = false, phase = 0, waves = [] } = {}) => {

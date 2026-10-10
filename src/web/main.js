@@ -80,7 +80,7 @@ import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncMod
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
-import { toggleScope } from './scope-window.js';
+import { togglePlots } from './plots-window.js';
 import { copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
@@ -6748,9 +6748,9 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // Shift+W: the oscilloscope (W for waveforms), open or closed.
+  // Shift+W: the plots window (W for waveforms), open or closed.
   if (key === 'W') {
-    toggleScope();
+    togglePlots();
     return;
   }
 
