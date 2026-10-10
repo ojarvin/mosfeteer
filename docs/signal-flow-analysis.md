@@ -124,6 +124,17 @@ document (it shows as unsaved) without marking the derived equations stale
 let go, a value typed, the optimizer's Apply -- is one undo step; undoing
 it shows the numbers again and keeps the equations current.
 
+Every plot in the window -- the graph, the step, swing, locus, and loop
+views, the optimizer's run, the Bode tab -- is one interactive plot
+(`src/web/plot-view.js`, its specs in `src/core/plot-spec.js`): drag pans,
+right-drag zooms to a box (a flat stroke along x only, a tall one along y
+only), a right-click steps back out, Ctrl+wheel or a pinch zooms, a
+double-click (or **Fit**) shows it all, and hovering reads every curve at
+the pointer. A frequency response is sampled densely across the signal
+band, and again across whatever range a zoom shows (`responsePlot`'s
+`detail`), so a narrow band's ripple is drawn from its own points. A plot
+annotation keeps the whole-range figure the window had before zooming.
+
 Responses go onto one **graph** of magnitudes, a colour per trace
 named by its ratio (`OUT/IN`) in that colour, its dB axis fitted to the
 curves in whole 20 dB steps. With an s result on it, the frequency axis

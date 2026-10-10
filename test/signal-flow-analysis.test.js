@@ -674,6 +674,18 @@ test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved wit
   assert.ok(onOmega.traces[0].points.some((p) => Math.abs(p.f - 0.2 * Math.PI) < 1e-12));
 });
 
+test('a response is sampled densely across the band, and across a zoomed range', () => {
+  const resonator = blockTransferFunction(new Circuit().addComponent('tf_z', { value: 'tf([1 0 1], [1])' }));
+  const trace = [{ label: 'N', color: '#3b74e0', value: resonator, variable: 'z' }];
+  const inBand = (plot, low, high) => plot.traces[0].points.filter((p) => p.f >= low && p.f <= high).length;
+  const banded = bandedPlot(trace, 'z', { band: { f0: 0.25, bw: 0.002 } });
+  assert.ok(inBand(banded, 0.249, 0.251) >= 96, String(inBand(banded, 0.249, 0.251)));
+  const zoomed = bandedPlot(trace, 'z', { detail: [0.1, 0.11] });
+  assert.ok(inBand(zoomed, 0.1, 0.11) >= 200, String(inBand(zoomed, 0.1, 0.11)));
+  const points = zoomed.traces[0].points.map((p) => p.f);
+  assert.deepEqual(points, [...points].sort((a, b) => a - b));
+});
+
 test('the swing plot marks where the swings run away: a net outgrowing the input, or an overload', () => {
   // Flat, noise-limited peaks jittering a dB or two, then a jump (4 dB past their best slope-1
   // line) a step before the overload.

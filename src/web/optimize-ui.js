@@ -777,14 +777,14 @@ function runPlotter() {
     return result.entries.map((entry, i) => {
       let value = null;
       try { value = withCoefficients(entry.value, values); } catch { value = null; }
-      return value && { label: entry.label, color: role === 'start' ? MUTED_TRACE_COLOR : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable };
+      return value && { label: entry.label, color: role === 'start' ? MUTED_TRACE_COLOR : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable, ...(role === 'start' ? { start: true } : {}) };
     }).filter(Boolean);
   };
   return ({ start, best }) => {
     const shown = [...traces(start, 'start'), ...traces(best, 'best')];
     if (!shown.length) return null;
     const plot = responsePlot(shown, shown[0].variable, { sAxis: 'normalized', band: api.band() });
-    return plot ? api.plotSvg(plot) : null;
+    return plot ? api.plotSpec(plot, (range) => responsePlot(shown, shown[0].variable, { sAxis: 'normalized', band: api.band(), detail: range })) : null;
   };
 }
 

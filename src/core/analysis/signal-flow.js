@@ -1171,19 +1171,28 @@ export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = '
  */
 function withPointsAt(curve, fs, hAt) {
   if (!curve || !fs?.length || curve.points.length < 2) return curve;
-  const points = [...curve.points];
-  const first = points[0].f;
-  const last = points[points.length - 1].f;
-  for (const f of fs) {
-    if (!(f >= first && f <= last) || points.some((p) => Math.abs(p.f - f) <= 1e-12 * f)) continue;
-    const h = hAt(f);
-    if (!h || !h.every(Number.isFinite)) continue;
-    const index = points.findIndex((p) => p.f > f);
-    const before = points[index - 1];
-    let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
-    while (phase - before.phase > 180) phase -= 360;
-    while (phase - before.phase < -180) phase += 360;
-    points.splice(index, 0, { f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+  const first = curve.points[0].f;
+  const last = curve.points[curve.points.length - 1].f;
+  const added = [...new Set(fs)].filter((f) => f >= first && f <= last).sort((a, b) => a - b);
+  // One merge, in order: each new point's phase unwrapped against the point before it.
+  const points = [];
+  let k = 0;
+  for (const point of curve.points) {
+    while (k < added.length && added[k] < point.f) {
+      const f = added[k++];
+      const before = points[points.length - 1];
+      if (before && Math.abs(before.f - f) <= 1e-12 * f) continue;
+      if (Math.abs(point.f - f) <= 1e-12 * f) continue;
+      const h = hAt(f);
+      if (!h || !h.every(Number.isFinite)) continue;
+      let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
+      const reference = before ? before.phase : point.phase;
+      while (phase - reference > 180) phase -= 360;
+      while (phase - reference < -180) phase += 360;
+      points.push({ f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+    }
+    while (k < added.length && Math.abs(added[k] - point.f) <= 1e-12 * point.f) k++;
+    points.push(point);
   }
   return { ...curve, points };
 }
@@ -1456,6 +1465,22 @@ export function bandFrequencies(band) {
   return [...bandEdges(band), ...(f0 > 0 && bandEdges(band).length ? [f0] : [])];
 }
 
+/** `count` frequencies spread evenly on a log axis from `low` to `high`. */
+function logGrid(low, high, count) {
+  const a = Math.log10(low);
+  const b = Math.log10(high);
+  return Array.from({ length: count }, (_, i) => 10 ** (a + ((b - a) * (i + 0.5)) / count));
+}
+
+/** Frequencies (f/fs) across the signal band, to sample a response in it
+ *  densely: evenly across a bandpass's band, on a log axis up a lowpass's. */
+export function bandGrid(band, count = 96) {
+  const edges = bandEdges(band);
+  if (edges.length === 2) return Array.from({ length: count }, (_, i) => edges[0] + ((edges[1] - edges[0]) * (i + 0.5)) / count);
+  if (edges.length === 1) return logGrid(edges[0] / 100, edges[0], count);
+  return [];
+}
+
 export function bandEdges(band) {
   const f0 = Number(band?.f0) || 0;
   const bw = Number(band?.bw);
@@ -1497,11 +1522,16 @@ export function bandSqnr(ntf, levels, band) {
  *  magnitude (dB), on the same frequency axis. */
 /** `dbfs`, with a simulated spectrum: `{ offset(trace) }`, each trace's |H|
  *  moved into the spectrum's dBFS (a noise level, or a tone's level). */
-export function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null } = {}) {
+/** `detail`, a [low, high] frequency range on the plot's axis (a zoomed
+ *  view), samples each curve densely there too. */
+export function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null, detail = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
-  // Each curve lands exactly on the band's edges and centre (on its own axis).
-  const bandPoints = (variable) => bandFrequencies(band).map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f));
+  // Each curve lands exactly on the band's edges and centre, and is sampled
+  // densely across the band (on its own axis): a bandpass's in-band ripple
+  // shows however narrow the band is.
+  const detailed = detail && detail[0] > 0 && detail[1] > detail[0] ? logGrid(detail[0], detail[1], 240) : [];
+  const bandPoints = (variable) => [...bandFrequencies(band), ...bandGrid(band)].map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f)).concat(detailed);
   const curves = withVariable
     .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
@@ -1529,6 +1559,7 @@ export function responsePlot(traces, variable, { sAxis = 'omega', band = null, q
         return {
           label: trace.label,
           color: trace.color,
+          ...(trace.start ? { start: true } : {}),
           points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : db + offset })),
         };
       }),

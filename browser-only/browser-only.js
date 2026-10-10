@@ -11684,6 +11684,7 @@ __exports.plotAxis = plotAxis;
 __exports.signalLabel = signalLabel;
 __exports.outputChoices = outputChoices;
 __exports.bandFrequencies = bandFrequencies;
+__exports.bandGrid = bandGrid;
 __exports.bandEdges = bandEdges;
 __exports.bandSqnr = bandSqnr;
 __exports.responsePlot = responsePlot;
@@ -12875,19 +12876,28 @@ function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega',
  */
 function withPointsAt(curve, fs, hAt) {
   if (!curve || !fs?.length || curve.points.length < 2) return curve;
-  const points = [...curve.points];
-  const first = points[0].f;
-  const last = points[points.length - 1].f;
-  for (const f of fs) {
-    if (!(f >= first && f <= last) || points.some((p) => Math.abs(p.f - f) <= 1e-12 * f)) continue;
-    const h = hAt(f);
-    if (!h || !h.every(Number.isFinite)) continue;
-    const index = points.findIndex((p) => p.f > f);
-    const before = points[index - 1];
-    let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
-    while (phase - before.phase > 180) phase -= 360;
-    while (phase - before.phase < -180) phase += 360;
-    points.splice(index, 0, { f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+  const first = curve.points[0].f;
+  const last = curve.points[curve.points.length - 1].f;
+  const added = [...new Set(fs)].filter((f) => f >= first && f <= last).sort((a, b) => a - b);
+  // One merge, in order: each new point's phase unwrapped against the point before it.
+  const points = [];
+  let k = 0;
+  for (const point of curve.points) {
+    while (k < added.length && added[k] < point.f) {
+      const f = added[k++];
+      const before = points[points.length - 1];
+      if (before && Math.abs(before.f - f) <= 1e-12 * f) continue;
+      if (Math.abs(point.f - f) <= 1e-12 * f) continue;
+      const h = hAt(f);
+      if (!h || !h.every(Number.isFinite)) continue;
+      let phase = (Math.atan2(h[1], h[0]) * 180) / Math.PI;
+      const reference = before ? before.phase : point.phase;
+      while (phase - reference > 180) phase -= 360;
+      while (phase - reference < -180) phase += 360;
+      points.push({ f, db: 20 * Math.log10(Math.hypot(h[0], h[1]) || 1e-300), phase });
+    }
+    while (k < added.length && Math.abs(added[k] - point.f) <= 1e-12 * point.f) k++;
+    points.push(point);
   }
   return { ...curve, points };
 }
@@ -13160,6 +13170,22 @@ function bandFrequencies(band) {
   return [...bandEdges(band), ...(f0 > 0 && bandEdges(band).length ? [f0] : [])];
 }
 
+/** `count` frequencies spread evenly on a log axis from `low` to `high`. */
+function logGrid(low, high, count) {
+  const a = Math.log10(low);
+  const b = Math.log10(high);
+  return Array.from({ length: count }, (_, i) => 10 ** (a + ((b - a) * (i + 0.5)) / count));
+}
+
+/** Frequencies (f/fs) across the signal band, to sample a response in it
+ *  densely: evenly across a bandpass's band, on a log axis up a lowpass's. */
+function bandGrid(band, count = 96) {
+  const edges = bandEdges(band);
+  if (edges.length === 2) return Array.from({ length: count }, (_, i) => edges[0] + ((edges[1] - edges[0]) * (i + 0.5)) / count);
+  if (edges.length === 1) return logGrid(edges[0] / 100, edges[0], count);
+  return [];
+}
+
 function bandEdges(band) {
   const f0 = Number(band?.f0) || 0;
   const bw = Number(band?.bw);
@@ -13201,11 +13227,16 @@ function bandSqnr(ntf, levels, band) {
  *  magnitude (dB), on the same frequency axis. */
 /** `dbfs`, with a simulated spectrum: `{ offset(trace) }`, each trace's |H|
  *  moved into the spectrum's dBFS (a noise level, or a tone's level). */
-function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null } = {}) {
+/** `detail`, a [low, high] frequency range on the plot's axis (a zoomed
+ *  view), samples each curve densely there too. */
+function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null, detail = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
-  // Each curve lands exactly on the band's edges and centre (on its own axis).
-  const bandPoints = (variable) => bandFrequencies(band).map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f));
+  // Each curve lands exactly on the band's edges and centre, and is sampled
+  // densely across the band (on its own axis): a bandpass's in-band ripple
+  // shows however narrow the band is.
+  const detailed = detail && detail[0] > 0 && detail[1] > detail[0] ? logGrid(detail[0], detail[1], 240) : [];
+  const bandPoints = (variable) => [...bandFrequencies(band), ...bandGrid(band)].map((f) => (variable === 's' && axis !== 'normalized' ? 2 * Math.PI * f : f)).concat(detailed);
   const curves = withVariable
     .map((trace) => ({ trace, curve: responseCurve(trace.value, trace.variable, { sAxis: axis, at: bandPoints(trace.variable) }) }))
     .filter(({ curve }) => curve && curve.points.length > 1);
@@ -13233,6 +13264,7 @@ function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity
         return {
           label: trace.label,
           color: trace.color,
+          ...(trace.start ? { start: true } : {}),
           points: curve.points.map(({ f, db, phase }) => ({ f, db: quantity === 'phase' ? phase : db + offset })),
         };
       }),
@@ -29761,6 +29793,401 @@ function addPinRail(circuit, ref, type) {
 __exports.PIN_RAIL_TYPES = PIN_RAIL_TYPES;
 };
 
+__modules["src/core/plot-scale.js"] = function (__require, __exports) {
+__exports.niceStep = niceStep;
+__exports.tickText = tickText;
+__exports.axisTicks = axisTicks;
+__exports.fitRange = fitRange;
+__exports.zoomAxes = zoomAxes;
+__exports.zoomAbout = zoomAbout;
+__exports.bisect = bisect;
+__exports.valueAt = valueAt;
+__exports.thinSeries = thinSeries;
+/**
+ * The arithmetic of an interactive plot (web/plot-view.js), kept apart from
+ * the DOM so it can be tested: axes in "u" coordinates (log10 of the value
+ * on a log axis, the value itself on a linear one), the ticks for a view,
+ * an automatic view that fits the data, which way a dragged box zooms, and
+ * thinning a long series down to what the pixels can show.
+ */
+
+/** A value on an axis of `scale` ('log' | 'linear') in u coordinates. */
+const toU = (scale, value) => (scale === 'log' ? Math.log10(value) : value);
+/** Back from u coordinates. */
+const fromU = (scale, u) => (scale === 'log' ? 10 ** u : u);
+
+/** 1, 2, or 5 times a power of ten, near `rough`. */
+function niceStep(rough) {
+  if (!(rough > 0) || !Number.isFinite(rough)) return 1;
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const unit = rough / power;
+  return (unit < 1.5 ? 1 : unit < 3.5 ? 2 : unit < 7.5 ? 5 : 10) * power;
+}
+
+/** A number as a tick shows it: short, no float dust. */
+function tickText(value, step = 0) {
+  if (value === 0 || Math.abs(value) < Math.abs(step) * 1e-9) return '0';
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1e5 || magnitude < 1e-3) {
+    const exponent = Math.floor(Math.log10(magnitude) + 1e-12);
+    const mantissa = Number((value / 10 ** exponent).toPrecision(3));
+    return mantissa === 1 ? `10^{${exponent}}` : mantissa === -1 ? `-10^{${exponent}}` : `${mantissa}·10^{${exponent}}`;
+  }
+  // As many decimals as the step needs.
+  const decimals = step > 0 ? Math.max(0, Math.min(10, -Math.floor(Math.log10(step) + 1e-9))) : 3;
+  return String(Number(value.toFixed(decimals)));
+}
+
+/**
+ * Ticks for the range [u0, u1] of an axis: `[{ u, text, major }]`. A log
+ * axis over several decades ticks whole decades (every second one, or
+ * fifth, when there are many); over about a decade or two it adds 2 and 5;
+ * zoomed in further it ticks plain numbers. A linear axis ticks 1-2-5 steps.
+ * `step` forces a linear step (20 dB, 45 degrees); `target` is roughly how
+ * many to aim for.
+ */
+function axisTicks(scale, u0, u1, { target = 6, step = null } = {}) {
+  const low = Math.min(u0, u1);
+  const high = Math.max(u0, u1);
+  if (!(high > low) || !Number.isFinite(low) || !Number.isFinite(high)) return [];
+  const ticks = [];
+  if (scale === 'log') {
+    const span = high - low;
+    if (span >= 2.5) {
+      const every = Math.max(1, niceStep(span / target));
+      for (let d = Math.ceil(low / every) * every; d <= high + 1e-9; d += every) {
+        ticks.push({ u: d, text: d === 0 ? '1' : d === 1 ? '10' : `10^{${d}}`, major: true });
+      }
+      return ticks;
+    }
+    if (span >= 0.8) {
+      for (let d = Math.floor(low); d <= high; d++) {
+        for (const m of [1, 2, 5]) {
+          const u = d + Math.log10(m);
+          if (u < low - 1e-9 || u > high + 1e-9) continue;
+          const value = m * 10 ** d;
+          ticks.push({ u, text: tickText(value, value / 10), major: m === 1 });
+        }
+      }
+      return ticks;
+    }
+    // Zoomed in: plain numbers in steps, placed on the log axis.
+    const a = 10 ** low;
+    const b = 10 ** high;
+    const linearStep = niceStep((b - a) / target);
+    for (let v = Math.ceil(a / linearStep) * linearStep; v <= b * (1 + 1e-12); v += linearStep) {
+      if (v > 0) ticks.push({ u: Math.log10(v), text: tickText(v, linearStep), major: true });
+    }
+    return ticks;
+  }
+  const s = step && (high - low) / step <= 3 * target ? step : niceStep((high - low) / target);
+  for (let v = Math.ceil(low / s - 1e-9) * s; v <= high + s * 1e-9; v += s) {
+    const value = Math.abs(v) < s * 1e-9 ? 0 : v;
+    ticks.push({ u: value, text: tickText(value, s), major: true });
+  }
+  return ticks;
+}
+
+/**
+ * The u range that fits `values` (already in u coordinates): rounded out to
+ * `step` when given (whole 20 dB), else padded by `pad` of the span. A
+ * single value, or none, gets a range around it.
+ */
+function fitRange(values, { step = null, pad = 0.05, include = [] } = {}) {
+  const finite = [...values, ...include].filter(Number.isFinite);
+  if (!finite.length) return [-1, 1];
+  let low = Math.min(...finite);
+  let high = Math.max(...finite);
+  if (high - low < 1e-12) {
+    const around = step || Math.max(Math.abs(low) * 0.1, 1);
+    return [low - around, high + around];
+  }
+  if (step) return [Math.floor(low / step - 1e-9) * step, Math.ceil(high / step + 1e-9) * step];
+  const margin = (high - low) * pad;
+  return [low - margin, high + margin];
+}
+
+/**
+ * Which way a dragged box zooms: 'x' when it is a flat stroke (only the
+ * horizontal axis), 'y' when it is a tall one, 'both' for a box, null when
+ * it is too small to mean anything. In pixels.
+ */
+function zoomAxes(dx, dy, { flat = 14, ratio = 3, least = 5 } = {}) {
+  const w = Math.abs(dx);
+  const h = Math.abs(dy);
+  if (w < least && h < least) return null;
+  if (h < flat && w >= ratio * h) return 'x';
+  if (w < flat && h >= ratio * w) return 'y';
+  if (w < least || h < least) return null;
+  return 'both';
+}
+
+/** A view zoomed by `factor` (below 1 zooms in) about the u point `at`, on
+ *  the axes named in `axes` ('x', 'y', or 'both'). */
+function zoomAbout(view, at, factor, axes = 'both') {
+  const scaled = (range, centre) => [centre + (range[0] - centre) * factor, centre + (range[1] - centre) * factor];
+  return {
+    x: axes === 'y' ? view.x : scaled(view.x, at.x),
+    y: axes === 'x' ? view.y : scaled(view.y, at.y),
+  };
+}
+
+/** Index of the last point whose x (u) is at most `u`, by bisection;
+ *  -1 before the first. `points` are [x, y] sorted by x. */
+function bisect(points, u) {
+  let lo = 0;
+  let hi = points.length - 1;
+  if (!points.length || u < points[0][0]) return -1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (points[mid][0] <= u) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/** A series' y at x = u, straight between its points (held, for stairs);
+ *  null outside it. */
+function valueAt(points, u, { stairs = false } = {}) {
+  const i = bisect(points, u);
+  if (i < 0) return null;
+  const a = points[i];
+  const b = points[i + 1];
+  if (!b) return u === a[0] ? a[1] : null;
+  if (stairs || b[0] === a[0]) return a[1];
+  return a[1] + ((u - a[0]) / (b[0] - a[0])) * (b[1] - a[1]);
+}
+
+/**
+ * A long series cut to what `columns` pixel columns over [u0, u1] can
+ * show: per column its first, lowest, highest, and last point, in order,
+ * so peaks survive; a short one comes back as it is (with a point either
+ * side of the view, so lines run to the edges). `points` are [x, y] in u,
+ * sorted by x.
+ */
+function thinSeries(points, u0, u1, columns) {
+  const start = Math.max(0, bisect(points, u0));
+  let end = bisect(points, u1) + 1;
+  end = Math.min(points.length - 1, end);
+  const visible = end - start + 1;
+  if (visible <= Math.max(4 * columns, 64)) return points.slice(start, end + 1);
+  const out = [points[start]];
+  const width = (u1 - u0) / columns;
+  let column = null;
+  let bucket = [];
+  const flush = () => {
+    if (!bucket.length) return;
+    let lowest = bucket[0];
+    let highest = bucket[0];
+    for (const p of bucket) {
+      if (p[1] < lowest[1]) lowest = p;
+      if (p[1] > highest[1]) highest = p;
+    }
+    const kept = [bucket[0], lowest, highest, bucket[bucket.length - 1]].filter((p, i, all) => all.indexOf(p) === i).sort((p, q) => p[0] - q[0]);
+    out.push(...kept);
+    bucket = [];
+  };
+  for (let i = start + 1; i < end; i++) {
+    const p = points[i];
+    if (!Number.isFinite(p[1])) { flush(); out.push(p); continue; }
+    const c = Math.floor((p[0] - u0) / width);
+    if (c !== column) { flush(); column = c; }
+    bucket.push(p);
+  }
+  flush();
+  out.push(points[end]);
+  return out;
+}
+
+__exports.toU = toU;
+__exports.fromU = fromU;
+};
+
+__modules["src/core/plot-spec.js"] = function (__require, __exports) {
+__exports.responseSpec = responseSpec;
+__exports.stepSpec = stepSpec;
+__exports.swingSpec = swingSpec;
+__exports.locusSpec = locusSpec;
+__exports.bodeSpecs = bodeSpecs;
+__exports.waveSpec = waveSpec;
+let plainTex, swingLimit; __bind(() => { ({ plainTex, swingLimit } = __require("src/core/bode-figure.js")); });
+/**
+ * The plots the analysis windows show, as one kind of interactive plot
+ * (web/plot-view.js) describes them: the data in its own units, the axes'
+ * scales and names, and the lines that mark things. The same data that a
+ * plot annotation keeps (bode-figure.js lays that out for the drawing) is
+ * turned into a spec here, so a window's plot and the drawing's agree.
+ *
+ * A spec: `{ key, title, x: { scale, label, range?, step? }, y: { ... },
+ * equal?, series: [{ points: [[x, y]], color, role, stairs?, dots?, label }],
+ * vlines: [{ x, role, label? }], hlines: [{ y, role, label? }],
+ * crosses: [{ x, y }], notes: [{ text, role }] }`. Roles: curve, background,
+ * asymptote, start (a run's starting point), band, marker, zero.
+ */
+
+
+
+const finitePoints = (points) => points.filter(([x, y]) => Number.isFinite(x) && x > -Infinity && y !== undefined);
+
+/** A frequency response (signal-flow.js `responsePlot`). */
+function responseSpec(plot) {
+  const phase = plot.quantity === 'phase';
+  const name = plot.role === 'loop' ? 'T' : 'H';
+  return {
+    key: `response:${plot.role || ''}:${phase ? 'phase' : plot.units || 'db'}:${plot.axis}`,
+    title: phase ? 'Phase responses' : 'Magnitude responses',
+    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [10 ** plot.range.low, 10 ** plot.range.high] },
+    y: { scale: 'linear', label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`, step: phase ? 45 : 20, floor: phase ? null : -400 },
+    series: plot.traces.map((trace) => ({
+      label: trace.label,
+      color: trace.color,
+      role: trace.background ? 'background' : trace.start ? 'start' : 'curve',
+      points: finitePoints(trace.points.filter((p) => p.f > 0).map((p) => [p.f, Number.isFinite(p.db) ? p.db : null])),
+    })),
+    vlines: [
+      ...(plot.band || []).map((f) => ({ x: f, role: 'band' })),
+      ...(plot.markers || []).filter((m) => m.f > 0).map((m) => ({ x: m.f, role: 'marker', label: m.label || '' })),
+    ],
+    hlines: phase ? [] : [{ y: 0, role: 'zero' }],
+  };
+}
+
+/** Step responses (step.js `stepPlot`). */
+function stepSpec(plot) {
+  return {
+    key: `step:${plot.unit}`,
+    title: 'Step responses',
+    x: { scale: 'linear', label: plot.unit === 'n' ? 'n (t/T_{s})' : 't', range: [plot.range.low, plot.range.high] },
+    y: { scale: 'linear', label: 'step response', include: [0] },
+    series: plot.traces.map((trace) => ({
+      label: trace.label,
+      color: trace.color,
+      role: 'curve',
+      ...(trace.stairs ? { stairs: true } : {}),
+      points: trace.points.filter((p) => Number.isFinite(p.y)).map((p) => [p.t, p.y]),
+    })),
+    vlines: [],
+    hlines: [{ y: 0, role: 'zero' }],
+  };
+}
+
+/** Each net's peak against the input amplitude (the swing simulation). */
+function swingSpec(plot) {
+  const limit = swingLimit(plot.traces);
+  const limitText = limit && (limit.kind === 'full-scale'
+    ? `${limit.label ? `${plainTex(limit.label)} ` : ''}full scale ${Number(limit.a.toFixed(1))} dBFS`
+    : `runaway ${Number(limit.a.toFixed(2))} dBFS`);
+  return {
+    key: 'swing',
+    title: 'Peak against input amplitude',
+    x: { scale: 'linear', label: 'input (dBFS)', range: [plot.range.low, plot.range.high], step: 10 },
+    y: { scale: 'linear', label: 'peak (dBFS)', step: 10, include: [-10, 10], ceiling: 40, floor: -200 },
+    series: plot.traces.map((trace) => ({
+      label: trace.label,
+      color: trace.color,
+      role: 'curve',
+      points: trace.points.map((p) => [p.a, Number.isFinite(p.db) ? p.db : null]),
+    })),
+    vlines: limit ? [{ x: limit.a, role: 'marker', label: limitText }] : [],
+    hlines: [{ y: 0, role: 'zero' }],
+  };
+}
+
+/** A root locus (locus.js `locusPlot`): the complex plane at equal scales. */
+function locusSpec(plot) {
+  const z = plot.variable === 'z';
+  const near = (p) => !z || Math.hypot(p.re, p.im) <= 2.5;
+  const number = (v) => String(Number(v.toPrecision(3)));
+  const notes = [{ text: `${plot.parameter} ${number(plot.from)} … ${number(plot.to)}`, role: 'label' }];
+  const crossings = plot.crossings || [];
+  if (crossings.length) {
+    const stableFrom = crossings.find((c) => c.becomes === 'stable');
+    const unstableAt = crossings.find((c) => c.becomes === 'unstable' && (!stableFrom || c.k !== stableFrom.k));
+    notes.push({
+      role: 'marker',
+      text: stableFrom && unstableAt
+        ? `stable for ${plot.parameter} ${number(Math.min(stableFrom.k, unstableAt.k))} … ${number(Math.max(stableFrom.k, unstableAt.k))}`
+        : stableFrom ? `stable from ${plot.parameter} = ${number(stableFrom.k)}` : `unstable from ${plot.parameter} = ${number(unstableAt.k)}`,
+    });
+  }
+  const shown = plot.points.filter(near);
+  const reach = z ? [-1.1, 1.1] : [0];
+  return {
+    key: `locus:${plot.variable}`,
+    title: 'Root locus',
+    equal: true,
+    x: { scale: 'linear', label: z ? 'Re z' : 'Re s', include: reach },
+    y: { scale: 'linear', label: z ? 'Im z' : 'Im s', include: z ? [-1.1, 1.1] : [], symmetric: true },
+    series: [
+      ...(z ? [{ role: 'band', points: Array.from({ length: 97 }, (_, i) => [Math.cos((i * Math.PI) / 48), Math.sin((i * Math.PI) / 48)]), parametric: true }] : []),
+      { label: plot.label, color: plot.color, role: 'curve', dots: shown.map((p) => p.t), points: shown.map((p) => [p.re, p.im]) },
+    ],
+    vlines: z ? [] : [{ x: 0, role: 'band' }],
+    hlines: [{ y: 0, role: 'zero' }],
+    crosses: plot.current.map((p) => ({ x: p.re, y: p.im })),
+    notes,
+  };
+}
+
+/**
+ * A Bode sketch (bode.js `bodeSketch`) as two plots sharing their
+ * frequency axis: the magnitude with its straight-line asymptotes and the
+ * marked corners, and the phase. `corners`: `[{ w, text }]`.
+ */
+function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{u}' } = {}) {
+  const range = [10 ** sketch.range.low, 10 ** sketch.range.high];
+  const marks = corners.filter((c) => c.w > 0).map((c) => ({ x: c.w, role: 'corner', label: c.text }));
+  if (sketch.unityGain) marks.push({ x: sketch.unityGain.w, role: 'corner', label: unityText });
+  return {
+    magnitude: {
+      key: 'bode:magnitude',
+      title: 'Magnitude',
+      x: { scale: 'log', label: 'ω (g/C)', range },
+      y: { scale: 'linear', label: `|${quantity}| (dB)`, step: 20, floor: -400 },
+      series: [
+        { role: 'asymptote', points: sketch.asymptote.map((p) => [p.w, p.db]) },
+        { role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.db]) },
+      ],
+      vlines: marks,
+      hlines: [{ y: 0, role: 'zero' }],
+    },
+    phase: {
+      key: 'bode:phase',
+      title: 'Phase',
+      x: { scale: 'log', label: 'ω (g/C)', range },
+      y: { scale: 'linear', label: `∠${quantity} (°)`, step: 90 },
+      series: [{ role: 'curve', label: quantity, points: sketch.points.map((p) => [p.w, p.phase]) }],
+      vlines: marks.map((mark) => ({ ...mark, label: '' })),
+      hlines: [-360, -180, 0, 180].map((y) => ({ y, role: 'zero' })),
+    },
+  };
+}
+
+/**
+ * Waveforms in time (the oscilloscope): each net's samples against the
+ * sample index n, or time t in units of T_s. `traces`: `[{ label, color,
+ * values, stairs }]`; `start` is the first sample's n.
+ */
+function waveSpec(traces, { start = 0, label = 'n' } = {}) {
+  return {
+    key: 'scope',
+    title: 'Waveforms',
+    x: { scale: 'linear', label },
+    y: { scale: 'linear', label: 'value' },
+    series: traces.map((trace) => ({
+      label: trace.label,
+      color: trace.color,
+      role: 'curve',
+      stairs: trace.stairs !== false,
+      points: Array.from(trace.values, (v, i) => [start + i, Number.isFinite(v) ? v : null]),
+    })),
+    vlines: [],
+    hlines: [{ y: 0, role: 'zero' }],
+  };
+}
+
+};
+
 __modules["src/core/png-export.js"] = function (__require, __exports) {
 __exports.normalizePngDpi = normalizePngDpi;
 __exports.pngRasterScale = pngRasterScale;
@@ -42570,7 +42997,6 @@ __exports.beatLabel = beatLabel;
 __modules["src/web/bode-ui.js"] = function (__require, __exports) {
 __exports.formatNumber = formatNumber;
 __exports.bodeAvailable = bodeAvailable;
-__exports.figureElement = figureElement;
 __exports.syncBodePlace = syncBodePlace;
 __exports.bodeSettingsRestored = bodeSettingsRestored;
 __exports.renderBode = renderBode;
@@ -42579,8 +43005,10 @@ let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE
 let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
-let bodeFigure, cornerNames; __bind(() => { ({ bodeFigure, cornerNames } = __require("src/core/bode-figure.js")); });
-let normalizePlot, parseLabelRuns; __bind(() => { ({ normalizePlot, parseLabelRuns } = __require("src/core/model.js")); });
+let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figure.js")); });
+let bodeSpecs; __bind(() => { ({ bodeSpecs } = __require("src/core/plot-spec.js")); });
+let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
+let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, markSettingsChanged, render, selectedLabel, setLabelSelection, setSelection; __bind(() => { ({ commit, markSettingsChanged, render, selectedLabel, setLabelSelection, setSelection } = __require("src/web/main.js")); });
@@ -42595,6 +43023,8 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
  * zeros, and their names follow at once. Nothing here solves the circuit
  * again: only the derived coefficients are re-evaluated.
  */
+
+
 
 
 
@@ -42729,41 +43159,6 @@ function currentModel() {
 
 // ----- drawing -----------------------------------------------------------------------
 
-const SVG = 'http://www.w3.org/2000/svg';
-
-function svgElement(name, attributes = {}) {
-  const element = document.createElementNS(SVG, name);
-  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
-  return element;
-}
-
-/** `ω_{p1}`, `10^{-3}` as text with real sub- and superscripts. */
-function markupText(element, text) {
-  for (const run of parseLabelRuns(text)) {
-    const span = svgElement('tspan', run.sub ? { 'baseline-shift': 'sub', 'font-size': '72%' } : run.super ? { 'baseline-shift': 'super', 'font-size': '72%' } : {});
-    span.textContent = run.text;
-    element.appendChild(span);
-  }
-}
-
-/** The figure (core/bode-figure.js) as an SVG in the theme's colors. */
-function figureElement(figure) {
-  const svg = svgElement('svg', { viewBox: `0 0 ${figure.width} ${figure.height}`, class: 'bode-figure', role: 'img' });
-  for (const item of figure.items) {
-    const cls = `bode-${item.role}`;
-    if (item.type === 'line') svg.appendChild(svgElement('line', { x1: item.x1, y1: item.y1, x2: item.x2, y2: item.y2, class: cls }));
-    else if (item.type === 'path' && item.points.length) {
-      svg.appendChild(svgElement('polyline', { points: item.points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '), class: cls }));
-    } else if (item.type === 'dot') svg.appendChild(svgElement('circle', { cx: item.x, cy: item.y, r: 2.5, class: cls }));
-    else if (item.type === 'text') {
-      const text = svgElement('text', { x: item.x, y: item.y, 'text-anchor': item.anchor, class: cls });
-      markupText(text, item.text);
-      svg.appendChild(text);
-    }
-  }
-  return svg;
-}
-
 function mathElement(tex, tag = 'span') {
   const element = document.createElement(tag);
   element.className = 'bode-math';
@@ -42809,6 +43204,18 @@ function slider({ label, tex, index, min, max, text, onInput, components = [], t
   return row;
 }
 
+
+// The magnitude and the phase, two plots sharing their frequency axis
+// (plot-view.js), kept across redraws so a zoomed view stays while a slider moves.
+let plots = null;
+function bodePlots() {
+  if (!plots) {
+    plots = { magnitude: createPlotView({ height: 200 }), phase: createPlotView({ height: 130 }) };
+    linkPlots(plots.magnitude, plots.phase);
+  }
+  return plots;
+}
+
 /** Redraw the figure and the corner list; the sliders stay (so a drag goes on). */
 function drawSketch() {
   const panel = panelEl();
@@ -42823,7 +43230,12 @@ function drawSketch() {
     return;
   }
   const { sketch, corners, quantity } = model;
-  figureHost.appendChild(figureElement(bodeFigure(sketch, { width: 480, height: 300, corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })));
+  const specs = bodeSpecs(sketch, { corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) });
+  const views = bodePlots();
+  for (const [name, view] of Object.entries(views)) {
+    figureHost.appendChild(view.el);
+    view.set({ ...specs[name], key: `${specs[name].key}:${quantity.key}:${quantity.tex}` });
+  }
   for (const corner of corners) {
     const item = document.createElement('li');
     const where = `${formatNumber(corner.w)}\\,g/C`;
@@ -63646,14 +64058,14 @@ function runPlotter() {
     return result.entries.map((entry, i) => {
       let value = null;
       try { value = withCoefficients(entry.value, values); } catch { value = null; }
-      return value && { label: entry.label, color: role === 'start' ? MUTED_TRACE_COLOR : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable };
+      return value && { label: entry.label, color: role === 'start' ? MUTED_TRACE_COLOR : TRACE_COLORS[i % TRACE_COLORS.length], value, variable: result.variable, ...(role === 'start' ? { start: true } : {}) };
     }).filter(Boolean);
   };
   return ({ start, best }) => {
     const shown = [...traces(start, 'start'), ...traces(best, 'best')];
     if (!shown.length) return null;
     const plot = responsePlot(shown, shown[0].variable, { sAxis: 'normalized', band: api.band() });
-    return plot ? api.plotSvg(plot) : null;
+    return plot ? api.plotSpec(plot, (range) => responsePlot(shown, shown[0].variable, { sAxis: 'normalized', band: api.band(), detail: range })) : null;
   };
 }
 
@@ -63792,6 +64204,7 @@ __modules["src/web/optimize-window.js"] = function (__require, __exports) {
 __exports.openRunWindow = openRunWindow;
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
+let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 /**
  * The window a coefficient search runs in (optimize-ui.js: the optimizer
  * and the rounding): one small floating window over the drawing, so it is
@@ -63802,6 +64215,7 @@ let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require
  * window leaves the run going; its progress then shows in the analysis
  * window again (`onClose`).
  */
+
 
 
 
@@ -63822,7 +64236,7 @@ let open = null;
 
 /**
  * Open the run window. `title` names the run ("Optimizer", "Rounding");
- * `plotAt(values, role)` returns the plot's SVG element for the numbers
+ * `plotAt({ start, best })` returns the plot's spec (plot-spec.js) for the numbers
  * given -- role 'start' or 'best' -- or null; `onStop` stops the run;
  * `onClose` is told when the window closes. Returns `{ say(text, error),
  * progress(fraction), best(values), done(text, error), isOpen() }`.
@@ -63833,7 +64247,8 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   let startValues = null;
   const status = el('p', { class: 'field-hint run-window-status', 'aria-live': 'polite', text: 'Preparing...' });
   const bar = el('progress', { class: 'run-window-progress', max: '1', value: '0' });
-  const plot = el('div', { class: 'run-window-plot' });
+  const plotView = createPlotView({ height: 220 });
+  const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
   const legend = el('p', { class: 'field-hint run-window-legend', text: 'Grey: where it started. Colour: the best so far.' });
   const stop = el('button', { type: 'button', class: 'run-window-stop', text: 'Stop', onclick: () => (finished ? dispose() : onStop()) });
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
@@ -63849,6 +64264,7 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     if (closed) return;
     closed = true;
     dialog.remove();
+    plotView.dispose();
     if (open?.dialog === dialog) open = null;
     onClose();
   }
@@ -63862,10 +64278,10 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   open = { dialog, dispose };
 
   const draw = (values) => {
-    const svg = plotAt({ start: startValues, best: values });
-    plot.replaceChildren(...(svg ? [svg] : []));
-    plot.hidden = !svg;
-    legend.hidden = !svg;
+    const spec = plotAt({ start: startValues, best: values });
+    plotView.set(spec);
+    plot.hidden = !spec;
+    legend.hidden = !spec;
   };
   return {
     start(values) { startValues = values; draw(null); },
@@ -64767,6 +65183,438 @@ function createPersistenceAdapter({ fetchImpl = globalThis.fetch, retry } = {}) 
 
 __exports.validDocumentName = validDocumentName;
 __exports.UNREACHABLE_RETRY_MS = UNREACHABLE_RETRY_MS;
+};
+
+__modules["src/web/plot-view.js"] = function (__require, __exports) {
+__exports.createPlotView = createPlotView;
+__exports.linkPlots = linkPlots;
+let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
+/**
+ * The one interactive plot every analysis view uses (responses, steps,
+ * swing, root locus, loop gain, Bode, the optimizer's run, the
+ * oscilloscope). It draws a spec (core/plot-spec.js) as SVG at its own
+ * size and lets it be looked into:
+ *
+ * - drag pans;
+ * - right-drag zooms to a box -- a flat stroke only along x, a tall one
+ *   only along y (core/plot-scale.js `zoomAxes`); a right-click steps back
+ *   out, one zoom at a time;
+ * - Ctrl+wheel (or a pinch) zooms about the pointer, Shift only along x,
+ *   Alt only along y; with `wheel: 'always'` the plain wheel does too;
+ * - double-click, or the Fit button that shows once zoomed, fits it all;
+ * - hovering reads each curve at the pointer.
+ *
+ * A spec with `refine(xRange)` draws its curves again for the frequencies
+ * in view as it is zoomed, so a close look has its own points. New data
+ * keeps a zoomed view (the plot follows the data only until it is
+ * zoomed); a spec with another `key` starts afresh.
+ */
+
+
+
+
+const NS = 'http://www.w3.org/2000/svg';
+const MARGIN = { left: 46, right: 12, top: 10, bottom: 24 };
+let clipCount = 0;
+
+function svg(name, attrs = {}) {
+  const node = document.createElementNS(NS, name);
+  for (const [key, value] of Object.entries(attrs)) if (value !== undefined && value !== null) node.setAttribute(key, value);
+  return node;
+}
+
+/** Text with _{} and ^{} markup, as tspans. */
+function markupText(text, attrs) {
+  const node = svg('text', attrs);
+  for (const run of parseLabelRuns(String(text))) {
+    const span = svg('tspan', run.sub || run.super ? { 'baseline-shift': run.sub ? '-25%' : '35%', 'font-size': '72%' } : {});
+    span.textContent = run.text;
+    node.append(span);
+  }
+  return node;
+}
+
+/** A number as the readout shows it. */
+function readoutNumber(value) {
+  if (!Number.isFinite(value)) return '–';
+  const magnitude = Math.abs(value);
+  if (magnitude !== 0 && (magnitude < 1e-3 || magnitude >= 1e6)) return value.toExponential(3).replace(/\.?0+e/, 'e');
+  return String(Number(value.toPrecision(5)));
+}
+
+const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').replace(/\\/g, '').replace(/[{}$]/g, '');
+
+/**
+ * A plot. `height` is its height in pixels (`fill: true` takes its box's
+ * height instead); `wheel` is 'modifier' (Ctrl/pinch zooms, the plain
+ * wheel scrolls the page) or 'always'. `onView(view)` hears each change of
+ * view (u coordinates), to link plots. Returns `{ el, set(spec), fit(),
+ * setXView(range), dispose() }`.
+ */
+function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView = null, className = '' } = {}) {
+  const el = document.createElement('div');
+  el.className = `plot-view${className ? ` ${className}` : ''}`;
+  if (!fill) el.style.height = `${height}px`;
+  const root = svg('svg', { class: 'plot-view-svg', role: 'img' });
+  const fitButton = document.createElement('button');
+  fitButton.type = 'button';
+  fitButton.className = 'plot-view-fit';
+  fitButton.textContent = 'Fit';
+  fitButton.title = 'Show it all again (double-click the plot)';
+  fitButton.hidden = true;
+  const readout = document.createElement('div');
+  readout.className = 'plot-view-readout';
+  readout.hidden = true;
+  el.append(root, fitButton, readout);
+  el.title = 'Drag to pan; right-drag zooms to a box (a flat stroke only along x, a tall one only along y); right-click steps back; double-click fits; Ctrl+wheel zooms';
+  const clipId = `plot-clip-${++clipCount}`;
+
+  let spec = null;
+  let base = null; // the series as set, before any refinement
+  let view = null; // { x: [u0, u1], y: [u0, u1] }
+  let following = true; // the view follows the data until zoomed
+  let history = [];
+  let hover = null; // { px, py }
+  let box = null; // a right-drag: { from, to, axes }
+  let frame = 0;
+  let refineTimer = 0;
+  let size = { w: 0, h: 0 };
+  let viewListener = onView;
+
+  const scaleX = () => spec?.x.scale || 'linear';
+  const pane = () => ({ x: MARGIN.left, y: MARGIN.top, w: Math.max(10, size.w - MARGIN.left - MARGIN.right), h: Math.max(10, size.h - MARGIN.top - MARGIN.bottom) });
+  const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), y]).filter(([u]) => Number.isFinite(u));
+
+  /** The view that shows all the data. */
+  function autoView() {
+    const p = pane();
+    const xs = spec.x.range ? spec.x.range.map((v) => toU(scaleX(), v))
+      : fitRange(spec.series.filter((s) => s.role !== 'band').flatMap((s) => uPoints(s).map(([u]) => u)), { pad: spec.equal ? 0.08 : 0, include: (spec.x.include || []).map((v) => toU(scaleX(), v)) });
+    const inX = ([u]) => u >= Math.min(...xs) - 1e-9 && u <= Math.max(...xs) + 1e-9;
+    let ys = spec.series.filter((s) => s.role !== 'background' && s.role !== 'band')
+      .flatMap((s) => uPoints(s).filter(inX).map(([, y]) => y))
+      .filter((y) => Number.isFinite(y) && (spec.y.floor === undefined || spec.y.floor === null || y > spec.y.floor));
+    if (spec.y.symmetric) ys = ys.flatMap((y) => [y, -y]);
+    let yr = fitRange(ys, { step: spec.y.step, pad: 0.08, include: spec.y.include || [] });
+    if (Number.isFinite(spec.y.ceiling)) yr = [Math.min(yr[0], spec.y.ceiling - (spec.y.step || 1)), Math.min(yr[1], spec.y.ceiling)];
+    let next = { x: [Math.min(...xs), Math.max(...xs)], y: yr };
+    if (spec.equal) next = equalized(next, p);
+    return next;
+  }
+
+  /** Equal units per pixel on both axes, growing the tighter one. */
+  function equalized(v, p) {
+    const per = Math.max((v.x[1] - v.x[0]) / p.w, (v.y[1] - v.y[0]) / p.h);
+    const cx = (v.x[0] + v.x[1]) / 2;
+    const cy = (v.y[0] + v.y[1]) / 2;
+    return { x: [cx - (per * p.w) / 2, cx + (per * p.w) / 2], y: [cy - (per * p.h) / 2, cy + (per * p.h) / 2] };
+  }
+
+  const X = (u) => { const p = pane(); return p.x + ((u - view.x[0]) / (view.x[1] - view.x[0])) * p.w; };
+  const Y = (u) => { const p = pane(); return p.y + ((view.y[1] - u) / (view.y[1] - view.y[0])) * p.h; };
+  const atX = (px) => { const p = pane(); return view.x[0] + ((px - p.x) / p.w) * (view.x[1] - view.x[0]); };
+  const atY = (py) => { const p = pane(); return view.y[1] - ((py - p.y) / p.h) * (view.y[1] - view.y[0]); };
+  // Far off-screen values are pinned near the pane, so a curve that runs
+  // off it still leaves at the right slope without enormous coordinates.
+  const clampPx = (v, lo, hi) => Math.max(lo - 4 * (hi - lo), Math.min(hi + 4 * (hi - lo), v));
+
+  function seriesPath(series, p) {
+    let points = uPoints(series);
+    if (!series.parametric && !series.dots) points = thinSeries(points, view.x[0], view.x[1], Math.round(p.w));
+    let d = '';
+    let pen = false;
+    let last = null;
+    for (const [u, y] of points) {
+      if (y === null || !Number.isFinite(y)) { pen = false; last = null; continue; }
+      const px = clampPx(X(u), p.x, p.x + p.w).toFixed(1);
+      const py = clampPx(Y(y), p.y, p.y + p.h).toFixed(1);
+      if (series.stairs && pen && last) d += ` L ${px} ${last}`;
+      d += `${pen ? ' L' : ' M'} ${px} ${py}`;
+      pen = true;
+      last = py;
+    }
+    return d.trim();
+  }
+
+  function render() {
+    frame = 0;
+    root.replaceChildren();
+    if (!spec || !view) return;
+    size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+    root.setAttribute('viewBox', `0 0 ${size.w} ${size.h}`);
+    root.setAttribute('width', size.w);
+    root.setAttribute('height', size.h);
+    root.setAttribute('aria-label', spec.title || 'Plot');
+    const p = pane();
+    const clip = svg('clipPath', { id: clipId });
+    clip.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h }));
+    const defs = svg('defs');
+    defs.append(clip);
+    root.append(defs);
+
+    const grid = svg('g', { class: 'plot-grid' });
+    const xTicks = axisTicks(scaleX(), view.x[0], view.x[1], { target: Math.max(2, Math.round(p.w / 80)) });
+    const yTicks = axisTicks('linear', view.y[0], view.y[1], { target: Math.max(2, Math.round(p.h / 38)), step: spec.y.step });
+    for (const tick of xTicks) {
+      const at = X(tick.u);
+      grid.append(svg('line', { x1: at, y1: p.y, x2: at, y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));
+      if (tick.major || xTicks.length <= 12) grid.append(markupText(tick.text, { x: at, y: p.y + p.h + 15, 'text-anchor': 'middle', class: 'role-number' }));
+    }
+    for (const tick of yTicks) {
+      const at = Y(tick.u);
+      grid.append(svg('line', { x1: p.x, y1: at, x2: p.x + p.w, y2: at, class: 'role-grid' }));
+      grid.append(markupText(tick.text, { x: p.x - 5, y: at + 3.5, 'text-anchor': 'end', class: 'role-number' }));
+    }
+    root.append(grid);
+
+    const body = svg('g', { 'clip-path': `url(#${clipId})` });
+    for (const line of spec.hlines || []) {
+      if (line.y < view.y[0] || line.y > view.y[1]) continue;
+      body.append(svg('line', { x1: p.x, y1: Y(line.y), x2: p.x + p.w, y2: Y(line.y), class: `role-${line.role || 'zero'}` }));
+    }
+    const marks = [];
+    for (const line of spec.vlines || []) {
+      const u = toU(scaleX(), line.x);
+      if (!Number.isFinite(u) || u < view.x[0] || u > view.x[1]) continue;
+      body.append(svg('line', { x1: X(u), y1: p.y, x2: X(u), y2: p.y + p.h, class: `role-${line.role || 'marker'}` }));
+      if (line.label) marks.push({ at: X(u), text: line.label, role: line.role || 'marker' });
+    }
+    for (const series of spec.series) {
+      if (series.dots) {
+        uPoints(series).forEach(([u, y], i) => {
+          if (u < view.x[0] || u > view.x[1] || y < view.y[0] || y > view.y[1]) return;
+          const dot = svg('circle', { cx: X(u), cy: Y(y), r: 2, class: 'role-dot' });
+          dot.style.fill = series.color || '';
+          dot.style.fillOpacity = String(0.2 + 0.8 * (series.dots[i] ?? 1));
+          body.append(dot);
+        });
+        continue;
+      }
+      const d = seriesPath(series, p);
+      if (!d) continue;
+      const path = svg('path', { d, class: `role-${series.role || 'curve'}` });
+      if (series.color) path.style.stroke = series.color;
+      body.append(path);
+    }
+    for (const cross of spec.crosses || []) {
+      const cx = X(cross.x);
+      const cy = Y(cross.y);
+      body.append(svg('path', { d: `M ${cx - 4} ${cy - 4} L ${cx + 4} ${cy + 4} M ${cx - 4} ${cy + 4} L ${cx + 4} ${cy - 4}`, class: 'role-marker cross' }));
+    }
+    root.append(body);
+    root.append(svg('rect', { x: p.x, y: p.y, width: p.w, height: p.h, class: 'plot-frame' }));
+    // Marked lines' names at the top, inside, clear of the edge.
+    for (const mark of marks) {
+      const right = mark.at > p.x + p.w / 2;
+      root.append(markupText(mark.text, { x: mark.at + (right ? -4 : 4), y: p.y + 24, 'text-anchor': right ? 'end' : 'start', class: `role-${mark.role} role-mark-label` }));
+    }
+    root.append(markupText(spec.y.label, { x: p.x + 5, y: p.y + 11, class: 'role-label' }));
+    (spec.notes || []).forEach((note, i) => root.append(markupText(note.text, { x: p.x + 5, y: p.y + 24 + 13 * i, class: `role-${note.role || 'label'}` })));
+    root.append(markupText(spec.x.label, { x: p.x + p.w - 4, y: p.y + p.h - 5, 'text-anchor': 'end', class: 'role-label' }));
+
+    if (box) {
+      const x0 = box.axes === 'y' ? p.x : Math.min(box.from.x, box.to.x);
+      const x1 = box.axes === 'y' ? p.x + p.w : Math.max(box.from.x, box.to.x);
+      const y0 = box.axes === 'x' ? p.y : Math.min(box.from.y, box.to.y);
+      const y1 = box.axes === 'x' ? p.y + p.h : Math.max(box.from.y, box.to.y);
+      if (box.axes) root.append(svg('rect', { x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0), class: 'plot-zoom-box' }));
+    } else if (hover && hover.px >= p.x && hover.px <= p.x + p.w && hover.py >= p.y && hover.py <= p.y + p.h) {
+      root.append(svg('line', { x1: hover.px, y1: p.y, x2: hover.px, y2: p.y + p.h, class: 'plot-cursor' }));
+      showReadout();
+    }
+    if (!hover || box) readout.hidden = true;
+    fitButton.hidden = following;
+  }
+
+  function showReadout() {
+    const u = atX(hover.px);
+    const rows = [`${plain(spec.x.label) || 'x'} = ${readoutNumber(fromU(scaleX(), u))}`];
+    const colors = [null];
+    if (spec.equal) rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(atY(hover.py))}`);
+    else {
+      for (const series of spec.series) {
+        if (series.dots || series.parametric || series.role === 'band') continue;
+        const y = valueAt(uPoints(series), u, { stairs: !!series.stairs });
+        if (y === null || !Number.isFinite(y)) continue;
+        rows.push(`${plain(series.label) || plain(spec.y.label)}: ${readoutNumber(y)}`);
+        colors.push(series.color || null);
+        if (rows.length > 7) break;
+      }
+      if (rows.length === 1) { rows.push(`${plain(spec.y.label) || 'y'} = ${readoutNumber(atY(hover.py))}`); colors.push(null); }
+    }
+    readout.replaceChildren(...rows.map((text, i) => {
+      const line = document.createElement('div');
+      line.textContent = text;
+      if (colors[i]) line.style.color = colors[i];
+      return line;
+    }));
+    readout.hidden = false;
+    const p = pane();
+    readout.classList.toggle('left', hover.px > p.x + p.w / 2);
+  }
+
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(render); };
+
+  function refine() {
+    clearTimeout(refineTimer);
+    if (!spec?.refine) return;
+    const series = following ? null : spec.refine(view.x.map((u) => fromU(scaleX(), u)));
+    spec = { ...spec, series: series || base };
+    schedule();
+  }
+
+  function setView(next, { record = true, quiet = false } = {}) {
+    if (record && view) {
+      history.push(view);
+      if (history.length > 50) history.shift();
+    }
+    view = next;
+    following = false;
+    schedule();
+    clearTimeout(refineTimer);
+    refineTimer = setTimeout(refine, 120);
+    if (!quiet) viewListener?.(view);
+  }
+
+  function fit({ quiet = false } = {}) {
+    if (!spec) return;
+    following = true;
+    history = [];
+    spec = { ...spec, series: base };
+    size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+    view = autoView();
+    schedule();
+    if (!quiet) viewListener?.(null);
+  }
+
+  // ----- pointer -----
+  const local = (ev) => {
+    const rect = root.getBoundingClientRect();
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  };
+  el.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  el.addEventListener('pointerdown', (ev) => {
+    if (!spec || !view || ev.target === fitButton) return;
+    if (ev.button !== 0 && ev.button !== 2) return;
+    ev.preventDefault();
+    el.setPointerCapture(ev.pointerId);
+    const start = local(ev);
+    const startView = view;
+    let moved = false;
+    if (ev.button === 2) box = { from: start, to: start, axes: null };
+    else el.classList.add('panning');
+    const move = (e) => {
+      const at = local(e);
+      if (Math.hypot(at.x - start.x, at.y - start.y) > 3) moved = true;
+      if (box) {
+        box.to = at;
+        box.axes = spec.equal ? (zoomAxes(at.x - start.x, at.y - start.y) && 'both') : zoomAxes(at.x - start.x, at.y - start.y);
+        schedule();
+        return;
+      }
+      const p = pane();
+      const dx = ((at.x - start.x) / p.w) * (startView.x[1] - startView.x[0]);
+      const dy = ((at.y - start.y) / p.h) * (startView.y[1] - startView.y[0]);
+      view = { x: [startView.x[0] - dx, startView.x[1] - dx], y: [startView.y[0] + dy, startView.y[1] + dy] };
+      following = false;
+      schedule();
+      viewListener?.(view);
+    };
+    const end = (e) => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', end);
+      el.removeEventListener('pointercancel', end);
+      el.classList.remove('panning');
+      if (box) {
+        const { from, to, axes } = box;
+        box = null;
+        if (e.type === 'pointerup' && !moved) {
+          // A right-click: back out of the last zoom.
+          if (history.length) { view = history.pop(); following = false; schedule(); refine(); viewListener?.(view); } else fit();
+          return;
+        }
+        if (!axes) { schedule(); return; }
+        const xs = [atX(from.x), atX(to.x)].sort((a, b) => a - b);
+        const ys = [atY(from.y), atY(to.y)].sort((a, b) => a - b);
+        let next = { x: axes === 'y' ? view.x : xs, y: axes === 'x' ? view.y : ys };
+        if (spec.equal) next = equalized(next, pane());
+        setView(next);
+        return;
+      }
+      if (moved) {
+        history.push(startView);
+        setView(view, { record: false });
+      }
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  });
+  el.addEventListener('pointermove', (ev) => {
+    if (box || el.classList.contains('panning')) return;
+    hover = local(ev);
+    schedule();
+  });
+  el.addEventListener('pointerleave', () => { hover = null; schedule(); });
+  el.addEventListener('dblclick', (ev) => { if (ev.target !== fitButton) fit(); });
+  fitButton.addEventListener('click', () => fit());
+  el.addEventListener('wheel', (ev) => {
+    if (!spec || !view || (wheel !== 'always' && !ev.ctrlKey && !ev.metaKey)) return;
+    ev.preventDefault();
+    const at = local(ev);
+    const delta = ev.deltaY || ev.deltaX;
+    const factor = Math.exp(Math.max(-1, Math.min(1, delta * (ev.deltaMode === 1 ? 0.05 : 0.002))));
+    const axes = spec.equal ? 'both' : ev.shiftKey ? 'x' : ev.altKey ? 'y' : 'both';
+    setView(zoomAbout(view, { x: atX(at.x), y: atY(at.y) }, factor, axes), { record: false });
+  }, { passive: false });
+
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+    const next = { w: el.clientWidth, h: fill ? el.clientHeight : height };
+    if (next.w === size.w && next.h === size.h) return;
+    if (following && spec) { size = next; view = autoView(); }
+    schedule();
+  }) : null;
+  observer?.observe(el);
+
+  return {
+    el,
+    /** Show `spec`; a zoomed view stays unless the spec's key changed. */
+    set(next) {
+      if (!next) { spec = null; base = null; root.replaceChildren(); return; }
+      const fresh = !spec || spec.key !== next.key;
+      spec = next;
+      base = next.series;
+      size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+      if (fresh || following || !view) { following = true; history = []; view = autoView(); } else if (spec.refine) {
+        const series = spec.refine(view.x.map((u) => fromU(scaleX(), u)));
+        if (series) spec = { ...spec, series };
+      }
+      render();
+    },
+    fit,
+    /** Follow another plot's x view (linked plots); null fits. */
+    setXView(range) {
+      if (!spec) return;
+      if (!range) { fit({ quiet: true }); return; }
+      view = { x: [...range.x], y: view.y };
+      following = false;
+      schedule();
+      clearTimeout(refineTimer);
+      refineTimer = setTimeout(refine, 120);
+    },
+    zoomed: () => !following,
+    /** Hear each change of view made on this plot (not one set from outside). */
+    listen(fn) { viewListener = fn; },
+    dispose() { observer?.disconnect(); clearTimeout(refineTimer); if (frame) cancelAnimationFrame(frame); },
+  };
+}
+
+/** Plots that share their x view: zooming or panning one moves the others. */
+function linkPlots(...plots) {
+  for (const plot of plots) plot.listen((view) => { for (const other of plots) if (other !== plot) other.setXView(view); });
+}
+
 };
 
 __modules["src/web/radial-menu.js"] = function (__require, __exports) {
@@ -66741,7 +67589,8 @@ let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/pr
 let linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients; __bind(() => { ({ linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } = __require("src/core/analysis/coefficient-links.js")); });
 let expressionTex, parseLevels; __bind(() => { ({ expressionTex, parseLevels } = __require("src/core/transfer-function.js")); });
 let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
-let locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let locusSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, responseSpec, stepSpec, swingSpec } = __require("src/core/plot-spec.js")); });
+let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
 let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
@@ -66772,6 +67621,7 @@ let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analy
  * across derives so responses can be compared; Annotate graph puts that graph
  * on the drawing with its legend, and Annotate equations the equations.
  */
+
 
 
 
@@ -66849,6 +67699,26 @@ const el = (tag, props = {}, children = []) => {
   node.append(...children);
   return node;
 };
+
+// The window's plots (plot-view.js), kept across redraws so a zoomed view
+// stays zoomed while the numbers change.
+const plotViews = {};
+function plotView(name) {
+  if (!plotViews[name]) {
+    plotViews[name] = createPlotView();
+    if (name === 'loop-phase') linkPlots(plotView('loop-magnitude'), plotViews[name]);
+  }
+  return plotViews[name];
+}
+
+/** A graph's spec; a response redraws its curves for a zoomed range
+ *  (`detailed(range)` returns the plot sampled there). */
+function graphSpec(plot, detailed = null) {
+  if (plot.kind === 'step') return stepSpec(plot);
+  const spec = responseSpec(plot);
+  if (detailed) spec.refine = (range) => { const close = detailed(range); return close ? responseSpec(close).series : null; };
+  return spec;
+}
 
 function circuitParts() {
   return [...editor.circuit.components.values()].filter((component) => CIRCUIT_TYPES.test(component.type)).length;
@@ -66990,6 +67860,7 @@ function syncDocument() {
 }
 
 function clearResults() {
+  for (const view of Object.values(plotViews)) view.set(null);
   traces = [];
   latest = null;
   locus = null;
@@ -67125,7 +67996,9 @@ function renderLocus() {
   const host = section.querySelector('.signal-flow-locus-plot');
   host.replaceChildren();
   if (!locus?.plot) return;
-  host.append(figureSvg(locusFigure(locus.plot, { width: 400, height: 260, fontSize: 11 }), 'Root locus'));
+  const view = plotView('locus');
+  host.append(view.el);
+  view.set(locusSpec(locus.plot));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Annotate locus', title: 'Put this root locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
   ]));
@@ -67176,8 +68049,21 @@ function renderLoop() {
     ? 'No crossover: |T| never passes 1 in this range.'
     : `Crossover at ${unit} = ${number(margins.crossover)}: phase margin ${margins.phaseMargin.toFixed(1)}°${margins.gainMargin !== null ? `, gain margin ${margins.gainMargin.toFixed(1)} dB` : ''}.`;
   body.append(el('p', { class: `field-hint${margins?.phaseMargin !== null && margins?.phaseMargin < 0 ? ' analysis-error' : ''}`, text: summary }));
-  if (data.magnitude) body.append(graphSvg(data.annotated));
-  if (data.phase) body.append(graphSvg({ ...data.phase, role: 'loop', markers: data.markers.map((m) => ({ f: m.f, label: '' })) }));
+  const detailed = (quantity, extra) => (range) => {
+    const close = responsePlot([data.trace], data.result.variable, { sAxis: sAxisSetting(), quantity, detail: range });
+    return close && { ...close, ...extra };
+  };
+  if (data.magnitude) {
+    const view = plotView('loop-magnitude');
+    body.append(view.el);
+    view.set(graphSpec(data.annotated, detailed('magnitude', { markers: data.markers, role: 'loop' })));
+  }
+  if (data.phase) {
+    const markers = data.markers.map((m) => ({ f: m.f, label: '' }));
+    const view = plotView('loop-phase');
+    body.append(view.el);
+    view.set(graphSpec({ ...data.phase, role: 'loop', markers }, detailed('phase', { role: 'loop', markers })));
+  }
   body.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Annotate loop', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
   ]));
@@ -67207,7 +68093,7 @@ function loopData(key, result) {
   const magnitude = responsePlot([trace], result.variable, { sAxis: sAxisSetting() });
   const phase = responsePlot([trace], result.variable, { sAxis: sAxisSetting(), quantity: 'phase' });
   return {
-    result, symbolic, equation, t, curve, margins, markers, magnitude, phase,
+    result, symbolic, equation, t, curve, margins, markers, magnitude, phase, trace,
     annotated: magnitude ? { ...magnitude, markers, role: 'loop', source: key } : null,
     shown: [{ label: `T_{${String(result.signal).replace(/[{}]/g, '')}}`, color: TRACE_COLORS[0] }],
   };
@@ -67376,7 +68262,11 @@ function renderSwing() {
   for (const trace of traces) trace.color = swingColors.get(trace.key) || trace.color;
   const shown = traces.filter((t) => swingShown.has(t.key));
   const plot = swingPlotOf(shown.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })));
-  if (shown.length) host.append(figureSvg(swingFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Peak against input amplitude'));
+  if (shown.length) {
+    const view = plotView('swing');
+    host.append(view.el);
+    view.set(swingSpec(plot));
+  }
   else host.append(el('p', { class: 'field-hint', text: 'Check a net below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
@@ -67582,76 +68472,19 @@ function refreshLinkedRows() {
 
 // ----- the graph ------------------------------------------------------------------------
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** Text with _{} and ^{} markup as SVG tspans. */
-function svgText(item, fontSize) {
-  const text = document.createElementNS(SVG_NS, 'text');
-  text.setAttribute('x', item.x);
-  text.setAttribute('y', item.y);
-  text.setAttribute('text-anchor', item.anchor || 'start');
-  text.setAttribute('class', `role-${item.role}`);
-  for (const run of parseLabelRuns(item.text)) {
-    const span = document.createElementNS(SVG_NS, 'tspan');
-    span.textContent = run.text;
-    if (run.sub || run.super) {
-      span.setAttribute('baseline-shift', run.sub ? '-25%' : '35%');
-      span.setAttribute('font-size', `${fontSize * 0.7}`);
-    }
-    text.append(span);
-  }
-  return text;
-}
-
-/** The graph in the panel: the same layout the drawing gets, in the theme's colours. */
-function graphSvg(plot) {
-  if (plot.kind === 'step') return figureSvg(stepFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Step responses');
-  return figureSvg(responseFigure(plot, { width: 400, height: 220, fontSize: 11 }), plot.quantity === 'phase' ? 'Phase responses' : 'Magnitude responses');
-}
-
-function figureSvg(figure, title) {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${figure.width} ${figure.height}`);
-  svg.setAttribute('class', 'signal-flow-plot');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', title);
-  for (const item of figure.items) {
-    let node;
-    if (item.type === 'line') {
-      node = document.createElementNS(SVG_NS, 'line');
-      for (const key of ['x1', 'y1', 'x2', 'y2']) node.setAttribute(key, item[key]);
-    } else if (item.type === 'path') {
-      node = document.createElementNS(SVG_NS, 'path');
-      node.setAttribute('d', item.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' '));
-      if (item.color) node.style.stroke = item.color;
-    } else if (item.type === 'dot') {
-      node = document.createElementNS(SVG_NS, 'circle');
-      node.setAttribute('cx', item.x);
-      node.setAttribute('cy', item.y);
-      node.setAttribute('r', item.r || 2);
-      node.style.fill = item.color || 'currentColor';
-      if (item.opacity !== undefined) node.style.fillOpacity = item.opacity;
-    } else if (item.type === 'text') node = svgText(item, 11);
-    if (!node) continue;
-    node.classList.add(`role-${item.role}`);
-    svg.append(node);
-  }
-  return svg;
-}
-
 // The axis s results plot on: ω in the coefficients' units, or f/fs with s
 // in units of 1/Ts (saved with the document). A z result puts every trace on f/fs.
 const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
 // What the graph shows (saved with the document): magnitude, phase, or the step response.
 const graphView = () => flow().graphView || 'magnitude';
-const graphPlot = (list, view = graphView()) => {
+const graphPlot = (list, view = graphView(), detail = null) => {
   const numbered = list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) }));
   if (view === 'step') return stepPlot(numbered);
   // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
   // as the noise it predicts, each STF as where the tone would sit.
   const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: MUTED_TRACE_COLOR, points: spectrum.points }] : [];
   const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
-  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs });
+  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs, detail });
 };
 
 // ----- the simulated output's spectrum, behind the curves --------------------------------
@@ -67783,9 +68616,10 @@ const shownTraces = () => traces.filter((trace) => trace.on);
 /** Redraw the graph's plot alone, its controls left as they are. */
 function redrawGraphPlot() {
   const host = section.querySelector('.signal-flow-graph');
-  const old = host.querySelector('.signal-flow-plot');
+  const graph = plotViews.graph;
   const plot = graphPlot(shownTraces());
-  if (old && plot) old.replaceWith(graphSvg(plot));
+  const view = graphView();
+  if (graph && host.contains(graph.el) && plot) graph.set(graphSpec(plot, view === 'step' ? null : (range) => graphPlot(shownTraces(), view, range)));
   else renderGraph();
 }
 
@@ -67898,8 +68732,11 @@ function renderGraph() {
   }
   if (head.children.length) host.append(head);
   if (view === 'magnitude') host.append(spectrumControls());
-  if (plot) host.append(graphSvg(plot));
-  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
+  if (plot) {
+    const graph = plotView('graph');
+    host.append(graph.el);
+    graph.set(graphSpec(plot, view === 'step' ? null : (range) => graphPlot(shownTraces(), view, range)));
+  } else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
@@ -68280,8 +69117,8 @@ function installSignalFlowUi() {
       links,
       resolved,
       band: () => editor.circuit.analysisValues.band,
-      // A response plot drawn as the graph draws it (the run window's).
-      plotSvg: (plot) => graphSvg(plot),
+      // A response plot as the graph shows it (the run window's).
+      plotSpec: (plot, detailed) => graphSpec(plot, detailed),
       markSettingsChanged,
       // The numbers found, into the sliders.
       applyCoefficients(values, { fractions: texts = {} } = {}) {

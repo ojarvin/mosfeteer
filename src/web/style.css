@@ -6705,6 +6705,147 @@ body.chrome-away [data-editor-edge="right"] {
   font-style: italic;
 }
 
+/* The interactive plot every analysis view uses (plot-view.js). */
+.plot-view {
+  position: relative;
+  min-width: 0;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.plot-view.panning {
+  cursor: grabbing;
+}
+
+.plot-view-svg {
+  display: block;
+  overflow: hidden;
+}
+
+.plot-view-svg line,
+.plot-view-svg path {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.plot-view-svg .role-grid {
+  stroke: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.plot-view-svg .role-grid.minor {
+  stroke-opacity: 0.55;
+}
+
+.plot-view-svg .role-zero {
+  stroke-dasharray: 2 4;
+}
+
+.plot-view-svg .role-band,
+.plot-view-svg .role-marker {
+  stroke: var(--text);
+  stroke-dasharray: 6 3;
+}
+
+.plot-view-svg .role-corner {
+  stroke-dasharray: 2 3;
+}
+
+.plot-view-svg .role-marker.cross {
+  stroke-dasharray: none;
+  stroke-width: 1.5;
+}
+
+.plot-view-svg .role-curve {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+/* Behind or before the curves: a simulated spectrum, a run's start. */
+.plot-view-svg .role-background {
+  stroke-width: 1.25;
+  stroke-opacity: 0.8;
+}
+
+.plot-view-svg .role-start {
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+}
+
+.plot-view-svg .role-asymptote {
+  stroke: var(--text-dim);
+  stroke-dasharray: 4 3;
+}
+
+.plot-view-svg .plot-frame {
+  fill: none;
+  stroke: var(--border);
+}
+
+.plot-view-svg .plot-cursor {
+  stroke: var(--text-dim);
+  stroke-dasharray: 1 3;
+}
+
+.plot-view-svg .plot-zoom-box {
+  fill: var(--accent-tint);
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+}
+
+.plot-view-svg text {
+  fill: var(--text-dim);
+  stroke: none;
+  font: 10px var(--font-ui);
+}
+
+.plot-view-svg text.role-label {
+  font-style: italic;
+}
+
+.plot-view-svg text.role-marker,
+.plot-view-svg text.role-corner {
+  fill: var(--text);
+}
+
+.plot-view-fit {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  height: var(--control-h-sm);
+  padding: 0 8px;
+  font-size: var(--text-xs);
+}
+
+.plot-view-readout {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  max-width: 60%;
+  padding: 4px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--glass-bg);
+  font: var(--text-xs)/1.4 var(--font-mono);
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plot-view-readout.left {
+  right: auto;
+  left: 52px;
+}
+
+.plot-view-fit:not([hidden]) ~ .plot-view-readout:not(.left) {
+  top: 44px;
+}
+
 /* The plot area: one card, its view switch on top. */
 .signal-flow-plots {
   display: grid;

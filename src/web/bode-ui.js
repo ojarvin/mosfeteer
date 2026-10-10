@@ -14,8 +14,10 @@ import {
 } from '../core/analysis/bode.js';
 import { renderExpression } from '../core/analysis/present.js';
 import { negate } from '../core/analysis/rational.js';
-import { bodeFigure, cornerNames } from '../core/bode-figure.js';
-import { normalizePlot, parseLabelRuns } from '../core/model.js';
+import { cornerNames } from '../core/bode-figure.js';
+import { bodeSpecs } from '../core/plot-spec.js';
+import { createPlotView, linkPlots } from './plot-view.js';
+import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { editor } from './editor-state.js';
 import { commit, markSettingsChanged, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
@@ -143,41 +145,6 @@ function currentModel() {
 
 // ----- drawing -----------------------------------------------------------------------
 
-const SVG = 'http://www.w3.org/2000/svg';
-
-function svgElement(name, attributes = {}) {
-  const element = document.createElementNS(SVG, name);
-  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
-  return element;
-}
-
-/** `ω_{p1}`, `10^{-3}` as text with real sub- and superscripts. */
-function markupText(element, text) {
-  for (const run of parseLabelRuns(text)) {
-    const span = svgElement('tspan', run.sub ? { 'baseline-shift': 'sub', 'font-size': '72%' } : run.super ? { 'baseline-shift': 'super', 'font-size': '72%' } : {});
-    span.textContent = run.text;
-    element.appendChild(span);
-  }
-}
-
-/** The figure (core/bode-figure.js) as an SVG in the theme's colors. */
-export function figureElement(figure) {
-  const svg = svgElement('svg', { viewBox: `0 0 ${figure.width} ${figure.height}`, class: 'bode-figure', role: 'img' });
-  for (const item of figure.items) {
-    const cls = `bode-${item.role}`;
-    if (item.type === 'line') svg.appendChild(svgElement('line', { x1: item.x1, y1: item.y1, x2: item.x2, y2: item.y2, class: cls }));
-    else if (item.type === 'path' && item.points.length) {
-      svg.appendChild(svgElement('polyline', { points: item.points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '), class: cls }));
-    } else if (item.type === 'dot') svg.appendChild(svgElement('circle', { cx: item.x, cy: item.y, r: 2.5, class: cls }));
-    else if (item.type === 'text') {
-      const text = svgElement('text', { x: item.x, y: item.y, 'text-anchor': item.anchor, class: cls });
-      markupText(text, item.text);
-      svg.appendChild(text);
-    }
-  }
-  return svg;
-}
-
 function mathElement(tex, tag = 'span') {
   const element = document.createElement(tag);
   element.className = 'bode-math';
@@ -223,6 +190,18 @@ function slider({ label, tex, index, min, max, text, onInput, components = [], t
   return row;
 }
 
+
+// The magnitude and the phase, two plots sharing their frequency axis
+// (plot-view.js), kept across redraws so a zoomed view stays while a slider moves.
+let plots = null;
+function bodePlots() {
+  if (!plots) {
+    plots = { magnitude: createPlotView({ height: 200 }), phase: createPlotView({ height: 130 }) };
+    linkPlots(plots.magnitude, plots.phase);
+  }
+  return plots;
+}
+
 /** Redraw the figure and the corner list; the sliders stay (so a drag goes on). */
 function drawSketch() {
   const panel = panelEl();
@@ -237,7 +216,12 @@ function drawSketch() {
     return;
   }
   const { sketch, corners, quantity } = model;
-  figureHost.appendChild(figureElement(bodeFigure(sketch, { width: 480, height: 300, corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })));
+  const specs = bodeSpecs(sketch, { corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) });
+  const views = bodePlots();
+  for (const [name, view] of Object.entries(views)) {
+    figureHost.appendChild(view.el);
+    view.set({ ...specs[name], key: `${specs[name].key}:${quantity.key}:${quantity.tex}` });
+  }
   for (const corner of corners) {
     const item = document.createElement('li');
     const where = `${formatNumber(corner.w)}\\,g/C`;

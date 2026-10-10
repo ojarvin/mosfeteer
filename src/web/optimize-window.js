@@ -11,6 +11,7 @@
 
 import { canvasEl } from './elements.js';
 import { PLACE, floatingWindow } from './floating-window.js';
+import { createPlotView } from './plot-view.js';
 
 const el = (tag, props = {}, children = []) => {
   const node = document.createElement(tag);
@@ -28,7 +29,7 @@ let open = null;
 
 /**
  * Open the run window. `title` names the run ("Optimizer", "Rounding");
- * `plotAt(values, role)` returns the plot's SVG element for the numbers
+ * `plotAt({ start, best })` returns the plot's spec (plot-spec.js) for the numbers
  * given -- role 'start' or 'best' -- or null; `onStop` stops the run;
  * `onClose` is told when the window closes. Returns `{ say(text, error),
  * progress(fraction), best(values), done(text, error), isOpen() }`.
@@ -39,7 +40,8 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   let startValues = null;
   const status = el('p', { class: 'field-hint run-window-status', 'aria-live': 'polite', text: 'Preparing...' });
   const bar = el('progress', { class: 'run-window-progress', max: '1', value: '0' });
-  const plot = el('div', { class: 'run-window-plot' });
+  const plotView = createPlotView({ height: 220 });
+  const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
   const legend = el('p', { class: 'field-hint run-window-legend', text: 'Grey: where it started. Colour: the best so far.' });
   const stop = el('button', { type: 'button', class: 'run-window-stop', text: 'Stop', onclick: () => (finished ? dispose() : onStop()) });
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
@@ -55,6 +57,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     if (closed) return;
     closed = true;
     dialog.remove();
+    plotView.dispose();
     if (open?.dialog === dialog) open = null;
     onClose();
   }
@@ -68,10 +71,10 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   open = { dialog, dispose };
 
   const draw = (values) => {
-    const svg = plotAt({ start: startValues, best: values });
-    plot.replaceChildren(...(svg ? [svg] : []));
-    plot.hidden = !svg;
-    legend.hidden = !svg;
+    const spec = plotAt({ start: startValues, best: values });
+    plotView.set(spec);
+    plot.hidden = !spec;
+    legend.hidden = !spec;
   };
   return {
     start(values) { startValues = values; draw(null); },

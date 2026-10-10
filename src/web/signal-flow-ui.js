@@ -18,7 +18,8 @@ import { symbolText } from '../core/analysis/present.js';
 import { linkMakesCycle, parseCoefficientLink, parseCoefficientVectors, resolveCoefficients } from '../core/analysis/coefficient-links.js';
 import { expressionTex, parseLevels } from '../core/transfer-function.js';
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
-import { locusFigure, responseFigure, stepFigure, swingFigure } from '../core/bode-figure.js';
+import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
+import { createPlotView, linkPlots } from './plot-view.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
@@ -89,6 +90,26 @@ const el = (tag, props = {}, children = []) => {
   node.append(...children);
   return node;
 };
+
+// The window's plots (plot-view.js), kept across redraws so a zoomed view
+// stays zoomed while the numbers change.
+const plotViews = {};
+function plotView(name) {
+  if (!plotViews[name]) {
+    plotViews[name] = createPlotView();
+    if (name === 'loop-phase') linkPlots(plotView('loop-magnitude'), plotViews[name]);
+  }
+  return plotViews[name];
+}
+
+/** A graph's spec; a response redraws its curves for a zoomed range
+ *  (`detailed(range)` returns the plot sampled there). */
+function graphSpec(plot, detailed = null) {
+  if (plot.kind === 'step') return stepSpec(plot);
+  const spec = responseSpec(plot);
+  if (detailed) spec.refine = (range) => { const close = detailed(range); return close ? responseSpec(close).series : null; };
+  return spec;
+}
 
 function circuitParts() {
   return [...editor.circuit.components.values()].filter((component) => CIRCUIT_TYPES.test(component.type)).length;
@@ -230,6 +251,7 @@ function syncDocument() {
 }
 
 function clearResults() {
+  for (const view of Object.values(plotViews)) view.set(null);
   traces = [];
   latest = null;
   locus = null;
@@ -365,7 +387,9 @@ function renderLocus() {
   const host = section.querySelector('.signal-flow-locus-plot');
   host.replaceChildren();
   if (!locus?.plot) return;
-  host.append(figureSvg(locusFigure(locus.plot, { width: 400, height: 260, fontSize: 11 }), 'Root locus'));
+  const view = plotView('locus');
+  host.append(view.el);
+  view.set(locusSpec(locus.plot));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Annotate locus', title: 'Put this root locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
   ]));
@@ -416,8 +440,21 @@ function renderLoop() {
     ? 'No crossover: |T| never passes 1 in this range.'
     : `Crossover at ${unit} = ${number(margins.crossover)}: phase margin ${margins.phaseMargin.toFixed(1)}°${margins.gainMargin !== null ? `, gain margin ${margins.gainMargin.toFixed(1)} dB` : ''}.`;
   body.append(el('p', { class: `field-hint${margins?.phaseMargin !== null && margins?.phaseMargin < 0 ? ' analysis-error' : ''}`, text: summary }));
-  if (data.magnitude) body.append(graphSvg(data.annotated));
-  if (data.phase) body.append(graphSvg({ ...data.phase, role: 'loop', markers: data.markers.map((m) => ({ f: m.f, label: '' })) }));
+  const detailed = (quantity, extra) => (range) => {
+    const close = responsePlot([data.trace], data.result.variable, { sAxis: sAxisSetting(), quantity, detail: range });
+    return close && { ...close, ...extra };
+  };
+  if (data.magnitude) {
+    const view = plotView('loop-magnitude');
+    body.append(view.el);
+    view.set(graphSpec(data.annotated, detailed('magnitude', { markers: data.markers, role: 'loop' })));
+  }
+  if (data.phase) {
+    const markers = data.markers.map((m) => ({ f: m.f, label: '' }));
+    const view = plotView('loop-phase');
+    body.append(view.el);
+    view.set(graphSpec({ ...data.phase, role: 'loop', markers }, detailed('phase', { role: 'loop', markers })));
+  }
   body.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Annotate loop', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
   ]));
@@ -447,7 +484,7 @@ function loopData(key, result) {
   const magnitude = responsePlot([trace], result.variable, { sAxis: sAxisSetting() });
   const phase = responsePlot([trace], result.variable, { sAxis: sAxisSetting(), quantity: 'phase' });
   return {
-    result, symbolic, equation, t, curve, margins, markers, magnitude, phase,
+    result, symbolic, equation, t, curve, margins, markers, magnitude, phase, trace,
     annotated: magnitude ? { ...magnitude, markers, role: 'loop', source: key } : null,
     shown: [{ label: `T_{${String(result.signal).replace(/[{}]/g, '')}}`, color: TRACE_COLORS[0] }],
   };
@@ -616,7 +653,11 @@ function renderSwing() {
   for (const trace of traces) trace.color = swingColors.get(trace.key) || trace.color;
   const shown = traces.filter((t) => swingShown.has(t.key));
   const plot = swingPlotOf(shown.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })));
-  if (shown.length) host.append(figureSvg(swingFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Peak against input amplitude'));
+  if (shown.length) {
+    const view = plotView('swing');
+    host.append(view.el);
+    view.set(swingSpec(plot));
+  }
   else host.append(el('p', { class: 'field-hint', text: 'Check a net below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
@@ -822,76 +863,19 @@ function refreshLinkedRows() {
 
 // ----- the graph ------------------------------------------------------------------------
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** Text with _{} and ^{} markup as SVG tspans. */
-function svgText(item, fontSize) {
-  const text = document.createElementNS(SVG_NS, 'text');
-  text.setAttribute('x', item.x);
-  text.setAttribute('y', item.y);
-  text.setAttribute('text-anchor', item.anchor || 'start');
-  text.setAttribute('class', `role-${item.role}`);
-  for (const run of parseLabelRuns(item.text)) {
-    const span = document.createElementNS(SVG_NS, 'tspan');
-    span.textContent = run.text;
-    if (run.sub || run.super) {
-      span.setAttribute('baseline-shift', run.sub ? '-25%' : '35%');
-      span.setAttribute('font-size', `${fontSize * 0.7}`);
-    }
-    text.append(span);
-  }
-  return text;
-}
-
-/** The graph in the panel: the same layout the drawing gets, in the theme's colours. */
-function graphSvg(plot) {
-  if (plot.kind === 'step') return figureSvg(stepFigure(plot, { width: 400, height: 220, fontSize: 11 }), 'Step responses');
-  return figureSvg(responseFigure(plot, { width: 400, height: 220, fontSize: 11 }), plot.quantity === 'phase' ? 'Phase responses' : 'Magnitude responses');
-}
-
-function figureSvg(figure, title) {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${figure.width} ${figure.height}`);
-  svg.setAttribute('class', 'signal-flow-plot');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', title);
-  for (const item of figure.items) {
-    let node;
-    if (item.type === 'line') {
-      node = document.createElementNS(SVG_NS, 'line');
-      for (const key of ['x1', 'y1', 'x2', 'y2']) node.setAttribute(key, item[key]);
-    } else if (item.type === 'path') {
-      node = document.createElementNS(SVG_NS, 'path');
-      node.setAttribute('d', item.points.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' '));
-      if (item.color) node.style.stroke = item.color;
-    } else if (item.type === 'dot') {
-      node = document.createElementNS(SVG_NS, 'circle');
-      node.setAttribute('cx', item.x);
-      node.setAttribute('cy', item.y);
-      node.setAttribute('r', item.r || 2);
-      node.style.fill = item.color || 'currentColor';
-      if (item.opacity !== undefined) node.style.fillOpacity = item.opacity;
-    } else if (item.type === 'text') node = svgText(item, 11);
-    if (!node) continue;
-    node.classList.add(`role-${item.role}`);
-    svg.append(node);
-  }
-  return svg;
-}
-
 // The axis s results plot on: ω in the coefficients' units, or f/fs with s
 // in units of 1/Ts (saved with the document). A z result puts every trace on f/fs.
 const sAxisSetting = () => editor.circuit.analysisValues.sAxis || 'omega';
 // What the graph shows (saved with the document): magnitude, phase, or the step response.
 const graphView = () => flow().graphView || 'magnitude';
-const graphPlot = (list, view = graphView()) => {
+const graphPlot = (list, view = graphView(), detail = null) => {
   const numbered = list.map((trace) => ({ ...trace, value: numeric(trace.value, trace.variable) }));
   if (view === 'step') return stepPlot(numbered);
   // With a simulated spectrum, one plot in its dBFS: the spectrum, each NTF
   // as the noise it predicts, each STF as where the tone would sit.
   const background = spectrum?.points?.length ? [{ label: '\\text{simulated output}', color: MUTED_TRACE_COLOR, points: spectrum.points }] : [];
   const dbfs = background.length ? { offset: (trace) => dbfsOffset(spectrum.raw, spectrum.fullScale, { noise: trace.noise, amplitude: spectrum.amplitude }) } : null;
-  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs });
+  return responsePlot(numbered, 's', { sAxis: sAxisSetting(), band: editor.circuit.analysisValues.band, quantity: view, background, dbfs, detail });
 };
 
 // ----- the simulated output's spectrum, behind the curves --------------------------------
@@ -1023,9 +1007,10 @@ const shownTraces = () => traces.filter((trace) => trace.on);
 /** Redraw the graph's plot alone, its controls left as they are. */
 function redrawGraphPlot() {
   const host = section.querySelector('.signal-flow-graph');
-  const old = host.querySelector('.signal-flow-plot');
+  const graph = plotViews.graph;
   const plot = graphPlot(shownTraces());
-  if (old && plot) old.replaceWith(graphSvg(plot));
+  const view = graphView();
+  if (graph && host.contains(graph.el) && plot) graph.set(graphSpec(plot, view === 'step' ? null : (range) => graphPlot(shownTraces(), view, range)));
   else renderGraph();
 }
 
@@ -1138,8 +1123,11 @@ function renderGraph() {
   }
   if (head.children.length) host.append(head);
   if (view === 'magnitude') host.append(spectrumControls());
-  if (plot) host.append(graphSvg(plot));
-  else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
+  if (plot) {
+    const graph = plotView('graph');
+    host.append(graph.el);
+    graph.set(graphSpec(plot, view === 'step' ? null : (range) => graphPlot(shownTraces(), view, range)));
+  } else host.append(el('p', { class: 'field-hint', text: view === 'step' && shownTraces().length ? 'These results have no step response here (a loop holding a delay).' : 'Check a trace below to plot it.' }));
   const legend = el('div', { class: 'signal-flow-legend' });
   for (const trace of traces) {
     const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
@@ -1520,8 +1508,8 @@ export function installSignalFlowUi() {
       links,
       resolved,
       band: () => editor.circuit.analysisValues.band,
-      // A response plot drawn as the graph draws it (the run window's).
-      plotSvg: (plot) => graphSvg(plot),
+      // A response plot as the graph shows it (the run window's).
+      plotSpec: (plot, detailed) => graphSpec(plot, detailed),
       markSettingsChanged,
       // The numbers found, into the sliders.
       applyCoefficients(values, { fractions: texts = {} } = {}) {
