@@ -366,3 +366,15 @@ serverTest('the symbol sheet is served live from the registry', async (t) => {
   // Nothing is written: the sheet is never a document.
   assert.deepEqual((await readdir(app.workspace).catch(() => [])).filter((file) => file.endsWith('.json')), []);
 });
+
+serverTest('an oversized document is refused with a reason, not a dropped connection', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  const response = await fetch(`${app.base}/api/document`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Origin: app.base },
+    body: JSON.stringify({ name: 'huge', state: { pad: 'x'.repeat(11_000_000) } }),
+  });
+  assert.equal(response.status, 413);
+  assert.match((await response.json()).error, /too large/);
+});

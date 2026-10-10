@@ -83,13 +83,16 @@ function matchesEtag(req, revision) {
 async function requestBody(req, limit = 10_000_000) {
   // Decode once at the end: a multi-byte character split across two chunks
   // would be mangled by concatenating each chunk's own string conversion.
+  // An oversized body is read to its end all the same: answering before the
+  // client has sent it all resets the connection, and the browser then sees
+  // only "Failed to fetch" instead of the reason.
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > limit) throw httpError('request body too large', 413);
-    chunks.push(chunk);
+    if (size <= limit) chunks.push(chunk);
   }
+  if (size > limit) throw httpError(`request body too large (${Math.round(size / 1e6)} MB; the limit is ${Math.round(limit / 1e6)} MB)`, 413);
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
   } catch {

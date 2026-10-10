@@ -802,8 +802,31 @@ function withResponseMeta(data, response, notModified = false) {
   return data;
 }
 
-async function httpJson(fetchImpl, url, options = {}) {
-  const response = await fetchImpl(url, { cache: 'no-store', ...options });
+/** Waits between tries while the server cannot be reached: a `--watch`
+ *  server restarting after a source change is back within a second or two. */
+export const UNREACHABLE_RETRY_MS = [250, 500, 1000, 1500, 2000, 3000];
+
+/** `fetch`, tried again while the server cannot be reached at all (the
+ *  browser's bare "Failed to fetch"), then failing with an error that says so. */
+async function fetchRetrying(fetchImpl, url, options, waits, sleep) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetchImpl(url, options);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      if (attempt >= waits.length) {
+        const error = new Error('the Mosfeteer server is not responding; check that it is still running, then try again');
+        error.code = 'unreachable';
+        error.cause = err;
+        throw error;
+      }
+      await sleep(waits[attempt]);
+    }
+  }
+}
+
+async function httpJsonOnce(fetchImpl, url, options = {}, { waits = UNREACHABLE_RETRY_MS, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const response = await fetchRetrying(fetchImpl, url, { cache: 'no-store', ...options }, waits, sleep);
   if (response.status === 304) return withResponseMeta({}, response, true);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -822,9 +845,10 @@ const jsonBody = (method, value) => ({
   body: JSON.stringify(value),
 });
 
-export function createPersistenceAdapter({ fetchImpl = globalThis.fetch } = {}) {
+export function createPersistenceAdapter({ fetchImpl = globalThis.fetch, retry } = {}) {
   if (browserOnlyRequested()) return createBrowserPersistenceAdapter();
   if (typeof fetchImpl !== 'function') throw new Error('persistence requires fetch');
+  const httpJson = (impl, url, options) => httpJsonOnce(impl, url, options, retry);
   const query = (params) => new URLSearchParams(params).toString();
   return {
     liveSync: true,

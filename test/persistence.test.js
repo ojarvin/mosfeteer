@@ -168,6 +168,24 @@ test('HTTP persistence addresses documents by path and exposes conditional loads
   assert.deepEqual(JSON.parse(requests[2][1].body), { path: '/a b/amp.json', state: { version: 2 }, overwrite: true });
 });
 
+test('HTTP persistence retries through a server restart, then says the server is down', async () => {
+  let calls = 0;
+  const flaky = async () => {
+    calls += 1;
+    if (calls < 3) throw new TypeError('Failed to fetch');
+    return response({ ok: true });
+  };
+  const waits = [];
+  const retry = { waits: [1, 1, 1], sleep: async (ms) => { waits.push(ms); } };
+  const persistence = createPersistenceAdapter({ fetchImpl: flaky, retry });
+  assert.deepEqual({ ...(await persistence.save({ path: '/a.json' }, {})) }, { ok: true });
+  assert.equal(calls, 3);
+  assert.deepEqual(waits, [1, 1]);
+
+  const down = createPersistenceAdapter({ fetchImpl: async () => { throw new TypeError('Failed to fetch'); }, retry });
+  await assert.rejects(down.load('/a.json'), (error) => error.code === 'unreachable' && /not responding/.test(error.message));
+});
+
 function crc32(buffer) {
   let crc = ~0;
   for (const byte of buffer) {
