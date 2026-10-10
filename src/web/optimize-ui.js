@@ -596,14 +596,30 @@ function fractionsTable(result) {
 
 // ----- the run --------------------------------------------------------------------------
 
-/** Score batches in worker threads; null where workers cannot run (the
- *  page opened from a file), and the run scores in this thread instead. */
+/** A worker thread: from its module beside the page, or -- opened from a
+ *  file, where no worker script may load -- from the source the browser-only
+ *  build carries (a blob). Null when neither can start. */
+let workerUrl = null;
+function startWorker() {
+  if (location.protocol !== 'file:') return new Worker('optimize-worker.js', { type: 'module' });
+  const source = globalThis.__MOSFETEER_WORKER_SOURCE;
+  if (!source) return null;
+  workerUrl ||= URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+  return new Worker(workerUrl);
+}
+
+/** Score batches in worker threads; null where workers cannot run, and the
+ *  run scores in this thread instead. */
 async function workerPool(circuitJson, problem) {
-  if (typeof Worker === 'undefined' || location.protocol === 'file:') return null;
+  if (typeof Worker === 'undefined') return null;
   const count = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 2) - 1));
   const workers = [];
   try {
-    for (let i = 0; i < count; i++) workers.push(new Worker('optimize-worker.js', { type: 'module' }));
+    for (let i = 0; i < count; i++) {
+      const worker = startWorker();
+      if (!worker) throw new Error('no worker source');
+      workers.push(worker);
+    }
   } catch {
     workers.forEach((w) => w.terminate());
     return null;

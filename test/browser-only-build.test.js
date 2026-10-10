@@ -52,3 +52,27 @@ test('browser-only bundle publishes every exported function, generators included
   const { polishSearch } = require('src/core/analysis/rounding.js');
   assert.equal(typeof polishSearch({ free: [] }, { own: {}, snapped: { fractions: {}, groups: [] } }).next, 'function');
 });
+
+test('browser-only bundle carries the optimizer worker, which scores in a blob worker', async () => {
+  const source = await readFile(new URL('../browser-only/browser-only.js', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../browser-only/index.html', import.meta.url), 'utf8');
+  assert.match(html, /worker-src blob:/);
+  const context = {};
+  runInNewContext(source.replace('  __require("src/web/main.js");', ''), context);
+  const worker = context.__MOSFETEER_WORKER_SOURCE;
+  assert.equal(typeof worker, 'string');
+  // Run it as a worker would: messages in, messages out.
+  const sent = [];
+  let listener = null;
+  const self = { addEventListener: (type, fn) => { if (type === 'message') listener = fn; }, postMessage: (data) => sent.push(data) };
+  runInNewContext(worker, { self });
+  const { Circuit } = await import('../src/core/model.js');
+  const { runCommand } = await import('../src/core/commands.js');
+  const circuit = new Circuit();
+  for (const line of ['add input U --at 0 0', 'add gain K1 --at 400 0 --value k', 'add output V --at 800 0', 'connect U.p K1.in', 'connect K1.out V.p']) runCommand(circuit, line);
+  listener({ data: { type: 'init', circuit: circuit.toJSON(), problem: { output: 'V', sources: { U: 'input' }, band: { f0: 0, bw: 0.01 }, values: { k: 1 }, setup: { specs: [{ action: 'maximize', measure: 'average', input: 'U', band: 'signal' }] } } } });
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0])), { type: 'ready', ok: true, error: null });
+  listener({ data: { type: 'evaluate', id: 7, batch: [{ k: 2 }] } });
+  assert.equal(sent[1].id, 7);
+  assert.ok(Math.abs(sent[1].scores[0].specs[0] - 20 * Math.log10(2)) < 1e-6);
+});

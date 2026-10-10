@@ -1702,20 +1702,6 @@ button:disabled {
 .floating-window-grip.grip-sw { bottom: 0; left: 0; cursor: nesw-resize; }
 .floating-window-grip.grip-se { bottom: 0; right: 0; cursor: nwse-resize; }
 
-/* A faint mark in the lower corner says it resizes. */
-.floating-window-grip.grip-se::after {
-  content: '';
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid var(--text-dim);
-  border-bottom: 1.5px solid var(--text-dim);
-  border-bottom-right-radius: 2px;
-  opacity: 0.5;
-}
-
 .floating-window.docked > .floating-window-grip {
   display: none;
 }
