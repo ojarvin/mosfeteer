@@ -38,18 +38,18 @@ its kin. `Shift+T` forgets the places and packs the desk afresh in
 neighbourhoods of related designs.
 
 With nothing picked every design lies flat at its true size, for
-comparison. A picked design lifts off the desk: it eases up onto a card a
-touch larger than the flat drawing, on a soft shadow, with a glowing accent
-rim; the designs it links to and those using it lift a little less, on
-cards of their own, and every other design dims. Letting go lays them flat
+comparison. A picked design lifts off the desk: it eases up onto a card
+larger than the flat drawing, on a deep soft shadow, its rim a hairline in
+drawing units (the accent's); the designs it links to and those using it
+lift a little less, on cards of their own, and every other design dims. Letting go lays them flat
 again (`drawCard`, each design easing on its own).
 
-A picked design shows its links (`src/core/design-links.js`): an accent
-curve from each part that links (a ring on the part) to the design it
-names, lifted too, the curve arriving square to the side facing the
-part with its head (`linkCurve`); the designs using the picked one link to
-it the same way, from their parts. Each curve runs over a halo of the
-paper, so it reads across drawings. With nothing picked, and while the desk is in a transition, no
+A picked design shows its links (`src/core/design-links.js`) as beams of
+light (`drawBeam`): a translucent curved band from each part that links,
+a bright point there, widening and fading as it reaches the design it
+names and arriving square to the side facing the part (`linkCurve`) --
+its taper says which way it goes; the designs using the picked one send
+theirs the same way. On a dark desk the beams add up as light does. With nothing picked, and while the desk is in a transition, no
 arrows show. **Links** in the top bar, or `L`, turns them off or on; the
 choice is kept in this browser.
 

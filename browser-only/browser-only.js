@@ -40576,8 +40576,8 @@ function draw() {
 // to and those using it lift a little less, and the rest dim. Each design
 // eases toward its own state, so picking and letting go animate.
 
-const LIFT_GROW = 0.07;
-const RELATED_LIFT = 0.55;
+const LIFT_GROW = 0.12;
+const RELATED_LIFT = 0.6;
 
 /** Every design's lift (0 flat .. 1 picked) and dim (0 .. 1), eased toward
  *  what the pick asks for; asks for frames while any is on its way. */
@@ -40627,43 +40627,40 @@ function liftedPoint(point, flat, id) {
   return { x: cx + (point.x - cx) * grow, y: cy + (point.y - cy) * grow };
 }
 
-/** The card a lifted design rests on: the panel's colour, a shadow that
- *  deepens as it rises, and for the picked one an accent rim. */
+/** The card a lifted design rests on: the panel's colour, raised on a
+ *  shadow that deepens and spreads as it rises; its rim a hairline in
+ *  drawing units, so it stays fine however far out the desk is zoomed (the
+ *  picked one's in the accent). */
 function drawCard(ctx, tile, rect, lift, palette) {
   const k = scale();
-  const pad = Math.max(6, ATLAS_GAP * 0.3 * k);
+  const pad = Math.max(4, ATLAS_GAP * 0.3 * k);
   const caption = Math.min(13, ATLAS_CAPTION * k * 0.45) >= 7 ? Math.min(13, ATLAS_CAPTION * k * 0.45) * 2.1 : 0;
   const x = rect.x - pad;
   const y = rect.y - pad;
   const w = rect.w + 2 * pad;
   const h = rect.h + 2 * pad + caption;
-  const radius = Math.min(14, pad * 1.4);
+  const radius = Math.max(3, Math.min(16, GRID * 0.6 * k));
   const picked = state.selected === tile.id || !!state.picked?.has(tile.id);
   ctx.save();
   ctx.globalAlpha = Math.min(1, lift * 1.4);
-  ctx.shadowColor = palette.shadow;
-  ctx.shadowBlur = 36 * lift;
-  ctx.shadowOffsetY = 14 * lift;
+  // Two shadows: a wide soft one far below, a tighter one close under it.
   ctx.fillStyle = palette.card;
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radius);
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
-  if (picked) {
-    ctx.globalAlpha = lift;
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    // A soft glow of the accent round the rim.
-    ctx.globalAlpha = lift * 0.35;
-    ctx.lineWidth = 7;
-    ctx.stroke();
-  } else {
-    ctx.globalAlpha = lift * 0.6;
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = 1;
-    ctx.stroke();
+  for (const [blur, drop, alpha] of [[70 * lift, 34 * lift, 1], [16 * lift, 6 * lift, 0.6]]) {
+    ctx.shadowColor = palette.shadow;
+    ctx.shadowBlur = blur;
+    ctx.shadowOffsetY = drop;
+    ctx.globalAlpha = Math.min(1, lift * 1.4) * alpha;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radius);
+    ctx.fill();
   }
+  ctx.shadowColor = 'transparent';
+  ctx.globalAlpha = Math.min(1, lift * 1.4);
+  ctx.fill();
+  ctx.globalAlpha = lift * (picked ? 0.9 : 0.35);
+  ctx.strokeStyle = picked ? palette.accent : palette.dim;
+  ctx.lineWidth = Math.max(0.5, Math.min(1.5, 3 * k));
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -40715,9 +40712,9 @@ function deskLinks() {
 }
 
 /**
- * The picked designs' links, drawn the way a reader follows them: from the
- * part that links (a ring on it) to the design it names, which is lifted
- * (drawCard),
+ * The picked designs' links, drawn the way a reader follows them: a beam
+ * of light (drawBeam) from the part that links to the design it names,
+ * which is lifted (drawCard),
  * the curve arriving square to the side facing the part with a clear head.
  * A design using a picked one is linked to it the same way, from its part.
  * Each curve runs over a halo of the paper, so it reads cleanly across
@@ -40758,45 +40755,95 @@ function drawLinks(ctx, palette, shown) {
     const starts = parts.length
       ? parts.map((item) => liftedPoint(worldToScreen({ x: item.boxes[0].x + item.boxes[0].w / 2 + dx, y: item.boxes[0].y + item.boxes[0].h / 2 + dy, w: 0, h: 0 }), flat, from))
       : (() => { const arrow = linkArrow(frameOf(a.tile), frameOf(b.tile), 0); return arrow ? [{ x: arrow.x1, y: arrow.y1 }] : []; })();
-    ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1);
-    for (const start of starts) {
-      const curve = linkCurve({ x: start.x, y: start.y }, frameOf(b.tile), 3);
-      if (!curve) continue;
-      const head = 11;
-      const base = { x: curve.end.x - curve.direction.x * head * 0.85, y: curve.end.y - curve.direction.y * head * 0.85 };
-      const path = () => {
-        ctx.beginPath();
-        ctx.moveTo(curve.start.x, curve.start.y);
-        ctx.bezierCurveTo(curve.c1.x, curve.c1.y, curve.c2.x, curve.c2.y, base.x, base.y);
-      };
-      // The paper's halo, then the line.
-      ctx.strokeStyle = palette.paper;
-      ctx.lineWidth = 6;
-      path();
-      ctx.stroke();
-      ctx.strokeStyle = palette.accent;
-      ctx.lineWidth = 2;
-      path();
-      ctx.stroke();
-      // A ring on the part that links.
-      ctx.beginPath();
-      ctx.arc(curve.start.x, curve.start.y, 5, 0, Math.PI * 2);
-      ctx.fillStyle = palette.paper;
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      // The head, square to the frame.
-      const wing = { x: -curve.direction.y * head * 0.45, y: curve.direction.x * head * 0.45 };
-      const back = { x: curve.end.x - curve.direction.x * head, y: curve.end.y - curve.direction.y * head };
-      ctx.beginPath();
-      ctx.moveTo(curve.end.x, curve.end.y);
-      ctx.lineTo(back.x + wing.x, back.y + wing.y);
-      ctx.lineTo(back.x - wing.x, back.y - wing.y);
-      ctx.closePath();
-      ctx.fillStyle = palette.accent;
-      ctx.fill();
-    }
+    // The beams come up with the lift, and go with it.
+    const rising = Math.max(liftOf(from).lift, liftOf(to).lift);
+    ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1) * rising;
+    for (const start of starts) drawBeam(ctx, start, frameOf(b.tile), palette);
   }
+  ctx.restore();
+}
+
+/** A colour as CSS with `alpha` (a hex colour; anything else as it is). */
+function withAlpha(color, alpha) {
+  const hex = String(color).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!hex) return color;
+  const digits = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(digits.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * A link as a beam of light: a curved band that leaves the linking part as
+ * a bright point and widens and fades as it reaches the design it names,
+ * sinking into that design's card rather than ending in a head -- which
+ * way it goes reads from its taper. Drawn additively on a dark desk, so
+ * where beams cross they brighten, as light does.
+ */
+function drawBeam(ctx, start, frame, palette) {
+  const curve = linkCurve({ x: start.x, y: start.y }, frame, -Math.min(18, Math.min(frame.w, frame.h) * 0.08));
+  if (!curve) return;
+  const along = Math.abs(curve.direction.x) > 0 ? frame.h : frame.w;
+  const narrow = 1.5;
+  const wide = Math.max(10, Math.min(64, along * 0.28));
+  const bezier = (t) => {
+    const u = 1 - t;
+    const { start: p0, c1, c2, end: p3 } = curve;
+    return {
+      x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p3.x,
+      y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y,
+    };
+  };
+  const steps = 40;
+  const points = Array.from({ length: steps + 1 }, (_, i) => bezier(i / steps));
+  const left = [];
+  const right = [];
+  points.forEach((p, i) => {
+    const a = points[Math.max(0, i - 1)];
+    const b = points[Math.min(steps, i + 1)];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = -(b.y - a.y) / len;
+    const ny = (b.x - a.x) / len;
+    const t = i / steps;
+    const half = (narrow + (wide - narrow) * t ** 1.7) / 2;
+    left.push({ x: p.x + nx * half, y: p.y + ny * half });
+    right.push({ x: p.x - nx * half, y: p.y - ny * half });
+  });
+  const dark = theme() === 'dark';
+  ctx.save();
+  if (dark) ctx.globalCompositeOperation = 'lighter';
+  const gradient = ctx.createLinearGradient(curve.start.x, curve.start.y, curve.end.x, curve.end.y);
+  gradient.addColorStop(0, withAlpha(palette.accent, dark ? 0.75 : 0.55));
+  gradient.addColorStop(0.55, withAlpha(palette.accent, dark ? 0.3 : 0.2));
+  // A little light left where it meets the design, so it lands there.
+  gradient.addColorStop(1, withAlpha(palette.accent, dark ? 0.14 : 0.1));
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.moveTo(left[0].x, left[0].y);
+  for (const p of left.slice(1)) ctx.lineTo(p.x, p.y);
+  for (const p of right.reverse()) ctx.lineTo(p.x, p.y);
+  ctx.closePath();
+  ctx.fill();
+  // Its bright core, fading sooner.
+  const core = ctx.createLinearGradient(curve.start.x, curve.start.y, curve.end.x, curve.end.y);
+  core.addColorStop(0, withAlpha(palette.accent, 0.9));
+  core.addColorStop(0.6, withAlpha(palette.accent, 0.15));
+  core.addColorStop(1, withAlpha(palette.accent, 0));
+  ctx.strokeStyle = core;
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (const p of points.slice(1)) ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+  // The source: a small glow on the part that links.
+  const glow = ctx.createRadialGradient(curve.start.x, curve.start.y, 0, curve.start.x, curve.start.y, 12);
+  glow.addColorStop(0, withAlpha(palette.accent, 0.95));
+  glow.addColorStop(0.35, withAlpha(palette.accent, 0.45));
+  glow.addColorStop(1, withAlpha(palette.accent, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(curve.start.x, curve.start.y, 12, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
