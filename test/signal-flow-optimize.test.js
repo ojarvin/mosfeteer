@@ -48,11 +48,11 @@ test('CMA-ES finds the minimum of a curved valley, the same run for the same see
 });
 
 test('the setup normalizes, and only free coefficients move: linked follow, timing stays', () => {
-  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {}, measure: 'sigma3' }, evaluations: 3000, prune: true, constraints: '', rounding: { denominator: 32, powersOfTwo: false, shared: true } });
+  assert.deepEqual(normalizeOptimizeSetup(null), { coefficients: {}, specs: [], swing: { on: false, amplitude: -6, input: '', frequency: '', limits: {}, targets: {}, measure: 'sigma3' }, evaluations: 3000, prune: true, constraints: '', rounding: { on: false, denominator: 32, fixed: false, powersOfTwo: false, shared: true } });
   const setup = normalizeOptimizeSetup({ coefficients: { a: { fixed: true }, b: { min: '0.1', max: 'x' } }, specs: [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: '3.5' }, { action: 'bogus', band: 'custom', f1: 0.1, f2: 0.2 }], swing: { on: true, amplitude: '-2', limits: { 'net:N1': '-6', 'net:N2': 'none' } }, evaluations: 20 });
   assert.deepEqual(setup.coefficients, { a: { fixed: true }, b: { min: 0.1 } });
   assert.deepEqual(setup.specs, [{ action: 'below', measure: 'peak', input: 'QZ1', band: 'all', value: 3.5 }, { action: 'minimize', measure: 'average', input: '', band: 'custom', f1: 0.1, f2: 0.2 }]);
-  assert.deepEqual(setup.swing, { on: true, amplitude: -2, input: '', frequency: '', limits: { 'net:N1': -6 }, measure: 'sigma3' });
+  assert.deepEqual(setup.swing, { on: true, amplitude: -2, input: '', frequency: '', limits: { 'net:N1': -6 }, targets: {}, measure: 'sigma3' });
   assert.equal(setup.evaluations, 3000);
   // Saved with the document.
   const circuit = modulator();
@@ -277,6 +277,12 @@ test('rounding: every free coefficient a fraction over its block\'s n, none roun
   // One coefficient alone: a fraction of its own.
   const alone = runRounding(objective, parameters, { values, denominator: 16, seed: 2 });
   assert.equal(alone.groups.length, 4);
+  // An n set exactly: a block's own, or every block's.
+  const exact = runRounding(objective, parameters, { values, denominator: 8, exact: { k_2: 12 }, groups, seed: 2 });
+  assert.equal(exact.groups.find((g) => g.into === 'H2').n, 12);
+  assert.ok(exact.groups.find((g) => g.into === 'H1').n <= 8);
+  const everyFixed = runRounding(objective, parameters, { values, denominator: 10, fixed: true, groups, seed: 2 });
+  assert.deepEqual(everyFixed.groups.map((g) => g.n), [10, 10]);
 });
 
 test('a coefficient written as a fraction is saved as one, while it is still its number', () => {
@@ -285,9 +291,9 @@ test('a coefficient written as a fraction is saved as one, while it is still its
   circuit.analysisValues.fractions = { k_1: '3/16', k_2: '1/3' };
   const back = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(back.analysisValues.fractions, { k_1: '3/16' });
-  const setup = normalizeOptimizeSetup({ coefficients: { k_1: { denominator: 64 } }, rounding: { denominator: 16, powersOfTwo: true, shared: false } });
-  assert.deepEqual(setup.coefficients, { k_1: { denominator: 64 } });
-  assert.deepEqual(setup.rounding, { denominator: 16, powersOfTwo: true, shared: false });
+  const setup = normalizeOptimizeSetup({ coefficients: { k_1: { denominator: 64 }, k_2: { denominator: 8, denominatorFixed: true } }, rounding: { on: true, denominator: 16, powersOfTwo: true, shared: false } });
+  assert.deepEqual(setup.coefficients, { k_1: { denominator: 64 }, k_2: { denominator: 8, denominatorFixed: true } });
+  assert.deepEqual(setup.rounding, { on: true, denominator: 16, fixed: false, powersOfTwo: true, shared: false });
 });
 
 test('the swing test takes the worst of runs at two in-band frequencies, and keeps a half-dB guard under each limit', () => {
@@ -377,20 +383,6 @@ test('dither in quantizer steps (levels 2 apart); an older dBFS amplitude reads 
   const circuit = modulator();
   circuit.analysisValues.flow = { output: 'V', sources: {}, swingInput: '', swingFrequency: '', dither: { shape: 'rect', steps: '0.5' } };
   assert.deepEqual(Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON()))).analysisValues.flow.dither, { shape: 'rect', steps: '0.5' });
-});
-
-import { ditherFraction } from '../src/core/analysis/rounding.js';
-
-test('the dither as a rounded gain into the quantizer\'s block: the smallest m/n giving at least the dither set', () => {
-  // +-1/2 step of a 5-level quantizer (full scale 4) is a gain of 1/4.
-  assert.deepEqual(ditherFraction(0.5, 4, 28), { m: 7, n: 28, gain: 0.25, steps: 0.5 });
-  // Not exact: rounded up, so the dither is at least what was set.
-  const up = ditherFraction(0.5, 4, 10);
-  assert.deepEqual([up.m, up.n], [3, 10]);
-  assert.ok(up.steps >= 0.5 && Math.abs(up.steps - 0.6) < 1e-12);
-  // Never below one unit; nothing without dither.
-  assert.equal(ditherFraction(0.01, 4, 4).m, 1);
-  assert.equal(ditherFraction(0, 4, 16), null);
 });
 
 import { isSensitive, pruneCandidates, pruneSearch, runRefine, sensitivitySearch } from '../src/core/analysis/refine.js';
@@ -537,4 +529,21 @@ test('a dither source: a source in the transfer functions, random numbers in the
   const dithered = run(0.5);
   assert.notDeepEqual(Array.from(quiet), Array.from(dithered));
   assert.deepEqual(Array.from(dithered), Array.from(run(0.5)));
+});
+
+test('a swing limit aimed at is a goal too: each dB a net stays under it is lost', () => {
+  const circuit = modulator();
+  const sim = prepareSimulation(circuit, { values: { k_1: 1, k_2: 2 }, input: 'U', output: 'name:V' });
+  const state = sim.signals.find((s) => s.role === 'state').key;
+  const base = { output: 'V', sources: { U: 'input' }, band: { f0: 0, bw: 1 / 64 }, values: { k_1: 1, k_2: 2 }, ...QUICK, swingGuard: 0 };
+  const limit = (targets) => prepareObjective(circuit, { ...base, setup: { swing: { on: true, amplitude: -6, input: 'U', limits: { [state]: 20 }, targets } } });
+  const plain = limit({});
+  const aimed = limit({ [state]: true });
+  assert.equal(plain.goals, 0);
+  assert.equal(aimed.goals, 1);
+  const level = plain.evaluate({ k_1: 1, k_2: 2 });
+  const goal = aimed.evaluate({ k_1: 1, k_2: 2 });
+  assert.equal(level.violation, 0);
+  assert.equal(level.goal, 0);
+  assert.ok(Math.abs(goal.goal - (20 - goal.swing.levels[state])) < 1e-9, `${goal.goal} vs ${goal.swing.levels[state]}`);
 });

@@ -81,8 +81,9 @@ export function normalizeOptimizeSetup(raw) {
       ...(entry.fixed === true ? { fixed: true } : entry.fixed === false ? { fixed: false } : {}),
       ...(finite(min) ? { min } : {}),
       ...(finite(max) ? { max } : {}),
-      // Its block's largest n when rounding (rounding.js), over the setup's.
-      ...(denominator >= 1 && denominator <= MAX_DENOMINATOR ? { denominator } : {}),
+      // Its block's n when made a fraction (rounding.js), over the setup's:
+      // the largest (n <= it), or with `denominatorFixed` exactly it.
+      ...(denominator >= 1 && denominator <= MAX_DENOMINATOR ? { denominator, ...(entry.denominatorFixed === true ? { denominatorFixed: true } : {}) } : {}),
     };
     if (Object.keys(out).length) coefficients[short(name, 80)] = out;
   }
@@ -93,6 +94,9 @@ export function normalizeOptimizeSetup(raw) {
     const db = number(limit);
     if (finite(db)) limits[short(key)] = db;
   }
+  // Limits aimed at: the net brought up to its limit, not only kept under it.
+  const targets = {};
+  for (const [key, on] of Object.entries(rawSwing.targets || {})) if (on === true && Object.hasOwn(limits, short(key))) targets[short(key)] = true;
   const amplitude = number(rawSwing.amplitude);
   const evaluations = Math.round(number(value.evaluations));
   const rawRounding = value.rounding && typeof value.rounding === 'object' ? value.rounding : {};
@@ -106,6 +110,7 @@ export function normalizeOptimizeSetup(raw) {
       input: short(rawSwing.input),
       frequency: short(rawSwing.frequency, 40),
       limits,
+      targets,
       // What a limit compares with: the 3-sigma or 4-sigma level, or the highest peak.
       measure: SWING_LEVELS.includes(rawSwing.measure) ? rawSwing.measure : 'sigma3',
     },
@@ -114,9 +119,13 @@ export function normalizeOptimizeSetup(raw) {
     prune: value.prune !== false,
     // Relations the coefficients must keep, as typed: `c_1 >= c_2, c_2 >= 2*c_3`.
     constraints: short(value.constraints, 400),
-    // Rounding to fractions m/n: the largest n, powers of two only, one n per block.
+    // The free coefficients made fractions m/n as part of a run (`on`): n up
+    // to `denominator` (exactly it with `fixed`), powers of two only, one n
+    // per block.
     rounding: {
+      on: rawRounding.on === true,
       denominator: denominator >= 1 && denominator <= MAX_DENOMINATOR ? denominator : 32,
+      fixed: rawRounding.fixed === true,
       powersOfTwo: rawRounding.powersOfTwo === true,
       shared: rawRounding.shared !== false,
     },

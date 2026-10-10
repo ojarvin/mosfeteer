@@ -426,6 +426,13 @@ The criteria:
   With no limit on a quantizer's input, a search tends to drive the gains
   into it to extremes; a limit a few dB over full scale keeps them sane.
 
+  A limit can be **aimed at** (its *aim* box, `swing.targets`): it is then
+  a goal as well -- the net brought up to the limit, each dB its level stays
+  under it counted against the result like a goal's dB -- so a search does
+  not scale an integrator's swing down for nothing (its circuit's noise
+  grows as its swing shrinks). A run with an aimed limit has a goal, so it
+  spends its budget.
+
 Candidates are ranked by feasibility first: one that meets every limit
 beats any that misses one; among those that miss, the smaller total miss
 wins (dB over each limit; a run-away at the target counts by how far below
@@ -436,11 +443,12 @@ point with twice the population whenever a run settles, until the budget
 of candidates is spent; with no goal it ends at the first candidate that
 meets every limit. Run scores the candidates in worker threads
 (`src/web/optimize-worker.js`; in this thread when the page is opened from a
-file). A run -- the optimizer's or the rounding's -- opens its own small
+file). A run opens its own small
 window (`optimize-window.js`): the specs' transfer functions at the numbers
 it started from (grey) and at its best so far (in colour, redrawn with
 each new best), the progress bar, and Stop, which turns to Close when it
-is done. The best numbers come back beside the
+is done; closing the window leaves the run going, its progress back in
+the analysis window. The best numbers come back beside the
 coefficients with each spec and the swing test at the start and at the
 best; **Apply** puts them into the coefficients (four digits), **Revert**
 undoes that. The setup is saved with the document
@@ -459,32 +467,38 @@ in dB per 1%. One of 1 dB per 1% or more, or a nudge that loses stability,
 is marked; a nudge missing a limit the result just meets is noted ("on a
 limit"), not marked -- a best on its limit misses it at any nudge.
 
-**Rounding to fractions** (`rounding.js`) makes each free coefficient a
-simple fraction m/n -- m units over n, whatever realizes it (a ratio of unit
-elements, a digital multiplier) -- at the least cost to the same specs. One
-setting sets how coarse: the largest n (any whole number up to 1024),
-optionally powers of two only. The gains into one block -- followed through sums to the part they
-feed, an integrator or the quantizer (`coefficientGroups`) -- share its n,
-its one reference element, so they read m1/n, m2/n, ...; off, each
-coefficient has its own n. A coefficient's own "n <=" in the table raises
-its block's. A coefficient that is not zero never rounds to zero (that would
-be another diagram), nor across it.
+**Fractions** (`rounding.js`, part of a run when *Make the free
+coefficients fractions m/n* is on, `rounding.on`) make each free
+coefficient a simple fraction m/n -- m units over n, whatever realizes it
+(a ratio of unit elements, a digital multiplier) -- at the least cost to
+the same specs, limits, constraints, and swing test. The run searches, zeroes what barely
+matters, then rounds from the numbers it found, and reports the fractions:
+what it finds is what can be built. One setting sets how coarse: **n ≤**
+a largest n (any whole number up to 1024; the most accurate n up to it is
+taken, optionally powers of two only) or **n =** exactly that n
+(`rounding.fixed`). The gains into one block -- followed through sums to
+the part they feed, an integrator or the quantizer (`coefficientGroups`),
+a dither source's gain among them -- share its n, its one reference
+element, so they read m1/n, m2/n, ...; off, each coefficient has its own n.
+A coefficient's own n in the table (≤ or =, `denominator`,
+`denominatorFixed`) overrides the setting for its block: the largest set
+among the block's gains, exactly if any of them is set exactly. A
+coefficient that is not zero never rounds to zero (that would be another
+diagram), nor across it.
 
 The search is sequential rounding with re-optimization: each block takes the
 n (up to its largest) that rounds its gains most accurately; the block
 rounded worst goes first, then the coefficients still free are re-optimized
 to win back what it cost (one may stand in for another: a resonator needs
 its product of gains), and so on; at the end each is moved by one unit, 1/n,
-while that helps. It starts from the coefficients' numbers now, so run the
-optimizer and Apply first. The start and the result are verified with the
+while that helps. The start and the result are verified with the
 long test, the steps between ranked by the quick one. The result lists
 each block's n and each coefficient's fraction, value, number before and
 change, the specs and swing
 test before and after, and names a gain far smaller than its block-mates
-(it needs a large n there). **Apply** writes the fractions exactly; a
+(it needs a large n there). **Apply** then writes the fractions exactly; a
 coefficient keeps its fraction in its field and in plot legends
 (`analysisValues.fractions`) until it is changed, and a fraction can be
 typed (3/16).
 
-Not yet: a scaling step that fits each integrator's swing to its limit
-without touching the transfer function, and other grids (CSD digits).
+Not yet: other grids (CSD digits).

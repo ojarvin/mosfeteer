@@ -6763,6 +6763,22 @@ body.chrome-away [data-editor-edge="right"] {
   font-style: italic;
 }
 
+/* The optimizer's per-limit aim, and an n's kind (≤ or =) before its field. */
+.signal-flow-optimize-aim {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.signal-flow-optimize-nkind {
+  width: auto;
+  min-width: 3em;
+  margin-right: 4px;
+}
+
 /* The interactive plot every analysis view uses (plot-view.js). */
 .plot-view {
   position: relative;
@@ -7181,7 +7197,7 @@ body.chrome-away [data-editor-edge="right"] {
 
 .signal-flow-optimize-limit {
   display: grid;
-  grid-template-columns: minmax(3rem, auto) 4.5rem auto 4rem;
+  grid-template-columns: minmax(3rem, auto) 4.5rem auto auto 4rem;
   align-items: center;
   justify-content: start;
   gap: 6px;

@@ -134,12 +134,15 @@ const unitsOf = (v, n) => {
   return m === 0 && v !== 0 ? Math.sign(v) : m;
 };
 
+/** How far a group's numbers move over n: their average relative error. */
+const errorAt = (numbers, n) => numbers.reduce((sum, v) => sum + (v ? Math.abs(unitsOf(v, n) / n - v) / Math.abs(v) : 0), 0) / numbers.length;
+
 /** A group's most accurate n up to its largest (or its powers of two): the
  *  least average relative error over its members, the smaller n on a tie. */
 function bestDenominator(numbers, maxDenominator, powersOfTwo) {
   let best = { n: 1, error: Infinity };
   for (let n = 1; n <= maxDenominator; n = powersOfTwo ? n * 2 : n + 1) {
-    const error = numbers.reduce((sum, v) => sum + (v ? Math.abs(unitsOf(v, n) / n - v) / Math.abs(v) : 0), 0) / numbers.length;
+    const error = errorAt(numbers, n);
     if (error < best.error - 1e-12) best = { n, error };
   }
   return best;
@@ -148,9 +151,11 @@ function bestDenominator(numbers, maxDenominator, powersOfTwo) {
 /**
  * The rounding search over `parameters` (optimizationParameters), from the
  * numbers `values` (every coefficient's own), `links` resolved. `options`:
- * `denominator` (the largest n), `denominators` (per coefficient: its
- * group's is the smallest of its members'), `powersOfTwo`, `groups`
- * (coefficientGroups; each coefficient alone when omitted), `seed`.
+ * `denominator` (the largest n; with `fixed`, the n), `denominators` (per
+ * coefficient: its group's is the smallest of its members'), `exact` (per
+ * coefficient, an n its group must have: the largest of its members'),
+ * `powersOfTwo`, `groups` (coefficientGroups; each coefficient alone when
+ * omitted), `seed`.
  *
  * A group is rounded at once: every member m/n over one n, the n (up to its
  * largest) that rounds it most accurately; the group rounded worst goes
@@ -158,7 +163,7 @@ function bestDenominator(numbers, maxDenominator, powersOfTwo) {
  * one unit, 1/n, while that helps. Returns, when done, `{ own, values, score,
  * fitness, fractions: { name: { m, n } }, groups, start (the unrounded score) }`.
  */
-export function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32, denominators = {}, powersOfTwo = false, groups: rawGroups = null, seed = 1 } = {}) {
+export function* roundingSearch(parameters, { values = {}, links = {}, denominator = 32, fixed = false, denominators = {}, exact = {}, powersOfTwo = false, groups: rawGroups = null, seed = 1 } = {}) {
   const own = { ...values };
   for (const p of parameters.free) own[p.name] = Number.isFinite(own[p.name]) ? own[p.name] : p.start;
   const byName = new Map(parameters.free.map((p) => [p.name, p]));
@@ -166,6 +171,11 @@ export function* roundingSearch(parameters, { values = {}, links = {}, denominat
     .map((g) => ({ into: g.into, names: g.names.filter((name) => byName.has(name)) }))
     .filter((g) => g.names.length);
   const maxOf = (group) => Math.min(...group.names.map((name) => denominators[name] || denominator));
+  // A group's n when it is set exactly: a member's own, else the setting's.
+  const exactOf = (group) => {
+    const set = group.names.map((name) => exact[name]).filter((n) => n >= 1);
+    return set.length ? Math.max(...set) : fixed ? maxOf(group) : null;
+  };
   const resolvedOf = (numbers) => pointValues({ free: [] }, [], { values: numbers, links }).values;
   const inRange = (p, v) => (p.min === null || v >= p.min - 1e-12) && (p.max === null || v <= p.max + 1e-12);
   // A group over n: each member to its nearest m/n (kept in its range).
@@ -192,7 +202,8 @@ export function* roundingSearch(parameters, { values = {}, links = {}, denominat
     let chosen = null;
     for (const group of remaining) {
       const numbers = group.names.map((name) => own[name]);
-      const { n, error } = bestDenominator(numbers, maxOf(group), powersOfTwo);
+      const set = exactOf(group);
+      const { n, error } = set ? { n: set, error: errorAt(numbers, set) } : bestDenominator(numbers, maxOf(group), powersOfTwo);
       if (!chosen || error > chosen.error) chosen = { group, n, error };
     }
     const ms = roundedAt(chosen.group, chosen.n);
@@ -263,18 +274,4 @@ export function runRounding(objective, parameters, options) {
     step = search.next(step.value.batch.map((request) => scoreRequest(objective, request)));
   }
   return { ...step.value, evaluations };
-}
-
-/**
- * The dither's gain as a fraction of a block's n: dither of +-`steps`
- * quantizer steps, entering the quantizer's block from the reference (the
- * diagram's full scale, N - 1), is a gain k = 2 steps / fullScale; the
- * smallest m/n at or above it, so the dither is at least what was set.
- * Returns `{ m, n, gain, steps (realized) }`, or null without dither.
- */
-export function ditherFraction(steps, fullScale, n) {
-  if (!(steps > 0) || !(fullScale > 0) || !(n >= 1)) return null;
-  const gain = (2 * steps) / fullScale;
-  const m = Math.max(1, Math.ceil(gain * n - 1e-9));
-  return { m, n, gain, steps: ((m / n) * fullScale) / 2 };
 }

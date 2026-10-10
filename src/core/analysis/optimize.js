@@ -10,7 +10,9 @@
  *   goal (minimize, maximize) or a limit (keep below, keep above);
  * - the swing test: the diagram simulated (simulate.js) with a sine of a
  *   given amplitude into one source, which must not run away, each limited
- *   net's peak under its limit (dBFS).
+ *   net's peak under its limit (dBFS) -- and a limit aimed at (`targets`)
+ *   is a goal as well: the net brought up to it, each dB under it a dB of
+ *   goal lost.
  *
  * Every transfer function a spec reads must be stable (poles inside the
  * unit circle, or in the left half plane). Candidates are ranked by
@@ -345,6 +347,7 @@ export function prepareObjective(circuit, problem = {}) {
     samples: problem.swingSamples ?? SWING_SAMPLES,
     phases: SWING_PHASES.slice(0, problem.swingPhases ?? SWING_PHASES.length),
     limits: setup.swing.limits,
+    targets: setup.swing.targets,
     measure: setup.swing.measure,
     rarity: SWING_MEASURES[setup.swing.measure],
     guard: problem.swingGuard ?? SWING_GUARD[setup.swing.measure],
@@ -396,12 +399,16 @@ export function prepareObjective(circuit, problem = {}) {
     const peaks = {};
     sim.signals.forEach((signal, i) => { peaks[signal.key] = db(Math.max(...runs.map((r) => r.peaks[i]))); });
     const levels = {};
+    let goal = 0;
     for (const i of indices) {
       const key = sim.signals[i].key;
       levels[key] = db(levelOf(runs.map((r) => r.magnitudes[i]), swing.rarity));
       violation += miss(levels[key] - (swing.limits[key] - guard));
+      // A limit aimed at: each dB the net stays under it is a dB of goal
+      // lost (a swing scaled down for nothing costs a circuit its noise).
+      if (swing.targets[key]) goal += Math.max(0, swing.limits[key] - guard - levels[key]);
     }
-    return { violation, margin, swing: { overloaded: false, peaks, levels, runs: total, held, marginRuns: marginPhases.length, marginHeld } };
+    return { violation, goal, margin, swing: { overloaded: false, peaks, levels, runs: total, held, marginRuns: marginPhases.length, marginHeld } };
   };
 
   const score = (values, long, withSwing = true) => {
@@ -463,6 +470,7 @@ export function prepareObjective(circuit, problem = {}) {
       } : { samples: swing.samples, phases: swing.phases, marginPhases: [0], guard: swing.guard });
       if (tested.error) return { ...out, violation: violation + BROKEN, goal, error: tested.error };
       violation += tested.violation;
+      goal += tested.goal || 0;
       out.swing = tested.swing;
       if (tested.margin === false) out.margin = false;
     }
@@ -471,7 +479,7 @@ export function prepareObjective(circuit, problem = {}) {
   // The quick test ranks a search's candidates; the long one verifies a
   // new best and is what is reported.
   // `measure`: the specs alone, no swing test -- deterministic, for sensitivities.
-  return { ok: true, evaluate: (values) => score(values, false), verify: (values) => score(values, true), measure: (values) => score(values, false, false), goals: goals.length, specs, swing };
+  return { ok: true, evaluate: (values) => score(values, false), verify: (values) => score(values, true), measure: (values) => score(values, false, false), goals: goals.length + (swing ? Object.keys(swing.targets).length : 0), specs, swing };
 }
 
 /**

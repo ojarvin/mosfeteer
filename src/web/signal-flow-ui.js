@@ -1533,13 +1533,6 @@ export function installSignalFlowUi() {
         coefficientsChanged();
         coefficientsSettled();
       },
-      // The simulations' dither (rounding realizes it as a gain), shown again.
-      setDither(dither) {
-        flow().dither = dither;
-        delete flow().dither.amplitude;
-        markSettingsChanged();
-        for (const node of section.querySelectorAll('.signal-flow-dither')) node.replaceWith(ditherControls());
-      },
       snapshotCoefficients: () => ({ coefficients: { ...coefficients() }, fractions: { ...fractions() }, dither: flow().dither ? { ...flow().dither } : undefined }),
       restoreCoefficients(saved) {
         editor.circuit.analysisValues.coefficients = { ...saved.coefficients };

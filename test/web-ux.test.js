@@ -84,15 +84,16 @@ test('Update plots sits in the footer beside Derive; explanations open while the
   assert.match(read('optimize-ui.js'), /if \(node !== button && !node\.classList\.contains\('hint-more'\)\) node\.disabled = true;/);
 });
 
-test('the optimizer\'s value lists are tables, and each coefficient\'s largest n sits with the rounding', () => {
+test('the optimizer\'s value lists are tables, and each coefficient\'s n sits with the fractions', () => {
   const ui = read('optimize-ui.js');
   assert.match(ui, /function gridTable\(head, rows\)/);
   assert.match(ui, /return \[gridTable\(\['', startLabel, endLabel\]/);
   assert.match(ui, /gridTable\(\['', 'm\/n', 'Value', 'Before', 'Change'\], rows\)/);
   assert.match(ui, /gridTable\(\['Coefficient', 'Change'\], entries\.map\(row\)\)/);
-  // n ≤ left the coefficient table for the rounding section.
+  // n (≤ or =) left the coefficient table for the fractions.
   assert.match(ui, /\['', '', 'Min', 'Max', 'Now', 'Found'\]/);
-  assert.match(ui, /el\('summary', \{ text: `Largest n per coefficient/);
+  assert.match(ui, /el\('summary', \{ text: `n per coefficient/);
+  assert.match(ui, /el\('option', \{ value: 'max', text: '≤' \}\), el\('option', \{ value: 'fixed', text: '=' \}\)/);
 });
 
 test('a run opens its own window: the start and the best so far, progress, Stop', () => {
@@ -106,7 +107,9 @@ test('a run opens its own window: the start and the best so far, progress, Stop'
   // Only the latest best is drawn beside the start.
   assert.match(ui, /if \(optimizer\.best && optimizer\.best !== shownBest\) \{\s*shownBest = optimizer\.best;\s*showBest\(shownBest\.values\);/);
   assert.match(ui, /title: 'Optimizer',/);
-  assert.match(ui, /title: 'Rounding',/);
+  // Rounding is part of the run, not a run of its own.
+  assert.doesNotMatch(ui, /title: 'Rounding',/);
+  assert.match(ui, /if \(options\.on && !stopped\(\)\) \{/);
 });
 
 test('fields show what is typed: no ligatures join their characters', () => {
