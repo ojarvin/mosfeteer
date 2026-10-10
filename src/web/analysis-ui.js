@@ -15,7 +15,7 @@ import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
 import { renderBode, syncBodePlace } from './bode-ui.js';
 import { snap, GRID } from '../core/grid.js';
-import { analysisNoiseRequest, analysisOptionDefaults, migrateAnalysisFormState, normalizeAnalysisOptions } from './analysis-options.js';
+import { analysisNoiseRequest, analysisOptionDefaults, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
@@ -264,8 +264,7 @@ function restoreAnalysisForm(defaults = {}) {
     collapsedGroups = new Set();
     return false;
   }
-  const { state, diagnostics } = migrateAnalysisFormState(saved);
-  for (const diagnostic of diagnostics) logLine(diagnostic.message, diagnostic.severity === 'error' ? 'error' : 'status');
+  const state = readAnalysisFormState(saved);
   const setSelect = (el, value, force = false) => {
     if (!el || !value || ![...el.options].some((option) => option.value === value)) return;
     if (!force && value === '') return;

@@ -49,9 +49,7 @@ function browserName(path) {
 }
 
 function documentNameFromFile(file) {
-  return String(file?.name || 'circuit.json')
-    .replace(/\.schematic\.json$/i, '')
-    .replace(/\.json$/i, '') || 'circuit';
+  return String(file?.name || 'circuit.json').replace(/\.json$/i, '') || 'circuit';
 }
 
 function isDocumentFileName(name) {

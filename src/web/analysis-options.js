@@ -1,4 +1,4 @@
-/** Canonical small-signal form options and the legacy persistence boundary. */
+/** Canonical small-signal form options and the form as saved with a design. */
 
 export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Model simplifications: they change the small-signal model itself.
@@ -52,28 +52,6 @@ function transferFunctionValue(value) {
   const names = new Set(value.map((name) => String(name).trim()));
   return TRANSFER_FUNCTIONS.filter((name) => names.has(name));
 }
-
-const OPTION_ALIASES = Object.freeze({
-  neglectBodyEffect: ['ignoreBodyEffect', 'ignoreGmb', 'approxIgnoreBody', 'bodyEffectIgnored'],
-  highIntrinsicGain: ['gmroLarge', 'assumeGmRoLarge', 'approxGmRo', 'approxGmRoLarge'],
-  neglectChannelLengthModulation: [
-    'ignoreChannelLengthModulation', 'ignoreRo', 'approxIgnoreRo', 'roInfinite',
-  ],
-  dominantPole: [
-    'dominantPoleApproximation', 'dominantPoleReduction', 'approxDominantPole',
-  ],
-  millerApproximation: ['miller', 'approxMiller', 'millerDecoupling'],
-  parasitics: ['deviceCapacitances', 'includeParasitics', 'approxParasitics'],
-  noiseThermal: [],
-  noiseFlicker: [],
-  noiseOutput: [],
-  nameSubexpressions: [],
-});
-
-const LEGACY_LIST_FIELDS = Object.freeze({
-  acGrounds: ['acGrounds', 'acGround', 'additionalAcGrounds'],
-  deviceRegions: ['deviceRegions', 'models', 'modelOverrides', 'deviceOverrides'],
-});
 
 function has(object, key) {
   return object != null && Object.prototype.hasOwnProperty.call(object, key);
@@ -163,72 +141,6 @@ function stringList(value) {
   return Array.isArray(value) ? [...new Set(value.map((item) => String(item).trim()).filter(Boolean))] : [];
 }
 
-function firstField(source, names) {
-  for (const name of names) if (source[name] !== undefined) return source[name];
-  return undefined;
-}
-
-function approximationNames(source) {
-  return Array.isArray(source.approximations)
-    ? source.approximations.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
-    : [];
-}
-
-function legacyOptions(source) {
-  const root = objectValue(source);
-  const nested = objectValue(root.options);
-  const old = objectValue(root.approximationOptions);
-  const result = {};
-  for (const [canonical, aliases] of Object.entries(OPTION_ALIASES)) {
-    let selected;
-    for (const candidate of [root, nested, old]) {
-      const value = firstBoolean(candidate, canonical);
-      if (value !== undefined) {
-        selected = value;
-        break;
-      }
-    }
-    if (selected === undefined) for (const candidate of [root, nested, old]) {
-      for (const alias of aliases) {
-        const value = firstBoolean(candidate, alias);
-        if (value !== undefined) {
-          selected = value;
-          break;
-        }
-      }
-      if (selected !== undefined) break;
-    }
-    if (selected !== undefined) result[canonical] = selected;
-  }
-  const approximations = approximationNames(root);
-  const listAliases = {
-    neglectBodyEffect: ['ignore-body-effect'],
-    highIntrinsicGain: ['gmro-large', 'high-intrinsic-gain'],
-    neglectChannelLengthModulation: ['ignore-channel-length-modulation', 'ignore-ro', 'ro-infinite'],
-    dominantPole: ['dominant-pole', 'dominant-pole-approximation', 'dominant-pole-reduction'],
-    millerApproximation: ['miller', 'miller-approximation'],
-    parasitics: ['parasitics', 'device-capacitances'],
-  };
-  for (const [name, names] of Object.entries(listAliases)) {
-    if (!has(result, name) && names.some((alias) => approximations.includes(alias))) result[name] = true;
-  }
-  const channelLengthModulation = [root, nested, old]
-    .map((candidate) => candidate.channelLengthModulation)
-    .find((value) => value !== undefined);
-  const mode = String(channelLengthModulation || '').trim().toLowerCase();
-  if (!has(result, 'neglectChannelLengthModulation')) {
-    if (mode === 'ignore' || mode === 'infinite') result.neglectChannelLengthModulation = true;
-    if (mode === 'finite' || mode === 'retain') result.neglectChannelLengthModulation = false;
-  }
-  return result;
-}
-
-function legacyRegionSource(source) {
-  const root = objectValue(source);
-  return firstField(root, LEGACY_LIST_FIELDS.deviceRegions)
-    ?? objectValue(root.options).deviceRegions;
-}
-
 /** Return a fresh copy of the concise default presentation options. */
 export function analysisOptionDefaults() {
   return { ...ANALYSIS_OPTION_DEFAULTS, transferFunctions: [...ANALYSIS_OPTION_DEFAULTS.transferFunctions] };
@@ -243,50 +155,17 @@ export function normalizeAnalysisOptions(value = {}) {
   return options;
 }
 
-/**
- * Migrate persisted form data once at the storage boundary. The returned
- * state contains only current fields and the canonical options.
- */
-export function migrateAnalysisFormState(value = {}) {
+/** The small-signal form as saved with a design (`Circuit#windows.analysis`),
+ *  its fields normalized. */
+export function readAnalysisFormState(value = {}) {
   const source = objectValue(value);
-  const migratedOptions = legacyOptions(source);
-  const transferFunctions = transferFunctionValue(objectValue(source.options).transferFunctions);
-  if (transferFunctions) migratedOptions.transferFunctions = transferFunctions;
-  const noiseSources = noiseSourcesValue(objectValue(source.options).noiseSources);
-  if (noiseSources !== undefined) migratedOptions.noiseSources = noiseSources;
-  const options = canonicalOptions(migratedOptions);
-  const deviceRegions = normalizeDeviceRegions(legacyRegionSource(source));
-  const diagnostics = [];
-  const removed = new Set();
-  for (const [rawRefdes, rawRegion] of parseEntries(legacyRegionSource(source))) {
-    const refdes = String(rawRefdes || '').trim();
-    const model = String(regionName(rawRegion) || '').trim().toLowerCase();
-    if (refdes && model === 'current-source' && !removed.has(refdes)) {
-      removed.add(refdes);
-      diagnostics.push({
-        code: 'legacy-mos-current-source',
-        severity: 'warning',
-        refdes,
-        once: true,
-        message: `${refdes}=current-source was removed because the model override is no longer supported.`,
-      });
-    }
-  }
   return {
-    state: {
-      input: String(source.input || '').trim(),
-      output: String(source.output ?? source.target ?? '').trim(),
-      // A reference was only ever one more AC ground (all of them are the
-      // same 0 V node); it joins the list.
-      acGrounds: normalizedList([
-        ...normalizedList(firstField(source, LEGACY_LIST_FIELDS.acGrounds)).split(', ').filter(Boolean),
-        ...(String(source.reference || '').trim() ? [String(source.reference).trim()] : []),
-      ]),
-      deviceRegions,
-      options,
-      annotationExcluded: stringList(source.annotationExcluded),
-      collapsedGroups: stringList(source.collapsedGroups),
-    },
-    diagnostics,
+    input: String(source.input || '').trim(),
+    output: String(source.output || '').trim(),
+    acGrounds: normalizedList(source.acGrounds),
+    deviceRegions: normalizeDeviceRegions(source.deviceRegions ?? source.options?.deviceRegions),
+    options: canonicalOptions(source),
+    annotationExcluded: stringList(source.annotationExcluded),
+    collapsedGroups: stringList(source.collapsedGroups),
   };
 }

@@ -27,7 +27,7 @@ The routing-sensitive symbol contract is:
 | bulk MOS | plain MOS plus `b=(0,0)` | bulk label offset `{40,-40}` |
 | NPN / PNP | `b=(-160,0)`, `c=(0,-120)`, `e=(0,120)` | bbox `{-160,-120,160,240}`; PNP collector/emitter are inverted |
 | current/voltage source, VCCS, VCVS | `a=(0,-80)`, `b=(0,80)` | bbox `{-40,-80,80,160}`; VCCS/VCVS are the diamond controlled sources |
-| opamp, comparator, gm | `ip=(-200,-40)`, `im=(-200,40)`, `o=(160,0)` | `+` on top; differential variant adds `om=(160,-40)`, `op=(160,40)`; `gm` is the differential pins on a blunt (trapezoid) body; documents without `opampPolarityVersion` load mirrored so they draw as saved; comparators share the single-ended body, the clocked one adds `clk=(-200,0)` between the inputs |
+| opamp, comparator, gm | `ip=(-200,-40)`, `im=(-200,40)`, `o=(160,0)` | `+` on top; differential variant adds `om=(160,-40)`, `op=(160,40)`; `gm` is the differential pins on a blunt (trapezoid) body; comparators share the single-ended body, the clocked one adds `clk=(-200,0)` between the inputs |
 | inverter/buffer | `a=(-120,0)`, `y=(120,0)` | tri-state variants add `en=(0,80)` |
 | 2-input logic | `a=(-120,-40)`, `b=(-120,40)`, `y=(120,0)` | XOR/XNOR output is at `x=160`; 3-input adds `c` at `y=40` |
 | mux2 | `a=(-80,-40)`, `b=(-80,40)`, `y=(80,0)`, `s=(0,160)` | tapered body |
@@ -83,9 +83,7 @@ full inset, and the box keeps the edge facing it fixed as the text grows;
 above or below, the text is centered. A net label above or below its wire
 that is aligned left or right keeps that edge where a two-cell box would have
 it and grows away, so a wire stub's label edge stays on its terminal. Aligned text labels round their box up
-to include that inset. Documents without `labelAlignVersion` 3 (or
-`ownedLabelAlignVersion` 2) load their centered part and net labels as
-`parent`. A net label may sit wherever its box touches its own wire -- along
+to include that inset. A net label may sit wherever its box touches its own wire -- along
 an edge, or by one corner at a wire end -- without the wire running through
 its text (`netLabelBoxTouches`, `Circuit#netLabelFits`); its anchor need not
 lie on the wire. Dragged out past a wire end it sits beyond that end on the
@@ -96,8 +94,7 @@ Interface ports are components and therefore also require unique identities.
 While a port is the only interface pin on its physical net, its authored label
 names that net in both directions. Multiple ports on a net retain their own
 identities; name the net to make a virtual connection. A net name that cannot
-be a component identity remains a net-only name. `port_filled` is a legacy
-JSON alias for `port`.
+be a component identity remains a net-only name.
 
 Unnamed `ground`, `supply`, and `vcm` markers name an attached unnamed net
 `V_{SS}`, `V_{DD}`, or `V_{CM}` and form shared AC-reference groups; the plain

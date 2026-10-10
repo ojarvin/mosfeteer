@@ -1,9 +1,7 @@
 /**
  * Document files on disk. A document is one self-contained JSON file that can
  * live anywhere: the workspace folder, a project repository, a shared drive.
- * Files saved by the app use the plain `.json` extension. Older
- * `.schematic.json` paths remain readable so existing schematics can be
- * opened and resaved under the canonical name.
+ * Files use the plain `.json` extension.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -13,13 +11,10 @@ import { documentKind, loadDocument, validDocumentName } from '../core/document.
 export { validDocumentName } from '../core/document.js';
 
 export const DOCUMENT_EXTENSION = '.json';
-const LEGACY_DOCUMENT_EXTENSION = '.schematic.json';
 
 /** Display name of a document file: its base name without the document extension. */
 export function documentNameFromPath(path) {
-  const file = basename(path);
-  if (file.toLowerCase().endsWith(LEGACY_DOCUMENT_EXTENSION)) return file.slice(0, -LEGACY_DOCUMENT_EXTENSION.length);
-  return file.replace(/\.json$/i, '');
+  return basename(path).replace(/\.json$/i, '');
 }
 
 export function documentPathFor(dir, name) {

@@ -139,7 +139,7 @@ export function displayPath(path) {
 function documentNameForPath(path) {
   const known = [...(editor.workspaceState?.documents || []), ...(editor.workspaceState?.recent || [])].find((document) => document.path === path);
   if (known) return known.name;
-  return String(path).split(/[\\/]/).pop().replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
+  return String(path).split(/[\\/]/).pop().replace(/\.json$/i, '');
 }
 
 let documentListHandler = null;
@@ -1255,7 +1255,7 @@ export function installDocumentSession() {
       logLine(`Could not open ${file.name}: ${err.message}`, 'error');
       return;
     }
-    const name = file.name.replace(/\.schematic\.json$/i, '').replace(/\.json$/i, '');
+    const name = file.name.replace(/\.json$/i, '');
     requestDocumentAction(`Opening "${file.name}"`, () => openUnsavedDocument(state, name));
   });
 

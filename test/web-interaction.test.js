@@ -600,7 +600,7 @@ test('analysis form state is scoped and role metadata is restored from the activ
   assert.match(main, /analysisFormStorageKey\(analysisFormScope\(\)\)/);
   assert.match(main, /Select an input node before deriving equations/);
   assert.match(main, /analysis failed: \$\{message\}/);
-  assert.match(main, /migrateAnalysisFormState\(saved\)/);
+  assert.match(main, /readAnalysisFormState\(saved\)/);
   assert.match(main, /pruneAnalysisNetValues\(state\.acGrounds, visibleNets\(\)\)/);
   assert.match(main, /pruneAnalysisDeviceRegions/);
   assert.match(main, /defaults\.targetMarked \? defaults\.target : state\.output/);

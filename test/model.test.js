@@ -228,89 +228,16 @@ test('obsolete MOS current-source model requests are rejected without mutation',
   assert.equal(empty.components.size, 0);
 });
 
-test('fromJSON drops obsolete MOS current-source models without reinterpreting other attributes', () => {
-  const data = {
-    version: 2,
-    grid: 40,
-    components: [{
-      refdes: 'M1',
-      type: 'nmos',
-      value: '',
-      transform: { x: 0, y: 0, rotation: 0, mirrorX: false, mirrorY: false },
-      analysis: {
-        model: 'current-source',
-        smallSignalModel: 'triode',
-        role: 'output',
-        channelLengthModulation: 'finite',
-        gmroLarge: true,
-        ignoreBodyEffect: false,
-      },
-    }],
-    nets: [],
-    labels: [],
-  };
-  const before = structuredClone(data);
-
-  const loaded = Circuit.fromJSON(data);
-  const analysis = loaded.getComponent('M1').analysis;
-  assert.equal(analysis.model, null);
-  assert.equal(analysis.role, 'output');
-  assert.equal(analysis.channelLengthModulation, 'finite');
-  assert.equal(analysis.gmroLarge, true);
-  assert.equal(analysis.ignoreBodyEffect, false);
-  assert.deepEqual(data, before, 'loading must not mutate serialized input');
-
-  const saved = loaded.toJSON().components.find(({ refdes }) => refdes === 'M1');
-  assert.notEqual(saved.analysis.model, 'current-source');
-  assert.equal(saved.analysis.channelLengthModulation, 'finite');
-  assert.equal(saved.analysis.gmroLarge, true);
-  assert.equal(saved.analysis.ignoreBodyEffect, false);
-});
-
-test('op-amps put + on top, and older documents keep their drawn pins and labels', () => {
+test('op-amps put + on top, their label above', () => {
   const fresh = new Circuit();
   fresh.addComponent('opamp', { refdes: 'U1' });
   const u1 = fresh.getComponent('U1');
   assert.ok(u1.terminalWorld('ip').y < u1.terminalWorld('im').y, '+ input on top');
   assert.ok(fresh.labelOf('U1').anchorWorld().y < u1.bboxWorld().y, 'label above');
-
-  // Saved before the flip: + at local y=40, so these opamps drew + below
-  // unless mirrored. One plain, one rotated and mirrored.
-  const legacy = fresh.toJSON();
-  delete legacy.opampPolarityVersion;
-  const [plain] = legacy.components;
-  legacy.components.push({ ...plain, refdes: 'U2', type: 'opamp_diff', transform: { x: 800, y: 0, rotation: 90, mirrorX: false, mirrorY: true } });
-  legacy.labels.push({ ...legacy.labels[0], id: 'lblU2', text: 'U_{2}', owner: 'U2', offset: { x: 0, y: 160 } });
-  const oldTerminal = { U1: { ip: { x: -200, y: 40 }, im: { x: -200, y: -40 } }, U2: { ip: { x: 800 + 40, y: -200 }, op: { x: 800 - 40, y: 160 } } };
-  const oldLabel = { U1: { x: 0, y: -160 }, U2: { x: 800 + 160, y: 0 } };
-
-  const loaded = Circuit.fromJSON(legacy);
-  for (const [ref, terminals] of Object.entries(oldTerminal)) {
-    for (const [term, at] of Object.entries(terminals)) assert.deepEqual(loaded.getComponent(ref).terminalWorld(term), at, `${ref}.${term}`);
-    assert.deepEqual(loaded.labelOf(ref).anchorWorld(), oldLabel[ref], `${ref} label`);
-  }
-  // Saved again, it carries the marker and is not flipped a second time.
-  const again = Circuit.fromJSON(loaded.toJSON());
-  assert.equal(loaded.toJSON().opampPolarityVersion, 2);
-  assert.deepEqual(again.getComponent('U2').terminalWorld('ip'), oldTerminal.U2.ip);
+  const again = Circuit.fromJSON(fresh.toJSON()).getComponent('U1');
+  assert.deepEqual(again.terminalWorld('ip'), u1.terminalWorld('ip'));
 });
-
-test('saved sequential symbols keep reset pins across the variant rename', () => {
-  const old = new Circuit();
-  old.addComponent('dff_rst', { refdes: 'U1', x: 0, y: 0 });
-  old.addComponent('latch_enb_rst', { refdes: 'U2', x: 480, y: 0 });
-  old.wireTo('U1.RST', old.getComponent('U2').terminalWorld('RST'));
-  const legacy = old.toJSON();
-  delete legacy.sequentialVariantVersion;
-  legacy.components[0].type = 'dff';
-  legacy.components[1].type = 'latch_enb';
-
-  const loaded = Circuit.fromJSON(legacy);
-  assert.equal(loaded.getComponent('U1').type, 'dff_rst');
-  assert.equal(loaded.getComponent('U2').type, 'latch_enb_rst');
-  assert.deepEqual(loaded.netOfTerminal({ comp: 'U1', term: 'RST' })?.terminals,
-    old.netOfTerminal({ comp: 'U1', term: 'RST' })?.terminals);
-
+test('sequential symbols without reset keep no reset pin through a save', () => {
   const fresh = new Circuit();
   fresh.addComponent('dff', { refdes: 'U1' });
   fresh.addComponent('latch', { refdes: 'U2', x: 480 });
@@ -319,7 +246,6 @@ test('saved sequential symbols keep reset pins across the variant rename', () =>
   assert.equal(roundTrip.getComponent('U2').type, 'latch');
   assert.equal(roundTrip.getComponent('U1').terminalDefs.some(({ name }) => name === 'RST'), false);
 });
-
 test('resistor infinity attributes persist and can be cleared', () => {
   const c = new Circuit();
   c.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
@@ -621,34 +547,6 @@ test('the circle port is an interface pin with an owned label that names its net
   assert.equal(c.components.has('VBIAS'), false);
   assert.equal(c.getComponent('VREF').type, 'port');
   assert.equal(c.labelOf('VREF').text, 'VREF');
-});
-
-test('legacy filled and unlabelled ports load as labelled ports', () => {
-  const c = new Circuit();
-  c.addComponent('port', { refdes: 'P1', x: 0, y: 0 });
-  c.addComponent('port', { refdes: 'P2', x: 0, y: 400 });
-  const data = c.toJSON();
-  data.components.find((component) => component.refdes === 'P2').type = 'port_filled';
-  data.labels = [];
-  const loaded = Circuit.fromJSON(data);
-  assert.equal(loaded.getComponent('P2').type, 'port');
-  assert.equal(loaded.labelOf('P1').text, 'P_{1}');
-  assert.equal(loaded.labelOf('P2').text, 'P_{2}');
-});
-
-test('legacy two-input gate types load as explicit arity names', () => {
-  const c = new Circuit();
-  for (const [index, type] of ['and2_gate', 'nand2_gate', 'or2_gate', 'nor2_gate', 'xor2_gate', 'xnor2_gate'].entries()) {
-    c.addComponent(type, { refdes: `U${index + 1}`, x: index * 400, y: 0 });
-  }
-  const data = c.toJSON();
-  for (const [index, type] of ['and_gate', 'nand_gate', 'or_gate', 'nor_gate', 'xor_gate', 'xnor_gate'].entries()) {
-    data.components[index].type = type;
-  }
-  const loaded = Circuit.fromJSON(data);
-  assert.deepEqual([...loaded.components.values()].map((component) => component.type), [
-    'and2_gate', 'nand2_gate', 'or2_gate', 'nor2_gate', 'xor2_gate', 'xnor2_gate',
-  ]);
 });
 
 test('interface pin names and owned labels stay synchronized with their single-owner net', () => {
@@ -2515,37 +2413,19 @@ test('a part label beside its part aligns toward it and keeps its box against it
   assert.deepEqual([vin.defaultAlign(), note.defaultAlign()], ['parent', 'center']);
 });
 
-test('older documents align their centered part and net labels toward what they name on load', () => {
+test('a new side net label faces its wire, and centered labels stay centered through a save', () => {
   const c = new Circuit();
   c.addComponent('input', { refdes: 'VIN', x: 0, y: 0 });
   const net = c.createWireNet({ name: 'X', route: [{ x: 400, y: 0 }, { x: 800, y: 0 }] });
   const side = c.addNetLabel(net, { x: 800, y: 0, netSide: 'right' });
-  const note = c.addLabel({ text: 'note', x: 0, y: 400 });
   assert.deepEqual([side.align, side.textAlign()], ['parent', 'left'], 'a new side net label faces its wire');
   assert.equal(side.textPos().x, 800 + GRID / 2, 'one inset from the wire end');
-  const centered = () => {
-    const data = c.toJSON();
-    for (const label of data.labels) label.align = 'center';
-    delete data.labelAlignVersion;
-    return data;
-  };
-  // Before either: both kinds face what they name; free text stays centered.
-  let loaded = Circuit.fromJSON(centered());
-  assert.equal(loaded.labelOf('VIN').align, 'parent');
-  assert.equal(loaded.labels.get(side.id).align, 'parent');
-  assert.equal(loaded.labels.get(note.id).align, 'center');
-  // Saved with part-label alignment only (version 2): net labels catch up.
-  const v2 = { ...centered(), ownedLabelAlignVersion: 2 };
-  loaded = Circuit.fromJSON(v2);
-  assert.equal(loaded.labelOf('VIN').align, 'center');
-  assert.equal(loaded.labels.get(side.id).align, 'parent');
-  // A current document keeps labels it centered on purpose.
-  const current = { ...centered(), labelAlignVersion: 3 };
-  loaded = Circuit.fromJSON(current);
+  const data = c.toJSON();
+  for (const label of data.labels) label.align = 'center';
+  const loaded = Circuit.fromJSON(data);
   assert.equal(loaded.labelOf('VIN').align, 'center');
   assert.equal(loaded.labels.get(side.id).align, 'center');
 });
-
 test('sub-pixel measurement noise at a grid boundary does not shift aligned label edges', () => {
   const c = new Circuit();
   const label = c.addLabel({ text: '\\text{Assumptions}', x: 400, y: 240, math: true, align: 'left' });
@@ -4070,14 +3950,12 @@ test('rails are named V_{SS}, V_{DD}, V_{CM}, and the plain spellings are the sa
   c.renameNet(typed, 'VSS');
   assert.equal(c.netGroupKey(typed), c.netGroupKey(rail));
   assert.equal(c.logicallyConnected(typed, rail), true);
-  // An older document's plain rail name, and its highlight, load respelled.
+  // An older document's plain rail name loads respelled.
   const json = c.toJSON();
   const saved = json.nets.find((net) => net.id === rail.id);
   saved.name = 'VSS';
-  json.netHighlights = { 'name:VSS': 'red' };
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(json)));
   assert.equal(loaded.nets.get(rail.id).name, 'V_{SS}');
-  assert.equal(loaded.netHighlights.get('name:V_{SS}'), 'red');
   assert.equal(loaded.nets.get(typed.id).name, 'VSS');
 });
 

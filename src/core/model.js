@@ -58,50 +58,6 @@ function signalInputSignOffset(terminal) {
   };
 }
 
-// Active-low sequential symbols used the `n` suffix before the terminal names
-// were standardized on `B`. Keep old documents loadable while the registered
-// component types and their new instances use the consistent spelling.
-const LEGACY_COMPONENT_TYPE_RENAMES = Object.freeze({
-  and_gate: 'and2_gate',
-  nand_gate: 'nand2_gate',
-  or_gate: 'or2_gate',
-  nor_gate: 'nor2_gate',
-  xor_gate: 'xor2_gate',
-  xnor_gate: 'xnor2_gate',
-  dff_clkn: 'dff_clkb',
-  dff_clkn_qb: 'dff_clkb_qb',
-  dff_rstn: 'dff_rstb',
-  dff_rstn_qb: 'dff_rstb_qb',
-  dff_clkn_rstn: 'dff_clkb_rstb',
-  dff_clkn_rstn_qb: 'dff_clkb_rstb_qb',
-});
-
-// Before reset-free variants existed, these four names in each family always
-// carried an RST pin. New documents mark the expanded name set explicitly.
-const LEGACY_SEQUENTIAL_RESET_TYPES = Object.freeze({
-  dff: 'dff_rst', dff_qb: 'dff_rst_qb',
-  dff_clkb: 'dff_clkb_rst', dff_clkb_qb: 'dff_clkb_rst_qb',
-  latch: 'latch_rst', latch_qb: 'latch_rst_qb',
-  latch_enb: 'latch_enb_rst', latch_enb_qb: 'latch_enb_rst_qb',
-});
-
-// Op-amps drew + below - until opampPolarityVersion 2 put + on top. An older
-// document's op-amps load flipped in their own frame, so they draw as saved.
-const OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
-
-function serializedComponentType(type, sequentialVariantVersion) {
-  const normalized = LEGACY_COMPONENT_TYPE_RENAMES[type] || type;
-  return sequentialVariantVersion >= 2 ? normalized : (LEGACY_SEQUENTIAL_RESET_TYPES[normalized] || normalized);
-}
-
-function serializedTerminalName(type, term) {
-  if (!['dff_clkb', 'dff_clkb_qb', 'dff_clkb_rst', 'dff_clkb_rst_qb', 'dff_clkb_rstb', 'dff_clkb_rstb_qb'].includes(type)
-      && !['dff_rstb', 'dff_rstb_qb'].includes(type)) return term;
-  if (term === 'CLKN') return 'CLKB';
-  if (term === 'RSTN') return 'RSTB';
-  return term;
-}
-
 /** A design link as stored: the linked design's name, or null. A `.json`
  *  file name reads as its design name. */
 export function normalizeDesignLink(value) {
@@ -1805,20 +1761,6 @@ function normalizeSmallSignalDeviceModel(value) {
     throw new Error(`unknown small-signal device model "${model}"`);
   }
   return model;
-}
-
-function migrateSerializedComponentAnalysis(analysis) {
-  if (!analysis || typeof analysis !== 'object') return analysis;
-  const migrated = { ...analysis };
-  const obsoleteModel = String(migrated.model ?? '').trim().toLowerCase() === 'current-source';
-  const obsoleteAlias = String(migrated.smallSignalModel ?? '').trim().toLowerCase() === 'current-source';
-  if (obsoleteModel) {
-    delete migrated.model;
-    delete migrated.smallSignalModel;
-  } else if (obsoleteAlias) {
-    delete migrated.smallSignalModel;
-  }
-  return migrated;
 }
 
 /** A transfer-function box around its equation: whole pairs of grid cells
@@ -7216,6 +7158,7 @@ export class Circuit {
   toJSON() {
     return {
       version: 2,
+      // Read by Mosfeteer before 0.7, which converts documents without them.
       sequentialVariantVersion: 2,
       opampPolarityVersion: 2,
       labelAlignVersion: 3,
@@ -7251,32 +7194,19 @@ export class Circuit {
     circuit.tags = normalizeTags(data.tags);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     circuit.windows = normalizeWindows(data.windows);
-    // A rail's group is keyed by its V_{..} spelling; older documents keyed
-    // it by the plain one (`name:VSS`).
-    const railKey = (key) => (key.startsWith('name:') ? `name:${railNameKey(key.slice(5))}` : key);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
-      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(railKey(key), color);
-    }
-    for (const beat of circuit.beats) {
-      for (const key of Object.keys(beat.highlights)) {
-        if (railKey(key) !== key) renameBeatHighlightKey(circuit, key, railKey(key));
-      }
+      if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }
     circuit._loading = true;
-    const flippedOpamps = new Set();
     for (const c of data.components) {
-      const type = serializedComponentType(c.type === 'port_filled' ? 'port' : c.type, data.sequentialVariantVersion);
-      const flip = OPAMP_TYPES.has(type) && !(data.opampPolarityVersion >= 2);
-      if (flip) flippedOpamps.add(c.refdes);
-      // The filled terminal marker was folded into the one labelled port.
-      circuit.addComponent(type, {
+      circuit.addComponent(c.type, {
         refdes: c.refdes,
         value: c.value,
         x: c.transform.x,
         y: c.transform.y,
         rotation: c.transform.rotation,
         mirrorX: c.transform.mirrorX,
-        mirrorY: flip ? !c.transform.mirrorY : c.transform.mirrorY,
+        mirrorY: c.transform.mirrorY,
         blockSize: c.blockSize,
         blockTerminals: c.blockTerminals,
         negativeInputs: c.negativeInputs,
@@ -7284,7 +7214,7 @@ export class Circuit {
         link: c.link,
         size: c.size,
         style: c.style,
-        analysis: migrateSerializedComponentAnalysis(c.analysis),
+        analysis: c.analysis,
         drawOrder: c.drawOrder,
         noLabel: true,
       });
@@ -7306,8 +7236,7 @@ export class Circuit {
       });
       net.id = n.id;
       for (const t of n.terminals) {
-        const component = circuit.components.get(t.comp);
-        net.terminals.push({ ...t, term: serializedTerminalName(component?.type, t.term) });
+        net.terminals.push({ ...t });
       }
       if (!fixed) {
         net.route = n.route ? clonePath(n.route, net.allowDiagonal) : null;
@@ -7346,7 +7275,6 @@ export class Circuit {
     // merge that was later split.
     circuit.netNameWarnings = circuit.netNameWarnings.filter((warning) => !warning.names.slice(1).some((name) =>
       [...circuit.nets].some(([id, net]) => id !== warning.netId && canonicalNetName(net.name) === canonicalNetName(name))));
-    const labelAlignVersion = data.labelAlignVersion ?? (data.ownedLabelAlignVersion >= 2 ? 2 : 1);
     const loadedLabelIds = new Set();
     for (const l of data.labels || []) {
       if (l.id && loadedLabelIds.has(l.id)) throw new Error(`label id "${l.id}" already in use`);
@@ -7360,9 +7288,7 @@ export class Circuit {
           id: l.id,
           kind: l.kind,
           text: l.text,
-          // Labels were all centered until they could face what they name:
-          // part labels from version 2, net labels from version 3.
-          align: l.align === 'center' && ((l.netId && labelAlignVersion < 3) || (l.owner && !l.role && labelAlignVersion < 2)) ? 'parent' : l.align,
+          align: l.align,
           owner: l.owner || null,
           role: l.role || null,
           signalTerminal: l.signalTerminal || null,
@@ -7373,7 +7299,7 @@ export class Circuit {
           math: !!l.math,
           mathBox: l.mathBox,
           netSide: l.netSide,
-          offset: l.offset && flippedOpamps.has(l.owner) ? { x: l.offset.x, y: -l.offset.y } : l.offset || null,
+          offset: l.offset || null,
           x: l.anchor ? l.anchor.x : 0,
           y: l.anchor ? l.anchor.y : 0,
           end: l.end || null,
@@ -7391,11 +7317,6 @@ export class Circuit {
       if (label.owner && !circuit.components.has(label.owner)) circuit.labels.delete(label.id);
       if (label.netId && !circuit._netLabelAnchorOnPath(label.netId, label.anchorWorld()) && !circuit.netLabelFits(label)) circuit.labels.delete(label.id);
     }
-    // Ports predating their owned name label get one, like the boxed ports.
-    for (const component of circuit.components.values()) {
-      if (component.type !== 'port' || circuit.labelOf(component.refdes)) continue;
-      try { circuit._ensureComponentInstanceLabel(component); } catch { /* label id in use */ }
-    }
     for (const component of circuit.components.values()) {
       circuit._syncSignalInputLabels(component);
       circuit._syncSizeLabel(component);
@@ -7407,17 +7328,6 @@ export class Circuit {
     }
     // Restore direct pin contacts that are not represented by wire geometry.
     if (!data.topologyOnly) circuit.connectCoincident();
-    // Migrate legacy owned instance labels that persisted a compact trailing
-    // number (for example `M1`) to the explicit source used by the current
-    // renderer (`M_{1}`). Custom markup such as `R_{D}` is preserved.
-    for (const component of circuit.components.values()) {
-      const label = circuit.labelOf(component.refdes);
-      if (!label || isReferenceMarker(component)) continue;
-      if (labelMatchesRefdes(label._text, component.refdes)) {
-        label._text = componentLabelText(component.refdes, label._text);
-        label.clearRenderedTextBounds();
-      }
-    }
     for (const net of circuit.nets.values()) {
       // An older document's unnamed marker named its net VSS, VDD, or VCM;
       // the rails are spelled V_{SS}, V_{DD}, V_{CM} now.

@@ -37,7 +37,7 @@ test('document names are portable file names and match on client and server', ()
   }
   assert.equal(documentPathFor('/work', ' amp '), join('/work', 'amp.json'));
   assert.throws(() => documentPathFor('/work', '../x'), /invalid document name/);
-  assert.equal(documentNameFromPath('/work/amp.schematic.json'), 'amp');
+  assert.equal(documentNameFromPath('/work/amp.schematic.json'), 'amp.schematic');
   assert.equal(documentNameFromPath('/work/amp.json'), 'amp');
 });
 
