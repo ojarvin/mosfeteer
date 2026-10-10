@@ -46045,7 +46045,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let selectedStyleSource, pasteStyle; __bind(() => { ({ selectedStyleSource, pasteStyle } = __require("src/web/style-controls.js")); });
 let beginNetLabelPaste; __bind(() => { ({ beginNetLabelPaste } = __require("src/web/annotation-tools.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } = __require("src/web/main.js")); });
+let applyJson, captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires; __bind(() => { ({ applyJson, captureNetGeometry, captureRouteGeometry, cloneFixedPaths, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } = __require("src/web/main.js")); });
 /**
  * Copy and paste: the copied set, the copy ghost that follows the pointer
  * (and its mirrored twin), pasting, and the system clipboard exchange that
@@ -46200,6 +46200,9 @@ function copySelection({ quiet = false } = {}) {
     id: net.id,
     name: net.name,
     routingMode: net.routingMode,
+    // A net drawn with diagonal legs keeps them: without the flag its copy
+    // would read them as broken orthogonal wire.
+    allowDiagonal: net.allowDiagonal,
     drawOrder: net.drawOrder,
     terminals: net.terminals.map((t) => ({ comp: t.comp, term: t.term })),
     ...captureRouteGeometry(net),
@@ -46321,7 +46324,7 @@ function startCopyGhost(startWorld, startClient, anchorShift = null) {
   const existingNetIds = new Set(editor.circuit.nets.keys());
   const start = { x: snap(startWorld.x), y: snap(startWorld.y) };
   editor.cursor = start;
-  pasteClipboard({ recordHistory: false, connect: false });
+  if (!pasteClipboard({ recordHistory: false, connect: false })) return false;
   const ghost = copyGhostSelection();
   ghost.netIds = ghost.netIds.filter((id) => !existingNetIds.has(id));
   // The source click is the placement anchor, not the clipboard set center.
@@ -46749,9 +46752,23 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       editor.circuit._loading = wasLoading;
     }
   };
-  if (recordHistory) commit(apply);
-  else apply();
+  // A paste is all or nothing: one that fails part way leaves the document
+  // as it was, never half a copy in it.
+  const before = snapshot();
+  try {
+    if (recordHistory) commit(apply);
+    else apply();
+  } catch (err) {
+    applyJson(before);
+    addedComps.length = 0;
+    addedLabels.length = 0;
+    addedNetLabels.length = 0;
+    logLine(`Could not paste: ${err.message}`, 'error');
+    render();
+    return false;
+  }
   render();
+  return true;
 }
 
 function installCopyPaste() {

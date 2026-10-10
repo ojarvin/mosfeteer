@@ -1,5 +1,6 @@
 import { editorSource } from './helpers/editor-source.js';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { encodeObjectClipboard, decodeObjectClipboard, OBJECT_CLIPBOARD_FORMAT } from '../src/core/object-clipboard.js';
 
@@ -87,4 +88,14 @@ test('pasting a copied net label hands its name to the net label tool', () => {
   assert.match(main, /function activateLabelPlacement\(kind\) \{\s*leaveActiveInteraction\(\);\s*clearNetLabelPaste\(\);/);
   // A differently named net is renamed only after a confirmation.
   assert.match(main, /kind === 'rename' && !await confirmChoice\(/);
+});
+
+test('a copied net keeps its diagonal legs, and a paste that fails leaves the document as it was', () => {
+  const paste = readFileSync(new URL('../src/web/copy-paste.js', import.meta.url), 'utf8');
+  const capture = paste.slice(paste.indexOf('const nets = parts.nets.map((net) => ({'), paste.indexOf('const fragments = parts.fragments.map'));
+  assert.match(capture, /allowDiagonal: net\.allowDiagonal,/);
+  assert.match(paste, /createWireNet\(\{ name: pastedNetName\(n, refMap\), routingMode: n\.routingMode, allowDiagonal: n\.allowDiagonal,/);
+  // All or nothing.
+  assert.match(paste, /catch \(err\) \{\s*applyJson\(before\);/);
+  assert.match(paste, /if \(!pasteClipboard\(\{ recordHistory: false, connect: false \}\)\) return false;/);
 });
