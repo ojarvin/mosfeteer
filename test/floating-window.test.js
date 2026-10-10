@@ -115,3 +115,10 @@ test('a picture pasted over a reference window shows there, not on the drawing',
   assert.match(reference, /win\.pasted\.src\.length <= MAX_WINDOW_PICTURE/);
   assert.match(reference, /onDocumentShown\(restoreWindows\);/);
 });
+
+test('a west or north corner grip moves that edge, not the opposite one', () => {
+  const source = readFileSync(new URL('../src/web/floating-window.js', import.meta.url), 'utf8');
+  // The place is kept in step while dragging: the window's resize observer
+  // re-places it from there on every size change.
+  assert.match(source, /el\.style\.top = `\$\{top\}px`;\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*stored = \{ \.\.\.stored, x: left, y: top \};/);
+});

@@ -352,6 +352,9 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
           el.style.height = `${h}px`;
           el.style.left = `${left}px`;
           el.style.top = `${top}px`;
+          // Its place too, at once: the window's own resize observer places
+          // it from there, and would put a west or north edge back.
+          stored = { ...stored, x: left, y: top };
         };
         const end = () => {
           grip.removeEventListener('pointermove', move);
