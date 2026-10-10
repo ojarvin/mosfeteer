@@ -141,11 +141,12 @@
   </dialog>
   <dialog id="switch-dialog" class="confirm-dialog" aria-labelledby="switch-dialog-title">
     <form method="dialog">
-      <h2 id="switch-dialog-title">Discard unsaved changes?</h2>
+      <h2 id="switch-dialog-title">Save your changes?</h2>
       <p id="switch-dialog-message"></p>
       <div class="dialog-actions">
         <button value="cancel" data-icon="x-circle">Keep editing</button>
-        <button id="confirm-switch" value="discard" data-icon="folder-open" class="confirm-action">Discard and load</button>
+        <button id="discard-switch" value="discard" data-icon="trash">Discard and load</button>
+        <button id="confirm-switch" value="save" data-icon="save" class="confirm-action">Save and load</button>
       </div>
     </form>
   </dialog>

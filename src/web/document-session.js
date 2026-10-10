@@ -316,9 +316,9 @@ export async function saveCircuit({ saveAs = false } = {}) {
       });
     } catch (err) {
       logLine(`Could not choose a save file: ${err.message}`, 'error');
-      return;
+      return false;
     }
-    if (!choice) return;
+    if (!choice) return false;
     ({ name } = choice);
     target = choice;
   } else if (editor.currentDocumentPath && name === editor.currentCircuitName) {
@@ -329,7 +329,7 @@ export async function saveCircuit({ saveAs = false } = {}) {
   if (!validDocumentName(name)) {
     logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
     circuitNameEl.focus();
-    return;
+    return false;
   }
   editor.syncGeneration += 1;
   editor.saveInFlight += 1;
@@ -356,7 +356,7 @@ export async function saveCircuit({ saveAs = false } = {}) {
       });
       if (!replace) {
         logLine('Save canceled.');
-        return;
+        return false;
       }
       data = await saveWith({ overwrite: true, force: true });
     }
@@ -374,9 +374,11 @@ export async function saveCircuit({ saveAs = false } = {}) {
     logLine(data.downloaded
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
       : `Saved ${displayPath(data.path)}.`);
+    return true;
   } catch (err) {
     if (err.code === 'canceled') logLine(`Save canceled${err.message === 'save canceled' ? '' : `: ${err.message}`}.`);
     else logLine(`Could not save document: ${err.message}`, 'error');
+    return false;
   } finally {
     editor.saveInFlight -= 1;
     editor.syncGeneration += 1;
@@ -458,6 +460,43 @@ function openUnsavedDocument(state, name) {
   logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
 }
 
+/** A document as text, without what its windows show: window state is saved
+ *  with the design but is no edit, so it never makes the design unsaved. */
+function drawingText(text) {
+  if (!text || !text.includes('"windows"')) return text;
+  try {
+    const data = JSON.parse(text);
+    delete data.windows;
+    return JSON.stringify(data);
+  } catch { return text; }
+}
+
+/** Whether the document differs from its file in its windows' state alone. */
+function windowsChanged() {
+  return !!editor.lastSavedSnapshot && snapshot() !== editor.lastSavedSnapshot && !documentChanged();
+}
+
+/**
+ * Write the open design's window state into its file when that is all that
+ * changed: the windows follow the design without ever making it unsaved.
+ * Done as the design is left or the window hidden. Resolves when written.
+ */
+export async function saveWindowState() {
+  const path = editor.currentDocumentPath;
+  if (!path || editor.saveInFlight || !windowsChanged()) return;
+  const text = snapshot();
+  try {
+    editor.syncGeneration += 1;
+    const data = await persistence.save({ path }, JSON.parse(text), { overwrite: true });
+    if (path !== editor.currentDocumentPath) return;
+    editor.lastSavedSnapshot = text;
+    editor.lastSeenRevision = data.revision || null;
+    editor.lastCircuitTag = data.etag || null;
+  } catch { /* the windows' state waits for the next save */ } finally {
+    editor.syncGeneration += 1;
+  }
+}
+
 // The toolbar's dirty dot asks on every frame; serializing the document each
 // time cost most of a frame on a large drawing. The answer only changes with
 // the model (its revision, or a preview's), the document, or a save.
@@ -469,7 +508,7 @@ let changedCache = null;
 function documentChanged({ cached = false } = {}) {
   const key = { revision: editor.modelRevision, preview: editor.previewRevision, circuit: editor.circuit, saved: editor.lastSavedSnapshot };
   if (cached && changedCache && Object.keys(key).every((field) => changedCache.key[field] === key[field])) return changedCache.changed;
-  changedCache = { key, changed: snapshot() !== editor.lastSavedSnapshot };
+  changedCache = { key, changed: drawingText(snapshot()) !== drawingText(editor.lastSavedSnapshot) };
   return changedCache.changed;
 }
 
@@ -483,12 +522,14 @@ let pendingDocumentAction = null;
 /** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
 export function requestDocumentAction(description, run, cancel = null) {
   if (!hasUnsavedChanges()) {
-    run();
+    // Nothing to lose but what the windows show: that goes to the file first.
+    if (windowsChanged()) void saveWindowState().then(run);
+    else run();
     return;
   }
   pendingDocumentAction = { run, cancel };
   if (switchDialogMessage) {
-    switchDialogMessage.textContent = `${description} will discard the unsaved changes in "${editor.currentCircuitName || circuitNameEl.value.trim() || 'this design'}".`;
+    switchDialogMessage.textContent = `"${editor.currentCircuitName || circuitNameEl.value.trim() || 'This design'}" has unsaved changes. Save them before ${description.charAt(0).toLowerCase()}${description.slice(1)}, or discard them?`;
   }
   circuitSelectEl.value = editor.currentDocumentPath || '';
   switchDialog?.showModal();
@@ -959,7 +1000,7 @@ async function syncActiveCircuitOnce() {
     editor.lastSeenRevision = remoteRevision || null;
     editor.lastCircuitTag = remoteTag || null;
     if (remoteSnapshot === currentSnapshot) return;
-    if (currentSnapshot !== editor.lastSavedSnapshot) {
+    if (drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot)) {
       if (!editor.remoteConflictLogged) {
         logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
         editor.remoteConflictLogged = true;
@@ -1056,7 +1097,7 @@ async function checkOpenFileChanged() {
   if (!persistence.browserOnly || !path || editor.saveInFlight || !editor.lastSeenRevision) return;
   const revision = await persistence.revision(path);
   if (!revision || revision === editor.lastSeenRevision || path !== editor.currentDocumentPath || editor.saveInFlight) return;
-  if (snapshot() !== editor.lastSavedSnapshot) {
+  if (documentChanged()) {
     if (!editor.remoteConflictLogged) {
       logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will ask before overwriting the other version.`, 'error');
       editor.remoteConflictLogged = true;
@@ -1065,7 +1106,7 @@ async function checkOpenFileChanged() {
   }
   let data;
   try { data = await persistence.load(path); } catch { return; }
-  if (path !== editor.currentDocumentPath || snapshot() !== editor.lastSavedSnapshot) return;
+  if (path !== editor.currentDocumentPath || documentChanged()) return;
   applyJson(JSON.stringify(loadDocument(data.state).toJSON()), { document: true });
   editor.lastSavedSnapshot = snapshot();
   editor.lastSeenRevision = data.revision || null;
@@ -1125,7 +1166,16 @@ export function installDocumentSession() {
       const action = pendingDocumentAction;
       pendingDocumentAction = null;
       if (switchDialog.returnValue === 'discard' && action) action.run();
-      else {
+      else if (switchDialog.returnValue === 'save' && action) {
+        // Saved first; a save that fails or is cancelled keeps the design open.
+        void saveCircuit().then((saved) => {
+          if (saved) action.run();
+          else {
+            action.cancel?.();
+            circuitSelectEl.value = editor.currentDocumentPath || '';
+          }
+        });
+      } else {
         action?.cancel?.();
         circuitSelectEl.value = editor.currentDocumentPath || '';
       }
@@ -1212,9 +1262,12 @@ export function installDocumentSession() {
   // Documents created by the CLI, another window, or a file manager appear without a manual reload.
   circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
 
+  // The windows' state goes to the file as the editor is put away.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) void saveWindowState(); });
+
   window.addEventListener('beforeunload', (ev) => {
     flushDraft();
-    if (snapshot() === editor.lastSavedSnapshot) return;
+    if (!documentChanged()) return;
     ev.preventDefault();
     ev.returnValue = 'You have unsaved schematic changes.';
   });

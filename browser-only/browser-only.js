@@ -43416,7 +43416,7 @@ function slider({ label, tex, index, min, max, text, onInput, components = [], t
 let plots = null;
 function bodePlots() {
   if (!plots) {
-    plots = { magnitude: createPlotView({ height: 200 }), phase: createPlotView({ height: 130 }) };
+    plots = { magnitude: createPlotView({ height: 200, aspect: 0.55 }), phase: createPlotView({ height: 130, aspect: 0.36 }) };
     linkPlots(plots.magnitude, plots.phase);
   }
   return plots;
@@ -47225,6 +47225,7 @@ __exports.onDocumentListChange = onDocumentListChange;
 __exports.allowFolderAccess = allowFolderAccess;
 __exports.restoreStartup = restoreStartup;
 __exports.saveCircuit = saveCircuit;
+__exports.saveWindowState = saveWindowState;
 __exports.hasUnsavedChanges = hasUnsavedChanges;
 __exports.requestDocumentAction = requestDocumentAction;
 __exports.openDocumentPath = openDocumentPath;
@@ -47572,9 +47573,9 @@ async function saveCircuit({ saveAs = false } = {}) {
       });
     } catch (err) {
       logLine(`Could not choose a save file: ${err.message}`, 'error');
-      return;
+      return false;
     }
-    if (!choice) return;
+    if (!choice) return false;
     ({ name } = choice);
     target = choice;
   } else if (editor.currentDocumentPath && name === editor.currentCircuitName) {
@@ -47585,7 +47586,7 @@ async function saveCircuit({ saveAs = false } = {}) {
   if (!validDocumentName(name)) {
     logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
     circuitNameEl.focus();
-    return;
+    return false;
   }
   editor.syncGeneration += 1;
   editor.saveInFlight += 1;
@@ -47612,7 +47613,7 @@ async function saveCircuit({ saveAs = false } = {}) {
       });
       if (!replace) {
         logLine('Save canceled.');
-        return;
+        return false;
       }
       data = await saveWith({ overwrite: true, force: true });
     }
@@ -47630,9 +47631,11 @@ async function saveCircuit({ saveAs = false } = {}) {
     logLine(data.downloaded
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
       : `Saved ${displayPath(data.path)}.`);
+    return true;
   } catch (err) {
     if (err.code === 'canceled') logLine(`Save canceled${err.message === 'save canceled' ? '' : `: ${err.message}`}.`);
     else logLine(`Could not save document: ${err.message}`, 'error');
+    return false;
   } finally {
     editor.saveInFlight -= 1;
     editor.syncGeneration += 1;
@@ -47714,6 +47717,43 @@ function openUnsavedDocument(state, name) {
   logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
 }
 
+/** A document as text, without what its windows show: window state is saved
+ *  with the design but is no edit, so it never makes the design unsaved. */
+function drawingText(text) {
+  if (!text || !text.includes('"windows"')) return text;
+  try {
+    const data = JSON.parse(text);
+    delete data.windows;
+    return JSON.stringify(data);
+  } catch { return text; }
+}
+
+/** Whether the document differs from its file in its windows' state alone. */
+function windowsChanged() {
+  return !!editor.lastSavedSnapshot && snapshot() !== editor.lastSavedSnapshot && !documentChanged();
+}
+
+/**
+ * Write the open design's window state into its file when that is all that
+ * changed: the windows follow the design without ever making it unsaved.
+ * Done as the design is left or the window hidden. Resolves when written.
+ */
+async function saveWindowState() {
+  const path = editor.currentDocumentPath;
+  if (!path || editor.saveInFlight || !windowsChanged()) return;
+  const text = snapshot();
+  try {
+    editor.syncGeneration += 1;
+    const data = await persistence.save({ path }, JSON.parse(text), { overwrite: true });
+    if (path !== editor.currentDocumentPath) return;
+    editor.lastSavedSnapshot = text;
+    editor.lastSeenRevision = data.revision || null;
+    editor.lastCircuitTag = data.etag || null;
+  } catch { /* the windows' state waits for the next save */ } finally {
+    editor.syncGeneration += 1;
+  }
+}
+
 // The toolbar's dirty dot asks on every frame; serializing the document each
 // time cost most of a frame on a large drawing. The answer only changes with
 // the model (its revision, or a preview's), the document, or a save.
@@ -47725,7 +47765,7 @@ let changedCache = null;
 function documentChanged({ cached = false } = {}) {
   const key = { revision: editor.modelRevision, preview: editor.previewRevision, circuit: editor.circuit, saved: editor.lastSavedSnapshot };
   if (cached && changedCache && Object.keys(key).every((field) => changedCache.key[field] === key[field])) return changedCache.changed;
-  changedCache = { key, changed: snapshot() !== editor.lastSavedSnapshot };
+  changedCache = { key, changed: drawingText(snapshot()) !== drawingText(editor.lastSavedSnapshot) };
   return changedCache.changed;
 }
 
@@ -47739,12 +47779,14 @@ let pendingDocumentAction = null;
 /** Run an action that replaces the open document, asking first when that would discard unsaved changes. */
 function requestDocumentAction(description, run, cancel = null) {
   if (!hasUnsavedChanges()) {
-    run();
+    // Nothing to lose but what the windows show: that goes to the file first.
+    if (windowsChanged()) void saveWindowState().then(run);
+    else run();
     return;
   }
   pendingDocumentAction = { run, cancel };
   if (switchDialogMessage) {
-    switchDialogMessage.textContent = `${description} will discard the unsaved changes in "${editor.currentCircuitName || circuitNameEl.value.trim() || 'this design'}".`;
+    switchDialogMessage.textContent = `"${editor.currentCircuitName || circuitNameEl.value.trim() || 'This design'}" has unsaved changes. Save them before ${description.charAt(0).toLowerCase()}${description.slice(1)}, or discard them?`;
   }
   circuitSelectEl.value = editor.currentDocumentPath || '';
   switchDialog?.showModal();
@@ -48215,7 +48257,7 @@ async function syncActiveCircuitOnce() {
     editor.lastSeenRevision = remoteRevision || null;
     editor.lastCircuitTag = remoteTag || null;
     if (remoteSnapshot === currentSnapshot) return;
-    if (currentSnapshot !== editor.lastSavedSnapshot) {
+    if (drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot)) {
       if (!editor.remoteConflictLogged) {
         logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
         editor.remoteConflictLogged = true;
@@ -48312,7 +48354,7 @@ async function checkOpenFileChanged() {
   if (!persistence.browserOnly || !path || editor.saveInFlight || !editor.lastSeenRevision) return;
   const revision = await persistence.revision(path);
   if (!revision || revision === editor.lastSeenRevision || path !== editor.currentDocumentPath || editor.saveInFlight) return;
-  if (snapshot() !== editor.lastSavedSnapshot) {
+  if (documentChanged()) {
     if (!editor.remoteConflictLogged) {
       logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will ask before overwriting the other version.`, 'error');
       editor.remoteConflictLogged = true;
@@ -48321,7 +48363,7 @@ async function checkOpenFileChanged() {
   }
   let data;
   try { data = await persistence.load(path); } catch { return; }
-  if (path !== editor.currentDocumentPath || snapshot() !== editor.lastSavedSnapshot) return;
+  if (path !== editor.currentDocumentPath || documentChanged()) return;
   applyJson(JSON.stringify(loadDocument(data.state).toJSON()), { document: true });
   editor.lastSavedSnapshot = snapshot();
   editor.lastSeenRevision = data.revision || null;
@@ -48381,7 +48423,16 @@ function installDocumentSession() {
       const action = pendingDocumentAction;
       pendingDocumentAction = null;
       if (switchDialog.returnValue === 'discard' && action) action.run();
-      else {
+      else if (switchDialog.returnValue === 'save' && action) {
+        // Saved first; a save that fails or is cancelled keeps the design open.
+        void saveCircuit().then((saved) => {
+          if (saved) action.run();
+          else {
+            action.cancel?.();
+            circuitSelectEl.value = editor.currentDocumentPath || '';
+          }
+        });
+      } else {
         action?.cancel?.();
         circuitSelectEl.value = editor.currentDocumentPath || '';
       }
@@ -48468,9 +48519,12 @@ function installDocumentSession() {
   // Documents created by the CLI, another window, or a file manager appear without a manual reload.
   circuitSelectEl.addEventListener('focus', () => { void refreshCircuitList(); });
 
+  // The windows' state goes to the file as the editor is put away.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) void saveWindowState(); });
+
   window.addEventListener('beforeunload', (ev) => {
     flushDraft();
-    if (snapshot() === editor.lastSavedSnapshot) return;
+    if (!documentChanged()) return;
     ev.preventDefault();
     ev.returnValue = 'You have unsaved schematic changes.';
   });
@@ -49892,7 +49946,7 @@ const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d=
  * browser. Returns { place() }, to call after showing it (it also comes to
  * the front, popping into place), and dispose(), for a window that is removed rather than hidden.
  */
-function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = false }) {
+function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
   const panel = document.getElementById('side-panel');
   const header = el.querySelector('.floating-window-header');
@@ -64415,6 +64469,10 @@ function run() {
         fractioned = result;
         final = { ...final, own: { ...final.own, ...result.own }, score: result.score };
         showBest(result.values);
+      } else if (snap) {
+        // Stopped first: the best is on fractions all the same; it reads as them.
+        const snapped = snap(final.own);
+        fractioned = { fractions: snapped.fractions, groups: snapped.groups, fitness: best.fitness };
       }
       // How much each spec moves per 1% of each coefficient.
       let sensitivity = [];
@@ -64497,7 +64555,8 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   let startValues = null;
   const status = el('p', { class: 'field-hint run-window-status', 'aria-live': 'polite', text: 'Preparing...' });
   const bar = el('progress', { class: 'run-window-progress', max: '1', value: '0' });
-  const plotView = createPlotView({ height: 220 });
+  // The plot takes whatever room the window has: resize it for a larger one.
+  const plotView = createPlotView({ height: 220, fill: true });
   const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
   const legend = el('p', { class: 'field-hint run-window-legend', text: 'Grey: where it started. Colour: the best so far.' });
   const stop = el('button', { type: 'button', class: 'run-window-stop', text: 'Stop', onclick: () => (finished ? dispose() : onStop()) });
@@ -64523,7 +64582,7 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     if (event.key === 'Escape') dispose();
   });
   canvasEl.closest('.canvas-pane').append(dialog);
-  const handle = floatingWindow(dialog, { key: 'run', onClose: dispose, place: PLACE.topCenter });
+  const handle = floatingWindow(dialog, { key: 'run', onClose: dispose, place: PLACE.topCenter, resizable: true });
   handle.place();
   open = { dialog, dispose };
 
@@ -65502,10 +65561,22 @@ const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').re
  * view (u coordinates), to link plots. Returns `{ el, set(spec), fit(),
  * setXView(range), dispose() }`.
  */
-function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView = null, className = '' } = {}) {
+function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '' } = {}) {
   const el = document.createElement('div');
   el.className = `plot-view${className ? ` ${className}` : ''}`;
   if (!fill) el.style.height = `${height}px`;
+  // Its size now: its box's height when it fills one; with `aspect`, a
+  // height that follows its width (a wider window, a taller plot).
+  const measure = () => {
+    const w = el.clientWidth || 400;
+    if (fill) return { w, h: el.clientHeight || height };
+    if (aspect) {
+      const h = Math.round(Math.min(maxHeight, Math.max(height, w * aspect)));
+      if (el.style.height !== `${h}px`) el.style.height = `${h}px`;
+      return { w, h };
+    }
+    return { w, h: height };
+  };
   const root = svg('svg', { class: 'plot-view-svg', role: 'img' });
   const fitButton = document.createElement('button');
   fitButton.type = 'button';
@@ -65591,7 +65662,7 @@ function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView
     frame = 0;
     root.replaceChildren();
     if (!spec || !view) return;
-    size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+    size = measure();
     root.setAttribute('viewBox', `0 0 ${size.w} ${size.h}`);
     root.setAttribute('width', size.w);
     root.setAttribute('height', size.h);
@@ -65732,7 +65803,7 @@ function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView
     following = true;
     history = [];
     spec = { ...spec, series: base };
-    size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+    size = measure();
     view = autoView();
     schedule();
     if (!quiet) viewListener?.(null);
@@ -65821,7 +65892,7 @@ function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView
   }, { passive: false });
 
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
-    const next = { w: el.clientWidth, h: fill ? el.clientHeight : height };
+    const next = measure();
     if (next.w === size.w && next.h === size.h) return;
     if (following && spec) { size = next; view = autoView(); }
     schedule();
@@ -65836,7 +65907,7 @@ function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView
       const fresh = !spec || spec.key !== next.key;
       spec = next;
       base = next.series;
-      size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+      size = measure();
       if (fresh || following || !view) { following = true; history = []; view = autoView(); } else if (spec.refine) {
         const series = spec.refine(view.x.map((u) => fromU(scaleX(), u)));
         if (series) spec = { ...spec, series };
@@ -66672,8 +66743,16 @@ async function swapWithEditor(win) {
   }
   if (path === shown.path) return;
   const current = { path, name: editor.currentCircuitName };
+  // The windows come along: the same ones, this one now showing the design
+  // that was open (opening another design would show its own windows).
+  const index = windows.indexOf(win);
+  const carried = windows.map((other, i) => (i === index ? { ...current }
+    : other.doc ? { path: other.doc.path, name: other.doc.name }
+      : other.pasted && other.pasted.src.length <= MAX_WINDOW_PICTURE ? { picture: other.pasted } : null)).filter(Boolean);
   if (!await openDocumentPath(shown.path)) return;
-  setDocument(win, current);
+  editor.circuit.windows.references = { items: carried };
+  markSettingsChanged();
+  restoreWindows();
 }
 
 /** A picture as a PNG blob: a PNG as it is, any other kind drawn into a
@@ -68217,7 +68296,8 @@ const el = (tag, props = {}, children = []) => {
 const plotViews = {};
 function plotView(name) {
   if (!plotViews[name]) {
-    plotViews[name] = createPlotView();
+    // Wider window, taller plot; the loop's phase a shorter band under its magnitude.
+    plotViews[name] = createPlotView(name === 'loop-phase' ? { height: 150, aspect: 0.38 } : { aspect: 0.6 });
     if (name === 'loop-phase') linkPlots(plotView('loop-magnitude'), plotViews[name]);
   }
   return plotViews[name];

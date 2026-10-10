@@ -117,3 +117,17 @@ test('a run opens its own window: the start and the best so far, progress, Stop'
 test('fields show what is typed: no ligatures join their characters', () => {
   assert.match(read('style.css'), /input,\ntextarea \{\n  font-variant-ligatures: none;\n  font-feature-settings: "liga" 0, "calt" 0;/);
 });
+
+test('leaving unsaved changes offers save, and window state never makes a design unsaved', () => {
+  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
+  const dialog = html.slice(html.indexOf('id="switch-dialog"'), html.indexOf('</dialog>', html.indexOf('id="switch-dialog"')));
+  assert.match(dialog, /value="cancel"[^>]*>Keep editing</);
+  assert.match(dialog, /value="discard"[^>]*>Discard and load</);
+  assert.match(dialog, /value="save"[^>]*>Save and load</);
+  const session = read('document-session.js');
+  assert.match(session, /changed: drawingText\(snapshot\(\)\) !== drawingText\(editor\.lastSavedSnapshot\)/);
+  assert.match(session, /if \(windowsChanged\(\)\) void saveWindowState\(\)\.then\(run\);/);
+  assert.match(session, /else if \(switchDialog\.returnValue === 'save' && action\) \{\s*\/\/[^\n]*\n\s*void saveCircuit\(\)\.then\(\(saved\) => \{/);
+  // Every floating window resizes.
+  assert.match(read('floating-window.js'), /export function floatingWindow\(el, \{ key, onClose, place = PLACE\.topRight, resizable = true \}\)/);
+});

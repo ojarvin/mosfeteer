@@ -826,6 +826,10 @@ function run() {
         fractioned = result;
         final = { ...final, own: { ...final.own, ...result.own }, score: result.score };
         showBest(result.values);
+      } else if (snap) {
+        // Stopped first: the best is on fractions all the same; it reads as them.
+        const snapped = snap(final.own);
+        fractioned = { fractions: snapped.fractions, groups: snapped.groups, fitness: best.fitness };
       }
       // How much each spec moves per 1% of each coefficient.
       let sensitivity = [];

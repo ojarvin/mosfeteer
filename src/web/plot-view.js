@@ -60,10 +60,22 @@ const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').re
  * view (u coordinates), to link plots. Returns `{ el, set(spec), fit(),
  * setXView(range), dispose() }`.
  */
-export function createPlotView({ height = 230, fill = false, wheel = 'modifier', onView = null, className = '' } = {}) {
+export function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '' } = {}) {
   const el = document.createElement('div');
   el.className = `plot-view${className ? ` ${className}` : ''}`;
   if (!fill) el.style.height = `${height}px`;
+  // Its size now: its box's height when it fills one; with `aspect`, a
+  // height that follows its width (a wider window, a taller plot).
+  const measure = () => {
+    const w = el.clientWidth || 400;
+    if (fill) return { w, h: el.clientHeight || height };
+    if (aspect) {
+      const h = Math.round(Math.min(maxHeight, Math.max(height, w * aspect)));
+      if (el.style.height !== `${h}px`) el.style.height = `${h}px`;
+      return { w, h };
+    }
+    return { w, h: height };
+  };
   const root = svg('svg', { class: 'plot-view-svg', role: 'img' });
   const fitButton = document.createElement('button');
   fitButton.type = 'button';
@@ -149,7 +161,7 @@ export function createPlotView({ height = 230, fill = false, wheel = 'modifier',
     frame = 0;
     root.replaceChildren();
     if (!spec || !view) return;
-    size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+    size = measure();
     root.setAttribute('viewBox', `0 0 ${size.w} ${size.h}`);
     root.setAttribute('width', size.w);
     root.setAttribute('height', size.h);
@@ -290,7 +302,7 @@ export function createPlotView({ height = 230, fill = false, wheel = 'modifier',
     following = true;
     history = [];
     spec = { ...spec, series: base };
-    size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+    size = measure();
     view = autoView();
     schedule();
     if (!quiet) viewListener?.(null);
@@ -379,7 +391,7 @@ export function createPlotView({ height = 230, fill = false, wheel = 'modifier',
   }, { passive: false });
 
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
-    const next = { w: el.clientWidth, h: fill ? el.clientHeight : height };
+    const next = measure();
     if (next.w === size.w && next.h === size.h) return;
     if (following && spec) { size = next; view = autoView(); }
     schedule();
@@ -394,7 +406,7 @@ export function createPlotView({ height = 230, fill = false, wheel = 'modifier',
       const fresh = !spec || spec.key !== next.key;
       spec = next;
       base = next.series;
-      size = { w: el.clientWidth || 400, h: fill ? el.clientHeight || height : height };
+      size = measure();
       if (fresh || following || !view) { following = true; history = []; view = autoView(); } else if (spec.refine) {
         const series = spec.refine(view.x.map((u) => fromU(scaleX(), u)));
         if (series) spec = { ...spec, series };

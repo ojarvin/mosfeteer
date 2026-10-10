@@ -196,7 +196,7 @@ function slider({ label, tex, index, min, max, text, onInput, components = [], t
 let plots = null;
 function bodePlots() {
   if (!plots) {
-    plots = { magnitude: createPlotView({ height: 200 }), phase: createPlotView({ height: 130 }) };
+    plots = { magnitude: createPlotView({ height: 200, aspect: 0.55 }), phase: createPlotView({ height: 130, aspect: 0.36 }) };
     linkPlots(plots.magnitude, plots.phase);
   }
   return plots;

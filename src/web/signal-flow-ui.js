@@ -98,7 +98,8 @@ const el = (tag, props = {}, children = []) => {
 const plotViews = {};
 function plotView(name) {
   if (!plotViews[name]) {
-    plotViews[name] = createPlotView();
+    // Wider window, taller plot; the loop's phase a shorter band under its magnitude.
+    plotViews[name] = createPlotView(name === 'loop-phase' ? { height: 150, aspect: 0.38 } : { aspect: 0.6 });
     if (name === 'loop-phase') linkPlots(plotView('loop-magnitude'), plotViews[name]);
   }
   return plotViews[name];

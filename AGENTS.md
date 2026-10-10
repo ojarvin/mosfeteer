@@ -438,9 +438,12 @@ What the editor's windows show for a design is saved with it
 (`Circuit#windows`, `src/core/window-state.js`): the reference windows
 (pasted pictures included), the calculator's results, the oscilloscope's
 nets and stimulus, and the small-signal form. It is not drawing: undo and redo keep it
-(`applyJson` replaces it only with `{ document: true }`), and a change to it
-is a settings change. Every window resets to the shown document's own state
-through `onDocumentShown` (main.js), so nothing of one design is left
+(`applyJson` replaces it only with `{ document: true }`), and it never makes
+the design unsaved -- it is written with the next save, or on its own
+(`saveWindowState`) when the design is left or the editor hidden with
+nothing else unsaved. Every window resets to the shown document's own state
+through `onDocumentShown` (main.js, counted by document loads, not by
+circuit objects), so nothing of one design is left
 showing in another.
 
 The browser exposes `window.__circuit()`, `window.__run(command)`, and

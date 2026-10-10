@@ -40,7 +40,8 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   let startValues = null;
   const status = el('p', { class: 'field-hint run-window-status', 'aria-live': 'polite', text: 'Preparing...' });
   const bar = el('progress', { class: 'run-window-progress', max: '1', value: '0' });
-  const plotView = createPlotView({ height: 220 });
+  // The plot takes whatever room the window has: resize it for a larger one.
+  const plotView = createPlotView({ height: 220, fill: true });
   const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
   const legend = el('p', { class: 'field-hint run-window-legend', text: 'Grey: where it started. Colour: the best so far.' });
   const stop = el('button', { type: 'button', class: 'run-window-stop', text: 'Stop', onclick: () => (finished ? dispose() : onStop()) });
@@ -66,7 +67,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
     if (event.key === 'Escape') dispose();
   });
   canvasEl.closest('.canvas-pane').append(dialog);
-  const handle = floatingWindow(dialog, { key: 'run', onClose: dispose, place: PLACE.topCenter });
+  const handle = floatingWindow(dialog, { key: 'run', onClose: dispose, place: PLACE.topCenter, resizable: true });
   handle.place();
   open = { dialog, dispose };
 

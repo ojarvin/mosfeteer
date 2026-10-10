@@ -860,21 +860,30 @@ button:disabled {
   font-family: var(--font-mono);
 }
 
-/* The window a coefficient search runs in (optimize-window.js). */
+/* The window a coefficient search runs in (optimize-window.js): its plot
+   takes the room the window is given. */
 .run-window {
   width: min(26rem, calc(100% - 16px));
+  height: min(27rem, calc(100% - 16px));
 }
 
 .run-window-body {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   gap: 8px;
+  min-height: 0;
   padding: 12px 16px 4px;
 }
 
-.run-window-plot svg {
-  display: block;
-  width: 100%;
-  height: auto;
+.run-window-plot {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 140px;
+}
+
+.run-window-plot > .plot-view {
+  flex: 1 1 auto;
 }
 
 .run-window-progress {
@@ -1660,6 +1669,14 @@ button:disabled {
 
 .floating-window[hidden] {
   display: none;
+}
+
+/* Every floating window resizes from its corner, as it moves by its title
+   bar (floating-window.js keeps the size). Docked, the column sizes it. */
+.floating-window:not(.docked) {
+  resize: both;
+  min-width: 220px;
+  min-height: 120px;
 }
 
 .floating-window.front {

@@ -409,8 +409,16 @@ async function swapWithEditor(win) {
   }
   if (path === shown.path) return;
   const current = { path, name: editor.currentCircuitName };
+  // The windows come along: the same ones, this one now showing the design
+  // that was open (opening another design would show its own windows).
+  const index = windows.indexOf(win);
+  const carried = windows.map((other, i) => (i === index ? { ...current }
+    : other.doc ? { path: other.doc.path, name: other.doc.name }
+      : other.pasted && other.pasted.src.length <= MAX_WINDOW_PICTURE ? { picture: other.pasted } : null)).filter(Boolean);
   if (!await openDocumentPath(shown.path)) return;
-  setDocument(win, current);
+  editor.circuit.windows.references = { items: carried };
+  markSettingsChanged();
+  restoreWindows();
 }
 
 /** A picture as a PNG blob: a PNG as it is, any other kind drawn into a

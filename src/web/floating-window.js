@@ -84,7 +84,7 @@ const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d=
  * browser. Returns { place() }, to call after showing it (it also comes to
  * the front, popping into place), and dispose(), for a window that is removed rather than hidden.
  */
-export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = false }) {
+export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
   const panel = document.getElementById('side-panel');
   const header = el.querySelector('.floating-window-header');
