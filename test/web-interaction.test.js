@@ -587,7 +587,8 @@ test('small-signal analysis exposes the canonical v2 controls', () => {
   assert.doesNotMatch(html, /<dialog id="analysis-dialog"/);
   assert.match(html, /data-analysis-pick="analysis-input"/);
   assert.match(html, /data-analysis-pick="analysis-target"/);
-  assert.match(style, /\.analysis-dock \{[^}]*resize: both/);
+  // Resized from any corner, as every floating window is (floating-window.js grips).
+  assert.match(readFileSync(new URL('../src/web/floating-window.js', import.meta.url), 'utf8'), /for \(const corner of \['nw', 'ne', 'sw', 'se'\]\)/);
   assert.match(style, /\.floating-window \{[^}]*overflow: hidden/);
   assert.match(style, /\.analysis-scroll\s*\{[\s\S]*overflow: auto/);
   assert.match(style, /\.analysis-dock \.dialog-actions\s*\{[\s\S]*flex: 0 0 auto/);

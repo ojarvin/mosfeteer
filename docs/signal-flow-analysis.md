@@ -88,7 +88,8 @@ and poles.
 A delay `e^{-sT}` is one more symbol in the exact solve, named by its TeX
 (`delaySymbol`), so a loop with excess delay comes out as
 `k / (s + k e^{-s T_d})` and draws its delays after the other factors. Its
-`T`'s symbols get coefficient sliders; the graph evaluates the result
+Every coefficient the diagram names has a slider from the start, derived
+or not. `T`'s symbols get coefficient sliders; the graph evaluates the result
 directly at `s = jω` with `e^{-jωT}` (`delayedCurve`), on **ω** from a
 decade under the longest delay to two over the shortest, and on **f/fs**
 with `T` counted in sample periods (`T = 1` is one sample). A delay has
@@ -145,7 +146,10 @@ through each period, a continuous one traced between samples too
 (`run(a, { waves })`). Full scale is marked. It runs again as the
 coefficients or its settings change; its nets and stimulus are saved with
 the design (`Circuit#windows.scope`). Its plot zooms with the plain wheel
-as well.
+as well. **Annotate** puts the waveforms on the drawing over the time in
+view (`plot.kind: 'wave'`, laid out as a step plot), the nets named beside
+them; Update plots runs the diagram again for it, its nets by name and its
+time span kept.
 
 Responses go onto one **graph** of magnitudes, a colour per trace
 named by its ratio (`OUT/IN`) in that colour, its dB axis fitted to the
@@ -310,8 +314,11 @@ SNDR and ENOB beside the predicted SQNR.
 
 **Dither** is a part of the diagram: a **dither source** (`dither`, value
 `rect 1` or `tri 0.5`: its shape and A, in full scale -- `rect 1` is
-+-FS, the largest quantizer's N - 1) draws a number a sample, rectangular
-over (-A, A) or triangular over (-A, A) peaking at 0, and a gain after it
++-FS, the largest quantizer's N - 1) draws a number a sample: `rect`
+uniform over (-A, A) and `tri` triangular over (-A, A), the textbook
+continuous dithers, or `bin` two levels, +-A (one LFSR bit through a DAC,
+as dither is made in a circuit) and `tern` three, -A, 0, +A at 1/4, 1/2,
+1/4 (two such bits added). A gain after it
 sets how much reaches the loop where it is wired (into the quantizer's
 sum, say): with the default +-FS the gain reads as the dither in full
 scale. It is a coefficient like any other, so the fractions treat it as

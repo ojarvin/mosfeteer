@@ -61,7 +61,7 @@ export function inlineEditSchematicBlock(component) {
   if (transfer) input.title = component.type === 'quantizer'
     ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
     : component.type === 'dither'
-    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS) or tri 0.5 (triangular over +-FS/2). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
+    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'

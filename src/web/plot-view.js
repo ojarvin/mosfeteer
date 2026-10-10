@@ -425,6 +425,8 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
       refineTimer = setTimeout(refine, 120);
     },
     zoomed: () => !following,
+    /** The x range in view, in the data's units; null before anything is shown. */
+    xRange: () => (spec && view ? view.x.map((u) => fromU(scaleX(), u)) : null),
     /** Hear each change of view made on this plot (not one set from outside). */
     listen(fn) { viewListener = fn; },
     dispose() { observer?.disconnect(); clearTimeout(refineTimer); if (frame) cancelAnimationFrame(frame); },

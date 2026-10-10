@@ -21,7 +21,7 @@ import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { arriving } from './motion.js';
-import { installScope, scopeChanged, toggleScope } from './scope-window.js';
+import { installScope, scopeChanged, scopePlotUpdate, toggleScope } from './scope-window.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
@@ -255,7 +255,6 @@ function clearResults() {
   spectrum = null;
   swing = null;
   swingShown = null;
-  optimized = false;
   resetOptimize();
   renderSwing();
   renderLocus();
@@ -686,16 +685,12 @@ function mathRow(label, tex) {
 
 // ----- coefficients ---------------------------------------------------------------------
 
-/** Every symbol the results and the graph's traces depend on. */
+/** Every coefficient the diagram names, and any a result or trace still
+ *  holds: the sliders show them all from the start, derived or not. */
 function currentSymbols() {
-  const names = new Set();
+  const names = new Set(diagramSymbols(editor.circuit));
   for (const trace of traces) for (const name of resultSymbols(trace.value, trace.variable)) names.add(name);
   if (latest?.ok) for (const entry of latest.entries) for (const name of resultSymbols(entry.value, latest.variable)) names.add(name);
-  // A swing sweep runs on every coefficient the diagram names, and the
-  // optimizer moves them.
-  if (swing || optimized) for (const name of diagramSymbols(editor.circuit)) names.add(name);
-  // The dither's gains shape every simulation though no result holds them.
-  for (const name of ditherSymbols(editor.circuit)) names.add(name);
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
@@ -746,7 +741,6 @@ function coefficientsSettled({ delay = 0 } = {}) {
   settleTimer = setTimeout(() => { if (flow().spectrum?.on) runSpectrum(); }, delay);
 }
 
-let optimized = false; // numbers applied from the optimizer: every coefficient gets its row
 let shownSymbols = '';
 let shownCircuit = null;
 /** The coefficient rows; kept (a slider mid-drag with them) unless the
@@ -1281,6 +1275,7 @@ function plotUpdate(plot) {
     const next = { ...locusPlot(result, { parameter: symbolText(name), label: entry.label, color: plot.color }), source: name };
     return { plot: next, shown: [{ label: next.label, color: next.color }], used: currentSymbols() };
   }
+  if (plot.kind === 'wave') return scopePlotUpdate(plot);
   if (plot.kind === 'swing') {
     if (!swing || swing.points.length < 2) return null;
     const current = swingTraces();
@@ -1473,7 +1468,6 @@ export function installSignalFlowUi() {
           if (texts[name]) fractions()[name] = texts[name];
           else delete fractions()[name];
         }
-        optimized = true;
         logLine(`set ${Object.entries(values).map(([name, value]) => `${name} = ${texts[name] || value}`).join(", ")}`);
         renderCoefficients({ force: true });
         coefficientsChanged();
@@ -1513,7 +1507,7 @@ export function installSignalFlowUi() {
     filledRevision = editor.modelRevision;
     fillForm();
   });
-  installScope({ flow, resolved });
+  installScope({ flow, resolved, placePlot: (plot, shown, used) => placePlot(plot, shown, used), symbols: () => currentSymbols() });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;

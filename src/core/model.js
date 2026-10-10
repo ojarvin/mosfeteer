@@ -966,7 +966,7 @@ export function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
   if (plot.kind === 'response') return normalizeResponsePlot(plot);
   if (plot.kind === 'swing') return normalizeSwingPlot(plot);
-  if (plot.kind === 'step') return normalizeStepPlot(plot);
+  if (plot.kind === 'step' || plot.kind === 'wave') return normalizeStepPlot(plot);
   if (plot.kind === 'locus') return normalizeLocusPlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
@@ -1134,7 +1134,8 @@ function normalizeStepPlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : []).filter((p) => finite(p?.t) && finite(p?.y)).slice(0, 4000).map((p) => ({ t: round(p.t, 6), y: round(p.y, 6) })),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
+  // A waveform (the oscilloscope's) is drawn as a step response is, in time.
+  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
 }
 
 /** A swing plot (signal-flow simulation): coloured traces of each net's

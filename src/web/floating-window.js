@@ -314,6 +314,60 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
     header.addEventListener('pointerup', end);
     header.addEventListener('pointercancel', end);
   });
+  // ----- resizing from any corner -----
+  // A grip in each corner: dragged, that corner follows the pointer and the
+  // opposite one stays put, within the window's least size and the pane.
+  if (resizable) {
+    for (const corner of ['nw', 'ne', 'sw', 'se']) {
+      const grip = document.createElement('div');
+      grip.className = `floating-window-grip grip-${corner}`;
+      grip.setAttribute('aria-hidden', 'true');
+      el.append(grip);
+      grip.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 || docked()) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        grip.setPointerCapture(ev.pointerId);
+        const style = getComputedStyle(el);
+        const least = { w: parseFloat(style.minWidth) || 160, h: parseFloat(style.minHeight) || 100 };
+        const start = { x: ev.clientX, y: ev.clientY, left: el.offsetLeft, top: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+        const room = paneSize();
+        const west = corner.includes('w');
+        const north = corner.includes('n');
+        el.classList.add('resizing');
+        const move = (e) => {
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          let w = Math.max(least.w, start.w + (west ? -dx : dx));
+          let h = Math.max(least.h, start.h + (north ? -dy : dy));
+          let left = west ? start.left + start.w - w : start.left;
+          let top = north ? start.top + start.h - h : start.top;
+          // Within the pane: a corner stops at its edge.
+          if (left < MARGIN) { w -= MARGIN - left; left = MARGIN; }
+          if (top < MARGIN) { h -= MARGIN - top; top = MARGIN; }
+          w = Math.min(w, room.w - MARGIN - left);
+          h = Math.min(h, room.h - MARGIN - top);
+          el.style.maxWidth = '';
+          el.style.width = `${w}px`;
+          el.style.height = `${h}px`;
+          el.style.left = `${left}px`;
+          el.style.top = `${top}px`;
+        };
+        const end = () => {
+          grip.removeEventListener('pointermove', move);
+          grip.removeEventListener('pointerup', end);
+          grip.removeEventListener('pointercancel', end);
+          el.classList.remove('resizing');
+          stored = { ...stored, x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+          writePlace(key, stored);
+        };
+        grip.addEventListener('pointermove', move);
+        grip.addEventListener('pointerup', end);
+        grip.addEventListener('pointercancel', end);
+      });
+    }
+  }
+
   // Double-clicking the title bar puts a floating window back in its default place.
   header?.addEventListener('dblclick', (ev) => {
     if (docked() || ev.target.closest('button, input, select, textarea, a')) return;

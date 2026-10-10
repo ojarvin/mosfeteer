@@ -544,3 +544,18 @@ test('a dither source\'s amplitude is in full scale: rect 1 is +-FS of the large
   const peak = Math.max(...v.map(Math.abs));
   assert.ok(peak > 3.9 && peak <= 4, `peak ${peak}`);
 });
+
+test('binary and ternary dither: two and three levels', async () => {
+  const { parseDither } = await import('../src/core/transfer-function.js');
+  assert.deepEqual(parseDither('binary 1'), { shape: 'bin', amplitude: 1 });
+  assert.deepEqual(parseDither('tern 0.5'), { shape: 'tern', amplitude: 0.5 });
+  const levelsOf = (value) => {
+    const circuit = diagram([`add dither DTH1 --at 0 0 --value "${value}"`, 'add gain KD --at 240 0 --value 1', 'add input U --at 240 400', 'add quantizer QZ1 --at 640 400 --value 3', 'add output V --at 640 0', 'add output W --at 1000 400',
+      'connect DTH1.out KD.in', 'connect KD.out V.p', 'connect U.p QZ1.in', 'connect QZ1.out W.p']);
+    const sim = prepareSimulation(circuit, { values: {}, sources: {}, input: 'U', output: 'name:V', samples: 1024 });
+    return [...new Set(sim.run(-60, { record: true }).samples)].sort((a, b) => a - b);
+  };
+  // Full scale 2 (three levels): bin 1 is +-2, tern 1 is -2, 0, 2.
+  assert.deepEqual(levelsOf('bin 1'), [-2, 2]);
+  assert.deepEqual(levelsOf('tern 1'), [-2, 0, 2]);
+});

@@ -48,7 +48,10 @@ export function isCoefficientBlock(component) {
 
 /**
  * A dither source's value: its shape and amplitude A, `rect 1` (uniform
- * over +-A; `uniform`, `rectangular`) or `tri 0.5` (triangular over +-A),
+ * over +-A; `uniform`, `rectangular`), `tri 0.5` (triangular over +-A),
+ * `bin 1` (two levels, +-A, as an LFSR bit through a DAC; `binary`), or
+ * `tern 1` (three levels, -A, 0, +A at 1/4, 1/2, 1/4: two such bits added;
+ * `ternary`),
  * A a positive number in full scale (1 is +-FS, N - 1 of the largest
  * quantizer; `1/2` too; a `±` and a trailing `FS` are read past). Returns
  * `{ shape: 'rect' | 'tri', amplitude }`.
@@ -60,10 +63,12 @@ export function parseDither(text) {
   for (const word of words) {
     if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
     else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
+    else if (/^(bin|binary|2-level|two-level|1-bit)$/.test(word)) shape = 'bin';
+    else if (/^(tern|ternary|3-level|three-level)$/.test(word)) shape = 'tern';
     else if (/^(a|amplitude|fs)$/.test(word)) continue;
     else {
       const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
-      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5');
+      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1');
       amplitude = Number(match[1]) / (match[2] ? Number(match[2]) : 1);
     }
   }

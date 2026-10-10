@@ -13914,7 +13914,12 @@ function prepareSimulation(circuit, options = {}) {
       const { shape } = sourceValue.get(key).dither;
       const a = sourceValue.get(key).dither.amplitude * fullScale;
       const draw = seededRandom(0xd17e + 7919 * i);
-      return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
+      // rect and tri continuous; bin a coin (+-A), tern two coins halved (-A, 0, +A).
+      const coin = () => (draw() < 0.5 ? -1 : 1);
+      return [key, shape === 'rect' ? () => a * (2 * draw() - 1)
+        : shape === 'tri' ? () => a * (draw() - draw())
+          : shape === 'bin' ? () => a * coin()
+            : () => (a * (coin() + coin())) / 2];
     }));
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;
@@ -16409,7 +16414,7 @@ function stepFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {
     });
     if (points.length > 1) items.push({ type: 'path', points, role: 'curve', color: trace.color, trace: index });
   });
-  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: 'step response', anchor: 'start', role: 'label' });
+  items.push({ type: 'text', x: pane.x + 0.4 * em, y: pane.y + 0.9 * em, text: plot.kind === 'wave' ? 'value' : 'step response', anchor: 'start', role: 'label' });
   items.push({ type: 'text', x: pane.x + pane.w, y: pane.y + pane.h - 0.45 * em, text: plot.unit === 'n' ? 'n (t/T_{s})' : 't', anchor: 'end', role: 'label' });
   return { width, height, items, pane, ranges: { y: [yLow, yHigh] } };
 }
@@ -22845,7 +22850,7 @@ function normalizePlot(plot) {
   if (!plot || typeof plot !== 'object') return null;
   if (plot.kind === 'response') return normalizeResponsePlot(plot);
   if (plot.kind === 'swing') return normalizeSwingPlot(plot);
-  if (plot.kind === 'step') return normalizeStepPlot(plot);
+  if (plot.kind === 'step' || plot.kind === 'wave') return normalizeStepPlot(plot);
   if (plot.kind === 'locus') return normalizeLocusPlot(plot);
   const low = Number(plot.range?.low);
   const high = Number(plot.range?.high);
@@ -23013,7 +23018,8 @@ function normalizeStepPlot(plot) {
     points: (Array.isArray(trace?.points) ? trace.points : []).filter((p) => finite(p?.t) && finite(p?.y)).slice(0, 4000).map((p) => ({ t: round(p.t, 6), y: round(p.y, 6) })),
   })).filter((trace) => trace.points.length > 1);
   if (!traces.length) return null;
-  return { kind: 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
+  // A waveform (the oscilloscope's) is drawn as a step response is, in time.
+  return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
 }
 
 /** A swing plot (signal-flow simulation): coloured traces of each net's
@@ -31118,14 +31124,14 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const response = ['response', 'swing', 'step', 'locus'].includes(plot.kind);
+  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
   const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
   // A response plot (signal-flow analysis) draws each trace in its colour;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
   const figure = plot.kind === 'locus'
     ? locusFigure(plot, { width: w, height: h, fontSize })
-    : plot.kind === 'step'
+    : plot.kind === 'step' || plot.kind === 'wave'
     ? stepFigure(plot, { width: w, height: h, fontSize })
     : plot.kind === 'swing'
     ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize })
@@ -35445,7 +35451,10 @@ function isCoefficientBlock(component) {
 
 /**
  * A dither source's value: its shape and amplitude A, `rect 1` (uniform
- * over +-A; `uniform`, `rectangular`) or `tri 0.5` (triangular over +-A),
+ * over +-A; `uniform`, `rectangular`), `tri 0.5` (triangular over +-A),
+ * `bin 1` (two levels, +-A, as an LFSR bit through a DAC; `binary`), or
+ * `tern 1` (three levels, -A, 0, +A at 1/4, 1/2, 1/4: two such bits added;
+ * `ternary`),
  * A a positive number in full scale (1 is +-FS, N - 1 of the largest
  * quantizer; `1/2` too; a `±` and a trailing `FS` are read past). Returns
  * `{ shape: 'rect' | 'tri', amplitude }`.
@@ -35457,10 +35466,12 @@ function parseDither(text) {
   for (const word of words) {
     if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
     else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
+    else if (/^(bin|binary|2-level|two-level|1-bit)$/.test(word)) shape = 'bin';
+    else if (/^(tern|ternary|3-level|three-level)$/.test(word)) shape = 'tern';
     else if (/^(a|amplitude|fs)$/.test(word)) continue;
     else {
       const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
-      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5');
+      if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5, bin 1, tern 1');
       amplitude = Number(match[1]) / (match[2] ? Number(match[2]) : 1);
     }
   }
@@ -50176,6 +50187,60 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
     header.addEventListener('pointerup', end);
     header.addEventListener('pointercancel', end);
   });
+  // ----- resizing from any corner -----
+  // A grip in each corner: dragged, that corner follows the pointer and the
+  // opposite one stays put, within the window's least size and the pane.
+  if (resizable) {
+    for (const corner of ['nw', 'ne', 'sw', 'se']) {
+      const grip = document.createElement('div');
+      grip.className = `floating-window-grip grip-${corner}`;
+      grip.setAttribute('aria-hidden', 'true');
+      el.append(grip);
+      grip.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0 || docked()) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        grip.setPointerCapture(ev.pointerId);
+        const style = getComputedStyle(el);
+        const least = { w: parseFloat(style.minWidth) || 160, h: parseFloat(style.minHeight) || 100 };
+        const start = { x: ev.clientX, y: ev.clientY, left: el.offsetLeft, top: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+        const room = paneSize();
+        const west = corner.includes('w');
+        const north = corner.includes('n');
+        el.classList.add('resizing');
+        const move = (e) => {
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          let w = Math.max(least.w, start.w + (west ? -dx : dx));
+          let h = Math.max(least.h, start.h + (north ? -dy : dy));
+          let left = west ? start.left + start.w - w : start.left;
+          let top = north ? start.top + start.h - h : start.top;
+          // Within the pane: a corner stops at its edge.
+          if (left < MARGIN) { w -= MARGIN - left; left = MARGIN; }
+          if (top < MARGIN) { h -= MARGIN - top; top = MARGIN; }
+          w = Math.min(w, room.w - MARGIN - left);
+          h = Math.min(h, room.h - MARGIN - top);
+          el.style.maxWidth = '';
+          el.style.width = `${w}px`;
+          el.style.height = `${h}px`;
+          el.style.left = `${left}px`;
+          el.style.top = `${top}px`;
+        };
+        const end = () => {
+          grip.removeEventListener('pointermove', move);
+          grip.removeEventListener('pointerup', end);
+          grip.removeEventListener('pointercancel', end);
+          el.classList.remove('resizing');
+          stored = { ...stored, x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+          writePlace(key, stored);
+        };
+        grip.addEventListener('pointermove', move);
+        grip.addEventListener('pointerup', end);
+        grip.addEventListener('pointercancel', end);
+      });
+    }
+  }
+
   // Double-clicking the title bar puts a floating window back in its default place.
   header?.addEventListener('dblclick', (ev) => {
     if (docked() || ev.target.closest('button, input, select, textarea, a')) return;
@@ -53277,7 +53342,7 @@ function inlineEditSchematicBlock(component) {
   if (transfer) input.title = component.type === 'quantizer'
     ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
     : component.type === 'dither'
-    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS) or tri 0.5 (triangular over +-FS/2). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
+    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS), tri 0.5 (triangular over +-FS/2), bin 1 (two levels, +-FS: an LFSR bit), or tern 1 (three levels, -FS, 0, +FS). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'
@@ -65926,6 +65991,8 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
       refineTimer = setTimeout(refine, 120);
     },
     zoomed: () => !following,
+    /** The x range in view, in the data's units; null before anything is shown. */
+    xRange: () => (spec && view ? view.x.map((u) => fromU(scaleX(), u)) : null),
     /** Hear each change of view made on this plot (not one set from outside). */
     listen(fn) { viewListener = fn; },
     dispose() { observer?.disconnect(); clearTimeout(refineTimer); if (frame) cancelAnimationFrame(frame); },
@@ -67001,6 +67068,7 @@ function installRenumberUi() {
 };
 
 __modules["src/web/scope-window.js"] = function (__require, __exports) {
+__exports.scopePlotUpdate = scopePlotUpdate;
 __exports.scopeShown = scopeShown;
 __exports.toggleScope = toggleScope;
 __exports.scopeChanged = scopeChanged;
@@ -67014,6 +67082,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
+let thinSeries; __bind(() => { ({ thinSeries } = __require("src/core/plot-scale.js")); });
 /**
  * The oscilloscope: a signal-flow diagram's nets in time, in a window of
  * their own. A sine of the amplitude (dBFS) and frequency (f/fs) set here
@@ -67024,6 +67093,9 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
  * as well. The plot is the analysis windows' one (plot-view.js), the
  * plain wheel zooming here: a flat right-drag zooms time alone, a tall one
  * the values alone.
+ *
+ * Annotate puts the waveforms on the drawing over the time in view (a
+ * `wave` plot, drawn as step plots are; Update plots runs it again).
  *
  * It runs again as the coefficients move and as its settings change. What
  * it shows and how it drives the diagram are saved with the design
@@ -67040,9 +67112,11 @@ let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot
 
 
 
+
 let api = null; // { flow(), resolved() } from the signal-flow window
 let win = null;
 let timer = 0;
+let last = null; // the last run shown: { sim, result, samples, amplitude, series }
 const colors = new Map(); // net key -> its colour while shown
 
 const state = () => editor.circuit.windows.scope || { nets: [] };
@@ -67081,6 +67155,7 @@ function build() {
     [256, 1024, 4096, 16384].map((n) => el('option', { value: String(n), text: `${n}` })));
   const status = el('p', { class: 'field-hint scope-status', 'aria-live': 'polite' });
   const nets = el('div', { class: 'scope-nets' });
+  const annotateButton = el('button', { type: 'button', class: 'scope-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing, over the time in view, their nets named beside them (Update plots redraws it)', disabled: true, onclick: () => annotate() });
   const node = el('section', { class: 'floating-window scope-window', 'aria-labelledby': 'scope-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'scope-title', class: 'floating-window-title', text: 'Oscilloscope' }), close]),
     el('div', { class: 'scope-body' }, [
@@ -67092,7 +67167,7 @@ function build() {
       ]),
       plot.el,
       nets,
-      status,
+      el('div', { class: 'scope-actions' }, [status, annotateButton]),
     ]),
   ]);
   node.addEventListener('keydown', (ev) => {
@@ -67101,7 +67176,7 @@ function build() {
   });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'scope', onClose: hide, resizable: true });
-  win = { el: node, plot, input, amplitude, frequency, samples, status, nets, chrome };
+  win = { el: node, plot, input, amplitude, frequency, samples, status, nets, chrome, annotate: annotateButton };
 }
 
 /** The controls from the design's settings, and the diagram's sources and nets. */
@@ -67148,17 +67223,15 @@ function schedule() {
   if (scopeShown()) timer = setTimeout(run, 60);
 }
 
-/** Run the diagram and draw what it gives. */
-function run() {
-  if (!scopeShown() || !api) return;
+/**
+ * The diagram run as the oscilloscope is set: `{ sim, result, samples,
+ * amplitude, series }` for the nets `keys` (the ones it shows by default),
+ * or `{ error }`. Needs no window: Update plots runs it for an annotated
+ * waveform.
+ */
+function simulateScope(keys = null) {
   const settings = state();
-  const say = (text, error = false) => { win.status.textContent = text; win.status.classList.toggle('analysis-error', error); };
-  if (!hasSignalFlow(editor.circuit)) {
-    fill(null);
-    win.plot.set(null);
-    say('The oscilloscope shows a signal-flow diagram\'s nets: draw one (H(s), H(z), sums, gains, quantizers).');
-    return;
-  }
+  if (!hasSignalFlow(editor.circuit)) return { error: 'The oscilloscope shows a signal-flow diagram\'s nets: draw one (H(s), H(z), sums, gains, quantizers).', quiet: true };
   const numbers = api.resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
@@ -67167,24 +67240,18 @@ function run() {
   const frequency = settings.frequency ? typedFraction(settings.frequency) : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
   const samples = settings.samples || 1024;
   const sim = prepareSimulation(editor.circuit, {
-    values, sources: api.flow().sources, input, output: api.flow().output, frequency, samples, warmup: Math.min(samples, 1024), dither: api.flow().dither,
+    values, sources: api.flow().sources, input, output: api.flow().output, frequency, samples, warmup: Math.min(samples, 1024),
   });
-  if (!sim.ok) {
-    fill(null);
-    win.plot.set(null);
-    say(sim.error, true);
-    return;
-  }
-  const keys = shownKeys(sim);
+  if (!sim.ok) return { error: sim.error };
+  const shown = keys || shownKeys(sim);
   const used = new Set();
-  for (const key of keys) {
+  for (const key of shown) {
     let color = colors.get(key);
     if (!color || used.has(color)) color = TRACE_COLORS.find((c) => !used.has(c)) || TRACE_COLORS[0];
     colors.set(key, color);
     used.add(color);
   }
-  fill(sim);
-  const indices = keys.map((key) => sim.signals.findIndex((s) => s.key === key)).filter((i) => i >= 0);
+  const indices = shown.map((key) => sim.signals.findIndex((s) => s.key === key)).filter((i) => i >= 0);
   const amplitude = Number.isFinite(Number(settings.amplitude)) && settings.amplitude !== '' ? Number(settings.amplitude) : -6;
   const result = sim.run(amplitude, { waves: indices });
   const series = (result.waves || []).map((wave) => {
@@ -67197,6 +67264,24 @@ function run() {
       points: wave.t.map((t, i) => [t, Number.isFinite(wave.v[i]) ? wave.v[i] : null]),
     };
   });
+  return { sim, result, samples, amplitude, series };
+}
+
+/** Run the diagram and draw what it gives. */
+function run() {
+  if (!scopeShown() || !api) return;
+  const say = (text, error = false) => { win.status.textContent = text; win.status.classList.toggle('analysis-error', error); };
+  const run = simulateScope();
+  if (run.error) {
+    fill(null);
+    win.plot.set(null);
+    last = null;
+    say(run.error, !run.quiet);
+    return;
+  }
+  const { sim, result, samples, amplitude, series } = run;
+  fill(sim);
+  last = run;
   win.plot.set({
     key: 'scope',
     title: 'Waveforms',
@@ -67206,8 +67291,45 @@ function run() {
     vlines: [],
     hlines: [{ y: 0, role: 'zero' }, ...(sim.fullScale ? [{ y: sim.fullScale, role: 'band' }, { y: -sim.fullScale, role: 'band' }] : [])],
   });
+  win.annotate.disabled = !series.length;
   const cycles = sim.frequency * samples;
   say(`${result.overloaded ? 'The loop ran away: shown up to there. ' : ''}A ${amplitude} dBFS sine at f/fs = ${Number(sim.frequency.toPrecision(4))} (${Math.round(cycles)} cycles in ${samples} samples, after ${Math.min(samples, 1024)} to settle); full scale ±${sim.fullScale}.`, result.overloaded);
+}
+
+/** Waveforms as a plot annotation keeps them: over `range` (in samples),
+ *  each thinned to what a drawing shows. */
+function wavePlot(series, range) {
+  const [low, high] = range;
+  const traces = series.map((s) => {
+    const inside = s.points.filter(([t, v]) => t >= low && t <= high && v !== null);
+    const thin = thinSeries(inside, low, high, 900);
+    return { label: s.label, color: s.color, ...(s.stairs ? { stairs: true } : {}), points: thin.map(([t, y]) => ({ t, y })) };
+  }).filter((trace) => trace.points.length > 1);
+  return traces.length ? { kind: 'wave', unit: 'n', range: { low, high }, traces } : null;
+}
+
+/** The waveforms shown, over the time in view, onto the drawing. */
+function annotate() {
+  if (!last?.series.length || !api.placePlot) return;
+  const range = win.plot.xRange() || [0, last.samples - 1];
+  const plot = wavePlot(last.series, range);
+  if (!plot) return;
+  api.placePlot(plot, plot.traces.map((t) => ({ label: t.label, color: t.color })), api.symbols());
+}
+
+/** An annotated waveform at the numbers now (Update plots): its nets by
+ *  name, its time span kept; null when a net is gone or it does not run. */
+function scopePlotUpdate(plot) {
+  if (!api) return null;
+  const probe = simulateScope([]);
+  if (probe.error) return null;
+  const keys = plot.traces.map((trace) => probe.sim.signals.find((s) => s.name === trace.label)?.key);
+  if (keys.some((key) => !key)) return null;
+  plot.traces.forEach((trace, i) => colors.set(keys[i], trace.color));
+  const run = simulateScope(keys);
+  if (run.error) return null;
+  const next = wavePlot(run.series, [plot.range.low, plot.range.high]);
+  return next ? { plot: next, shown: next.traces.map((t) => ({ label: t.label, color: t.color })), used: api.symbols() } : null;
 }
 
 function syncButton() {
@@ -67244,7 +67366,8 @@ function scopeChanged() {
   schedule();
 }
 
-/** `deps`: the signal-flow window's `{ flow(), resolved() }`. */
+/** `deps`: the signal-flow window's `{ flow(), resolved(), placePlot(plot,
+ *  shown, used), symbols() }`. */
 function installScope(deps) {
   api = deps;
   document.getElementById('btn-window-scope')?.addEventListener('click', toggleScope);
@@ -68179,7 +68302,7 @@ let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE
 let locusSpec, responseSpec, stepSpec, swingSpec; __bind(() => { ({ locusSpec, responseSpec, stepSpec, swingSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
-let installScope, scopeChanged, toggleScope; __bind(() => { ({ installScope, scopeChanged, toggleScope } = __require("src/web/scope-window.js")); });
+let installScope, scopeChanged, scopePlotUpdate, toggleScope; __bind(() => { ({ installScope, scopeChanged, scopePlotUpdate, toggleScope } = __require("src/web/scope-window.js")); });
 let stepPlot; __bind(() => { ({ stepPlot } = __require("src/core/analysis/step.js")); });
 let locusPlot, locusSteps, rootLocus; __bind(() => { ({ locusPlot, locusSteps, rootLocus } = __require("src/core/analysis/locus.js")); });
 let dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum; __bind(() => { ({ dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } = __require("src/core/analysis/spectrum.js")); });
@@ -68453,7 +68576,6 @@ function clearResults() {
   spectrum = null;
   swing = null;
   swingShown = null;
-  optimized = false;
   resetOptimize();
   renderSwing();
   renderLocus();
@@ -68884,16 +69006,12 @@ function mathRow(label, tex) {
 
 // ----- coefficients ---------------------------------------------------------------------
 
-/** Every symbol the results and the graph's traces depend on. */
+/** Every coefficient the diagram names, and any a result or trace still
+ *  holds: the sliders show them all from the start, derived or not. */
 function currentSymbols() {
-  const names = new Set();
+  const names = new Set(diagramSymbols(editor.circuit));
   for (const trace of traces) for (const name of resultSymbols(trace.value, trace.variable)) names.add(name);
   if (latest?.ok) for (const entry of latest.entries) for (const name of resultSymbols(entry.value, latest.variable)) names.add(name);
-  // A swing sweep runs on every coefficient the diagram names, and the
-  // optimizer moves them.
-  if (swing || optimized) for (const name of diagramSymbols(editor.circuit)) names.add(name);
-  // The dither's gains shape every simulation though no result holds them.
-  for (const name of ditherSymbols(editor.circuit)) names.add(name);
   return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
@@ -68944,7 +69062,6 @@ function coefficientsSettled({ delay = 0 } = {}) {
   settleTimer = setTimeout(() => { if (flow().spectrum?.on) runSpectrum(); }, delay);
 }
 
-let optimized = false; // numbers applied from the optimizer: every coefficient gets its row
 let shownSymbols = '';
 let shownCircuit = null;
 /** The coefficient rows; kept (a slider mid-drag with them) unless the
@@ -69479,6 +69596,7 @@ function plotUpdate(plot) {
     const next = { ...locusPlot(result, { parameter: symbolText(name), label: entry.label, color: plot.color }), source: name };
     return { plot: next, shown: [{ label: next.label, color: next.color }], used: currentSymbols() };
   }
+  if (plot.kind === 'wave') return scopePlotUpdate(plot);
   if (plot.kind === 'swing') {
     if (!swing || swing.points.length < 2) return null;
     const current = swingTraces();
@@ -69671,7 +69789,6 @@ function installSignalFlowUi() {
           if (texts[name]) fractions()[name] = texts[name];
           else delete fractions()[name];
         }
-        optimized = true;
         logLine(`set ${Object.entries(values).map(([name, value]) => `${name} = ${texts[name] || value}`).join(", ")}`);
         renderCoefficients({ force: true });
         coefficientsChanged();
@@ -69711,7 +69828,7 @@ function installSignalFlowUi() {
     filledRevision = editor.modelRevision;
     fillForm();
   });
-  installScope({ flow, resolved });
+  installScope({ flow, resolved, placePlot: (plot, shown, used) => placePlot(plot, shown, used), symbols: () => currentSymbols() });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;

@@ -498,7 +498,12 @@ export function prepareSimulation(circuit, options = {}) {
       const { shape } = sourceValue.get(key).dither;
       const a = sourceValue.get(key).dither.amplitude * fullScale;
       const draw = seededRandom(0xd17e + 7919 * i);
-      return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
+      // rect and tri continuous; bin a coin (+-A), tern two coins halved (-A, 0, +A).
+      const coin = () => (draw() < 0.5 ? -1 : 1);
+      return [key, shape === 'rect' ? () => a * (2 * draw() - 1)
+        : shape === 'tri' ? () => a * (draw() - draw())
+          : shape === 'bin' ? () => a * coin()
+            : () => (a * (coin() + coin())) / 2];
     }));
     // A state a thousand times full scale: the loop has run away.
     const limit = 1e3 * fullScale;

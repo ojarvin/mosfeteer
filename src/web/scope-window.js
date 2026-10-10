@@ -9,6 +9,9 @@
  * plain wheel zooming here: a flat right-drag zooms time alone, a tall one
  * the values alone.
  *
+ * Annotate puts the waveforms on the drawing over the time in view (a
+ * `wave` plot, drawn as step plots are; Update plots runs it again).
+ *
  * It runs again as the coefficients move and as its settings change. What
  * it shows and how it drives the diagram are saved with the design
  * (`Circuit#windows.scope`). `Shift+W` (W for waveforms) shows or hides it.
@@ -23,10 +26,12 @@ import { editor } from './editor-state.js';
 import { floatingWindow } from './floating-window.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
 import { createPlotView } from './plot-view.js';
+import { thinSeries } from '../core/plot-scale.js';
 
 let api = null; // { flow(), resolved() } from the signal-flow window
 let win = null;
 let timer = 0;
+let last = null; // the last run shown: { sim, result, samples, amplitude, series }
 const colors = new Map(); // net key -> its colour while shown
 
 const state = () => editor.circuit.windows.scope || { nets: [] };
@@ -65,6 +70,7 @@ function build() {
     [256, 1024, 4096, 16384].map((n) => el('option', { value: String(n), text: `${n}` })));
   const status = el('p', { class: 'field-hint scope-status', 'aria-live': 'polite' });
   const nets = el('div', { class: 'scope-nets' });
+  const annotateButton = el('button', { type: 'button', class: 'scope-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing, over the time in view, their nets named beside them (Update plots redraws it)', disabled: true, onclick: () => annotate() });
   const node = el('section', { class: 'floating-window scope-window', 'aria-labelledby': 'scope-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'scope-title', class: 'floating-window-title', text: 'Oscilloscope' }), close]),
     el('div', { class: 'scope-body' }, [
@@ -76,7 +82,7 @@ function build() {
       ]),
       plot.el,
       nets,
-      status,
+      el('div', { class: 'scope-actions' }, [status, annotateButton]),
     ]),
   ]);
   node.addEventListener('keydown', (ev) => {
@@ -85,7 +91,7 @@ function build() {
   });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'scope', onClose: hide, resizable: true });
-  win = { el: node, plot, input, amplitude, frequency, samples, status, nets, chrome };
+  win = { el: node, plot, input, amplitude, frequency, samples, status, nets, chrome, annotate: annotateButton };
 }
 
 /** The controls from the design's settings, and the diagram's sources and nets. */
@@ -132,17 +138,15 @@ function schedule() {
   if (scopeShown()) timer = setTimeout(run, 60);
 }
 
-/** Run the diagram and draw what it gives. */
-function run() {
-  if (!scopeShown() || !api) return;
+/**
+ * The diagram run as the oscilloscope is set: `{ sim, result, samples,
+ * amplitude, series }` for the nets `keys` (the ones it shows by default),
+ * or `{ error }`. Needs no window: Update plots runs it for an annotated
+ * waveform.
+ */
+function simulateScope(keys = null) {
   const settings = state();
-  const say = (text, error = false) => { win.status.textContent = text; win.status.classList.toggle('analysis-error', error); };
-  if (!hasSignalFlow(editor.circuit)) {
-    fill(null);
-    win.plot.set(null);
-    say('The oscilloscope shows a signal-flow diagram\'s nets: draw one (H(s), H(z), sums, gains, quantizers).');
-    return;
-  }
+  if (!hasSignalFlow(editor.circuit)) return { error: 'The oscilloscope shows a signal-flow diagram\'s nets: draw one (H(s), H(z), sums, gains, quantizers).', quiet: true };
   const numbers = api.resolved();
   const values = Object.fromEntries(diagramSymbols(editor.circuit).map((name) => [name, numbers[name] ?? 1]));
   const { sources } = signalFlowGraph(editor.circuit);
@@ -151,24 +155,18 @@ function run() {
   const frequency = settings.frequency ? typedFraction(settings.frequency) : swingTestFrequency({ frequency: '' }, editor.circuit.analysisValues.band);
   const samples = settings.samples || 1024;
   const sim = prepareSimulation(editor.circuit, {
-    values, sources: api.flow().sources, input, output: api.flow().output, frequency, samples, warmup: Math.min(samples, 1024), dither: api.flow().dither,
+    values, sources: api.flow().sources, input, output: api.flow().output, frequency, samples, warmup: Math.min(samples, 1024),
   });
-  if (!sim.ok) {
-    fill(null);
-    win.plot.set(null);
-    say(sim.error, true);
-    return;
-  }
-  const keys = shownKeys(sim);
+  if (!sim.ok) return { error: sim.error };
+  const shown = keys || shownKeys(sim);
   const used = new Set();
-  for (const key of keys) {
+  for (const key of shown) {
     let color = colors.get(key);
     if (!color || used.has(color)) color = TRACE_COLORS.find((c) => !used.has(c)) || TRACE_COLORS[0];
     colors.set(key, color);
     used.add(color);
   }
-  fill(sim);
-  const indices = keys.map((key) => sim.signals.findIndex((s) => s.key === key)).filter((i) => i >= 0);
+  const indices = shown.map((key) => sim.signals.findIndex((s) => s.key === key)).filter((i) => i >= 0);
   const amplitude = Number.isFinite(Number(settings.amplitude)) && settings.amplitude !== '' ? Number(settings.amplitude) : -6;
   const result = sim.run(amplitude, { waves: indices });
   const series = (result.waves || []).map((wave) => {
@@ -181,6 +179,24 @@ function run() {
       points: wave.t.map((t, i) => [t, Number.isFinite(wave.v[i]) ? wave.v[i] : null]),
     };
   });
+  return { sim, result, samples, amplitude, series };
+}
+
+/** Run the diagram and draw what it gives. */
+function run() {
+  if (!scopeShown() || !api) return;
+  const say = (text, error = false) => { win.status.textContent = text; win.status.classList.toggle('analysis-error', error); };
+  const run = simulateScope();
+  if (run.error) {
+    fill(null);
+    win.plot.set(null);
+    last = null;
+    say(run.error, !run.quiet);
+    return;
+  }
+  const { sim, result, samples, amplitude, series } = run;
+  fill(sim);
+  last = run;
   win.plot.set({
     key: 'scope',
     title: 'Waveforms',
@@ -190,8 +206,45 @@ function run() {
     vlines: [],
     hlines: [{ y: 0, role: 'zero' }, ...(sim.fullScale ? [{ y: sim.fullScale, role: 'band' }, { y: -sim.fullScale, role: 'band' }] : [])],
   });
+  win.annotate.disabled = !series.length;
   const cycles = sim.frequency * samples;
   say(`${result.overloaded ? 'The loop ran away: shown up to there. ' : ''}A ${amplitude} dBFS sine at f/fs = ${Number(sim.frequency.toPrecision(4))} (${Math.round(cycles)} cycles in ${samples} samples, after ${Math.min(samples, 1024)} to settle); full scale ±${sim.fullScale}.`, result.overloaded);
+}
+
+/** Waveforms as a plot annotation keeps them: over `range` (in samples),
+ *  each thinned to what a drawing shows. */
+function wavePlot(series, range) {
+  const [low, high] = range;
+  const traces = series.map((s) => {
+    const inside = s.points.filter(([t, v]) => t >= low && t <= high && v !== null);
+    const thin = thinSeries(inside, low, high, 900);
+    return { label: s.label, color: s.color, ...(s.stairs ? { stairs: true } : {}), points: thin.map(([t, y]) => ({ t, y })) };
+  }).filter((trace) => trace.points.length > 1);
+  return traces.length ? { kind: 'wave', unit: 'n', range: { low, high }, traces } : null;
+}
+
+/** The waveforms shown, over the time in view, onto the drawing. */
+function annotate() {
+  if (!last?.series.length || !api.placePlot) return;
+  const range = win.plot.xRange() || [0, last.samples - 1];
+  const plot = wavePlot(last.series, range);
+  if (!plot) return;
+  api.placePlot(plot, plot.traces.map((t) => ({ label: t.label, color: t.color })), api.symbols());
+}
+
+/** An annotated waveform at the numbers now (Update plots): its nets by
+ *  name, its time span kept; null when a net is gone or it does not run. */
+export function scopePlotUpdate(plot) {
+  if (!api) return null;
+  const probe = simulateScope([]);
+  if (probe.error) return null;
+  const keys = plot.traces.map((trace) => probe.sim.signals.find((s) => s.name === trace.label)?.key);
+  if (keys.some((key) => !key)) return null;
+  plot.traces.forEach((trace, i) => colors.set(keys[i], trace.color));
+  const run = simulateScope(keys);
+  if (run.error) return null;
+  const next = wavePlot(run.series, [plot.range.low, plot.range.high]);
+  return next ? { plot: next, shown: next.traces.map((t) => ({ label: t.label, color: t.color })), used: api.symbols() } : null;
 }
 
 function syncButton() {
@@ -228,7 +281,8 @@ export function scopeChanged() {
   schedule();
 }
 
-/** `deps`: the signal-flow window's `{ flow(), resolved() }`. */
+/** `deps`: the signal-flow window's `{ flow(), resolved(), placePlot(plot,
+ *  shown, used), symbols() }`. */
 export function installScope(deps) {
   api = deps;
   document.getElementById('btn-window-scope')?.addEventListener('click', toggleScope);

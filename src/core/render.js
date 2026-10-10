@@ -696,14 +696,14 @@ function plotAnnotationSvg(label, opacity = '') {
   const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
   const w = Math.abs(b.x - a.x); const h = Math.abs(b.y - a.y);
   const plot = label.plot;
-  const response = ['response', 'swing', 'step', 'locus'].includes(plot.kind);
+  const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
   const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
   // A response plot (signal-flow analysis) draws each trace in its colour;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
   const figure = plot.kind === 'locus'
     ? locusFigure(plot, { width: w, height: h, fontSize })
-    : plot.kind === 'step'
+    : plot.kind === 'step' || plot.kind === 'wave'
     ? stepFigure(plot, { width: w, height: h, fontSize })
     : plot.kind === 'swing'
     ? swingFigure({ ...plot, traces: plot.traces.map((t) => ({ ...t, points: t.points.map((p) => ({ a: p.a, db: p.db ?? Infinity })) })) }, { width: w, height: h, fontSize })

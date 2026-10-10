@@ -949,7 +949,18 @@ button:disabled {
 }
 
 .scope-status {
+  flex: 1 1 auto;
   margin: 0;
+}
+
+.scope-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scope-annotate {
+  flex: none;
 }
 
 /* The calculator (calculator-window.js): past results over one line. */
@@ -1671,12 +1682,46 @@ button:disabled {
   display: none;
 }
 
-/* Every floating window resizes from its corner, as it moves by its title
-   bar (floating-window.js keeps the size). Docked, the column sizes it. */
+/* Every floating window resizes from any of its corners (floating-window.js
+   grips, which keep the size), as it moves by its title bar. Docked, the
+   column sizes it. */
 .floating-window:not(.docked) {
-  resize: both;
   min-width: 220px;
   min-height: 120px;
+}
+
+.floating-window-grip {
+  position: absolute;
+  z-index: 3;
+  width: 14px;
+  height: 14px;
+}
+
+.floating-window-grip.grip-nw { top: 0; left: 0; cursor: nwse-resize; }
+.floating-window-grip.grip-ne { top: 0; right: 0; cursor: nesw-resize; }
+.floating-window-grip.grip-sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.floating-window-grip.grip-se { bottom: 0; right: 0; cursor: nwse-resize; }
+
+/* A faint mark in the lower corner says it resizes. */
+.floating-window-grip.grip-se::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-dim);
+  border-bottom: 1.5px solid var(--text-dim);
+  border-bottom-right-radius: 2px;
+  opacity: 0.5;
+}
+
+.floating-window.docked > .floating-window-grip {
+  display: none;
+}
+
+.floating-window.resizing {
+  user-select: none;
 }
 
 .floating-window.front {
@@ -1741,7 +1786,6 @@ button:disabled {
   height: calc(100% - 16px);
   min-width: 300px;
   min-height: 240px;
-  resize: both;
 }
 
 .analysis-dock form {
@@ -5888,7 +5932,6 @@ circle.bode-corner {
   /* Resized from the corner like the analysis window. */
   min-width: 18rem;
   min-height: 12rem;
-  resize: both;
 }
 
 .renumber-dialog {
@@ -6267,7 +6310,6 @@ body.chrome-away [data-editor-edge="right"] {
   height: min(320px, calc(100% - 16px));
   min-width: 220px;
   min-height: 160px;
-  resize: both;
 }
 
 .reference-window .floating-window-header {
