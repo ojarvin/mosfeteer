@@ -37,9 +37,16 @@ centre, else moves to the nearest free spot), and a new design is placed near
 its kin. `Shift+T` forgets the places and packs the desk afresh in
 neighbourhoods of related designs.
 
+With nothing picked every design lies flat at its true size, for
+comparison. A picked design lifts off the desk: it eases up onto a card a
+touch larger than the flat drawing, on a soft shadow, with a glowing accent
+rim; the designs it links to and those using it lift a little less, on
+cards of their own, and every other design dims. Letting go lays them flat
+again (`drawCard`, each design easing on its own).
+
 A picked design shows its links (`src/core/design-links.js`): an accent
 curve from each part that links (a ring on the part) to the design it
-names, which is outlined, the curve arriving square to the side facing the
+names, lifted too, the curve arriving square to the side facing the
 part with its head (`linkCurve`); the designs using the picked one link to
 it the same way, from their parts. Each curve runs over a halo of the
 paper, so it reads across drawings. With nothing picked, and while the desk is in a transition, no

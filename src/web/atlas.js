@@ -441,6 +441,9 @@ function colors() {
     text: read('--text', '#17181c'),
     dim: read('--text-dim', '#5a6372'),
     accent: read('--accent', '#1a56db'),
+    // A lifted design's card, and the shadow it casts.
+    card: read('--bg-panel', '#ffffff'),
+    shadow: document.documentElement.classList.contains('dark') ? 'rgba(0, 0, 0, 0.7)' : 'rgba(20, 24, 34, 0.28)',
   };
 }
 
@@ -503,20 +506,26 @@ function draw() {
     .sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)
     .slice(0, MAX_VECTOR_TILES);
   const live = new Set(vector.map((item) => item.tile.id));
-  for (const { tile, alpha, rect: placedRect, detail } of placed) {
+  updateLifts();
+  // Lifted designs are drawn last, over the ones lying flat.
+  placed.sort((a, b) => liftOf(a.tile.id).lift - liftOf(b.tile.id).lift);
+  for (const { tile, alpha, rect: flatRect, detail } of placed) {
     const reveal = tileReveal(tile);
+    const { lift, dim } = liftOf(tile.id);
+    const placedRect = lifted(flatRect, tile.id);
     // Revealing, a design grows into its place from a little smaller.
     const grow = 0.9 + 0.1 * easeOutBack(reveal);
     const rect = reveal < 1 ? {
       x: placedRect.x + (placedRect.w * (1 - grow)) / 2, y: placedRect.y + (placedRect.h * (1 - grow)) / 2,
       w: placedRect.w * grow, h: placedRect.h * grow,
     } : placedRect;
+    if (lift > 0.004) drawCard(ctx, tile, placedRect, lift, palette);
     const entry = state.entries.get(tile.id);
     const found = state.matches?.get(tile.id);
     // A search fades every design it does not find; what it finds in one is
     // marked under the drawing, like a highlighter, while the search box has
     // focus -- away from it, the marks step aside and the drawings read clean.
-    const fade = (state.matches && !found ? 0.18 : 1) * alpha;
+    const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - 0.72 * dim);
     ctx.globalAlpha = alpha;
     if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
     ctx.globalAlpha = (entry.current ? 1 : Math.min(1, reveal * 1.6)) * fade;
@@ -540,7 +549,7 @@ function draw() {
       const key = bitmapKey(entry, need);
       if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
-    ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6);
+    ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6) * (1 - 0.6 * dim);
     drawCaption(ctx, tile, entry, placedRect, palette);
   }
   ctx.globalAlpha = 1;
@@ -551,6 +560,105 @@ function draw() {
   state.wanted = wanted;
   void pump();
   syncVectorOverlays(vector, moving);
+}
+
+// ----- lifting the picked designs ------------------------------------------------
+//
+// With nothing picked every design lies flat, at its true size, for
+// comparison. A picked design lifts off the desk as a card -- a touch
+// larger, brighter, on a soft shadow, an accent rim -- the designs it links
+// to and those using it lift a little less, and the rest dim. Each design
+// eases toward its own state, so picking and letting go animate.
+
+const LIFT_GROW = 0.07;
+const RELATED_LIFT = 0.55;
+
+/** Every design's lift (0 flat .. 1 picked) and dim (0 .. 1), eased toward
+ *  what the pick asks for; asks for frames while any is on its way. */
+function updateLifts() {
+  const now = performance.now();
+  const dt = Math.min(100, now - (state.liftAt || now));
+  state.liftAt = now;
+  state.lifts ||= new Map();
+  const focus = state.source === 'workspace' && !state.quiet ? new Set([state.selected, ...(state.picked || [])].filter(Boolean)) : new Set();
+  const related = new Set();
+  if (focus.size) {
+    for (const { from, to } of deskLinks().edges) {
+      if (focus.has(from) && !focus.has(to)) related.add(to);
+      if (focus.has(to) && !focus.has(from)) related.add(from);
+    }
+  }
+  const rate = reducedMotion() ? 1 : 1 - Math.exp(-dt / 55);
+  let moving = false;
+  for (const tile of state.tiles) {
+    const target = { lift: focus.has(tile.id) ? 1 : related.has(tile.id) ? RELATED_LIFT : 0, dim: focus.size && !focus.has(tile.id) && !related.has(tile.id) ? 1 : 0 };
+    const now = state.lifts.get(tile.id) || { lift: 0, dim: 0 };
+    const next = {};
+    for (const key of ['lift', 'dim']) {
+      const value = now[key] + (target[key] - now[key]) * rate;
+      next[key] = Math.abs(value - target[key]) < 0.004 ? target[key] : value;
+      if (next[key] !== target[key]) moving = true;
+    }
+    state.lifts.set(tile.id, next);
+  }
+  if (moving) requestDraw();
+}
+
+const liftOf = (id) => state.lifts?.get(id) || { lift: 0, dim: 0 };
+
+/** A design's screen rect as lifted: grown about its centre. */
+function lifted(rect, id) {
+  const grow = 1 + LIFT_GROW * liftOf(id).lift;
+  if (grow === 1) return rect;
+  return { x: rect.x + (rect.w * (1 - grow)) / 2, y: rect.y + (rect.h * (1 - grow)) / 2, w: rect.w * grow, h: rect.h * grow };
+}
+
+/** A screen point on a design, where its lift has carried it. */
+function liftedPoint(point, flat, id) {
+  const grow = 1 + LIFT_GROW * liftOf(id).lift;
+  const cx = flat.x + flat.w / 2;
+  const cy = flat.y + flat.h / 2;
+  return { x: cx + (point.x - cx) * grow, y: cy + (point.y - cy) * grow };
+}
+
+/** The card a lifted design rests on: the panel's colour, a shadow that
+ *  deepens as it rises, and for the picked one an accent rim. */
+function drawCard(ctx, tile, rect, lift, palette) {
+  const k = scale();
+  const pad = Math.max(6, ATLAS_GAP * 0.3 * k);
+  const caption = Math.min(13, ATLAS_CAPTION * k * 0.45) >= 7 ? Math.min(13, ATLAS_CAPTION * k * 0.45) * 2.1 : 0;
+  const x = rect.x - pad;
+  const y = rect.y - pad;
+  const w = rect.w + 2 * pad;
+  const h = rect.h + 2 * pad + caption;
+  const radius = Math.min(14, pad * 1.4);
+  const picked = state.selected === tile.id || !!state.picked?.has(tile.id);
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, lift * 1.4);
+  ctx.shadowColor = palette.shadow;
+  ctx.shadowBlur = 36 * lift;
+  ctx.shadowOffsetY = 14 * lift;
+  ctx.fillStyle = palette.card;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radius);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (picked) {
+    ctx.globalAlpha = lift;
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // A soft glow of the accent round the rim.
+    ctx.globalAlpha = lift * 0.35;
+    ctx.lineWidth = 7;
+    ctx.stroke();
+  } else {
+    ctx.globalAlpha = lift * 0.6;
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /** How far a design's reveal has come (1 at rest): designs nearer the
@@ -602,7 +710,8 @@ function deskLinks() {
 
 /**
  * The picked designs' links, drawn the way a reader follows them: from the
- * part that links (a ring on it) to the design it names, which is outlined,
+ * part that links (a ring on it) to the design it names, which is lifted
+ * (drawCard),
  * the curve arriving square to the side facing the part with a clear head.
  * A design using a picked one is linked to it the same way, from its part.
  * Each curve runs over a halo of the paper, so it reads cleanly across
@@ -618,30 +727,15 @@ function drawLinks(ctx, palette, shown) {
   const tiles = new Map(shown.map(({ tile, alpha }) => [tile.id, { tile, alpha }]));
   // The drawing and its name on screen, a little out from them.
   const PAD = 10;
+  // Where a design's lift has carried it (lifted designs float larger).
   const frameOf = (tile) => {
-    const r = worldToScreen({ ...tile, h: tile.h + ATLAS_CAPTION });
+    const r = lifted(worldToScreen({ ...tile, h: tile.h + ATLAS_CAPTION }), tile.id);
     return { x: r.x - PAD, y: r.y - PAD, w: r.w + 2 * PAD, h: r.h + 2 * PAD };
   };
   const fadedOf = (from, to) => !!state.matches && !(state.matches.has(from) && state.matches.has(to));
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  // The designs at the far ends, outlined: where the arrows go is plain.
-  const ends = new Map();
-  for (const { from, to } of edges) {
-    for (const id of [from, to]) if (!focus.has(id) && tiles.has(id)) ends.set(id, Math.min(ends.get(id) ?? 1, fadedOf(from, to) ? 0.3 : 1));
-  }
-  for (const [id, fade] of ends) {
-    const { tile, alpha } = tiles.get(id);
-    const f = frameOf(tile);
-    ctx.globalAlpha = alpha * fade * 0.7;
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 5]);
-    ctx.beginPath();
-    ctx.roundRect?.(f.x, f.y, f.w, f.h, 8) ?? ctx.rect(f.x, f.y, f.w, f.h);
-    ctx.stroke();
-  }
   ctx.setLineDash([]);
   for (const { from, to } of edges) {
     const a = tiles.get(from);
@@ -654,8 +748,9 @@ function drawLinks(ctx, palette, shown) {
     const parts = (source?.index?.items || []).filter((item) => item.kind === 'part' && item.link === target?.name && item.boxes?.[0]);
     const dx = a.tile.x - (source?.box?.x ?? a.tile.x);
     const dy = a.tile.y - (source?.box?.y ?? a.tile.y);
+    const flat = worldToScreen(a.tile);
     const starts = parts.length
-      ? parts.map((item) => worldToScreen({ x: item.boxes[0].x + item.boxes[0].w / 2 + dx, y: item.boxes[0].y + item.boxes[0].h / 2 + dy, w: 0, h: 0 }))
+      ? parts.map((item) => liftedPoint(worldToScreen({ x: item.boxes[0].x + item.boxes[0].w / 2 + dx, y: item.boxes[0].y + item.boxes[0].h / 2 + dy, w: 0, h: 0 }), flat, from))
       : (() => { const arrow = linkArrow(frameOf(a.tile), frameOf(b.tile), 0); return arrow ? [{ x: arrow.x1, y: arrow.y1 }] : []; })();
     ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1);
     for (const start of starts) {
@@ -1124,10 +1219,9 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   if (state.source === 'symbols' || state.quiet) return;
   const selected = state.selected === tile.id || !!state.picked?.has(tile.id);
   const hovered = state.hover === tile.id;
-  // The pick is a bracket at each of the design's corners, the
-  // hover a faint frame -- the picked design (the open one, at first) takes
-  // it too, bracket and all. Both sit in the gap around the design, measured
-  // in drawing units, so they scale with the zoom and never reach a neighbour.
+  // The pick lifts the design on a card (drawCard); the hover is a faint
+  // frame in the gap around a design lying flat, measured in drawing units,
+  // so it scales with the zoom and never reaches a neighbour.
   const k = scale();
   const inset = ATLAS_GAP * 0.35 * k;
   // The caption may run on into the gap after its tile; its size follows
@@ -1136,31 +1230,12 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   const captioned = size >= 7;
   // Frame and bracket take in the caption, so no line runs through it.
   const bottom = captioned ? rect.y + rect.h + size * 1.9 + inset * 0.6 : rect.y + rect.h + inset;
-  if (hovered) {
+  if (hovered && !selected && liftOf(tile.id).lift < 0.01) {
     ctx.save();
     ctx.globalAlpha *= 0.3;
     ctx.strokeStyle = palette.accent;
     ctx.lineWidth = 1;
     ctx.strokeRect(rect.x - inset, rect.y - inset, rect.w + 2 * inset, bottom - rect.y + inset);
-    ctx.restore();
-  }
-  if (selected) {
-    const arm = Math.min(ATLAS_GAP * 1.5, Math.min(tile.w, tile.h) * 0.25) * k;
-    ctx.save();
-    ctx.strokeStyle = palette.accent;
-    ctx.lineWidth = Math.max(1, Math.min(2.5, inset * 0.6));
-    ctx.lineCap = 'square';
-    const x0 = rect.x - inset;
-    const y0 = rect.y - inset;
-    const x1 = rect.x + rect.w + inset;
-    const y1 = bottom;
-    ctx.beginPath();
-    for (const [x, y, dx, dy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x1, y1, -1, -1], [x0, y1, 1, -1]]) {
-      ctx.moveTo(x, y + dy * arm);
-      ctx.lineTo(x, y);
-      ctx.lineTo(x + dx * arm, y);
-    }
-    ctx.stroke();
     ctx.restore();
   }
   if (!captioned) return;
@@ -1228,7 +1303,6 @@ function syncVectorOverlays(list, moving = false) {
       const svg = el.querySelector('svg');
       svg?.removeAttribute('width');
       svg?.removeAttribute('height');
-      if (state.matches && !state.matches.has(tile.id)) el.style.opacity = '0.18';
       overlayEl.appendChild(el);
       state.overlays.set(tile.id, el);
       // Until the SVG has painted once, its image stands in for it.
@@ -1244,9 +1318,15 @@ function syncVectorOverlays(list, moving = false) {
         requestDraw();
       });
     }
-    el.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
+    // Lifted as its image is: grown about its centre; dimmed with the rest.
+    const { lift, dim } = liftOf(tile.id);
+    const grow = 1 + LIFT_GROW * lift;
+    el.style.transformOrigin = 'center';
+    el.style.transform = `translate(${rect.x}px, ${rect.y}px)${grow !== 1 ? ` scale(${grow})` : ''}`;
     el.style.width = `${rect.w}px`;
     el.style.height = `${rect.h}px`;
+    const searched = state.matches && !state.matches.has(tile.id) ? 0.18 : 1;
+    el.style.opacity = String(searched * (1 - 0.72 * dim));
   }
 }
 

@@ -439,14 +439,13 @@ test('opening a design from the Atlas flies once and loads without costing the f
   assert.match(css, /\.atlas \{ animation: none; transition: opacity 180ms ease-out; \}/);
 });
 
-test('the Atlas marks the open design apart from the pick and the hover', () => {
+test('the Atlas marks the open design apart from the pick and the hover; the pick lifts, its kin with it', () => {
   const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
   const caption = atlas.slice(atlas.indexOf('function drawCaption'), atlas.indexOf('function fitText'));
-  assert.match(caption, /if \(hovered\) \{\s*ctx\.save\(\);\s*ctx\.globalAlpha \*= 0\.3;/);
-  assert.doesNotMatch(caption, /hovered && !selected/);
-  assert.match(caption, /if \(selected\) \{/);
-  // The pick is bracketed at all four corners.
-  assert.match(caption, /\[\[x0, y0, 1, 1\], \[x1, y0, -1, 1\], \[x1, y1, -1, -1\], \[x0, y1, 1, -1\]\]/);
+  // A design lying flat shows the hover as a faint frame; the pick lifts it on a card.
+  assert.match(caption, /if \(hovered && !selected && liftOf\(tile\.id\)\.lift < 0\.01\) \{\s*ctx\.save\(\);\s*ctx\.globalAlpha \*= 0\.3;/);
+  assert.match(atlas, /function drawCard\(ctx, tile, rect, lift, palette\) \{/);
+  assert.match(atlas, /lift: focus\.has\(tile\.id\) \? 1 : related\.has\(tile\.id\) \? RELATED_LIFT : 0, dim: focus\.size && !focus\.has\(tile\.id\) && !related\.has\(tile\.id\) \? 1 : 0/);
   // The open design, where Esc returns, carries an OPEN badge, and the way back names it.
   assert.match(caption, /if \(entry\.current\) \{[^]*ctx\.fillText\('OPEN'/);
   assert.match(atlas, /const label = `Back to \$\{name\}\$\{onDesk \|\| state\.source === 'symbols' \? '' : ' \(not in this workspace\)'\}`;/);
