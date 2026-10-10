@@ -98,7 +98,7 @@ export function placeAnnotationAt(world) {
  * cursor. Resolves the text typed (Enter), '' for none (Enter on an empty
  * field: type it after placing), or null when dismissed (Esc).
  */
-export function promptLabelText({ title, placeholder = '' }) {
+function promptLabelText({ title, placeholder = '' }) {
   document.querySelector('.label-prompt')?.remove();
   const box = document.createElement('div');
   box.className = 'label-prompt glass';
@@ -370,7 +370,7 @@ export function beginNetLabelPaste(name, { once = false } = {}) {
 }
 
 /** Place `names` on the wires clicked next, one each, in order. */
-export function beginNetLabelSequence(names) {
+function beginNetLabelSequence(names) {
   enterNetLabelMode();
   pastedNetName = { names, index: 0, once: false, repeat: false };
   sequenceHint();
@@ -388,7 +388,7 @@ export function clearNetLabelPaste() {
   pendingAnnotationText = null;
 }
 
-export function pastingNetName() {
+function pastingNetName() {
   return editor.labelMode === 'net' && pastedNetName ? pastedNetName.names[pastedNetName.index] || null : null;
 }
 

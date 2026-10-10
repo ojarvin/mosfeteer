@@ -45,7 +45,7 @@ export function pinEscape(circuit, ref) {
 }
 
 /** The world point the marker's pin lands on for terminal `ref`: one cell out. */
-export function pinRailPoint(circuit, ref, type) {
+function pinRailPoint(circuit, ref, type) {
   if (!HANG[type]) throw new Error(`a pin rail is ${PIN_RAIL_TYPES.join(' or ')}`);
   const { pin, dir } = pinEscape(circuit, ref);
   return { x: pin.x + dir.x * GRID, y: pin.y + dir.y * GRID };

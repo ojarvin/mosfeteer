@@ -152,7 +152,7 @@ function budgetFailure(ops, stage) {
  * Expose canonical descriptors in the flat shape used by legacy report and
  * numeric-oracle boundaries.
  */
-export function adaptPrimitiveDescriptor(primitive, options = {}) {
+function adaptPrimitiveDescriptor(primitive, options = {}) {
   if (!primitive || typeof primitive !== 'object') throw new TypeError('primitive is required');
   const ops = validateMnaOps(options.ops || numberOps());
   const terminals = primitiveTerminals(primitive);
@@ -247,7 +247,7 @@ export function adaptPrimitiveDescriptor(primitive, options = {}) {
   return { ...base, a: terminals.a, b: terminals.b, value };
 }
 
-export function adaptPrimitiveDescriptors(primitives = [], options = {}) {
+function adaptPrimitiveDescriptors(primitives = [], options = {}) {
   return primitives.map((primitive) => adaptPrimitiveDescriptor(primitive, options));
 }
 
@@ -312,7 +312,7 @@ function uniqueName(base, primitives) {
  * one column per noise generator (`noise.js`). A noise column zeroes both
  * port sources: the input is shorted to AC ground and the output left open.
  */
-export function createTestExcitations(context, primitives = [], options = {}) {
+function createTestExcitations(context, primitives = [], options = {}) {
   if (!context?.input?.node || !context?.output?.node) {
     throw new TypeError('analysis context must contain input and output nodes');
   }

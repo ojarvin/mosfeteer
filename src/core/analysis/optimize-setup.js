@@ -5,15 +5,15 @@
  * no imports, so the model can read it without the analysis.
  */
 
-export const SPEC_ACTIONS = Object.freeze(['minimize', 'maximize', 'below', 'above']);
+const SPEC_ACTIONS = Object.freeze(['minimize', 'maximize', 'below', 'above']);
 // A band's average, peak, or lowest |H| (dB); or its poles: the highest Q of
 // a complex pair, or the largest radius (optimize.js poleMeasures).
-export const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest', 'q', 'radius']);
+const SPEC_MEASURES = Object.freeze(['average', 'peak', 'lowest', 'q', 'radius']);
 export const POLE_MEASURES = Object.freeze(['q', 'radius']);
-export const SPEC_BANDS = Object.freeze(['signal', 'outside', 'all', 'custom']);
-export const DEFAULT_EVALUATIONS = 3000;
-export const MAX_DENOMINATOR = 1024;
-export const SWING_LEVELS = Object.freeze(['sigma3', 'sigma4', 'peak']);
+const SPEC_BANDS = Object.freeze(['signal', 'outside', 'all', 'custom']);
+const DEFAULT_EVALUATIONS = 3000;
+const MAX_DENOMINATOR = 1024;
+const SWING_LEVELS = Object.freeze(['sigma3', 'sigma4', 'peak']);
 
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
 
@@ -26,7 +26,7 @@ export function frequencyNumber(text) {
 
 /** The text to keep beside a frequency's number: a fraction as typed
  *  (`1/256`), so a field shows it again; none for a plain number. */
-export function frequencyText(text) {
+function frequencyText(text) {
   const raw = String(text ?? '').trim().replace(/\s+/g, '');
   return /^\d*\.?\d+\/\d*\.?\d+$/.test(raw) && raw.length <= 40 ? raw : null;
 }

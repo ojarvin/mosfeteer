@@ -91,8 +91,3 @@ export async function trimCache() {
     return cursor;
   });
 }
-
-/** Forget the in-memory copies (the baked images are large). */
-export function releaseMemory(keep = () => false) {
-  for (const key of memory.keys()) if (!keep(key)) memory.delete(key);
-}

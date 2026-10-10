@@ -101,10 +101,6 @@ function polynomialExpression(coefficients, variable) {
   )));
 }
 
-function isZeroExpression(value) {
-  return value?.kind === 'number' && value.numerator === 0n;
-}
-
 function integerSquareRoot(value) {
   if (value < 0n) return null;
   if (value < 2n) return value;

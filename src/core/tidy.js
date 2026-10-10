@@ -116,7 +116,7 @@ export function placeLabelClear(circuit, label, { reach = null } = {}) {
  *  routed keeps its drawing. Protected (fixed) nets are left alone, and so is
  *  authored diagonal wire: in a net that has some, only the orthogonal
  *  branches are re-laid. Returns the ids rerouted. */
-export function rerouteFresh(circuit, netIds) {
+function rerouteFresh(circuit, netIds) {
   const done = [];
   for (const id of netIds) {
     const net = circuit.nets.get(id);

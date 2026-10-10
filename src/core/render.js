@@ -235,7 +235,7 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
 
 /** A label's monospace face (style.mono): columns line up, for truth
  *  tables and pin lists. */
-export const MONO_FONT_FAMILY = "'DejaVu Sans Mono','Menlo','Consolas','Liberation Mono',monospace";
+const MONO_FONT_FAMILY = "'DejaVu Sans Mono','Menlo','Consolas','Liberation Mono',monospace";
 
 /** The solid greys a beat draws with: what it dims, and (in the editor) what
  * it hides -- ink at about 30% and 12% over white paper. The editor and the
@@ -793,7 +793,7 @@ export function viewportGridPath(vp) {
   return d.join(' ');
 }
 
-export function viewportGridSvg(vp) {
+function viewportGridSvg(vp) {
   return `<path class="grid-line" d="${viewportGridPath(vp)}" fill="none" stroke="#e9e9e9" stroke-width="1"/>`;
 }
 

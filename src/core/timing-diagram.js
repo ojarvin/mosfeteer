@@ -176,7 +176,7 @@ export function timingRowGeometry(levels, columns, x, top, shift = {}) {
 }
 
 /** A row's edge shift as saved or given: whole cells within the limit. */
-export function normalizeEdgeShift(shift) {
+function normalizeEdgeShift(shift) {
   const cells = (value) => Math.max(-MAX_EDGE_SHIFT, Math.min(MAX_EDGE_SHIFT, Math.round(Number(value)) || 0));
   return { fall: cells(shift?.fall), rise: cells(shift?.rise) };
 }
@@ -205,7 +205,7 @@ function timingSpot(circuit, area, drawn) {
 
 /** A state's name: its phases' names as one -- one math expression when any
  *  is TeX ($\varphi_1, \varphi_2$), plain names as text inside it. */
-export function stateName(sources) {
+function stateName(sources) {
   if (!sources.some(isTexSource)) return sources.join(', ');
   const body = (source) => (isTexSource(source) ? source.replace(/^\$+|\$+$/g, '').trim() : `\\mathrm{${source}}`);
   return `$${sources.map(body).join(',\\ ')}$`;
@@ -238,7 +238,7 @@ export function timingStates(circuit) {
 
 /** Phases in drawing order, each complement right after its phase; a pair
  *  goes where the first of the two was drawn. */
-export function timingOrder(phases) {
+function timingOrder(phases) {
   const baseOf = (phase) => (isComplementPhase(phase.key) ? phases.find((other) => samePhase(other.key, complementKey(phase.key))) : null) || phase;
   const ordered = [];
   for (const phase of phases) {

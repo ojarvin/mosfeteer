@@ -131,7 +131,7 @@ function fileInput({ documentImpl = globalThis.document, accept = '.json,applica
  * the same files again (after the browser's permission prompt). Each value is
  * `{ key, kind: 'file'|'folder', path?, name, handle }`.
  */
-export function indexedDbHandleStore(indexedDBImpl = globalThis.indexedDB) {
+function indexedDbHandleStore(indexedDBImpl = globalThis.indexedDB) {
   if (!indexedDBImpl) return null;
   let database = null;
   const open = () => (database ||= new Promise((resolve, reject) => {
@@ -804,7 +804,7 @@ function withResponseMeta(data, response, notModified = false) {
 
 /** Waits between tries while the server cannot be reached: a `--watch`
  *  server restarting after a source change is back within a second or two. */
-export const UNREACHABLE_RETRY_MS = [250, 500, 1000, 1500, 2000, 3000];
+const UNREACHABLE_RETRY_MS = [250, 500, 1000, 1500, 2000, 3000];
 
 /** `fetch`, tried again while the server cannot be reached at all (the
  *  browser's bare "Failed to fetch"), then failing with an error that says so. */

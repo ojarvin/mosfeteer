@@ -12,7 +12,7 @@ import { LABEL_FONT_SIZE } from './model.js';
 // wide set at a column of C points scales text to LABEL_FONT_SIZE * C / W
 // points, so the width for T-point text is W = LABEL_FONT_SIZE * C / T.
 
-export const PAGE_GUIDES = Object.freeze({
+const PAGE_GUIDES = Object.freeze({
   // IEEEtran journal: 3.5 in columns and 7.16 in text width. Figure text at
   // 8 pt matches the captions and leaves a usable width (10 pt body-size text
   // would allow only about 24 grid cells across a column).

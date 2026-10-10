@@ -24,7 +24,7 @@ export function defineSymbol(def) {
  * the wire meeting it at the terminal are rasterized once, without a seam or
  * doubled anti-aliased edges.
  */
-export function markTerminalLeads(graphics, terminals) {
+function markTerminalLeads(graphics, terminals) {
   const points = new Set(terminals.map((t) => `${t.x},${t.y}`));
   return graphics.map((g) => {
     if (g.kind !== 'path' || (g.style && g.style !== 'symbol') || g.terminalLead !== undefined) return g;

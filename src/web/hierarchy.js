@@ -65,14 +65,14 @@ function knownDesigns(state = editor.workspaceState || {}) {
 
 /** The document a link names, or null: one of that name beside the open
  *  document first, else any. */
-export function linkedDocument(name, state = editor.workspaceState || {}) {
+function linkedDocument(name, state = editor.workspaceState || {}) {
   if (!name) return null;
   const matches = knownDesigns(state).filter((doc) => doc.name === name && !doc.missing);
   return matches.find((doc) => doc.dir && doc.dir === editor.currentDocumentDir) || matches[0] || null;
 }
 
 /** Designs a part may link to: every known one but the open document. */
-export function linkableDesigns() {
+function linkableDesigns() {
   const seen = new Set();
   return knownDesigns()
     .filter((doc) => doc.path !== editor.currentDocumentPath && !seen.has(doc.name) && seen.add(doc.name))
@@ -257,10 +257,6 @@ function refitAfterClosing(before) {
   if (target.w < view.w * 0.98 && target.h < view.h * 0.98) fitView({ animate: true });
 }
 
-export function linkBubbleOpen(refdes) {
-  return bubbles.has(refdes);
-}
-
 /** The parts whose bubble is at a world point: { refdes, refdeses } (the
  *  first, and every part sharing it) or null. */
 export function linkBubbleAt(point) {
@@ -331,7 +327,7 @@ export function linkBubbleFrame(refdes) {
 }
 
 /** Put a dragged bubble back where the layout would place it. */
-export function resetLinkBubble(refdes) {
+function resetLinkBubble(refdes) {
   const ids = layoutEntry(refdes)?.ids || [refdes];
   if (!ids.map((id) => spots.delete(id)).some(Boolean)) return;
   rememberSpots();
@@ -554,11 +550,6 @@ function followUsedIn() {
     usedIn.parents = found.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     renderTrail();
   });
-}
-
-/** The designs the open one is used in (their parts link to it). */
-export function usedInDesigns() {
-  return usedIn.parents;
 }
 
 /** Open a design the open one is used in, its linking parts selected. */

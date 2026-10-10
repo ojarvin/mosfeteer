@@ -20,30 +20,6 @@ import { editor } from './editor-state.js';
 import { placeNetLabelAt } from './annotation-tools.js';
 import { activatePlace, applyJson, clearSymmetry, commit, rememberAction, setSelection, swapTargets, commitWireAtCursor, connectWireToTerminal, draftRoutePath, endGestureWire, markModelChanged, moveCursor, placePending, recordHistoryEntry, render, setSymmetry, snapshot, transformPendingComponent, redo, undo } from './main.js';
 
-const PLACEMENT = {
-  r: 'resistor',
-  c: 'capacitor',
-  L: 'inductor',
-  d: 'diode',
-  n: 'nmos',
-  p: 'pmos',
-  N: 'npn',
-  P: 'pnp',
-  g: 'ground',
-  s: 'supply',
-  x: 'switch_open',
-  X: 'switch_closed',
-  i: 'current_source',
-  v: 'voltage_source',
-  u: 'opamp',
-  A: 'and2_gate',
-  b: 'buffer',
-  I: 'input',
-  o: 'output',
-  O: 'inputoutput',
-  a: 'solder',
-};
-
 // Human-facing names keep the picker useful at a glance. Aliases stay out of
 // the menu while the underlying type remains the stable placement value.
 // The registry is the single source of truth for insertable components.

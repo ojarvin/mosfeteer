@@ -129,7 +129,7 @@ const ACTIONS = {
 
 /** Run one command line: an editor command here, anything else as a
  *  document command (its synonyms mapped to the command's own name). */
-export function runCommandLine(line) {
+function runCommandLine(line) {
   const command = resolveEditorCommand(line);
   if (!command) {
     const canonical = canonicalDocumentLine(line);

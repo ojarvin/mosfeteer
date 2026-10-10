@@ -550,11 +550,11 @@ function detailHeader(name, kind) {
   return header;
 }
 
-export const PANEL_COLLAPSED_KEY = 'mosfeteer:panel-collapsed';
+const PANEL_COLLAPSED_KEY = 'mosfeteer:panel-collapsed';
 
 const PANEL_WIDTH_KEY = 'mosfeteer:panel-width';
 
-export const collapsedPanels = new Set();
+const collapsedPanels = new Set();
 
 function panelSection(name) {
   return document.querySelector(`.side-panel [data-panel="${CSS.escape(name)}"]`);

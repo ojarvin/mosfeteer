@@ -36,7 +36,7 @@ function netHas(circuit, id, predicate) {
 
 /** The OTA's roles as found in the drawing: which parts are the tail, the
  *  input pair, and the loads. Missing roles are null. */
-export function tutorialRoles(circuit) {
+function tutorialRoles(circuit) {
   const parts = [...circuit.components.values()];
   const nmos = parts.filter((c) => NMOS.has(c.type));
   const pmos = parts.filter((c) => PMOS.has(c.type));

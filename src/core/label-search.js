@@ -42,7 +42,7 @@ function netNameShown(circuit, net) {
 /** Every searchable text in the drawing, as { key, role, text, label?,
  * refdes?, netId? }. A label's key is `label:<id>`, a block caption's
  * `block:<refdes>`, and a net name no label shows `net:<id>`. */
-export function searchableTexts(circuit) {
+function searchableTexts(circuit) {
   const texts = [];
   for (const label of circuit.labels.values()) {
     // Generated text (input signs, a transistor's size) is not authored here.

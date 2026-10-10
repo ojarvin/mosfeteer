@@ -29,7 +29,7 @@ function firstSentenceEnd(paragraph) {
 }
 
 /** Fold one hint paragraph (once). */
-export function foldHint(paragraph) {
+function foldHint(paragraph) {
   if (paragraph.dataset.folded !== undefined) return;
   paragraph.dataset.folded = '';
   const total = paragraph.textContent.length;

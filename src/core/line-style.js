@@ -1,5 +1,5 @@
 /** The one filled triangular arrowhead offered by the shared style menu. */
-export const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
+const ARROWHEAD_VALUES = Object.freeze(['none', 'start', 'end', 'both']);
 
 export function normalizeArrowhead(value, fallback = 'none') {
   return ARROWHEAD_VALUES.includes(value) ? value : fallback;
@@ -75,7 +75,7 @@ export function polylineArrowheadStyles(wireStyles = {}, branch = 0, points = []
 const samePoint = (a, b) => a?.x === b?.x && a?.y === b?.y;
 
 /** Filled arrowhead geometry for a segment whose tip is `b`. */
-export function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
+function arrowheadGeometry(a, b, length = 32, halfWidth = 18, tipInset = 0) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const distance = Math.hypot(dx, dy);

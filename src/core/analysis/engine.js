@@ -723,7 +723,7 @@ function portSymbols(name) {
   return { voltage: `v_{${flat}}`, current: `i_{${flat}}` };
 }
 
-export function portDefinitions(context, transferFunctions = ['Av']) {
+function portDefinitions(context, transferFunctions = ['Av']) {
   const input = context?.input;
   const output = context?.output;
   if (!input || !output) return [];

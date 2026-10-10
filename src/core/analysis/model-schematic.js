@@ -16,7 +16,7 @@ import { rectsOverlap } from '../geometry.js';
 import { createRationalOps } from './algebra-ops.js';
 import { renderExpression } from './present.js';
 
-export const AC_GROUND_NODE = '@AC_GROUND';
+const AC_GROUND_NODE = '@AC_GROUND';
 
 const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
 const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source', 'opamp']);
@@ -75,7 +75,7 @@ function normalize(primitive) {
 
 /** `ro1` -> `r_{o1}`, `CGD` -> `C_{GD}`, `gmb2` -> `g_{mb2}`: the same textbook
  * spelling the netlist and the equations use. */
-export function textbookSymbol(raw) {
+function textbookSymbol(raw) {
   const name = String(raw || '');
   if (!name) return '';
   if (/^gmb[A-Za-z0-9_]*$/.test(name)) return `g_{mb${name.slice(3)}}`;

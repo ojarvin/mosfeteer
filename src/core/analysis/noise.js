@@ -19,7 +19,7 @@
  */
 import { MOS_TYPES } from './shared.js';
 
-export const NOISE_KINDS = Object.freeze(['thermal', 'flicker']);
+const NOISE_KINDS = Object.freeze(['thermal', 'flicker']);
 
 const RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
 
@@ -120,7 +120,7 @@ const LABELS = Object.freeze({
   output: { thermal: 'S_{v,out,th}', flicker: 'S_{v,out,1/f}' },
 });
 
-export const NOISE_PREFIXES = Object.freeze({ thermal: '4kT', flicker: '\\frac{1}{f}' });
+const NOISE_PREFIXES = Object.freeze({ thermal: '4kT', flicker: '\\frac{1}{f}' });
 
 const TITLES = Object.freeze({
   input: { thermal: 'Input-referred thermal noise', flicker: 'Input-referred flicker noise' },

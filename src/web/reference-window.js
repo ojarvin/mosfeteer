@@ -556,13 +556,6 @@ export function toggleReferenceWindows() {
   logLine(hidden ? 'Reference windows hidden (Shift+V shows them)' : 'Reference windows shown');
 }
 
-/** Show `doc` in a reference window: a new one. */
-export function showInReferenceWindow(doc) {
-  hidden = false;
-  for (const win of windows) win.el.hidden = false;
-  createWindow(doc);
-}
-
 export function installReferenceWindows() {
   document.getElementById('btn-window-reference')?.addEventListener('click', () => toggleReferenceWindows());
   // Ctrl+V with the pointer over a window puts the picture there.

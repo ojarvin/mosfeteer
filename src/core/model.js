@@ -126,7 +126,7 @@ export function referenceMarkerInfo(type) {
   return REFERENCE_MARKER_INFO[type] || null;
 }
 
-export function referenceMarkerGlobalNames(typeOrInfo) {
+function referenceMarkerGlobalNames(typeOrInfo) {
   const info = typeof typeOrInfo === 'string' ? referenceMarkerInfo(typeOrInfo) : typeOrInfo;
   if (!info) return [];
   const type = Object.entries(REFERENCE_MARKER_INFO).find(([, value]) => value === info)?.[0];
@@ -193,7 +193,7 @@ function segmentMeetsRect(a, b, r) {
 /** A net label's place is valid when its box touches the net's wire -- an
  * edge along it, or only a corner at a wire end -- and the wire does not run
  * through the text. */
-export function netLabelBoxTouches(paths, box) {
+function netLabelBoxTouches(paths, box) {
   let touches = false;
   for (const path of paths) {
     for (let i = 1; i < path.length; i++) {
@@ -301,7 +301,7 @@ function automaticMovePathSafe(path, env) {
  *  Raised for the bold+italic label font (INSTANCE_FONT / LABEL_FONT are both
  *  bold italic) — bold/italic glyphs are measurably wider than the regular
  *  face. */
-export const LABEL_CHAR_W = 8;
+const LABEL_CHAR_W = 8;
 
 /** Font-size (world units) of a normal-weight label (style.js LABEL_FONT_SIZES). */
 export const LABEL_FONT_SIZE = LABEL_FONT_SIZES.normal;
@@ -357,7 +357,7 @@ export function parseLabelRuns(text, opts = {}) {
 
 /** Split rich-text runs into visual lines without losing sub/superscript
  * metadata. Newlines remain part of the persisted label text. */
-export function labelRunLines(text, opts = {}) {
+function labelRunLines(text, opts = {}) {
   const lines = [[]];
   for (const run of parseLabelRuns(text, opts)) {
     const parts = String(run.text).split('\n');
@@ -370,7 +370,7 @@ export function labelRunLines(text, opts = {}) {
 }
 
 /** Tight height (world units) of a rendered label line (cap height). */
-export const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
+const LABEL_CAP_H = Math.round(LABEL_FONT_SIZE * 0.7);
 
 /** Gap between left/right aligned text and its box edge: half a grid cell. */
 export const LABEL_ALIGN_INSET = GRID / 2;
@@ -386,7 +386,7 @@ const symbolInkPieces = new WeakMap();
  * reaching half its stroke past its points. Finer than symbolInkRect, for
  * telling whether text touches the drawing or only sits in an empty corner
  * of it. Cached per definition. */
-export function symbolInkParts(def) {
+function symbolInkParts(def) {
   if (!def?.graphics?.length) return [];
   if (symbolInkPieces.has(def)) return symbolInkPieces.get(def);
   const parts = [];
@@ -436,7 +436,7 @@ export function symbolInkParts(def) {
 /** The local rectangle a symbol's graphics cover: path points (absolute
  * M/L/C, curve control points included), polygons, circles, rects, and text
  * anchors. Null when it draws nothing. Cached per definition. */
-export function symbolInkRect(def) {
+function symbolInkRect(def) {
   if (!def?.graphics?.length) return null;
   if (symbolInk.has(def)) return symbolInk.get(def);
   const points = [];
@@ -470,10 +470,10 @@ export function symbolInkRect(def) {
  * beside its part aligns toward it, and the box keeps the edge facing the
  * part fixed however wide the text grows; a net label at the side of a wire
  * aligns toward the wire. Above or below, the text is centered. */
-export const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
+const LABEL_ALIGNS = Object.freeze(['center', 'left', 'right', 'parent']);
 
 /** Spaces one Tab indents free text by. */
-export const INDENT = '    ';
+const INDENT = '    ';
 
 /**
  * Tab in a text field: indent (or with `outdent`, unindent) by INDENT. A
@@ -795,7 +795,7 @@ export function stripMathDelimiters(value) {
  * TeX command names should not make an equation's box wider than the glyphs
  * they produce in MathML. This is deliberately a metric helper, not a TeX
  * evaluator; rendering remains the authoritative MathML representation. */
-export function mathTextForMetrics(value) {
+function mathTextForMetrics(value) {
   let source = stripMathDelimiters(value);
   const symbols = {
     parallel: '||', vert: '|', Vert: '||', cdot: '·', times: '×', pm: '±', mp: '∓',
@@ -824,7 +824,7 @@ export function mathTextForMetrics(value) {
  * A bare `||` is convenient to type, but TeX parses it as two independent
  * delimiters (and browsers may add operator spacing).  Store the escaped
  * spelling so editing, JSON, and SVG export all agree on `\|\|`. */
-export function normalizeMathSource(value) {
+function normalizeMathSource(value) {
   return String(value ?? '')
     .replace(/\\parallel/g, '\\|\\|')
     .replace(/(^|[^\\])\|\|/g, '$1\\|\\|');
@@ -932,7 +932,7 @@ export function normalizeImage(image) {
  * 0s), the slot width in cells, which phases are kept from overlapping
  * (`gaps`), its edge shift, and whether it is a signal of the diagram's own
  * rather than a switch phase (`signal`); null when unusable. */
-export function normalizeTiming(timing) {
+function normalizeTiming(timing) {
   if (!timing || typeof timing !== 'object' || typeof timing.phase !== 'string' || !timing.phase) return null;
   const bits = typeof timing.bits === 'string' && /^[01]*$/.test(timing.bits) ? timing.bits.slice(0, 512) : '';
   const slot = Math.max(1, Math.min(64, Math.round(Number(timing.slot)) || 4));
@@ -997,7 +997,7 @@ export function normalizePlot(plot) {
 
 /** The analysis's saved numbers, checked: finite coefficients by symbol
  *  name, and the Bode sketch's positive ratios. */
-export function normalizeAnalysisValues(value) {
+function normalizeAnalysisValues(value) {
   const coefficients = {};
   for (const [name, number] of Object.entries(value?.coefficients || {})) {
     if (/^[A-Za-z][\w]{0,40}$/.test(name) && Number.isFinite(number)) coefficients[name] = number;
@@ -2262,7 +2262,7 @@ export class Net {
 const isDiagonalSegment = (a, b) => a.x !== b.x && a.y !== b.y;
 
 /** True when a polyline contains an authored diagonal segment. */
-export function pathHasDiagonal(path = []) {
+function pathHasDiagonal(path = []) {
   for (let i = 1; i < path.length; i++) if (isDiagonalSegment(path[i - 1], path[i])) return true;
   return false;
 }

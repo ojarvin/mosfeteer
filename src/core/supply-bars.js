@@ -20,7 +20,7 @@ function localSlab(def) {
 /** A supply's rail identity: its own marker name (or, for a scripted marker
  *  without a label, its value), else the global supply rail. Erring toward
  *  distinct names only ever breaks a bar. */
-export function supplyRailName(component) {
+function supplyRailName(component) {
   return referenceMarkerName(component) || canonicalNetName(component.value || '')
     || referenceMarkerInfo('supply').globalName;
 }

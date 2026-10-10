@@ -16,21 +16,21 @@ export function analysisNetOptionText(net) {
   return name === net.id ? name : `${name} — ${net.id}`;
 }
 
-export const ANALYSIS_FORM_KEY = 'mosfeteer:analysis-form';
+const ANALYSIS_FORM_KEY = 'mosfeteer:analysis-form';
 
 export function analysisFormStorageKey(documentName = '') {
   const scope = String(documentName || 'new').trim() || 'new';
   return `${ANALYSIS_FORM_KEY}:${encodeURIComponent(scope)}`;
 }
 
-export function splitAnalysisValues(value) {
+function splitAnalysisValues(value) {
   if (Array.isArray(value)) return value.flatMap((item) => splitAnalysisValues(item));
   if (value === undefined || value === null) return [];
   return String(value).split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 /** Return the names that resolveAcGrounds can accept for the visible nets. */
-export function analysisNetAliases(nets = []) {
+function analysisNetAliases(nets = []) {
   const aliases = new Set();
   for (const net of nets) {
     if (!net) continue;

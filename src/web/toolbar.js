@@ -183,7 +183,7 @@ export const naturalCompare = new Intl.Collator(undefined, { numeric: true, sens
 
 // The editor's keyboard reference is data, not a second hand-written list in
 // the dialog. Keep this registry alongside the keyboard-facing toolbar.
-export const EDITOR_KEYMAP = Object.freeze([
+const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
     ['i', 'insert mode (fuzzy-search component and label placement)'],
     ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal or free wire end; a click on a free wire end joins it; Enter commits'],

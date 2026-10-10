@@ -8,7 +8,7 @@ import { symbolTypes } from './components/index.js';
 // before any of it reaches the model.
 
 export const OBJECT_CLIPBOARD_FORMAT = 'mosfeteer/objects';
-export const OBJECT_CLIPBOARD_VERSION = 1;
+const OBJECT_CLIPBOARD_VERSION = 1;
 
 /** The clipboard text for a copy buffer. */
 export function encodeObjectClipboard(buffer) {

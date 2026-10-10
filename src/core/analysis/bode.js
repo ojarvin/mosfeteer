@@ -17,7 +17,7 @@ import { symbolText } from './present.js';
 
 export const DEFAULT_INTRINSIC_GAIN = 30;
 /** A capacitor on the output node starts this many units: loads dominate. */
-export const OUTPUT_CAPACITANCE = 10;
+const OUTPUT_CAPACITANCE = 10;
 /** MOS parasitic capacitances start at this fraction of a unit. */
 export const DEFAULT_PARASITIC_RATIO = 0.1;
 /** A body-effect transconductance starts at this fraction of a unit g_m. */
@@ -192,11 +192,6 @@ export function responseAt(numerator, denominator, omega) {
 const log10 = Math.log10;
 const decibels = (h) => 20 * log10(cabs(h));
 
-/** Roots with positive imaginary part stand for their pair; the rest once. */
-function distinctCorners(roots) {
-  return roots.filter((root) => root.im >= 0);
-}
-
 /**
  * The sketch of `N(s)/D(s)` (dense coefficient arrays): the exact magnitude
  * and phase over a frequency range around its corners, the poles and zeros,
@@ -318,12 +313,4 @@ function unityCrossing(points) {
     }
   }
   return null;
-}
-
-/** Corners for labelling: each real root, and each complex pair once. */
-export function sketchCorners(sketch) {
-  return {
-    zeros: distinctCorners(sketch.zeros),
-    poles: distinctCorners(sketch.poles),
-  };
 }

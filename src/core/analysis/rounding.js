@@ -37,24 +37,6 @@ export function fractionGrid(low, high, maxDenominator, { powersOfTwo = false } 
   return [...found.values()].sort((a, b) => a.value - b.value);
 }
 
-/** The fractions around a value: its grid (signed like it) and where the
- *  value sits in it -- `below`/`above` the fractions either side. */
-export function fractionsAround(value, maxDenominator, options = {}) {
-  const size = Math.abs(value);
-  const sign = value < 0 ? -1 : 1;
-  const grid = fractionGrid(size / 4, Math.max(size * 4, 2 / maxDenominator), maxDenominator, options)
-    .map((f) => ({ ...f, m: sign * f.m, value: sign * f.value }));
-  // Sorted by size, then by the signed value's side.
-  const bySize = grid.slice().sort((a, b) => Math.abs(a.value) - Math.abs(b.value));
-  let below = bySize[0];
-  let above = bySize[bySize.length - 1];
-  for (const f of bySize) {
-    if (Math.abs(f.value) <= size) below = f;
-    if (Math.abs(f.value) >= size) { above = f; break; }
-  }
-  return { grid: bySize, below, above };
-}
-
 /** A value as a fraction "m/n" when it is one with n up to `maxDenominator`
  *  (and not an integer), else null. */
 export function fractionText(value, maxDenominator = 1024) {

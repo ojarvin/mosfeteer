@@ -748,7 +748,7 @@ function endDocumentRename() {
  * content is written under the new name, then the old file goes. Unsaved
  * edits stay unsaved. A name already taken is refused.
  */
-export async function renameDocument(name) {
+async function renameDocument(name) {
   const oldPath = editor.currentDocumentPath;
   const oldName = editor.currentCircuitName;
   if (!oldPath || name === editor.currentCircuitName) return false;

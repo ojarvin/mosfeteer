@@ -12,7 +12,7 @@ import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
 import { commit, render, selectedComps, setSelection } from './main.js';
 
-export function openRenumberDialog() {
+function openRenumberDialog() {
   const selected = selectedComps().map((c) => c.refdes);
   const dialog = element('dialog', { class: 'confirm-dialog renumber-dialog', 'aria-label': 'Renumber parts' });
   const choose = (order) => {

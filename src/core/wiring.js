@@ -2,7 +2,7 @@ import { snap, GRID } from './grid.js';
 
 export const pointKey = (p) => `${snap(p.x)},${snap(p.y)}`;
 
-export function orthogonalizePath(path = []) {
+function orthogonalizePath(path = []) {
   const out = [];
   for (let i = 0; i < path.length; i++) {
     const a = path[i];

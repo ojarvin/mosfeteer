@@ -213,7 +213,7 @@ export const BUS_COUNT_SIZE = 30;
 
 /** Where a slash's bit count sits by default, from the slash: above the
  *  slash on a horizontal wire, beside it on a vertical one. */
-export function defaultBusCountOffset(mark) {
+function defaultBusCountOffset(mark) {
   return mark.horizontal ? { x: 0, y: -2 * SLASH } : { x: 2 * SLASH, y: 0 };
 }
 

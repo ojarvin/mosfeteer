@@ -9,7 +9,7 @@
 
 import { reducedMotion } from './motion.js';
 
-export const CHROME_SLIDE_MS = 180;
+const CHROME_SLIDE_MS = 180;
 
 
 /** Slide the toolbars under `root` away (`away` true) or back. Resolves when

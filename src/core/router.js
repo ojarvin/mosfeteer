@@ -5,7 +5,7 @@ import { junctionPoints, normalizeBranches, pointKey, reduceBranches } from './w
  * Auto-routing helpers. All returned points are snapped to the 40-unit grid.
  */
 
-export function snapP(p) {
+function snapP(p) {
   return { x: snap(p.x), y: snap(p.y) };
 }
 
@@ -13,7 +13,7 @@ export function snapP(p) {
  * Collapse a polyline: drop consecutive duplicates and any point that is
  * collinear with its neighbours (so output is the minimal list of corners).
  */
-export function compressElbow(pts) {
+function compressElbow(pts) {
   const out = [];
   for (const p of pts) {
     const q = { x: snap(p.x), y: snap(p.y) };
@@ -75,7 +75,7 @@ function samePoint(a, b) {
 }
 
 /** Remove non-terminal 180-degree stubs and closed loops from a route. */
-export function pruneRoute(points, protectedPoints = []) {
+function pruneRoute(points, protectedPoints = []) {
   const protectedSet = new Set(protectedPoints.map((p) => `${snap(p.x)},${snap(p.y)}`));
   const out = points.map(snapP);
   let changed = true;

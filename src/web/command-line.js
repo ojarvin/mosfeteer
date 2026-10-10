@@ -286,7 +286,7 @@ export function didYouMean(word) {
 }
 
 /** Whether `word` is exactly a command's name or synonym. */
-export function knownCommandWord(word) {
+function knownCommandWord(word) {
   return !!word && !!(entryNamed(EDITOR_COMMANDS, word) || entryNamed(DOCUMENT_COMMANDS, word));
 }
 

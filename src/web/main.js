@@ -1038,7 +1038,7 @@ export function setLabelSelection(ids, primary = ids[0], preserveMixed = false) 
 
 /** The picked vertices, while their lines and arrows are the whole
  *  selection: [{ label, indices }] with indices in path order, or null. */
-export function vertexSelection() {
+function vertexSelection() {
   if (!selectedVertices || multi.size || selectedNets.size || selectedWires.size) return null;
   if ([...selLabels].some((id) => !selectedVertices.has(id))) return null;
   const picks = [];

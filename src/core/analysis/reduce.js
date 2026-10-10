@@ -23,7 +23,7 @@ export function isReduciblePassive(primitive) {
 }
 
 /** Exact impedance of one passive primitive, given a resolved (non-string) `.value`. */
-export function primitiveImpedance(primitive, ops) {
+function primitiveImpedance(primitive, ops) {
   const s = ops.s();
   switch (primitive.kind) {
     case 'resistor': return primitive.value;

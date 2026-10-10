@@ -8,9 +8,9 @@
 import { GRID } from './grid.js';
 import { segThroughInterior } from './router.js';
 
-export const BUBBLE_GAP = 3 * GRID;
-export const BUBBLE_PAD = GRID;
-export const BUBBLE_CAPTION = 1.5 * GRID;
+const BUBBLE_GAP = 3 * GRID;
+const BUBBLE_PAD = GRID;
+const BUBBLE_CAPTION = 1.5 * GRID;
 
 const snap = (value) => Math.round(value / GRID) * GRID;
 const ceilCell = (value) => Math.ceil(value / GRID - 1e-9) * GRID;
@@ -167,12 +167,12 @@ export function bubbleAt(bubbles, point) {
 
 // Bubbles are drawn in drawing units, like a dashed box annotation, so
 // they scale with the drawing on the canvas and in an export alike.
-export const BUBBLE_COLOR = '#1a56db';
-export const BUBBLE_STROKE = 6;
-export const BUBBLE_DASH = '12 12';
+const BUBBLE_COLOR = '#1a56db';
+const BUBBLE_STROKE = 6;
+const BUBBLE_DASH = '12 12';
 export const BUBBLE_RADIUS = GRID;
 export const BUBBLE_DOT = 6;
-export const BUBBLE_CAPTION_SIZE = 36;
+const BUBBLE_CAPTION_SIZE = 36;
 
 /** Where a bubble's name sits: its baseline, inset a cell from the rounded
  *  top-left corner. */

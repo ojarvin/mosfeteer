@@ -19,7 +19,7 @@ const REQUIRED_OPS = Object.freeze([
   'add', 'sub', 'mul', 'div', 'neg', 'isZero',
 ]);
 
-export const MNA_OPS = Object.freeze([
+const MNA_OPS = Object.freeze([
   'zero', 'one', ...REQUIRED_OPS,
 ]);
 

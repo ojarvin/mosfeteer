@@ -95,7 +95,7 @@ function roleCandidates(circuit, role) {
   return candidates;
 }
 
-export function resolveAnalysisPort(circuit, value, role) {
+function resolveAnalysisPort(circuit, value, role) {
   if (value != null && value !== '') return netByValue(circuit, value, role);
   const all = roleCandidates(circuit, role);
   // Candidates that share a name are one node, so they cannot be ambiguous.
@@ -161,7 +161,7 @@ export function collectAcGrounds(circuit, values = []) {
  * a port and a label carrying the same name). Their drawable geometry stays
  * separate, so the solve maps every member onto the first one it meets. The
  * returned map holds only the members that are not the representative. */
-export function virtualNetAliases(circuit) {
+function virtualNetAliases(circuit) {
   const byName = new Map();
   for (const net of circuit.nets.values()) {
     const name = canonicalNetName(net.name);

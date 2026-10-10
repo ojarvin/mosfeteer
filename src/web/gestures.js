@@ -289,15 +289,9 @@ export function easeOutCubic(t) {
   return 1 - (1 - clamped) ** 3;
 }
 
-/** Interpolate two view rectangles. */
-/** Ease in and out: a camera move that starts and lands gently. */
-export function easeInOutCubic(t) {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
-
 /** A quick start that settles softly: the view moves most of the way at
  *  once, so a short animation still reads, and lands without a bump. */
-export function easeOutQuint(t) {
+function easeOutQuint(t) {
   const clamped = Math.min(1, Math.max(0, t));
   return 1 - (1 - clamped) ** 5;
 }

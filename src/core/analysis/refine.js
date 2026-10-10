@@ -26,13 +26,13 @@
 import { INFEASIBLE_SCORE, fitnessOf } from './optimize.js';
 import { resolveCoefficients } from './coefficient-links.js';
 
-export const SENSITIVITY_STEP = 0.01;
+const SENSITIVITY_STEP = 0.01;
 // A spec moving this much (dB) per 1% of a coefficient: a fragile design.
 export const SENSITIVE_DB = 1;
 // A coefficient under this fraction of its block's largest is a candidate for zero.
-export const PRUNE_RATIO = 0.05;
+const PRUNE_RATIO = 0.05;
 // The most the goals may lose (dB, summed) to a coefficient set to zero.
-export const PRUNE_COST = 0.5;
+const PRUNE_COST = 0.5;
 
 /** A spec's value as dB: a magnitude already is; a pole Q as 20 log Q, a
  *  radius by its distance to the unit circle (as the search ranks them). */

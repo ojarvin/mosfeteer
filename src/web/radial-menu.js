@@ -21,7 +21,7 @@ import { snap, GRID } from '../core/grid.js';
 import { NET_HIGHLIGHT_COLORS } from '../core/model.js';
 import { addPinRail } from '../core/pin-rails.js';
 import { addTerminalStubs } from '../core/stubs.js';
-import { swapCandidates, swapComponentType } from '../core/swap.js';
+import { swapCandidates } from '../core/swap.js';
 import { setHighlightFrom } from '../core/beats.js';
 import { resolveColor } from '../core/style.js';
 import { radialRingRadius, radialSector, quickAddPlacement } from './gestures.js';

@@ -366,7 +366,7 @@ function term(token, power, variable, inverse) {
 }
 
 /** A polynomial as TeX, its terms in the order written. */
-export function polynomialTex(tokens, variable, inverse = false) {
+function polynomialTex(tokens, variable, inverse = false) {
   const last = tokens.length - 1;
   const terms = tokens
     .map((token, index) => (isZero(token) ? null : term(token, inverse ? index : last - index, variable, inverse)))

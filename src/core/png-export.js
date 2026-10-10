@@ -6,7 +6,7 @@ import { LABEL_FONT_SIZE } from './model.js';
 // DPI then sets its pixels. The PNG records that DPI, so apps that honour it
 // place the image at that size and its text at that point size.
 
-export const PNG_DPI_CHOICES = Object.freeze([150, 300, 600]);
+const PNG_DPI_CHOICES = Object.freeze([150, 300, 600]);
 export const DEFAULT_PNG_DPI = 300;
 /** Label text size (pt) a PNG is sized for when no page guide is active. */
 export const DEFAULT_EXPORT_TEXT_PT = 10;

@@ -80,7 +80,6 @@ const REVEAL_STEP_MS = 28;
 const REVEAL_SPREAD_MS = 520;
 /** A wheel zoom counts as motion until the wheel has been still this long. */
 const WHEEL_SETTLE_MS = 150;
-const OPEN_MS = 340;
 /** A design's image arriving after the desk shows fades in this long. */
 const ARRIVE_MS = 160;
 /** The desk's fade into the editor (style.css .atlas.leaving). */
@@ -1411,8 +1410,7 @@ function setView(view) {
 }
 
 /** Animate the view to `target`. `camera` flies there as one zoom
- *  (gestures.js zoomView) rather than easing each edge; `retargetView`
- *  can move the destination while it flies. */
+ *  (gestures.js zoomView) rather than easing each edge. */
 function animateView(target, duration = 320, { camera = false, scatter = null } = {}) {
   stopAnimation();
   const reduced = reducedMotion();
@@ -1474,11 +1472,6 @@ function partDesk(tile, outward, near, animation) {
     centre: { x: tile.x + tile.w / 2, y: tile.y + tile.h / 2 },
     reach: Math.hypot(near.w, near.h) * 0.75,
   };
-}
-
-/** Move a running animation's destination, keeping its pace. */
-function retargetView(target) {
-  if (state?.animation?.target) state.animation.target = target;
 }
 
 function stopAnimation() {

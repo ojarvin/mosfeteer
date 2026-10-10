@@ -13,7 +13,7 @@ import { documentKind, loadDocument, validDocumentName } from '../core/document.
 export { validDocumentName } from '../core/document.js';
 
 export const DOCUMENT_EXTENSION = '.json';
-export const LEGACY_DOCUMENT_EXTENSION = '.schematic.json';
+const LEGACY_DOCUMENT_EXTENSION = '.schematic.json';
 
 /** Display name of a document file: its base name without the document extension. */
 export function documentNameFromPath(path) {

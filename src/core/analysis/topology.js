@@ -22,7 +22,7 @@ function reachable(edges, start, excluded = -1) {
  * return path from the output; merely lying on a drawn signal path is not
  * sufficient to license multiplying independent stage gains.
  */
-export function findSignalCuts(pipeline, ops) {
+function findSignalCuts(pipeline, ops) {
   const { system, context, excitations } = pipeline;
   const input = system.unknowns.indexOf(`V(${context.input.node})`);
   const output = system.unknowns.indexOf(`V(${context.output.node})`);

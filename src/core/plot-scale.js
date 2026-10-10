@@ -129,7 +129,7 @@ export function zoomAbout(view, at, factor, axes = 'both') {
 
 /** Index of the last point whose x (u) is at most `u`, by bisection;
  *  -1 before the first. `points` are [x, y] sorted by x. */
-export function bisect(points, u) {
+function bisect(points, u) {
   let lo = 0;
   let hi = points.length - 1;
   if (!points.length || u < points[0][0]) return -1;

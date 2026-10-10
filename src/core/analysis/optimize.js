@@ -253,7 +253,7 @@ const VERIFY_MARGIN_PHASES = [0, 3.1];
 // What a limit compares with: the level |x| exceeds as rarely as a Gaussian
 // exceeds +-3 sigma (0.27% of samples) or +-4 sigma (0.0063%), or the
 // highest peak. The signals are not Gaussian: sigma names the rarity.
-export const SWING_MEASURES = Object.freeze({ sigma3: 0.0027, sigma4: 6.334e-5, peak: 0 });
+const SWING_MEASURES = Object.freeze({ sigma3: 0.0027, sigma4: 6.334e-5, peak: 0 });
 
 /** The level a set of magnitudes exceeds in a fraction `rarity` of them
  *  (the highest at 0). */

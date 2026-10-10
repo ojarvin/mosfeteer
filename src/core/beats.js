@@ -172,7 +172,7 @@ export function switchKeyFor(circuit, refOrPhase) {
 // ----- stored form ------------------------------------------------------
 
 /** An object's look in one beat, and the list each look is stored in. */
-export const PRESENCES = Object.freeze(['show', 'dim', 'hide']);
+const PRESENCES = Object.freeze(['show', 'dim', 'hide']);
 
 function emptyBeat(id, name = '') {
   return { id, name, show: [], dim: [], hide: [], switches: {}, highlights: {} };
@@ -225,7 +225,7 @@ export function beatsToJSON(circuit) {
   });
 }
 
-export function nextBeatId(circuit) {
+function nextBeatId(circuit) {
   const used = new Set((circuit.beats || []).map((beat) => beat.id));
   let n = 1;
   while (used.has(`b${n}`)) n += 1;
@@ -244,7 +244,7 @@ export function beatTitle(circuit, index) {
 /** 'component' or 'label' when `id` can be shown or hidden by a beat, else
  * null. Junction dots, owned labels, and captions of annotation shapes
  * follow their owners instead. */
-export function beatObjectKind(circuit, id) {
+function beatObjectKind(circuit, id) {
   const component = circuit.components.get(id);
   if (component) return component.type === 'solder' ? null : 'component';
   const label = circuit.labels.get(id);
@@ -264,7 +264,7 @@ export function beatTargetId(circuit, id) {
 // ----- tracks -----------------------------------------------------------------
 
 /** Per-beat presence ('show' | 'dim' | 'hide') of one object. */
-export function visibilityTrack(beats, id) {
+function visibilityTrack(beats, id) {
   const first = beats.map((beat) => listed(beat, id)).find(Boolean);
   let presence = first === 'show' ? 'hide' : 'show';
   return beats.map((beat) => {
@@ -441,11 +441,6 @@ function checkPresence(presence) {
   if (!PRESENCES.includes(presence)) throw new Error(`an object is shown, dimmed, or hidden, not "${presence}"`);
 }
 
-/** 'show', 'dim', or 'hide' for a listable object in beat `index`. */
-export function presenceAt(circuit, id, index) {
-  return visibilityTrack(circuit.beats, id)[index] ?? 'show';
-}
-
 /** Show, dim, or hide objects from beat `index` on, until the next beat
  * where they already looked different. Returns the listed ids. */
 export function setPresenceFrom(circuit, index, ids, presence) {
@@ -584,26 +579,19 @@ function railGroups(circuit) {
 }
 
 /**
- * What still works in one phase: the phase's equivalent circuit. With its
- * switches closed and every other phase's open, the open switches drop out
- * and the rest splits into islands joined through anything but a rail. The
- * ends of an island are the rails, pins, and named nets (a virtual
- * connection) it touches. An island keeps working when it has a device in it
- * -- anything but switches, pins, and rail markers -- and at least one end
- * (an integrator holding its charge, a capacitor holding its sample against
- * ground), or when its closed switches join two ends (an output reset to
- * VCM). Anything else is cut off: a capacitor floating between open switches
- * holds nothing that the phase uses. Returns a Set of the refdes
- * that stay shown, pins and rail markers included with the parts on their
- * wire; the open switches are never in it.
+ * What still works while the phases `isClosed(phaseKey)` says are closed --
+ * any set of them at once, as a timing diagram's state has. The open
+ * switches drop out and the rest splits into islands joined through anything
+ * but a rail. The ends of an island are the rails, pins, and named nets (a
+ * virtual connection) it touches. An island keeps working when it has a
+ * device in it -- anything but switches, pins, and rail markers -- and at
+ * least one end (an integrator holding its charge, a capacitor holding its
+ * sample against ground), or when its closed switches join two ends (an
+ * output reset to VCM). Anything else is cut off. Returns a Set of the
+ * refdes that stay shown, pins and rail markers included with the parts on
+ * their wire; the open switches are never in it.
  */
-export function phaseLive(circuit, key) {
-  return liveWhen(circuit, (phase) => phaseClosedIn(phase, key));
-}
-
-/** What still works while the phases `isClosed(phaseKey)` says are closed --
- *  any set of them at once, as a timing diagram's state has (phaseLive). */
-export function liveWhen(circuit, isClosed) {
+function liveWhen(circuit, isClosed) {
   const rails = railGroups(circuit);
   const closed = (component) => {
     if (!switchState(component)) return true;
@@ -672,7 +660,7 @@ function setSwitchAt(circuit, index, key, state) {
  * Insert one beat per switch phase at `index`, named after the phase: its
  * switches closed and every other phase's open (a barred phase closed
  * wherever the phase it complements is open), what still works in that phase
- * shown and the rest -- open switches included -- dimmed (phaseLive). Only
+ * shown and the rest -- open switches included -- dimmed (liveWhen). Only
  * phases some switch is on make beats. With `replace`, they replace every
  * existing beat instead. Returns how many beats.
  */

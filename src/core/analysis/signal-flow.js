@@ -41,7 +41,7 @@ function isSignalPart(component) {
 }
 
 /** A quantizer's error source: a gain of 1 plus this, in the linear model. */
-export const quantizerErrorKey = (refdes) => `quantizer:${refdes}`;
+const quantizerErrorKey = (refdes) => `quantizer:${refdes}`;
 
 /** Whether a drawing has any signal-flow part (the analysis mode it opens in). */
 export function hasSignalFlow(circuit) {
@@ -153,7 +153,7 @@ export function coefficientValue(token) {
 const DELAYS = new Map();
 
 /** The symbol standing for e^{-s delay}. */
-export function delaySymbol(delay) {
+function delaySymbol(delay) {
   const shown = renderExpression(delay);
   const name = shown === '1' ? '{e^{-s}}' : `{e^{-s\\,${shown}}}`;
   const known = DELAYS.get(name);
@@ -834,7 +834,7 @@ export function sampledEquation(entry, values) {
  * algebra explode. Returns `{ ok, columns }`, a transfer function per column
  * of B, or `{ ok: false, code, error }`.
  */
-export function eliminateSignals(A, B, outputIndex, ops, variable) {
+function eliminateSignals(A, B, outputIndex, ops, variable) {
   const n = A.length;
   const width = B[0]?.length ?? 0;
   const cancel = (value) => cancelCommonPolynomialFactor(value, { variable, maxWork: 400_000 });
@@ -1424,7 +1424,7 @@ export const MUTED_TRACE_COLOR = COLOR_PALETTE.gray;
  * results share the axis; on ω only s results plot. The frequency range
  * covers every trace. Null when none can be plotted.
  */
-export function plotAxis(traces, sAxis = 'omega') {
+function plotAxis(traces, sAxis = 'omega') {
   return traces.some((trace) => trace.variable === 'z') || sAxis === 'normalized' ? 'normalized' : 'omega';
 }
 
@@ -1434,7 +1434,7 @@ export function plotAxis(traces, sAxis = 'omega') {
  */
 /** A signal as the editor names it: its net's name, or an unnamed net's id
  *  with the pin driving it (`N1 (K1.out)`). */
-export function signalLabel(circuit, signal) {
+function signalLabel(circuit, signal) {
   const named = signal.netIds.map((id) => circuit.nets.get(id)).find((net) => net?.name);
   if (named) return named.name;
   const driver = signal.driver && !signal.driver.source ? ` (${signal.driver.comp}.${signal.driver.term})` : '';
@@ -1464,7 +1464,7 @@ export function outputChoices(circuit) {
 }
 
 /** A band's edges and its centre, f/fs: where a response is sampled exactly. */
-export function bandFrequencies(band) {
+function bandFrequencies(band) {
   const f0 = Number(band?.f0) || 0;
   return [...bandEdges(band), ...(f0 > 0 && bandEdges(band).length ? [f0] : [])];
 }

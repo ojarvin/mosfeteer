@@ -10,7 +10,7 @@ import { INTERFACE_PIN_TYPES, REFERENCE_MARKER_TYPES, canonicalNetName } from '.
 import { pointOnPath } from './wiring.js';
 
 /** Stub length: two grid cells out of the terminal. */
-export const STUB_CELLS = 2;
+const STUB_CELLS = 2;
 
 const samePoint = (a, b) => a.x === b.x && a.y === b.y;
 

@@ -76,7 +76,7 @@ function ratioText(value) {
 
 /** A number as a reader wants it: 3 significant figures, powers of ten when
  *  it is very large or small. */
-export function formatNumber(value) {
+function formatNumber(value) {
   if (!Number.isFinite(value)) return String(value);
   const magnitude = Math.abs(value);
   if (magnitude !== 0 && (magnitude < 1e-2 || magnitude >= 1e4)) {
@@ -100,7 +100,7 @@ function exactOf(report, key) {
 }
 
 /** Whether a report has anything with a frequency to plot. */
-export function bodeAvailable(report) {
+function bodeAvailable(report) {
   return QUANTITIES.some(({ key }) => {
     const exact = exactOf(report, key);
     return exact && (exact.numeratorDegree > 0 || exact.denominatorDegree > 0);
@@ -387,7 +387,7 @@ export function renderBode(report) {
 }
 
 /** The sketch as it stands, as a plot annotation's data (model.js normalizePlot). */
-export function currentPlotData() {
+function currentPlotData() {
   const model = currentModel();
   if (!model) return null;
   const { sketch, corners, quantity } = model;

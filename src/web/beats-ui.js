@@ -163,7 +163,7 @@ function clickBeatChip(i, ev) {
 
 /** Merge the picked beats into one, at the first of them (core/beats.js
  *  mergeBeats): most visible look, switches closed in any, first highlight. */
-export function mergePickedBeats() {
+function mergePickedBeats() {
   const indices = selectedBeatIndices();
   if (indices.length < 2) {
     hintLine('BEATS: Ctrl- or Shift-click two or more beats to merge them');
@@ -526,7 +526,7 @@ export function toggleTimingDialog() {
   else openTimingDialog();
 }
 
-export function openTimingDialog() {
+function openTimingDialog() {
   noteTip('timing-open');
   if (timingEditor) {
     timingEditor.grid.focus();

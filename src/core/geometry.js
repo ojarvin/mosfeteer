@@ -1,4 +1,3 @@
-import { GRID } from './grid.js';
 
 /**
  * Component/wire transforming. A transform is:

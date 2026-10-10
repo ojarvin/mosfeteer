@@ -67,7 +67,7 @@ function insert(text) {
 }
 
 /** Empty the results and forget ans and every name given. */
-export function clearCalculator() {
+function clearCalculator() {
   names = {};
   recall = -1;
   if (editor.circuit.windows.calculator) {
@@ -79,7 +79,7 @@ export function clearCalculator() {
 }
 
 /** Work out one line and keep it with the design. */
-export function calculateLine(line) {
+function calculateLine(line) {
   const text = String(line).trim();
   if (!text) return null;
   if (/^(clear|cls|reset)$/i.test(text)) {

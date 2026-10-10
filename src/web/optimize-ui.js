@@ -17,7 +17,7 @@
 import { MUTED_TRACE_COLOR, TRACE_COLORS, analyzeSignalFlow, diagramSymbols, responsePlot, signalFlowGraph, withCoefficients } from '../core/analysis/signal-flow.js';
 import { openRunWindow } from './optimize-window.js';
 import { arriving } from './motion.js';
-import { createOptimizer, fitnessOf, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
+import { createOptimizer, isFeasible, optimizationParameters, parseConstraints, prepareObjective, scoreRequest, swingTestFrequency } from '../core/analysis/optimize.js';
 import { POLE_MEASURES, normalizeOptimizeSetup } from '../core/analysis/optimize-setup.js';
 import { coefficientGroups, fractionSnapper, polishSearch } from '../core/analysis/rounding.js';
 import { SENSITIVE_DB, isSensitive, pruneCandidates, pruneSearch, sensitivitySearch } from '../core/analysis/refine.js';
