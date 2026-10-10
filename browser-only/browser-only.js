@@ -43620,6 +43620,7 @@ function placeSketch(existing) {
 };
 
 __modules["src/web/calculator-window.js"] = function (__require, __exports) {
+__exports.clearCalculator = clearCalculator;
 __exports.calculateLine = calculateLine;
 __exports.calculatorShown = calculatorShown;
 __exports.toggleCalculator = toggleCalculator;
@@ -43638,7 +43639,8 @@ let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged,
  * click on a result puts its value in the line. The results are saved with
  * the design (`Circuit#windows.calculator`), names given in them included,
  * so another design has its own and this one keeps them when it is closed
- * and opened again. `Shift+E` shows or hides it.
+ * and opened again. `clear` typed in the line, or the Clear button, empties
+ * the results and forgets `ans` and every name. `Shift+E` shows or hides it.
  */
 
 
@@ -43697,10 +43699,26 @@ function insert(text) {
   input.setSelectionRange(start + text.length, start + text.length);
 }
 
+/** Empty the results and forget ans and every name given. */
+function clearCalculator() {
+  names = {};
+  recall = -1;
+  if (editor.circuit.windows.calculator) {
+    delete editor.circuit.windows.calculator;
+    markSettingsChanged();
+  }
+  renderList();
+  win?.input.focus();
+}
+
 /** Work out one line and keep it with the design. */
 function calculateLine(line) {
   const text = String(line).trim();
   if (!text) return null;
+  if (/^(clear|cls|reset)$/i.test(text)) {
+    clearCalculator();
+    return { input: text, cleared: true };
+  }
   let entry;
   try {
     const { name, value } = calculate(text, names);
@@ -43742,11 +43760,12 @@ function onKey(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the calculator', title: 'Close (Shift+E)', text: '×' });
+  const clear = el('button', { type: 'button', class: 'calculator-clear', title: 'Clear the results and forget ans and every name (or type clear)', text: 'Clear', onclick: clearCalculator });
   const list = el('ol', { class: 'calculator-list', 'aria-live': 'polite' });
-  const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2.' });
+  const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2. clear starts afresh.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
   const node = el('section', { class: 'floating-window calculator-window', 'aria-labelledby': 'calculator-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), clear, close]),
     el('div', { class: 'calculator-body' }, [empty, list, input]),
   ]);
   node.style.setProperty('--calculator-rows', String(SHOWN));
@@ -71628,7 +71647,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+S', 'show or hide the small-signal analysis window'],
     ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
     ['Shift+W', 'show or hide the oscilloscope: a signal-flow diagram\'s nets in time; drag pans, right-drag zooms (a flat stroke time only), the wheel zooms'],
-    ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall'],
+    ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall, clear starts afresh'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],

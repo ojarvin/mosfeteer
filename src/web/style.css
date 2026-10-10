@@ -939,6 +939,13 @@ button:disabled {
   min-height: 0;
 }
 
+.calculator-clear {
+  flex: none;
+  height: var(--control-h-sm);
+  padding: 0 8px;
+  font-size: var(--text-xs);
+}
+
 .calculator-body {
   display: flex;
   flex: 1 1 auto;
