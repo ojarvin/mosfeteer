@@ -13910,7 +13910,9 @@ function prepareSimulation(circuit, options = {}) {
     // Each dither source its own sequence, the same every run: amplitudes
     // compare like for like.
     const sourceDither = new Map([...pSource.keys()].filter((key) => sourceValue.get(key).dither).map((key, i) => {
-      const { shape, amplitude: a } = sourceValue.get(key).dither;
+      // A in full scale: rect 1 is +-FS (N - 1 of the largest quantizer).
+      const { shape } = sourceValue.get(key).dither;
+      const a = sourceValue.get(key).dither.amplitude * fullScale;
       const draw = seededRandom(0xd17e + 7919 * i);
       return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
     }));
@@ -20118,8 +20120,9 @@ const sampler = defineSymbol({
 /**
  * A dither source: random numbers into a sampled signal, one a sample --
  * rectangular (uniform over +-A) or triangular (two uniforms added, over
- * +-A, peaking at 0). Its value is the shape and A (`rect 1`, `tri 0.5`),
- * drawn beside it; how much reaches the loop is a gain after it, a
+ * +-A, peaking at 0). Its value is the shape and A in full scale (`rect 1`
+ * is +-FS, the largest quantizer's N - 1), drawn beside it; how much
+ * reaches the loop is a gain after it, a
  * coefficient like any other. The transfer functions take it as a source
  * (its own transfer function to the output, as an input port's); the
  * simulations draw its numbers.
@@ -24746,7 +24749,7 @@ class Circuit {
     if (!variable) return null;
     const quantizer = component.type === 'quantizer';
     const dither = component.type === 'dither';
-    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}`; };
+    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}\\,\\text{FS}`; };
     const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centred on its
     // centroid, the part's origin); a longer one beside it, by one rule in
@@ -35443,7 +35446,8 @@ function isCoefficientBlock(component) {
 /**
  * A dither source's value: its shape and amplitude A, `rect 1` (uniform
  * over +-A; `uniform`, `rectangular`) or `tri 0.5` (triangular over +-A),
- * A a positive number (`1/2` too; a `±` is read past). Returns
+ * A a positive number in full scale (1 is +-FS, N - 1 of the largest
+ * quantizer; `1/2` too; a `±` and a trailing `FS` are read past). Returns
  * `{ shape: 'rect' | 'tri', amplitude }`.
  */
 function parseDither(text) {
@@ -35453,7 +35457,7 @@ function parseDither(text) {
   for (const word of words) {
     if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
     else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
-    else if (/^(a|amplitude)$/.test(word)) continue;
+    else if (/^(a|amplitude|fs)$/.test(word)) continue;
     else {
       const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
       if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5');
@@ -53115,7 +53119,7 @@ function inlineEditSchematicBlock(component) {
   if (transfer) input.title = component.type === 'quantizer'
     ? 'The number of levels N (2 is single-bit; levels at the odd or even integers up to N - 1). Enter applies, Esc cancels.'
     : component.type === 'dither'
-    ? 'The shape and the amplitude A: rect 1 (uniform over +-A) or tri 0.5 (triangular over +-A). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
+    ? 'The shape and the amplitude A in full scale: rect 1 (uniform over +-FS) or tri 0.5 (triangular over +-FS/2). Scale it into the loop with a gain after it. Enter applies, Esc cancels.'
     : component.type === 'sampler'
     ? 'The sampling period: a number or a symbol (T, T_s, 1). Enter applies, Esc cancels.'
     : component.type === 'gain'

@@ -49,7 +49,8 @@ export function isCoefficientBlock(component) {
 /**
  * A dither source's value: its shape and amplitude A, `rect 1` (uniform
  * over +-A; `uniform`, `rectangular`) or `tri 0.5` (triangular over +-A),
- * A a positive number (`1/2` too; a `±` is read past). Returns
+ * A a positive number in full scale (1 is +-FS, N - 1 of the largest
+ * quantizer; `1/2` too; a `±` and a trailing `FS` are read past). Returns
  * `{ shape: 'rect' | 'tri', amplitude }`.
  */
 export function parseDither(text) {
@@ -59,7 +60,7 @@ export function parseDither(text) {
   for (const word of words) {
     if (/^(rect|rectangular|uniform|rnd)$/.test(word)) shape = 'rect';
     else if (/^(tri|triangular|tpdf)$/.test(word)) shape = 'tri';
-    else if (/^(a|amplitude)$/.test(word)) continue;
+    else if (/^(a|amplitude|fs)$/.test(word)) continue;
     else {
       const match = word.match(/^(\d*\.?\d+(?:e[-+]?\d+)?)(?:\/(\d*\.?\d+))?$/);
       if (!match || amplitude !== null) throw new Error('a dither source is a shape and an amplitude: rect 1, tri 0.5');

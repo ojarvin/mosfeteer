@@ -2870,7 +2870,7 @@ export class Circuit {
     if (!variable) return null;
     const quantizer = component.type === 'quantizer';
     const dither = component.type === 'dither';
-    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}`; };
+    const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}\\,\\text{FS}`; };
     const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
     // A gain's short coefficient sits inside its triangle (centred on its
     // centroid, the part's origin); a longer one beside it, by one rule in

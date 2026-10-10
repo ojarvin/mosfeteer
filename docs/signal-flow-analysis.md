@@ -309,11 +309,16 @@ STF (a real input) to where the tone would sit, the amplitude in dBFS plus
 SNDR and ENOB beside the predicted SQNR.
 
 **Dither** is a part of the diagram: a **dither source** (`dither`, value
-`rect 1` or `tri 0.5`: its shape and A) draws a number a sample,
-rectangular over (-A, A) or triangular over (-A, A) peaking at 0, and a
-gain after it sets how much reaches the loop where it is wired (into the
-quantizer's sum, say) -- a coefficient like any other, so the optimizer and
-its fractions treat it as the gains into that block (one n per block).
+`rect 1` or `tri 0.5`: its shape and A, in full scale -- `rect 1` is
++-FS, the largest quantizer's N - 1) draws a number a sample, rectangular
+over (-A, A) or triangular over (-A, A) peaking at 0, and a gain after it
+sets how much reaches the loop where it is wired (into the quantizer's
+sum, say): with the default +-FS the gain reads as the dither in full
+scale. It is a coefficient like any other, so the fractions treat it as
+the gains into that block (one n per block). Nothing the optimizer
+measures rewards dither -- the transfer functions do not hold its gain and
+the swing test only grows with it -- so fix that gain rather than leave it
+free (a free one is driven down, or zeroed as one that barely matters).
 The transfer functions take it as a source, an input of its own; the
 simulations (swing, spectrum, oscilloscope, the optimizer's swing test)
 draw its numbers, the same sequence every run so runs compare like for

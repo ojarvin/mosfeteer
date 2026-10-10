@@ -494,7 +494,9 @@ export function prepareSimulation(circuit, options = {}) {
     // Each dither source its own sequence, the same every run: amplitudes
     // compare like for like.
     const sourceDither = new Map([...pSource.keys()].filter((key) => sourceValue.get(key).dither).map((key, i) => {
-      const { shape, amplitude: a } = sourceValue.get(key).dither;
+      // A in full scale: rect 1 is +-FS (N - 1 of the largest quantizer).
+      const { shape } = sourceValue.get(key).dither;
+      const a = sourceValue.get(key).dither.amplitude * fullScale;
       const draw = seededRandom(0xd17e + 7919 * i);
       return [key, shape === 'rect' ? () => a * (2 * draw() - 1) : () => a * (draw() - draw())];
     }));

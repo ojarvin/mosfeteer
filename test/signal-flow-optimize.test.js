@@ -485,6 +485,7 @@ test('a dither source: a source in the transfer functions, random numbers in the
   const { parseDither } = await import('../src/core/transfer-function.js');
   assert.deepEqual(parseDither('tri ±1/2'), { shape: 'tri', amplitude: 0.5 });
   assert.deepEqual(parseDither('uniform 2'), { shape: 'rect', amplitude: 2 });
+  assert.deepEqual(parseDither('rect ±1 FS'), { shape: 'rect', amplitude: 1 });
   assert.throws(() => parseDither('rect'), /amplitude/);
   // Dither into the quantizer's sum, through a gain d_1.
   const integrator = '"tf([0 1], [1 -1])"';
@@ -529,4 +530,17 @@ test('the dither\'s gains are named, though no transfer function holds them', as
     'connect DTH1.out KD.in', 'connect KD.out KE.in', 'connect KE.out S4.w']);
   assert.deepEqual(ditherSymbols(circuit), ['d_1', 'e_1']);
   assert.deepEqual(ditherSymbols(modulator()), []);
+});
+
+test('a dither source\'s amplitude is in full scale: rect 1 is +-FS of the largest quantizer', () => {
+  // The dither straight into a 5-level quantizer's output path: V is the
+  // dither itself, through a gain of 1 into an output (no loop).
+  const circuit = diagram(['add dither DTH1 --at 0 0 --value "rect 1"', 'add gain KD --at 240 0 --value 1', 'add quantizer QZ1 --at 640 400 --value 5', 'add input U --at 240 400', 'add output V --at 640 0', 'add output W --at 1000 400',
+    'connect DTH1.out KD.in', 'connect KD.out V.p', 'connect U.p QZ1.in', 'connect QZ1.out W.p']);
+  const sim = prepareSimulation(circuit, { values: {}, sources: {}, input: 'U', output: 'name:V', samples: 4096 });
+  assert.ok(sim.ok, sim.error);
+  assert.equal(sim.fullScale, 4);
+  const v = Array.from(sim.run(-60, { record: true }).samples);
+  const peak = Math.max(...v.map(Math.abs));
+  assert.ok(peak > 3.9 && peak <= 4, `peak ${peak}`);
 });

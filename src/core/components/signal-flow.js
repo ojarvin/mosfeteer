@@ -183,8 +183,9 @@ export const sampler = defineSymbol({
 /**
  * A dither source: random numbers into a sampled signal, one a sample --
  * rectangular (uniform over +-A) or triangular (two uniforms added, over
- * +-A, peaking at 0). Its value is the shape and A (`rect 1`, `tri 0.5`),
- * drawn beside it; how much reaches the loop is a gain after it, a
+ * +-A, peaking at 0). Its value is the shape and A in full scale (`rect 1`
+ * is +-FS, the largest quantizer's N - 1), drawn beside it; how much
+ * reaches the loop is a gain after it, a
  * coefficient like any other. The transfer functions take it as a source
  * (its own transfer function to the output, as an input port's); the
  * simulations draw its numbers.
