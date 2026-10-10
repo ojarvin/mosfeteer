@@ -160,17 +160,6 @@ export function bubbleOffset(part, at) {
   return { dx: snap(at.x) - (part.x + part.w / 2), dy: snap(at.y) - (part.y + part.h / 2) };
 }
 
-/** A design without its commentary, for a bubble's picture: free equations,
- *  pasted pictures (boxes drawing an image), and Bode sketches (boxes drawing
- *  a plot), with their captions. Labels of parts and nets stay. Changes and
- *  returns `circuit`. */
-export function peekPicture(circuit) {
-  const commentary = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && !label.parent
-    && (label.math || label.image || label.plot));
-  for (const label of commentary) if (circuit.labels.has(label.id)) circuit.removeLabel(label.id);
-  return circuit;
-}
-
 /** The bubble whose frame holds `point`, if any. */
 export function bubbleAt(bubbles, point) {
   return bubbles.find(({ frame }) => point.x >= frame.x && point.x <= frame.x + frame.w && point.y >= frame.y && point.y <= frame.y + frame.h) || null;

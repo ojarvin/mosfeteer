@@ -22,7 +22,7 @@ import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { designIndex, searchKey } from '../core/design-index.js';
 import { cacheGet, cachePut, renderingKey } from './atlas-cache.js';
-import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture } from '../core/link-bubble.js';
+import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { animateViewTo, fitTarget, fitView } from './canvas-view.js';
@@ -84,10 +84,9 @@ export function linkableDesigns() {
 const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
 /** A design drawn as a bubble's picture, in both themes; null when empty.
- *  The bubble shows the design itself: free equations, pasted pictures, and
- *  Bode sketches, the document's commentary, are left out (peekPicture). */
-async function pictureOf(full) {
-  const circuit = peekPicture(full);
+ *  The bubble shows the whole design as its own export draws it: equations,
+ *  timing diagrams, pasted pictures, and Bode sketches too. */
+async function pictureOf(circuit) {
   if (!circuit.components.size && !circuit.labels.size) return null;
   const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
   const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);

@@ -21202,7 +21202,6 @@ __exports.ARROWHEAD_VALUES = ARROWHEAD_VALUES;
 __modules["src/core/link-bubble.js"] = function (__require, __exports) {
 __exports.layoutBubbles = layoutBubbles;
 __exports.bubbleOffset = bubbleOffset;
-__exports.peekPicture = peekPicture;
 __exports.bubbleAt = bubbleAt;
 __exports.captionAnchor = captionAnchor;
 __exports.connectorPath = connectorPath;
@@ -21370,17 +21369,6 @@ function connectorCost(from, to, rects, segments, connectors, frames) {
  *  top-left corner) beside a part: grid-aligned, as the layout keeps it. */
 function bubbleOffset(part, at) {
   return { dx: snap(at.x) - (part.x + part.w / 2), dy: snap(at.y) - (part.y + part.h / 2) };
-}
-
-/** A design without its commentary, for a bubble's picture: free equations,
- *  pasted pictures (boxes drawing an image), and Bode sketches (boxes drawing
- *  a plot), with their captions. Labels of parts and nets stay. Changes and
- *  returns `circuit`. */
-function peekPicture(circuit) {
-  const commentary = [...circuit.labels.values()].filter((label) => !label.owner && !label.netId && !label.parent
-    && (label.math || label.image || label.plot));
-  for (const label of commentary) if (circuit.labels.has(label.id)) circuit.removeLabel(label.id);
-  return circuit;
 }
 
 /** The bubble whose frame holds `point`, if any. */
@@ -49758,7 +49746,7 @@ let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __requi
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let designIndex, searchKey; __bind(() => { ({ designIndex, searchKey } = __require("src/core/design-index.js")); });
 let cacheGet, cachePut, renderingKey; __bind(() => { ({ cacheGet, cachePut, renderingKey } = __require("src/web/atlas-cache.js")); });
-let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles, peekPicture } = __require("src/core/link-bubble.js")); });
+let BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles; __bind(() => { ({ BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } = __require("src/core/link-bubble.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/web/status-bar-ui.js")); });
 let animateViewTo, fitTarget, fitView; __bind(() => { ({ animateViewTo, fitTarget, fitView } = __require("src/web/canvas-view.js")); });
@@ -49855,10 +49843,9 @@ function linkableDesigns() {
 const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
 /** A design drawn as a bubble's picture, in both themes; null when empty.
- *  The bubble shows the design itself: free equations, pasted pictures, and
- *  Bode sketches, the document's commentary, are left out (peekPicture). */
-async function pictureOf(full) {
-  const circuit = peekPicture(full);
+ *  The bubble shows the whole design as its own export draws it: equations,
+ *  timing diagrams, pasted pictures, and Bode sketches too. */
+async function pictureOf(circuit) {
   if (!circuit.components.size && !circuit.labels.size) return null;
   const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false });
   const match = svg.match(/viewBox="([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)[ ,]+([-\d.e]+)"/);
