@@ -1,6 +1,6 @@
 {
   "name": "mosfeteer",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Programmatic/agent-assisted circuit schematic generator. Connectivity-based model rendered to SVG.",
   "type": "module",
   "scripts": {
