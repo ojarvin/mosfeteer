@@ -250,6 +250,7 @@ function clearResults() {
   locus = null;
   loop = null;
   spectrum = null;
+  swingRun++; // a sweep still running stops
   swing = null;
   swingShown = null;
   resetOptimize();

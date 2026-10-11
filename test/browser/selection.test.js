@@ -9,7 +9,7 @@ import { editing } from './fixtures.js';
 describe('selection and editing', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { edit: editing() }, width: 1400, height: 900 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   beforeEach(async () => {
     // An editor left open by a test is closed first.
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.inlineInput?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))`);
@@ -35,6 +35,7 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     }
     await sleep(80);
   };
+  const until = (expression) => h.until(`${h.module('editor-state.js')}.then((m) => { const e = m.editor; const c = e.circuit; return ${expression}; })`);
   const selected = () => ed(`({ parts: [...e.multi].length ? [...e.multi] : (e.selected ? [e.selected] : []), labels: [...e.selLabels].map((id) => c.labels.get(id)?.text ?? id) })`);
   const noteId = () => ed(`[...c.labels.values()].find((l) => l.text === 'note').id`);
 
@@ -159,19 +160,18 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     const ghost = () => ed('e.drag?.mode === "copyghost" ? [...e.drag.ghost.refs, ...(e.drag.ghost.mirror?.refs || [])] : []');
     const p = await at(-80, 240);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await sleep(60);
-    assert.equal((await ghost()).length, 1);
+    await until('e.cursor.x === -80 && e.cursor.y === 240');
+    await until('e.drag?.mode === "copyghost" && e.drag.ghost.refs.length === 1');
     try {
       await h.key('Alt', { altKey: true });
       const q = await at(-80, 400);
       await h.mouse('mouseMoved', q.x, q.y, { button: 'none', buttons: 0, modifiers: 1 });
-      await sleep(80);
+      await until('e.cursor.y === 400 && !!e.drag?.ghost?.mirror');
       const refs = await ghost();
       assert.equal(refs.length, 2, 'a mirrored second set');
       const listed = await h.evaluate(`[...document.querySelectorAll('#side-panel .row')].map((r) => r.textContent)`);
       assert.ok(!refs.some((ref) => listed.some((text) => new RegExp(`\\b${ref}\\b`).test(text))), 'the ghost is not in the parts list yet');
       await h.key('Enter', { altKey: true });
-      await sleep(100);
     } finally {
       await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))`);
     }
@@ -190,10 +190,11 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     // R1.b is at (80, 0): a new resistor at (160, 0) puts its a pin there.
     const p = await at(160, 0);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await sleep(60);
+    await until('e.cursor.x === 160 && e.cursor.y === 0');
+    const parts = await ed('c.components.size');
     await h.mouse('mousePressed', p.x, p.y);
     await h.mouse('mouseReleased', p.x, p.y);
-    await sleep(100);
+    await until(`c.components.size === ${parts + 1}`);
     await h.key('Escape');
     await h.key('Escape');
     const joined = await ed(`c.netOfTerminal({ comp: 'R1', term: 'b' })?.terminals.map((t) => t.comp + '.' + t.term).sort()`);

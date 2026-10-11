@@ -82,9 +82,12 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
     if (msg.method === 'Runtime.exceptionThrown') logs.push(['exception', msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text]);
     if (msg.method === 'Runtime.consoleAPICalled') logs.push([msg.params.type, msg.params.args.map((a) => a.value ?? a.description).join(' ')]);
   });
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
+  // Every call answers within a time limit: a page that stops answering
+  // fails its test instead of hanging the run.
+  const send = (method, params = {}, timeout = 30000) => new Promise((resolve, reject) => {
     const i = ++id;
-    pending.set(i, (m) => (m.error ? reject(new Error(`${method}: ${m.error.message}`)) : resolve(m.result)));
+    const timer = setTimeout(() => { pending.delete(i); reject(new Error(`${method}: no answer in ${timeout} ms`)); }, timeout);
+    pending.set(i, (m) => { clearTimeout(timer); if (m.error) reject(new Error(`${method}: ${m.error.message}`)); else resolve(m.result); });
     ws.send(JSON.stringify({ id: i, method, params }));
   });
   await send('Runtime.enable');
@@ -125,6 +128,12 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
     await sleep(100);
   };
 
+  /** Wait for `expression`, discarding unsaved changes whenever the editor asks. */
+  const untilDiscarding = (expression, timeout = 10000) => until(`(() => {
+    const dialog = document.getElementById('switch-dialog');
+    if (dialog?.open) dialog.querySelector('[value="discard"]').click();
+    return ${expression};
+  })()`, timeout);
   /** A key as the editor receives it on the canvas. */
   const key = (k, init = {}) => evaluate(`(() => { document.getElementById('canvas').focus(); document.getElementById('canvas').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, ...${JSON.stringify(init)} })); })()`);
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
@@ -144,5 +153,5 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
     await sleep(200);
     await rm(root, { recursive: true, force: true });
   };
-  return { send, evaluate, until, module, open, key, click, mouse, screenshot, exceptions, stop, logs, workspace, home, port };
+  return { send, evaluate, until, untilDiscarding, module, open, key, click, mouse, screenshot, exceptions, stop, logs, workspace, home, port };
 }

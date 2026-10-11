@@ -10,7 +10,7 @@ import { amplifier, editing } from './fixtures.js';
 describe('gestures', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { amp: amplifier(), edit: editing() }, width: 1400, height: 900 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   const fresh = async (name, state) => {
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.inlineInput?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))`);
     await h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden]) .floating-window-close')].forEach((b) => b.click())`);

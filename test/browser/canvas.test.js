@@ -9,7 +9,7 @@ import { amplifier } from './fixtures.js';
 describe('canvas editing', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { amp: amplifier() }, width: 1400, height: 900 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   // Each test starts from the design as saved, every tool put down.
   beforeEach(async () => {
     await h.open('amp');
@@ -189,8 +189,7 @@ describe('canvas editing', { skip: browserSkip() }, () => {
   test('New starts an empty schematic directly, and fitting it shows a 30-cell planning view', async () => {
     assert.equal(await h.evaluate(`document.getElementById('btn-new-document').getAttribute('aria-haspopup')`), null);
     await h.click('#btn-new-document');
-    await h.until(`(() => { const d = document.getElementById('switch-dialog'); if (d.open) d.querySelector('[value="discard"]').click(); return true; })()`);
-    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.size === 0)`);
+    await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.size === 0)`);
     await h.key('f');
     await sleep(100);
     const view = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.view)`);

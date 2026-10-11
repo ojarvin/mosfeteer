@@ -10,7 +10,7 @@ import { linkedTop, withBeats, amplifier } from './fixtures.js';
 describe('floating windows', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { beats: withBeats(), top: linkedTop(), child: amplifier() }, width: 1500, height: 950 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const shown = (selector) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return !!el && !el.hidden && !!el.offsetParent; })()`);
   const closeAll = () => h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden]) .floating-window-close')].forEach((b) => b.click())`);

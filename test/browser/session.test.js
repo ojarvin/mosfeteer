@@ -29,7 +29,7 @@ const pngWidth = (dataUrl) => Buffer.from(dataUrl.split(',')[1], 'base64').readU
 describe('documents and sessions', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), beats: withBeats() }, width: 1400, height: 900 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   /** Export through the dialog with `set` applied to its form; the requests it sent. */
   const exportWith = async (name, set) => {
@@ -97,8 +97,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     await h.until(`typeof window.__circuit === 'function' && !document.getElementById('startup-cover')`, 15000);
     await h.evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-close')?.click(); })()`);
     await h.click('#btn-new-document');
-    await h.until(`(() => { const d = document.getElementById('switch-dialog'); if (d.open) d.querySelector('[value="discard"]').click(); return true; })()`);
-    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.currentDocumentPath)`);
+    await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => !m.editor.currentDocumentPath)`);
     // The CLI makes amp the active document; the new, unsaved one stays.
     const response = await fetch(`http://127.0.0.1:${h.port}/api/circuits/amp/cmd`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cmd: 'add resistor R8 --at 1200 0' }) });
     assert.ok(response.ok, await response.text());
@@ -129,9 +128,8 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
   test('opening another design ends the tutorial; its own design reloaded does not', async () => {
     await h.open('amp');
     await h.evaluate(`${h.module('onboarding.js')}.then((m) => m.offerTutorial())`);
-    await h.until(`(() => { const d = document.getElementById('switch-dialog'); if (d.open) d.querySelector('[value="discard"]').click(); return true; })()`);
     const going = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => !!m.editor.tutorial)`);
-    await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.tutorial)`);
+    await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => !!m.editor.tutorial)`);
     // Saved, its file changed by another program and reloaded: still going.
     await h.evaluate(`${h.module('document-session.js')}.then((m) => m.saveCircuit())`);
     await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.currentDocumentPath)`);

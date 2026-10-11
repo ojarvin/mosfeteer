@@ -10,7 +10,7 @@ import { amplifier } from './fixtures.js';
 describe('small-signal analysis', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier() }, width: 1500, height: 950 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const value = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).value`);
   const checked = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).checked`);

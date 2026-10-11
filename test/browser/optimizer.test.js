@@ -18,7 +18,7 @@ describe('optimizer', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { const bw = document.querySelector('.signal-flow-band-field[data-key="bw"]'); bw.value = '1/64'; bw.dispatchEvent(new Event('input', { bubbles: true })); })()`);
     await h.evaluate(`document.querySelector('.signal-flow-optimize').open = true`);
   });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const optimizer = (selector) => `document.querySelector('.signal-flow-optimize ${selector}')`;
 

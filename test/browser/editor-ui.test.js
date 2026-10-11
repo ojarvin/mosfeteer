@@ -11,7 +11,7 @@ import { amplifier, editing, modulator } from './fixtures.js';
 describe('editor chrome', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { amplifier: amplifier(), modulator: modulator(), edit: editing() }, width: 1500, height: 950 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const style = (selector, property) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? getComputedStyle(el).getPropertyValue(${JSON.stringify(property)}) : null; })()`);
   const at = (x, y) => h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${x}, ${y}))`);

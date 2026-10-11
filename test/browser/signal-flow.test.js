@@ -12,7 +12,7 @@ import { amplifier, chain, modulator } from './fixtures.js';
 describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { modulator: modulator(), chain: chain(), amplifier: amplifier() }, width: 1500, height: 950 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const shown = (selector) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return !!el && !el.hidden && !!el.offsetParent; })()`);
   const tabs = () => h.evaluate(`[...document.querySelectorAll('.plots-window .signal-flow-view button')].map((b) => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : ''))`);
@@ -108,6 +108,25 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await openAnalysis('modulator');
     assert.equal(await h.evaluate(`document.querySelectorAll('.signal-flow-results .signal-flow-entry').length`), 0);
     assert.equal(await h.evaluate(`document.querySelectorAll('.plots-window .signal-flow-legend-row').length`), 0);
+  });
+
+  test('a swing sweep still running stops when another document is opened', async () => {
+    await openAnalysis('modulator');
+    await derive();
+    await tab('Swing');
+    const before = h.exceptions().length;
+    // Started, and another design shown on its first frame.
+    const running = await h.evaluate(`new Promise((resolve) => {
+      document.querySelector('.plots-window .signal-flow-swing-run').click();
+      requestAnimationFrame(() => {
+        const status = document.querySelector('.plots-window .signal-flow-swing-status').textContent;
+        window.__load(${JSON.stringify(chain())});
+        resolve(/Simulating/.test(status));
+      });
+    })`);
+    assert.ok(running, 'still sweeping when the design changed');
+    await sleep(1000);
+    assert.deepEqual(h.exceptions().slice(before), []);
   });
 
   test("a circuit's plots window says where its Bode plot is instead", async () => {

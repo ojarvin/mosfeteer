@@ -12,7 +12,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
   before(async () => {
     h = await start({ docs: { top: linkedTop(), child: amplifier(), alpha: tagged('CA'), beta: tagged('CB') }, width: 1400, height: 900 });
   });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const snapshot = () => h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`);
   const atlasKey = (key, init = {}) => h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, ...${JSON.stringify(init)} }))`);

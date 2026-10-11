@@ -9,7 +9,7 @@ import { twoResistors } from './fixtures.js';
 describe('wiring', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { two: twoResistors() }, width: 1400, height: 900 }); });
-  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   beforeEach(async () => {
     await h.open('two');
     await h.key('Escape');
