@@ -42,10 +42,11 @@ function freePort() {
   });
 }
 
-/** Start a server on `docs` ({ name: state }) and a browser on the editor. */
-export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
+/** Start a server on `docs` ({ name: state }) and a browser on the editor;
+ *  `folder` names the workspace folder (its name shows in the Atlas). */
+export async function start({ docs = {}, width = 1400, height = 900, folder = 'ws' } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mosfeteer-browser-'));
-  const workspace = join(root, 'ws');
+  const workspace = join(root, folder);
   await mkdir(workspace, { recursive: true });
   const home = join(root, 'home');
   await mkdir(join(home, 'Pictures'), { recursive: true });
