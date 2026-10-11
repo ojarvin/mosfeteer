@@ -19,20 +19,6 @@ test('document raster export sizes PNGs by the chosen DPI and keeps a fine PDF f
   assert.match(html, /<select name="pngDpi">[\s\S]*?value="300" selected/);
 });
 
-test('named net edits confirm virtual connections, and port names never repeat', () => {
-  const main = editorSource();
-  assert.match(main, /function namedConnectionConflicts\(/);
-  assert.match(main, /function confirmNamedConnection\(/);
-  assert.match(main, /cancelLabel: 'Keep separate'/);
-  assert.match(main, /namedConnectionConflicts\(v, \{ netId: net\.id \}\)/);
-  assert.match(main, /input\.focus\((\{ preventScroll: true \})?\);\s*input\.select\(\);\s*return false;/);
-  // A port's label is its identity: a name another port carries is reported
-  // as a collision instead of being offered as a virtual connection.
-  assert.match(main, /function portNameConflict\(/);
-  assert.match(main, /function reportPortNameConflict\(/);
-  assert.doesNotMatch(main, /applySharedInterfaceName|sharedInterfaceNameTarget|setInterfacePinName/);
-});
-
 test('insert categories keep switches and macros separate and include vccs with sources', async () => {
   const { symbolCategories } = await import('../src/core/components/categories.js');
   const groups = Object.fromEntries(symbolCategories().map(({ title, types }) => [title, types]));
@@ -47,39 +33,6 @@ test('insert categories keep switches and macros separate and include vccs with 
   assert.equal(groups.Other, undefined, 'every registered symbol has a category');
   // The insert menu uses the same groups.
   assert.match(readFileSync(new URL('../src/web/insert-menu.js', import.meta.url), 'utf8'), /symbolCategories\(availableTypes\)/);
-});
-
-test('selection style controls keep their text-target result shape', () => {
-  const main = editorSource();
-  const start = main.indexOf('function selectedTextTargets()');
-  const end = main.indexOf('\n}\n', start) + 2;
-  assert.ok(start > 0 && end > start);
-  assert.match(main.slice(start, end), /return \{ labels: \[\.\.\.labels\.values\(\)\], blocks: \[\] \};/);
-});
-
-test('the insert menu is one scrolling column led by the recent placements', () => {
-  const main = editorSource();
-  // Committed placements are what feed the Recent group, so an armed ghost the
-  // user escapes never claims a slot.
-  assert.match(main, /rememberInsertType\(pendingPlace\.type\)/);
-  assert.match(main, /rememberInsertType\('label'\)/);
-  // Session state only: nothing reads or writes it through the document or
-  // localStorage, so a reopened file never inherits someone else's shortcuts.
-  assert.doesNotMatch(main, /insertRecentTypes[\s\S]{0,200}localStorage/);
-  // The group leads the menu, and only while the list is being browsed: a
-  // query is answered by the fuzzy ranking alone.
-  assert.match(main, /\{ title: 'Recent', entries: recent \}, \.\.\.groups/);
-  const recentGroup = main.indexOf("title: 'Recent'");
-  assert.ok(recentGroup > 0 && main.lastIndexOf('if (!insertQuery) {', recentGroup) > 0);
-  // Most of the column is out of sight, so the highlight scrolls into view.
-  assert.match(main, /items\[highlight\]\?\.scrollIntoView\(\{ block: 'nearest' \}\)/);
-
-  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  const body = css.slice(css.indexOf('.insert-menu-body {'));
-  assert.match(body.slice(0, body.indexOf('}')), /overflow-y: auto/);
-  assert.match(body.slice(0, body.indexOf('}')), /overflow-x: hidden/);
-  // Columns would spread the list sideways over the drawing again.
-  assert.doesNotMatch(body.slice(0, body.indexOf('}')), /column-width/);
 });
 
 test('an aligned label keeps its own edge when its measured box changes', () => {
@@ -359,50 +312,6 @@ test('F5 reloads the application instead of entering the normal keymap', () => {
   assert.match(main, /ev\.preventDefault\(\);\s*flushDraft\(\);\s*window\.location\.reload\(\);/);
 });
 
-test('committed inserts repair coincident connectivity and analysis menus support multi-selection', () => {
-  const main = editorSource();
-  // One placement or a mirrored pair, each half repaired the same way.
-  assert.match(main, /placements\.map\(\(t\) => circuit\.addComponent\(pendingPlace\.type/);
-  assert.match(main, /for \(const comp of placed\) circuit\.connectCoincident\(comp\.refdes\);/);
-  assert.match(main, /circuit\.reconnectCoincidentNets\(\);/);
-  assert.match(main, /circuit\.ensureUniqueTerminals\(placed\.map\(\(comp\) => comp\.refdes\)\);/);
-  assert.match(main, /function analysisComponentTargets\(target/);
-  assert.match(main, /function analysisNetTargets\(target/);
-  assert.match(main, /for \(const component of components\) circuit\.setComponentAnalysis/);
-  assert.match(main, /for \(const net of nets\) circuit\.setNetAnalysis/);
-  assert.match(main, /channelLengthModulation: 'ignore'/);
-  assert.match(main, /channelLengthModulation: 'finite'/);
-  assert.match(main, /Clear r_o override/);
-  assert.match(main, /gmroLarge: true/);
-  assert.match(main, /ignoreBodyEffect: true/);
-  assert.match(main, /resistance: 'infinite'/);
-  assert.match(main, /Treat as R = ∞/);
-  assert.match(main, /Clear resistance override/);
-  assert.match(main, /Clear g_m r_o override/);
-  assert.match(main, /Clear body-effect override/);
-  assert.match(main, /function appendContextSmallSignalMenu\(menu, target\)/);
-  assert.match(main, /function appendSignalFlowPolarityMenu\(menu, target\)/);
-  assert.match(main, /signalRole === 'input'/);
-  assert.match(main, /circuit\.setSignalInputNegative\(component\.refdes, terminal\.name/);
-  assert.match(main, /Input polarity/);
-  assert.match(main, /appendContextSubmenu\(menu, 'Select'/);
-  assert.match(main, /function analysisChoiceState\(targets, read, expected\)/);
-  assert.match(main, /context-item-active/);
-  assert.match(main, /trigger\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(main, /trigger\.classList\.add\('context-item-open'\)/);
-  assert.match(main, /aria-checked/);
-  assert.match(main, /function openComponentChildLabelEditor\(component\)/);
-  assert.match(main, /ownedLabelDraft: true/);
-  assert.match(main, /if \(component\) openComponentChildLabelEditor\(component\)/);
-  assert.match(main, /const doubleClick = ev\.detail >= 2/);
-  assert.match(main, /setTimeout\(\(\) => openComponentChildLabelEditor\(componentHit\), 0\)/);
-  assert.match(main, /openComponentContextMenu\(\{ kind: 'component', value: comp \}/);
-  assert.match(main, /openComponentContextMenu\(\{ kind: 'net', value: net \}/);
-  assert.doesNotMatch(main, /Current source \(ideal small-signal open\)/);
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.doesNotMatch(html, /M1=current-source/);
-});
-
 test('pointer paths use snapped cursor conversion', () => {
   assert.deepEqual(worldAndCursorFromClient(50, 70, rect, view), {
     world: { x: 80, y: 120 }, cursor: { x: 80, y: 120 },
@@ -436,42 +345,6 @@ test('symmetric placement mirrors across one axis, chosen by the cursor', () => 
   assert.equal(symmetryOperation({ x: 400, y: 400 }, { x: 440, y: 640 }), 'mirrorY');
 });
 
-test('the style menu exposes one shared arrowhead as independent start/end toggle buttons', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="style-arrow-start"[^>]*data-arrow-end="start"/);
-  assert.match(html, /id="style-arrow-end"[^>]*data-arrow-end="end"/);
-  assert.match(html, /id="style-line-pattern"/);
-  assert.match(html, /data-line-style="solid"/);
-  assert.match(html, /data-line-style="dashed"/);
-  assert.match(html, /data-line-style="dash-dot"/);
-  assert.match(html, /data-line-style="dotted"/);
-  const main = editorSource();
-  assert.match(main, /function combineArrowheadEnds\(start, end\)/);
-  assert.match(main, /start && end \? 'both' : start \? 'start' : end \? 'end' : 'none'/);
-  assert.match(main, /field !== 'arrowhead' \|\| supportsArrowhead/);
-});
-
-test('the context menu carries the style panel controls and stays open while styling', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="style-line-row" data-style-row="line"/);
-  assert.match(html, /id="style-text-row" data-style-row="text"/);
-  const main = editorSource();
-  const open = functionSource('openComponentContextMenu', main);
-  assert.match(open, /menu\.appendChild\(heading\);\s*appendContextStyleStrip\(menu\);\s*appendContextActions\(menu, target\);/);
-  const strip = functionSource('appendContextStyleStrip', main);
-  // Cloned panel controls must not duplicate the panel's ids.
-  assert.match(strip, /removeAttribute\('id'\)/);
-  assert.match(strip, /strip\.addEventListener\('click', \(ev\) => handleStyleControlClick\(strip, ev\)\)/);
-  assert.doesNotMatch(strip, /closeComponentContextMenu/);
-  const handler = functionSource('handleStyleControlClick', main);
-  assert.doesNotMatch(handler, /closeComponentContextMenu/);
-  // The panel and an open strip reflect the same selection after every render.
-  const update = functionSource('updateStyleControls', main);
-  assert.match(update, /syncStyleControls\(panel, state\)/);
-  assert.match(update, /syncStyleControls\(strip, state\)/);
-  assert.match(main, /getElementById\('style-panel'\)\?\.addEventListener\('click', \(ev\) => handleStyleControlClick\(ev\.currentTarget, ev\)\)/);
-});
-
 test('opening another design ends the tutorial, but a sync reload of its own does not', () => {
   const main = editorSource();
   const body = (name) => main.slice(main.indexOf(`function ${name}(`), main.indexOf('\n}\n', main.indexOf(`function ${name}(`)));
@@ -481,114 +354,6 @@ test('opening another design ends the tutorial, but a sync reload of its own doe
   assert.match(body('deleteSavedCircuit'), /dropTutorial\(\);/);
   // The tutorial starts in a fresh document, so it is dropped before it begins.
   assert.match(body('offerTutorial'), /startNewDocument\(\);\s*startTutorial\(\);/);
-});
-
-test('hovering another context menu item closes submenus it is not part of', () => {
-  const main = editorSource();
-  const start = main.indexOf('function closeStrayContextSubmenus(');
-  const close = vm.runInNewContext(`(${main.slice(start, main.indexOf('\n}\n', start) + 2)})`, {
-    get componentContextMenuEl() { return menu; },
-    get document() { return { activeElement: active }; },
-  });
-  const el = (children = []) => {
-    const node = { children, classes: new Set(), attrs: {}, parent: null, focused: false,
-      classList: { remove: (c) => node.classes.delete(c), add: (c) => node.classes.add(c) },
-      setAttribute: (k, v) => { node.attrs[k] = v; },
-      contains: (other) => other === node || node.children.some((child) => child.contains(other)),
-      focus: () => { active = node; } };
-    for (const child of children) child.parent = node;
-    return node;
-  };
-  const inner = el();
-  const trigger = el();
-  const submenu = el([inner]);
-  submenu.classes.add('open');
-  const plain = el();
-  const menu = el([trigger, submenu, plain]);
-  menu.hidden = false;
-  submenu.previousElementSibling = trigger;
-  menu.querySelectorAll = () => [...(submenu.classes.has('open') ? [submenu] : [])];
-  let active = trigger;
-  close(inner); // pointer inside the submenu keeps it
-  assert.ok(submenu.classes.has('open'));
-  close(trigger); // back on its own trigger keeps it
-  assert.ok(submenu.classes.has('open'));
-  close(plain); // a sibling row closes it and takes focus
-  assert.ok(!submenu.classes.has('open'));
-  assert.equal(trigger.attrs['aria-expanded'], 'false');
-  assert.equal(active, plain);
-});
-
-test('a copy ghost mirrors by pasting a second set and reflecting it', () => {
-  const main = editorSource();
-  const arm = main.slice(main.indexOf('function armCopyGhostMirror('), main.indexOf('function dropCopyGhostMirror('));
-  const symmetry = main.slice(main.indexOf('function copyGhostSymmetryPin('), main.indexOf('function setSymmetry('));
-  assert.match(symmetry, /components\[0\]\.transform\.x, y: components\[0\]\.transform\.y/);
-  assert.match(symmetry, /components\.length > 1/);
-  assert.match(symmetry, /x: snap\(\(x0 \+ x1\) \/ 2\), y: snap\(\(y0 \+ y1\) \/ 2\)/);
-  assert.match(main, /const pin = drag\?\.mode === 'copyghost' \? copyGhostSymmetryPin\(\) : \{ \.\.\.cursor \};/);
-  assert.match(main, /waitingForMotion: drag\?\.mode === 'copyghost'/);
-  assert.match(main, /if \(symmetry\.waitingForMotion\)[\s\S]*symmetry\.waitingForMotion = false/);
-  assert.match(main, /const directionPin = symmetry\.armedCursor \|\| symmetry\.pin;/);
-  assert.match(main, /symmetry\.operation = symmetryOperation\(directionPin, cursor, symmetry\.operation\);/);
-  // One transform both carries the copy to the far side and flips its symbols,
-  // which is why the second set is pasted on top of the first rather than at
-  // the reflected point.
-  assert.match(arm, /const savedClipboard = clipboard;/);
-  assert.match(arm, /restoreCopyGhostSelection\(ghost\);\s*if \(!copySelection\(\)\)/);
-  assert.match(arm, /cursor = \{ \.\.\.clipboard\.anchor \};/);
-  assert.match(arm, /pasteClipboard\(\{ recordHistory: false, connect: false \}\);/);
-  assert.match(arm, /clipboard = savedClipboard;\s*cursor = savedCursor;/);
-  assert.match(arm, /transformMixedSelection\(symmetry\.operation, \{ recordHistory: false, center: symmetry\.pin \}\)/);
-  // A selection that cannot be reflected whole leaves nothing behind.
-  assert.match(arm, /circuit = Circuit\.fromJSON\(JSON\.parse\(beforeSnapshot\)\);\s*\n\s*restoreCopyGhostSelection\(ghost\);/);
-  // Its own base geometry makes every later move a translation.
-  assert.match(arm, /mirror\.baseGeometry = captureCopyGhostGeometry\(mirror\);/);
-
-  const move = main.slice(main.indexOf('function moveCopyGhost('), main.indexOf('function commitCopyGhost('));
-  assert.match(move, /translateCopyGhost\(ghost\.mirror,\s*\n?\s*symmetry\?\.operation === 'mirrorY' \? dx : -dx,/);
-  const refresh = main.slice(main.indexOf('function mirroredCopyGhostOperation('), main.indexOf('function refreshCopyGhostBase('));
-  assert.match(refresh, /transformMixedSelection\(mirroredCopyGhostOperation\(operation\),/);
-  assert.match(refresh, /const mirrorPivot = transformWorldPoints\(\[pivot\], symmetry\.pin, symmetry\.operation\)\[0\];/);
-  assert.match(main, /transformSelectionAbout\(axis === 'x' \? 'mirrorX' : 'mirrorY',/);
-  assert.match(main, /function transformSelectionAbout\(operation, transformPart\)[\s\S]*refreshCopyGhostBase\(\{ operation, pivot \}\)/);
-  assert.match(main, /function rotateSelectionAbout\([\s\S]*?if \(inCopyGhost \|\| multi\.size > 1/);
-  assert.match(main, /function mirrorSelectionAbout\([\s\S]*?if \(inCopyGhost \|\| multi\.size > 1/);
-  assert.doesNotMatch(main, /copyPivot/);
-
-  const render = main.slice(main.indexOf('function renderCanvas('), main.indexOf('\n// ----- mouse', main.indexOf('function renderCanvas(')));
-  assert.match(render, /for \(const ref of drag\.ghost\.mirror\?\.refs \|\| \[\]\) ghostRefs\.add\(ref\);/);
-  assert.match(render, /for \(const id of drag\.ghost\.mirror\?\.labels \|\| \[\]\) ghostLabels\.add\(id\);/);
-  assert.match(render, /for \(const id of drag\.ghost\.mirror\?\.netIds \|\| \[\]\) ghostNets\.add\(id\);/);
-
-  const drop = main.slice(main.indexOf('function dropCopyGhostMirror('), main.indexOf('function commitCopyGhost('));
-  // The mirror snapshot is based at the ghost's original placement. Dropping
-  // Alt must replay the primary displacement instead of returning it to the
-  // source component before the mirrored half is removed.
-  assert.match(drop, /const dx = snap\(cursor\.x\) - snap\(drag\.startWorld\.x\);/);
-  assert.match(drop, /const dy = snap\(cursor\.y\) - snap\(drag\.startWorld\.y\);/);
-  assert.match(drop, /beforeMirror\.topologyOnly = true;\s*circuit = Circuit\.fromJSON\(beforeMirror\);/);
-  assert.match(drop, /ghost\.mirror = null;\s*translateCopyGhost\(ghost, dx, dy\);/);
-
-  const commit = main.slice(main.indexOf('function commitCopyGhost('), main.indexOf('\n/** Paste the clipboard'));
-  // The mirror is pasted after the primary's own snapshot, so both halves are
-  // already inside the single history entry -- one undo for the pair.
-  assert.match(commit, /const refs = \[\.\.\.ghost\.refs, \.\.\.\(ghost\.mirror\?\.refs \|\| \[\]\)\];/);
-  assert.match(commit, /recordHistoryEntry\(ghost\.beforeSnapshot\);/);
-  assert.match(commit, /if \(mirrored && symmetry\?\.operation\) armCopyGhostMirror\(\);/);
-});
-
-test('transient copy ghosts stay out of side panels until committed', () => {
-  const main = editorSource();
-  const components = functionSource('renderComponents', main);
-  assert.match(components, /componentPaletteItems\(sortedComps\(\)\)[\s\S]*\.filter\(\(comp\) => !isTransientCopyGhostRef\(comp\.refdes\)\)/);
-
-  const nets = functionSource('renderNets', main);
-  assert.match(nets, /const visibleGroupNets =/);
-  assert.match(nets, /const groupedNets = visibleGroupNets\(net\)/);
-
-  const detail = functionSource('renderDetail', main);
-  assert.match(detail, /isTransientCopyGhostRef\(comp\.refdes\)/);
 });
 
 test('a compatibility mousemove after the same mouse pointermove is skipped', () => {
@@ -608,101 +373,6 @@ test('a compatibility mousemove after the same mouse pointermove is skipped', ()
   // Touch and pen have no compatibility echo to drop.
   skip({ ...pointer, pointerType: 'touch' });
   assert.equal(skip(mouse), false);
-});
-
-test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () => {
-  const main = editorSource();
-  const down = main.slice(main.indexOf('const pickedLine = endpointHit?.label'), main.indexOf("mode: 'labelmove', labelId: annotationGeometry.id"));
-  // Lines and arrows (grabbed by a vertex or segment), shape captions, and
-  // box outlines each try the copy grab first; a click without a drag still
-  // toggles the selection when the grab is released.
-  for (const target of ['pickedLine', 'annotationText', 'annotationGeometry']) {
-    const arm = down.indexOf(`armLabelCopyGrab(${target}, startWorld, startClient, ev)`);
-    assert.ok(arm >= 0, `${target} arms a copy`);
-    const toggle = target === 'pickedLine' ? down.indexOf('if (pickedLine && isSelectionModifier(ev))') : down.indexOf(`isSelectionModifier(ev)`, down.indexOf(target));
-    assert.ok(arm < toggle, `${target} copies before it toggles`);
-  }
-  // The one exception: Shift or Ctrl/Cmd on a vertex of the line already
-  // selected, or while vertices are picked, picks that vertex instead.
-  assert.ok(down.indexOf('pickVertex(endpointHit.label, vertexIndex, true)') < down.indexOf('armLabelCopyGrab(pickedLine'));
-});
-
-test('picked line vertices drag together, fall to a partial box, and go with Delete', () => {
-  const main = editorSource();
-  assert.match(main, /for \(const \{ label, indices, startPoints \} of drag\.picks\) \{[\s\S]*?label\.moveVertices\(indices, dx, dy\);/);
-  assert.match(main, /if \(drag\.mode !== 'marquee' \|\| !pickVerticesInBox\(box, drag\.shift\)\) applyBoxSelection/);
-  assert.match(functionSource('deleteSelection', main), /commit\(\(\) => \{ for \(const \{ label, indices \} of vertices\) label\.removeVertices\(indices\); \}\)/);
-  // No line needs selecting first: a box catching only some vertices, and
-  // no whole object, picks them, on any number of lines.
-  const box = functionSource('pickVerticesInBox', main);
-  assert.match(box, /caught\.refs\.length \|\| caught\.labels\.length \|\| caught\.nets\.length \|\| caught\.wires\.length\) return false;/);
-  assert.match(box, /partialVertexPicks\(circuit\.labels\.values\(\), box\)/);
-});
-
-test('a still click on a selected object cycles to the next one stacked under it, and a press drags the selected one', () => {
-  const main = editorSource();
-  const up = functionSource('canvasMouseUp', main);
-  assert.match(up, /const still = !!drag && !dragMoved\(/);
-  assert.match(up, /nextStackedSelection\(click\.candidates, click\.pressKey\)/);
-  const down = main.slice(main.indexOf('function canvasMouseDown('), main.indexOf('\n/** Arm one translation drag'));
-  assert.match(down, /stackedClick = !isSelectionModifier\(ev\) && ev\.detail < 2/);
-  assert.match(down, /beginComponentDrag\(\{ refdes: preferred\.slice\('component:'\.length\) \}/);
-  assert.match(down, /const wireHit = preferredWire \|\| pickWire\(startWorld\);/);
-});
-
-test('a click picks the label whose text is under the pointer before one whose box merely reaches there, and cycles through every label', () => {
-  const main = editorSource();
-  const at = functionSource('labelsAt', main);
-  assert.match(at, /const ink = label\.inkRect\(\);/);
-  assert.match(at, /return \[\.\.\.onText, \.\.\.inBox\];/);
-  assert.match(main, /function pickLabel\(w\) \{\s*return labelsAt\(w\)\[0\] \|\| null;/);
-  assert.match(main, /for \(const label of labelsAt\(w\)\) add\(`label:\$\{label\.id\}`\);/);
-});
-
-test('the inline label editor covers the text, not the label\'s grid box, and follows zoom', () => {
-  const main = editorSource();
-  const edit = main.slice(main.indexOf('function inlineEditLabel('), main.indexOf('  resize();', main.indexOf('function inlineEditLabel(')));
-  // The label's own size, one line tall per line, centred where the text is drawn.
-  assert.match(edit, /labelFontSize\(label\.style\?\.width\) \* scale/);
-  assert.match(edit, /const lines = input\.value\.split\('\\n'\)\.length \* fontPx \* 1\.2 \+ 4;/);
-  assert.match(edit, /const centre = r\.top \+ \(b\.y \+ b\.h \/ 2 - view\.y\) \* scale;/);
-  // Long text wraps and scrolls inside the visible canvas instead of running off it.
-  assert.match(edit, /const width = Math\.min\(r\.width - 2 \* margin,/);
-  assert.match(edit, /Math\.min\(Math\.max\(wanted, r\.left \+ margin\), r\.right - margin - width\)/);
-  assert.match(edit, /const height = Math\.min\(r\.height - 2 \* margin, Math\.max\(lines, input\.scrollHeight \+ 2\)\);/);
-  assert.match(edit, /input\.style\.overflowY = input\.scrollHeight > height \+ 1 \? 'auto' : 'hidden';/);
-  assert.match(edit, /input\.style\.overflowWrap = 'anywhere';/);
-  // It is laid out again on every repaint, so it follows zoom and pan.
-  assert.match(edit, /input\.relayout = resize;/);
-  assert.match(main, /syncViewToPane\(\);\s*\/\/ An open inline editor sits over its text at the current zoom and pan\.\s*inlineInput\?\.relayout\?\.\(\);/);
-  // Aligned text grows from its aligned edge, as the drawn text does.
-  assert.match(edit, /align === 'left' \? screenX\(b\.x \+ inset\) - editorPad/);
-  assert.doesNotMatch(edit, /const sh = /);
-});
-
-test('canvas text editors never scroll the page when they run past the window', () => {
-  const main = editorSource();
-  for (const name of ['function inlineEditLabel(', 'function inlineEditSchematicBlock(']) {
-    const body = main.slice(main.indexOf(name), main.indexOf('\n}\n', main.indexOf(name)));
-    assert.match(body, /input\.style\.position = 'fixed';/, name);
-    assert.doesNotMatch(body, /input\.focus\(\);/, name);
-  }
-});
-
-test('a set drag keeps net label sides and never shows a frame its nets cannot follow', () => {
-  const main = editorSource();
-  // Each frame reroutes from the pre-drag wire, whose label repair would put
-  // the label on whichever side its last frame's anchor lay: the side it had
-  // when the drag began is restored before the label is placed.
-  assert.match(main, /return \[id, \{ x: l\.anchorWorld\(\)\.x, y: l\.anchorWorld\(\)\.y, side: l\.netSide \}\];/);
-  assert.match(main, /if \(o\.side\) l\.netSide = o\.side;\s*moveLabelSafely\(l, o\.x \+ delta\.dx, o\.y \+ delta\.dy\);/);
-  assert.match(main, /if \(side\) label\.netSide = side;\s*if \(!moveLabelSafely\(label, point\.x, point\.y\)\)/);
-  // A failed reroute rolls back only the parts, so the whole frame is redone
-  // at the last delta that worked.
-  assert.match(main, /if \(rerouteNet\(net, netMoved\) === false\) ok = false;/);
-  // Junctions on selected wire ride along (carriedJunctions).
-  assert.match(main, /const netMoved = carry \? Object\.assign\(new Map\(moved\), \{ carry \}\) : moved;/);
-  assert.match(main, /if \(!applyDragStep\(delta\)\) \{\s*shown = drag\.goodDelta\?\.origins === drag\.origins \? drag\.goodDelta : \{ dx: 0, dy: 0 \};\s*applyDragStep\(shown\);/);
 });
 
 test('linked-design bubbles live in a kept layer and dive keys go through hierarchy.js', () => {

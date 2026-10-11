@@ -187,3 +187,20 @@ test('a box picks the vertices of lines it catches only partly, on any number of
   assert.deepEqual([...picks], [['L1', [0]], ['L2', [0]]]);
   assert.equal(partialVertexPicks(labels, { x0: 1000, y0: 1000, x1: 1200, y1: 1200 }).size, 0);
 });
+
+test('a click picks the label whose text is under it before one whose box merely reaches there', async () => {
+  const { labelsUnderPoint } = await import('../src/web/selection.js');
+  const label = (id, box, ink, extra = {}) => ({ id, kind: 'label', bbox: () => box, inkRect: () => ink, ...extra });
+  // A wide box reaches over the point, its text elsewhere; the other's text is on it.
+  const wide = label('wide', { x: 0, y: 0, w: 400, h: 80 }, { x: 200, y: 20, w: 180, h: 40 });
+  const onIt = label('on', { x: 40, y: 0, w: 80, h: 80 }, { x: 50, y: 20, w: 60, h: 40 });
+  assert.deepEqual(labelsUnderPoint([wide, onIt], { x: 80, y: 40 }).map((l) => l.id), ['on', 'wide']);
+  // Shapes, hidden labels, and ones not selectable are not picked.
+  const shape = label('box', { x: 0, y: 0, w: 400, h: 400 }, { x: 0, y: 0, w: 400, h: 400 }, { kind: 'box' });
+  const off = label('off', { x: 0, y: 0, w: 400, h: 80 }, { x: 0, y: 0, w: 400, h: 80 }, { selectable: false });
+  const hidden = label('hidden', { x: 0, y: 0, w: 400, h: 80 }, { x: 0, y: 0, w: 400, h: 80 });
+  assert.deepEqual(labelsUnderPoint([shape, off, hidden, onIt], { x: 80, y: 40 }, { hidden: new Set(['hidden']) }).map((l) => l.id), ['on']);
+  // The text is found a little beside its ink, as a pointer lands.
+  assert.deepEqual(labelsUnderPoint([onIt], { x: 112, y: 40 }, { tolerance: 4 }).map((l) => l.id), ['on']);
+  assert.deepEqual(labelsUnderPoint([wide], { x: 80, y: 40 }).map((l) => l.id), ['wide']);
+});

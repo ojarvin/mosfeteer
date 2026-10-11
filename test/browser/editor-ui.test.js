@@ -6,11 +6,11 @@
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
-import { amplifier, modulator } from './fixtures.js';
+import { amplifier, editing, modulator } from './fixtures.js';
 
 describe('editor chrome', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { amplifier: amplifier(), modulator: modulator() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { amplifier: amplifier(), modulator: modulator(), edit: editing() }, width: 1500, height: 950 }); });
   after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
 
   const style = (selector, property) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? getComputedStyle(el).getPropertyValue(${JSON.stringify(property)}) : null; })()`);
@@ -89,4 +89,59 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     assert.equal(await unsaved(), true, 'kept editing');
     await h.key('u');
   });
+
+  const closeWindows = () => h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden]) .floating-window-close')].forEach((b) => b.click())`);
+  const rightClick = async (x, y) => {
+    await closeWindows();
+    const p = await at(x, y);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
+    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+  };
+
+  test('a line\'s arrowheads are two toggles, its start and its end, sharing one setting', async () => {
+    await h.open('edit');
+    const line = await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.kind === 'line').id)`);
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setLabelSelection([${JSON.stringify(line)}]); m.render(); })`);
+    const arrowhead = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.labels.get(${JSON.stringify(line)}).style.arrowhead || 'none')`);
+    await h.click('#style-arrow-start');
+    assert.equal(await arrowhead(), 'start');
+    await h.click('#style-arrow-end');
+    assert.equal(await arrowhead(), 'both');
+    await h.click('#style-arrow-start');
+    assert.equal(await arrowhead(), 'end');
+    assert.equal(await h.evaluate(`document.getElementById('style-arrow-end').getAttribute('aria-pressed')`), 'true');
+    for (const pattern of ['solid', 'dashed', 'dash-dot', 'dotted']) assert.ok(await h.evaluate(`!!document.querySelector('#style-panel [data-line-style="${pattern}"]')`), pattern);
+  });
+
+  test('the context menu carries the style controls, keeps no duplicate ids, and stays open while styling', async () => {
+    await h.open('edit');
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['R2']); m.render(); })`);
+    await rightClick(600, 0);
+    const strip = await h.evaluate(`(() => { const menu = document.querySelector('.component-context-menu'); return { controls: menu.querySelectorAll('[data-line-style], [data-arrow-end], [data-style-color], button[data-color]').length, ids: [...menu.querySelectorAll('[id]')].map((el) => el.id).filter((id) => document.querySelectorAll('#' + CSS.escape(id)).length > 1) }; })()`);
+    assert.ok(strip.controls > 0, 'style controls in the menu');
+    assert.deepEqual(strip.ids, [], 'no id twice in the page');
+    await h.evaluate(`document.querySelector('.component-context-menu [data-line-style="dashed"]')?.click()`);
+    assert.equal(await h.evaluate(`document.querySelector('.component-context-menu').hidden`), false, 'still open');
+    await h.key('Escape');
+  });
+
+  test('hovering another menu row closes the submenus it is not part of', async () => {
+    await h.open('amplifier');
+    await rightClick(-20, 0); // M1
+    const row = (text) => `[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)}))`;
+    await h.evaluate(`${row('Small-signal attributes')}.click()`);
+    const open = () => h.evaluate(`document.querySelectorAll('.component-context-menu .context-submenu.open').length`);
+    assert.ok(await open() > 0);
+    // Hovering inside the submenu keeps it.
+    await h.evaluate(`${row('Device model')}.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+    await sleep(250);
+    assert.ok(await open() > 0, 'inside it, it stays');
+    await h.evaluate(`[...document.querySelector('.component-context-menu').querySelectorAll(':scope > button, :scope > .context-menu-group > button')].find((b) => !b.textContent.includes('Small-signal')).dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+    await sleep(250);
+    assert.equal(await open(), 0, 'a row outside it closes it');
+    await h.key('Escape');
+  });
 });
+

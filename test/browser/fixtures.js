@@ -46,3 +46,18 @@ export function amplifier() {
 export function twoResistors() {
   return build(['add resistor R1 --at 0 0', 'add resistor R2 --at 800 400', 'annotation add margin 1600 1000']);
 }
+
+/** Things to select and edit: a note over a resistor's body, a named wire
+ *  with its label, a bent line, and two input ports. */
+export function editing() {
+  const circuit = new Circuit();
+  for (const line of [
+    'add resistor R1 --at 0 0', 'annotation add note 0 0',
+    'add resistor R2 --at 600 0', 'add resistor R3 --at 1000 0', 'connect R2.b R3.a --name OUT',
+    'add input IN --at -400 400', 'add input IN2 --at -400 640',
+  ]) runCommand(circuit, line);
+  const net = circuit.netOfTerminal({ comp: 'R2', term: 'b' });
+  circuit.addNetLabel(net, { x: 760, y: 0, netSide: 'right' });
+  circuit.addAnnotation('line', { x: 0, y: 400, points: [{ x: 0, y: 400 }, { x: 200, y: 400 }, { x: 200, y: 560 }] });
+  return circuit.toJSON();
+}

@@ -53485,7 +53485,7 @@ let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __req
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
 let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
 let crossNetOverlaps, pointOnPath; __bind(() => { ({ crossNetOverlaps, pointOnPath } = __require("src/core/wiring.js")); });
-let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection, componentPressSelection; __bind(() => { ({ selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection, componentPressSelection } = __require("src/web/selection.js")); });
+let selectedSetMoveSource, selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection; __bind(() => { ({ selectedSetMoveSource, completeSelectedNetIds: selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection } = __require("src/web/selection.js")); });
 let buildWireHitIndex, queryWireHitIndex; __bind(() => { ({ buildWireHitIndex, queryWireHitIndex } = __require("src/web/wire-index.js")); });
 let layerActionForKey, layoutAlignKey, naturalCompare; __bind(() => { ({ layerActionForKey, layoutAlignKey, naturalCompare } = __require("src/web/toolbar.js")); });
 let alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient; __bind(() => { ({ alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } = __require("src/web/interaction.js")); });
@@ -54729,24 +54729,10 @@ function pickLabel(w) {
  * under the pointer comes first: an aligned label's box reaches past its text,
  * over a neighbour's text, and the text is what the user aims at. */
 function labelsAt(w) {
-  const x = snap(w.x);
-  const y = snap(w.y);
   const p = paneSize();
-  const tol = 4 / (p ? view.w / p.w : 1);
-  const barHidden = hiddenSupplyBarLabels(circuit);
-  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
-  const onText = [];
-  const inBox = [];
-  for (const label of labels()) {
-    if (label.selectable === false || barHidden.has(label.id)) continue;
-    if (['arrow', 'box', 'line'].includes(label.kind)) continue;
-    const r = label.bbox();
-    if (!(x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)) continue;
-    const ink = label.inkRect();
-    const inked = w.x >= ink.x - tol && w.x <= ink.x + ink.w + tol && w.y >= ink.y - tol && w.y <= ink.y + ink.h + tol;
-    (inked ? onText : inBox).push(label);
-  }
-  return [...onText, ...inBox];
+  const hidden = hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) hidden.add(id);
+  return labelsUnderPoint(labels(), w, { tolerance: 4 / (p ? view.w / p.w : 1), hidden });
 }
 
 function annotationTextAt(world) {
@@ -65679,6 +65665,9 @@ __exports.completeSelectedNetIds = completeSelectedNetIds;
 __exports.chooseWireHitCandidate = chooseWireHitCandidate;
 __exports.nextStackedSelection = nextStackedSelection;
 __exports.componentPressSelection = componentPressSelection;
+__exports.labelsUnderPoint = labelsUnderPoint;
+let snap; __bind(() => { ({ snap } = __require("src/core/grid.js")); });
+
 
 
 /** Convert any standalone visual label, including a net label, to the
@@ -65804,6 +65793,29 @@ function componentPressSelection({ refdes, selectedRefs = new Set(), selectedLab
     return { refs: [...selectedRefs], labelIds: [...selectedLabelIds], keepMixed: true };
   }
   return { refs: [...group], labelIds: [], keepMixed: false };
+}
+
+/**
+ * The text labels at world point `w`, the one whose text is under it first
+ * (within `tolerance`), then those whose grid box merely reaches there --
+ * so a click picks the text it is on, and clicking again goes through the
+ * rest. Shapes and labels `hidden` (or not selectable) are left out.
+ */
+function labelsUnderPoint(labels, w, { tolerance = 0, hidden = new Set() } = {}) {
+  const x = snap(w.x);
+  const y = snap(w.y);
+  const onText = [];
+  const inBox = [];
+  for (const label of labels) {
+    if (label.selectable === false || hidden.has(label.id)) continue;
+    if (['arrow', 'box', 'line'].includes(label.kind)) continue;
+    const r = label.bbox();
+    if (!(x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)) continue;
+    const ink = label.inkRect();
+    const inked = w.x >= ink.x - tolerance && w.x <= ink.x + ink.w + tolerance && w.y >= ink.y - tolerance && w.y <= ink.y + ink.h + tolerance;
+    (inked ? onText : inBox).push(label);
+  }
+  return [...onText, ...inBox];
 }
 
 __exports.copySelectionParts = __require("src/core/selection.js").copySelectionParts;

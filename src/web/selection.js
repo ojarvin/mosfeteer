@@ -1,3 +1,4 @@
+import { snap } from '../core/grid.js';
 export { copySelectionParts } from '../core/selection.js';
 
 /** Convert any standalone visual label, including a net label, to the
@@ -123,4 +124,27 @@ export function componentPressSelection({ refdes, selectedRefs = new Set(), sele
     return { refs: [...selectedRefs], labelIds: [...selectedLabelIds], keepMixed: true };
   }
   return { refs: [...group], labelIds: [], keepMixed: false };
+}
+
+/**
+ * The text labels at world point `w`, the one whose text is under it first
+ * (within `tolerance`), then those whose grid box merely reaches there --
+ * so a click picks the text it is on, and clicking again goes through the
+ * rest. Shapes and labels `hidden` (or not selectable) are left out.
+ */
+export function labelsUnderPoint(labels, w, { tolerance = 0, hidden = new Set() } = {}) {
+  const x = snap(w.x);
+  const y = snap(w.y);
+  const onText = [];
+  const inBox = [];
+  for (const label of labels) {
+    if (label.selectable === false || hidden.has(label.id)) continue;
+    if (['arrow', 'box', 'line'].includes(label.kind)) continue;
+    const r = label.bbox();
+    if (!(x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)) continue;
+    const ink = label.inkRect();
+    const inked = w.x >= ink.x - tolerance && w.x <= ink.x + ink.w + tolerance && w.y >= ink.y - tolerance && w.y <= ink.y + ink.h + tolerance;
+    (inked ? onText : inBox).push(label);
+  }
+  return [...onText, ...inBox];
 }

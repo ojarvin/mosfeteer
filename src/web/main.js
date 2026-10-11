@@ -34,7 +34,7 @@ import { TRANSFER_FUNCTION_TYPES } from '../core/transfer-function.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
 import { crossNetOverlaps, pointOnPath } from '../core/wiring.js';
-import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, nextStackedSelection, componentPressSelection } from './selection.js';
+import { selectedSetMoveSource, completeSelectedNetIds as selectedCompleteNetIds, chooseWireHitCandidate, labelsUnderPoint, nextStackedSelection, componentPressSelection } from './selection.js';
 import { buildWireHitIndex, queryWireHitIndex } from './wire-index.js';
 import { layerActionForKey, layoutAlignKey, naturalCompare } from './toolbar.js';
 import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constrainAxis, isKeyboardSurfaceTarget, isPrimaryPointerEvent, isSelectionModifier, moveAnnotationEndpoint, nearestPoint, resizeRect, shouldForwardCanvasMove, shouldPanTouch, symmetryOperation, worldAndCursorFromClient } from './interaction.js';
@@ -1203,24 +1203,10 @@ export function pickLabel(w) {
  * under the pointer comes first: an aligned label's box reaches past its text,
  * over a neighbour's text, and the text is what the user aims at. */
 function labelsAt(w) {
-  const x = snap(w.x);
-  const y = snap(w.y);
   const p = paneSize();
-  const tol = 4 / (p ? view.w / p.w : 1);
-  const barHidden = hiddenSupplyBarLabels(circuit);
-  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
-  const onText = [];
-  const inBox = [];
-  for (const label of labels()) {
-    if (label.selectable === false || barHidden.has(label.id)) continue;
-    if (['arrow', 'box', 'line'].includes(label.kind)) continue;
-    const r = label.bbox();
-    if (!(x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)) continue;
-    const ink = label.inkRect();
-    const inked = w.x >= ink.x - tol && w.x <= ink.x + ink.w + tol && w.y >= ink.y - tol && w.y <= ink.y + ink.h + tol;
-    (inked ? onText : inBox).push(label);
-  }
-  return [...onText, ...inBox];
+  const hidden = hiddenSupplyBarLabels(circuit);
+  for (const id of sizeReplacedNameLabels(circuit)) hidden.add(id);
+  return labelsUnderPoint(labels(), w, { tolerance: 4 / (p ? view.w / p.w : 1), hidden });
 }
 
 export function annotationTextAt(world) {
