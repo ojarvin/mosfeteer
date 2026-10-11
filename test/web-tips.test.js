@@ -1,7 +1,6 @@
-import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { TIP_COOLDOWN_MS, TIP_MAX_SHOWS, TIPS, TIPS_PER_SESSION, TipBook, loadTipState } from '../src/web/tips.js';
 
 const LATER = TIP_COOLDOWN_MS + 1;
@@ -57,14 +56,13 @@ test('turning tips off silences them, and stored junk is ignored', () => {
 });
 
 test('every tip is short and names a trigger and a retiring action the editor reports', () => {
-  const main = editorSource();
+  // Where the editor reports its events: one noteTip('event') call each.
+  const web = new URL('../src/web/', import.meta.url);
+  const main = readdirSync(web).filter((name) => name.endsWith('.js')).map((name) => readFileSync(new URL(name, web), 'utf8')).join('\n');
   for (const tip of TIPS) {
     assert.ok(tip.text.length <= 110, `${tip.id} is one short line`);
     for (const event of [tip.trigger, tip.retiredBy]) {
       assert.match(main, new RegExp(`noteTip\\('${event}'\\)`), `${event} is reported`);
     }
   }
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="tip-card"[^>]*role="status"[^>]*hidden/);
-  assert.match(html, /id="btn-tips"[^>]*role="menuitemcheckbox"/);
 });

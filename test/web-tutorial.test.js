@@ -1,7 +1,5 @@
-import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { TUTORIAL_STEPS, TUTORIAL_TARGETS, openTutorialTargets, tutorialProgress, tutorialRuns } from '../src/web/tutorial.js';
@@ -62,19 +60,10 @@ test('suggested spots disappear once a matching part stands on them', () => {
   assert.deepEqual(openTutorialTargets(circuit, TUTORIAL_STEPS.find((step) => step.id === 'label')), []);
 });
 
-test('step text marks keys, and the tutorial is offered, never pushed', () => {
+test('step text marks keys', () => {
   assert.deepEqual(tutorialRuns('Press **w** now'), [
     { key: false, text: 'Press ' }, { key: true, text: 'w' }, { key: false, text: ' now' },
   ]);
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  // Learn (?) holds it, and the empty drawing points there.
-  const learn = html.slice(html.indexOf('id="help-dialog"'), html.indexOf('</dialog>', html.indexOf('id="help-dialog"')));
-  assert.match(learn, /id="btn-tutorial"/);
-  assert.match(html, /data-empty-action="learn"/);
-  const main = editorSource();
-  // Nothing starts the tutorial except an explicit choice.
-  assert.equal((main.match(/(?<!function )startTutorial\(\)/g) || []).length, 1);
-  assert.match(main, /requestDocumentAction\('Starting the tutorial'/);
 });
 
 test('the suggested rows are evenly spaced, eight cells apart', () => {

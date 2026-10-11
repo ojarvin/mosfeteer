@@ -1,7 +1,5 @@
-import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { Circuit, LABEL_FONT_SIZE } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { editorOverlay, svgString } from '../src/core/render.js';
@@ -69,23 +67,6 @@ test('the editor draws the guide quietly, and in red when the drawing is wider',
   assert.match(wide, new RegExp(`−${Math.round(trim * 10) / 10} cells`));
   assert.doesNotMatch(fits, /page-guide-overflow/);
   assert.doesNotMatch(editorOverlay(new Circuit(), {}), /page-guide/);
-});
-
-test('settings hold the page guide and preferences; More holds document actions', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="btn-settings"[^>]*aria-haspopup="menu"/);
-  const settings = html.slice(html.indexOf('id="settings-menu"'), html.indexOf('</header>'));
-  assert.match(settings, /toolbar-menu-note[\s\S]*data-page-guide="ieee-1col"[\s\S]*data-page-guide="ieee-2col"[\s\S]*data-page-guide="a4"/);
-  for (const id of ['btn-scroll-scheme', 'btn-tips']) assert.match(settings, new RegExp(`id="${id}"`));
-  // Learning lives in Learn (?); Settings keeps only the tips switch.
-  for (const id of ['btn-tutorial', 'btn-symbols']) assert.doesNotMatch(settings, new RegExp(`id="${id}"`));
-  // The settings button is not in the view cluster, so a folded toolbar keeps it.
-  const view = html.slice(html.indexOf('class="toolbar-cluster view-cluster"'), html.indexOf('class="toolbar-cluster settings-cluster"'));
-  assert.doesNotMatch(view, /btn-settings/);
-  const more = html.slice(html.indexOf('id="document-menu"'), html.indexOf('</div>', html.indexOf('id="document-menu"')));
-  for (const id of ['btn-scroll-scheme', 'btn-tips', 'btn-tutorial', 'data-page-guide']) assert.doesNotMatch(more, new RegExp(id));
-  const main = editorSource();
-  assert.match(main, /renderDocument\(drawing, \{\s*\.\.\.DRAWING_EXPORT_OPTIONS,\s*grid,\s*pageGuide,/);
 });
 
 test('the A4 guide sets base label text at 8 pt across a 16 cm text width', () => {

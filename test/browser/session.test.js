@@ -3,10 +3,11 @@
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync } from 'node:fs';
+import { readdirSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { start, sleep, browserSkip } from './harness.js';
 import { amplifier, withBeats } from './fixtures.js';
+import { normalizePageGuide, pageGuideWidth } from '../../src/core/page-guide.js';
 
 /** The pixels per inch a PNG data URL declares (its pHYs chunk). */
 function pngDpi(dataUrl) {
@@ -140,5 +141,47 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     assert.equal(await going(), true, 'a reload of its own keeps it');
     await h.open('other');
     assert.equal(await going(), false, 'another design ends it');
+  });
+
+  test("the status bar dates a clean design by its file's time and an unsaved one by its latest edit", async () => {
+    utimesSync(join(h.workspace, 'other.json'), new Date(2025, 0, 5, 9, 30), new Date(2025, 0, 5, 9, 30));
+    await h.open('amp');
+    await h.open('other');
+    const chip = () => h.evaluate(`(() => { const c = document.getElementById('status-modified'); return c.hidden ? null : c.textContent; })()`);
+    assert.match(await chip(), /^saved .*2025/);
+    await h.evaluate(`window.__run('add resistor R9 --at 1600 1600')`);
+    await h.until(`/^edited just now$/.test(document.getElementById('status-modified').textContent)`);
+  });
+
+  test('an export is the width of the page guide chosen in Settings', async () => {
+    await h.open('amp');
+    // As first written: other tests widen it past the guide.
+    await h.evaluate(`window.__load(${JSON.stringify(amplifier())})`);
+    const width = (svg) => Number(svg.match(/viewBox="([^"]+)"/)[1].split(' ')[2]);
+    const svgOnly = `(form) => { for (const box of form.querySelectorAll('[name=format]')) box.checked = box.value === 'svg'; }`;
+    const [plain] = await exportWith('plain', svgOnly);
+    await h.evaluate(`document.querySelector('[data-page-guide="ieee-1col"]').click()`);
+    try {
+      const [guided] = await exportWith('guided', svgOnly);
+      assert.ok(Math.abs(width(guided.svg) - pageGuideWidth(normalizePageGuide('ieee-1col'))) < 0.01, `${width(plain.svg)} -> ${width(guided.svg)}`);
+      assert.notEqual(width(guided.svg), width(plain.svg));
+    } finally {
+      await h.evaluate(`document.querySelector('[data-page-guide=""]').click()`);
+    }
+  });
+
+  test('"Only the selection" starts unchecked each time the export opens', async () => {
+    await h.open('amp');
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.selectAll(); m.render(); })`);
+    const box = () => h.evaluate(`(() => { const b = document.querySelector('#export-form [name=selection]'); return { checked: b.checked, disabled: b.disabled }; })()`);
+    await h.key('e', { ctrlKey: true });
+    await h.until(`document.getElementById('export-dialog').open`);
+    assert.deepEqual(await box(), { checked: false, disabled: false });
+    await h.evaluate(`document.querySelector('#export-form [name=selection]').click()`);
+    await h.evaluate(`document.getElementById('export-dialog').close()`);
+    await h.key('e', { ctrlKey: true });
+    await h.until(`document.getElementById('export-dialog').open`);
+    assert.deepEqual(await box(), { checked: false, disabled: false });
+    await h.evaluate(`document.getElementById('export-dialog').close()`);
   });
 });

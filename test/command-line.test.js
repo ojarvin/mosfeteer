@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { Circuit } from '../src/core/model.js';
-import { runCommand } from '../src/core/commands.js';
+import { commandHelp, runCommand } from '../src/core/commands.js';
 import { DOCUMENT_COMMANDS, EDITOR_COMMANDS, canonicalDocumentLine, commandCompletions, commandLineIntent, didYouMean, resolveEditorCommand, tabComplete } from '../src/web/command-line.js';
 
 test('Tab completes a prefix, then Enter runs the editor command', () => {
@@ -83,19 +82,19 @@ test('every word the command line offers is unique and dispatchable', () => {
 });
 
 test('the document catalog covers every command the language dispatches', () => {
-  const source = readFileSync(new URL('../src/core/commands.js', import.meta.url), 'utf8');
-  const dispatched = new Set([...source.matchAll(/cmd === '([a-z_-]+)'/g)].map((match) => match[1]));
+  // Each word of the help that the language takes as a command, not as unknown.
+  const unknown = (word) => {
+    try {
+      return /unknown command/.test(runCommand(new Circuit(), word).text ?? '');
+    } catch (err) {
+      return /unknown command/.test(err.message);
+    }
+  };
+  assert.equal(unknown('nosuchword'), true);
+  const dispatched = [...new Set(commandHelp().match(/(?<![\w-])[a-z][a-z_-]*(?![\w-])/g))].filter((word) => !unknown(word));
+  assert.ok(dispatched.length > 40, dispatched.join(' '));
   const offered = new Set([...EDITOR_COMMANDS, ...DOCUMENT_COMMANDS].flatMap((entry) => [entry.name, ...(entry.aliases || [])]));
-  const missing = [...dispatched].filter((cmd) => !offered.has(cmd) && !['wire', 'net_label'].includes(cmd));
-  assert.deepEqual(missing, []);
-});
-
-test('every editor command has an action in the command-line UI', () => {
-  const ui = readFileSync(new URL('../src/web/command-line-ui.js', import.meta.url), 'utf8');
-  const actions = ui.slice(ui.indexOf('const ACTIONS = {'), ui.indexOf('\n};', ui.indexOf('const ACTIONS = {')));
-  for (const { name } of EDITOR_COMMANDS) {
-    assert.match(actions, new RegExp(`\\n  (${name}|'${name}'):`), name);
-  }
+  assert.deepEqual(dispatched.filter((cmd) => !offered.has(cmd)), []);
 });
 
 test('a typo completes to its nearest command when nothing else matches', () => {

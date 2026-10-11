@@ -8,7 +8,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -63,9 +63,15 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
     server.stderr.on('data', (chunk) => { out += chunk; });
     server.once('exit', () => reject(new Error(out)));
   });
-  const cdpPort = await freePort();
-  const chrome = spawn(chromePath(), ['--headless=new', `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${join(root, 'chrome')}`,
+  // Chrome picks its own debugging port and writes it down, so two
+  // browsers started at once never race for one.
+  const chrome = spawn(chromePath(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${join(root, 'chrome')}`,
     `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore', env: { ...process.env, HOME: home } });
+  let cdpPort = null;
+  for (let i = 0; i < 100 && !cdpPort; i++) {
+    try { cdpPort = Number((await readFile(join(root, 'chrome', 'DevToolsActivePort'), 'utf8')).split('\n')[0]) || null; } catch { /* not up yet */ }
+    if (!cdpPort) await sleep(100);
+  }
   let targets = [];
   for (let i = 0; i < 100 && !targets.some((t) => t.type === 'page'); i++) {
     try { targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json(); } catch { /* not up yet */ }
@@ -106,7 +112,11 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
     const end = Date.now() + timeout;
     for (;;) {
       try { const value = await evaluate(expression); if (value) return value; } catch { /* page still loading */ }
-      if (Date.now() > end) throw new Error(`timed out waiting for ${expression}`);
+      if (Date.now() > end) {
+        // What the page shows then: an open dialog or a focused field often explains it.
+        const state = await evaluate(`JSON.stringify({ dialogs: [...document.querySelectorAll('dialog[open]')].map((d) => d.id || d.className), focus: document.activeElement && (document.activeElement.id || document.activeElement.className || document.activeElement.tagName), status: document.getElementById('status-message')?.textContent })`).catch(() => 'unknown');
+        throw new Error(`timed out waiting for ${expression}\n  page: ${state}`);
+      }
       await sleep(50);
     }
   };

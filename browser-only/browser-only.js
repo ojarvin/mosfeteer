@@ -43749,6 +43749,7 @@ function installCommandLine() {
   cmdInput.addEventListener('blur', closeSuggestions);
 }
 
+__exports.ACTIONS = ACTIONS;
 };
 
 __modules["src/web/command-line.js"] = function (__require, __exports) {
@@ -45937,16 +45938,25 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
   };
   // A paste is all or nothing: one that fails part way leaves the document
   // as it was, never half a copy in it.
+  // The failure is caught here, inside the commit, which would otherwise
+  // swallow it and keep the half: restored, the commit records nothing.
   const before = snapshot();
-  try {
-    if (recordHistory) commit(apply);
-    else apply();
-  } catch (err) {
-    applyJson(before);
+  let failure = null;
+  const attempt = () => {
+    try {
+      apply();
+    } catch (err) {
+      failure = err;
+      applyJson(before);
+    }
+  };
+  if (recordHistory) commit(attempt);
+  else attempt();
+  if (failure) {
     addedComps.length = 0;
     addedLabels.length = 0;
     addedNetLabels.length = 0;
-    logLine(`Could not paste: ${err.message}`, 'error');
+    logLine(`Could not paste: ${failure.message}`, 'error');
     render();
     return false;
   }

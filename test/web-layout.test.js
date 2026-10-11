@@ -1,8 +1,8 @@
-import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { getSymbol } from '../src/core/components/index.js';
+import { Circuit } from '../src/core/model.js';
+import { editorOverlay } from '../src/core/render.js';
 import {
   alignmentPlan, describeGuides, distributionPlan, ghostLayoutItem, layoutAnchor,
   layoutSuggestions, placementGuides,
@@ -367,46 +367,33 @@ test('layout suggestions are conservative and separate from electrical check', (
   assert.ok(alignment.some((suggestion) => suggestion.kind === 'alignment' && suggestion.ids.includes('D')));
 });
 
-test('the editor draws and names the guides it computed', () => {
-  const main = editorSource();
-  // Guides describe the object being placed or moved against what is already
-  // committed, so the moving set and generated junction dots are not peers.
-  assert.match(main, /!ghostRefs\.has\(component\.refdes\) && component\.type !== 'solder'/);
-  // The dimension lines alone carry the relationship: a status-line readout
-  // changed on every cursor step and drowned the tool's own hint.
-  assert.match(main, /activePlacementGuides = placementGuide\?\.guides \|\| \[\]/);
-  assert.doesNotMatch(main, /describeGuides\(/);
-
-  const render = readFileSync(new URL('../src/core/render.js', import.meta.url), 'utf8');
-  const overlay = render.slice(render.indexOf('if (opts.placementGuide?.guides?.length)'),
-    render.indexOf('// A marquee/visual selection is only a preview'));
-  // Every interval is drawn between two anchors the guide carries, with a
-  // leader from each, and both equal intervals are labelled the same way.
-  assert.match(overlay, /for \(let i = 0; i \+ 1 < guide\.points\.length; i \+= 1\)/);
-  assert.equal((overlay.match(/\$\{guide\.cells\} cells/g) || []).length, 2);
-  assert.match(overlay, /leader = \(p\)/);
-  assert.match(overlay, /const ANCHOR_INK = '#0ea5e9'/);
-  assert.doesNotMatch(overlay, /SPACE_INK|#14b8a6/);
-  // It is an overlay: no coordinate of the moving object is touched here.
-  assert.doesNotMatch(overlay, /moving\.(anchor|bbox)\.[xy] =/);
-});
-
-test('a suggested guide is drawn as one, and the crosshair stays out of its way', () => {
-  const render = readFileSync(new URL('../src/core/render.js', import.meta.url), 'utf8');
-  const overlay = render.slice(render.indexOf('if (opts.placementGuide?.guides?.length)'),
-    render.indexOf('// A marquee/visual selection is only a preview'));
-  // Not yet standing there: dashed bars, a line across the target column or
-  // row, and a hollow point, so a suggestion never reads as a measurement of
-  // where the object actually is.
-  assert.match(overlay, /const pending = !guide\.exact;/);
-  assert.match(overlay, /if \(pending\) \{[\s\S]*Where to land/);
-  assert.match(overlay, /dot\(p, guide\.exact, color\)/);
-  assert.match(overlay, /p\.moving && !p\.synthetic && solid/);
-});
-
-test('the cursor crosshair starts off, leaving the guides to carry position', () => {
-  const main = editorSource();
-  assert.match(main, /let crosshairVisible = false;/);
+test('a guide is drawn as a measurement: equal intervals read alike, in blue, the point filled only when standing there', () => {
+  const peers = [item('R1', 0, 0), item('R2', 320, 0)];
+  const draw = (x) => {
+    const moving = { ...item('__ghost__', x, 0), moving: true };
+    const before = JSON.stringify(moving);
+    const guides = placementGuides(peers, moving);
+    const svg = editorOverlay(new Circuit(), { placementGuide: { moving, guides } });
+    assert.equal(JSON.stringify(moving), before, 'an overlay moves nothing');
+    const overlay = svg.slice(svg.indexOf('class="placement-guides"'));
+    return {
+      guide: guides.find((g) => g.kind === 'spacing'),
+      overlay,
+      filled: (overlay.match(/<circle[^>]*fill="#0ea5e9"/g) || []).length,
+      target: /stroke-opacity="0\.55"/.test(overlay),
+    };
+  };
+  const exact = draw(640);
+  assert.equal(exact.guide.exact, true);
+  assert.equal((exact.overlay.match(/>8 cells</g) || []).length, 2, 'both intervals labelled the same');
+  assert.match(exact.overlay, /#0ea5e9/);
+  assert.doesNotMatch(exact.overlay, /#14b8a6/);
+  // Not there yet: a hollow point and a line across where to land.
+  const pending = draw(600);
+  assert.equal(pending.guide.exact, false);
+  assert.ok(pending.filled < exact.filled, 'hollow until it stands there');
+  assert.equal(pending.target, true);
+  assert.equal(exact.target, false);
 });
 
 test('placement guides omit drawn-space references while keeping anchor spacing', () => {
@@ -414,22 +401,6 @@ test('placement guides omit drawn-space references while keeping anchor spacing'
   const guides = placementGuides(stack, item('__ghost__', 0, 200, 80, 80, 'port'));
   assert.equal(guides.some((guide) => guide.basis === 'space'), false);
   assert.ok(guides.some((guide) => guide.kind === 'spacing'));
-});
-
-test('align lives in the Selection inspector and lines up box child labels', async () => {
-  const { readFileSync } = await import('node:fs');
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const selection = html.slice(html.indexOf('data-panel="terminals"'), html.indexOf('</section>', html.indexOf('data-panel="terminals"')));
-  assert.ok(selection.indexOf('id="style-panel"') < selection.indexOf('id="align-panel"'), 'Align follows Style inside Selection');
-  assert.equal((html.match(/id="align-panel"/g) || []).length, 1);
-  const main = editorSource();
-  // A box's child label is eligible; only owned and net labels are excluded.
-  assert.match(main, /const eligibleLabels = labels\.filter\(\(label\) => !label\.owner && !label\.netId\);/);
-  // Children move from their original anchors after their parents.
-  // Selected children, even unmoved ones, are placed after their parents.
-  assert.match(main, /const children = plan\.deltas\.filter\(isChild\);/);
-  assert.match(main, /\[\.\.\.moves\.filter\(\(move\) => !isChild\(move\)\), \.\.\.children\]/);
-  assert.match(main, /label\.moveTo\(origin\.x \+ dx, origin\.y \+ dy\)/);
 });
 
 test('align to: a rectangle offers four edges, four corners, four edge midpoints, and its centre', () => {

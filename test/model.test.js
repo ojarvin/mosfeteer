@@ -3311,15 +3311,6 @@ test('net highlights offer sixteen distinct palette colors, far apart in turn', 
   }
   assert.ok(values.every(Boolean));
   assert.equal(new Set(values).size, values.length);
-  // The style swatches offer every palette color too.
-  const { readFileSync } = await import('node:fs');
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const swatches = [...html.matchAll(/class="swatch[^"]*"[^>]*data-value="([^"]+)"/g)].map((match) => match[1]);
-  // Swatches store the token, so a later palette change reaches old picks.
-  for (const [token, value] of Object.entries(COLOR_PALETTE)) {
-    assert.ok(swatches.includes(token), `swatch for ${token}`);
-    assert.ok(html.includes(`data-value="${token}" aria-label="${token === 'gray' ? 'Grey' : token[0].toUpperCase() + token.slice(1)}" style="--swatch:${value}"`), `swatch color for ${token}`);
-  }
 });
 
 test('net highlights color whole electrical groups with unique cycling colors', async () => {
@@ -3548,11 +3539,3 @@ test('a restyled label keeps its last measured box as the edge to hold, not the 
   assert.equal(label._restyled, false);
 });
 
-test('the editor measures a restyled label against its previous box (no creep on toggles)', async () => {
-  const { functionSource, editorSource } = await import('./helpers/editor-source.js');
-  const sync = functionSource('syncRenderedLabelMetrics', editorSource());
-  assert.match(sync, /const before = \(\(label\.parent \|\| label\._restyled\) && label\._boxBeforeEdit\) \|\| label\.bbox\(\);/);
-  const { readFileSync } = await import('node:fs');
-  const controls = readFileSync(new URL('../src/web/style-controls.js', import.meta.url), 'utf8');
-  assert.match(controls, /label\.clearRenderedTextBounds\(\{ restyle: true \}\)/);
-});

@@ -7,6 +7,8 @@ import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
 import { amplifier, editing, modulator } from './fixtures.js';
+import { Circuit } from '../../src/core/model.js';
+import { COLOR_PALETTE } from '../../src/core/style.js';
 
 describe('editor chrome', { skip: browserSkip() }, () => {
   let h;
@@ -154,6 +156,175 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     assert.ok(categories.every((l) => !l.measured), 'no category label measured');
     assert.ok(labels.some((l) => !l.category && l.measured), 'while the other labels are');
     await h.open('amplifier');
+  });
+
+  test('every editor command the command line offers has an action', async () => {
+    const missing = await h.evaluate(`Promise.all([${h.module('command-line.js')}, ${h.module('command-line-ui.js')}]).then(([line, ui]) => line.EDITOR_COMMANDS.map((c) => c.name).filter((name) => typeof ui.ACTIONS[name] !== 'function'))`);
+    assert.deepEqual(missing, []);
+  });
+
+  test('the footer is one status line with a log drawer over the drawing; live hints and check results stay out of the log', async () => {
+    await h.open('edit');
+    const bar = await h.evaluate(`(() => { const s = getComputedStyle(document.querySelector('footer.statusbar')); return { h: s.height, resize: s.resize }; })()`);
+    assert.deepEqual(bar, { h: '26px', resize: 'none' });
+    for (const id of ['status-mode', 'status-selection', 'status-cursor', 'status-zoom', 'status-check', 'status-message', 'btn-help']) assert.ok(await h.evaluate(`!!document.querySelector('footer.statusbar #${id}')`), id);
+    assert.equal(await h.evaluate(`!!document.querySelector('#log-drawer #log') && !!document.querySelector('#log-drawer #cmd-input')`), true);
+    assert.equal(await style('#log-drawer', 'position'), 'absolute', 'it floats, taking no room');
+    assert.equal(await h.evaluate(`document.getElementById('log-drawer').hidden`), true);
+    // The wiring hint shows in the status line only.
+    await h.key('w');
+    await h.until(`/click a terminal or point to start/.test(document.getElementById('status-message').textContent)`);
+    assert.doesNotMatch(await h.evaluate(`document.getElementById('log').textContent`), /click a terminal or point to start/);
+    await h.key('Escape');
+    // A check with problems fills the panel and the chip; the log drawer stays shut.
+    await h.evaluate(`${h.module('design-check-ui.js')}.then((m) => m.runCheck())`);
+    assert.match(await h.evaluate(`document.getElementById('status-check').textContent`), /⚠/);
+    await sleep(300);
+    assert.equal(await h.evaluate(`document.getElementById('log-drawer').hidden`), true, 'no peek');
+    // Each category is one group, its rows without the category's name.
+    const groups = await h.evaluate(`[...document.querySelectorAll('#check-summary details.check-group')].map((g) => ({ name: g.querySelector('summary span').textContent, rows: [...g.querySelectorAll('.check-issue')].map((b) => b.textContent) }))`);
+    assert.ok(groups.length > 0);
+    for (const group of groups) for (const row of group.rows) assert.ok(!row.includes(group.name), `${group.name}: ${row}`);
+  });
+
+  test('a view of its own keeps its scale and top-left corner when the window resizes', async () => {
+    await h.open('edit');
+    // Zoomed by hand: no longer the fitted view, which refits instead.
+    await h.evaluate(`(() => { const c = document.getElementById('canvas'); const r = c.getBoundingClientRect(); c.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, ctrlKey: true, clientX: r.x + r.width / 3, clientY: r.y + r.height / 3, bubbles: true, cancelable: true })); })()`);
+    await sleep(200);
+    const view = () => h.evaluate(`${h.module('canvas-view.js')}.then((m) => { const a = m.worldToClient(0, 0); const b = m.worldToClient(400, 0); return { x: Math.round(a.x), y: Math.round(a.y), scale: Math.round((b.x - a.x) * 100) / 100 }; })`);
+    const before = await view();
+    await h.send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
+    await sleep(300);
+    const after = await view();
+    await h.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 950, deviceScaleFactor: 1, mobile: false });
+    await sleep(300);
+    assert.deepEqual(after, before);
+  });
+
+  test('the name shows a dot while unsaved; the annotation tools fold into one rail flyout; styling sits in the Selection panel', async () => {
+    await h.open('amplifier');
+    const dot = () => h.evaluate(`document.getElementById('dirty-dot').hidden`);
+    assert.equal(await dot(), true);
+    await h.evaluate(`window.__run('add resistor R9 --at 1600 1600')`);
+    await h.until(`!document.getElementById('dirty-dot').hidden`);
+    await h.key('u');
+    for (const id of ['annotation', 'arrow', 'box', 'line']) {
+      assert.equal(await h.evaluate(`!!document.querySelector('.mode-toolbar #btn-mode-${id}')`), false, `${id} not on the rail`);
+      assert.equal(await h.evaluate(`!!document.querySelector('#rail-flyout #btn-mode-${id}')`), true, `${id} in the flyout`);
+    }
+    assert.ok(await h.evaluate(`!!document.querySelector('.mode-toolbar #btn-rail-annotate')`));
+    for (const id of ['btn-bring-front', 'btn-send-back']) assert.equal(await h.evaluate(`!!document.getElementById('${id}')`), false, id);
+    assert.equal(await h.evaluate(`document.getElementById('style-panel').closest('[data-panel]').dataset.panel`), 'terminals');
+  });
+
+  test('Ctrl+Z undoes and Ctrl+Shift+Z redoes', async () => {
+    await h.open('amplifier');
+    const has = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.has('R9'))`);
+    await h.evaluate(`window.__run('add resistor R9 --at 1600 1600')`);
+    await h.key('z', { ctrlKey: true });
+    assert.equal(await has(), false);
+    await h.key('Z', { ctrlKey: true, shiftKey: true });
+    assert.equal(await has(), true);
+  });
+
+  test('Settings holds the page guides, scrolling, and tips; More and Learn keep the rest', async () => {
+    await h.click('#btn-settings');
+    await h.until(`!document.getElementById('settings-menu').hidden`);
+    const settings = await h.evaluate(`[...document.querySelectorAll('#settings-menu button')].map((b) => b.id || 'guide:' + (b.dataset.pageGuide ?? ''))`);
+    const guides = settings.filter((id) => id.startsWith('guide:'));
+    assert.deepEqual(guides, ['guide:', 'guide:ieee-1col', 'guide:ieee-2col', 'guide:a4']);
+    for (const id of ['btn-scroll-scheme', 'btn-tips']) assert.ok(settings.includes(id), id);
+    assert.equal(await h.evaluate(`document.getElementById('btn-tips').getAttribute('role')`), 'menuitemcheckbox');
+    assert.deepEqual(await h.evaluate(`(() => { const card = document.getElementById('tip-card'); return [card.getAttribute('role'), card.hidden]; })()`), ['status', true]);
+    for (const id of ['btn-tutorial', 'btn-symbols']) assert.ok(!settings.includes(id), id);
+    await h.key('Escape');
+    // Not in the view cluster, so a folded toolbar keeps it.
+    assert.equal(await h.evaluate(`!!document.querySelector('.view-cluster #btn-settings')`), false);
+    assert.equal(await h.evaluate(`!!document.querySelector('#document-menu :is(#btn-scroll-scheme, #btn-tips, #btn-tutorial, [data-page-guide])')`), false);
+    assert.equal(await h.evaluate(`!!document.querySelector('#help-dialog #btn-tutorial')`), true, 'the tutorial is in Learn');
+  });
+
+  test('the tutorial is offered, never pushed: the empty drawing points to Learn, and starting it asks about unsaved changes', async () => {
+    await h.open('amplifier');
+    await h.click('#btn-new-document');
+    await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => !m.editor.currentDocumentPath && m.editor.circuit.components.size === 0)`);
+    await h.until(`!document.getElementById('empty-state').hidden`);
+    const tutorial = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => !!m.editor.tutorial)`);
+    assert.equal(await tutorial(), false, 'not started by itself');
+    await h.click('#empty-state [data-empty-action="learn"]');
+    await h.until(`document.getElementById('help-dialog').open`);
+    await h.evaluate(`document.getElementById('help-dialog').close()`);
+    assert.equal(await tutorial(), false);
+    // With an edit unsaved, starting it asks first.
+    await h.evaluate(`window.__run('add resistor R1 --at 0 0')`);
+    await h.evaluate(`document.getElementById('btn-tutorial').click()`);
+    await h.until(`document.getElementById('switch-dialog').open`);
+    assert.equal(await tutorial(), false);
+    await h.click('#switch-dialog [value="discard"]');
+    await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.tutorial)`);
+    await h.evaluate(`${h.module('onboarding.js')}.then((m) => m.dropTutorial())`);
+  });
+
+  test('a guide shows on the drawing while a part is placed, not in the status line; the crosshair starts off', async () => {
+    await h.open('edit');
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.crosshairVisible)`), false);
+    // R2 at 600 and R3 at 1000: a third resistor placed a pitch before them.
+    await h.key('i');
+    for (const ch of 'resistor') await h.key(ch);
+    await h.key('Enter');
+    await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.pendingPlace)`);
+    const p = await at(200, 0);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.cursor.x === 200 && m.editor.cursor.y === 0)`);
+    await h.until(`!!document.querySelector('#canvas .placement-guides')`);
+    const status = await h.evaluate(`document.querySelector('footer.statusbar').textContent`);
+    assert.doesNotMatch(status, /\d+ cells/, 'the drawing carries the measure, not the status line');
+    // A pitch measured from R2 and R3 to the part being placed.
+    const guides = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.activePlacementGuides.map((g) => ({ kind: g.kind, xs: g.points.map((p) => p.x), moving: g.points.filter((p) => p.moving).length })))`);
+    assert.ok(guides.some((g) => g.kind === 'spacing' && g.xs.join() === '200,600,1000' && g.moving === 1), JSON.stringify(guides));
+    await h.key('Escape');
+    await h.key('Escape');
+  });
+
+  test('Align follows Style in the Selection panel and lines up a box\'s own label with a loose one', async () => {
+    assert.equal(await h.evaluate(`(() => { const style = document.getElementById('style-panel'); const align = document.getElementById('align-panel'); return style.closest('[data-panel]') === align.closest('[data-panel]') && !!(style.compareDocumentPosition(align) & Node.DOCUMENT_POSITION_FOLLOWING); })()`), true);
+    assert.equal(await h.evaluate(`document.querySelectorAll('#align-panel').length`), 1);
+    const circuit = new Circuit();
+    const box = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 400, y: 240 } });
+    const child = circuit.addLabel({ text: 'inside', align: 'left', parent: box.id, x: 160, y: 120 });
+    const loose = circuit.addLabel({ text: 'loose', align: 'left', x: 40, y: 480 });
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setLabelSelection(${JSON.stringify([child.id, loose.id])}); m.render(); })`);
+    await h.click('[data-layout-align="left"]');
+    const left = (id) => h.evaluate(`${h.module('editor-state.js')}.then((m) => Math.round(m.editor.circuit.labels.get(${JSON.stringify(id)}).inkRect().x))`);
+    assert.equal(await left(child.id), await left(loose.id));
+  });
+
+  test('the style swatches offer every palette color, stored as its token', async () => {
+    const swatches = await h.evaluate(`[...document.querySelectorAll('#style-color .swatch')].map((b) => ({ value: b.dataset.value, label: b.getAttribute('aria-label'), color: b.style.getPropertyValue('--swatch') }))`);
+    for (const [token, value] of Object.entries(COLOR_PALETTE)) {
+      const swatch = swatches.find((s) => s.value === token);
+      assert.ok(swatch, `swatch for ${token}`);
+      assert.equal(swatch.color, value, token);
+      assert.equal(swatch.label, token === 'gray' ? 'Grey' : token[0].toUpperCase() + token.slice(1));
+    }
+  });
+
+  test('a label toggled bold and back keeps its place: no creep on toggles', async () => {
+    await h.open('edit');
+    // A left-aligned formula: its measured box differs from the estimate.
+    const circuit = new Circuit();
+    const formula = circuit.addLabel({ text: '$\\frac{g_m}{C_L}$', x: 200, y: 200, math: true });
+    formula.setAlign('left');
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    const id = formula.id;
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setLabelSelection([${JSON.stringify(id)}]); m.render(); })`);
+    const box = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const r = m.editor.circuit.labels.get(${JSON.stringify(id)}).inkRect(); return [r.x, r.y, r.w, r.h].map((v) => Math.round(v * 10) / 10); })`);
+    await sleep(100);
+    const before = await box();
+    for (let i = 0; i < 6; i++) { await h.key('b', { ctrlKey: true }); await sleep(50); }
+    assert.deepEqual(await box(), before);
   });
 });
 

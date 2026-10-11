@@ -1,6 +1,4 @@
-import { editorSource } from './helpers/editor-source.js';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { encodeObjectClipboard, decodeObjectClipboard, OBJECT_CLIPBOARD_FORMAT } from '../src/core/object-clipboard.js';
 
@@ -58,44 +56,10 @@ test('damaged or foreign-version copied objects are refused before any paste', (
   }
 });
 
-test('Ctrl/Cmd+C publishes copies and Ctrl/Cmd+V is read from the browser paste event', async () => {
-  const main = editorSource();
-  assert.match(main, /k === 'c' && !ev\.shiftKey\) \{\s*ev\.preventDefault\(\);\s*if \(copyHoveredReference\(\)\) return;\s*if \(copySelection\(\)\) publishObjectClipboard\(\);/);
-  // Ctrl/Cmd+C and V are the clipboard keys; the old y and p are gone.
-  assert.doesNotMatch(main, /key === 'y'\)|key === 'p'\) \{\s*pasteClipboard/);
-  // Ctrl/Cmd+V must not prevent the default, or no paste event follows.
-  assert.match(main, /k === 'v'\) \{\s*\/\/[^\n]*\n\s*armObjectPaste\(ev\.shiftKey \? 'style' : 'objects'\);\s*\}/);
-  assert.match(main, /document\.addEventListener\('paste', /);
-});
-
 test('a copied net label crosses windows as just its name', () => {
   const copied = { comps: [], labels: [], nets: [], fragments: [], anchor: { x: 0, y: 0 }, netLabel: { text: 'V_{out}' }, style: null };
   assert.deepEqual(decodeObjectClipboard(encodeObjectClipboard(copied)), copied);
   for (const netLabel of [{ text: '' }, { text: 7 }, 'VOUT']) {
     assert.throws(() => decodeObjectClipboard(encodeObjectClipboard({ ...copied, netLabel })), /bad net label/);
   }
-});
-
-test('pasting a copied net label hands its name to the net label tool', () => {
-  const main = editorSource();
-  // Every paste route starts the placement instead of dropping loose text.
-  assert.match(main, /if \(clipboard\.netLabel\) return beginNetLabelPaste\(clipboard\.netLabel\.text\);/);
-  assert.match(main, /if \(clipboard\.netLabel\) \{\s*if \(recordHistory\) beginNetLabelPaste\(clipboard\.netLabel\.text\);\s*return;/);
-  // Ctrl-drag drops it once, then returns to Select.
-  assert.match(main, /beginNetLabelPaste\(label\.text, \{ once: true \}\);\s*drag = \{ mode: 'netlabelpaste'/);
-  assert.match(main, /drag\.mode === 'netlabelpaste'\) \{\s*placeNetLabelAt\(w\);/);
-  // Picking any tool forgets a pasted name, so plain Shift+L never inherits it.
-  assert.match(main, /function activateLabelPlacement\(kind\) \{\s*leaveActiveInteraction\(\);\s*clearNetLabelPaste\(\);/);
-  // A differently named net is renamed only after a confirmation.
-  assert.match(main, /kind === 'rename' && !await confirmChoice\(/);
-});
-
-test('a copied net keeps its diagonal legs, and a paste that fails leaves the document as it was', () => {
-  const paste = readFileSync(new URL('../src/web/copy-paste.js', import.meta.url), 'utf8');
-  const capture = paste.slice(paste.indexOf('const nets = parts.nets.map((net) => ({'), paste.indexOf('const fragments = parts.fragments.map'));
-  assert.match(capture, /allowDiagonal: net\.allowDiagonal,/);
-  assert.match(paste, /createWireNet\(\{ name: pastedNetName\(n, refMap\), allowDiagonal: n\.allowDiagonal,/);
-  // All or nothing.
-  assert.match(paste, /catch \(err\) \{\s*applyJson\(before\);/);
-  assert.match(paste, /if \(!pasteClipboard\(\{ recordHistory: false, connect: false \}\)\) return false;/);
 });

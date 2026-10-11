@@ -1,7 +1,5 @@
-import { editorSource } from './helpers/editor-source.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { Circuit, Net } from '../src/core/model.js';
 import { netLabelPasteKind, resolveCopySelection } from '../src/core/selection.js';
 import { selectionDrawing } from '../src/core/selection-drawing.js';
@@ -202,10 +200,6 @@ test('exporting only the selection renders the subset with the normal export fra
   assert.match(svg, /data-ref="R1"/);
   assert.doesNotMatch(svg, /data-ref="R2"/);
   assert.ok(circuit.components.has('R2'), 'the document is untouched');
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /name="selection"[^>]*\/> Only the selection/);
-  const main = editorSource();
-  assert.match(main, /exportSelectionInput\.checked = false;/);
 });
 
 test('a selection keeps the net highlight colors of the document', async () => {

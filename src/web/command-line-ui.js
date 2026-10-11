@@ -44,7 +44,7 @@ function openMenu(buttonId) {
 }
 
 /** What each editor command does. `state` is resolveEditorCommand's. */
-const ACTIONS = {
+export const ACTIONS = {
   settings: () => openMenu('btn-settings'),
   more: () => openMenu('btn-document-menu'),
   panel: (state) => setSidePanelVisible(state ?? !sidePanelVisible()),

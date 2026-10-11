@@ -28,14 +28,3 @@ test('modification times read relative to now, then as yesterday or the date', (
   // A clock that runs behind the file never reads as the future.
   assert.equal(formatModifiedTime(now + 5000, now), 'just now');
 });
-
-test('the status bar carries the modified chip, refreshed with the save state', async () => {
-  const { readFileSync } = await import('node:fs');
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const chips = html.slice(html.indexOf('class="status-chips"'), html.indexOf('id="log-drawer"'));
-  assert.match(chips, /id="status-modified"[^>]*hidden/);
-  const session = readFileSync(new URL('../src/web/document-session.js', import.meta.url), 'utf8');
-  assert.match(session, /renderModifiedTime\(dirty\);/);
-  // Unsaved edits date from the latest one; a clean document from its file.
-  assert.match(session, /return dirty && editedAt !== null \? editedAt : revisionTime\(editor\.lastSeenRevision\);/);
-});

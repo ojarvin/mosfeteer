@@ -1,7 +1,5 @@
-import { editorSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } from '../src/web/status-bar.js';
 
 const run = (events, start = LOG_DRAWER_CLOSED) => events.reduce((state, event) => logDrawerTransition(state, event), start);
@@ -50,58 +48,6 @@ test('zoom reads as a percentage of the default scale; fields hide empty selecti
   assert.deepEqual(statusFields({ mode: 'WIRE', selection: '', cursor: { x: 40, y: -80 }, hints: ['a', '', 'b'] }),
     { mode: 'WIRE', selection: '', cursor: '40, -80', hint: 'a  ·  b' });
   assert.equal(statusFields({}).mode, 'NORMAL');
-});
-
-test('the footer is one status line with an overlay log drawer and no resize affordance', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  const main = editorSource();
-  assert.match(html, /<footer class="statusbar" id="console-panel"/);
-  assert.match(html, /<section id="log-drawer" class="log-drawer"[^>]*hidden>[\s\S]*id="log"[\s\S]*id="cmd-input"/);
-  for (const id of ['status-mode', 'status-selection', 'status-cursor', 'status-zoom', 'status-check', 'status-message', 'btn-help']) {
-    assert.match(html, new RegExp(`id="${id}"`));
-  }
-  assert.doesNotMatch(html, /console-resizer/);
-  const bar = css.slice(css.indexOf('.statusbar {'));
-  assert.match(bar.slice(0, bar.indexOf('}')), /height: 26px/);
-  assert.doesNotMatch(bar.slice(0, bar.indexOf('}')), /resize:/);
-  // The drawer floats above the bar instead of taking layout space.
-  const drawer = css.slice(css.indexOf('.log-drawer {'));
-  assert.match(drawer.slice(0, drawer.indexOf('}')), /position: absolute/);
-  // Guidance that repeats the live status hint never enters the log.
-  const hint = main.slice(main.indexOf('function hintLine('), main.indexOf('function applyLogDrawerEvent('));
-  assert.doesNotMatch(hint, /logEl/);
-  assert.match(main, /hintLine\(`wiring \(\$\{routeMode\}\): click a terminal or point to start/);
-  // Check results are shown in the panel and the chip, so they do not peek.
-  assert.match(main, /logLine\(evaluationText\(report\), hasProblems \? 'error' : undefined, \{ peek: false \}\)/);
-});
-
-test('the view keeps its scale and top-left corner when the pane resizes', () => {
-  const main = editorSource();
-  const resize = main.slice(main.indexOf('function resizeView()'), main.indexOf('function syncViewToPane()'));
-  assert.match(resize, /const pxPerUnit = \(viewPane\?\.w \|\| p\.w\) \/ view\.w;/);
-  assert.doesNotMatch(resize, /view\.x =|view\.y =/);
-  assert.match(main, /function render\(\) \{[\s\S]{0,120}syncViewToPane\(\);/);
-});
-
-test('document title, annotation flyout, and grouped design check are wired', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const main = editorSource();
-  assert.match(html, /<div class="circuit-picker"[^>]*>\s*(?:<nav id="hierarchy-trail"[^>]*><\/nav>\s*)?<input id="circuit-name"[\s\S]*id="dirty-dot"[\s\S]*<select id="circuit-select"/);
-  assert.match(main, /if \(dirtyDot\) dirtyDot\.hidden = !dirty;/);
-  // Layer buttons live in the context menu and on Shift+Up/Down, not the rail.
-  assert.doesNotMatch(html, /id="btn-bring-front"|id="btn-send-back"/);
-  const rail = html.slice(html.indexOf('class="mode-group mode-toolbar"'), html.indexOf('id="rail-flyout"'));
-  assert.doesNotMatch(rail, /id="btn-mode-(annotation|arrow|box|line)"/);
-  assert.match(rail, /id="btn-rail-annotate"/);
-  const flyout = html.slice(html.indexOf('id="rail-flyout"'), html.indexOf('id="empty-state"'));
-  for (const id of ['annotation', 'arrow', 'box', 'line']) assert.match(flyout, new RegExp(`id="btn-mode-${id}"`));
-  // Style controls are part of the Selection inspector.
-  const selection = html.slice(html.indexOf('data-panel="terminals"'), html.indexOf('id="check-summary"'));
-  assert.match(selection, /id="style-panel"/);
-  // Each category is one group; rows drop the repeated category name.
-  assert.match(main, /details\.className = 'check-group';/);
-  assert.match(main, /button\.textContent = checkIssueLocation\(issue\);/);
 });
 
 const keysOf = (ctx) => contextKeyHints(ctx).map(([keys]) => keys);
