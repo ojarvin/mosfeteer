@@ -37,7 +37,7 @@
 
 |  |  |
 | --- | --- |
-| **Draw fast** | Press `i` and type to place a part. Wires route themselves and stay tidy as parts move. |
+| **Draw fast** | Press `i` and type to place a part, `w` to draw a wire. Moving a part bends only the wire legs that must change, so the layout stays as you drew it. |
 | **Explain in steps** | Beats show, dim, and hide parts and flip switches over one drawing, driven by a timing diagram. |
 | **Derive the math** | Symbolic Z<sub>in</sub>, Z<sub>out</sub>, A<sub>v</sub>, poles, zeros, and noise, each term traced back to its devices. |
 | **Analyze block diagrams** | Draw a loop of gains, sums, H(s) and H(z) blocks, samplers, and quantizers, and get its exact transfer functions, plots, and a time-domain simulation. |

@@ -68481,7 +68481,7 @@ __exports.announce = announce;
 __exports.noteActionPrevented = noteActionPrevented;
 __exports.renderStatus = renderStatus;
 __exports.installStatusBar = installStatusBar;
-let contextKeyHints, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ contextKeyHints, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
+let contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
 let statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
@@ -68582,7 +68582,7 @@ function renderStatus() {
   const comp = selectedComp();
   const label = selectedLabel();
   const sel = label
-    ? `${label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation'} "${label.text}"${editor.selLabels.size > 1 ? ` +${editor.selLabels.size - 1}` : ''}`
+    ? labelSummary({ kind: label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation', text: label.text, more: editor.selLabels.size - 1 })
     : comp
       ? `${comp.refdes}${editor.multi.size > 1 ? ` +${editor.multi.size - 1}` : ''}`
       : '';
@@ -68706,10 +68706,12 @@ function installStatusBar() {
 };
 
 __modules["src/web/status-bar.js"] = function (__require, __exports) {
+__exports.labelSummary = labelSummary;
 __exports.logDrawerTransition = logDrawerTransition;
 __exports.zoomPercent = zoomPercent;
 __exports.statusFields = statusFields;
 __exports.contextKeyHints = contextKeyHints;
+let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.js")); });
 /**
  * Status bar and log drawer state.
  *
@@ -68719,6 +68721,20 @@ __exports.contextKeyHints = contextKeyHints;
  * hover peeks, error peeks, click-open, command entry, and pinning compose
  * without timers or DOM state leaking into each other.
  */
+
+
+
+/** The longest label text the selection chip shows before it ellipsizes. */
+const LABEL_SUMMARY_CHARS = 32;
+
+/** A selected label in the selection chip: its kind and its text as plain
+ *  words (markup and TeX read as text), cut to one short line so a long
+ *  equation never crowds out the key hints. `more` counts other labels picked. */
+function labelSummary({ kind, text, more = 0 }) {
+  const plain = plainTexText(String(text ?? '').replace(/\\[;:!>]/g, ' ')).replace(/\s+/g, ' ').trim();
+  const short = plain.length > LABEL_SUMMARY_CHARS ? `${plain.slice(0, LABEL_SUMMARY_CHARS - 1).trimEnd()}…` : plain;
+  return `${kind} “${short}”${more > 0 ? ` +${more}` : ''}`;
+}
 
 const LOG_DRAWER_CLOSED = Object.freeze({ open: false, pinned: false, reason: null });
 
@@ -68860,6 +68876,7 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
   return hints;
 }
 
+__exports.LABEL_SUMMARY_CHARS = LABEL_SUMMARY_CHARS;
 __exports.LOG_DRAWER_CLOSED = LOG_DRAWER_CLOSED;
 };
 

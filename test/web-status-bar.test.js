@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LOG_DRAWER_CLOSED, contextKeyHints, logDrawerTransition, statusFields, zoomPercent } from '../src/web/status-bar.js';
+import { LABEL_SUMMARY_CHARS, LOG_DRAWER_CLOSED, contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent } from '../src/web/status-bar.js';
 
 const run = (events, start = LOG_DRAWER_CLOSED) => events.reduce((state, event) => logDrawerTransition(state, event), start);
 
@@ -81,4 +81,14 @@ test('an armed tool shows how to use and leave it', () => {
     assert.equal(hints.length, 3, tool);
     assert.equal(hints.at(-1), 'Esc', tool);
   }
+});
+
+test('a selected label is summed up in a few plain words, never its whole source', () => {
+  const equation = '\\text{Input-referred thermal noise: }\\;S_{v,in,th} \\approx 4kT \\frac{\\gamma}{g_{m3}}\\left(1 + \\frac{g_{m8}}{g_{m3}}\\right)';
+  const chip = labelSummary({ kind: 'annotation', text: equation });
+  assert.equal(chip, 'annotation “Input-referred thermal noise: S…”');
+  assert.ok(chip.length <= 'annotation “”'.length + LABEL_SUMMARY_CHARS);
+  assert.doesNotMatch(chip, /\\/, 'no TeX left');
+  assert.equal(labelSummary({ kind: 'net', text: 'V_{OUT}', more: 2 }), 'net “VOUT” +2');
+  assert.equal(labelSummary({ kind: 'annotation', text: 'Assumptions:' }), 'annotation “Assumptions:”');
 });

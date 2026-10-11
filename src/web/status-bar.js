@@ -8,6 +8,20 @@
  * without timers or DOM state leaking into each other.
  */
 
+import { plainTexText } from '../core/render.js';
+
+/** The longest label text the selection chip shows before it ellipsizes. */
+export const LABEL_SUMMARY_CHARS = 32;
+
+/** A selected label in the selection chip: its kind and its text as plain
+ *  words (markup and TeX read as text), cut to one short line so a long
+ *  equation never crowds out the key hints. `more` counts other labels picked. */
+export function labelSummary({ kind, text, more = 0 }) {
+  const plain = plainTexText(String(text ?? '').replace(/\\[;:!>]/g, ' ')).replace(/\s+/g, ' ').trim();
+  const short = plain.length > LABEL_SUMMARY_CHARS ? `${plain.slice(0, LABEL_SUMMARY_CHARS - 1).trimEnd()}…` : plain;
+  return `${kind} “${short}”${more > 0 ? ` +${more}` : ''}`;
+}
+
 export const LOG_DRAWER_CLOSED = Object.freeze({ open: false, pinned: false, reason: null });
 
 // Reasons that close by themselves when the pointer leaves the footer.

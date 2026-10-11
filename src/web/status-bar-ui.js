@@ -4,7 +4,7 @@
  * in status-bar.js.
  */
 
-import { contextKeyHints, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
+import { contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
 import { statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { paneSize } from './canvas-view.js';
@@ -93,7 +93,7 @@ export function renderStatus() {
   const comp = selectedComp();
   const label = selectedLabel();
   const sel = label
-    ? `${label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation'} "${label.text}"${editor.selLabels.size > 1 ? ` +${editor.selLabels.size - 1}` : ''}`
+    ? labelSummary({ kind: label.isNetLabel?.() ? 'net' : label.owner ? 'instance' : 'annotation', text: label.text, more: editor.selLabels.size - 1 })
     : comp
       ? `${comp.refdes}${editor.multi.size > 1 ? ` +${editor.multi.size - 1}` : ''}`
       : '';
