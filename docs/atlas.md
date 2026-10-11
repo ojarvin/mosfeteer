@@ -7,11 +7,17 @@ a server, none) it starts in the editor. Launching a specific file opens that
 file in the editor instead. The restored drawing and any unsaved draft remain
 available behind the Atlas.
 
-An empty desk asks what to do: **New design**, **Open design…** (in
-browser-only mode the file joins the desk, and a single one opens), **Open
-folder…** (or Change folder… with a server), **Allow access** again to a
-folder the browser no longer may read, and **Back to** the drawing on screen
-when it has anything in it.
+An empty desk asks what to do. Browser-only with no folder yet (the header
+says "No folder yet"), it leads with **Open folder…**: one folder for every
+design makes saving quiet and shows them all here next visit; a browser
+that cannot write files (Firefox, Safari) is told up front that Save
+downloads a copy. **New design** and **Open design…** (the file joins the
+desk, and a single one opens) sit beside it. An open but empty folder (or,
+with a server, the workspace folder) leads with **New design**, which
+saves into it, then **Change folder…**. A folder the browser no longer may
+read asks to **Allow access** again first, and **Back to** returns to the
+drawing on screen when it has anything in it. While the desk is empty the
+header's Export and way back and the hint bar step aside.
 At startup, a dark cover stays up while the drawings load, then fades as the
 Atlas zooms in from afar to fit the workspace. Later visits keep the usual
 editor-to-Atlas zoom. Reduced-motion preferences skip the startup animation.

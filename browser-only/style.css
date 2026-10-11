@@ -680,6 +680,19 @@ button:focus-visible {
   text-overflow: ellipsis;
 }
 
+/* A first save without a name: the field asks for one, with a ring that
+   pulses twice and stays until something is typed. */
+.toolbar .circuit-picker:has(#circuit-name.needs-name) {
+  box-shadow: 0 0 0 2px var(--accent);
+  animation: needs-name-pulse 0.6s ease-in-out 2;
+}
+
+@keyframes needs-name-pulse {
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent); }
+}
+
+:root[data-reduce-motion] .toolbar .circuit-picker:has(#circuit-name.needs-name) { animation: none; }
+
 /* The title hugs its full text so the unsaved dot and chevron sit right after
    it. On one toolbar row it is the only item that gives way: it shows the
    whole name while there is room and ellipsizes when there is not. */
@@ -5469,6 +5482,14 @@ button.off {
 }
 
 /* An empty desk's prompt: a new design, a file, a folder. */
+/* An empty desk: nothing to export, no design to go back to, and no keys
+   for designs that are not there yet; the card says what to do. */
+.atlas-is-empty #atlas-export,
+.atlas-is-empty #atlas-close,
+.atlas-is-empty #atlas-hint {
+  display: none;
+}
+
 .atlas-empty {
   position: absolute;
   top: 50%;

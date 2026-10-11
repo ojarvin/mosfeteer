@@ -300,6 +300,29 @@ export async function restoreStartup() {
   return opensOnAtlas({ openPath, documents: editor.workspaceState?.documents, browserOnly: persistence.browserOnly });
 }
 
+const FOLDER_TIP_KEY = 'mosfeteer:folder-tip';
+
+/** Once per browser, after a design is saved to a file of its own rather
+ *  than into a folder: a folder keeps the designs together, and saves
+ *  into it ask nothing. */
+function folderTipOnce() {
+  if (!persistence.browserOnly || editor.workspaceState?.folder) return;
+  try {
+    if (localStorage.getItem(FOLDER_TIP_KEY)) return;
+    localStorage.setItem(FOLDER_TIP_KEY, '1');
+  } catch { return; }
+  logLine('Tip: open a folder for your designs (Atlas → Open folder…). New designs then save into it without asking, and the Atlas shows them all each visit.');
+}
+
+/** Point at the name field: a new design is named before its first save. */
+function askForName() {
+  hintLine(`Name the design, then press Enter to save it ${newDocumentDestination()}`);
+  circuitNameEl.classList.remove('needs-name');
+  void circuitNameEl.offsetWidth; // restart the pulse
+  circuitNameEl.classList.add('needs-name');
+  circuitNameEl.focus();
+}
+
 export async function saveCircuit({ saveAs = false } = {}) {
   let name = circuitNameEl.value.trim();
   let target;
@@ -322,6 +345,17 @@ export async function saveCircuit({ saveAs = false } = {}) {
     target = { path: editor.currentDocumentPath };
   } else {
     target = { ...(editor.currentDocumentDir ? { dir: editor.currentDocumentDir } : {}), name };
+  }
+  if (!name && !target.path) {
+    // A new design not named yet. Where Save picks a file anyway, its picker
+    // asks for the name; elsewhere the name field asks, gently.
+    if (persistence.browserOnly && !editor.workspaceState?.folder?.writable && typeof window.showSaveFilePicker === 'function') {
+      name = 'untitled';
+      target = { name };
+    } else {
+      askForName();
+      return false;
+    }
   }
   if (!validDocumentName(name)) {
     logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
@@ -371,6 +405,7 @@ export async function saveCircuit({ saveAs = false } = {}) {
     logLine(data.downloaded
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
       : `Saved ${displayPath(data.path)}.`);
+    if (!data.downloaded) folderTipOnce();
     return true;
   } catch (err) {
     if (err.code === 'canceled') logLine(`Save canceled${err.message === 'save canceled' ? '' : `: ${err.message}`}.`);
@@ -629,6 +664,15 @@ async function revealCurrentDocument() {
 }
 
 /** Where Save puts a document that has no file yet. */
+/** What a new design says first: name it, press Enter, and where it goes. */
+function newDesignMessage() {
+  const folder = editor.workspaceState?.folder;
+  if (!persistence.browserOnly) return 'New design: name it and press Enter to save it in the workspace folder.';
+  if (folder?.writable) return `New design: name it and press Enter to save it in “${folder.name}”.`;
+  if (typeof window.showSaveFilePicker !== 'function') return 'New design: name it and press Enter to download it (this browser cannot save in place).';
+  return 'New design: name it and press Enter, then choose where it goes. A folder opened in the Atlas keeps designs together and saves without asking.';
+}
+
 function newDocumentDestination() {
   if (!persistence.browserOnly) return 'to the workspace folder';
   const folder = editor.workspaceState?.folder;
@@ -1048,9 +1092,7 @@ export function startNewDocument() {
   render();
   circuitNameEl.focus();
   renderSaveState();
-  logLine(persistence.browserOnly
-    ? `Started a new schematic. Enter a name and save it ${newDocumentDestination()}, or use Save as to choose a file.`
-    : 'Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
+  logLine(newDesignMessage());
 }
 
 /**
@@ -1193,10 +1235,18 @@ export function installDocumentSession() {
 
   document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
 
-  circuitNameEl.addEventListener('input', renderSaveState);
+  circuitNameEl.addEventListener('input', () => { circuitNameEl.classList.remove('needs-name'); renderSaveState(); });
 
   document.getElementById('btn-rename-document')?.addEventListener('click', beginDocumentRename);
   circuitNameEl.addEventListener('keydown', (ev) => {
+    // Naming a design never saved: Enter saves it.
+    if (!renaming && ev.key === 'Enter' && !editor.currentDocumentPath && circuitNameEl.value.trim()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      circuitNameEl.classList.remove('needs-name');
+      void saveCircuit();
+      return;
+    }
     if (!renaming) return;
     if (ev.key === 'Enter') {
       ev.preventDefault();

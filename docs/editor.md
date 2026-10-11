@@ -18,6 +18,13 @@ fixture directory. Each browser window keeps its own local draft
 the most recently focused window follows, and none does while another window
 already shows it.
 
+A new design is named before its first save: its name field has focus, and
+Enter there saves it. Ctrl+S with no name asks for one at the field (a ring
+and a hint), except in browser-only mode with no writable folder, where the
+save picker asks instead (suggesting `untitled.json`). Browser-only, the
+first save to a file of its own (not into a folder) adds a one-time tip to
+open a folder for the designs.
+
 Core keyboard vocabulary:
 
 | Context | Keys |

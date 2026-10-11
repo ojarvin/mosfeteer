@@ -1662,16 +1662,24 @@ async function reloadDesk() {
 }
 
 /**
- * An empty desk asks what to do, rather than showing nothing: a new design,
- * a design file, a folder of them (and the browser's permission again for a
- * folder it no longer may read), or back to the drawing on screen when it
- * has anything in it. Gone as soon as the desk has a design.
+ * An empty desk asks what to do, rather than showing nothing. Browser-only
+ * with no folder yet, it leads with the folder -- one folder for every
+ * design is what makes saving quiet and the desk whole next time -- and
+ * says up front when this browser cannot save in place. Else a new design,
+ * a design file, or another folder (and the browser's permission again for
+ * a folder it no longer may read), and back to the drawing on screen when it
+ * has anything in it. The header's export and way back and the hint bar,
+ * which have nothing to act on yet, step aside. Gone as soon as the desk has
+ * a design.
  */
 function showEmptyDesk() {
   rootEl.querySelector('.atlas-empty')?.remove();
-  if (!state || state.source !== 'workspace' || state.tiles.length) return;
+  const empty = !!state && state.source === 'workspace' && !state.tiles.length;
+  rootEl.classList.toggle('atlas-is-empty', empty);
+  if (!empty) return;
   const folder = editor.workspaceState?.folder;
   const drawn = editor.circuit.components.size || editor.circuit.labels.size;
+  const savesInPlace = typeof window.showDirectoryPicker === 'function';
   const button = (text, title, action, primary = false) => {
     const node = document.createElement('button');
     node.type = 'button';
@@ -1684,17 +1692,30 @@ function showEmptyDesk() {
   const box = document.createElement('div');
   box.className = 'atlas-empty glass';
   const heading = document.createElement('h2');
-  heading.textContent = 'No designs open yet';
   const text = document.createElement('p');
-  text.textContent = persistence.browserOnly
-    ? 'Start a new design, open design files from anywhere, or open a folder of them: its designs lay out here.'
-    : 'Start a new design, or show another folder of designs as the workspace.';
   const actions = document.createElement('div');
   actions.className = 'atlas-empty-actions';
-  actions.append(button('New design', 'Start a new schematic', newDesign, true));
-  actions.append(button('Open design…', 'Open a design file (Ctrl/Cmd+O)', openDesign));
-  actions.append(button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'A folder of designs as the workspace', () => openOntoDesk('folder')));
-  if (folder?.locked) actions.append(button(`Allow access to “${folder.name}”…`, 'The browser needs your permission again to read this folder', allowFolderAccess));
+  const newButton = (primary) => button('New design', 'Start a new schematic', newDesign, primary);
+  const openButton = () => button('Open design…', 'Open a design file (Ctrl/Cmd+O)', openDesign);
+  const folderButton = (primary) => button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'A folder of designs as the workspace', () => openOntoDesk('folder'), primary);
+  if (folder?.locked) {
+    heading.textContent = `Allow access to “${folder.name}”`;
+    text.textContent = 'The browser asks again, each visit, before it lets Mosfeteer read the folder.';
+    actions.append(button(`Allow access to “${folder.name}”…`, 'The browser needs your permission again to read this folder', allowFolderAccess, true), newButton(false), folderButton(false));
+  } else if (persistence.browserOnly && !folder) {
+    heading.textContent = 'Keep your designs in one folder';
+    titleEl.textContent = 'No folder yet';
+    text.textContent = savesInPlace
+      ? 'Mosfeteer keeps each design as a .json file. Make one folder for all of them and open it: new designs save straight into it, and they all lay out here next time.'
+      : 'Mosfeteer keeps each design as a .json file. This browser can read a folder of them but not save in place: Save downloads a copy. Chrome and Edge save straight into the folder.';
+    actions.append(folderButton(true), newButton(false), openButton());
+  } else {
+    heading.textContent = folder?.name || !persistence.browserOnly ? `No designs in “${folder?.name || titleEl.textContent}” yet` : 'No designs open yet';
+    text.textContent = persistence.browserOnly && !folder?.writable
+      ? 'New designs download when saved: this browser cannot write to the folder.'
+      : 'New designs save into this folder and lay out here.';
+    actions.append(newButton(true), ...(persistence.browserOnly ? [openButton()] : []), folderButton(false));
+  }
   box.append(heading, text, actions);
   if (drawn) {
     const back = document.createElement('p');

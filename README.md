@@ -80,7 +80,7 @@ The editor opens in its own window and quits when you close it.
 
 - **Windows:** double-click `Mosfeteer.cmd`.
 - **Linux or macOS:** `node launch.mjs --install` adds Mosfeteer to the application menu.
-- **No Node?** Open [`browser-only/index.html`](browser-only/index.html) directly. In Chrome or Edge it can open a folder of designs and save in place.
+- **No Node?** Open [`browser-only/index.html`](browser-only/index.html) directly. Make one folder for all your designs and open it there (**Open folder…**): in Chrome or Edge new designs save straight into it, and the Atlas shows them all each visit. Firefox and Safari can read the folder, but save by downloading a copy.
 
 ## Keys worth knowing
 

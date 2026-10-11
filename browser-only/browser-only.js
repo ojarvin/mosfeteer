@@ -40701,16 +40701,24 @@ async function reloadDesk() {
 }
 
 /**
- * An empty desk asks what to do, rather than showing nothing: a new design,
- * a design file, a folder of them (and the browser's permission again for a
- * folder it no longer may read), or back to the drawing on screen when it
- * has anything in it. Gone as soon as the desk has a design.
+ * An empty desk asks what to do, rather than showing nothing. Browser-only
+ * with no folder yet, it leads with the folder -- one folder for every
+ * design is what makes saving quiet and the desk whole next time -- and
+ * says up front when this browser cannot save in place. Else a new design,
+ * a design file, or another folder (and the browser's permission again for
+ * a folder it no longer may read), and back to the drawing on screen when it
+ * has anything in it. The header's export and way back and the hint bar,
+ * which have nothing to act on yet, step aside. Gone as soon as the desk has
+ * a design.
  */
 function showEmptyDesk() {
   rootEl.querySelector('.atlas-empty')?.remove();
-  if (!state || state.source !== 'workspace' || state.tiles.length) return;
+  const empty = !!state && state.source === 'workspace' && !state.tiles.length;
+  rootEl.classList.toggle('atlas-is-empty', empty);
+  if (!empty) return;
   const folder = editor.workspaceState?.folder;
   const drawn = editor.circuit.components.size || editor.circuit.labels.size;
+  const savesInPlace = typeof window.showDirectoryPicker === 'function';
   const button = (text, title, action, primary = false) => {
     const node = document.createElement('button');
     node.type = 'button';
@@ -40723,17 +40731,30 @@ function showEmptyDesk() {
   const box = document.createElement('div');
   box.className = 'atlas-empty glass';
   const heading = document.createElement('h2');
-  heading.textContent = 'No designs open yet';
   const text = document.createElement('p');
-  text.textContent = persistence.browserOnly
-    ? 'Start a new design, open design files from anywhere, or open a folder of them: its designs lay out here.'
-    : 'Start a new design, or show another folder of designs as the workspace.';
   const actions = document.createElement('div');
   actions.className = 'atlas-empty-actions';
-  actions.append(button('New design', 'Start a new schematic', newDesign, true));
-  actions.append(button('Open design…', 'Open a design file (Ctrl/Cmd+O)', openDesign));
-  actions.append(button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'A folder of designs as the workspace', () => openOntoDesk('folder')));
-  if (folder?.locked) actions.append(button(`Allow access to “${folder.name}”…`, 'The browser needs your permission again to read this folder', allowFolderAccess));
+  const newButton = (primary) => button('New design', 'Start a new schematic', newDesign, primary);
+  const openButton = () => button('Open design…', 'Open a design file (Ctrl/Cmd+O)', openDesign);
+  const folderButton = (primary) => button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'A folder of designs as the workspace', () => openOntoDesk('folder'), primary);
+  if (folder?.locked) {
+    heading.textContent = `Allow access to “${folder.name}”`;
+    text.textContent = 'The browser asks again, each visit, before it lets Mosfeteer read the folder.';
+    actions.append(button(`Allow access to “${folder.name}”…`, 'The browser needs your permission again to read this folder', allowFolderAccess, true), newButton(false), folderButton(false));
+  } else if (persistence.browserOnly && !folder) {
+    heading.textContent = 'Keep your designs in one folder';
+    titleEl.textContent = 'No folder yet';
+    text.textContent = savesInPlace
+      ? 'Mosfeteer keeps each design as a .json file. Make one folder for all of them and open it: new designs save straight into it, and they all lay out here next time.'
+      : 'Mosfeteer keeps each design as a .json file. This browser can read a folder of them but not save in place: Save downloads a copy. Chrome and Edge save straight into the folder.';
+    actions.append(folderButton(true), newButton(false), openButton());
+  } else {
+    heading.textContent = folder?.name || !persistence.browserOnly ? `No designs in “${folder?.name || titleEl.textContent}” yet` : 'No designs open yet';
+    text.textContent = persistence.browserOnly && !folder?.writable
+      ? 'New designs download when saved: this browser cannot write to the folder.'
+      : 'New designs save into this folder and lay out here.';
+    actions.append(newButton(true), ...(persistence.browserOnly ? [openButton()] : []), folderButton(false));
+  }
   box.append(heading, text, actions);
   if (drawn) {
     const back = document.createElement('p');
@@ -46834,6 +46855,29 @@ async function restoreStartup() {
   return opensOnAtlas({ openPath, documents: editor.workspaceState?.documents, browserOnly: persistence.browserOnly });
 }
 
+const FOLDER_TIP_KEY = 'mosfeteer:folder-tip';
+
+/** Once per browser, after a design is saved to a file of its own rather
+ *  than into a folder: a folder keeps the designs together, and saves
+ *  into it ask nothing. */
+function folderTipOnce() {
+  if (!persistence.browserOnly || editor.workspaceState?.folder) return;
+  try {
+    if (localStorage.getItem(FOLDER_TIP_KEY)) return;
+    localStorage.setItem(FOLDER_TIP_KEY, '1');
+  } catch { return; }
+  logLine('Tip: open a folder for your designs (Atlas → Open folder…). New designs then save into it without asking, and the Atlas shows them all each visit.');
+}
+
+/** Point at the name field: a new design is named before its first save. */
+function askForName() {
+  hintLine(`Name the design, then press Enter to save it ${newDocumentDestination()}`);
+  circuitNameEl.classList.remove('needs-name');
+  void circuitNameEl.offsetWidth; // restart the pulse
+  circuitNameEl.classList.add('needs-name');
+  circuitNameEl.focus();
+}
+
 async function saveCircuit({ saveAs = false } = {}) {
   let name = circuitNameEl.value.trim();
   let target;
@@ -46856,6 +46900,17 @@ async function saveCircuit({ saveAs = false } = {}) {
     target = { path: editor.currentDocumentPath };
   } else {
     target = { ...(editor.currentDocumentDir ? { dir: editor.currentDocumentDir } : {}), name };
+  }
+  if (!name && !target.path) {
+    // A new design not named yet. Where Save picks a file anyway, its picker
+    // asks for the name; elsewhere the name field asks, gently.
+    if (persistence.browserOnly && !editor.workspaceState?.folder?.writable && typeof window.showSaveFilePicker === 'function') {
+      name = 'untitled';
+      target = { name };
+    } else {
+      askForName();
+      return false;
+    }
   }
   if (!validDocumentName(name)) {
     logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
@@ -46905,6 +46960,7 @@ async function saveCircuit({ saveAs = false } = {}) {
     logLine(data.downloaded
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
       : `Saved ${displayPath(data.path)}.`);
+    if (!data.downloaded) folderTipOnce();
     return true;
   } catch (err) {
     if (err.code === 'canceled') logLine(`Save canceled${err.message === 'save canceled' ? '' : `: ${err.message}`}.`);
@@ -47163,6 +47219,15 @@ async function revealCurrentDocument() {
 }
 
 /** Where Save puts a document that has no file yet. */
+/** What a new design says first: name it, press Enter, and where it goes. */
+function newDesignMessage() {
+  const folder = editor.workspaceState?.folder;
+  if (!persistence.browserOnly) return 'New design: name it and press Enter to save it in the workspace folder.';
+  if (folder?.writable) return `New design: name it and press Enter to save it in “${folder.name}”.`;
+  if (typeof window.showSaveFilePicker !== 'function') return 'New design: name it and press Enter to download it (this browser cannot save in place).';
+  return 'New design: name it and press Enter, then choose where it goes. A folder opened in the Atlas keeps designs together and saves without asking.';
+}
+
 function newDocumentDestination() {
   if (!persistence.browserOnly) return 'to the workspace folder';
   const folder = editor.workspaceState?.folder;
@@ -47582,9 +47647,7 @@ function startNewDocument() {
   render();
   circuitNameEl.focus();
   renderSaveState();
-  logLine(persistence.browserOnly
-    ? `Started a new schematic. Enter a name and save it ${newDocumentDestination()}, or use Save as to choose a file.`
-    : 'Started a new schematic. Enter a name and save to store it in the workspace folder, or use Save as to choose a folder.');
+  logLine(newDesignMessage());
 }
 
 /**
@@ -47727,10 +47790,18 @@ function installDocumentSession() {
 
   document.getElementById('btn-workspace')?.addEventListener('click', chooseWorkspaceFolder);
 
-  circuitNameEl.addEventListener('input', renderSaveState);
+  circuitNameEl.addEventListener('input', () => { circuitNameEl.classList.remove('needs-name'); renderSaveState(); });
 
   document.getElementById('btn-rename-document')?.addEventListener('click', beginDocumentRename);
   circuitNameEl.addEventListener('keydown', (ev) => {
+    // Naming a design never saved: Enter saves it.
+    if (!renaming && ev.key === 'Enter' && !editor.currentDocumentPath && circuitNameEl.value.trim()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      circuitNameEl.classList.remove('needs-name');
+      void saveCircuit();
+      return;
+    }
     if (!renaming) return;
     if (ev.key === 'Enter') {
       ev.preventDefault();
