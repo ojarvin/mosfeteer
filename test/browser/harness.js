@@ -70,8 +70,12 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   });
   // Chrome picks its own debugging port and writes it down, so two
   // browsers started at once never race for one.
-  const chrome = spawn(chromePath(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${join(root, 'chrome')}`,
-    `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore', env: { ...process.env, HOME: home } });
+  // CI runners (GitHub's Ubuntu) do not allow Chromium's sandbox.
+  const sandbox = process.env.CI ? ['--no-sandbox'] : [];
+  const chrome = spawn(chromePath(), ['--headless=new', ...sandbox, '--remote-debugging-port=0', `--user-data-dir=${join(root, 'chrome')}`,
+    `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, HOME: home } });
+  let chromeErr = '';
+  chrome.stderr.on('data', (chunk) => { chromeErr = (chromeErr + chunk).slice(-2000); });
   let ws;
   try {
     let cdpPort = null;
@@ -85,7 +89,7 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
       if (!targets.some((t) => t.type === 'page')) await sleep(100);
     }
     const page = targets.find((t) => t.type === 'page');
-    if (!page) throw new Error('Chromium started but offered no page to drive');
+    if (!page) throw new Error(`Chromium ${cdpPort ? 'offered no page to drive' : 'did not start'}${chromeErr ? `:\n${chromeErr.trim()}` : ''}`);
     ws = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
       ws.addEventListener('open', resolve, { once: true });
