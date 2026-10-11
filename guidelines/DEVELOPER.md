@@ -126,8 +126,8 @@ browser and `/api/export`, not here.
 3. **Plan in one paragraph.** "I will change X by doing Y because Z."
 4. **Write the test first (or alongside) when adding behavior.**
 5. **Run `npm test`** and confirm green before commit.
-6. **Browser-verify when the change is user-visible.** The CDP harness lives
-   in `/tmp/opencode/`; see "Headless verification" below.
+6. **Test it in the browser when the change is user-visible.** Add to
+   `test/browser/`; see "Browser tests" below.
 7. **Update the authoritative doc.** Touch `AGENTS.md` for cross-cutting
    invariants; update focused docs for feature contracts and role-facing
    behavior.
@@ -196,7 +196,7 @@ When you fix a bug, write the failing test first, watch it fail, then fix.
 3. Confirm it appears in `symbolTypeNames()` and `getSymbol(type)`.
 4. Add a test in `test/components.test.js` (or a new file): symbol builds,
    `bboxWorld()` correct, terminals snap to grid, instance label auto-creates.
-5. Add a CDP smoke test in `/tmp/opencode/` if the symbol has user-visible
+5. Add a browser test in `test/browser/` if the symbol has user-visible
    quirks (e.g. mirror defaults).
 6. Update the component test and `style-guide.md` reference table; update
    `AGENTS.md` only if the symbol changes a cross-cutting invariant.
@@ -227,28 +227,26 @@ is behind `request-guard.js`; keep static serving limited to `src/web/` and
 For a **new CLI flag**, edit `src/cli/index.js` and update the help text. CLI
 flags are the user's only view of the CLI surface — keep them honest.
 
-## Headless verification (CDP)
+## Browser tests
 
-The headless tests live outside the repo and use no flaky network.
-The pattern is:
+What the editor does in a page is tested in `test/browser/`, as part of
+`npm test` (skipped when no Chromium is found; set `CHROME` to point at one).
+`harness.js` starts a server on temporary folders, with a home of its own, and
+a headless Chromium on its own debugging port, over one CDP connection:
 
 ```js
-// 1. launch debug chromium on a unique port
-// 2. start the server on a unique port with temporary folders
-//    (PORT=... SCHEMATIC_WORKSPACE=... DATA_ROOT=... node src/server/serve.js)
-// 3. open one persistent CDP connection per session
-// 4. drive via Runtime.evaluate: window.__run('add nmos M1 --at 120 120')
-// 5. assert via window.__circuit() or DOM state
-// 6. close cleanly (no pkill of the parent shell pattern)
+const h = await start({ docs: { amp: amplifier() } }); // fixtures.js
+await h.open('amp');
+await h.evaluate(`window.__run('add nmos M1 --at 120 120')`);
+await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.has('M1'))`);
+await h.stop();
 ```
 
-Headless **never fires native `dblclick`**. Use real
-`Input.dispatchMouseEvent` with `clickCount: 2`. Inline editors are
-`input[style*="position: absolute"]`. Ctrl+A =
-`keyDown('a', { modifiers: MOD, code: 'KeyA', keyCode: 65 })`.
-
-See `/tmp/opencode/` for existing examples (`mos_label_test.mjs`,
-`feature_test.mjs`, `ghost_test.mjs`, `wiredrag_test.mjs`).
+Test what the editor does, not its source text. Wait for the state a step
+needs with `h.until` rather than a fixed pause; a timed-out wait reports the
+open dialogs and the focused element. Headless Chromium **never fires a native
+`dblclick`**: send `h.mouse('mousePressed', x, y, { clickCount: 2 })`. Each
+file's `after` stops the browser before it checks `h.exceptions()`.
 
 ## Style & code quality
 

@@ -109,10 +109,10 @@ boundary. Only `.json` files that load as a design join a workspace.
 - Every behavior change gets a focused test; `npm test` must pass.
 - Rebuild `browser-only/` (`npm run browser-only`) and commit it with the
   change; `test/browser-only-build.test.js` fails on a stale build.
-- Browser-visible changes need an isolated smoke check: one persistent CDP
-  connection, temporary ports and directories, real mouse events for
-  double-click (`clickCount: 2`), and only processes you started (never a
-  broad `pkill`). `window.__circuit()`, `window.__run(command)`, and
+- Browser-visible changes get a test in `test/browser/` (its `harness.js`
+  isolates ports, folders, and home) that drives the editor rather than
+  reading its source; stop only processes you started (never a broad
+  `pkill`). `window.__circuit()`, `window.__run(command)`, and
   `window.__load(state)` serve isolated verification.
 - Update this file only for durable cross-cutting invariants; put feature
   contracts in the focused docs and implementation facts in source and
