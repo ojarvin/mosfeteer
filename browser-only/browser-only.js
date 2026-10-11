@@ -49328,9 +49328,14 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
           let h = Math.max(least.h, start.h + (north ? -dy : dy));
           let left = west ? start.left + start.w - w : start.left;
           let top = north ? start.top + start.h - h : start.top;
-          // Within the pane: a corner stops at its edge.
-          if (left < MARGIN) { w -= MARGIN - left; left = MARGIN; }
+          // Within the pane: a corner stops at its edge, and beside the tool
+          // rail at the rail (the window is never placed over it: past it,
+          // it would be put back and its other side move instead).
           if (top < MARGIN) { h -= MARGIN - top; top = MARGIN; }
+          const rail = railRect();
+          const besideRail = rail && top < rail.y + rail.h + MARGIN && top + h > rail.y - MARGIN;
+          const leftmost = besideRail ? rail.x + rail.w + MARGIN : MARGIN;
+          if (left < leftmost) { w -= leftmost - left; left = leftmost; }
           w = Math.min(w, room.w - MARGIN - left);
           h = Math.min(h, room.h - MARGIN - top);
           el.style.maxWidth = '';
