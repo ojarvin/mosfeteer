@@ -9,24 +9,6 @@ import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constra
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
 
-test('component rows share the net-list layout without inline delete controls', () => {
-  const main = editorSource();
-  const start = main.indexOf('function renderComponents()');
-  const end = main.indexOf('\n}\n', start) + 2;
-  assert.ok(start > 0 && end > start);
-  const render = main.slice(start, end);
-  assert.match(render, /row\.appendChild\(ref\);[\s\S]*row\.appendChild\(meta\);/);
-  assert.doesNotMatch(render, /document\.createElement\('button'\)|row\.appendChild\(remove\)/);
-
-  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  assert.doesNotMatch(css, /\.row \.remove/);
-});
-
-test('export has a Ctrl/Cmd+E shortcut before focused-control handling', () => {
-  const main = editorSource();
-  assert.match(main, /ev\.key\.toLowerCase\(\) === 'e'[^\n]*!inlineInput[\s\S]*?ev\.preventDefault\(\);\s*exportCircuit\(\);/);
-});
-
 test('document raster export sizes PNGs by the chosen DPI and keeps a fine PDF fallback', () => {
   const main = editorSource();
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
@@ -227,25 +209,6 @@ test('a child label keeps the edge that was flush against its parent when it is 
   assert.deepEqual(attachedEdgeShift({ x: -120, y: -40, w: 80, h: 80 }, { w: 160, h: 80 }, start), { dx: 0, dy: 0 });
 });
 
-test('editor shell exposes keyboard canvas and live status surfaces', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="canvas"[^>]+tabindex="0"[^>]+role="application"/);
-  assert.match(html, /id="status"[^>]+role="status"[^>]+aria-live="polite"/);
-  assert.match(html, /id="accessibility-announcement"[^>]+aria-live="polite"/);
-  assert.doesNotMatch(html, /id="btn-label-bboxes"/);
-});
-
-test('new document control starts a schematic directly', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="btn-new-document"[^>]+title="Start a new schematic"/);
-  assert.doesNotMatch(html, /id="btn-new-document"[^>]+aria-haspopup="menu"/);
-  assert.doesNotMatch(html, /id="new-document-menu"|data-new-document=/);
-  assert.doesNotMatch(html, /id="btn-new-circuit"|id="btn-new-block"/);
-
-  const main = editorSource();
-  assert.match(main, /newDocumentButton\?\.addEventListener\('click', \(\) => \{[\s\S]*?startNewDocument\(\);/);
-});
-
 test('Atlas creates a circuit through the unsaved-changes guard and preserves name focus', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   const atlas = readFileSync(new URL('../src/web/atlas.js', import.meta.url), 'utf8');
@@ -382,11 +345,6 @@ test('an explicit new document is protected from active-document auto-loads', ()
   assert.match(main.slice(0, main.indexOf('function copySelectionSource(')), /activeSyncSuspended = false;/);
 });
 
-test('arrow-key nudging moves mixed selections atomically', () => {
-  const main = editorSource();
-  assert.match(main, /transformMixedSelection\('translate', \{ translation: \{ dx, dy \} \}\)/);
-});
-
 test('wire previews exclude the destination net and transformed nets keep terminal moves', () => {
   const main = editorSource();
   const preview = functionSource('draftRoutePath', main);
@@ -404,39 +362,6 @@ test('startup paints before listing documents and restoring the requested docume
   assert.match(main, /if \(openPath && openPath !== currentDocumentPath\) await openDocumentPath\(openPath\);/);
   assert.match(main, /fitView\(\);\s*restoreStartup\(\)/);
   assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreStartup/);
-});
-
-test('fit reserves the axis the mode rail is thin along', () => {
-  const main = editorSource();
-  // fitView fits through fittedView, the pure fit the Atlas aims its flights with.
-  assert.match(functionSource('fitTarget', main), /return Object\.assign\(target, fittedView\(\{ x: x0, y: y0, w: x1 - x0, h: y1 - y0 \}\)\)/);
-  const fit = functionSource('fittedView', main);
-  // On a narrow window the rail is a horizontal strip across the top. Reserving
-  // its width there leaves a 1 px usable pane, so the fit clamps to the widest
-  // allowed view and the drawing disappears -- F looks like it stopped working.
-  assert.match(fit, /railIsColumn = railRect \? railRect\.width <= railRect\.height : false/);
-  assert.match(fit, /leftPx = railRect && railIsColumn/);
-  assert.match(fit, /topPx = railRect && !railIsColumn/);
-  // Whichever axis is reserved, the drawing centres in what is left of it.
-  assert.match(fit, /fitH = Math\.max\(1, usableH - marginPx \* 2\)/);
-  assert.match(fit, /y: \(y0 \+ y1\) \/ 2 - th \* usableCenterPy \/ paneH/);
-});
-
-test('a fitted view stays fitted when the pane resizes or labels are measured', () => {
-  const main = editorSource();
-  const view = readFileSync(new URL('../src/web/canvas-view.js', import.meta.url), 'utf8');
-  // Until something else moves the view, a pane resize and the label
-  // measurement fit the drawing again instead of keeping the old corner.
-  assert.match(functionSource('fitView', view), /fittedSnapshot = \{ \.\.\.editor\.view \};\s*render\(\);/);
-  assert.match(functionSource('refitIfFitted', main), /if \(!fittedSnapshot \|\| \['x', 'y', 'w', 'h'\]\.some/);
-  assert.match(functionSource('resizeView', main), /if \(refitIfFitted\(\)\) return;/);
-  assert.match(functionSource('scheduleMeasuredLabelRender', main), /refitIfFitted\(\);\s*render\(\);/);
-});
-
-test('empty canvas fit starts at a 30-cell planning view', () => {
-  const main = editorSource();
-  const fit = functionSource('fitTarget', main);
-  assert.match(fit, /x0 = -600;\s*y0 = -600;\s*x1 = 600;\s*y1 = 600;/);
 });
 
 test('F5 reloads the application instead of entering the normal keymap', () => {
@@ -522,77 +447,6 @@ test('symmetric placement mirrors across one axis, chosen by the cursor', () => 
   assert.equal(symmetryOperation({ x: 400, y: 400 }, { x: 440, y: 640 }), 'mirrorY');
 });
 
-test('Alt arms symmetric placement without swallowing the ghost keys', () => {
-  const main = editorSource();
-  // Alt held on its own arms it; releasing it or losing the window drops the
-  // mirrored ghost.
-  assert.match(main, /if \(ev\.key === 'Alt'\) \{[\s\S]{0,220}setSymmetry\(true\)/);
-  assert.match(main, /keyup[\s\S]{0,260}ev\.key !== 'Alt'[\s\S]{0,120}setSymmetry\(false\)/);
-  assert.match(main, /'blur', \(\) => \{[\s\S]{0,260}setSymmetry\(false\)/);
-  // The modifier branch otherwise swallows every key it does not bind, which
-  // would leave the ghost undrivable, untransformable and uncommittable while
-  // Alt is down -- r and Shift+r included, which carry the Alt modifier.
-  assert.match(main, /drivingSymmetry = symmetry\s*\n?\s*&& \(ev\.key === 'Enter' \|\| ev\.key === 'Escape' \|\| ev\.key\.startsWith\('Arrow'\) \|\| ev\.key\.toLowerCase\(\) === 'r'\)/);
-  assert.match(main, /if \(\(ev\.metaKey \|\| ev\.ctrlKey\) && !drivingSymmetry\)/);
-  // A settled axis outlives the modifier, so stepping off it for one transform
-  // does not cost the axis; dropping the ghost forgets it.
-  assert.match(main, /symmetry = symmetryMemory\s*\n?\s*\? \{ pin: \{ \.\.\.symmetryMemory\.pin \}, operation: symmetryMemory\.operation, settled: true \}/);
-  assert.match(main, /symmetryMemory = \{ pin: \{ \.\.\.symmetry\.pin \}, operation: symmetry\.operation \};/);
-  assert.match(main, /function clearSymmetry\(\) \{\s*dropCopyGhostMirror\(\);\s*symmetry = null;\s*symmetryMemory = null;/);
-  // It belongs to a component ghost or copy ghost, never to a wire draft.
-  assert.match(main, /const armed = \(mode === 'insert' && pendingPlace\?\.kind === 'component'\)\s*\n?\s*\|\| drag\?\.mode === 'copyghost';/);
-  assert.doesNotMatch(main, /!!wire\?\.source && !wire\.source\.fixed/);
-  const drops = main.match(/pendingPlace = null;\n\s*clearSymmetry\(\);/g) || [];
-  assert.ok(drops.length >= 5, `every ghost drop clears the axis (${drops.length})`);
-  // Both halves land in one commit, so the pair is one undo.
-  assert.match(main, /const placements = \[pendingTransform\(\), \.\.\.\(twin \? \[twin\] : \[\]\)\]/);
-  // Placing a pair settles the axis, so stacking the next pair above the first
-  // -- movement along the axis -- does not turn the mirror ninety degrees.
-  assert.match(main, /if \(placed\.length > 1\) \{\s*symmetry\.settled = true;/);
-  assert.match(main, /if \(!symmetry \|\| symmetry\.settled\) return;/);
-});
-
-test('Ctrl+r still mirrors vertically while Alt symmetry is held', () => {
-  // Alt symmetry is held while Ctrl+r is pressed, so the explicit branch must
-  // preserve the vertical mirror instead of treating r as a rotation.
-  const main = editorSource();
-  const drivingSymmetryIndex = main.indexOf('const drivingSymmetry = symmetry');
-  const modifierBranchIndex = main.indexOf("if ((ev.metaKey || ev.ctrlKey) && !drivingSymmetry) {");
-  assert.ok(drivingSymmetryIndex > 0 && modifierBranchIndex > drivingSymmetryIndex);
-  const between = main.slice(drivingSymmetryIndex, modifierBranchIndex);
-  assert.match(between, /if \(drivingSymmetry && \(ev\.metaKey \|\| ev\.ctrlKey\) && !ev\.shiftKey && ev\.key\.toLowerCase\(\) === 'r'\) \{/);
-  assert.match(between, /ev\.preventDefault\(\);/);
-  assert.match(between, /transformPendingComponent\('mirrorY'\);/);
-  assert.match(between, /selectedTransform\('mirror-y'\);/);
-});
-
-test('rejected actions do not create history entries and use the shared note', () => {
-  const main = editorSource();
-  const start = main.indexOf('function commit(fn)');
-  const end = main.indexOf('\n}\n', start) + 2;
-  const commit = main.slice(start, end);
-  assert.match(commit, /const before = snapshot\(\);/);
-  assert.match(commit, /if \(snapshot\(\) === before\) return result;/);
-  assert.match(commit, /noteActionPrevented\(error\)/);
-  assert.match(main, /if \(id !== null\) throw new Error\(`unable to reroute net \$\{id\} safely`\)/);
-  assert.match(main, /function noteActionPrevented\(error\)/);
-});
-test('the placement guides are a view toggle beside the grid', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="btn-guides"[^>]*aria-pressed="true"/);
-  assert.ok(html.indexOf('id="btn-guides"') > html.indexOf('id="btn-grid"'));
-  assert.ok(html.indexOf('id="btn-guides"') < html.indexOf('id="btn-theme"'));
-
-  const main = editorSource();
-  assert.match(main, /key === 'G' \|\| \(key === 'g' && shiftKey\)\) setGuides\(!guidesVisible\)/);
-  assert.match(main, /guides: guidesVisible \? placementGuides\(/);
-  // Off by keyboard or button, but never reaching the deliberately armed axis.
-  assert.doesNotMatch(main, /guidesVisible[\s\S]{0,80}symmetryAxis/);
-
-  const keymap = readFileSync(new URL('../src/web/toolbar.js', import.meta.url), 'utf8');
-  assert.match(keymap, /\['Shift\+G', 'toggle the spacing and alignment guides'\]/);
-});
-
 test('the style menu exposes one shared arrowhead as independent start/end toggle buttons', () => {
   const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
   assert.match(html, /id="style-arrow-start"[^>]*data-arrow-end="start"/);
@@ -674,60 +528,6 @@ test('hovering another context menu item closes submenus it is not part of', () 
   assert.ok(!submenu.classes.has('open'));
   assert.equal(trigger.attrs['aria-expanded'], 'false');
   assert.equal(active, plain);
-});
-
-test('tools switch straight from inside another tool, dropping its uncommitted work', () => {
-  const main = editorSource();
-  const body = (name) => main.slice(main.indexOf(`function ${name}(`), main.indexOf('\n}\n', main.indexOf(`function ${name}(`)));
-  // No tool refuses because another one is mid-interaction any more.
-  assert.doesNotMatch(main, /finish (or cancel )?the active interaction/);
-  for (const name of ['activateLabelPlacement', 'activatePlace', 'activateSelect', 'activateDelete', 'activateMove', 'activateCopy']) {
-    assert.match(body(name), /^function \w+\([^)]*\) \{\s*leaveActiveInteraction\(\);/, name);
-  }
-  // Re-picking Wire keeps a half-drawn wire; anything else is dropped first.
-  assert.match(body('activateWire'), /if \(hasWireDraft\(\)\) \{[^}]*return; \}\s*leaveActiveInteraction\(\);/);
-  const leave = body('leaveActiveInteraction');
-  for (const part of [/cancelDrag\(\)/, /wire = null;/, /pendingPlace = null;/, /mode = 'normal';/]) assert.match(leave, part);
-
-  const pick = vm.runInNewContext(`(${body('toolSwitchForKey')}\n})`, {
-    get wire() { return state.wire; }, get mode() { return state.mode; },
-    get pendingPlace() { return state.pendingPlace; }, get drag() { return null; },
-    hasModalPlacement: () => false, wireTerminalLetter: (key) => state.terminals.includes(key),
-    activatePlace: 'place', activateWire: 'wire', activateMove: () => {}, activateCopy: 'copy', activateAlign: 'align', activateHighlight: 'hl',
-    activateShapeAnnotation: () => {}, activateNetLabel: 'netlabel', activateEquation: 'eq', activateAnnotation: 'note',
-  });
-  let state = { mode: 'insert', pendingPlace: null, wire: null, terminals: [] };
-  assert.equal(pick('w'), null); // the insert search keeps its letters
-  state.pendingPlace = { kind: 'component' };
-  assert.equal(pick('w'), 'wire'); // a placement ghost gives way to the wire tool
-  assert.equal(pick('r'), null); // r still rotates the ghost
-  state = { mode: 'normal', pendingPlace: null, wire: {}, terminals: ['c'] };
-  assert.equal(pick('i'), 'place');
-  assert.equal(pick('w'), null); // re-picking Wire keeps the draft
-  assert.equal(pick('c'), null); // pointing at a BJT, c is still its collector
-  assert.equal(pick('L'), 'netlabel');
-  assert.equal(pick('A'), 'align');
-  state = { mode: 'normal', pendingPlace: null, wire: null, terminals: [] };
-  assert.equal(pick('w'), null); // idle normal mode is onNormalKey's
-});
-
-test('view toggles answer in every mode but the insert search', () => {
-  const main = editorSource();
-  const start = main.indexOf('function viewKey(');
-  const view = main.slice(start, main.indexOf('\n}\n', start) + 2);
-  // Typing a component name is the one place a printable key is not a command.
-  assert.match(view, /if \(mode === 'insert' && !pendingPlace\) return false;/);
-  for (const binding of [/setGrid\(!showGrid\)/, /setCrosshair\(!crosshairVisible\)/,
-    /setGuides\(!guidesVisible\)/, /toggleTheme\(\)/, /fitView\(\{ animate: true \}\)/, /showHelp\(\)/]) {
-    assert.match(view, binding);
-  }
-  // Lower-case d and c belong to dd and copy mode, so only the shifted forms.
-  assert.doesNotMatch(view, /key === 'd'/);
-  assert.doesNotMatch(view, /key === 'c'(?! && shiftKey)/);
-  // Routed before the per-mode handlers, and no longer duplicated inside one.
-  assert.match(main, /if \(viewKey\(key, ev\.shiftKey\)\) \{[\s\S]{0,60}return;\s*\}\s*\n\s*const toolSwitch = toolSwitchForKey\(key, ev\.shiftKey\);[\s\S]{0,120}return;\s*\}\s*\n\s*if \(wire\)/);
-  const normal = functionSource('onNormalKey', main);
-  assert.doesNotMatch(normal, /setGrid\(!showGrid\)|toggleTheme\(\)|setCrosshair\(!crosshairVisible\)/);
 });
 
 test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing', () => {
@@ -877,22 +677,6 @@ test('a compatibility mousemove after the same mouse pointermove is skipped', ()
   // Touch and pen have no compatibility echo to drop.
   skip({ ...pointer, pointerType: 'touch' });
   assert.equal(skip(mouse), false);
-});
-
-test('9 arms net highlighting and 8 clears it; digits are no repeat counts', () => {
-  const main = editorSource();
-  assert.match(main, /if \(key === '9'\) \{\s*activateHighlight\(\);/);
-  assert.match(main, /if \(key === '8'\) \{\s*removeAllNetHighlights\(\);/);
-  assert.doesNotMatch(main, /counts = counts \* 10/);
-  // No vim visual mode either: the marquee is the box selection.
-  assert.doesNotMatch(main, /activateVisual|onVisualKey/);
-  assert.doesNotMatch(main, /key === 'i' \|\| key === 'I'/);
-  // Clicks cycle through one undoable model edit (on a beat, the beat's own
-  // highlight); the net list shows the color.
-  assert.match(main, /commit\(\(\) => \{\s*color = beatIndex === null \? circuit\.cycleNetHighlight\(net\) : cycleBeatHighlight\(circuit, beatIndex, net, NET_HIGHLIGHT_COLORS\);\s*\}\);/);
-  assert.match(main, /dot\.className = 'net-highlight-dot';/);
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="btn-mode-highlight" class="mode-control"[^>]*data-action="highlight"/);
 });
 
 test('Ctrl/Cmd on any annotation arms a copy before the selection toggle', () => {

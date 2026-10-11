@@ -43122,12 +43122,13 @@ function cancelViewAnimation() {
   viewAnimation = 0;
 }
 
-function animateViewTo(target, ms = 260) {
+function animateViewTo(target, ms = 260, landed = () => {}) {
   cancelViewAnimation();
   const from = { ...editor.view };
   const to = { x: target.x, y: target.y, w: target.w, h: target.h };
   if (reducedMotion() || document.hidden) {
     Object.assign(editor.view, to);
+    landed();
     render();
     return;
   }
@@ -43136,6 +43137,7 @@ function animateViewTo(target, ms = 260) {
     const t = (now - start) / ms;
     Object.assign(editor.view, lerpView(from, to, t));
     viewAnimation = t < 1 ? requestAnimationFrame(step) : 0;
+    if (t >= 1) landed();
     render();
   };
   viewAnimation = requestAnimationFrame(step);
@@ -43165,8 +43167,9 @@ function fitView({ animate = false } = {}) {
   const target = fitTarget();
   editor.viewPane = paneSize();
   if (animate) {
+    // Fitted once it lands: a view still on its way is not yet the fit.
     fittedSnapshot = null;
-    animateViewTo(target);
+    animateViewTo(target, undefined, () => { fittedSnapshot = { ...editor.view }; });
     return;
   }
   Object.assign(editor.view, target);

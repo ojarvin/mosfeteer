@@ -112,19 +112,22 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
    *  asked) and wait for it to show. */
   const open = async (name) => {
     const path = join(workspace, `${name}.json`);
-    await evaluate(`void ${module('document-session.js')}.then((m) => m.openDocumentPath(${JSON.stringify(path)}))`);
+    await evaluate(`window.__opened = false; void ${module('document-session.js')}.then((m) => m.openDocumentPath(${JSON.stringify(path)})).finally(() => { window.__opened = true; })`);
     await until(`(() => {
       const dialog = document.getElementById('switch-dialog');
       if (dialog?.open) dialog.querySelector('[value="discard"]').click();
-      return ${module('editor-state.js')}.then((m) => m.editor.currentDocumentPath === ${JSON.stringify(path)});
+      return window.__opened;
     })()`, 10000);
-    await sleep(200);
+    await until(`${module('editor-state.js')}.then((m) => m.editor.currentDocumentPath === ${JSON.stringify(path)})`);
+    await sleep(100);
   };
+
   /** A key as the editor receives it on the canvas. */
   const key = (k, init = {}) => evaluate(`(() => { document.getElementById('canvas').focus(); document.getElementById('canvas').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, ...${JSON.stringify(init)} })); })()`);
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
-  const mouse = (type, x, y, { button = 'left', clickCount = 1, buttons } = {}) => send('Input.dispatchMouseEvent', {
-    type, x, y, button, clickCount, buttons: buttons ?? (type === 'mouseReleased' ? 0 : button === 'left' ? 1 : button === 'right' ? 2 : 0),
+  /** A real mouse event; `modifiers` as CDP counts them (Alt 1, Ctrl 2, Meta 4, Shift 8). */
+  const mouse = (type, x, y, { button = 'left', clickCount = 1, buttons, modifiers = 0 } = {}) => send('Input.dispatchMouseEvent', {
+    type, x, y, button, clickCount, modifiers, buttons: buttons ?? (type === 'mouseReleased' ? 0 : button === 'left' ? 1 : button === 'right' ? 2 : 0),
   });
   const screenshot = async (path, clip) => {
     const r = await send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) });
