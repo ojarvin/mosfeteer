@@ -41,6 +41,17 @@ export function amplifier() {
   ]);
 }
 
+/** The amplifier on a wide sheet: a note far off makes it a large design,
+ *  so on its card it reaches across the gap to a neighbour's. */
+export function wideAmplifier() {
+  return build([
+    'add nmos M1 --at 0 0', 'add resistor RD --at 0 -320 --rot 90', 'add supply VDD --at 0 -560', 'add ground GND --at 0 240',
+    'add input VIN --at -400 0', 'add output VOUT --at 400 -160',
+    'connect VIN.p M1.g', 'connect M1.s GND.gnd', 'connect M1.d RD.b', 'connect RD.a VDD.p', 'connect M1.d VOUT.p',
+    'annotation add margin 4000 2400',
+  ]);
+}
+
 /** Two resistors apart, diagonally: R1 at the origin, R2 down and right;
  *  a note far off widens the fitted view to room for wires beside them. */
 export function twoResistors() {

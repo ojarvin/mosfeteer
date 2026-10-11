@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -160,3 +160,30 @@ test('the desk closes the gap a design leaves', () => {
   }
 });
 
+
+test('cards floating around a picked one step clear of it and of each other, the short way out', () => {
+  const gap = 20;
+  const shifted = (card, offsets) => ({ ...card, x: card.x + offsets.get(card.id).dx, y: card.y + offsets.get(card.id).dy });
+  const picked = { id: 'p', x: 1000, y: 0, w: 1000, h: 600, fixed: true };
+  // One overlapping its left edge a little, one under it, two stacked on its right
+  // that would run into each other once pushed.
+  const cards = [
+    picked,
+    { id: 'left', x: 0, y: 100, w: 1040, h: 400 },
+    { id: 'below', x: 1200, y: 560, w: 400, h: 300 },
+    { id: 'r1', x: 1900, y: 0, w: 500, h: 300 },
+    { id: 'r2', x: 1900, y: 290, w: 500, h: 300 },
+  ];
+  const offsets = floatClear(cards, gap);
+  assert.equal(offsets.has('p'), false, 'the picked card stays put');
+  assert.deepEqual(offsets.get('left'), { dx: -60, dy: 0 }, 'just clear, to the left');
+  assert.deepEqual(offsets.get('below'), { dx: 0, dy: 60 }, 'just clear, downward');
+  const moved = cards.map((card) => (card.fixed ? card : shifted(card, offsets)));
+  for (const [i, a] of moved.entries()) {
+    for (const b of moved.slice(i + 1)) {
+      assert.equal(rectsIntersect({ x: a.x - gap / 2, y: a.y - gap / 2, w: a.w + gap, h: a.h + gap }, { x: b.x - gap / 2, y: b.y - gap / 2, w: b.w + gap, h: b.h + gap }), false, `${a.id} and ${b.id} apart`);
+    }
+  }
+  // Already clear: nothing moves.
+  assert.deepEqual(floatClear([picked, { id: 'far', x: 3000, y: 0, w: 100, h: 100 }], gap).get('far'), { dx: 0, dy: 0 });
+});

@@ -20,7 +20,7 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkGraph } from '../core/design-links.js';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeInOutQuart, wheelIntent, lerpView, zoomView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -97,7 +97,8 @@ export function atlasOpen() {
 
 /** What the desk shows, read-only, for tests and tools (it is drawn on a
  *  canvas): each design's name and place, whether it is the open one, the
- *  pick, matched by the search, and how far it is lifted; null when closed. */
+ *  pick, matched by the search, how far it is lifted, and how far it has
+ *  floated clear of the pick (drawing units); null when closed. */
 export function atlasSnapshot() {
   if (!state) return null;
   return {
@@ -111,6 +112,7 @@ export function atlasSnapshot() {
         id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h,
         current: !!entry?.current, selected: state.selected === tile.id || !!state.picked?.has(tile.id),
         lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim,
+        float: { dx: liftOf(tile.id).dx || 0, dy: liftOf(tile.id).dy || 0 },
       };
     }),
   };
@@ -136,6 +138,13 @@ function clientToWorld(clientX, clientY) {
   const box = rootEl.getBoundingClientRect();
   const k = scale();
   return { x: state.view.x + (clientX - box.left) / k, y: state.view.y + (clientY - box.top) / k };
+}
+
+/** A desk point in client pixels, for tests that click the canvas. */
+export function atlasWorldToClient(x, y) {
+  const box = rootEl.getBoundingClientRect();
+  const k = scale();
+  return { x: box.left + (x - state.view.x) * k, y: box.top + (y - state.view.y) * k };
 }
 
 function worldToScreen(rect) {
@@ -505,7 +514,11 @@ function draw() {
     for (const tile of state.motion.leaving) shown.push({ tile, alpha: 1 - progress });
     requestDraw();
   }
-  const visible = shown.filter(({ tile }) => rectsIntersect(screen, { ...tile, h: tile.h + ATLAS_CAPTION }));
+  // A design counts where it lies and where its card has floated to.
+  const visible = shown.filter(({ tile }) => {
+    const { dx = 0, dy = 0 } = liftOf(tile.id);
+    return rectsIntersect(screen, { ...tile, h: tile.h + ATLAS_CAPTION }) || ((dx || dy) && rectsIntersect(screen, { ...tile, x: tile.x + dx, y: tile.y + dy, h: tile.h + ATLAS_CAPTION }));
+  });
   const wanted = [];
   const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
   const placed = visible.map(({ tile, alpha }) => {
@@ -603,15 +616,17 @@ function updateLifts() {
       if (focus.has(to) && !focus.has(from)) related.add(from);
     }
   }
+  const floats = floatTargets(focus, related);
   const rate = reducedMotion() ? 1 : 1 - Math.exp(-dt / 85);
   let moving = false;
   for (const tile of state.tiles) {
-    const target = { lift: focus.has(tile.id) ? 1 : related.has(tile.id) ? RELATED_LIFT : 0, dim: focus.size && !focus.has(tile.id) && !related.has(tile.id) ? 1 : 0 };
-    const now = state.lifts.get(tile.id) || { lift: 0, dim: 0 };
+    const float = floats.get(tile.id) || { dx: 0, dy: 0 };
+    const target = { lift: focus.has(tile.id) ? 1 : related.has(tile.id) ? RELATED_LIFT : 0, dim: focus.size && !focus.has(tile.id) && !related.has(tile.id) ? 1 : 0, dx: float.dx, dy: float.dy };
+    const now = state.lifts.get(tile.id) || { lift: 0, dim: 0, dx: 0, dy: 0 };
     const next = {};
-    for (const key of ['lift', 'dim']) {
+    for (const key of ['lift', 'dim', 'dx', 'dy']) {
       const value = now[key] + (target[key] - now[key]) * rate;
-      next[key] = Math.abs(value - target[key]) < 0.004 ? target[key] : value;
+      next[key] = Math.abs(value - target[key]) < (key === 'dx' || key === 'dy' ? 0.5 : 0.004) ? target[key] : value;
       if (next[key] !== target[key]) moving = true;
     }
     next.target = target.lift;
@@ -620,21 +635,62 @@ function updateLifts() {
   if (moving) requestDraw();
 }
 
-const liftOf = (id) => state.lifts?.get(id) || { lift: 0, dim: 0 };
+const liftOf = (id) => state.lifts?.get(id) || { lift: 0, dim: 0, dx: 0, dy: 0 };
 
-/** A design's screen rect as lifted: grown about its centre. */
+/** Where the designs lifted with the pick float to (id -> { dx, dy }, in
+ *  drawing units): grown on their cards they would overlap the picked one
+ *  or each other, so each steps clear (floatClear). Kept while the pick
+ *  and the desk stay the same. */
+function floatTargets(focus, related) {
+  const key = [...focus].sort().join('|') + '>' + [...related].sort().join('|');
+  if (state.floats?.key === key && state.floats.tiles === state.tiles) return state.floats.offsets;
+  const card = (tile, lift) => {
+    const grow = 1 + LIFT_GROW * lift;
+    const pad = ATLAS_GAP * 0.3;
+    const w = tile.w * grow;
+    const h = tile.h * grow;
+    return { id: tile.id, x: tile.x + (tile.w - w) / 2 - pad, y: tile.y + (tile.h - h) / 2 - pad, w: w + 2 * pad, h: h + 2 * pad + ATLAS_CAPTION, fixed: focus.has(tile.id) };
+  };
+  const cards = state.tiles.filter((tile) => focus.has(tile.id) || related.has(tile.id)).map((tile) => card(tile, focus.has(tile.id) ? 1 : RELATED_LIFT));
+  const offsets = related.size ? floatClear(cards, 2 * ATLAS_GAP) : new Map();
+  state.floats = { key, tiles: state.tiles, offsets };
+  return offsets;
+}
+
+/** A design's screen rect as lifted: grown about its centre, and floated clear. */
 function lifted(rect, id) {
-  const grow = 1 + LIFT_GROW * liftOf(id).lift;
-  if (grow === 1) return rect;
-  return { x: rect.x + (rect.w * (1 - grow)) / 2, y: rect.y + (rect.h * (1 - grow)) / 2, w: rect.w * grow, h: rect.h * grow };
+  const { lift, dx = 0, dy = 0 } = liftOf(id);
+  const grow = 1 + LIFT_GROW * lift;
+  if (grow === 1 && !dx && !dy) return rect;
+  const k = scale();
+  return { x: rect.x + (rect.w * (1 - grow)) / 2 + dx * k, y: rect.y + (rect.h * (1 - grow)) / 2 + dy * k, w: rect.w * grow, h: rect.h * grow };
 }
 
 /** A screen point on a design, where its lift has carried it. */
 function liftedPoint(point, flat, id) {
-  const grow = 1 + LIFT_GROW * liftOf(id).lift;
+  const { lift, dx = 0, dy = 0 } = liftOf(id);
+  const grow = 1 + LIFT_GROW * lift;
+  const k = scale();
   const cx = flat.x + flat.w / 2;
   const cy = flat.y + flat.h / 2;
-  return { x: cx + (point.x - cx) * grow, y: cy + (point.y - cy) * grow };
+  return { x: cx + (point.x - cx) * grow + dx * k, y: cy + (point.y - cy) * grow + dy * k };
+}
+
+/** The design under a world point as the desk shows it: a lifted card
+ *  first, where it floats, then the designs lying flat. */
+function tileUnder(point) {
+  const raised = state.tiles.filter((tile) => liftOf(tile.id).lift > 0.01)
+    .sort((a, b) => liftOf(b.id).lift - liftOf(a.id).lift);
+  for (const tile of raised) {
+    const { lift, dx = 0, dy = 0 } = liftOf(tile.id);
+    const grow = 1 + LIFT_GROW * lift;
+    const w = tile.w * grow;
+    const h = tile.h * grow;
+    const x = tile.x + (tile.w - w) / 2 + dx;
+    const y = tile.y + (tile.h - h) / 2 + dy;
+    if (point.x >= x && point.x <= x + w && point.y >= y && point.y <= y + h + ATLAS_CAPTION) return tile;
+  }
+  return tileAt(state.tiles, point);
 }
 
 /** The card a lifted design rests on: the drawing's own paper, raised on a
@@ -1404,10 +1460,11 @@ function syncVectorOverlays(list, moving = false) {
       });
     }
     // Lifted as its image is: grown about its centre; dimmed with the rest.
-    const { lift, dim } = liftOf(tile.id);
+    const { lift, dim, dx = 0, dy = 0 } = liftOf(tile.id);
     const grow = 1 + LIFT_GROW * lift;
+    const k = scale();
     el.style.transformOrigin = 'center';
-    el.style.transform = `translate(${rect.x}px, ${rect.y}px)${grow !== 1 ? ` scale(${grow})` : ''}`;
+    el.style.transform = `translate(${rect.x + dx * k}px, ${rect.y + dy * k}px)${grow !== 1 ? ` scale(${grow})` : ''}`;
     el.style.width = `${rect.w}px`;
     el.style.height = `${rect.h}px`;
     const searched = state.matches && !state.matches.has(tile.id) ? 0.18 : 1;
@@ -2111,7 +2168,7 @@ function onPointerMove(ev) {
     return;
   }
   if (!drag) {
-    const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
+    const hit = tileUnder(clientToWorld(ev.clientX, ev.clientY));
     const hover = hit?.id || null;
     if (hover !== state.hover) {
       state.hover = hover;
@@ -2172,7 +2229,7 @@ function onPointerUp(ev) {
   state.drag = null;
   rootEl.classList.remove('panning');
   if (!drag || drag.moved || ev.button !== 0) return;
-  const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
+  const hit = tileUnder(clientToWorld(ev.clientX, ev.clientY));
   // Ctrl- or Shift-click adds a design to the pick or takes it out; a plain
   // click picks one.
   if ((ev.ctrlKey || ev.metaKey || ev.shiftKey) && hit && state.source === 'workspace') {
@@ -2196,7 +2253,7 @@ function onPointerUp(ev) {
 
 function onDoubleClick(ev) {
   if (!state || inTransition() || ev.target.closest?.('.atlas-empty')) return;
-  const hit = tileAt(state.tiles, clientToWorld(ev.clientX, ev.clientY));
+  const hit = tileUnder(clientToWorld(ev.clientX, ev.clientY));
   if (hit) void openTile(hit);
 }
 

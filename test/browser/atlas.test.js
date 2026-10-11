@@ -5,12 +5,12 @@
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
-import { amplifier, linkedTop, tagged } from './fixtures.js';
+import { linkedTop, tagged, wideAmplifier } from './fixtures.js';
 
 describe('Atlas and linked designs', { skip: browserSkip() }, () => {
   let h;
   before(async () => {
-    h = await start({ docs: { top: linkedTop(), child: amplifier(), alpha: tagged('CA'), beta: tagged('CB') }, width: 1400, height: 900 });
+    h = await start({ docs: { top: linkedTop(), child: wideAmplifier(), alpha: tagged('CA'), beta: tagged('CB') }, width: 1400, height: 900 });
   });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
@@ -60,6 +60,31 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     const lifted = Object.fromEntries((await snapshot()).tiles.map((t) => [t.name, t]));
     assert.ok(lifted.child.lift > 0.3 && lifted.child.lift < 1, `its linked design lifts part way: ${lifted.child.lift}`);
     assert.ok(lifted.alpha.lift === 0 && lifted.alpha.dim > 0.5, 'the rest dim');
+  });
+
+  test('the designs lifted with the pick float clear of its card, are picked where they float, and settle back', async () => {
+    await openDesk();
+    assert.ok(await pick('top'));
+    await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.name === 'top').lift > 0.99)`);
+    await sleep(600);
+    const tiles = Object.fromEntries((await snapshot()).tiles.map((t) => [t.name, t]));
+    // Each card as drawn: grown about the drawing's centre, then floated, its caption below.
+    const card = (t) => {
+      const grow = 1 + 0.12 * t.lift;
+      return { x: t.x + (t.w * (1 - grow)) / 2 + t.float.dx, y: t.y + (t.h * (1 - grow)) / 2 + t.float.dy, w: t.w * grow, h: t.h * grow + 80 };
+    };
+    const a = card(tiles.top);
+    const b = card(tiles.child);
+    assert.ok(!(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h), `cards apart: ${JSON.stringify({ a, b })}`);
+    assert.deepEqual(tiles.top.float, { dx: 0, dy: 0 }, 'the pick stays put');
+    // A click where the linked design floats picks it.
+    const at = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasWorldToClient(${b.x + b.w / 2}, ${b.y + b.h / 2}))`);
+    await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', at.x, at.y);
+    await h.mouse('mouseReleased', at.x, at.y);
+    await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.selected)?.name === 'child')`);
+    await atlasKey('Escape');
+    await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.every((t) => t.lift === 0 && !t.float.dx && !t.float.dy))`);
   });
 
   test('a search marks what it finds at once and packs it together once typing pauses', async () => {

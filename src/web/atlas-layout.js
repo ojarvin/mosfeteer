@@ -220,6 +220,47 @@ export function rectsIntersect(a, b) {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
+/**
+ * How far each floating card moves so that no two cards overlap: `cards`
+ * ({ id, x, y, w, h, fixed }) are the lifted cards in world units, `gap`
+ * the space kept between them. Fixed cards (the picked designs) stay put;
+ * the others, nearest first, each step out along the shorter way clear of
+ * every card already placed, never doubling back on an axis. Returns id ->
+ * { dx, dy } for each card that floats.
+ */
+export function floatClear(cards, gap) {
+  const centre = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+  const placed = cards.filter((card) => card.fixed);
+  const anchors = placed.map(centre);
+  const reach = (card) => Math.min(...anchors.map((a) => Math.hypot(centre(card).x - a.x, centre(card).y - a.y)));
+  const floating = cards.filter((card) => !card.fixed).sort((a, b) => reach(a) - reach(b) || String(a.id).localeCompare(String(b.id)));
+  const offsets = new Map();
+  for (const card of floating) {
+    let dx = 0;
+    let dy = 0;
+    for (let i = 0; i < 4 * cards.length; i++) {
+      const r = { x: card.x + dx, y: card.y + dy, w: card.w, h: card.h };
+      const hit = placed.find((o) => rectsIntersect({ x: r.x - gap, y: r.y - gap, w: r.w + 2 * gap, h: r.h + 2 * gap }, o));
+      if (!hit) break;
+      const c = centre(r);
+      const o = centre(hit);
+      // Each way out of the card hit, and the shortest that keeps going the way it went.
+      const ways = [
+        { dx: hit.x + hit.w + gap - r.x, dy: 0 }, { dx: hit.x - gap - (r.x + r.w), dy: 0 },
+        { dx: 0, dy: hit.y + hit.h + gap - r.y }, { dx: 0, dy: hit.y - gap - (r.y + r.h) },
+      ].filter((way) => way.dx * dx >= 0 && way.dy * dy >= 0);
+      const away = ways.filter((way) => (way.dx || way.dy) * ((way.dx ? c.x - o.x : c.y - o.y) || 1) > 0);
+      const way = (away.length ? away : ways).sort((a, b) => Math.abs(a.dx + a.dy) - Math.abs(b.dx + b.dy))[0];
+      if (!way) break;
+      dx += way.dx;
+      dy += way.dy;
+    }
+    offsets.set(card.id, { dx, dy });
+    placed.push({ x: card.x + dx, y: card.y + dy, w: card.w, h: card.h });
+  }
+  return offsets;
+}
+
 /** The tile under a world point, if any (a caption counts as its tile). */
 export function tileAt(tiles, point, caption = ATLAS_CAPTION) {
   return tiles.find((tile) => point.x >= tile.x && point.x <= tile.x + tile.w &&
