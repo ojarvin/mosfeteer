@@ -345,17 +345,6 @@ test('an explicit new document is protected from active-document auto-loads', ()
   assert.match(main.slice(0, main.indexOf('function copySelectionSource(')), /activeSyncSuspended = false;/);
 });
 
-test('wire previews exclude the destination net and transformed nets keep terminal moves', () => {
-  const main = editorSource();
-  const preview = functionSource('draftRoutePath', main);
-  assert.match(preview, /const excludedNets = new Set\(sourceNetId && !isOpenEnd\(endpoints\[0\], sourceNetId\) \? \[sourceNetId\] : \[\]\)/);
-  assert.match(preview, /circuit\._netEnv\(excludedNets\)/);
-  const transform = main.slice(main.indexOf('function transformMixedSelection('), main.indexOf('/** Re-route every net', main.indexOf('function transformMixedSelection(')));
-  assert.match(transform, /componentTerminalMoves\(circuit, refs, beforeComponents\)/);
-  // The editor and the commands reroute through one helper (core/part-moves.js).
-  assert.match(readFileSync(new URL('../src/core/part-moves.js', import.meta.url), 'utf8'), /terminalMoves \|\| \(fresh \? 'refresh' : moved\)/);
-});
-
 test('startup paints before listing documents and restoring the requested document', () => {
   const main = editorSource();
   assert.match(main, /const listPromise = refreshCircuitList\(\);/);
@@ -528,64 +517,6 @@ test('hovering another context menu item closes submenus it is not part of', () 
   assert.ok(!submenu.classes.has('open'));
   assert.equal(trigger.attrs['aria-expanded'], 'false');
   assert.equal(active, plain);
-});
-
-test('wiring uses Alt for nearest-terminal snapping instead of symmetric routing', () => {
-  const main = editorSource();
-  assert.match(main, /function terminalSnapWorld\(point\)/);
-  assert.match(main, /function nearestSnapTarget\(point\)[\s\S]*?circuit\.openWireEnds\(\)[\s\S]*?nearestTerminal\(point, \{ anyDistance: true \}\)/);
-  assert.match(main, /const hit = nearestSnapTarget\(point\);/);
-  assert.match(main, /return wire && terminalSnap \? terminalSnapWorld\(point\) : snappedWorld\(point\);/);
-  assert.match(main, /if \(wire\) setTerminalSnap\(true\)/);
-  assert.match(main, /if \(terminalSnap\) \{\s*terminalSnap = false;/);
-  assert.match(main, /terminalSnapTarget: terminalSnap \? nearestSnapTarget\(cursor\) : null/);
-  // A click on a free wire end finishes the draft there, like a terminal.
-  const click = functionSource('doWireClick', main);
-  assert.match(click, /circuit\.openWireEnds\(\)\.find\([\s\S]*?joinWireToNet\(/);
-  assert.doesNotMatch(main, /withMirroredWire|mirroredWireDraft|mirrorWirePreview/);
-  const toolbar = readFileSync(new URL('../src/web/toolbar.js', import.meta.url), 'utf8');
-  assert.match(toolbar, /hold Alt \(wire\).*nearest terminal/);
-  assert.doesNotMatch(toolbar, /symmetric wiring/);
-});
-
-test('wire previews prefer a centered equivalent route', () => {
-  const main = editorSource();
-  const draft = functionSource('draftRoutePath', main);
-  assert.match(draft, /allowDiagonal: false, preferMidpoint: true/);
-});
-
-test('wire drafts meet a free wire end at its tip instead of running along that wire', () => {
-  const main = editorSource();
-  const draft = functionSource('draftRoutePath', main);
-  assert.match(draft, /circuit\.openWireEnds\(\)/);
-  assert.match(draft, /if \(isOpenEnd\(endpoints\.at\(-1\), net\.id\)\) continue;/);
-});
-
-test('terminal commits preserve the routed preview without manual waypoints', () => {
-  const main = editorSource();
-  const connect = main.slice(main.indexOf('function connectWireToTerminal('), main.indexOf('\n/** A point reflected', main.indexOf('function connectWireToTerminal(')));
-  assert.match(connect, /const draftPath = draftRoutePath\(wire, end\);/);
-  assert.doesNotMatch(connect, /wire\.points\.length \? draftRoutePath/);
-});
-
-test('wire previews can cross neighbours but validate the final drop, and canvas menus do not promise rename by double-click', () => {
-  const main = editorSource();
-  // The keyboard and the pointer drag gather their runs the same way.
-  const runs = functionSource('collectWireRuns', main);
-  assert.match(runs, /allowPastNeighbors: true/);
-  assert.match(runs, /preserveDiagonalNeighbors: true/);
-  assert.match(functionSource('managedWireDragAt', main), /collectWireRuns\(moveKeys, \{/);
-  assert.match(functionSource('canvasMouseDown', main), /collectWireRuns\(moveKeys\)/);
-  const upStart = main.indexOf('function canvasMouseUp(');
-  const mouseup = main.slice(upStart, main.indexOf("\ncanvasEl.addEventListener('mousedown'", upStart));
-  assert.match(mouseup, /newWireBodyViolation\(drag\.startSnapshot, touchedNets\)/);
-  assert.match(mouseup, /drag\.mode === 'wireseg' && !drag\.modal && movedOut\) canvasMouseMove\(ev\)/);
-
-  const wireRename = main.match(/appendContextItem\(group, 'Rename net…',[^\n]*/)?.[0];
-  assert.ok(wireRename, 'the wire context menu still offers net rename');
-  assert.doesNotMatch(wireRename, /shortcut: 'dbl-click'/);
-  const netList = functionSource('renderNets', main);
-  assert.match(netList, /row\.addEventListener\('dblclick', \(\) => \{[\s\S]*startNetRename\(net, ref\)/);
 });
 
 test('a copy ghost mirrors by pasting a second set and reflecting it', () => {

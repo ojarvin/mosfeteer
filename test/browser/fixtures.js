@@ -40,3 +40,9 @@ export function amplifier() {
     'connect VIN.p M1.g', 'connect M1.s GND.gnd', 'connect M1.d RD.b', 'connect RD.a VDD.p', 'connect M1.d VOUT.p',
   ]);
 }
+
+/** Two resistors apart, diagonally: R1 at the origin, R2 down and right;
+ *  a note far off widens the fitted view to room for wires beside them. */
+export function twoResistors() {
+  return build(['add resistor R1 --at 0 0', 'add resistor R2 --at 800 400', 'annotation add margin 1600 1000']);
+}
