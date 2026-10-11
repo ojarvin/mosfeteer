@@ -76,8 +76,10 @@ is hidden in the Symbols view.
 The design open in the editor -- where Shift+Backspace and the header's **Back to …**
 button return -- carries an **OPEN** badge before its caption, and the
 button names it ("Back to amp", or "(not in this workspace)" for a new or
-unsaved drawing). The picked design, which Enter opens, has a bracket at each
-corner; a hover draws a faint frame. Both take in the caption.
+unsaved drawing). The picked design, which Enter opens, is named in the
+hint bar at the bottom, with its tags and the keys that act on it (several
+picked: their names); a hover draws a faint frame that takes in the
+caption.
 
 Opening a design flies the camera straight into it -- one zoom about the
 point that stays put, timed by how far it zooms -- to exactly where the

@@ -5442,6 +5442,15 @@ button.off {
   white-space: nowrap;
 }
 
+.atlas-hint-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.atlas-hint-tags {
+  color: var(--text-dim);
+}
+
 .atlas-hint {
   position: absolute;
   bottom: 12px;

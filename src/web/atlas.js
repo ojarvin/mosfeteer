@@ -470,6 +470,35 @@ function colors() {
   };
 }
 
+/** The hint bar names the pick -- the design Enter opens, with its tags --
+ *  and the keys for it; with nothing picked it shows the keys that get around. */
+function syncHint() {
+  if (!hintEl) return;
+  const ids = state.source === 'workspace' ? pickedIds() : [];
+  const names = ids.map((id) => state.entries.get(id)).filter(Boolean);
+  const key = `${state.source}|${names.map((entry) => `${entry.name}:${entry.index?.tags?.join(',') || ''}`).join('|')}`;
+  if (state.hintKey === key) return;
+  state.hintKey = key;
+  if (!names.length) {
+    hintEl.textContent = HINTS[state.source];
+    return;
+  }
+  const name = (entry) => Object.assign(document.createElement('b'), { className: 'atlas-hint-name', textContent: entry.name });
+  const parts = [];
+  if (names.length === 1) {
+    parts.push(name(names[0]));
+    const tags = names[0].index?.tags || [];
+    if (tags.length) parts.push(' ', Object.assign(document.createElement('span'), { className: 'atlas-hint-tags', textContent: tags.map((tag) => `#${tag}`).join(' ') }));
+    parts.push(' · Enter opens · Z zooms to it · Esc lets go');
+  } else {
+    const shown = names.slice(0, 3);
+    shown.forEach((entry, i) => parts.push(...(i ? [', '] : []), name(entry)));
+    if (names.length > shown.length) parts.push(` and ${names.length - shown.length} more`);
+    parts.push(' · Ctrl+Shift+C copies them · Esc lets go');
+  }
+  hintEl.replaceChildren(...parts);
+}
+
 /** The header's way back names the design the editor returns to, and says so when
  *  that design is not on the desk (a new drawing, or one from elsewhere). */
 function syncBackButton() {
@@ -485,6 +514,7 @@ function syncBackButton() {
 
 function draw() {
   syncBackButton();
+  syncHint();
   const { w, h } = paneSize();
   const dpr = window.devicePixelRatio || 1;
   if (deskEl.width !== Math.round(w * dpr) || deskEl.height !== Math.round(h * dpr)) {
@@ -1715,6 +1745,7 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   // Until it has landed and its toolbars are back (inTransition).
   state.entering = true;
   if (hintEl) hintEl.textContent = HINTS[source];
+  state.hintKey = null;
   if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
   if (openFolderEl) {
     openFolderEl.hidden = source !== 'workspace';

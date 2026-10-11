@@ -60,6 +60,11 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     const lifted = Object.fromEntries((await snapshot()).tiles.map((t) => [t.name, t]));
     assert.ok(lifted.child.lift > 0.1 && lifted.child.lift < 0.5, `its linked design lifts part way: ${lifted.child.lift}`);
     assert.ok(lifted.alpha.lift === 0 && lifted.alpha.dim > 0.5, 'the rest dim');
+    const hint = () => h.evaluate(`document.getElementById('atlas-hint').textContent`);
+    assert.match(await hint(), /^top · Enter opens/, 'the hint bar names the pick');
+    await atlasKey('Escape');
+    await h.until(`!/Enter opens/.test(document.getElementById('atlas-hint').textContent)`);
+    assert.match(await hint(), /^Drag to move/);
   });
 
   test('the designs lifted with the pick float clear of its card, are picked where they float, and settle back', async () => {
