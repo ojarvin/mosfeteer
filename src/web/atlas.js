@@ -595,11 +595,11 @@ function draw() {
 // With nothing picked every design lies flat, at its true size, for
 // comparison. A picked design lifts off the desk as a card -- a touch
 // larger, brighter, on a soft shadow, an accent rim -- the designs it links
-// to and those using it lift a little less, and the rest dim. Each design
+// to and those using it lift only part way, and the rest dim. Each design
 // eases toward its own state, so picking and letting go animate.
 
 const LIFT_GROW = 0.12;
-const RELATED_LIFT = 0.6;
+const RELATED_LIFT = 0.3;
 
 /** Every design's lift (0 flat .. 1 picked) and dim (0 .. 1), eased toward
  *  what the pick asks for; asks for frames while any is on its way. */
@@ -707,23 +707,26 @@ function drawCard(ctx, tile, rect, lift, palette) {
   const h = rect.h + 2 * pad + caption;
   const radius = Math.max(3, Math.min(16, GRID * 0.6 * k));
   const picked = state.selected === tile.id || !!state.picked?.has(tile.id);
+  // Solid from the related designs' height up: a lower card is nearer the
+  // desk (a smaller shadow), never see-through.
+  const solid = Math.min(1, lift / RELATED_LIFT);
   ctx.save();
-  ctx.globalAlpha = Math.min(1, lift * 1.4);
+  ctx.globalAlpha = solid;
   // Two shadows: a wide soft one far below, a tighter one close under it.
   ctx.fillStyle = palette.card;
   for (const [blur, drop, alpha] of [[70 * lift, 34 * lift, 1], [16 * lift, 6 * lift, 0.6]]) {
     ctx.shadowColor = palette.shadow;
     ctx.shadowBlur = blur;
     ctx.shadowOffsetY = drop;
-    ctx.globalAlpha = Math.min(1, lift * 1.4) * alpha;
+    ctx.globalAlpha = solid * alpha;
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, radius);
     ctx.fill();
   }
   ctx.shadowColor = 'transparent';
-  ctx.globalAlpha = Math.min(1, lift * 1.4);
+  ctx.globalAlpha = solid;
   ctx.fill();
-  ctx.globalAlpha = lift * (picked ? 0.9 : 0.35);
+  ctx.globalAlpha = picked ? lift * 0.9 : solid * 0.3;
   ctx.strokeStyle = picked ? palette.accent : palette.dim;
   ctx.lineWidth = Math.max(0.5, Math.min(1.5, 3 * k));
   ctx.stroke();

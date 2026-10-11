@@ -58,7 +58,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     assert.ok(await pick('top'));
     await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.name === 'top').lift > 0.99)`);
     const lifted = Object.fromEntries((await snapshot()).tiles.map((t) => [t.name, t]));
-    assert.ok(lifted.child.lift > 0.3 && lifted.child.lift < 1, `its linked design lifts part way: ${lifted.child.lift}`);
+    assert.ok(lifted.child.lift > 0.1 && lifted.child.lift < 0.5, `its linked design lifts part way: ${lifted.child.lift}`);
     assert.ok(lifted.alpha.lift === 0 && lifted.alpha.dim > 0.5, 'the rest dim');
   });
 

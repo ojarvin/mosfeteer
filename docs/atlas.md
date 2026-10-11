@@ -41,7 +41,7 @@ With nothing picked every design lies flat at its true size, for
 comparison. A picked design lifts off the desk: it eases up onto a card
 larger than the flat drawing, on a deep soft shadow, its rim a hairline in
 drawing units (the accent's); the designs it links to and those using it
-lift a little less, on cards of their own, and every other design dims. Grown
+lift only part way, on lower cards of their own, and every other design dims. Grown
 on their cards they would overlap the picked one (or each other), so each
 linked card floats out of the way, the shortest way clear (`floatClear`),
 and is picked where it floats. Letting go lays them flat
