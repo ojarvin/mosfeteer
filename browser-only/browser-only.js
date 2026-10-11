@@ -29242,6 +29242,9 @@ let plainTex, swingLimit; __bind(() => { ({ plainTex, swingLimit } = __require("
 
 
 
+/** 10^x, exact at whole powers (V8 before 12 gives 10 ** -4 as 0.00009999999999999999). */
+const pow10 = (x) => (Number.isInteger(x) ? Number(`1e${x}`) : 10 ** x);
+
 const finitePoints = (points) => points.filter(([x, y]) => Number.isFinite(x) && x > -Infinity && y !== undefined);
 
 /** A frequency response (signal-flow.js `responsePlot`). */
@@ -29251,7 +29254,7 @@ function responseSpec(plot) {
   return {
     key: `response:${plot.role || ''}:${phase ? 'phase' : plot.units || 'db'}:${plot.axis}`,
     title: phase ? 'Phase responses' : 'Magnitude responses',
-    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [10 ** plot.range.low, 10 ** plot.range.high] },
+    x: { scale: 'log', label: plot.axis === 'normalized' ? 'f/f_{s}' : 'ω', range: [pow10(plot.range.low), pow10(plot.range.high)] },
     y: { scale: 'linear', label: phase ? `∠${name} (°)` : plot.units === 'dBFS' ? 'dBFS' : `|${name}| (dB)`, step: phase ? 45 : 20, floor: phase ? null : -400 },
     series: plot.traces.map((trace) => ({
       label: trace.label,
@@ -29350,7 +29353,7 @@ function locusSpec(plot) {
  * marked corners, and the phase. `corners`: `[{ w, text }]`.
  */
 function bodeSpecs(sketch, { corners = [], quantity = 'A_{v}', unityText = 'ω_{u}' } = {}) {
-  const range = [10 ** sketch.range.low, 10 ** sketch.range.high];
+  const range = [pow10(sketch.range.low), pow10(sketch.range.high)];
   const marks = corners.filter((c) => c.w > 0).map((c) => ({ x: c.w, role: 'corner', label: c.text }));
   if (sketch.unityGain) marks.push({ x: sketch.unityGain.w, role: 'corner', label: unityText });
   return {

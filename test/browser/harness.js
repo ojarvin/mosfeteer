@@ -29,8 +29,12 @@ export function chromePath() {
   return found;
 }
 
-/** Skip reason for node:test when no browser is available. */
-export const browserSkip = () => (chromePath() ? false : 'no Chromium found (set CHROME to run browser tests)');
+/** Skip reason for node:test when no browser is available, or no
+ *  WebSocket to drive it with (Node 22 and later have one). */
+export const browserSkip = () => {
+  if (typeof WebSocket !== 'function') return 'browser tests need Node 22 or later (a global WebSocket)';
+  return chromePath() ? false : 'no Chromium found (set CHROME to run browser tests)';
+};
 
 function freePort() {
   return new Promise((resolve) => {
@@ -68,18 +72,34 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   // browsers started at once never race for one.
   const chrome = spawn(chromePath(), ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${join(root, 'chrome')}`,
     `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore', env: { ...process.env, HOME: home } });
-  let cdpPort = null;
-  for (let i = 0; i < 100 && !cdpPort; i++) {
-    try { cdpPort = Number((await readFile(join(root, 'chrome', 'DevToolsActivePort'), 'utf8')).split('\n')[0]) || null; } catch { /* not up yet */ }
-    if (!cdpPort) await sleep(100);
+  let ws;
+  try {
+    let cdpPort = null;
+    for (let i = 0; i < 100 && !cdpPort; i++) {
+      try { cdpPort = Number((await readFile(join(root, 'chrome', 'DevToolsActivePort'), 'utf8')).split('\n')[0]) || null; } catch { /* not up yet */ }
+      if (!cdpPort) await sleep(100);
+    }
+    let targets = [];
+    for (let i = 0; i < 100 && cdpPort && !targets.some((t) => t.type === 'page'); i++) {
+      try { targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json(); } catch { /* not up yet */ }
+      if (!targets.some((t) => t.type === 'page')) await sleep(100);
+    }
+    const page = targets.find((t) => t.type === 'page');
+    if (!page) throw new Error('Chromium started but offered no page to drive');
+    ws = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      ws.addEventListener('open', resolve, { once: true });
+      ws.addEventListener('error', () => reject(new Error('could not connect to Chromium')), { once: true });
+    });
+  } catch (err) {
+    // A start that fails leaves nothing running: the test fails at once
+    // instead of waiting out its time limit on a browser no one drives.
+    chrome.kill('SIGTERM');
+    server.kill('SIGTERM');
+    await sleep(200);
+    await rm(root, { recursive: true, force: true });
+    throw err;
   }
-  let targets = [];
-  for (let i = 0; i < 100 && !targets.some((t) => t.type === 'page'); i++) {
-    try { targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json(); } catch { /* not up yet */ }
-    if (!targets.some((t) => t.type === 'page')) await sleep(100);
-  }
-  const ws = new WebSocket(targets.find((t) => t.type === 'page').webSocketDebuggerUrl);
-  await new Promise((resolve) => ws.addEventListener('open', resolve, { once: true }));
   let id = 0;
   const pending = new Map();
   const logs = [];
