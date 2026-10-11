@@ -135,7 +135,13 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { const input = document.activeElement; input.value = 'OUT'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
     await h.until(`[...document.querySelectorAll('dialog[open] button')].some((b) => b.textContent.trim() === 'Keep separate')`);
     await h.evaluate(`[...document.querySelectorAll('dialog[open] button')].find((b) => b.textContent.trim() === 'Keep separate').click()`);
-    await sleep(100);
+    // The field stays open for a correction (unless the panel redrew under
+    // the prompt); Esc there drops the edit -- left open, the next blur would
+    // commit it again.
+    await h.until(`!document.querySelector('dialog[open]')`);
+    await sleep(150);
+    await h.evaluate(`(() => { const input = document.querySelector('#side-panel input:focus'); if (input) input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); })()`);
+    await h.until(`!document.querySelector('#side-panel input:focus') && !document.querySelector('dialog[open]')`);
     assert.notEqual(await ed(`c.nets.get(${JSON.stringify(id)}).name`), 'OUT');
   });
 
