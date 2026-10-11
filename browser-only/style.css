@@ -75,8 +75,22 @@
   /* A toggle or chip that is on: accent text on this tint. */
   --accent-tint: color-mix(in srgb, var(--accent) 14%, transparent);
   --control-h-sm: 24px;
+  /* A field's size: the normal one, or the dense one inside a row of
+     fields set among words (.signal-flow-swing-controls and the rest
+     below). Every text field and select reads these. */
+  --field-h: var(--control-h);
+  --field-pad-x: 8px;
+  --field-font: inherit;
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
   --shadow-window: 0 12px 40px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
+  /* Small raised things (a chip, a banner), and a drawer sliding over. */
+  --shadow-sm: 0 2px 8px rgba(20, 24, 34, 0.16);
+  --shadow-drawer: -8px 0 24px rgba(20, 24, 34, 0.28);
+  /* Text on an accent or danger fill, a modal's backdrop, a scrollbar. */
+  --on-accent: #fff;
+  --scrim: rgba(0, 0, 0, 0.32);
+  --scrollbar: rgba(128, 128, 128, 0.35);
+  --scrollbar-hover: rgba(128, 128, 128, 0.6);
   /* Motion: quick out, soft landing; a spring for things that pop; three
      short times. Entrances that list several things stagger them a little
      each (--stagger), so a group arrives as a group, not as one block. */
@@ -111,18 +125,18 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(128, 128, 128, 0.35);
+  background: var(--scrollbar);
   border-radius: var(--radius-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(128, 128, 128, 0.6);
+  background: var(--scrollbar-hover);
 }
 
 @supports not selector(::-webkit-scrollbar) {
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(128, 128, 128, 0.45) transparent;
+    scrollbar-color: var(--scrollbar) transparent;
   }
 }
 
@@ -148,7 +162,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: #161618;
+  background: var(--bg);
 }
 
 .startup-cover .boot-banner {
@@ -171,25 +185,24 @@ body {
   top: 8px;
   z-index: 100;
   padding: 10px 14px;
-  background: #fff7ed;
-  border: 1px solid #fcd34d;
+  --banner: var(--warn);
+  background: color-mix(in srgb, var(--banner) 9%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--banner) 40%, var(--bg-panel));
   border-radius: var(--radius-md);
-  color: #7c2d12;
+  color: color-mix(in srgb, var(--banner) 65%, var(--text));
   font-size: var(--text-md);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-sm);
 }
 
 .boot-banner code {
-  background: #fef3c7;
+  background: color-mix(in srgb, var(--banner) 16%, var(--bg-panel));
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
 }
 
 .boot-banner.error {
-  background: #fef2f2;
-  border-color: #fca5a5;
-  color: #b91c1c;
+  --banner: var(--danger);
 }
 
 button {
@@ -235,13 +248,24 @@ select,
 input[type="text"],
 input[type="search"],
 input[type="number"] {
+  box-sizing: border-box;
   font: inherit;
+  font-size: var(--field-font);
   color: var(--text);
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  min-height: var(--control-h);
-  padding: 0 8px;
+  height: var(--field-h);
+  min-height: 0;
+  padding: 0 var(--field-pad-x);
+}
+
+/* Dense rows: fields among words, a line of controls, a table of numbers. */
+:is(.signal-flow-section, .plots-window, .run-window, .analysis-table, .file-dialog-entry, .timing-width,
+  .bode-head, .align-controls, .panel-filter-row) {
+  --field-h: var(--control-h-sm);
+  --field-pad-x: 6px;
+  --field-font: var(--text-sm);
 }
 
 textarea {
@@ -323,7 +347,6 @@ button:focus-visible {
 .toolbar button,
 .toolbar select,
 .toolbar input {
-  height: var(--control-h);
   font-size: var(--text-md);
 }
 
@@ -441,7 +464,7 @@ button:focus-visible {
 
 .primary-action:not(:disabled),
 .confirm-action:not(:disabled) {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 500;
@@ -491,7 +514,7 @@ button:focus-visible {
 
 .toolbar-menu button:hover:not(:disabled),
 .toolbar-menu button:focus-visible {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   outline: none;
   box-shadow: none;
@@ -499,7 +522,7 @@ button:focus-visible {
 
 .toolbar-menu button.danger-action:hover:not(:disabled),
 .toolbar-menu button.danger-action:focus-visible {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--danger);
   outline: none;
 }
@@ -625,7 +648,6 @@ button:focus-visible {
   width: 100%;
   box-sizing: border-box;
   margin: 2px 0 6px;
-  height: var(--control-h);
 }
 
 .atlas-button {
@@ -816,7 +838,7 @@ button:disabled {
 }
 
 .confirm-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--scrim);
 }
 
 .confirm-dialog h2 {
@@ -1069,7 +1091,7 @@ button:disabled {
 }
 
 .dialog-actions .danger-action:not(:disabled) {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--danger);
   border-color: var(--danger);
 }
@@ -1155,7 +1177,6 @@ button:disabled {
 .export-name-row input {
   flex: 1 1 auto;
   min-width: 0;
-  height: var(--control-h);
 }
 
 .export-extensions {
@@ -1272,8 +1293,6 @@ button:disabled {
 .file-dialog-entry input {
   flex: 1 1 auto;
   min-width: 0;
-  height: var(--control-h-sm);
-  min-height: var(--control-h-sm);
 }
 
 .confirm-dialog .file-dialog-status {
@@ -1334,7 +1353,7 @@ button:disabled {
 }
 
 .model-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--scrim);
 }
 
 .model-dialog form {
@@ -1408,7 +1427,7 @@ button:disabled {
 }
 
 .help-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--scrim);
 }
 
 .help-dialog form {
@@ -1580,7 +1599,6 @@ button:disabled {
   width: 100%;
   margin: 0 0 12px;
   box-sizing: border-box;
-  height: var(--control-h);
 }
 
 .help-content {
@@ -1913,10 +1931,11 @@ button:disabled {
   background: var(--bg-panel);
 }
 
-:is(.analysis-dock, .plots-window) input,
-:is(.analysis-dock, .plots-window) select {
-  min-height: var(--control-h);
-  padding: 0 8px;
+:is(.analysis-dock, .plots-window) :is(input:not([type="checkbox"], [type="radio"], [type="range"]), select) {
+  height: var(--field-h);
+  min-height: 0;
+  font-size: var(--field-font);
+  padding: 0 var(--field-pad-x);
 }
 
 /* A checkbox or radio keeps its own size, whatever the fields around it. */
@@ -2372,7 +2391,7 @@ button:disabled {
   display: block;
   background: var(--paper);
   border: 1px solid var(--border);
-  box-shadow: 0 1px 3px rgba(20, 24, 34, 0.08);
+  box-shadow: var(--shadow-sm);
   /* The tool cursor (select arrow + tool badge) is built in main.js. */
   cursor: var(--tool-cursor, default);
   touch-action: none;
@@ -2582,8 +2601,8 @@ button.app-mark-button:active {
 .align-distribute-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .align-controls button { min-width: 0; padding: 4px 3px; font-size: var(--text-sm); }
 .align-controls select {
- width: 100%; min-width: 0; font-size: var(--text-sm); 
-  height: var(--control-h);
+  width: 100%;
+  min-width: 0;
 }
 .align-measure-label { color: var(--text-dim); font-size: var(--text-sm); }
 .align-note { min-height: 1.1em; color: var(--text-dim); font-size: var(--text-sm); line-height: 1.35; }
@@ -2757,7 +2776,6 @@ button.app-mark-button:active {
 .panel-filter input {
   width: 100%;
   font-size: var(--text-sm);
-  height: var(--control-h);
 }
 
 /* Sections share the column: each shrinks toward its own scrolling list
@@ -2868,7 +2886,7 @@ button.app-mark-button:active {
 }
 
 .panel-count.issue {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--danger);
 }
 
@@ -3531,7 +3549,7 @@ button.status-chip:hover {
 }
 
 .insert-menu-item.active .insert-menu-preview svg {
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* Symbol previews (insert menu, Learn, radial tiles) drop the paper and take
@@ -3595,7 +3613,7 @@ button.status-chip:hover {
 }
 
 .insert-menu-item.active {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   outline: none;
   box-shadow: none;
@@ -3653,7 +3671,7 @@ button.status-chip:hover {
 .component-context-menu button:hover,
 .component-context-menu button:focus-visible,
 .component-context-menu button.context-item-open {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   outline: none;
   box-shadow: none;
@@ -3797,7 +3815,7 @@ button.status-chip:hover {
 
 .component-context-menu button.context-item-danger:hover,
 .component-context-menu button.context-item-danger:focus-visible {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--danger);
   outline: none;
 }
@@ -3915,22 +3933,6 @@ html.dark {
   --shadow-window: 0 16px 48px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
   --segment-selected: #45454b;
   color-scheme: dark;
-}
-
-html.dark .boot-banner {
-  background: #2a2110;
-  border-color: #5c4a16;
-  color: #fcd9a0;
-}
-
-html.dark .boot-banner code {
-  background: #3a2f14;
-}
-
-html.dark .boot-banner.error {
-  background: #2a1416;
-  border-color: #5c1f24;
-  color: #ffb4b4;
 }
 
 /* Editor renders default ink as currentColor (themeInk), so symbols, wires,
@@ -4171,7 +4173,7 @@ button.off {
   .mode-toolbar[data-overflow-end] {
     box-shadow:
       inset -18px 0 12px -14px color-mix(in srgb, var(--bg-panel) 96%, transparent),
-      0 2px 8px rgba(20, 24, 34, 0.16);
+      var(--shadow-sm);
   }
 
   :is(.mode-toolbar, .rail-flyout) .mode-control {
@@ -4255,7 +4257,7 @@ button.off {
   body.side-panel-open .side-panel {
     transform: none;
     visibility: visible;
-    box-shadow: -8px 0 24px rgba(20, 24, 34, 0.28);
+    box-shadow: var(--shadow-drawer);
     transition: transform 180ms var(--ease-out);
   }
 
@@ -4470,7 +4472,6 @@ button.off {
 .quick-add-input {
   width: 100%;
   margin-bottom: 4px;
-  height: var(--control-h);
 }
 
 .quick-add-list {
@@ -4491,7 +4492,7 @@ button.off {
 }
 
 .quick-add-item.active {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   outline: none;
   box-shadow: none;
@@ -4619,7 +4620,7 @@ button.off {
 
 .radial-item.active {
   --radial-pop: 1.08;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
 }
@@ -5750,7 +5751,7 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 /* Drawing units, as a dashed box annotation (link-bubble.js), so a
    bubble scales with the drawing and exports as it shows. */
 .link-bubble-frame {
-  fill: var(--paper, #fff);
+  fill: var(--paper);
   fill-opacity: 0.6;
   stroke: var(--accent);
   stroke-width: 6;
@@ -6027,8 +6028,6 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 
 .timing-dialog .timing-width input {
   width: 3.5rem;
-  padding: 0 6px;
-  height: var(--control-h);
 }
 
 /* The name field and its add button read as one control. */
@@ -6043,7 +6042,6 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
   min-width: 0;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
-  height: var(--control-h);
 }
 
 .timing-signal-field .icon-button {
@@ -6311,8 +6309,8 @@ body.chrome-away [data-editor-edge="right"] {
 
 .reference-zoom-box {
   position: absolute;
-  border: 1px dashed var(--svg-faint, #7a7d85);
-  background: color-mix(in srgb, var(--svg-faint, #7a7d85) 10%, transparent);
+  border: 1px dashed var(--svg-faint);
+  background: color-mix(in srgb, var(--svg-faint) 10%, transparent);
   pointer-events: none;
 }
 
@@ -6781,9 +6779,7 @@ body.chrome-away [data-editor-edge="right"] {
   flex: none;
   width: 3.4em;
   min-width: 0;
-  min-height: var(--control-h-sm);
-  height: var(--control-h-sm);
-  padding: 0 2px 0 6px;
+  padding-right: 2px;
 }
 
 /* n's kind and its number side by side, the number short. */
@@ -6798,8 +6794,6 @@ body.chrome-away [data-editor-edge="right"] {
 :is(.analysis-dock, .plots-window) .signal-flow-optimize-fractions-n .signal-flow-optimize-bound {
   flex: none;
   width: 4.5em;
-  min-height: var(--control-h-sm);
-  height: var(--control-h-sm);
 }
 
 /* The interactive plot every analysis view uses (plot-view.js). */
@@ -7176,10 +7170,6 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 :is(.analysis-dock, .plots-window) .signal-flow-optimize-bound,
-:is(.analysis-dock, .plots-window) .signal-flow-optimize-coefficient input {
-  padding: 0 5px;
-}
-
 /* Narrow, each coefficient takes two lines: its name, Free or Fixed, its
    number now and found; under them its range and its n. The head row
    follows the same places. */
@@ -7319,10 +7309,11 @@ body.chrome-away [data-editor-edge="right"] {
 
 :is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) :is(input[type="text"], select, button) {
   flex: none;
-  height: var(--control-h-sm);
-  min-height: 0;
-  padding: 0 6px;
-  font-size: var(--text-sm);
+}
+
+:is(.signal-flow-swing-controls, .signal-flow-band) button {
+  height: var(--field-h);
+  font-size: var(--field-font);
 }
 
 :is(.analysis-dock, .plots-window) :is(.signal-flow-swing-controls, .signal-flow-band) input[type="text"] {
