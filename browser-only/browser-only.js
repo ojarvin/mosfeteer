@@ -38957,6 +38957,7 @@ __exports.MAX_SHEET_PX = MAX_SHEET_PX;
 
 __modules["src/web/atlas.js"] = function (__require, __exports) {
 __exports.atlasOpen = atlasOpen;
+__exports.atlasSnapshot = atlasSnapshot;
 __exports.openAtlas = openAtlas;
 __exports.closeAtlas = closeAtlas;
 __exports.toggleAtlas = toggleAtlas;
@@ -39083,6 +39084,27 @@ let state = null;
 
 function atlasOpen() {
   return !!state;
+}
+
+/** What the desk shows, read-only, for tests and tools (it is drawn on a
+ *  canvas): each design's name and place, whether it is the open one, the
+ *  pick, matched by the search, and how far it is lifted; null when closed. */
+function atlasSnapshot() {
+  if (!state) return null;
+  return {
+    source: state.source,
+    busy: !!(state.entering || state.closing || state.opening),
+    search: state.matches ? [...state.matches.keys()] : null,
+    arranged: state.arranged,
+    tiles: state.tiles.map((tile) => {
+      const entry = state.entries.get(tile.id);
+      return {
+        id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h,
+        current: !!entry?.current, selected: state.selected === tile.id || !!state.picked?.has(tile.id),
+        lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim,
+      };
+    }),
+  };
 }
 
 // ----- geometry ---------------------------------------------------------------

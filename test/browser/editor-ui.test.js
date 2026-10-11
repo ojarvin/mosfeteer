@@ -143,5 +143,17 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     assert.equal(await open(), 0, 'a row outside it closes it');
     await h.key('Escape');
   });
+
+  test("the symbol sheet's category labels keep their placed boxes when the page measures labels", async () => {
+    await h.evaluate(`${h.module('../core/symbol-sheet.js')}.then((m) => window.__load(m.symbolSheet().toJSON()))`);
+    await h.evaluate(`${h.module('main.js')}.then((m) => m.render())`);
+    await sleep(500);
+    const labels = await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'label').map((l) => ({ category: l.id.startsWith('category_'), measured: !!l._renderedTextBounds })))`);
+    const categories = labels.filter((l) => l.category);
+    assert.ok(categories.length > 3);
+    assert.ok(categories.every((l) => !l.measured), 'no category label measured');
+    assert.ok(labels.some((l) => !l.category && l.measured), 'while the other labels are');
+    await h.open('amplifier');
+  });
 });
 

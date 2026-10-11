@@ -61,3 +61,24 @@ export function editing() {
   circuit.addAnnotation('line', { x: 0, y: 400, points: [{ x: 0, y: 400 }, { x: 200, y: 400 }, { x: 200, y: 560 }] });
   return circuit.toJSON();
 }
+
+/** A design whose op-amp links to another design ('child'). */
+export function linkedTop() {
+  const circuit = new Circuit();
+  for (const line of ['add opamp OA1 --at 0 0', 'add resistor R1 --at -600 -40', 'connect R1.b OA1.ip', 'link OA1 child']) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
+/** A design tagged `filters`, with one part. */
+export function tagged(name) {
+  const circuit = new Circuit();
+  for (const line of [`add capacitor ${name} --at 0 0`, 'tag add filters']) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
+/** The amplifier with two beats. */
+export function withBeats() {
+  const circuit = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'beat add first', 'beat add second', 'beat hide 1 R2']) runCommand(circuit, line);
+  return circuit.toJSON();
+}

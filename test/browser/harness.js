@@ -47,11 +47,14 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'mosfeteer-browser-'));
   const workspace = join(root, 'ws');
   await mkdir(workspace, { recursive: true });
+  const home = join(root, 'home');
+  await mkdir(join(home, 'Pictures'), { recursive: true });
   for (const [name, state] of Object.entries(docs)) await writeFile(join(workspace, `${name}.json`), JSON.stringify(state));
   const port = await freePort();
   const server = spawn(process.execPath, [join(REPO, 'src/server/serve.js')], {
     cwd: REPO,
-    env: { ...process.env, PORT: String(port), SCHEMATIC_WORKSPACE: workspace, DATA_ROOT: join(root, 'data') },
+    // A home of its own: nothing a test does (an export to ~/Pictures) reaches the user's.
+    env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), PORT: String(port), SCHEMATIC_WORKSPACE: workspace, DATA_ROOT: join(root, 'data') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
@@ -62,7 +65,7 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
   });
   const cdpPort = await freePort();
   const chrome = spawn(chromePath(), ['--headless=new', `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${join(root, 'chrome')}`,
-    `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore' });
+    `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore', env: { ...process.env, HOME: home } });
   let targets = [];
   for (let i = 0; i < 100 && !targets.some((t) => t.type === 'page'); i++) {
     try { targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json(); } catch { /* not up yet */ }
@@ -141,5 +144,5 @@ export async function start({ docs = {}, width = 1400, height = 900 } = {}) {
     await sleep(200);
     await rm(root, { recursive: true, force: true });
   };
-  return { send, evaluate, until, module, open, key, click, mouse, screenshot, exceptions, stop, logs, workspace, port };
+  return { send, evaluate, until, module, open, key, click, mouse, screenshot, exceptions, stop, logs, workspace, home, port };
 }
