@@ -49521,7 +49521,8 @@ function cutAlong(stroke) {
     return;
   }
   setSelection(refs);
-  setLabelSelection(labelIds);
+  // Keeping the parts: a label selection alone would drop them.
+  setLabelSelection(labelIds, labelIds[0], true);
   editor.selectedNets.clear();
   editor.selectedWires = new Set(wires);
   syncSelectedWire();

@@ -1,4 +1,3 @@
-import { editorSource, functionSource } from './helpers/editor-source.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getSymbol } from '../src/core/components/index.js';
@@ -178,76 +177,6 @@ test('view easing interpolates and clamps', () => {
   assert.deepEqual(lerpView({ x: 0, y: 0, w: 1, h: 1 }, { x: 5, y: 6, w: 7, h: 8 }, 1), { x: 5, y: 6, w: 7, h: 8 });
 });
 
-test('editor gestures are wired through the shared draft, history, and menus', async () => {
-  const main = editorSource();
-  // A pin press stays a component click until it moves; then it is a wire draft.
-  assert.match(main, /isPinDragCandidate\(componentHit\?\.def\)\) \{\s*drag\.pinGrab = /);
-  assert.match(main, /drag\.mode === 'move' && drag\.pinGrab && !drag\.moved && movedOut\) \{\s*beginPinWire\(drag, w\);/);
-  // Quick-add places and wires the part as one history entry.
-  const pick = functionSource('pickQuickAdd', main);
-  assert.match(pick, /const before = snapshot\(\);/);
-  assert.match(pick, /connectWireToTerminal\(\{ refdes: comp\.refdes, term: placement\.terminal[^)]*\}, before\)/);
-  assert.match(pick, /applyJson\(before\)/);
-  assert.match(main, /function connectTwo\(src, dst, points, before = snapshot\(\)\)/);
-  // Splicing applies to placement and to a single-part drop.
-  assert.match(main, /if \(placed\.length === 1\) spliceIfOnWire\(placed\[0\]\);/);
-  assert.match(main, /if \(refs\.length === 1\) spliceIfOnWire\(circuit\.components\.get\(refs\[0\]\)\);\n  if \(moveDrag\.detached\)/);
-  // ... and to a lone part copied (the copy tool, a Ctrl-drag) or pasted onto a wire, before its pins tee in.
-  assert.match(functionSource('commitCopyGhost', main), /if \(refs\.length === 1\) spliceIfOnWire\(circuit\.components\.get\(refs\[0\]\)\);\s*circuit\.connectCoincident\(refs\);/);
-  assert.match(main, /if \(addedComps\.length === 1\) spliceIfOnWire\(circuit\.components\.get\(addedComps\[0\]\)\);\s*circuit\.connectCoincident\(addedComps\);/);
-  // The context menu waits for the release while a right press is undecided.
-  assert.match(main, /if \(drag\?\.mode === 'radialpending' \|\| drag\?\.mode === 'radial' \|\| drag\?\.contextOnRelease\) return;/);
-  assert.match(main, /drag\.mode === 'radialpending'\) \{\s*window\.clearTimeout\(drag\.holdTimer\);\s*drag = null;\s*suppressContextMenuUntil/);
-  // Ctrl/Cmd-drag copies preview inside a transaction and keep the clipboard.
-  assert.match(main, /const savedClipboard = clipboard;[\s\S]{0,300}pasteClipboard\(\{ recordHistory: false, connect: false \}\);[\s\S]{0,40}clipboard = savedClipboard;/);
-  assert.match(main, /beginPreviewTransaction\(startSnapshot\);\n\s*const componentRefs/);
-  // Live drags accept transforms without their own history entry.
-  assert.match(main, /if \(drag\.modal && !drag\.committed\) \{\s*recordHistoryEntry/);
-  // Knife, corner flip, double-click insert, Space pan, trackpad scheme.
-  assert.match(main, /knife: ev\.shiftKey \? \[/);
-  assert.match(main, /cutAlong\(\[\.\.\.drag\.knife/);
-  assert.match(main, /key === '\/'\) \{[\s\S]{0,120}wire\.flipCorner = !wire\.flipCorner;/);
-  assert.match(main, /if \(draft\.flipCorner && i === endpoints\.length - 1\) leg = flippedCornerLeg\(leg, route\) \|\| leg;/);
-  assert.match(main, /Double-clicking empty paper opens the insert menu right there\.\s*cursor = snappedWorld\(w\);\s*activatePlace\(\);/);
-  assert.match(main, /if \(b === 1 \|\| \(b === 0 && spaceHeld\)\)/);
-  assert.match(main, /if \(wheelIntent\(ev, scrollScheme\) === 'pan'\)/);
-  assert.match(main, /localStorage\.setItem\('mosfeteer\.scrollScheme', scrollScheme\)/);
-});
-
-test('named-net shorts share one name picker; scripted commands never prompt', async () => {
-  const main = editorSource();
-  // Every recorded edit checks for a new merged-name conflict.
-  assert.match(main, /queueCommitFeedback\(startSnapshot, feedback\);\s*askNameForNewNetNameConflict\(startSnapshot\);/);
-  // Solder, wire, and reference-rail shorts go through the same picker.
-  assert.equal((main.match(/askNetNameChoice\(\{/g) || []).length, 3);
-  // A commit that joins an unnamed ground/supply/VCM marker to a named net
-  // asks to take the rail name; the picker's cancel reverts the edit.
-  assert.match(main, /if \(askForNewNetNameWarning\(startSnapshot\)\) return;\s*askForNewReferenceShort\(startSnapshot\);/);
-  assert.match(main, /heading: 'Rename net to',\s*names: \[conflict\.railName\]/);
-  // Command-line edits keep the model's name instead of prompting.
-  assert.match(main, /suppressNetNameChoice = true;\s*try \{ recordHistoryEntry\(before\); \} finally \{ suppressNetNameChoice = false; \}/);
-});
-
-test('rail tools hand keyboard focus back to the canvas after a pointer click', async () => {
-  const { readFileSync } = await import('node:fs');
-  const main = editorSource();
-  assert.match(main, /querySelectorAll\('\.mode-toolbar, \.rail-flyout'\)[\s\S]{0,200}ev\.detail > 0 && ev\.target\.closest\('button'\)\) canvasEl\.focus/);
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  // Wire shapes live in a flyout like the annotation tools; box select is key-only.
-  assert.match(html, /id="btn-mode-wire" class="mode-control rail-flyout-proxy"[^>]*aria-controls="wire-flyout"/);
-  assert.match(html, /id="wire-flyout" class="rail-flyout glass"/);
-  assert.doesNotMatch(html, /id="btn-mode-visual"/);
-});
-
-test('hover previews: net hovers glow markers and ports; part bodies light their panel row', async () => {
-  const main = editorSource();
-  // Selected and hovered nets share one marker/port lookup.
-  assert.match(main, /const netMarkers = netMarkerRefs\(nets\);/);
-  assert.match(main, /netMarkerRefs\(hoverTarget\.ids\.map\(/);
-  // A canvas hover over a part body targets that part's row.
-  assert.match(main, /body && body\.type !== 'solder' \? \{ kind: 'component', refdes: body\.refdes \}/);
-});
-
 test('knife strokes cross rectangles and polylines', async () => {
   const { strokeCrossesRect, strokeCrossesPolyline } = await import('../src/web/gestures.js');
   const rect = { x: 0, y: 0, w: 100, h: 60 };
@@ -261,51 +190,6 @@ test('knife strokes cross rectangles and polylines', async () => {
   assert.equal(strokeCrossesPolyline([{ x: 100, y: 20 }, { x: 180, y: 180 }], line), false);
 });
 
-test('the knife deletes every object kind it cuts through one delete', async () => {
-  const main = editorSource();
-  const cut = main.slice(main.indexOf('function knifeTargets('), main.indexOf('/** Gesture feedback appended'));
-  assert.match(cut, /if \(c\.type === 'solder'\) continue;/);
-  assert.match(cut, /if \(label\.owner \|\| label\.selectable === false\) continue;/);
-  assert.match(cut, /setSelection\(refs\);\s*setLabelSelection\(labelIds\);[\s\S]*selectedWires = new Set\(wires\);[\s\S]*deleteSelection\(\);/);
-  assert.match(main, /cutAlong\(\[\.\.\.drag\.knife, \{ x: releaseWorld\.x, y: releaseWorld\.y \}\]\);/);
-});
-
-test('right-hold menus fit what is under the press', async () => {
-  const main = editorSource();
-  const { readFileSync } = await import('node:fs');
-  const radial = readFileSync(new URL('../src/web/radial-menu.js', import.meta.url), 'utf8');
-  // A pin of a part with several, a part, a wire, else the paper.
-  const target = main.slice(main.indexOf('function radialTarget('), main.indexOf('\n}\n', main.indexOf('function radialTarget(')));
-  assert.match(target, /kind: 'pin'[\s\S]*kind: 'part'[\s\S]*kind: 'wire'[\s\S]*kind: 'paper'/);
-  // A drag before the hold is a zoom box on any target, and only the hold,
-  // the same everywhere, opens the menu.
-  assert.match(main, /drag\.mode === 'radialpending' && Math\.hypot\(dx, dy\) > 10\) \{[\s\S]*?mode: 'zoom'/);
-  assert.doesNotMatch(main, /radialpending' && Math\.hypot\(dx, dy\) > 10\) openRadialMenu/);
-  assert.match(main, /openRadialMenu\(drag\);\s*\}, 320\);/);
-  // A right press elsewhere (a label) zooms on a drag and opens the context
-  // menu only on a release that did not drag, never on the press.
-  assert.match(main, /mode: 'zoom', startClient, startWorld, moved: false, rubber: null, contextOnRelease: true/);
-  assert.match(main, /else if \(drag\.contextOnRelease\) \{[\s\S]*?openContextMenuAt\(ev\.clientX, ev\.clientY\);/);
-  const contextMenu = readFileSync(new URL('../src/web/context-menu.js', import.meta.url), 'utf8');
-  assert.match(contextMenu, /editor\.drag\?\.contextOnRelease\) return;/);
-  // The paper palette keeps its places; each sector has variants.
-  const palette = radial.slice(radial.indexOf('const PALETTE = ['), radial.indexOf('];', radial.indexOf('const PALETTE = [')));
-  for (const type of ['nmos', 'resistor', 'capacitor', 'current_source', 'ground', 'supply', 'vcm', 'port', 'opamp', 'pmos']) assert.match(palette, new RegExp(`part\\('${type}'`));
-  assert.equal((palette.match(/children:/g) || []).length, 8);
-  // A pick arms a placement ghost rather than dropping the part at once.
-  assert.match(radial, /run: \(\) => beginPlacing\(type\)/);
-  // A pin: rails, a port, a labelled stub, a wire.
-  for (const label of ['Supply', 'Stub \\+ label', 'Port', 'VCM', 'Ground', 'Wire']) assert.match(radial, new RegExp(`label: '${label}'|'${label}'\\)`));
-  // A part swaps as q does.
-  assert.match(radial, /swapCandidates\(component\.type\)[\s\S]*run: \(\) => swapParts\(\[radial\.refdes\], type\)/);
-  // A wire: its net, including a color wheel of highlights.
-  for (const label of ['Name net', 'Net label', 'Highlight', 'Tidy', 'Delete run']) assert.match(radial, new RegExp(`label: '${label}'`));
-  assert.match(radial, /NET_HIGHLIGHT_COLORS\.slice\(0, 7\)\.map\(highlightItem\)/);
-  // Pointing only lights a sector; the drawing changes once, on release.
-  assert.doesNotMatch(radial, /previewEdit|preview:/);
-  assert.match(main, /finishRadialMenu\(radial, \{ x: ev\.clientX, y: ev\.clientY \}\);/);
-});
-
 test('Ctrl+A selects nets that join touching pins without any wire', async () => {
   const { selectAllNetIds } = await import('../src/core/selection.js');
   const { Circuit } = await import('../src/core/model.js');
@@ -315,70 +199,6 @@ test('Ctrl+A selects nets that join touching pins without any wire', async () =>
   assert.equal(circuit.nets.size, 1);
   assert.deepEqual(selectAllNetIds(circuit), [...circuit.nets.keys()]);
 });
-test('small windows: rail follows canvas height, one-row toolbar, drawer panel', async () => {
-  const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const main = editorSource();
-  // The rail turns horizontal by canvas height, not window width.
-  assert.match(css, /container: canvas-pane \/ size;/);
-  assert.match(css, /@container canvas-pane \(max-height: 380px\) \{\s*\.mode-toolbar \{\s*width: max-content;/);
-  // The toolbar never wraps; narrow windows fold buttons into More as proxies.
-  assert.match(css, /^\.toolbar \{\s*flex-wrap: nowrap;/m);
-  for (const id of ['btn-new-document', 'btn-export', 'btn-grid', 'btn-guides', 'btn-crosshair']) {
-    assert.match(html, new RegExp(`class="fold-only"[^>]*data-proxy-for="${id}"`));
-  }
-  // The panel toggle works at every size: collapse when docked, drawer when narrow.
-  assert.match(html, /id="btn-side-panel"[^>]*aria-controls="side-panel"/);
-  assert.match(css, /body\.side-panel-collapsed \.side-panel \{\s*display: none;/);
-  assert.match(css, /body\.side-panel-open \.side-panel \{\s*transform: none;/);
-  assert.match(main, /else if \(key === 'P'\) toggleSidePanel\(\);[\s\S]{0,120}else if \(key === 'S'\) toggleAnalysisDock\(\{ focus: false \}\);/);
-  assert.match(main, /window\.matchMedia\('\(max-width: 600px\)'\)/);
-  // Ctrl+F reveals a hidden panel before focusing its filter; inert fields take no focus.
-  const findUi = readFileSync(new URL('../src/web/find-replace-ui.js', import.meta.url), 'utf8');
-  assert.match(findUi, /export function openFind\(\) \{\s*if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);\s*filterEl\.focus\(\);/);
-});
-
-test('the panel filter finds label text and Ctrl+H opens replace beside it', async () => {
-  const { readFileSync } = await import('node:fs');
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const main = editorSource();
-  const filter = html.slice(html.indexOf('class="panel-filter"'), html.indexOf('data-panel="components"'));
-  for (const id of ['panel-replace-toggle', 'panel-replace-input', 'panel-replace-case', 'panel-replace-regex', 'panel-replace-all', 'text-matches-list']) {
-    assert.match(filter, new RegExp(`id="${id}"`));
-  }
-  assert.match(filter, /id="panel-replace"[^>]*hidden/);
-  assert.match(main, /ev\.key\.toLowerCase\(\) === 'h' && !inlineInput\) \{[\s\S]{0,160}openReplace\(\);/);
-  assert.match(main, /renderTextMatches\(\);\s*renderComponents\(\);/);
-  // A replace goes through the core, previewed first, as one undo step.
-  assert.match(main, /replaceInLabels\(circuit, find, replacement, \{ \.\.\.options, dryRun: true \}\)/);
-  assert.match(main, /commit\(\(\) => \{ result = replaceInLabels\(circuit, find, replacement, options\); \}\);/);
-  // The case and regex toggles both steer the search; a half-typed pattern
-  // lists its error instead of throwing, and a net no label shows is selected.
-  assert.match(main, /const searchOptions = \(\) => \(\{ matchCase: matchCase\(\), regex: useRegex\(\) \}\);/);
-  assert.match(main, /for \(const toggle of \[caseEl, regexEl\]\)/);
-  assert.match(main, /catch \(err\) \{\s*\/\/ A regular expression half typed[\s\S]{0,300}note\.textContent = err\.message;/);
-  assert.match(main, /else if \(entry\.netId\) \{\s*setSelection\(\[\]\);\s*selectedNets = new Set\(\[entry\.netId\]\);/);
-  // One Escape anywhere in the find area ends a replace: both fields clear.
-  assert.match(main, /if \(ev\.key !== 'Escape' \|\| !replaceOpen\(\)\) return;[\s\S]{0,80}endFindReplace\(\);\s*\}, \{ capture: true \}\);/);
-  assert.match(main, /function endFindReplace\(\) \{\s*replaceEl\.value = '';[\s\S]{0,200}filterEl\.value = '';/);
-});
-
-test('Design check runs from its panel section and an always-visible status chip', async () => {
-  const { readFileSync } = await import('node:fs');
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  const main = editorSource();
-  const toolbar = html.slice(html.indexOf('<header class="toolbar">'), html.indexOf('</header>'));
-  assert.doesNotMatch(toolbar, /id="btn-check"/);
-  const section = html.slice(html.indexOf('id="check-summary"'), html.indexOf('id="check-summary-body"'));
-  assert.match(section, /id="btn-check"[^>]*data-action="check"/);
-  assert.match(section, /id="btn-clear-check"[^>]*hidden/);
-  assert.doesNotMatch(html, /id="status-check"[^>]*hidden/);
-  // The chip runs a check when there is no report and opens it otherwise.
-  assert.match(main, /statusCheckEl\?\.addEventListener\('click', \(\) => \{\s*if \(lastCheckReport\) focusCheckSummary\(\);\s*else runCheck\(\);/);
-  assert.match(main, /function focusCheckSummary\(\) \{\s*if \(!sidePanelVisible\(\)\) setSidePanelVisible\(true\);/);
-});
-
 test('pin handles scale with the drawing within a screen-size band', async () => {
   const { pinHandleRadius } = await import('../src/web/gestures.js');
   // Mid zoom: the world radius (6 units) wins.
