@@ -9,7 +9,7 @@
     "browser-only": "node scripts/build_browser_only.mjs",
     "cli": "node src/cli/index.js",
     "install-launcher": "node launch.mjs --install",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js test/browser/*.test.js"
   },
   "engines": {
     "node": ">=18"

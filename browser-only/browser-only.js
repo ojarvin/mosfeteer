@@ -32756,6 +32756,7 @@ __exports.copySelectionParts = copySelectionParts;
 __exports.resolveCopySelection = resolveCopySelection;
 __exports.netLabelPasteKind = netLabelPasteKind;
 __exports.partialVertexPicks = partialVertexPicks;
+__exports.selectAllNetIds = selectAllNetIds;
 let canonicalNetName, extractWireFragments; __bind(() => { ({ canonicalNetName, extractWireFragments } = __require("src/core/model.js")); });
 let pointOnPath; __bind(() => { ({ pointOnPath } = __require("src/core/wiring.js")); });
 
@@ -32856,6 +32857,14 @@ function partialVertexPicks(labels, box) {
     if (inside.length && inside.length < label.points.length) picks.set(label.id, inside);
   }
   return picks;
+}
+
+/** The nets Select all takes: every one with a drawn wire, or joining two
+ *  pins that touch with no wire between them. */
+function selectAllNetIds(model) {
+  return [...model.nets.values()]
+    .filter((net) => net.paths().some((path) => path.length >= 2) || net.terminals.length >= 2)
+    .map((net) => net.id);
 }
 
 };
@@ -36235,6 +36244,7 @@ __exports.analysisNoiseRequest = analysisNoiseRequest;
 __exports.analysisOptionDefaults = analysisOptionDefaults;
 __exports.normalizeAnalysisOptions = normalizeAnalysisOptions;
 __exports.readAnalysisFormState = readAnalysisFormState;
+__exports.annotationAssumptions = annotationAssumptions;
 /** Canonical small-signal form options and the form as saved with a design. */
 
 const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
@@ -36407,6 +36417,21 @@ function readAnalysisFormState(value = {}) {
   };
 }
 
+/** The assumptions an annotated analysis lists under its equations, as TeX:
+ *  the approximations applied, and any Miller approximation made. */
+function annotationAssumptions(report) {
+  const options = report?.analysisOptions || {};
+  const lines = [];
+  if (options.highIntrinsicGain) lines.push('g_{m}r_{o} \\gg 1');
+  if (options.neglectChannelLengthModulation) lines.push('r_{o} = \\infty');
+  if (options.neglectBodyEffect) lines.push('g_{mb} = 0');
+  if (options.dominantPoleApplied) lines.push('\\text{Dominant-pole approximation}');
+  for (const assumption of report?.assumptions || []) {
+    if (assumption.startsWith('Miller approximation')) lines.push(`\\text{${assumption}}`);
+  }
+  return lines;
+}
+
 __exports.ANALYSIS_OPTION_DEFAULTS = ANALYSIS_OPTION_DEFAULTS;
 };
 
@@ -36553,7 +36578,7 @@ let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("sr
 let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/analysis/noise.js")); });
 let renderBode, syncBodePlace; __bind(() => { ({ renderBode, syncBodePlace } = __require("src/web/bode-ui.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
-let analysisNoiseRequest, analysisOptionDefaults, normalizeAnalysisOptions, readAnalysisFormState; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, normalizeAnalysisOptions, readAnalysisFormState } = __require("src/web/analysis-options.js")); });
+let analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
 let installHintFolding; __bind(() => { ({ installHintFolding } = __require("src/web/hints.js")); });
 let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
@@ -37365,19 +37390,6 @@ function syncAnalysisButton(open) {
   if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis window (Shift+S)`;
 }
 
-function analysisAnnotationAssumptions(report) {
-  const options = report?.analysisOptions || {};
-  const lines = [];
-  if (options.highIntrinsicGain) lines.push('g_{m}r_{o} \\gg 1');
-  if (options.neglectChannelLengthModulation) lines.push('r_{o} = \\infty');
-  if (options.neglectBodyEffect) lines.push('g_{mb} = 0');
-  if (options.dominantPoleApplied) lines.push('\\text{Dominant-pole approximation}');
-  for (const assumption of report?.assumptions || []) {
-    if (assumption.startsWith('Miller approximation')) lines.push(`\\text{${assumption}}`);
-  }
-  return lines;
-}
-
 function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (!analysisDialog) return;
   const defaults = fillAnalysisDialog(targetNetId);
@@ -37573,7 +37585,7 @@ function annotateAnalysisResult() {
       labels.push(label);
       equationLabels.push(label);
     }
-    const assumptions = analysisAnnotationAssumptions(report);
+    const assumptions = annotationAssumptions(report);
     if (assumptions.length) {
       const label = editor.circuit.addLabel({
         text: ['\\text{Assumptions\\:}', ...assumptions].join('\n'),
@@ -38415,6 +38427,7 @@ __exports.renderingKey = renderingKey;
 __exports.cacheGet = cacheGet;
 __exports.cachePut = cachePut;
 __exports.trimCache = trimCache;
+__exports.bakeTiles = bakeTiles;
 /**
  * The Atlas view's rendering cache: each design's drawing (SVG and size) and its
  * baked images, kept in IndexedDB so a second visit shows the workspace at
@@ -38507,6 +38520,28 @@ async function trimCache() {
     };
     return cursor;
   });
+}
+
+/**
+ * Bake each tile's images in turn: `levels(tile)` names which (a small one,
+ * and a large one where the tile shows big). Each one baked is kept
+ * (`keep(tile, level, bitmap)`); one that fails is noted (`failed(tile,
+ * level)`) and the rest go on. Once `stale()` (a newer opening of the
+ * Atlas) nothing more is baked or kept.
+ */
+async function bakeTiles(tiles, { levels, bake, keep, failed, stale }) {
+  for (const tile of tiles) {
+    for (const level of levels(tile)) {
+      try {
+        const bitmap = await bake(tile, level);
+        if (stale()) { bitmap?.close?.(); return; }
+        keep(tile, level, bitmap);
+      } catch {
+        if (stale()) return;
+        failed(tile, level);
+      }
+    }
+  }
 }
 
 };
@@ -38938,7 +38973,7 @@ let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDar
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkGraph } = __require("src/core/design-links.js")); });
 let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
-let cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
+let bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutQuart, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutQuart, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument } = __require("src/web/document-session.js")); });
@@ -39319,21 +39354,13 @@ async function warmSmallImages(generation, budget) {
 async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
-  for (const tile of state.tiles) {
-    const entry = state.entries.get(tile.id);
-    const levels = tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large'];
-    for (const level of levels) {
-      const key = bitmapKey(entry, level);
-      try {
-        const bitmap = await bake(entry, level);
-        if (!state || state.generation !== generation) { bitmap.close?.(); return; }
-        state.bitmaps.set(key, bitmap);
-      } catch {
-        if (!state || state.generation !== generation) return;
-        state.failed.add(key);
-      }
-    }
-  }
+  await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
+    levels: ({ tile }) => (tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large']),
+    bake: ({ entry }, level) => bake(entry, level),
+    keep: ({ entry }, level, bitmap) => state.bitmaps.set(bitmapKey(entry, level), bitmap),
+    failed: ({ entry }, level) => state.failed.add(bitmapKey(entry, level)),
+    stale: () => !state || state.generation !== generation,
+  });
 }
 
 /** Bake what the frame asked for, nearest the middle of the screen first. */
@@ -45189,13 +45216,15 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let selectedStyleSource, pasteStyle; __bind(() => { ({ selectedStyleSource, pasteStyle } = __require("src/web/style-controls.js")); });
 let beginNetLabelPaste; __bind(() => { ({ beginNetLabelPaste } = __require("src/web/annotation-tools.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let applyJson, captureNetGeometry, captureRouteGeometry, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires; __bind(() => { ({ applyJson, captureNetGeometry, captureRouteGeometry, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } = __require("src/web/main.js")); });
+let applyJson, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, validateSelectedWires; __bind(() => { ({ applyJson, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, validateSelectedWires } = __require("src/web/main.js")); });
+let captureNetGeometry, captureRouteGeometry, translateNetGeometry; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, translateNetGeometry } = __require("src/web/net-geometry.js")); });
 /**
  * Copy and paste: the copied set, the copy ghost that follows the pointer
  * (and its mirrored twin), pasting, and the system clipboard exchange that
  * carries objects between editor windows. Which objects a copy takes is
  * core/selection.js; the clipboard format is core/object-clipboard.js.
  */
+
 
 
 
@@ -46317,6 +46346,7 @@ let createPersistenceAdapter, validDocumentName; __bind(() => { ({ createPersist
 let createWindowSession; __bind(() => { ({ createWindowSession } = __require("src/web/window-session.js")); });
 let confirmChoice, showFileDialog; __bind(() => { ({ confirmChoice, showFileDialog } = __require("src/web/file-dialog.js")); });
 let analysisFormStorageKey; __bind(() => { ({ analysisFormStorageKey } = __require("src/web/analysis-state.js")); });
+let opensOnAtlas; __bind(() => { ({ opensOnAtlas } = __require("src/web/startup.js")); });
 let circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm; __bind(() => { ({ circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } = __require("src/web/elements.js")); });
 let dropTutorial; __bind(() => { ({ dropTutorial } = __require("src/web/onboarding.js")); });
 let formatModifiedTime, modifiedRefreshMs, revisionTime; __bind(() => { ({ formatModifiedTime, modifiedRefreshMs, revisionTime } = __require("src/web/modified-time.js")); });
@@ -46334,6 +46364,7 @@ let applyJson, cancelPreviewTransaction, clearSymmetry, markModelChanged, render
  * the CLI's active document and reloading files changed on disk; and dropped
  * files. Storage itself is behind persistence.js.
  */
+
 
 
 
@@ -46626,11 +46657,7 @@ async function restoreStartup() {
   const folder = editor.workspaceState?.folder;
   if (folder?.locked) logLine(`The browser needs permission to open folder “${folder.name}” again: choose “Allow access to folder” in the document list.`);
   if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
-  // A browser-only file waiting for permission again cannot be drawn yet.
-  const designs = (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length;
-  // Several designs open onto the Atlas; so does browser-only mode with none
-  // open yet, where the Atlas offers a new design, a file, or a folder.
-  return !openPath && (designs > 1 || (persistence.browserOnly && designs === 0));
+  return opensOnAtlas({ openPath, documents: editor.workspaceState?.documents, browserOnly: persistence.browserOnly });
 }
 
 async function saveCircuit({ saveAs = false } = {}) {
@@ -51246,21 +51273,9 @@ function updateCanvasHover(w) {
 
 };
 
-__modules["src/web/icons.js"] = function (__require, __exports) {
-__exports.syncToolCursor = syncToolCursor;
-__exports.buttonIcon = buttonIcon;
-__exports.installIcons = installIcons;
-let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
-let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let interactionState; __bind(() => { ({ interactionState } = __require("src/web/main.js")); });
-/**
- * Toolbar icons and tool cursors: the line icons buttons carry, and the
- * select arrow badged with the active tool's icon.
- */
-
-
-
-
+__modules["src/web/icon-paths.js"] = function (__require, __exports) {
+/** The line icons buttons, menus, and tool cursors draw: SVG path markup on a
+ *  24-unit box. Plain data, so code without a page can read it. */
 
 // Small line icons keep the compact tool rail scannable without a dependency.
 // Button text and existing aria labels remain the accessible names.
@@ -51352,54 +51367,30 @@ const ICON_PATHS = {
   'arrow-end': '<path d="M4 12h13"/><path d="M20 12l-5.5-4v8z" fill="currentColor" stroke="none"/>',
 };
 
-// The canvas pointer is the select arrow, badged with the active tool's rail
-// icon so the current mode reads where the eye already is. Cursors are data
-// URIs built from the same ICON_PATHS the rail draws, cached per icon/theme.
-const CURSOR_ARROW = 'M1.5 1 1.5 18.5 6.1 14.3 9 20.6 11.9 19.2 9.1 13.2 15 12.7Z';
-
-const TOOL_CURSOR_ICONS = {
-  normal: null,
-  place: 'plus',
-  move: 'move',
-  'detached-move': 'detach',
-  copy: 'copy',
-  delete: 'trash',
-  align: 'align',
-  'net-label': 'tag',
-  highlight: 'highlight',
-  annotation: 'text',
-  equation: 'text',
-  arrow: 'arrow',
-  box: 'rectangle',
-  line: 'line',
+__exports.ICON_PATHS = ICON_PATHS;
 };
 
-const toolCursorCache = new Map();
+__modules["src/web/icons.js"] = function (__require, __exports) {
+__exports.syncToolCursor = syncToolCursor;
+__exports.buttonIcon = buttonIcon;
+__exports.installIcons = installIcons;
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let interactionState; __bind(() => { ({ interactionState } = __require("src/web/main.js")); });
+let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icon-paths.js")); });
+let TOOL_CURSOR_ICONS, allToolCursors, toolCursorValue; __bind(() => { ({ TOOL_CURSOR_ICONS, allToolCursors, toolCursorValue } = __require("src/web/tool-cursor.js")); });
+/**
+ * Toolbar icons and tool cursors in the page: the line icons (icon-paths.js)
+ * put on buttons, and the canvas cursor for the live tool (tool-cursor.js).
+ */
 
-/** One `cursor` value: arrow plus optional tool badge, outlined so it stays
- * legible on light paper, dark paper, and over drawn ink. */
-function toolCursorValue(icon, { dark = false, danger = false } = {}) {
-  const key = `${icon || ''}|${dark}|${danger}`;
-  const cached = toolCursorCache.get(key);
-  if (cached) return cached;
-  const ink = dark ? '#f4f5f7' : '#16181d';
-  const halo = dark ? '#16181d' : '#ffffff';
-  const badgeInk = danger ? (dark ? '#ff8f85' : '#c33b2e') : ink;
-  const glyph = ICON_PATHS[icon] || '';
-  const badge = glyph
-    ? `<g transform="translate(14 14) scale(.7)" fill="none" stroke-linecap="round" stroke-linejoin="round">`
-      + `<g style="color:${halo}" stroke="${halo}" stroke-width="4.8">${glyph}</g>`
-      + `<g style="color:${badgeInk}" stroke="${badgeInk}" stroke-width="2.2">${glyph}</g></g>`
-    : '';
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">'
-    + `<path d="${CURSOR_ARROW}" fill="${ink}" stroke="${halo}" stroke-width="1.4" stroke-linejoin="round"/>`
-    + `${badge}</svg>`;
-  // The hotspot is the arrow tip, so the pointer still picks the exact grid point.
-  const value = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 2 1, default`;
-  toolCursorCache.set(key, value);
-  preloadToolCursorImage(value);
-  return value;
-}
+
+
+
+
+
+
+
 
 function cursorIconFor(state) {
   if (state.key === 'wire') return editor.routeMode === 'diagonal' ? 'wire-diagonal' : 'wire';
@@ -51424,18 +51415,11 @@ function syncToolCursor(state = interactionState()) {
 // the cursor on the next pointer motion — which is out of the page's reach.
 const toolCursorImages = [];
 
-function preloadToolCursorImage(value) {
-  const image = new Image();
-  image.src = value.slice(value.indexOf('"') + 1, value.lastIndexOf('"'));
-  toolCursorImages.push(image);
-}
-
-/** Build (and so fetch) every cursor the editor can switch to, in both themes. */
 function preloadToolCursors() {
-  const icons = new Set([...Object.values(TOOL_CURSOR_ICONS), 'wire', 'wire-diagonal']);
-  for (const dark of [false, true]) {
-    for (const icon of icons) toolCursorValue(icon, { dark });
-    toolCursorValue(TOOL_CURSOR_ICONS.delete, { dark, danger: true });
+  for (const value of allToolCursors()) {
+    const image = new Image();
+    image.src = value.slice(value.indexOf('"') + 1, value.lastIndexOf('"'));
+    toolCursorImages.push(image);
   }
 }
 
@@ -51462,7 +51446,7 @@ function installIcons() {
   preloadToolCursors();
 }
 
-__exports.ICON_PATHS = ICON_PATHS;
+__exports.ICON_PATHS = __require("src/web/icon-paths.js").ICON_PATHS;
 };
 
 __modules["src/web/insert-menu.js"] = function (__require, __exports) {
@@ -52798,6 +52782,32 @@ function inlineEditLabel(label, options = {}) {
 
 };
 
+__modules["src/web/label-measure.js"] = function (__require, __exports) {
+__exports.paddedLineBounds = paddedLineBounds;
+/**
+ * A math label's measured box from its rendered lines: plain geometry, so
+ * it can be checked without a page (main.js measures the lines).
+ */
+
+/**
+ * The union of a label's line rectangles (client pixels), widened by the
+ * label's padding (`{ left, top, right, bottom }` in world units, each
+ * `scale.x`/`scale.y` pixels on screen). Each line is measured on its own:
+ * a wrapper around several lines is as wide as the box it was given, which
+ * would feed the last measurement back into the next. Null without lines.
+ */
+function paddedLineBounds(rects, padding, scale) {
+  const lines = rects.filter((rect) => rect.width > 0 && rect.height > 0);
+  if (!lines.length) return null;
+  const left = Math.min(...lines.map((rect) => rect.left)) - padding.left * scale.x;
+  const top = Math.min(...lines.map((rect) => rect.top)) - padding.top * scale.y;
+  const right = Math.max(...lines.map((rect) => rect.right)) + padding.right * scale.x;
+  const bottom = Math.max(...lines.map((rect) => rect.bottom)) + padding.bottom * scale.y;
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+};
+
 __modules["src/web/layout.js"] = function (__require, __exports) {
 __exports.layoutAnchor = layoutAnchor;
 __exports.componentLayoutItem = componentLayoutItem;
@@ -53345,7 +53355,6 @@ function layoutSuggestions(items, grid = GRID) {
 };
 
 __modules["src/web/main.js"] = function (__require, __exports) {
-__exports.selectAllNetIds = selectAllNetIds;
 __exports.deriveInteractionState = deriveInteractionState;
 __exports.markSettingsChanged = markSettingsChanged;
 __exports.beginSettingsEdit = beginSettingsEdit;
@@ -53360,7 +53369,6 @@ __exports.scheduleInteractionRender = scheduleInteractionRender;
 __exports.applyJson = applyJson;
 __exports.undo = undo;
 __exports.redo = redo;
-__exports.captureRouteGeometry = captureRouteGeometry;
 __exports.sortedComps = sortedComps;
 __exports.isTransientCopyGhostRef = isTransientCopyGhostRef;
 __exports.transientCopyGhostNetIds = transientCopyGhostNetIds;
@@ -53419,8 +53427,6 @@ __exports.commitWireAtCursor = commitWireAtCursor;
 __exports.connectWireToTerminal = connectWireToTerminal;
 __exports.endGestureWire = endGestureWire;
 __exports.beginObjectMove = beginObjectMove;
-__exports.captureNetGeometry = captureNetGeometry;
-__exports.translateNetGeometry = translateNetGeometry;
 __exports.armModalMove = armModalMove;
 __exports.beginCopySource = beginCopySource;
 __exports.removableVertexAt = removableVertexAt;
@@ -53492,7 +53498,7 @@ let renderHelpSearch, showHelp, installHelp; __bind(() => { ({ renderHelpSearch,
 let openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu; __bind(() => { ({ openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } = __require("src/web/radial-menu.js")); });
 let logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar; __bind(() => { ({ logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } = __require("src/web/status-bar-ui.js")); });
 let resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi; __bind(() => { ({ resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } = __require("src/web/design-check-ui.js")); });
-let partialVertexPicks; __bind(() => { ({ partialVertexPicks } = __require("src/core/selection.js")); });
+let partialVertexPicks, selectAllNetIds; __bind(() => { ({ partialVertexPicks, selectAllNetIds } = __require("src/core/selection.js")); });
 let paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect; __bind(() => { ({ paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } = __require("src/web/canvas-view.js")); });
 let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock; __bind(() => { ({ syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
@@ -53515,6 +53521,8 @@ let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ sho
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let togglePlots; __bind(() => { ({ togglePlots } = __require("src/web/plots-window.js")); });
+let paddedLineBounds; __bind(() => { ({ paddedLineBounds } = __require("src/web/label-measure.js")); });
+let captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry; __bind(() => { ({ captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } = __require("src/web/net-geometry.js")); });
 let copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows; __bind(() => { ({ copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles; __bind(() => { ({ enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } = __require("src/web/hierarchy.js")); });
 let askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines; __bind(() => { ({ askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } = __require("src/web/annotation-tools.js")); });
@@ -53532,6 +53540,8 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
+
 
 
 
@@ -53908,12 +53918,6 @@ let presenter = null; // { index, blank, fullscreen }
  */
 /** Nets Ctrl+A selects: every net with drawn wire, and every net that joins
  * pins directly (touching terminals have a connection but no wire length). */
-function selectAllNetIds(model) {
-  return [...model.nets.values()]
-    .filter((net) => net.paths().some((path) => path.length >= 2) || net.terminals.length >= 2)
-    .map((net) => net.id);
-}
-
 function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, moveMode = null, copyMode = false, deleteMode = false, alignMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
   if (wire) return {
     key: 'wire',
@@ -54260,23 +54264,6 @@ function redo() {
 }
 
 // ----- helpers ---------------------------------------------------------
-
-const clonePoint = (p) => ({ ...p });
-/** Copy a point list, optionally through a translation. */
-function clonePoints(points, move = clonePoint) {
-  return (points || []).map(move);
-}
-function cloneWireStyles(styles) {
-  return Object.fromEntries(Object.entries(styles || {}).map(([key, style]) => [key, { ...style }]));
-}
-/** Managed route geometry of one net, detached from the live model. */
-function captureRouteGeometry(net, move = clonePoint) {
-  return {
-    route: net.route ? clonePoints(net.route, move) : null,
-    branches: net.branches ? net.branches.map((path) => clonePoints(path, move)) : null,
-    junctions: clonePoints(net.junctions, move),
-  };
-}
 
 function sortedComps() {
   if (!sortedCompsCache || sortedCompsCache.revision !== modelRevision) {
@@ -56106,47 +56093,25 @@ function renderedLabelTextBounds(group) {
   if (!math) return null;
   try {
     const mathNodes = [...math.querySelectorAll('math')];
-    // Measure each line's intrinsic MathML contents. A Range around the
-    // multiline flex wrapper includes its full-width line containers, which
-    // feeds the old bbox back into the next measurement. Rounding can then
-    // add/remove two cells and move left-aligned assumptions by one cell.
     const rects = mathNodes.map((node) => {
       const client = node.getBoundingClientRect?.();
       if (client?.width > 0 && client.height > 0) return client;
       const range = document.createRange();
       range.selectNodeContents(node);
       return range.getBoundingClientRect();
-    }).filter((rect) => rect.width > 0 && rect.height > 0);
-    if (!rects.length) return null;
-    const tight = {
-      left: Math.min(...rects.map((rect) => rect.left)),
-      top: Math.min(...rects.map((rect) => rect.top)),
-      right: Math.max(...rects.map((rect) => rect.right)),
-      bottom: Math.max(...rects.map((rect) => rect.bottom)),
-    };
-    tight.width = tight.right - tight.left;
-    tight.height = tight.bottom - tight.top;
-    // The foreignObject reserves six CSS pixels of padding around the math;
-    // include that rendered inset so the measured box cannot clip the glyphs.
+    });
+    // The foreignObject reserves six CSS pixels of padding around the math,
+    // in world units: converted at the zoom, so zooming never changes the box.
     const css = getComputedStyle(math);
-    // Computed padding is in foreignObject/world units; Range rectangles are
-    // in screen pixels. Convert before expanding, otherwise zoom changes the
-    // measured bbox (and a fraction's vertical position after reload).
     const matrix = canvasSvgEl.getScreenCTM();
-    const scaleX = Math.hypot(matrix.a, matrix.b);
-    const scaleY = Math.hypot(matrix.c, matrix.d);
-    const px = (Number.parseFloat(css.paddingLeft) || 0) * scaleX;
-    const py = (Number.parseFloat(css.paddingTop) || 0) * scaleY;
-    const pr = (Number.parseFloat(css.paddingRight) || 0) * scaleX;
-    const pb = (Number.parseFloat(css.paddingBottom) || 0) * scaleY;
-    const expanded = {
-      left: tight.left - px,
-      top: tight.top - py,
-      right: tight.right + pr,
-      bottom: tight.bottom + pb,
-      width: tight.width + px + pr,
-      height: tight.height + py + pb,
+    const padding = {
+      left: Number.parseFloat(css.paddingLeft) || 0,
+      top: Number.parseFloat(css.paddingTop) || 0,
+      right: Number.parseFloat(css.paddingRight) || 0,
+      bottom: Number.parseFloat(css.paddingBottom) || 0,
     };
+    const expanded = paddedLineBounds(rects, padding, { x: Math.hypot(matrix.a, matrix.b), y: Math.hypot(matrix.c, matrix.d) });
+    if (!expanded) return null;
     return clientRectToSvgBounds(canvasSvgEl, expanded);
   } catch { return null; }
 }
@@ -58523,42 +58488,11 @@ function detachMoveComponents(drag) {
   return selectedNetIds;
 }
 
-function captureNetGeometry(net) {
-  return {
-    ...captureRouteGeometry(net),
-    // Segment styles are keyed by route position, so snapshot them with the
-    // geometry they decorate.
-    wireStyles: cloneWireStyles(net.wireStyles),
-  };
-}
-/** One route snapshot per distinct net behind a set of dragged wire runs. */
-function captureRunNetGeometry(runs) {
-  const snapshots = new Map();
-  for (const run of runs) {
-    if (snapshots.has(run.net.id)) continue;
-    snapshots.set(run.net.id, {
-      id: run.net.id,
-      net: run.net,
-      ...captureRouteGeometry(run.net),
-      wireStyles: cloneWireStyles(run.net.wireStyles),
-    });
-  }
-  return snapshots;
-}
-
 function snappedDragDelta(startWorld, currentWorld) {
   return {
     dx: snap(currentWorld.x - startWorld.x),
     dy: snap(currentWorld.y - startWorld.y),
   };
-}
-
-function translateNetGeometry(net, saved, dx, dy) {
-  const move = (p) => ({ x: p.x + dx, y: p.y + dy });
-  Object.assign(net, captureRouteGeometry(saved, move));
-  if (saved.wireStyles) {
-    net.wireStyles = cloneWireStyles(saved.wireStyles);
-  }
 }
 
 function armModalLabelMove(label, startWorld, startClient) {
@@ -61640,6 +61574,58 @@ function arriving(el, ms = 700) {
   el.classList.add('arriving');
   clearTimeout(el._arrivingTimer);
   el._arrivingTimer = setTimeout(() => el.classList.remove('arriving'), ms);
+}
+
+};
+
+__modules["src/web/net-geometry.js"] = function (__require, __exports) {
+__exports.cloneWireStyles = cloneWireStyles;
+__exports.captureRouteGeometry = captureRouteGeometry;
+__exports.captureNetGeometry = captureNetGeometry;
+__exports.captureRunNetGeometry = captureRunNetGeometry;
+__exports.translateNetGeometry = translateNetGeometry;
+/**
+ * Snapshots of a net's drawn geometry for a drag or a paste to restore or
+ * move: its route, branches, and junctions, and the segment styles keyed by
+ * their place on that route. Plain data, detached from the live model.
+ */
+
+const clonePoint = (p) => ({ ...p });
+const clonePoints = (points, move = clonePoint) => (points || []).map(move);
+
+function cloneWireStyles(styles) {
+  return Object.fromEntries(Object.entries(styles || {}).map(([key, style]) => [key, { ...style }]));
+}
+
+/** A net's route geometry, each point through `move` (a copy by default). */
+function captureRouteGeometry(net, move = clonePoint) {
+  return {
+    route: net.route ? clonePoints(net.route, move) : null,
+    branches: net.branches ? net.branches.map((path) => clonePoints(path, move)) : null,
+    junctions: clonePoints(net.junctions, move),
+  };
+}
+
+/** Route geometry with the segment styles that decorate it. */
+function captureNetGeometry(net) {
+  return { ...captureRouteGeometry(net), wireStyles: cloneWireStyles(net.wireStyles) };
+}
+
+/** One snapshot per distinct net behind a set of dragged wire runs. */
+function captureRunNetGeometry(runs) {
+  const snapshots = new Map();
+  for (const run of runs) {
+    if (!snapshots.has(run.net.id)) snapshots.set(run.net.id, { id: run.net.id, net: run.net, ...captureNetGeometry(run.net) });
+  }
+  return snapshots;
+}
+
+/** Put a snapshot back on `net`, moved by (dx, dy): its geometry and its
+ *  segment styles together, so a style stays on the segment it was set on. */
+function translateNetGeometry(net, saved, dx, dy) {
+  const move = (p) => ({ x: p.x + dx, y: p.y + dy });
+  Object.assign(net, captureRouteGeometry(saved, move));
+  if (saved.wireStyles) net.wireStyles = cloneWireStyles(saved.wireStyles);
 }
 
 };
@@ -68175,6 +68161,7 @@ function installSignalFlowUi() {
 
 __modules["src/web/startup.js"] = function (__require, __exports) {
 __exports.revealStartup = revealStartup;
+__exports.opensOnAtlas = opensOnAtlas;
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 
 
@@ -68190,6 +68177,15 @@ function revealStartup() {
     duration: reduced ? 0 : 700, easing: 'ease-out', fill: 'forwards',
   }).finished.finally(() => cover.remove());
   return reveal;
+}
+
+/** Whether the editor opens onto the Atlas: no file was asked for, and
+ *  either several designs are there to choose from, or (browser-only) none
+ *  is open yet and the Atlas offers a new one, a file, or a folder. A
+ *  design waiting for the browser's permission again does not count. */
+function opensOnAtlas({ openPath = '', documents = [], browserOnly = false }) {
+  const designs = documents.filter((doc) => doc.kind === 'circuit' && !doc.locked).length;
+  return !openPath && (designs > 1 || (browserOnly && designs === 0));
 }
 
 };
@@ -69466,6 +69462,80 @@ __exports.TIP_COOLDOWN_MS = TIP_COOLDOWN_MS;
 __exports.TIPS_PER_SESSION = TIPS_PER_SESSION;
 __exports.TIP_MAX_SHOWS = TIP_MAX_SHOWS;
 __exports.TipBook = TipBook;
+};
+
+__modules["src/web/tool-cursor.js"] = function (__require, __exports) {
+__exports.toolCursorValue = toolCursorValue;
+__exports.allToolCursors = allToolCursors;
+let ICON_PATHS; __bind(() => { ({ ICON_PATHS } = __require("src/web/icon-paths.js")); });
+/**
+ * Tool cursors: the select arrow badged with the active tool's icon, as CSS
+ * `cursor` values. Plain strings, so code without a page can build them.
+ */
+
+
+
+// The canvas pointer is the select arrow, badged with the active tool's rail
+// icon so the current mode reads where the eye already is. Cursors are data
+// URIs built from the same ICON_PATHS the rail draws, cached per icon/theme.
+const CURSOR_ARROW = 'M1.5 1 1.5 18.5 6.1 14.3 9 20.6 11.9 19.2 9.1 13.2 15 12.7Z';
+
+const TOOL_CURSOR_ICONS = {
+  normal: null,
+  place: 'plus',
+  move: 'move',
+  'detached-move': 'detach',
+  copy: 'copy',
+  delete: 'trash',
+  align: 'align',
+  'net-label': 'tag',
+  highlight: 'highlight',
+  annotation: 'text',
+  equation: 'text',
+  arrow: 'arrow',
+  box: 'rectangle',
+  line: 'line',
+};
+
+const toolCursorCache = new Map();
+
+/** One `cursor` value: arrow plus optional tool badge, outlined so it stays
+ * legible on light paper, dark paper, and over drawn ink. */
+function toolCursorValue(icon, { dark = false, danger = false } = {}) {
+  const key = `${icon || ''}|${dark}|${danger}`;
+  const cached = toolCursorCache.get(key);
+  if (cached) return cached;
+  const ink = dark ? '#f4f5f7' : '#16181d';
+  const halo = dark ? '#16181d' : '#ffffff';
+  const badgeInk = danger ? (dark ? '#ff8f85' : '#c33b2e') : ink;
+  const glyph = ICON_PATHS[icon] || '';
+  const badge = glyph
+    ? `<g transform="translate(14 14) scale(.7)" fill="none" stroke-linecap="round" stroke-linejoin="round">`
+      + `<g style="color:${halo}" stroke="${halo}" stroke-width="4.8">${glyph}</g>`
+      + `<g style="color:${badgeInk}" stroke="${badgeInk}" stroke-width="2.2">${glyph}</g></g>`
+    : '';
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">'
+    + `<path d="${CURSOR_ARROW}" fill="${ink}" stroke="${halo}" stroke-width="1.4" stroke-linejoin="round"/>`
+    + `${badge}</svg>`;
+  // The hotspot is the arrow tip, so the pointer still picks the exact grid point.
+  const value = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 2 1, default`;
+  toolCursorCache.set(key, value);
+  return value;
+}
+
+/** Every cursor the editor can switch to, in both themes: the bare arrow,
+ *  each tool's badge, both wire shapes, and Delete's danger badge. */
+function allToolCursors() {
+  const icons = new Set([...Object.values(TOOL_CURSOR_ICONS), 'wire', 'wire-diagonal']);
+  const values = [];
+  for (const dark of [false, true]) {
+    for (const icon of icons) values.push(toolCursorValue(icon, { dark }));
+    values.push(toolCursorValue(TOOL_CURSOR_ICONS.delete, { dark, danger: true }));
+  }
+  return values;
+}
+
+__exports.TOOL_CURSOR_ICONS = TOOL_CURSOR_ICONS;
 };
 
 __modules["src/web/toolbar-fit.js"] = function (__require, __exports) {

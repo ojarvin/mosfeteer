@@ -9,29 +9,6 @@ import { alignedAnchorShift, attachedEdgeShift, compatibilityMoveFilter, constra
 const rect = { left: 10, top: 20, width: 100, height: 100 };
 const view = { x: -80, y: -80, w: 400, h: 400 };
 
-test('tool cursors badge the select arrow per tool, theme, and danger', () => {
-  const main = editorSource();
-  const start = main.indexOf('function toolCursorValue(');
-  const end = main.indexOf('\n}\n', start) + 2;
-  const build = vm.runInNewContext(`(${main.slice(start, end)})`, {
-    ICON_PATHS: { trash: '<path d="M4 6h16"/>' },
-    toolCursorCache: new Map(),
-    CURSOR_ARROW: 'M1 1 1 9 5 5Z',
-    preloadToolCursorImage: () => {},
-  });
-  const decode = (value) => decodeURIComponent(value.match(/url\("data:image\/svg\+xml,([^"]+)"\)/)[1]);
-  const plain = build(null, {});
-  assert.match(plain, /\) 2 1, default$/); // the hotspot stays on the arrow tip
-  assert.ok(!decode(plain).includes('M4 6h16'));
-  const badged = decode(build('trash', {}));
-  // The glyph is drawn twice: a halo pass under the ink pass keeps it legible.
-  assert.equal(badged.split('M4 6h16').length - 1, 2);
-  assert.ok(!badged.includes('#c33b2e'));
-  assert.ok(decode(build('trash', { danger: true })).includes('#c33b2e'));
-  assert.notEqual(build('trash', {}), build('trash', { dark: true }));
-  assert.equal(build('trash', {}), build('trash', {})); // cached per icon/theme
-});
-
 test('component rows share the net-list layout without inline delete controls', () => {
   const main = editorSource();
   const start = main.indexOf('function renderComponents()');
@@ -98,34 +75,6 @@ test('selection style controls keep their text-target result shape', () => {
   assert.match(main.slice(start, end), /return \{ labels: \[\.\.\.labels\.values\(\)\], blocks: \[\] \};/);
 });
 
-test('the small-signal figure owns Escape and hands the keyboard back', () => {
-  const main = editorSource();
-  const start = main.indexOf("modelDialog?.addEventListener('keydown'");
-  assert.ok(start > 0, 'the model dialog handles Escape itself');
-  const handlers = main.slice(start, start + 900);
-  // Stopped here, so the analysis dock's own Escape never fires behind it.
-  assert.match(handlers, /ev\.stopPropagation\(\);\s*modelDialog\.close\(\);/);
-  // Clicking beside the figure dismisses it, and closing returns focus to the
-  // drawing it was covering.
-  assert.match(handlers, /ev\.target === modelDialog/);
-  assert.match(handlers, /addEventListener\('close'[\s\S]*canvasEl\.focus\(\)/);
-});
-
-test('the full-size figure is a view over one drawing, driven like the canvas', () => {
-  const main = editorSource();
-  const start = main.indexOf('function bindModelFigureView(');
-  assert.ok(start > 0);
-  const view = main.slice(start, main.indexOf('bindModelFigureView(modelDialogFigure)', start));
-  // Wheel zooms about the pointer, the middle button pans, the right button
-  // drags a box (and zooms out on a click), and a double-click refits.
-  assert.match(view, /'wheel'[\s\S]*Math\.pow\(1\.0016, ev\.deltaY\)/);
-  assert.match(view, /ev\.button === 1 \? 'pan' : 'zoom'/);
-  assert.match(view, /if \(!drag\.moved\) \{\s*zoomModelFigure\(2, world\);/);
-  assert.match(view, /'dblclick'[\s\S]*fitModelFigure\(\)/);
-  // Nothing re-renders and nothing is mutated: it is the SVG's own viewBox.
-  assert.match(main, /function applyModelFigureView\(\)[\s\S]*setAttribute\('viewBox'/);
-});
-
 test('the insert menu is one scrolling column led by the recent placements', () => {
   const main = editorSource();
   // Committed placements are what feed the Recent group, so an armed ghost the
@@ -149,59 +98,6 @@ test('the insert menu is one scrolling column led by the recent placements', () 
   assert.match(body.slice(0, body.indexOf('}')), /overflow-x: hidden/);
   // Columns would spread the list sideways over the drawing again.
   assert.doesNotMatch(body.slice(0, body.indexOf('}')), /column-width/);
-});
-
-test('component drag snapshots restore segment styles with route geometry', () => {
-  const main = editorSource();
-  const source = ['captureNetGeometry', 'captureRunNetGeometry', 'snappedDragDelta', 'translateNetGeometry']
-    .map((name) => functionSource(name, main)).join('\n');
-  const helpers = vm.runInNewContext(`(() => {
-    ${source}
-    return { captureNetGeometry, translateNetGeometry };
-  })()`, {
-    cloneWireStyles: (styles) => Object.fromEntries(Object.entries(styles || {}).map(([key, style]) => [key, { ...style }])),
-    captureRouteGeometry: (net, move = (point) => ({ ...point })) => ({
-      route: net.route ? net.route.map(move) : null,
-      branches: net.branches ? net.branches.map((path) => path.map(move)) : null,
-      junctions: (net.junctions || []).map(move),
-    }),
-  });
-  const net = {
-    route: [{ x: 0, y: 0 }, { x: 0, y: 400 }],
-    branches: [[{ x: 0, y: 0 }, { x: 0, y: 400 }]],
-    junctions: [],
-    wireStyles: { '0:1': { color: '#111', arrowhead: 'end' } },
-  };
-  const saved = helpers.captureNetGeometry(net);
-  net.route = [{ x: 0, y: 0 }, { x: 0, y: 120 }, { x: 160, y: 120 }, { x: 160, y: 400 }];
-  net.branches = [net.route];
-  net.wireStyles = {
-    '0:1': { color: '#111', arrowhead: 'none' },
-    '0:2': { color: '#111', arrowhead: 'none' },
-    '0:3': { color: '#111', arrowhead: 'end' },
-  };
-
-  helpers.translateNetGeometry(net, saved, 0, 0);
-
-  assert.deepEqual(net.wireStyles, saved.wireStyles);
-  assert.equal(JSON.stringify(net.route), JSON.stringify(saved.route));
-});
-
-test('every tool cursor is fetched up front so a keyboard tool change paints one', () => {
-  const main = editorSource();
-  const start = main.indexOf('function preloadToolCursors(');
-  const end = main.indexOf('\n}\n', start) + 2;
-  const built = [];
-  const preload = vm.runInNewContext(`(${main.slice(start, end)})`, {
-    TOOL_CURSOR_ICONS: { normal: null, wire: 'wire', delete: 'trash' },
-    toolCursorValue: (icon, opts) => built.push(`${icon}|${opts.dark}|${!!opts.danger}`),
-  });
-  preload();
-  // Both themes, both wire shapes, the bare arrow, and Delete's danger badge.
-  for (const key of ['null|false|false', 'null|true|false', 'wire|false|false', 'wire-diagonal|false|false',
-    'wire-diagonal|true|false', 'trash|true|false', 'trash|false|true', 'trash|true|true']) {
-    assert.ok(built.includes(key), `missing preloaded cursor ${key}`);
-  }
 });
 
 test('an aligned label keeps its own edge when its measured box changes', () => {
@@ -228,55 +124,11 @@ test('the view follows the cursor out of frame, minimally and with a margin', ()
   assert.equal(viewFollowingCursor(null, { x: 0, y: 0 }, 40), null);
 });
 
-test('MathML annotation measurements are independent of zoom on reload', () => {
-  const main = editorSource();
-  const start = main.indexOf('function renderedLabelTextBounds(');
-  const end = main.indexOf('\n// Equation annotations are initially positioned', start);
-  for (const scale of [0.08, 0.5, 1, 2]) {
-    const rect = { left: 100 * scale, top: 200 * scale, right: 400 * scale, bottom: 291 * scale, width: 300 * scale, height: 91 * scale };
-    const content = { getBoundingClientRect: () => rect };
-    const math = { querySelectorAll: () => [content], getBoundingClientRect: () => ({ width: 400 * scale }) };
-    const measure = vm.runInNewContext(`(${main.slice(start, end)})`, {
-      canvasSvgEl: { getScreenCTM: () => ({ a: scale, b: 0, c: 0, d: scale }) },
-      document: { createRange: () => ({ selectNodeContents() {}, getBoundingClientRect: () => rect }) },
-      getComputedStyle: () => ({ paddingLeft: '6px', paddingTop: '6px', paddingRight: '6px', paddingBottom: '6px' }),
-      clientRectToSvgBounds: (_, bounds) => ({ x: bounds.left / scale, y: bounds.top / scale, w: bounds.width / scale, h: bounds.height / scale }),
-    });
-    const result = measure({ querySelector: (selector) => selector === 'text' ? null : math });
-    assert.ok(Math.abs(result.w - 312) < 1e-9);
-    assert.ok(Math.abs(result.h - 103) < 1e-9);
-    assert.ok(Math.abs(result.y + result.h / 2 - 245.5) < 1e-9);
-  }
-});
-
 test('generated category labels keep their persisted grid metrics', () => {
   const main = editorSource();
   const start = main.indexOf('function syncRenderedLabelMetrics()');
   const end = main.indexOf('\n}\n', start) + 2;
   assert.match(main.slice(start, end), /if \(label\.id\.startsWith\('category_'\)\) continue;/);
-});
-
-test('multiline assumptions measure their text independently of the restored container width', () => {
-  const main = editorSource();
-  const start = main.indexOf('function renderedLabelTextBounds(');
-  const end = main.indexOf('\n// Equation annotations are initially positioned', start);
-  for (const containerWidth of [240, 320, 400]) {
-    for (const scale of [0.08, 0.590074019, 1, 2]) {
-      const rect = (width, top) => ({ left: 100 * scale, right: (100 + width) * scale, top: top * scale, bottom: (top + 36) * scale, width: width * scale, height: 36 * scale });
-      const nodes = [rect(209, 200), rect(155, 248), rect(124, 296)].map((bounds) => ({ getBoundingClientRect: () => bounds }));
-      const math = { querySelectorAll: () => nodes, getBoundingClientRect: () => rect(containerWidth, 200) };
-      const measure = vm.runInNewContext(`(${main.slice(start, end)})`, {
-        canvasSvgEl: { getScreenCTM: () => ({ a: scale, b: 0, c: 0, d: scale }) },
-        document: { createRange: () => { throw new Error('must measure intrinsic lines, not the full-width wrapper'); } },
-        getComputedStyle: () => ({ paddingLeft: '6px', paddingTop: '6px', paddingRight: '6px', paddingBottom: '6px' }),
-        clientRectToSvgBounds: (_, bounds) => ({ x: bounds.left / scale, y: bounds.top / scale, w: bounds.width / scale, h: bounds.height / scale }),
-      });
-      const measured = measure({ querySelector: (selector) => selector === 'text' ? null : math });
-      assert.ok(Math.abs(measured.w - 221) < 1e-9);
-      assert.ok(Math.abs(measured.h - 144) < 1e-9);
-      assert.ok(Math.abs(measured.x - 94) < 1e-9);
-    }
-  }
 });
 
 test('selection extension uses one cross-platform modifier policy', () => {
@@ -530,118 +382,6 @@ test('an explicit new document is protected from active-document auto-loads', ()
   assert.match(main.slice(0, main.indexOf('function copySelectionSource(')), /activeSyncSuspended = false;/);
 });
 
-test('small-signal analysis exposes the canonical v2 controls', () => {
-  const html = readFileSync(new URL('../src/web/index.html', import.meta.url), 'utf8');
-  assert.match(html, /id="btn-analysis"/);
-  // Analyze toggles its floating window from the toolbar's window group; the
-  // canvas corner keeps only the docked side panel's toggle.
-  assert.match(html, /class="toolbar-cluster window-cluster"[\s\S]*?<button id="btn-analysis"[^>]+data-doc-kind="schematic"[^>]+aria-controls="analysis-dialog"/);
-  assert.match(html, /class="canvas-panel-toggles"[^>]*>\s*<button id="btn-side-panel"/);
-  assert.match(html, /id="analysis-dialog"/);
-  assert.match(html, /id="analysis-input-field"[^>]*>Input node/);
-  assert.match(html, /for="analysis-target">Output node/);
-  // Every AC ground is the one 0 V reference: there is no separate Reference.
-  assert.doesNotMatch(html, /id="analysis-reference"/);
-  assert.match(html, /for="analysis-ac-grounds">More AC grounds/);
-  assert.match(html, /data-analysis-pick="analysis-ac-grounds"/);
-  // The field is the one AC-ground list: Derive clears the marks of nets it
-  // no longer lists, and the open panel follows marks set on the drawing.
-  const ui = readFileSync(new URL('../src/web/analysis-ui.js', import.meta.url), 'utf8');
-  assert.match(ui, /releaseUnlistedGroundMarks\(parseAnalysisList\(analysisAcGrounds\?\.value\)\);\s*persistAnalysisForm\(\);/);
-  assert.match(ui, /export function syncAnalysisDock\(\) \{[\s\S]*?followGroundMarks\(\);/);
-  assert.match(html, /id="analysis-submit"[^>]*>Derive all equations/);
-  assert.match(html, /id="analysis-ac-grounds"/);
-  assert.match(html, /id="analysis-device-regions"/);
-  assert.match(html, /REF=triode/);
-  assert.match(html, /id="analysis-annotate"/);
-  assert.match(html, /id="analysis-equation"/);
-  assert.match(html, /id="analysis-details"/);
-  assert.match(html, /id="analysis-netlist"/);
-  assert.match(html, /id="analysis-panel-netlist"[^>]+role="tabpanel"/);
-  assert.doesNotMatch(html, /id="analysis-netlist-panel"/);
-  assert.match(html, /id="analysis-tab-equations"[^>]+role="tab"/);
-  assert.match(html, /id="analysis-tab-log"[^>]+role="tab"/);
-  assert.match(html, /id="analysis-tab-netlist"[^>]+role="tab"/);
-  assert.match(html, /id="analysis-panel-equations"[^>]+role="tabpanel"/);
-  assert.match(html, /id="analysis-panel-log"[^>]+role="tabpanel"/);
-  assert.match(html, /id="analysis-panel-netlist"[^>]+role="tabpanel"/);
-  assert.match(html, /id="analysis-approx-ro"[^>]+type="checkbox"/);
-  assert.match(html, /id="analysis-approx-body"[^>]+type="checkbox"[^>]+checked/);
-  assert.match(html, /id="analysis-approx-gmro"[^>]+type="checkbox"[^>]+checked/);
-  assert.match(html, /id="analysis-approx-dominant-pole"[^>]+type="checkbox"/);
-  // The card separates what changes the model from what changes the equation.
-  // Miller decoupling belongs to the first group: it is the engine's own
-  // pre-solve transform, not the removed v1 "miller" presentation control.
-  assert.match(html, /id="analysis-approx-miller"[^>]+type="checkbox"[^>]+checked/);
-  assert.match(html, /<legend>Model simplifications<\/legend>[\s\S]*id="analysis-approx-miller"/);
-  assert.match(html, /<legend>Equation approximations<\/legend>[\s\S]*id="analysis-approx-dominant-pole"/);
-  assert.doesNotMatch(html, /id="analysis-(?:kind|context|mode|complementary|models)"/);
-  assert.doesNotMatch(html, /id="analysis-approx-(?:dc|cascode)"/);
-  assert.doesNotMatch(html, /current-source|cascode|Analyze DC topology only/i);
-  assert.match(html, /<div class="analysis-scroll">[\s\S]*id="analysis-result"[\s\S]*<\/div>\s*<div class="dialog-actions">/);
-  const style = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
-  assert.match(html, /<section id="analysis-dialog" class="analysis-dock floating-window"[^>]*hidden/);
-  assert.doesNotMatch(html, /<dialog id="analysis-dialog"/);
-  assert.match(html, /data-analysis-pick="analysis-input"/);
-  assert.match(html, /data-analysis-pick="analysis-target"/);
-  // Resized from any corner, as every floating window is (floating-window.js grips).
-  assert.match(readFileSync(new URL('../src/web/floating-window.js', import.meta.url), 'utf8'), /for \(const corner of \['nw', 'ne', 'sw', 'se'\]\)/);
-  assert.match(style, /\.floating-window \{[^}]*overflow: hidden/);
-  assert.match(style, /\.analysis-scroll\s*\{[\s\S]*overflow: auto/);
-  assert.match(style, /\.analysis-dock \.dialog-actions\s*\{[\s\S]*flex: 0 0 auto/);
-  assert.match(style, /\.analysis-tabs\s*\{[\s\S]*border-bottom/);
-  assert.match(style, /\.analysis-tab-panels\s*\{[\s\S]*overflow: hidden/);
-});
-
-test('analysis form state is scoped and role metadata is restored from the active schematic', () => {
-  const main = editorSource();
-  assert.match(main, /analysisFormStorageKey\(analysisFormScope\(\)\)/);
-  assert.match(main, /Select an input node before deriving equations/);
-  assert.match(main, /analysis failed: \$\{message\}/);
-  assert.match(main, /readAnalysisFormState\(saved\)/);
-  assert.match(main, /pruneAnalysisNetValues\(state\.acGrounds, visibleNets\(\)\)/);
-  assert.match(main, /pruneAnalysisDeviceRegions/);
-  assert.match(main, /defaults\.targetMarked \? defaults\.target : state\.output/);
-  assert.match(main, /defaults\.inputMarked \? defaults\.input : state\.input/);
-  assert.match(main, /neglectChannelLengthModulation: !!analysisApproxRo\?\.checked/);
-  assert.match(main, /neglectBodyEffect: !!analysisApproxBody\?\.checked/);
-  assert.match(main, /highIntrinsicGain: !!analysisApproxGmRo\?\.checked/);
-  assert.match(main, /dominantPole: !!analysisApproxDominantPole\?\.checked/);
-  assert.match(main, /deviceRegions: analysisDeviceRegions\?\.value/);
-  assert.match(main, /options\.neglectBodyEffect = source\.ignoreBodyEffect/);
-  assert.match(main, /options\.highIntrinsicGain = source\.gmroLarge/);
-  assert.match(main, /options\.neglectChannelLengthModulation = true/);
-  assert.match(main, /\.\.\.\(Object\.keys\(devices\)\.length \? \{ devices \} : \{\}\)/);
-  assert.match(main, /resistance: 'infinite'/);
-  assert.equal((main.match(/analyzeSmallSignalV2\(/g) || []).length, 1);
-  assert.match(main, /adaptCombinedReport\(analyzeSmallSignalV2\(circuit, request\), \{ nameSubexpressions: formOptions\.nameSubexpressions \}\)/);
-  assert.doesNotMatch(main, /analyzeInputImpedance|analyzeOutputImpedance|analyzeTransferFunction/);
-  assert.doesNotMatch(main, /core\/analysis\/index\.js/);
-  // Whole identifiers: `analysisModelEl` (the drawn small-signal model) is
-  // not the removed `analysisMode` control.
-  assert.doesNotMatch(main, /\b(?:analysisKind|analysisMode|analysisComplementary|analysisContext|analysisModels|analysisApproxCascode|dcOnly)\b/);
-  assert.match(main, /Array\.isArray\(report\?\.equationEntries\)/);
-  assert.match(main, /function analysisEquationRow\(\{ title, group, result: child \}, report\)/);
-  // A tab whose content this report has no data for falls back to Equations.
-  assert.match(main, /selectedTab === 'netlist' && !netlist/);
-  assert.match(main, /selectedTab === 'model' && !drawn/);
-  assert.match(main, /const topGap = 2 \* GRID/);
-  assert.match(main, /const bottomEdge = circuitBounds\.h > 0 \? circuitBounds\.y \+ circuitBounds\.h/);
-  assert.match(main, /const leftEdge = circuitBounds\.w > 0 \? circuitBounds\.x/);
-  assert.match(main, /function analysisEquationEntries\(report\)/);
-  assert.match(main, /layout\.bottomEdge \+ layout\.topGap/);
-  assert.match(main, /align: 'left'/);
-  assert.match(main, /analysisAnnotationAssumptions/);
-  assert.match(main, /text: \['\\\\text\{Assumptions\\\\:\}', \.\.\.assumptions\]/);
-  assert.match(main, /syncRenderedLabelMetrics/);
-  assert.match(main, /function reflowEquationAnnotations/);
-  assert.match(main, /const pitch = heights\.length < 2/);
-  assert.match(main, /options\.neglectBodyEffect/);
-  assert.match(main, /options\.highIntrinsicGain/);
-  assert.match(main, /options\.neglectChannelLengthModulation/);
-  assert.match(main, /options\.dominantPoleApplied/);
-});
-
 test('arrow-key nudging moves mixed selections atomically', () => {
   const main = editorSource();
   assert.match(main, /transformMixedSelection\('translate', \{ translation: \{ dx, dy \} \}\)/);
@@ -664,33 +404,6 @@ test('startup paints before listing documents and restoring the requested docume
   assert.match(main, /if \(openPath && openPath !== currentDocumentPath\) await openDocumentPath\(openPath\);/);
   assert.match(main, /fitView\(\);\s*restoreStartup\(\)/);
   assert.doesNotMatch(main, /fitView\(\);\s*render\(\);\s*restoreStartup/);
-});
-
-test('startup chooses Atlas for multiple circuits without an explicit file, or browser-only with none', async () => {
-  const source = functionSource('restoreStartup');
-  for (const browserOnly of [false, true]) for (const count of [0, 1, 2, 3]) {
-    for (const openPath of ['', '/workspace/requested.json']) {
-      const loaded = [];
-      const context = {
-        persistence: { browserOnly },
-        URLSearchParams,
-        window: { location: { search: openPath ? `?open=${encodeURIComponent(openPath)}` : '', pathname: '/' }, history: { replaceState() {} } },
-        currentDocumentPath: null,
-        workspaceState: null,
-        openDocumentPath: async (path) => loaded.push(path),
-      };
-      context.refreshCircuitList = async () => {
-        context.workspaceState = { documents: [
-          ...Array.from({ length: count }, () => ({ kind: 'circuit' })),
-          { kind: 'other' },
-        ], recent: [{ kind: 'circuit' }, { kind: 'circuit' }] };
-      };
-      const restore = vm.runInNewContext(`(${source})`, context);
-      // Browser-only with nothing open yet: the Atlas, to start or open a design.
-      assert.equal(await restore(), !openPath && (count > 1 || (browserOnly && count === 0)));
-      assert.deepEqual(loaded, openPath ? [openPath] : []);
-    }
-  }
 });
 
 test('fit reserves the axis the mode rail is thin along', () => {
@@ -730,29 +443,6 @@ test('F5 reloads the application instead of entering the normal keymap', () => {
   const main = editorSource();
   assert.match(main, /if \(ev\.key === 'F5'\)/);
   assert.match(main, /ev\.preventDefault\(\);\s*flushDraft\(\);\s*window\.location\.reload\(\);/);
-});
-
-test('analysis annotations use structured canonical assumptions', () => {
-  const main = editorSource();
-  const start = main.indexOf('function analysisAnnotationAssumptions');
-  const end = main.indexOf('\n\nfunction openAnalysisDialog', start);
-  assert.ok(start >= 0 && end > start);
-  const summarize = vm.runInNewContext(`(${main.slice(start, end)})`);
-  assert.deepEqual(Array.from(summarize({
-    analysisOptions: {
-      highIntrinsicGain: true,
-      neglectChannelLengthModulation: true,
-      neglectBodyEffect: true,
-      dominantPoleApplied: true,
-    },
-  })), [
-    'g_{m}r_{o} \\gg 1',
-    'r_{o} = \\infty',
-    'g_{mb} = 0',
-    '\\text{Dominant-pole approximation}',
-  ]);
-  assert.deepEqual(Array.from(summarize({ analysisOptions: {} })), []);
-  assert.deepEqual(Array.from(summarize({ analysisOptions: {}, assumptions: ['Miller approximation (M1)'] })), ['\\text{Miller approximation (M1)}']);
 });
 
 test('committed inserts repair coincident connectivity and analysis menus support multi-selection', () => {
@@ -1338,15 +1028,6 @@ test('coming back up from a linked design leaves its peek bubble as it was', () 
   assert.match(hierarchy, /if \(target\.peeking\) rememberOpen\(\);/);
   assert.match(hierarchy, /if \(!target\.peeking\) \{[\s\S]*?closeLinkBubble\(target\.refdes, \{ refit: false \}\)/);
   assert.match(hierarchy, /if \(!target\.peeking\) bubbles\.delete\(target\.refdes\);/);
-});
-
-test('signal-flow results belong to their document: another one opened starts with none', () => {
-  const ui = readFileSync(new URL('../src/web/signal-flow-ui.js', import.meta.url), 'utf8');
-  const clear = ui.slice(ui.indexOf('function clearResults()'), ui.indexOf('// ----- root locus'));
-  for (const reset of ['traces = [];', 'latest = null;', 'locus = null;', 'loop = null;', 'spectrum = null;', 'swing = null;', 'resetOptimize();']) assert.ok(clear.includes(reset), reset);
-  // Cleared when another document is shown (main.js onDocumentShown), only then.
-  assert.match(ui, /onDocumentShown\(\(\) => \{\s*chosenThisSession = false;\s*clearResults\(\);/);
-  assert.equal(ui.match(/clearResults\(\);/g).length, 1);
 });
 
 test('? opens Learn over the Atlas as over the drawing', () => {

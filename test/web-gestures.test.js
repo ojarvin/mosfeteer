@@ -307,19 +307,14 @@ test('right-hold menus fit what is under the press', async () => {
 });
 
 test('Ctrl+A selects nets that join touching pins without any wire', async () => {
-  const main = editorSource();
-  assert.match(main, /selectedNets = new Set\(selectAllNetIds\(circuit\)\);/);
-  const body = main.slice(main.indexOf('export function selectAllNetIds('), main.indexOf('export function deriveInteractionState('));
-  // Rebuild the pure helper and exercise it on a real model.
+  const { selectAllNetIds } = await import('../src/core/selection.js');
   const { Circuit } = await import('../src/core/model.js');
-  const selectAllNetIds = new Function(`${body.replace('export ', '')}; return selectAllNetIds;`)();
   const circuit = new Circuit();
   circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
   circuit.addComponent('resistor', { refdes: 'R2', x: 160, y: 0 });
   assert.equal(circuit.nets.size, 1);
   assert.deepEqual(selectAllNetIds(circuit), [...circuit.nets.keys()]);
 });
-
 test('small windows: rail follows canvas height, one-row toolbar, drawer panel', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');

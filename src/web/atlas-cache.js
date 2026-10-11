@@ -91,3 +91,25 @@ export async function trimCache() {
     return cursor;
   });
 }
+
+/**
+ * Bake each tile's images in turn: `levels(tile)` names which (a small one,
+ * and a large one where the tile shows big). Each one baked is kept
+ * (`keep(tile, level, bitmap)`); one that fails is noted (`failed(tile,
+ * level)`) and the rest go on. Once `stale()` (a newer opening of the
+ * Atlas) nothing more is baked or kept.
+ */
+export async function bakeTiles(tiles, { levels, bake, keep, failed, stale }) {
+  for (const tile of tiles) {
+    for (const level of levels(tile)) {
+      try {
+        const bitmap = await bake(tile, level);
+        if (stale()) { bitmap?.close?.(); return; }
+        keep(tile, level, bitmap);
+      } catch {
+        if (stale()) return;
+        failed(tile, level);
+      }
+    }
+  }
+}

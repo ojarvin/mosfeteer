@@ -11,6 +11,7 @@ import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { createWindowSession } from './window-session.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
 import { analysisFormStorageKey } from './analysis-state.js';
+import { opensOnAtlas } from './startup.js';
 import { circuitSelectEl, circuitNameEl, newDocumentButton, deleteCircuitBtn, revealDocumentBtn, deleteDialog, deleteDialogMessage, switchDialog, switchDialogMessage, exportForm } from './elements.js';
 import { dropTutorial } from './onboarding.js';
 import { formatModifiedTime, modifiedRefreshMs, revisionTime } from './modified-time.js';
@@ -296,11 +297,7 @@ export async function restoreStartup() {
   const folder = editor.workspaceState?.folder;
   if (folder?.locked) logLine(`The browser needs permission to open folder “${folder.name}” again: choose “Allow access to folder” in the document list.`);
   if (openPath && openPath !== editor.currentDocumentPath) await openDocumentPath(openPath);
-  // A browser-only file waiting for permission again cannot be drawn yet.
-  const designs = (editor.workspaceState?.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked).length;
-  // Several designs open onto the Atlas; so does browser-only mode with none
-  // open yet, where the Atlas offers a new design, a file, or a folder.
-  return !openPath && (designs > 1 || (persistence.browserOnly && designs === 0));
+  return opensOnAtlas({ openPath, documents: editor.workspaceState?.documents, browserOnly: persistence.browserOnly });
 }
 
 export async function saveCircuit({ saveAs = false } = {}) {

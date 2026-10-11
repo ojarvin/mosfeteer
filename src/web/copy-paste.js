@@ -14,7 +14,8 @@ import { logLine } from './status-bar-ui.js';
 import { selectedStyleSource, pasteStyle } from './style-controls.js';
 import { beginNetLabelPaste } from './annotation-tools.js';
 import { editor } from './editor-state.js';
-import { applyJson, captureNetGeometry, captureRouteGeometry, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, translateNetGeometry, validateSelectedWires } from './main.js';
+import { applyJson, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, validateSelectedWires } from './main.js';
+import { captureNetGeometry, captureRouteGeometry, translateNetGeometry } from './net-geometry.js';
 
 export function copySelectionSource() {
   const wireKeys = new Set(editor.selectedWires);

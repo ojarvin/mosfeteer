@@ -97,3 +97,11 @@ export function partialVertexPicks(labels, box) {
   }
   return picks;
 }
+
+/** The nets Select all takes: every one with a drawn wire, or joining two
+ *  pins that touch with no wire between them. */
+export function selectAllNetIds(model) {
+  return [...model.nets.values()]
+    .filter((net) => net.paths().some((path) => path.length >= 2) || net.terminals.length >= 2)
+    .map((net) => net.id);
+}

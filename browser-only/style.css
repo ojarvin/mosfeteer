@@ -278,11 +278,12 @@ textarea {
 }
 
 /* What is typed shows as typed: a font's ligatures (>= drawn as one
-   glyph, which some fonts leave half-blank) never join characters in a field. */
+   glyph, which some fonts leave half-blank) never join characters in a field.
+   Important: a later `font` shorthand on a field would reset them. */
 input,
 textarea {
-  font-variant-ligatures: none;
-  font-feature-settings: "liga" 0, "calt" 0;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "liga" 0, "calt" 0 !important;
 }
 
 input::placeholder,

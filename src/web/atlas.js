@@ -21,7 +21,7 @@ import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js'
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkGraph } from '../core/design-links.js';
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
-import { cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
+import { bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeInOutQuart, wheelIntent, lerpView, zoomView } from './gestures.js';
 import { editor } from './editor-state.js';
 import {
@@ -364,21 +364,13 @@ async function warmSmallImages(generation, budget) {
 async function prepareStartupImages(generation, target) {
   await document.fonts.ready;
   const k = paneSize().w / target.w * (window.devicePixelRatio || 1);
-  for (const tile of state.tiles) {
-    const entry = state.entries.get(tile.id);
-    const levels = tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large'];
-    for (const level of levels) {
-      const key = bitmapKey(entry, level);
-      try {
-        const bitmap = await bake(entry, level);
-        if (!state || state.generation !== generation) { bitmap.close?.(); return; }
-        state.bitmaps.set(key, bitmap);
-      } catch {
-        if (!state || state.generation !== generation) return;
-        state.failed.add(key);
-      }
-    }
-  }
+  await bakeTiles(state.tiles.map((tile) => ({ tile, entry: state.entries.get(tile.id) })), {
+    levels: ({ tile }) => (tileDetail(Math.max(tile.w, tile.h) * k) === 'small' ? ['small'] : ['small', 'large']),
+    bake: ({ entry }, level) => bake(entry, level),
+    keep: ({ entry }, level, bitmap) => state.bitmaps.set(bitmapKey(entry, level), bitmap),
+    failed: ({ entry }, level) => state.failed.add(bitmapKey(entry, level)),
+    stale: () => !state || state.generation !== generation,
+  });
 }
 
 /** Bake what the frame asked for, nearest the middle of the screen first. */

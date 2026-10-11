@@ -4,6 +4,7 @@ import {
   ANALYSIS_OPTION_DEFAULTS,
   analysisNoiseRequest,
   analysisOptionDefaults,
+  annotationAssumptions,
   normalizeAnalysisOptions,
   readAnalysisFormState,
 } from '../src/web/analysis-options.js';
@@ -166,4 +167,12 @@ test('result-panel choices persist as clean string lists', () => {
   const state = readAnalysisFormState({ annotationExcluded: ['DC voltage gain', ' ', 'DC voltage gain'], collapsedGroups: 'noise' });
   assert.deepEqual(state.annotationExcluded, ['DC voltage gain']);
   assert.deepEqual(state.collapsedGroups, []);
+});
+
+test('an annotated analysis lists the approximations it made, as TeX', () => {
+  assert.deepEqual(annotationAssumptions({
+    analysisOptions: { highIntrinsicGain: true, neglectChannelLengthModulation: true, neglectBodyEffect: true, dominantPoleApplied: true },
+  }), ['g_{m}r_{o} \\gg 1', 'r_{o} = \\infty', 'g_{mb} = 0', '\\text{Dominant-pole approximation}']);
+  assert.deepEqual(annotationAssumptions({ analysisOptions: {} }), []);
+  assert.deepEqual(annotationAssumptions({ analysisOptions: {}, assumptions: ['Miller approximation (M1)', 'other'] }), ['\\text{Miller approximation (M1)}']);
 });

@@ -15,7 +15,7 @@ import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
 import { renderBode, syncBodePlace } from './bode-ui.js';
 import { snap, GRID } from '../core/grid.js';
-import { analysisNoiseRequest, analysisOptionDefaults, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
+import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
@@ -800,19 +800,6 @@ function syncAnalysisButton(open) {
   if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis window (Shift+S)`;
 }
 
-function analysisAnnotationAssumptions(report) {
-  const options = report?.analysisOptions || {};
-  const lines = [];
-  if (options.highIntrinsicGain) lines.push('g_{m}r_{o} \\gg 1');
-  if (options.neglectChannelLengthModulation) lines.push('r_{o} = \\infty');
-  if (options.neglectBodyEffect) lines.push('g_{mb} = 0');
-  if (options.dominantPoleApplied) lines.push('\\text{Dominant-pole approximation}');
-  for (const assumption of report?.assumptions || []) {
-    if (assumption.startsWith('Miller approximation')) lines.push(`\\text{${assumption}}`);
-  }
-  return lines;
-}
-
 function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   if (!analysisDialog) return;
   const defaults = fillAnalysisDialog(targetNetId);
@@ -1008,7 +995,7 @@ function annotateAnalysisResult() {
       labels.push(label);
       equationLabels.push(label);
     }
-    const assumptions = analysisAnnotationAssumptions(report);
+    const assumptions = annotationAssumptions(report);
     if (assumptions.length) {
       const label = editor.circuit.addLabel({
         text: ['\\text{Assumptions\\:}', ...assumptions].join('\n'),

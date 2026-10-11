@@ -169,3 +169,18 @@ export function readAnalysisFormState(value = {}) {
     collapsedGroups: stringList(source.collapsedGroups),
   };
 }
+
+/** The assumptions an annotated analysis lists under its equations, as TeX:
+ *  the approximations applied, and any Miller approximation made. */
+export function annotationAssumptions(report) {
+  const options = report?.analysisOptions || {};
+  const lines = [];
+  if (options.highIntrinsicGain) lines.push('g_{m}r_{o} \\gg 1');
+  if (options.neglectChannelLengthModulation) lines.push('r_{o} = \\infty');
+  if (options.neglectBodyEffect) lines.push('g_{mb} = 0');
+  if (options.dominantPoleApplied) lines.push('\\text{Dominant-pole approximation}');
+  for (const assumption of report?.assumptions || []) {
+    if (assumption.startsWith('Miller approximation')) lines.push(`\\text{${assumption}}`);
+  }
+  return lines;
+}

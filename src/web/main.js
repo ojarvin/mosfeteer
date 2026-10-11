@@ -58,7 +58,7 @@ import { renderHelpSearch, showHelp, installHelp } from './help.js';
 import { openRadialMenu, highlightRadial, closeRadialMenu, finishRadialMenu } from './radial-menu.js';
 import { logLine, hintLine, applyLogDrawerEvent, openCommandLine, logCommand, announce, noteActionPrevented, renderStatus, installStatusBar } from './status-bar-ui.js';
 import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSummary, runCheck, installDesignCheckUi } from './design-check-ui.js';
-import { partialVertexPicks } from '../core/selection.js';
+import { partialVertexPicks, selectAllNetIds } from '../core/selection.js';
 import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
 import { installModelFigure } from './model-figure.js';
@@ -81,6 +81,8 @@ import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-nam
 import { installRenumberUi } from './renumber-ui.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { togglePlots } from './plots-window.js';
+import { paddedLineBounds } from './label-measure.js';
+import { captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } from './net-geometry.js';
 import { copyHoveredReference, fitHoveredReference, installReferenceWindows, toggleReferenceWindows } from './reference-window.js';
 import { enterLinkedDesign, installHierarchy, leaveLinkedDesign, linkBubbleAt, linkBubbleFrame, moveLinkBubble, mountLinkBubbles, syncLinkBubbles, toggleAllLinkBubbles, toggleLinkBubbles } from './hierarchy.js';
 import { askAnnotationText, askNetLabelNames, moveLabelSafely, placeAnnotationAt, placeEquationAt, draftPointAt, commitLineAnnotation, commitArrowAnnotation, placeShapeAnnotation, highlightNetAt, removeAllNetHighlights, placeNetLabelAt, beginNetLabelPaste, clearNetLabelPaste, netLabelPastePreview, joinSelectedLines } from './annotation-tools.js';
@@ -393,12 +395,6 @@ let presenter = null; // { index, blank, fullscreen }
  */
 /** Nets Ctrl+A selects: every net with drawn wire, and every net that joins
  * pins directly (touching terminals have a connection but no wire length). */
-export function selectAllNetIds(model) {
-  return [...model.nets.values()]
-    .filter((net) => net.paths().some((path) => path.length >= 2) || net.terminals.length >= 2)
-    .map((net) => net.id);
-}
-
 export function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null, moveMode = null, copyMode = false, deleteMode = false, alignMode = false, movePending = false, copyPending = false, routeMode = 'orthogonal' } = {}) {
   if (wire) return {
     key: 'wire',
@@ -745,23 +741,6 @@ export function redo() {
 }
 
 // ----- helpers ---------------------------------------------------------
-
-const clonePoint = (p) => ({ ...p });
-/** Copy a point list, optionally through a translation. */
-function clonePoints(points, move = clonePoint) {
-  return (points || []).map(move);
-}
-function cloneWireStyles(styles) {
-  return Object.fromEntries(Object.entries(styles || {}).map(([key, style]) => [key, { ...style }]));
-}
-/** Managed route geometry of one net, detached from the live model. */
-export function captureRouteGeometry(net, move = clonePoint) {
-  return {
-    route: net.route ? clonePoints(net.route, move) : null,
-    branches: net.branches ? net.branches.map((path) => clonePoints(path, move)) : null,
-    junctions: clonePoints(net.junctions, move),
-  };
-}
 
 export function sortedComps() {
   if (!sortedCompsCache || sortedCompsCache.revision !== modelRevision) {
@@ -2591,47 +2570,25 @@ function renderedLabelTextBounds(group) {
   if (!math) return null;
   try {
     const mathNodes = [...math.querySelectorAll('math')];
-    // Measure each line's intrinsic MathML contents. A Range around the
-    // multiline flex wrapper includes its full-width line containers, which
-    // feeds the old bbox back into the next measurement. Rounding can then
-    // add/remove two cells and move left-aligned assumptions by one cell.
     const rects = mathNodes.map((node) => {
       const client = node.getBoundingClientRect?.();
       if (client?.width > 0 && client.height > 0) return client;
       const range = document.createRange();
       range.selectNodeContents(node);
       return range.getBoundingClientRect();
-    }).filter((rect) => rect.width > 0 && rect.height > 0);
-    if (!rects.length) return null;
-    const tight = {
-      left: Math.min(...rects.map((rect) => rect.left)),
-      top: Math.min(...rects.map((rect) => rect.top)),
-      right: Math.max(...rects.map((rect) => rect.right)),
-      bottom: Math.max(...rects.map((rect) => rect.bottom)),
-    };
-    tight.width = tight.right - tight.left;
-    tight.height = tight.bottom - tight.top;
-    // The foreignObject reserves six CSS pixels of padding around the math;
-    // include that rendered inset so the measured box cannot clip the glyphs.
+    });
+    // The foreignObject reserves six CSS pixels of padding around the math,
+    // in world units: converted at the zoom, so zooming never changes the box.
     const css = getComputedStyle(math);
-    // Computed padding is in foreignObject/world units; Range rectangles are
-    // in screen pixels. Convert before expanding, otherwise zoom changes the
-    // measured bbox (and a fraction's vertical position after reload).
     const matrix = canvasSvgEl.getScreenCTM();
-    const scaleX = Math.hypot(matrix.a, matrix.b);
-    const scaleY = Math.hypot(matrix.c, matrix.d);
-    const px = (Number.parseFloat(css.paddingLeft) || 0) * scaleX;
-    const py = (Number.parseFloat(css.paddingTop) || 0) * scaleY;
-    const pr = (Number.parseFloat(css.paddingRight) || 0) * scaleX;
-    const pb = (Number.parseFloat(css.paddingBottom) || 0) * scaleY;
-    const expanded = {
-      left: tight.left - px,
-      top: tight.top - py,
-      right: tight.right + pr,
-      bottom: tight.bottom + pb,
-      width: tight.width + px + pr,
-      height: tight.height + py + pb,
+    const padding = {
+      left: Number.parseFloat(css.paddingLeft) || 0,
+      top: Number.parseFloat(css.paddingTop) || 0,
+      right: Number.parseFloat(css.paddingRight) || 0,
+      bottom: Number.parseFloat(css.paddingBottom) || 0,
     };
+    const expanded = paddedLineBounds(rects, padding, { x: Math.hypot(matrix.a, matrix.b), y: Math.hypot(matrix.c, matrix.d) });
+    if (!expanded) return null;
     return clientRectToSvgBounds(canvasSvgEl, expanded);
   } catch { return null; }
 }
@@ -5008,42 +4965,11 @@ function detachMoveComponents(drag) {
   return selectedNetIds;
 }
 
-export function captureNetGeometry(net) {
-  return {
-    ...captureRouteGeometry(net),
-    // Segment styles are keyed by route position, so snapshot them with the
-    // geometry they decorate.
-    wireStyles: cloneWireStyles(net.wireStyles),
-  };
-}
-/** One route snapshot per distinct net behind a set of dragged wire runs. */
-function captureRunNetGeometry(runs) {
-  const snapshots = new Map();
-  for (const run of runs) {
-    if (snapshots.has(run.net.id)) continue;
-    snapshots.set(run.net.id, {
-      id: run.net.id,
-      net: run.net,
-      ...captureRouteGeometry(run.net),
-      wireStyles: cloneWireStyles(run.net.wireStyles),
-    });
-  }
-  return snapshots;
-}
-
 function snappedDragDelta(startWorld, currentWorld) {
   return {
     dx: snap(currentWorld.x - startWorld.x),
     dy: snap(currentWorld.y - startWorld.y),
   };
-}
-
-export function translateNetGeometry(net, saved, dx, dy) {
-  const move = (p) => ({ x: p.x + dx, y: p.y + dy });
-  Object.assign(net, captureRouteGeometry(saved, move));
-  if (saved.wireStyles) {
-    net.wireStyles = cloneWireStyles(saved.wireStyles);
-  }
 }
 
 function armModalLabelMove(label, startWorld, startClient) {

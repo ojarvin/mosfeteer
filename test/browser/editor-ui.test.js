@@ -1,0 +1,92 @@
+/**
+ * The editor's chrome in a browser: menus, settings, the look shared by
+ * the windows' cards and fields, and what makes a design unsaved.
+ */
+
+import { describe, before, after, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { start, sleep, browserSkip } from './harness.js';
+import { amplifier, modulator } from './fixtures.js';
+
+describe('editor chrome', { skip: browserSkip() }, () => {
+  let h;
+  before(async () => { h = await start({ docs: { amplifier: amplifier(), modulator: modulator() }, width: 1500, height: 950 }); });
+  after(async () => { assert.deepEqual(h.exceptions(), []); await h.stop(); });
+
+  const style = (selector, property) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? getComputedStyle(el).getPropertyValue(${JSON.stringify(property)}) : null; })()`);
+  const at = (x, y) => h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${x}, ${y}))`);
+  const unsaved = () => h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`);
+
+  test('a right click on a part opens its menu, Delete last in its own group, with no Close item', async () => {
+    await h.open('amplifier');
+    const p = await at(0, -320);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
+    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    // The menu's last group holds Delete alone.
+    const last = await h.evaluate(`[...document.querySelector('.component-context-menu').lastElementChild.querySelectorAll('button')].map((b) => b.textContent.trim())`);
+    assert.equal(last.length, 1);
+    assert.match(last[0], /^Delete/);
+    const items = await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].map((b) => b.textContent.trim())`);
+    assert.ok(!items.some((item) => /^Close/.test(item)));
+    await h.key('Escape');
+  });
+
+  test('the theme is a setting: its menu item switches the drawing dark and back', async () => {
+    assert.ok(await h.evaluate(`!!document.querySelector('#settings-menu #btn-theme[role="menuitemcheckbox"]')`));
+    const dark = () => h.evaluate(`document.documentElement.classList.contains('dark')`);
+    const was = await dark();
+    await h.click('#btn-theme');
+    assert.equal(await dark(), !was);
+    await h.click('#btn-theme');
+    assert.equal(await dark(), was);
+  });
+
+  test('every card opens with the same header, headings inside a card are quieter, hints sit close', async () => {
+    await h.open('modulator');
+    await h.key('S');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    await h.evaluate(`document.querySelector('.signal-flow-optimize').open = true`);
+    for (const header of ['#analysis-signal-flow fieldset > legend', '.signal-flow-plots > .card-heading', '.signal-flow-optimize > summary']) {
+      assert.equal(await style(header, 'text-transform'), 'uppercase', header);
+    }
+    assert.equal(await style('.signal-flow-optimize-heading', 'text-transform'), 'none');
+    // A scrollbar appearing never reflows the window; a segmented control never wraps.
+    assert.equal(await style('#analysis-dialog .analysis-scroll', 'scrollbar-gutter'), 'stable');
+    assert.equal(await style('.analysis-mode', 'flex-wrap'), 'nowrap');
+    // A hint stands below what it explains, pulled up inside a container that spaces its rows.
+    assert.equal(await style('#analysis-signal-flow fieldset > .field-hint', 'margin-top'), '-4px');
+    assert.equal(await style('#analysis-signal-flow .signal-flow-stale', 'margin-top') !== '-4px', true);
+  });
+
+  test('fields show what is typed: no ligatures join their characters', async () => {
+    assert.equal(await style('#analysis-dialog input[type=text]', 'font-variant-ligatures'), 'none');
+  });
+
+  test('every floating window can be resized from each corner', async () => {
+    await h.key('E');
+    await h.until(`!!document.querySelector('.calculator-window:not([hidden])')`);
+    const corners = await h.evaluate(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden).map((w) => w.querySelectorAll(':scope > .floating-window-grip').length)`);
+    assert.ok(corners.length >= 2);
+    assert.ok(corners.every((n) => n === 4), `${corners}`);
+  });
+
+  test('window state never makes a design unsaved; an edit does, and leaving it asks to save, discard, or keep editing', async () => {
+    await h.open('amplifier');
+    assert.equal(await unsaved(), false);
+    await h.evaluate(`(() => { const line = document.querySelector('.calculator-line'); line.value = '1+1'; line.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await sleep(100);
+    assert.equal(await unsaved(), false, 'a calculator result is window state');
+    await h.evaluate(`window.__run('add resistor R9 --at 800 800')`);
+    await sleep(100);
+    assert.equal(await unsaved(), true);
+    await h.evaluate(`void ${h.module('document-session.js')}.then((m) => m.openDocumentPath(${JSON.stringify(`${h.workspace}/modulator.json`)}))`);
+    await h.until(`document.getElementById('switch-dialog').open`);
+    const choices = await h.evaluate(`[...document.querySelectorAll('#switch-dialog button[value]')].map((b) => b.value + ':' + b.textContent.trim())`);
+    assert.deepEqual(choices.sort(), ['cancel:Keep editing', 'discard:Discard and load', 'save:Save and load']);
+    await h.click('#switch-dialog button[value="cancel"]');
+    assert.equal(await unsaved(), true, 'kept editing');
+    await h.key('u');
+  });
+});

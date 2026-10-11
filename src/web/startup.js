@@ -13,3 +13,12 @@ export function revealStartup() {
   }).finished.finally(() => cover.remove());
   return reveal;
 }
+
+/** Whether the editor opens onto the Atlas: no file was asked for, and
+ *  either several designs are there to choose from, or (browser-only) none
+ *  is open yet and the Atlas offers a new one, a file, or a folder. A
+ *  design waiting for the browser's permission again does not count. */
+export function opensOnAtlas({ openPath = '', documents = [], browserOnly = false }) {
+  const designs = documents.filter((doc) => doc.kind === 'circuit' && !doc.locked).length;
+  return !openPath && (designs > 1 || (browserOnly && designs === 0));
+}
