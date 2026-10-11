@@ -37,13 +37,27 @@ function sameNamedConnection(left, right) {
   return !!a && !!b && (netNamesConnect(a, b) || normalizeComponentRefdes(a) === normalizeComponentRefdes(b));
 }
 
-/** Find named nets or interface ports that a new name would virtually join. */
+/** The parts with terminals on both nets: joining the nets shorts them. */
+function partsBetween(a, b) {
+  if (!a || !b) return [];
+  const onA = new Set(a.terminals.map((terminal) => terminal.comp));
+  return [...new Set(b.terminals.map((terminal) => terminal.comp).filter((comp) => onA.has(comp)))];
+}
+
+/** The sentence a naming prompt adds when the join would short parts. */
+export function shortedPartsWarning(conflicts) {
+  const parts = [...new Set(conflicts.flatMap((conflict) => conflict.shorts || []))];
+  if (!parts.length) return '';
+  return ` This shorts ${parts.join(', ')}: ${parts.length === 1 ? 'it has' : 'each has'} a terminal on both nets.`;
+}
+
+/** Find named nets or interface ports that a new name would virtually join,
+ *  each with the parts (`shorts`) that would then sit across one name. */
 export function namedConnectionConflicts(name, { netId = null, ownerRefdes = null } = {}) {
   const wanted = String(name ?? '').trim();
   if (!wanted) return [];
   const owner = ownerRefdes ? editor.circuit.components.get(ownerRefdes) : null;
   const targetNet = netId ? editor.circuit.nets.get(netId) : interfacePortNet(owner);
-  const targetMembers = new Set(targetNet?.terminals?.map((terminal) => terminal.comp) || []);
   const conflicts = [];
   const seen = new Set();
   for (const component of editor.circuit.components.values()) {
@@ -56,15 +70,14 @@ export function namedConnectionConflicts(name, { netId = null, ownerRefdes = nul
     const key = `port:${component.refdes}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    conflicts.push({ kind: 'port', component, net: portNet });
+    conflicts.push({ kind: 'port', component, net: portNet, shorts: partsBetween(targetNet, portNet) });
   }
   for (const net of editor.circuit.nets.values()) {
     if (net.id === targetNet?.id || !net.name || !sameNamedConnection(net.name, wanted)) continue;
-    if (net.terminals.some((terminal) => targetMembers.has(terminal.comp))) continue;
     const key = `net:${net.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    conflicts.push({ kind: 'net', net });
+    conflicts.push({ kind: 'net', net, shorts: partsBetween(targetNet, net) });
   }
   return conflicts;
 }
@@ -88,7 +101,7 @@ export async function confirmNamedConnection(name, conflicts) {
   const target = port ? `port ${port.refdes}` : 'an existing named net';
   return confirmChoice({
     title: 'Connect named nets?',
-    message: `The name ${name} is already used by ${target}. Connect this net virtually to the existing name?`,
+    message: `The name ${name} is already used by ${target}. Connect this net virtually to the existing name?${shortedPartsWarning(conflicts)}`,
     confirmLabel: 'Connect',
     cancelLabel: 'Keep separate',
   });

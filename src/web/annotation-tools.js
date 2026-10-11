@@ -16,6 +16,7 @@ import { constrainAxis } from './interaction.js';
 import { noteTip } from './onboarding.js';
 import { logLine, hintLine } from './status-bar-ui.js';
 import { inlineEditLabel } from './label-editor.js';
+import { confirmNamedConnection, namedConnectionConflicts, shortedPartsWarning } from './net-names.js';
 import { activeBeatIndex } from './beats-ui.js';
 import { editor } from './editor-state.js';
 import { enterNetLabelMode, activateSelect, commit, markModelChanged, nearestTerminal, pickAt, pickLabel, pickWire, render, selectedLabels, setLabelSelection, setSelection, snappedWorld, snapshot } from './main.js';
@@ -420,9 +421,12 @@ async function pasteNetLabelAt(world, name) {
   }
   const { net, point } = target;
   const kind = netLabelPasteKind(net, name);
+  // An unnamed net asks only when the name joins it to another; a named one always does.
+  const conflicts = kind === 'same' ? [] : namedConnectionConflicts(name, { netId: net.id });
+  if (kind === 'name' && conflicts.length && !await confirmNamedConnection(name, conflicts)) return false;
   if (kind === 'rename' && !await confirmChoice({
     title: 'Rename net?',
-    message: `This wire is on net ${net.name}. Rename it to ${name}? Any net already named ${name} then connects to it.`,
+    message: `This wire is on net ${net.name}. Rename it to ${name}? Any net already named ${name} then connects to it.${shortedPartsWarning(conflicts)}`,
     confirmLabel: 'Rename',
   })) return false;
   let label = null;

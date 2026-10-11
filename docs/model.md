@@ -67,6 +67,9 @@ label occurrence does not remove the net or its name. A net label never
 becomes free text: copied with its wire it travels with it; copied alone it
 carries only the name, and pasting it on a wire names that net (an unnamed net
 takes it, a differently named one is renamed only after confirmation).
+Any interactive name that would join a net to another named net or port asks
+first, and the prompt names the parts with a terminal on both nets, which the
+join shorts.
 
 Component names and owned labels are one synchronized unique identity. Names
 accept markup such as `M_{2}` and `R_{D}`; canonicalize for connectivity but
