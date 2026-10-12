@@ -6345,6 +6345,63 @@ export class Circuit {
     return joined;
   }
 
+  /**
+   * Tee the free wire ends of `netIds` into the managed wire they rest on: a
+   * moved or pasted wire whose open end lands on the middle of another net's
+   * wire joins that net there, with a junction, as a drawn wire ending there
+   * does. A free end is on no pin and on no other wire of its own net. A
+   * point where two other nets' wires meet is ambiguous and left alone, and
+   * so is a wire of `netIds` itself: the set lands as it was drawn. Ends
+   * meeting ends are reconnectCoincidentNets' business. Returns the points
+   * joined.
+   */
+  teeWireEndsOntoWires(netIds) {
+    const carried = new Set(netIds);
+    const pins = new Set();
+    for (const component of this.components.values()) {
+      for (const t of component.worldTerminals()) pins.add(`${t.x},${t.y}`);
+    }
+    const same = (a, b) => a.x === b.x && a.y === b.y;
+    const isEnd = (point, path) => path.length >= 2 && (same(path[0], point) || same(path.at(-1), point));
+    // Every end is found against the drawing as it landed, before any joins.
+    const ends = [];
+    for (const id of carried) {
+      const net = this.nets.get(id);
+      if (!net) continue;
+      const paths = this._explicitBranches(net);
+      for (const [index, path] of paths.entries()) {
+        if (path.length < 2) continue;
+        for (const end of [path[0], path.at(-1)]) {
+          if (pins.has(`${end.x},${end.y}`)) continue;
+          if (net.junctions.some((p) => same(p, end))) continue;
+          if (paths.some((other, i) => i !== index && pointOnPath(end, other))) continue;
+          const hits = [...this.nets.values()].filter((other) => other !== net
+            && this._explicitBranches(other).some((p) => pointOnPath(end, p)));
+          if (hits.length !== 1 || carried.has(hits[0].id)) continue;
+          if (this._explicitBranches(hits[0]).some((p) => isEnd(end, p))) continue;
+          if (!ends.some((p) => same(p, end))) ends.push({ x: end.x, y: end.y });
+        }
+      }
+    }
+    for (const end of ends) {
+      // The nets there now: an earlier join may have merged either.
+      const nets = [...this.nets.values()];
+      const target = nets.find((net) => this._explicitBranches(net).some((p) => pointOnPath(end, p) && !isEnd(end, p)));
+      const source = nets.find((net) => this._explicitBranches(net).some((p) => isEnd(end, p)));
+      if (!target || !source) continue;
+      this.invalidateRoutingCache();
+      const pieces = this._splitBranchesPreservingStyles(target, this._explicitBranches(target), [end]);
+      target.branches = pieces;
+      target.route = pieces[0] ? clonePath(pieces[0], target.allowDiagonal) : null;
+      if (!target.junctions.some((p) => same(p, end))) target.junctions.push({ ...end });
+      // Both nets now end at the point: merging them there keeps the three
+      // arms and their junction.
+      if (source !== target) this.reconnectCoincidentNets([source.id, target.id]);
+    }
+    if (ends.length) this.syncJunctionSolders();
+    return ends;
+  }
+
   /** Add one terminal to an existing net. */
   connectTo(netId, ref) {
     this.invalidateRoutingCache();

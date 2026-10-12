@@ -52,3 +52,57 @@ test('a wired pin or a crossing of two nets is never teed', () => {
   assert.deepEqual(wired.teeTerminalsOntoWires(['R5']).filter((ref) => ref.term === 'a'), []);
   assert.equal(wired.netOfTerminal({ comp: 'R5', term: 'a' }), own);
 });
+
+// R3 to the right of the rail, its pins at (320,240) and (480,240): a wire
+// from each, as a pasted or moved set carries them, ending on the rail.
+function landed(circuit, ...paths) {
+  const r3 = circuit.addComponent('resistor', { x: 400, y: 240, refdes: 'R3' });
+  return paths.map(([term, ...points]) => {
+    const pin = r3.terminalWorld(term);
+    const path = [pin, ...points];
+    const net = circuit.createWireNet({ route: path, branches: [path] });
+    net.terminals.push({ comp: 'R3', term });
+    return net.id;
+  });
+}
+const solderAt = (circuit, x, y) => [...circuit.components.values()].some((c) => c.type === 'solder' && c.transform.x === x && c.transform.y === y);
+
+test('a wire end landing on the middle of a wire tees into it with a junction', () => {
+  const circuit = rail();
+  const ids = landed(circuit, ['a', { x: 320, y: 160 }, { x: 0, y: 160 }], ['b', { x: 480, y: 320 }, { x: 0, y: 320 }]);
+  assert.deepEqual(circuit.teeWireEndsOntoWires(ids), [{ x: 0, y: 160 }, { x: 0, y: 320 }]);
+  const net = circuit.netOfTerminal({ comp: 'R1', term: 'b' });
+  for (const term of ['a', 'b']) assert.equal(circuit.netOfTerminal({ comp: 'R3', term }), net);
+  assert.equal(circuit.netOfTerminal({ comp: 'R2', term: 'a' }), net);
+  assert.ok(solderAt(circuit, 0, 160) && solderAt(circuit, 0, 320));
+  assert.deepEqual(evaluate(circuit).issues.filter((issue) => issue.kind !== 'unconnected-terminal'), []);
+});
+
+test('both ends of one landed net tee into the same wire', () => {
+  const circuit = rail();
+  const r3 = circuit.addComponent('resistor', { x: 400, y: 240, refdes: 'R3' });
+  const pin = r3.terminalWorld('a');
+  const up = [pin, { x: 320, y: 160 }, { x: 0, y: 160 }];
+  const down = [pin, { x: 320, y: 320 }, { x: 0, y: 320 }];
+  const net = circuit.createWireNet({ route: up, branches: [up, down] });
+  net.terminals.push({ comp: 'R3', term: 'a' });
+  assert.equal(circuit.teeWireEndsOntoWires([net.id]).length, 2);
+  assert.equal(circuit.netOfTerminal({ comp: 'R3', term: 'a' }), circuit.netOfTerminal({ comp: 'R1', term: 'b' }));
+  assert.ok(solderAt(circuit, 0, 160) && solderAt(circuit, 0, 320));
+});
+
+test('a wire end on a crossing of two nets, or on a wire of the landed set, is never teed', () => {
+  const crossing = rail();
+  // A second net crosses the rail at (0,160), where the landed wire ends.
+  const across = [{ x: -400, y: 160 }, { x: 200, y: 160 }];
+  crossing.createWireNet({ route: across, branches: [across] });
+  const nets = crossing.nets.size;
+  assert.deepEqual(crossing.teeWireEndsOntoWires(landed(crossing, ['a', { x: 320, y: 160 }, { x: 0, y: 160 }])), []);
+  assert.equal(crossing.nets.size, nets + 1);
+
+  const circuit = rail();
+  const rails = [...circuit.nets.keys()];
+  const ids = landed(circuit, ['a', { x: 320, y: 160 }, { x: 0, y: 160 }]);
+  assert.deepEqual(circuit.teeWireEndsOntoWires([...ids, ...rails]), []);
+  assert.notEqual(circuit.netOfTerminal({ comp: 'R3', term: 'a' }), circuit.netOfTerminal({ comp: 'R1', term: 'b' }));
+});

@@ -225,8 +225,10 @@ The model is topological; geometry is a route, not connectivity.
   does. A placed, moved, or pasted part's pin that is on no net and lands on
   the middle of exactly one managed wire tees into it with a junction
   (`Circuit#teeTerminalsOntoWires`); a pin already on a net never does. A
-  lone part placed, moved, copied, or pasted with both series pins free on one
-  straight managed segment is spliced into it in series first
+  moved or pasted wire's free end that lands on the middle of exactly one
+  other net's wire tees into it the same way (`Circuit#teeWireEndsOntoWires`).
+  A lone part placed, moved, copied, or pasted with both series pins free on
+  one straight managed segment is spliced into it in series first
   (`Circuit#spliceIntoSegment`). `route` is a compatibility alias; new code uses `paths()` and
   `wireSegments()`.
 - `smartRoute` is grid-based and keeps committed wire at least one cell from

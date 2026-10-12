@@ -336,7 +336,8 @@ export function lerpView(from, to, t) {
  * Which of `pins` ({x, y, netId}) will join something when the parts carrying
  * them land: another part's pin, a free end of a managed wire, or -- for a pin
  * on no net yet -- the middle of one managed wire, which it tees into
- * (Circuit#teeTerminalsOntoWires). `carried` names the parts that move with
+ * (Circuit#teeTerminalsOntoWires). A free end of a wire on the pins' nets
+ * joins the middle of one other net's wire the same way. `carried` names the parts that move with
  * the pins, which are never targets. A pin already on the only net standing
  * there joins nothing new.
  */
@@ -377,6 +378,26 @@ export function pinJoinPoints(circuit, pins, carried = new Set()) {
     const tee = !there && !pin.netId
       && managed.filter((net) => net.paths().some((path) => pointOnPath(pin, path))).length === 1;
     if (tee || (there && !(pin.netId && there.size === 1 && there.has(pin.netId)))) points.set(`${pin.x},${pin.y}`, { x: pin.x, y: pin.y });
+  }
+  // A carried wire's free end on the middle of one other net's wire tees
+  // into it (Circuit#teeWireEndsOntoWires).
+  const pinKeys = new Set([...standing, ...pins.map((pin) => `${pin.x},${pin.y}`)]);
+  for (const id of carriedNets) {
+    const net = circuit.nets.get(id);
+    if (!net) continue;
+    const paths = net.paths();
+    paths.forEach((path, index) => {
+      if (path.length < 2) return;
+      for (const end of [path[0], path.at(-1)]) {
+        if (pinKeys.has(`${end.x},${end.y}`)) continue;
+        if (net.junctions.some((p) => p.x === end.x && p.y === end.y)) continue;
+        if (paths.some((other, i) => i !== index && pointOnPath(end, other))) continue;
+        const hits = [...circuit.nets.values()].filter((other) => other !== net && other.paths().some((p) => pointOnPath(end, p)));
+        if (hits.length !== 1 || carriedNets.has(hits[0].id)) continue;
+        if (hits[0].paths().some((p) => p.length >= 2 && [p[0], p.at(-1)].some((q) => q.x === end.x && q.y === end.y))) continue;
+        points.set(`${end.x},${end.y}`, { x: end.x, y: end.y });
+      }
+    });
   }
   return [...points.values()];
 }

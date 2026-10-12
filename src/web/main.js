@@ -1356,6 +1356,7 @@ export function applyLayoutPlan(plan) {
       circuit.connectCoincident(refs);
       circuit.reconnectCoincidentNets();
       circuit.teeTerminalsOntoWires(refs);
+      circuit.teeWireEndsOntoWires(touched);
       circuit.ensureUniqueTerminals(refs);
     }
     for (const id of netsTouching(refs)) touched.add(id);
@@ -1752,8 +1753,10 @@ export function transformMixedSelection(operation, { recordHistory = true, cente
       }
     }
     if (delta) {
+      const landed = [...geometryNetIds, ...netsTouching(refs)];
       circuit.reconnectCoincidentNets();
       circuit.teeTerminalsOntoWires(refs);
+      circuit.teeWireEndsOntoWires(landed);
     }
     // A stub's label turned upright or back sits as a fresh stub's does:
     // above a level stub aligned toward its pin, beside an upright one.
@@ -5001,6 +5004,8 @@ export function armModalMove(hit, startWorld, startClient) {
 function finishMoveMutation(moveDrag) {
   if (!moveDrag.moved) return;
   const refs = [...moveDrag.origins.keys()];
+  // The nets carried with the parts, whose wire ends may land on a wire.
+  const landed = netsTouching(refs);
   const previewed = moveDrag.netRoutes instanceof Map;
   // A lone part lands in series on a wire, detached or not: a part with its
   // pins still connected never splices (spliceTargetFor).
@@ -5008,6 +5013,7 @@ function finishMoveMutation(moveDrag) {
   if (moveDrag.detached) {
     circuit.reconnectCoincidentNets();
     circuit.teeTerminalsOntoWires(refs);
+    circuit.teeWireEndsOntoWires(landed);
     markModelChanged();
     return;
   }
@@ -5035,6 +5041,7 @@ function finishMoveMutation(moveDrag) {
   }
   circuit.reconnectCoincidentNets();
   circuit.teeTerminalsOntoWires(refs);
+  circuit.teeWireEndsOntoWires(landed);
   markModelChanged();
 }
 

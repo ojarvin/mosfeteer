@@ -5,6 +5,19 @@ import { describe, before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
 import { editing } from './fixtures.js';
+import { Circuit } from '../../src/core/model.js';
+import { runCommand } from '../../src/core/commands.js';
+
+/** A rail from R1.b (0,80) down to R2.a (0,400), and R3 to its right with a
+ *  wire from its pin a (320,240) that ends free at (160,160). */
+function stubBesideRail() {
+  const circuit = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0 --rot 90', 'add resistor R2 --at 0 480 --rot 90', 'connect R1.b R2.a', 'add resistor R3 --at 400 240']) runCommand(circuit, line);
+  const path = [{ x: 320, y: 240 }, { x: 320, y: 160 }, { x: 160, y: 160 }];
+  const net = circuit.createWireNet({ route: path, branches: [path] });
+  net.terminals.push({ comp: 'R3', term: 'a' });
+  return circuit.toJSON();
+}
 
 describe('selection and editing', { skip: browserSkip() }, () => {
   let h;
@@ -186,6 +199,42 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     assert.equal(await parts(), before + 2);
     await h.key('u');
     assert.equal(await parts(), before, 'one undo for the pair');
+  });
+
+  test('a copied wire whose free end lands on the middle of a wire joins it there', async () => {
+    await h.evaluate(`window.__load(${JSON.stringify(stubBesideRail())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    const stub = await ed(`c.netOfTerminal({ comp: 'R3', term: 'a' }).id`);
+    await h.evaluate(`Promise.all([${h.module('main.js')}, ${h.module('editor-state.js')}]).then(([m, s]) => { m.setSelection(['R3']); s.editor.selectedWires = new Set(['${stub}:0:1', '${stub}:0:2']); m.render(); })`);
+    await h.key('c');
+    await press(400, 240); // the source: R3
+    // Down a cell and left four: the wire's end lands on the rail at (0,240).
+    const p = await at(240, 320);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await until('e.drag?.mode === "copyghost" && e.cursor.x === 240 && e.cursor.y === 320');
+    const rings = await h.evaluate(`${h.module('main.js')}.then((m) => m.placementJoinPoints())`);
+    assert.ok(rings.some((q) => q.x === 0 && q.y === 240), `the join is ringed before the drop: ${JSON.stringify(rings)}`);
+    await press(240, 320);
+    await h.key('Escape');
+    await h.key('Escape');
+    const copy = await ed(`[...c.components.values()].find((p) => p.type === 'resistor' && p.transform.x === 240 && p.transform.y === 320)?.refdes`);
+    assert.ok(copy, 'the copy landed');
+    assert.equal(await ed(`c.netOfTerminal({ comp: ${JSON.stringify(copy)}, term: 'a' }) === c.netOfTerminal({ comp: 'R1', term: 'b' })`), true, 'the copied wire joined the rail');
+    assert.equal(await ed(`[...c.components.values()].some((p) => p.type === 'solder' && p.transform.x === 0 && p.transform.y === 240)`), true, 'with a junction dot');
+    assert.notEqual(await ed(`c.netOfTerminal({ comp: 'R3', term: 'a' }) === c.netOfTerminal({ comp: 'R1', term: 'b' })`), true, 'the source stays apart');
+  });
+
+  test('a moved wire whose free end lands on the middle of a wire joins it there', async () => {
+    await h.evaluate(`window.__load(${JSON.stringify(stubBesideRail())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    const stub = await ed(`c.netOfTerminal({ comp: 'R3', term: 'a' }).id`);
+    await h.evaluate(`Promise.all([${h.module('main.js')}, ${h.module('editor-state.js')}]).then(([m, s]) => { m.setSelection(['R3']); s.editor.selectedWires = new Set(['${stub}:0:1', '${stub}:0:2']); m.render(); })`);
+    await press(400, 240, { to: { x: 240, y: 320 } });
+    assert.equal(await ed(`c.components.get('R3').transform.x === 240 && c.components.get('R3').transform.y === 320`), true, 'R3 moved');
+    assert.equal(await ed(`c.netOfTerminal({ comp: 'R3', term: 'a' }) === c.netOfTerminal({ comp: 'R1', term: 'b' })`), true, 'its wire joined the rail');
+    assert.equal(await ed(`[...c.components.values()].some((p) => p.type === 'solder' && p.transform.x === 0 && p.transform.y === 240)`), true, 'with a junction dot');
+    await h.key('u');
+    assert.notEqual(await ed(`c.netOfTerminal({ comp: 'R3', term: 'a' }) === c.netOfTerminal({ comp: 'R1', term: 'b' })`), true, 'one undo takes it all back');
   });
 
   test('a part placed with a pin on another\'s pin joins it, and recent placements lead the insert menu', async () => {

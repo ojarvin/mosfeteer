@@ -242,6 +242,22 @@ test('a carried pin joins another pin or a free wire end, and nothing it is alre
   assert.deepEqual(pinJoinPoints(circuit, [{ x: 200, y: 0, netId: other }]), []);
 });
 
+test('a carried wire\'s free end on the middle of another wire is a join point', () => {
+  const circuit = new Circuit();
+  for (const line of ['add resistor R1 --at 0 0 --rot 90', 'add resistor R2 --at 0 480 --rot 90', 'connect R1.b R2.a']) runCommand(circuit, line);
+  // R3 carries a wire from its pin a at (320,240) that ends on the rail at (0,160).
+  const r3 = circuit.addComponent('resistor', { x: 400, y: 240, refdes: 'R3' });
+  const path = [r3.terminalWorld('a'), { x: 320, y: 160 }, { x: 0, y: 160 }];
+  const carried = circuit.createWireNet({ route: path, branches: [path] });
+  carried.terminals.push({ comp: 'R3', term: 'a' });
+  const pins = r3.worldTerminals().map((t) => ({ x: t.x, y: t.y, netId: circuit.netOfTerminal({ comp: 'R3', term: t.name })?.id || null }));
+  assert.deepEqual(pinJoinPoints(circuit, pins, new Set(['R3'])), [{ x: 0, y: 160 }]);
+  // Ending short of the rail, it joins nothing.
+  carried.branches = [path.slice(0, 2)];
+  carried.route = carried.branches[0];
+  assert.deepEqual(pinJoinPoints(circuit, pins, new Set(['R3'])), []);
+});
+
 test('a camera flight zooms geometrically about the point both views share', () => {
   const from = { x: 0, y: 0, w: 1000, h: 600 };
   const to = { x: 300, y: 200, w: 100, h: 60 };

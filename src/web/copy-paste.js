@@ -427,6 +427,7 @@ export function commitCopyGhost({ again = true } = {}) {
   editor.circuit.connectCoincident(refs);
   editor.circuit.reconnectCoincidentNets();
   editor.circuit.teeTerminalsOntoWires(refs);
+  editor.circuit.teeWireEndsOntoWires([...ghost.netIds, ...(ghost.mirror?.netIds || [])]);
   editor.circuit.ensureUniqueTerminals(refs);
   editor.circuit.syncJunctionSolders();
   recordHistoryEntry(ghost.beforeSnapshot);
@@ -627,6 +628,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
   const addedComps = [];
   const addedLabels = [];
   const addedNetLabels = [];
+  const addedNets = [];
   const apply = () => {
     const refMap = new Map();
     const wasLoading = editor.circuit._loading;
@@ -672,6 +674,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       for (const n of editor.clipboard.nets) {
       const net = editor.circuit.createWireNet({ name: pastedNetName(n, refMap), allowDiagonal: n.allowDiagonal, drawOrder: n.drawOrder });
       netMap.set(n.id, net);
+      addedNets.push(net.id);
       for (const t of n.terminals) {
         const newRef = refMap.get(t.comp);
         if (newRef) net.terminals.push({ comp: newRef, term: t.term });
@@ -692,6 +695,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       for (const fragment of editor.clipboard.fragments || []) {
       const paths = fragment.paths.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })));
       const net = editor.circuit.createWireNet({ name: fragment.name, allowDiagonal: fragment.allowDiagonal, drawOrder: fragment.drawOrder, branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
+        addedNets.push(net.id);
         for (let branch = 0; branch < paths.length; branch++) {
           for (let segment = 1; segment < paths[branch].length; segment++) {
             if (paths[branch][segment - 1].x === paths[branch][segment].x && paths[branch][segment - 1].y === paths[branch][segment].y) continue;
@@ -713,6 +717,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
         if (addedComps.length === 1) spliceIfOnWire(editor.circuit.components.get(addedComps[0]));
         editor.circuit.connectCoincident(addedComps);
         editor.circuit.teeTerminalsOntoWires(addedComps);
+        editor.circuit.teeWireEndsOntoWires(addedNets);
       }
       editor.circuit.ensureUniqueTerminals(addedComps);
       editor.circuit.syncJunctionSolders();
