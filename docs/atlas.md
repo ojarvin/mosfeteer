@@ -171,8 +171,13 @@ the same sheet for scripted visual checks.
 ## How it stays fast
 
 - **Layout** (`src/web/atlas-layout.js`): the designs packed into one
-  loose, screen-shaped ball, largest in the middle, each next in the free
-  spot nearest the centre. Real size means one drawing unit is one world
+  loose ball shaped like the window (its width over height, kept between
+  1:3 and 3:1), largest in the middle, each next in the free spot nearest
+  the centre. Remembered places stay put while the window keeps their
+  shape; opened in a window of another shape (more than 1.25 times
+  narrower or wider), the desk is packed again to fill it, each design as
+  near its remembered spot stretched to the new shape as it fits, so
+  neighbours stay neighbours (`reshapedPlaces`). `Shift+T` packs afresh. Real size means one drawing unit is one world
   unit, and every design is shifted by whole grid cells, so its grid lines
   continue the desk's and entering or leaving the editor does not move a
   line.

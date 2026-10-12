@@ -39255,6 +39255,7 @@ async function bakeTiles(tiles, { levels, bake, keep, failed, stale }) {
 };
 
 __modules["src/web/atlas-layout.js"] = function (__require, __exports) {
+__exports.reshapedPlaces = reshapedPlaces;
 __exports.layoutAtlas = layoutAtlas;
 __exports.tileDetail = tileDetail;
 __exports.rectsIntersect = rectsIntersect;
@@ -39287,6 +39288,43 @@ const ATLAS_CAPTION = 2 * GRID;
 const snap = (value) => Math.round(value / GRID) * GRID;
 
 /**
+ * Remembered places (Map id -> { x, y, w, h }) stretched to `aspect` when
+ * the desk they make is clearly another shape than the window (more than
+ * 1.25 times off): each design's centre is scaled about the desk's centre,
+ * wider and shorter or narrower and taller, so neighbours stay neighbours
+ * and the desk fills the window. layoutAtlas keeps those that still fit
+ * and packs the rest beside their new spots. Places already of the
+ * window's shape come back as they are. Stretched places are only where
+ * each design would like to be (`reshaped: true`): layoutAtlas packs every
+ * one again as near its new spot as it fits (`keep: false`), or the
+ * designs that kept their widths would keep the old shape too.
+ */
+function reshapedPlaces(previous, aspect) {
+  if (!previous?.size || !(aspect > 0)) return previous;
+  const slots = [...previous.values()].filter((slot) => slot.w !== undefined);
+  if (!slots.length) return previous;
+  const x0 = Math.min(...slots.map((slot) => slot.x));
+  const y0 = Math.min(...slots.map((slot) => slot.y));
+  const x1 = Math.max(...slots.map((slot) => slot.x + slot.w));
+  const y1 = Math.max(...slots.map((slot) => slot.y + slot.h));
+  const now = (x1 - x0) / Math.max(1, y1 - y0);
+  const ratio = aspect / now;
+  if (ratio < 1.25 && ratio > 1 / 1.25) return previous;
+  const sx = Math.sqrt(ratio);
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const out = new Map();
+  for (const [id, slot] of previous) {
+    if (slot.w === undefined) { out.set(id, slot); continue; }
+    const mx = cx + (slot.x + slot.w / 2 - cx) * sx;
+    const my = cy + (slot.y + slot.h / 2 - cy) / sx;
+    out.set(id, { ...slot, x: snap(mx - slot.w / 2), y: snap(my - slot.h / 2) });
+  }
+  out.reshaped = true;
+  return out;
+}
+
+/**
  * Pack `items` ({ id, w, h, tags } in drawing units, whole grid cells) around
  * the origin. `aspect` stretches the ball to a screen's shape. Each slot also
  * holds a caption band below its design.
@@ -39304,7 +39342,7 @@ const snap = (value) => Math.round(value / GRID) * GRID;
  * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
  * excluded), slots: Map id -> { x, y, w, h }, bounds }.
  */
-function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, related = null } = {}) {
+function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAPTION, previous = null, keep = true, related = null } = {}) {
   if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
   const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
   const affinity = related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
@@ -39329,7 +39367,7 @@ function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = ATLAS_CAP
   for (const item of order) {
     const { w, h } = slotOf(item);
     const was = previous?.get(item.id);
-    if (!was) pending.push(item);
+    if (!was || !keep) pending.push(item);
     else if (was.w !== undefined && (was.w !== w || was.h !== h)) resized.push(item);
     else if (free(was.x, was.y, w, h)) placed.push({ id: item.id, x: was.x, y: was.y, w, h });
     else pending.push(item);
@@ -39724,7 +39762,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkGraph } = __require("src/core/design-links.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeInOutQuart, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutQuart, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -39942,7 +39980,13 @@ function placeDrawings(entries, previous = null) {
   const idsByName = new Map(entries.map((entry) => [entry.name, entry.id]));
   const linksOf = (entry) => (entry.index?.links || []).map((name) => idsByName.get(name)).filter(Boolean);
   const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: linksOf(entry) })));
-  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous, related });
+  // The ball takes the window's shape: a narrow window packs tall.
+  const pane = paneSize();
+  const aspect = Math.min(3, Math.max(1 / 3, pane.w / pane.h || 1.6));
+  // Remembered places keep the arrangement, stretched to the window if it
+  // is another shape now (narrower, wider) than when they were packed.
+  const places = reshapedPlaces(previous, aspect);
+  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous: places, keep: !places?.reshaped, related, aspect });
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);

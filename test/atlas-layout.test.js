@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -43,6 +43,45 @@ test('the designs pack into a tight, screen-shaped ball on the grid', () => {
   const big = tiles.find((tile) => tile.id === 'symbols');
   const middle = { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 };
   assert.ok(Math.abs(big.x + big.w / 2 - middle.x) < bounds.w / 4 && Math.abs(big.y + big.h / 2 - middle.y) < bounds.h / 4);
+});
+
+test('a narrow window packs the ball tall, a wide one wide', () => {
+  const tall = layoutAtlas(many, { aspect: 0.7 }).bounds;
+  const wide = layoutAtlas(many, { aspect: 2 }).bounds;
+  assert.ok(tall.h > tall.w, `tall: ${tall.w} x ${tall.h}`);
+  assert.ok(wide.w > 1.3 * wide.h, `wide: ${wide.w} x ${wide.h}`);
+});
+
+test('a desk remembered at another shape fills the window, its neighbours kept', () => {
+  const wide = layoutAtlas(many, { aspect: 2 });
+  const places = reshapedPlaces(wide.slots, 0.6);
+  assert.equal(places.reshaped, true);
+  const reshaped = layoutAtlas(many, { aspect: 0.6, previous: places, keep: false });
+  assert.ok(reshaped.bounds.h > reshaped.bounds.w, `${reshaped.bounds.w} x ${reshaped.bounds.h}`);
+  // Left of and above stay so for most pairs: far more of the arrangement
+  // is kept than a fresh pack at the new shape keeps.
+  const ids = many.map((item) => item.id);
+  const kept = (before, after) => {
+    const centre = (slots) => ids.map((id) => slots.get(id)).map((slot) => [slot.x + slot.w / 2, slot.y + slot.h / 2]);
+    const a = centre(before);
+    const b = centre(after);
+    let same = 0;
+    let pairs = 0;
+    for (let i = 0; i < a.length; i++) {
+      for (let j = i + 1; j < a.length; j++) {
+        pairs += 2;
+        if (Math.sign(a[i][0] - a[j][0]) === Math.sign(b[i][0] - b[j][0])) same += 1;
+        if (Math.sign(a[i][1] - a[j][1]) === Math.sign(b[i][1] - b[j][1])) same += 1;
+      }
+    }
+    return same / pairs;
+  };
+  const fresh = layoutAtlas(many, { aspect: 0.6 });
+  assert.ok(kept(wide.slots, reshaped.slots) >= 0.7, `kept ${kept(wide.slots, reshaped.slots)}`);
+  assert.ok(kept(wide.slots, reshaped.slots) > kept(wide.slots, fresh.slots) + 0.2, `fresh keeps ${kept(wide.slots, fresh.slots)}`);
+  // Of the window's shape already, places come back untouched.
+  assert.equal(reshapedPlaces(wide.slots, 2.1), wide.slots);
+  for (const tile of reshaped.tiles) assert.ok(tile.x % 40 === 0 && tile.y % 40 === 0);
 });
 
 test('the same designs always get the same layout', () => {

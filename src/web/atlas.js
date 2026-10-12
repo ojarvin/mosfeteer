@@ -20,7 +20,7 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkGraph } from '../core/design-links.js';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
 import { bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeInOutQuart, wheelIntent, lerpView, zoomView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -200,7 +200,13 @@ function placeDrawings(entries, previous = null) {
   const idsByName = new Map(entries.map((entry) => [entry.name, entry.id]));
   const linksOf = (entry) => (entry.index?.links || []).map((name) => idsByName.get(name)).filter(Boolean);
   const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: linksOf(entry) })));
-  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous, related });
+  // The ball takes the window's shape: a narrow window packs tall.
+  const pane = paneSize();
+  const aspect = Math.min(3, Math.max(1 / 3, pane.w / pane.h || 1.6));
+  // Remembered places keep the arrangement, stretched to the window if it
+  // is another shape now (narrower, wider) than when they were packed.
+  const places = reshapedPlaces(previous, aspect);
+  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous: places, keep: !places?.reshaped, related, aspect });
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
