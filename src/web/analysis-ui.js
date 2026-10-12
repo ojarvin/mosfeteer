@@ -5,8 +5,8 @@
  * option rules are in analysis-options.js and analysis-state.js.
  */
 
-import { INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } from '../core/model.js';
-import { analyzeSmallSignalV2 } from '../core/analysis/engine.js';
+import { Circuit, INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } from '../core/model.js';
+import { analyzeSmallSignalV2, numericSmallSignal } from '../core/analysis/engine.js';
 import { LOOP_ELEMENT_TYPES } from '../core/analysis/loop-gain.js';
 import { EQUATION_GROUPS, adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
@@ -872,7 +872,11 @@ let analysisReportRevision = null;
 export function syncAnalysisDock() {
   syncBodePlace();
   if (!isAnalysisDockOpen() || analysisDockRevision === editor.modelRevision) return;
+  // A settings change alone (a Bode slider moving) changes no net: rebuilding
+  // the form on every tick would shift the window under the slider.
+  const settingsOnly = revisionCurrent(analysisDockRevision);
   analysisDockRevision = editor.modelRevision;
+  if (settingsOnly) return;
   const kept = [analysisInput, analysisTarget].map((el) => el?.value);
   fillAnalysisDialog();
   [analysisInput, analysisTarget].forEach((el, index) => {
@@ -1217,6 +1221,15 @@ export function installAnalysisUi() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       report = adaptCombinedReport({ ok: false, error: `analysis failed: ${message}` });
+    }
+    // The Bode tab's curves: the same model in numbers, from a copy of the
+    // drawing as it is now (the sliders re-solve it; later edits wait for the
+    // next Analyze, as the equations do). It plots even when the equations
+    // are too large to derive.
+    try {
+      report.numericModel = numericSmallSignal(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+    } catch (error) {
+      report.numericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
     latestAnalysisReport = report;
     analysisReportRevision = editor.modelRevision;

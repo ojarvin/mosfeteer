@@ -284,18 +284,30 @@ whose share is negligible is best left out rather than approximated away.
 
 ## Bode sketch
 
-The **Bode** tab plots the exact transfer function (or `Z_out`, `Z_in`) in
+The **Bode** tab plots `A_v`, `Z_out`, or `Z_in` (and the loop gain) in
 relative units, so it sketches shapes, not a design's numbers. Every `g_m`
 starts at one unit `g`, every capacitor at one unit `C` (capacitors on the
 output node at 10, as loads usually are), every `r_o` and resistor at
 `g_m r_o` units, MOS `C_gs`/`C_gd` at one shared fraction of `C`, and a body
 `g_mb` at 0.2 `g`. Frequency is then in units of `g/C` and impedance in `1/g`;
 absolute values would only slide the plot along its axes. Sliders scale
-`g_m r_o`, the parasitic fraction, and each symbol by 1-2-5 steps; the plot,
-its straight-line asymptote, its poles and zeros, and the unity-gain
-frequency follow at once, because only the derived coefficients are
-re-evaluated (`src/core/analysis/bode.js`), never solved again. A corner
-whose factor is first order is listed with its exact expression.
+`g_m r_o`, the parasitic fraction, and each parameter the ports reach by
+1-2-5 steps; the plot, its straight-line asymptote, its poles and zeros, and
+the unity-gain frequency follow at once. A corner the equations also have,
+first order, is listed with its exact expression.
+
+The plot is the deliverable, so the port quantities are not drawn from the
+equations but from the same model solved in numbers at the sliders' values
+(`numericSmallSignal` in `engine.js`, `numeric-response.js`, `eigen.js`):
+exact, with no Miller splitting or other approximation, and at any size --
+a two-stage amplifier with every device capacitance, too large to derive,
+plots in milliseconds. The model's MNA matrix is affine in s, `A0 + s A1`
+(built at s = 1, 2, and checked at 3), so the curve is a complex solve at
+each frequency, and each quantity, a ratio of two unknowns, is by Cramer's
+rule a ratio of determinants affine in s whose roots, its zeros and poles,
+are eigenvalues. Each Analyze builds the model from the drawing as it is;
+the sliders re-solve it. The tab says which way its curve was found. The
+loop gain is still drawn from its derived coefficients.
 
 **Place on drawing** puts a textbook sketch of the plot on the canvas: a box
 annotation carrying the sampled curve, asymptote, and named corners
@@ -358,8 +370,9 @@ selected generator to that same solve. The main implementation is in
   `report-adapter.js` re-renders every displayed AC/DC row, so pass its
   equivalence options, named sub-expressions (`definitions.js`), and
   provenance through every row, including poles/zeros and noise.
-- The Bode tab evaluates the exact coefficients numerically in relative
-  units (`src/core/analysis/bode.js`); it never solves again and never takes
+- The Bode tab solves the port quantities in numbers (`numericSmallSignal`),
+  never from the equations, and evaluates the loop gain's exact
+  coefficients (`src/core/analysis/bode.js`); both in relative units, never
   design values. A box annotation may carry its sketch (`plot`). Its slider
   ratios, like the signal-flow coefficients, are saved with the document
   (`Circuit#analysisValues`); a slider move is a settings change

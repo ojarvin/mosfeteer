@@ -4,7 +4,8 @@ import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
 import { symbolProvenance } from './provenance.js';
-import { sketchParameters, sketchValues } from './bode.js';
+import { evaluateExpression, sketchParameters, sketchValues } from './bode.js';
+import { numericQuantities } from './numeric-response.js';
 import { buildExactAnalysisPipeline, transferFunctionList } from './pipeline.js';
 import { presentDiagnostics } from './diagnostics.js';
 import { describeSmallSignalNetlist } from './netlist.js';
@@ -762,6 +763,116 @@ function budgetFailureReport(stage, budget, options) {
  * Run the topology-independent symbolic small-signal analysis pipeline.
  * Exact canonical responses are retained beside any selected approximation.
  */
+/** Plain floating-point arithmetic for the numeric model. */
+const FLOAT_OPS = Object.freeze({
+  zero: 0,
+  one: 1,
+  add: (a, b) => a + b,
+  sub: (a, b) => a - b,
+  mul: (a, b) => a * b,
+  div: (a, b) => a / b,
+  neg: (a) => -a,
+  isZero: (value) => value === 0,
+});
+
+/** A primitive's value as a number: its parameter's value, a number as it
+ *  is, an expression (an opamp's inverse gain, say) evaluated. */
+function floatValue(value, primitive, values) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'bigint') return Number(value);
+  if (value?.kind === 'number') return Number(value.numerator) / Number(value.denominator);
+  if (value?.kind) return evaluateExpression(value, values);
+  const key = primitive?.parameter ?? value;
+  const number = values[key];
+  if (number === undefined) {
+    const decimal = Number(key);
+    if (key !== '' && Number.isFinite(decimal)) return decimal;
+    throw new Error(`no value for ${key}`);
+  }
+  return number;
+}
+
+/**
+ * The small-signal model in numbers, for the Bode tab (numeric-response.js):
+ * the plot is the deliverable, so it never waits on, or fails with, the
+ * symbolic solve. Built once from the same options as the analysis, exact
+ * (no Miller splitting, no approximations). Returns `{ ok, provenance,
+ * reached, outputComponents, at(values) }`: `provenance` names every
+ * parameter, `reached` those of the part of the circuit the ports reach
+ * (the ones worth a slider), and `at(values)`
+ * gives `{ ok, quantities: { transfer, input, output } }` with every
+ * parameter at its value in `values`, by name.
+ */
+export function numericSmallSignal(circuit, options = {}) {
+  if (!circuit) throw new TypeError('circuit is required');
+  const { ops } = makeEngineOps({});
+  const normalized = normaliseOptions(options, circuit, true, ops);
+  const regions = modelRegions(options);
+  const base = {
+    ...normalized,
+    devices: regions,
+    deviceRegions: regions,
+    deviceAssumptions: normalized.devices,
+    millerApproximation: false,
+    noise: null,
+    solve: false,
+  };
+  let structure;
+  try {
+    structure = buildExactAnalysisPipeline(circuit, { ...base, ops, s: ops.s() });
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+  if (!structure.ok) return { ok: false, error: structure.error, stage: structure.stage };
+  // Every parameter needs a value (the model stamps the whole circuit); the
+  // ones the ports reach are the ones worth a slider.
+  const provenance = symbolProvenance(structure.primitives);
+  const reached = new Set(Object.keys(symbolProvenance(structure.coupled.primitiveIndices.map((index) => structure.primitives[index]))));
+  const outputNode = structure.context.output?.node;
+  const outputComponents = new Set([...circuit.nets.values()]
+    .filter((net) => net.id === outputNode || structure.context.nodeAliases.get(net.id) === outputNode)
+    .flatMap((net) => net.terminals.map((terminal) => terminal.comp)));
+  const systemAt = (s, values) => {
+    const model = buildExactAnalysisPipeline(circuit, {
+      ...base,
+      ops: FLOAT_OPS,
+      s,
+      valueOf: (value, primitive) => floatValue(value, primitive, values),
+    });
+    if (!model.ok) throw new Error(model.error);
+    return model;
+  };
+  const at = (values) => {
+    try {
+      // Built away from s = 0, where a one-pole opamp's s/omega_t would make
+      // it ideal and fold it out of the system.
+      const [one, two, three] = [1, 2, 3].map((s) => systemAt(s, values));
+      const size = one.system.A.length;
+      if ([two, three].some((model) => model.system.A.length !== size)) return { ok: false, error: 'the model is not linear in s' };
+      const A1 = two.system.A.map((row, i) => row.map((value, j) => value - one.system.A[i][j]));
+      const A0 = one.system.A.map((row, i) => row.map((value, j) => value - A1[i][j]));
+      // Affine in s, or the curve would be wrong: A(3) must be A0 + 3 A1.
+      const scale = Math.max(1e-300, ...three.system.A.flat().map(Math.abs));
+      const affine = three.system.A.every((row, i) => row.every((value, j) => Math.abs(value - (A0[i][j] + 3 * A1[i][j])) <= 1e-9 * scale));
+      if (!affine) return { ok: false, error: 'the model is not linear in s' };
+      const quantities = numericQuantities({
+        A0,
+        A1,
+        B: one.system.B,
+        unknowns: one.system.unknowns,
+        aliases: one.system.aliases || new Map(),
+        inputNode: one.context.input.node,
+        outputNode: one.context.output.node,
+        inputSource: one.excitations.input.name,
+      });
+      return { ok: true, quantities };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  };
+  return { ok: true, provenance, reached, outputComponents, at };
+}
+
 export function analyzeSmallSignalV2(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   const { ops, symbolic } = makeEngineOps(options);

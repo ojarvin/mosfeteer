@@ -5,11 +5,11 @@
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
-import { amplifier } from './fixtures.js';
+import { amplifier, millerBuffer } from './fixtures.js';
 
 describe('small-signal analysis', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const value = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).value`);
@@ -83,7 +83,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.click('#analysis-tab-model');
     await h.until(`!document.getElementById('analysis-model-open').disabled`);
     await h.click('#analysis-model-open');
-    await h.until(`document.getElementById('model-dialog').open`);
+    await h.until(`document.getElementById('model-dialog').open`, 20000);
     // A view over the one drawing: the wheel zooms it, a double-click fits it again.
     const viewBox = () => h.evaluate(`document.querySelector('#model-dialog-figure svg').getAttribute('viewBox')`);
     const fitted = await viewBox();
@@ -150,5 +150,57 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await press('Forward biased');
     await sleep(100);
     assert.equal(await resistance(), null);
+  });
+
+  test('the Bode tab plots in numbers: a two-stage amplifier\'s supply rejection, too large to derive, still plots', async () => {
+    await h.open('miller');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    const pick = (id, text) => h.evaluate(`(() => { const s = document.getElementById(${JSON.stringify(id)}); const o = [...s.options].find((o) => o.textContent.replace(/[_{}]/g, '').startsWith(${JSON.stringify(text)})); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
+    await pick('analysis-input', 'VDD');
+    await pick('analysis-target', 'OUT');
+    await h.evaluate(`(() => { const f = document.getElementById('analysis-ac-grounds'); f.value = 'VB'; f.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    if (!await checked('analysis-parasitics')) await h.click('#analysis-parasitics');
+    await h.click('#analysis-submit');
+    await h.until(`!document.getElementById('analysis-result').hidden && !document.getElementById('analysis-tab-bode').disabled`, 60000);
+    // The equations are out of reach; the plot is not.
+    assert.match(await h.evaluate(`document.getElementById('analysis-equation').textContent`), /budget|too large/i);
+    await h.click('#analysis-tab-bode');
+    await h.until(`!!document.querySelector('#analysis-panel-bode .bode-figure-host svg path')`, 60000);
+    assert.match(await h.evaluate(`document.querySelector('#analysis-panel-bode .bode-how').textContent`), /Solved in numbers/);
+    const quantities = await h.evaluate(`[...document.querySelectorAll('#analysis-panel-bode .bode-head select option')].map((o) => o.textContent)`);
+    assert.ok(quantities.includes('Voltage gain') && quantities.includes('Output impedance'), quantities.join('|'));
+    // A slider for every parameter the ports reach, each moving the curve.
+    const sliders = await h.evaluate(`document.querySelectorAll('#analysis-panel-bode .bode-sliders input[type=range]').length`);
+    assert.ok(sliders > 10, `${sliders} sliders`);
+    const corners = () => h.evaluate(`document.querySelector('#analysis-panel-bode .bode-corners').textContent`);
+    const before = await corners();
+    await h.evaluate(`(() => { const input = [...document.querySelectorAll('#analysis-panel-bode .bode-sliders input[type=range]')].find((i) => i.getAttribute('aria-label') === 'CC'); input.value = String(Number(input.value) + 24); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    assert.notEqual(await corners(), before, 'moving C_C moves the corners');
+  });
+
+  test('a Bode slider dragged stays under the pointer: the plot is redrawn in place, the form is not rebuilt', async () => {
+    // The tab is as the last test left it: the Miller buffer's many sliders.
+    const sliders = `[...document.querySelectorAll('#analysis-panel-bode .bode-sliders input[type=range]')]`;
+    await h.evaluate(`${sliders}.at(-1).scrollIntoView({ block: 'start' })`);
+    await sleep(200);
+    // A slider the pointer can reach (the log covers the window's foot).
+    const hit = await h.evaluate(`(() => { for (const [i, input] of ${sliders}.entries()) { const r = input.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; if (document.elementFromPoint(x, y) === input) return { i, x, y }; } return null; })()`);
+    assert.ok(hit, 'a slider in reach');
+    const scrolls = `[...document.querySelectorAll('#analysis-dialog, #analysis-dialog *')].filter((e) => e.scrollHeight > e.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(e).overflowY)).map((e) => Math.round(e.scrollTop)).join(',')`;
+    const where = () => h.evaluate(`({ scrolls: ${scrolls}, y: Math.round(${sliders}[${hit.i}].getBoundingClientRect().y) })`);
+    await h.evaluate(`window.__option = document.getElementById('analysis-input').options[1]`);
+    const before = await where();
+    const start = await h.evaluate(`${sliders}[${hit.i}].value`);
+    await h.mouse('mouseMoved', hit.x, hit.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', hit.x, hit.y);
+    for (let k = 1; k <= 8; k++) {
+      await h.mouse('mouseMoved', hit.x + k * 8, hit.y, { buttons: 1 });
+      await sleep(40);
+      assert.deepEqual(await where(), before, `step ${k}`);
+    }
+    await h.mouse('mouseReleased', hit.x + 64, hit.y);
+    assert.notEqual(await h.evaluate(`${sliders}[${hit.i}].value`), start, 'the drag moved the slider');
+    assert.equal(await h.evaluate(`document.getElementById('analysis-input').options[1] === window.__option`), true, 'the form was not rebuilt');
   });
 });

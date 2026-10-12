@@ -196,16 +196,22 @@ const decibels = (h) => 20 * log10(cabs(h));
  * The sketch of `N(s)/D(s)` (dense coefficient arrays): the exact magnitude
  * and phase over a frequency range around its corners, the poles and zeros,
  * the straight-line magnitude asymptote, and the unity-gain crossing.
- * Frequencies are in the units the coefficients were evaluated in.
+ * Frequencies are in the units the coefficients were evaluated in. A
+ * numeric solve (numeric-response.js) passes its own `roots` ({zeros,
+ * poles}, found as eigenvalues rather than from the coefficients) and its
+ * exact `response(ω)` for the curve.
  */
-export function bodeSketch(numerator, denominator, { pointsPerDecade = 40 } = {}) {
+export function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots = null, response = null } = {}) {
   const num = trimmed(numerator);
   const den = trimmed(denominator);
   // The exact solve can leave a factor common to both sides (a symmetric
   // half-circuit's, say): a pole standing exactly on a zero cancels in the
   // function itself. Leave such pairs out of the corners and the asymptote;
   // the curve, evaluated from the coefficients, is the same either way.
-  const { zeros, poles, cancelled } = cancelCommonRoots(polynomialRoots(num), polynomialRoots(den));
+  // Eigenvalues meet only to about a part in 10^6.
+  const { zeros, poles, cancelled } = roots
+    ? cancelCommonRoots(roots.zeros, roots.poles, 1e-6)
+    : cancelCommonRoots(polynomialRoots(num), polynomialRoots(den));
   const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0 && Number.isFinite(w));
   const low = corners.length ? Math.floor(log10(Math.min(...corners))) - 1 : -2;
   let high = corners.length ? Math.ceil(log10(Math.max(...corners))) + 1 : 2;
@@ -222,7 +228,7 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40 } = {}
   let previousPhase = null;
   for (let i = 0; i <= (high - low) * pointsPerDecade; i++) {
     const w = 10 ** (low + i / pointsPerDecade);
-    const h = responseAt(num, den, w);
+    const h = response ? response(w) : responseAt(num, den, w);
     let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
     // Unwrap, so a phase running past -180 keeps going instead of jumping.
     if (previousPhase !== null) {

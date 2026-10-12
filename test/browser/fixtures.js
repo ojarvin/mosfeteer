@@ -93,3 +93,24 @@ export function withBeats() {
   for (const line of ['add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'beat add first', 'beat add second', 'beat hide 1 R2']) runCommand(circuit, line);
   return circuit.toJSON();
 }
+
+/** A two-stage Miller OTA as a unity-gain buffer, its nets joined by name
+ *  only (no wires): too large to derive with its device capacitances. */
+export function millerBuffer() {
+  const circuit = new Circuit();
+  const add = (type, refdes, x, y) => circuit.addComponent(type, { refdes, x, y });
+  add('input', 'VINP', -800, 0); add('supply', 'VDD', 0, -800); add('ground', 'GND', 0, 800);
+  add('nmos', 'M1', -400, 0); add('nmos', 'M2', 400, 0); add('pmos', 'M3', -400, -400); add('pmos', 'M4', 400, -400);
+  add('nmos', 'M5', 0, 400); add('pmos', 'M6', 1200, -400); add('nmos', 'M7', 1200, 400);
+  add('capacitor', 'CC', 800, -200); add('capacitor', 'CL', 1600, 400); add('output', 'VOUT', 1600, 0);
+  const net = (name, ...refs) => { circuit._createNet(name).terminals = refs.map((ref) => circuit.resolveTerm(ref)); };
+  net('V_{DD}', 'VDD.p', 'M3.s', 'M4.s', 'M6.s');
+  net('V_{SS}', 'GND.gnd', 'M5.s', 'M7.s', 'CL.b');
+  net('VINP', 'VINP.p', 'M1.g');
+  net('X', 'M1.d', 'M3.d', 'M3.g', 'M4.g');
+  net('Y', 'M2.d', 'M4.d', 'M6.g', 'CC.a');
+  net('OUT', 'M6.d', 'M7.d', 'CC.b', 'CL.a', 'VOUT.p', 'M2.g');
+  net('TAIL', 'M1.s', 'M2.s', 'M5.d');
+  net('VB', 'M5.g', 'M7.g');
+  return circuit.toJSON();
+}

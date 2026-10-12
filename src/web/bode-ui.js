@@ -1,10 +1,15 @@
 /**
- * The analysis panel's Bode tab: a relative sketch of the derived transfer
- * function (core/analysis/bode.js). Every g_m starts at one unit, every r_o
- * and resistor at g_m r_o units, capacitors at one unit (loads on the output
- * at ten); sliders scale any of them by ratios, and the plot, its poles and
- * zeros, and their names follow at once. Nothing here solves the circuit
- * again: only the derived coefficients are re-evaluated.
+ * The analysis panel's Bode tab: a relative sketch of a port quantity
+ * (core/analysis/bode.js). Every g_m starts at one unit, every r_o and
+ * resistor at g_m r_o units, capacitors at one unit (loads on the output at
+ * ten); sliders scale any of them by ratios, and the plot, its poles and
+ * zeros, and their names follow at once.
+ *
+ * A_v, Z_in, and Z_out are plotted from the full model solved in numbers at
+ * those values (the report's `numericModel`, engine.js `numericSmallSignal`):
+ * the plot is the deliverable, so it does not wait on the symbolic solve,
+ * fail with it, or take its approximations. The loop gain is plotted from
+ * its derived coefficients.
  */
 
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
@@ -99,12 +104,45 @@ function exactOf(report, key) {
   return exact?.numeratorCoefficients && exact?.denominatorCoefficients ? exact : null;
 }
 
+const NUMERIC_KEYS = new Set(['transfer', 'input', 'output']);
+
+/** Every parameter of the numeric model and its value at the sliders: the
+ *  ones the ports reach get sliders. */
+function numericParameters(report) {
+  const model = report?.numericModel;
+  if (!model?.ok) return null;
+  const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
+  return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)), values: sketchValues(all, state) };
+}
+
+let numericMemo = null;
+/** The numeric quantity `key` at the sliders' values, or null: solved once
+ *  per set of values, however often the tab redraws. */
+function numericOf(report, key) {
+  if (!NUMERIC_KEYS.has(key)) return null;
+  const parameters = numericParameters(report);
+  if (!parameters) return null;
+  const memoKey = JSON.stringify(parameters.values);
+  if (numericMemo?.model !== report.numericModel || numericMemo.key !== memoKey) {
+    numericMemo = { model: report.numericModel, key: memoKey, result: report.numericModel.at(parameters.values) };
+  }
+  const quantity = numericMemo.result.ok ? numericMemo.result.quantities[key] : null;
+  // A quantity that is zero, or does not change with frequency, has nothing to sketch.
+  if (!quantity || quantity.zero || !(quantity.zeros.length || quantity.poles.length)) return null;
+  return { parameters, quantity };
+}
+
+/** Whether `key` can be plotted: from the numeric model, or (the loop gain)
+ *  from derived coefficients that carry s. */
+function plottable(report, key) {
+  if (NUMERIC_KEYS.has(key) && report?.numericModel?.ok) return !!numericOf(report, key);
+  const exact = exactOf(report, key);
+  return !!exact && (exact.numeratorDegree > 0 || exact.denominatorDegree > 0);
+}
+
 /** Whether a report has anything with a frequency to plot. */
 function bodeAvailable(report) {
-  return QUANTITIES.some(({ key }) => {
-    const exact = exactOf(report, key);
-    return exact && (exact.numeratorDegree > 0 || exact.denominatorDegree > 0);
-  });
+  return QUANTITIES.some(({ key }) => plottable(report, key));
 }
 
 function outputComponents(report) {
@@ -115,17 +153,30 @@ function outputComponents(report) {
 
 function currentModel() {
   const report = state.report;
-  const exact = exactOf(report, state.quantity);
-  if (!exact) return null;
-  const symbols = new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
-    .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]));
-  const parameters = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(report) });
-  const values = sketchValues(parameters, state);
-  const sketch = bodeSketch(numericCoefficients(exact.numeratorCoefficients, values), numericCoefficients(exact.denominatorCoefficients, values));
+  const numeric = numericOf(report, state.quantity);
+  const exact = numeric ? null : exactOf(report, state.quantity);
+  if (!numeric && !exact) return null;
+  let parameters;
+  let values;
+  let sketch;
+  if (numeric) {
+    const { quantity } = numeric;
+    ({ values } = numeric.parameters);
+    parameters = numeric.parameters.reached;
+    sketch = bodeSketch(quantity.numerator, quantity.denominator, { roots: { zeros: quantity.zeros, poles: quantity.poles }, response: quantity.response });
+  } else {
+    const symbols = new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
+      .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]));
+    parameters = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(report) });
+    values = sketchValues(parameters, state);
+    sketch = bodeSketch(numericCoefficients(exact.numeratorCoefficients, values), numericCoefficients(exact.denominatorCoefficients, values));
+  }
   const corners = cornerNames(sketch.poles, sketch.zeros);
-  // A corner whose factor is first order has its exact expression.
-  const symbolic = [...(report.reports[state.quantity].poles || []).map((root) => ({ ...root, kind: 'pole' })),
-    ...(report.reports[state.quantity].zeros || []).map((root) => ({ ...root, kind: 'zero' }))];
+  // A corner whose factor is first order has its exact expression, when the
+  // equations have it at the same place.
+  const derived = report.reports?.[state.quantity] || {};
+  const symbolic = [...(derived.poles || []).map((root) => ({ ...root, kind: 'pole' })),
+    ...(derived.zeros || []).map((root) => ({ ...root, kind: 'zero' }))];
   for (const corner of corners) {
     for (const root of symbolic) {
       if (root.kind !== corner.kind || !root.root || root.order !== 1) continue;
@@ -140,7 +191,7 @@ function currentModel() {
   const found = QUANTITIES.find((q) => q.key === state.quantity);
   // An ideal opamp's loop is its feedback factor (T = A beta, A infinite).
   const quantity = found.key === 'loop' && report.reports.loop?.infinite ? { ...found, label: 'Feedback factor', tex: '\\beta' } : found;
-  return { parameters, values, sketch, corners, quantity };
+  return { parameters, values, sketch, corners, quantity, numeric: !!numeric };
 }
 
 // ----- drawing -----------------------------------------------------------------------
@@ -177,8 +228,15 @@ function slider({ label, tex, index, min, max, text, onInput, components = [], t
   value.className = 'bode-slider-value';
   value.textContent = text(index);
   input.addEventListener('input', () => {
+    sliding = true;
     value.textContent = text(Number(input.value));
     onInput(Number(input.value));
+  });
+  // Let go: the corner list may take its own height again.
+  input.addEventListener('change', () => {
+    sliding = false;
+    const list = panelEl()?.querySelector('.bode-corners');
+    if (list) list.style.minHeight = '';
   });
   if (components.length) {
     row.addEventListener('pointerenter', () => emphasize(components));
@@ -190,6 +248,9 @@ function slider({ label, tex, index, min, max, text, onInput, components = [], t
   return row;
 }
 
+
+/** A slider is being moved (between its first input and its change). */
+let sliding = false;
 
 // The magnitude and the phase, two plots sharing their frequency axis
 // (plot-view.js), kept across redraws so a zoomed view stays while a slider moves.
@@ -209,9 +270,14 @@ function drawSketch() {
   const list = panel?.querySelector('.bode-corners');
   if (!figureHost || !list) return;
   const model = currentModel();
-  figureHost.replaceChildren();
+  // Nothing above the sliders may shrink while one is held: the plots stay
+  // in place (taking them out and back would collapse the tab for a moment,
+  // and the scroll with it), and the corner list keeps the height it reached
+  // until the slider is let go, so the slider stays under the pointer.
+  if (sliding) list.style.minHeight = `${Math.max(parseFloat(list.style.minHeight) || 0, list.offsetHeight)}px`;
   list.replaceChildren();
   if (!model) {
+    figureHost.replaceChildren();
     figureHost.textContent = 'This quantity has no derived expression to plot.';
     return;
   }
@@ -219,7 +285,7 @@ function drawSketch() {
   const specs = bodeSpecs(sketch, { corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) });
   const views = bodePlots();
   for (const [name, view] of Object.entries(views)) {
-    figureHost.appendChild(view.el);
+    if (view.el.parentNode !== figureHost) figureHost.appendChild(view.el);
     view.set({ ...specs[name], key: `${specs[name].key}:${quantity.key}:${quantity.tex}` });
   }
   for (const corner of corners) {
@@ -292,14 +358,14 @@ export function renderBode(report) {
   panel.replaceChildren();
   if (!available) return available;
   loadRatios();
-  if (!exactOf(report, state.quantity)) state.quantity = QUANTITIES.find(({ key }) => exactOf(report, key))?.key || 'transfer';
+  if (!plottable(report, state.quantity)) state.quantity = QUANTITIES.find(({ key }) => plottable(report, key))?.key || 'transfer';
 
   const head = document.createElement('div');
   head.className = 'bode-head';
   const select = document.createElement('select');
   select.setAttribute('aria-label', 'Quantity to plot');
   for (const quantity of QUANTITIES) {
-    if (!exactOf(report, quantity.key)) continue;
+    if (!plottable(report, quantity.key)) continue;
     const option = document.createElement('option');
     option.value = quantity.key;
     option.textContent = quantity.label;
@@ -313,6 +379,12 @@ export function renderBode(report) {
   const note = document.createElement('span');
   note.className = 'bode-note';
   note.textContent = 'A relative sketch: each gm starts at one unit g, each capacitor at one unit C (loads on the output at 10), each ro and resistor at gm·ro units. Frequency is in g/C.';
+  // Say which way the curve was found: numbers do not show it on their own.
+  const how = document.createElement('span');
+  how.className = 'bode-note bode-how';
+  how.textContent = NUMERIC_KEYS.has(state.quantity) && report.numericModel?.ok
+    ? 'Solved in numbers at these ratios: the full model, exact (no Miller splitting or other approximation), at any size. The equations are the symbolic side.'
+    : 'Evaluated from the derived equation at these ratios.';
   const reset = document.createElement('button');
   reset.type = 'button';
   reset.textContent = 'Reset ratios';
@@ -345,7 +417,7 @@ export function renderBode(report) {
   corners.className = 'bode-corners';
   const sliders = document.createElement('div');
   sliders.className = 'bode-sliders';
-  panel.append(head, note, figureHost, placeRow, corners, sliders);
+  panel.append(head, note, how, figureHost, placeRow, corners, sliders);
 
   const model = currentModel();
   // The one ratio every MOS design has.
