@@ -45876,21 +45876,55 @@ function decodedImage(src) {
   });
 }
 
+function canvasOf(image, width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext('2d', { willReadFrequently: true }).drawImage(image, 0, 0, width, height);
+  return canvas;
+}
+
+function samePixels(a, b) {
+  const pixels = (canvas) => canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data;
+  const x = pixels(a);
+  const y = pixels(b);
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  return true;
+}
+
+/** `png` as lossless WebP when that is smaller and draws the same pixels,
+ *  else `png` itself. Screenshots mostly shrink by a quarter; flat ones with
+ *  few colours can grow, and a browser that encodes WebP lossily (or not at
+ *  all) fails the pixel check. */
+async function smallerLossless(png, image) {
+  try {
+    const canvas = canvasOf(image, image.naturalWidth, image.naturalHeight);
+    const webp = canvas.toDataURL('image/webp', 1);
+    if (!webp.startsWith('data:image/webp') || webp.length >= png.length) return png;
+    const decoded = await decodedImage(webp);
+    return samePixels(canvas, canvasOf(decoded, canvas.width, canvas.height)) ? webp : png;
+  } catch {
+    return png;
+  }
+}
+
 /** A pasted picture as the document keeps it: a PNG, JPEG, or WebP data URL
  *  no larger than MAX_IMAGE_PX on its longer side (re-encoded when it was
- *  larger, or of another type), and its aspect. */
+ *  larger, or of another type; a PNG as lossless WebP when that is smaller),
+ *  and its aspect. */
 async function storedImage(file) {
   const original = await readDataUrl(file);
   const image = await decodedImage(original);
   const aspect = image.naturalWidth / image.naturalHeight;
   const fits = Math.max(image.naturalWidth, image.naturalHeight) <= MAX_IMAGE_PX;
   const kept = /^data:image\/(png|jpeg|webp);/.test(original);
-  if (fits && kept && original.length <= MAX_IMAGE_DATA / 2) return { src: original, aspect, width: image.naturalWidth };
+  if (fits && kept && original.length <= MAX_IMAGE_DATA / 2) {
+    const src = original.startsWith('data:image/png;') ? await smallerLossless(original, image) : original;
+    return { src, aspect, width: image.naturalWidth };
+  }
   const k = Math.min(1, MAX_IMAGE_PX / Math.max(image.naturalWidth, image.naturalHeight));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * k));
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * k));
-  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  const canvas = canvasOf(image, Math.max(1, Math.round(image.naturalWidth * k)), Math.max(1, Math.round(image.naturalHeight * k)));
   let src = canvas.toDataURL('image/webp', 0.9);
   if (!src.startsWith('data:image/webp')) src = canvas.toDataURL('image/png');
   if (src.length > MAX_IMAGE_DATA) src = canvas.toDataURL('image/jpeg', 0.85);

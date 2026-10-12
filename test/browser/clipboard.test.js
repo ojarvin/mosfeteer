@@ -1,6 +1,7 @@
 /** Copying and pasting in a browser: the system clipboard carries the
  *  copy, a copied net label pastes into the net label tool, and a copied
- *  net keeps its diagonal legs. */
+ *  net keeps its diagonal legs, and a pasted PNG is kept losslessly in the
+ *  smaller of PNG and WebP. */
 
 import { describe, before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -117,5 +118,54 @@ describe('copy and paste', { skip: browserSkip() }, () => {
     assert.equal(pasted, false, 'it failed');
     assert.equal(await ed('JSON.stringify(c.toJSON())'), before);
     assert.equal(await undoable(), steps, 'and no undo step');
+  });
+  /** Paste a PNG drawn by `draw(g, w, h)` on a w×h canvas, with the pointer
+   *  over the drawing; the picture as the document keeps it, and whether it
+   *  draws the very pixels of the PNG. */
+  const pastePicture = async (w, h2, draw) => {
+    await h.mouse('mouseMoved', 600, 400, { button: 'none', buttons: 0 });
+    const before = await ed('[...c.labels.values()].filter((l) => l.image).length');
+    await h.evaluate(`(async () => {
+      const canvas = new OffscreenCanvas(${w}, ${h2});
+      (${draw})(canvas.getContext('2d'), ${w}, ${h2});
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      window.__png = await new Promise((r) => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(blob); });
+      const data = new DataTransfer();
+      data.items.add(new File([blob], 'picture.png', { type: 'image/png' }));
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    })()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.image).length === ${before + 1})`, 5000);
+    return h.evaluate(`${h.module('editor-state.js')}.then(async (m) => {
+      const src = [...m.editor.circuit.labels.values()].filter((l) => l.image).at(-1).image.src;
+      const pixels = async (url) => {
+        const image = new Image(); image.src = url; await image.decode();
+        const canvas = new OffscreenCanvas(image.naturalWidth, image.naturalHeight);
+        const g = canvas.getContext('2d'); g.drawImage(image, 0, 0);
+        return [...g.getImageData(0, 0, canvas.width, canvas.height).data].join();
+      };
+      return { type: src.slice(5, src.indexOf(';')), length: src.length, png: window.__png.length, same: (await pixels(src)) === (await pixels(window.__png)) };
+    })`);
+  };
+
+  test('a pasted screenshot is kept as lossless WebP when that is smaller', async () => {
+    const kept = await pastePicture(480, 320, (g, w, h) => {
+      g.fillStyle = '#fafafa'; g.fillRect(0, 0, w, h);
+      g.font = '13px sans-serif';
+      for (let row = 0; row < 18; row++) {
+        g.fillStyle = ['#111', '#1565c0', '#c62828'][row % 3];
+        g.fillText(`Vout = ${(row * 1.37).toFixed(2)} V  gm·ro = ${(row * 7.1 + 3).toFixed(1)}  f₋₃dB ${row + 2} MHz`, 8, 16 + row * 17);
+      }
+      g.strokeStyle = '#2e7d32'; g.lineWidth = 1.5; g.beginPath();
+      for (let x = 0; x < w; x++) g.lineTo(x, h / 2 + 60 * Math.sin(x / 23));
+      g.stroke();
+    });
+    assert.equal(kept.type, 'image/webp', JSON.stringify(kept));
+    assert.ok(kept.length < kept.png, JSON.stringify(kept));
+    assert.equal(kept.same, true, 'lossless: the same pixels as the PNG');
+  });
+
+  test('a pasted PNG stays PNG when WebP would not be smaller', async () => {
+    const kept = await pastePicture(1, 1, (g) => { g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1); });
+    assert.deepEqual(kept, { ...kept, type: 'image/png', length: kept.png, same: true });
   });
 });
