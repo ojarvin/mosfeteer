@@ -129,12 +129,31 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.deepEqual(h.exceptions().slice(before), []);
   });
 
-  test("a circuit's plots window says where its Bode plot is instead", async () => {
+  test("a circuit's plots window holds its Bode graph; a diagram's, its own plots", async () => {
     await h.open('amplifier');
     if (!await shown('.plots-window')) await h.key('W');
     await h.until(`!document.querySelector('.plots-window').hidden`);
-    assert.equal(await shown('.signal-flow-plots-empty'), true);
+    // Empty until a Derive in the analysis window adds a gain.
+    assert.equal(await shown('.bode-plots-empty'), true);
     assert.equal(await shown('.signal-flow-plots-head'), false);
+    await h.open('modulator');
+    await h.until(`!!document.querySelector('.plots-window .signal-flow-plots-view')`);
+    assert.equal(await shown('.bode-plots-empty'), false);
+  });
+
+  test("a result's On the graph switch takes its response off the graph and puts it back", async () => {
+    await openAnalysis('modulator');
+    await derive();
+    const switches = `[...document.querySelectorAll('.signal-flow-results .signal-flow-entry-actions button')]`;
+    const legend = () => h.evaluate(`document.querySelectorAll('.plots-window .signal-flow-legend-row').length`);
+    assert.equal(await h.evaluate(`${switches}[0].getAttribute('aria-pressed')`), 'true');
+    const before = await legend();
+    await h.evaluate(`${switches}[0].click()`);
+    assert.equal(await h.evaluate(`${switches}[0].getAttribute('aria-pressed')`), 'false');
+    assert.equal(await legend(), before - 1);
+    await h.evaluate(`${switches}[0].click()`);
+    assert.equal(await h.evaluate(`${switches}[0].getAttribute('aria-pressed')`), 'true');
+    assert.equal(await legend(), before);
   });
 
   test('a finished coefficient adjustment is one undo step, and undoing it keeps the results current', async () => {

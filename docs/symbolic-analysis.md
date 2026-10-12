@@ -10,6 +10,14 @@ devices. One analysis produces the complete report. There is no separate
 reference: every AC ground is the same 0 V node, and supplies, grounds, and
 other DC rails already are AC ground, so a schematic with a rail needs
 nothing added. A drawing with no rail at all needs one AC ground named.
+
+The window reads as the signal-flow analysis's does (`signal-flow-ui.js`):
+**Signals** first; then **Options**, folded, its summary naming what is
+chosen that is not the default (transfer functions, loop gain, model
+simplifications, equation approximations, noise, triode devices); the
+results; a **Plots** card that opens the Plots window; and **Values**, the
+numbers the plots are drawn at. Its footer is **Annotate equations** and
+**Derive** (Enter).
 Nets marked AC ground from their context menu (DC bias) are listed in the
 field; the field is the one list, so taking a net out clears its mark when
 the equations are next derived.
@@ -120,7 +128,7 @@ alone for an ideal opamp, whose T is infinite; a transistor gives T =
 -g_m v_gs / i_t at its g_m. It is exact in the analysis's own model, with no
 loading to approximate, and solved without Miller splitting, which would
 remove the feedback being measured. T and its DC value, and an opamp's
-beta, list under Loop gain; the Bode tab sketches T (or beta) with its
+beta, list under Loop gain; the Bode plots sketch T (or beta) with its
 crossover omega_c and the phase margin there, at the sliders' relative
 values -- a phase margin needs no design values.
 
@@ -282,19 +290,38 @@ generator outside the coupled network, or one whose gain vanishes at DC, is
 named in the Log tab instead. Unchecking a device drops its column; a device
 whose share is negligible is best left out rather than approximated away.
 
-## Bode sketch
+## Bode plots
 
-The **Bode** tab plots `A_v`, `Z_out`, or `Z_in` (and the loop gain) in
-relative units, so it sketches shapes, not a design's numbers. Every `g_m`
+The Bode plots are in the **Plots** window (`Shift+W`), as a signal-flow
+diagram's responses are, its view picked by the analysis window's mode (or,
+that window shut, by what the drawing is; `plots-window.js`). Each Derive
+adds its `A_v` (and its loop gain, if one is asked for) to the graph beside
+what is there -- a supply's way to the output beside the signal's, or one
+setting beside another; the same quantity between the same nets replaces
+itself. **Voltage gain**, **Output impedance**, **Input impedance**, and
+**Loop gain** above the graph are switches for the last Derive's
+quantities: pressed while one is on the graph, pressed again to take it
+off. Each trace can be hidden or removed;
+**Magnitude** and **Phase** switch the view; one trace shown is drawn as a
+textbook sketch, its asymptote and corners marked, several as their curves
+together over the range they span. **Annotate graph** puts the graph on the
+drawing as a signal-flow graph is (`plot.kind: 'response'`, its traces
+named beside it); **Place sketch** puts the one trace shown there as a
+textbook sketch. Each shown trace's corners are listed under the graph.
+
+The plots are drawn in relative units, so they sketch shapes, not a
+design's numbers. Every `g_m`
 starts at one unit `g`, every capacitor at one unit `C` (capacitors on the
 output node at 10, as loads usually are), every `r_o` and resistor at
 `g_m r_o` units, MOS `C_gs`/`C_gd` at one shared fraction of `C`, and a body
 `g_mb` at 0.2 `g`. Frequency is then in units of `g/C` and impedance in `1/g`;
-absolute values would only slide the plot along its axes. Sliders scale
-`g_m r_o`, the parasitic fraction, and each parameter the ports reach by
-1-2-5 steps; the plot, its straight-line asymptote, its poles and zeros, and
-the unity-gain frequency follow at once. A corner the equations also have,
-first order, is listed with its exact expression.
+absolute values would only slide the plot along its axes. **Values**, in
+the analysis window as signal flow's coefficients are, scale `g_m r_o`, the
+parasitic fraction, and each parameter the graph's traces reach: a slider
+through 1-2-5 steps and a field for any positive number, each. The plots,
+their asymptotes, poles and zeros, and unity-gain frequencies follow at
+once. A corner the equations also have, first order, is listed with its
+exact expression.
 
 The plot is the deliverable, so the port quantities are not drawn from the
 equations but from the same model solved in numbers at the sliders' values
@@ -305,19 +332,18 @@ plots in milliseconds. The model's MNA matrix is affine in s, `A0 + s A1`
 (built at s = 1, 2, and checked at 3), so the curve is a complex solve at
 each frequency, and each quantity, a ratio of two unknowns, is by Cramer's
 rule a ratio of determinants affine in s whose roots, its zeros and poles,
-are eigenvalues. Each Analyze builds the model from the drawing as it is;
-the sliders re-solve it. The tab says which way its curve was found. The
-loop gain is still drawn from its derived coefficients.
+are eigenvalues. Each Derive builds the model from the drawing as it is;
+the values re-solve it. The Values hint says which way the curves are
+found. The loop gain is still drawn from its derived coefficients.
 
-**Place on drawing** puts a textbook sketch of the plot on the canvas: a box
-annotation carrying the sampled curve, asymptote, and named corners
-(`plot` in the document), drawn without numbers by `src/core/bode-figure.js`,
-the same layout the tab uses. With a sketch selected the button updates it
-in place.
+**Place sketch** puts a textbook sketch on the canvas: a box annotation
+carrying the sampled curve, asymptote, and named corners (`plot` in the
+document), drawn without numbers by `src/core/bode-figure.js`. With a
+sketch selected the button updates it in place.
 
 ## Schematic annotations
 
-**Annotate schematic** places the displayed equations below the figure,
+**Annotate equations** places the displayed equations below the figure,
 left-aligned with its edge and separated by two grid cells. Each row, and
 each group, has a checkbox that keeps it out of the annotation; the choice is
 remembered with the form. The definitions the annotated rows use, directly
@@ -370,7 +396,7 @@ selected generator to that same solve. The main implementation is in
   `report-adapter.js` re-renders every displayed AC/DC row, so pass its
   equivalence options, named sub-expressions (`definitions.js`), and
   provenance through every row, including poles/zeros and noise.
-- The Bode tab solves the port quantities in numbers (`numericSmallSignal`),
+- The Bode plots solve the port quantities in numbers (`numericSmallSignal`),
   never from the equations, and evaluates the loop gain's exact
   coefficients (`src/core/analysis/bode.js`); both in relative units, never
   design values. A box annotation may carry its sketch (`plot`). Its slider

@@ -152,37 +152,118 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await resistance(), null);
   });
 
-  test('the Bode tab plots in numbers: a two-stage amplifier\'s supply rejection, too large to derive, still plots', async () => {
+  const bode = () => h.evaluate(`${h.module('bode-ui.js')}.then((m) => m.bodeSnapshot())`);
+  const pick = (id, text) => h.evaluate(`(() => { const s = document.getElementById(${JSON.stringify(id)}); const o = [...s.options].find((o) => o.textContent.replace(/[_{}]/g, '').startsWith(${JSON.stringify(text)})); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
+  const shown = (selector) => h.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); return !!e && !e.hidden && !!e.offsetParent; })()`);
+  const plotsButton = (text) => h.evaluate(`(() => { const b = [...document.querySelectorAll('.plots-window button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)})); if (!b) return false; b.click(); return true; })()`);
+
+  test('the analysis window reads as signal flow\'s: signals, folded options, results, plots, values; Annotate equations and Derive', async () => {
+    await h.open('amp');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    const order = await h.evaluate(`[...document.querySelector('#analysis-dialog .analysis-scroll').children].filter((e) => !e.classList.contains('analysis-mode-hidden') && !e.classList.contains('signal-flow-section')).map((e) => e.id || e.className.split(' ')[0])`);
+    const at = (name) => order.findIndex((entry) => entry.includes(name));
+    assert.ok(at('analysis-signals') < at('analysis-options') && at('analysis-options') < at('analysis-result') && at('analysis-result') < at('analysis-plots-card') && at('analysis-plots-card') < at('analysis-values'), order.join(' | '));
+    assert.equal(await h.evaluate(`document.getElementById('analysis-options').open`), false, 'the options fold away');
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`), ['Annotate equations', 'Derive']);
+    // Folded, the options still say what is chosen that is not the default.
+    const summary = () => h.evaluate(`document.getElementById('analysis-options-summary').textContent`);
+    const before = await summary();
+    assert.doesNotMatch(before, /C_gs/);
+    await h.evaluate(`document.querySelector('#analysis-options > summary').click()`);
+    await h.click('#analysis-parasitics');
+    assert.match(await summary(), /C_gs, C_gd/);
+    await h.click('#analysis-parasitics');
+    assert.equal(await summary(), before);
+    // The Bode tab is gone: the plots are in the Plots window.
+    assert.equal(await h.evaluate(`!!document.getElementById('analysis-tab-bode')`), false);
+  });
+
+  test('the Plots window draws the gain in numbers: a two-stage amplifier too large to derive still plots', async () => {
     await h.open('miller');
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
     await h.until(`!document.getElementById('analysis-dialog').hidden`);
-    const pick = (id, text) => h.evaluate(`(() => { const s = document.getElementById(${JSON.stringify(id)}); const o = [...s.options].find((o) => o.textContent.replace(/[_{}]/g, '').startsWith(${JSON.stringify(text)})); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return o.value; })()`);
     await pick('analysis-input', 'VDD');
     await pick('analysis-target', 'OUT');
     await h.evaluate(`(() => { const f = document.getElementById('analysis-ac-grounds'); f.value = 'VB'; f.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await h.evaluate(`document.getElementById('analysis-options').open = true`);
     if (!await checked('analysis-parasitics')) await h.click('#analysis-parasitics');
     await h.click('#analysis-submit');
-    await h.until(`!document.getElementById('analysis-result').hidden && !document.getElementById('analysis-tab-bode').disabled`, 60000);
+    await h.until(`!document.getElementById('analysis-result').hidden && !document.querySelector('.plots-window')?.hidden`, 60000);
     // The equations are out of reach; the plot is not.
     assert.match(await h.evaluate(`document.getElementById('analysis-equation').textContent`), /budget|too large/i);
-    await h.click('#analysis-tab-bode');
-    await h.until(`!!document.querySelector('#analysis-panel-bode .bode-figure-host svg path')`, 60000);
-    assert.match(await h.evaluate(`document.querySelector('#analysis-panel-bode .bode-how').textContent`), /Solved in numbers/);
-    const quantities = await h.evaluate(`[...document.querySelectorAll('#analysis-panel-bode .bode-head select option')].map((o) => o.textContent)`);
-    assert.ok(quantities.includes('Voltage gain') && quantities.includes('Output impedance'), quantities.join('|'));
-    // A slider for every parameter the ports reach, each moving the curve.
-    const sliders = await h.evaluate(`document.querySelectorAll('#analysis-panel-bode .bode-sliders input[type=range]').length`);
-    assert.ok(sliders > 10, `${sliders} sliders`);
-    const corners = () => h.evaluate(`document.querySelector('#analysis-panel-bode .bode-corners').textContent`);
+    await h.until(`!!document.querySelector('.plots-window .bode-plots-graph svg path')`, 60000);
+    assert.deepEqual((await bode()).traces.map((t) => t.label), ['\\frac{OUT}{V_{DD}}']);
+    assert.equal(await shown('#analysis-plots-card'), true);
+    assert.match(await h.evaluate(`document.querySelector('#analysis-values .field-hint').textContent`), /solved in numbers/);
+    // A value for every parameter the ports reach, a slider and a field each.
+    const rows = await h.evaluate(`document.querySelectorAll('#analysis-values .bode-value').length`);
+    assert.ok(rows > 10, `${rows} values`);
+    const corners = () => h.evaluate(`document.querySelector('.plots-window .bode-corners').textContent`);
     const before = await corners();
-    await h.evaluate(`(() => { const input = [...document.querySelectorAll('#analysis-panel-bode .bode-sliders input[type=range]')].find((i) => i.getAttribute('aria-label') === 'CC'); input.value = String(Number(input.value) + 24); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-    assert.notEqual(await corners(), before, 'moving C_C moves the corners');
+    // Typed: C_C twice as large.
+    await h.evaluate(`(() => { const f = document.querySelector('#analysis-values .bode-value[data-name="CC"] .signal-flow-coefficient-value'); f.value = '2'; f.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    assert.notEqual(await corners(), before, 'a typed value moves the corners');
+    assert.equal((await bode()).values.multipliers.CC, 2);
+    // Its slider follows the field.
+    assert.equal(await h.evaluate(`document.querySelector('#analysis-values .bode-value[data-name="CC"] input[type=range]').value`), '7');
+    await h.evaluate(`document.querySelector('#analysis-values .bode-values-actions button').click()`);
+    assert.deepEqual((await bode()).values.multipliers, {});
   });
 
-  test('a Bode slider dragged stays under the pointer: the plot is redrawn in place, the form is not rebuilt', async () => {
-    // The tab is as the last test left it: the Miller buffer's many sliders.
-    const sliders = `[...document.querySelectorAll('#analysis-panel-bode .bode-sliders input[type=range]')]`;
-    await h.evaluate(`${sliders}.at(-1).scrollIntoView({ block: 'start' })`);
+  test('each Derive adds its gain beside the others; the graph shows phase, takes other quantities, and goes on the drawing', async () => {
+    // The same quantity again replaces itself; another input is another trace.
+    await h.click('#analysis-submit');
+    await h.until(`!document.getElementById('analysis-result').hidden`, 60000);
+    assert.equal((await bode()).traces.length, 1);
+    await h.evaluate(`document.getElementById('analysis-options').open = true`);
+    if (await checked('analysis-parasitics')) await h.click('#analysis-parasitics');
+    await pick('analysis-input', 'VINP');
+    await h.click('#analysis-submit');
+    await h.until(`${h.module('bode-ui.js')}.then((m) => m.bodeSnapshot().traces.length === 2)`, 60000);
+    const [first, second] = (await bode()).traces;
+    assert.notEqual(first.color, second.color);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-row').length`), 2);
+    // Phase, then back.
+    assert.equal(await plotsButton('Phase'), true);
+    assert.equal((await bode()).view, 'phase');
+    await h.until(`/°/.test(document.querySelector('.plots-window .bode-plots-graph').textContent)`);
+    await plotsButton('Magnitude');
+    // Another quantity of the last Derive: a switch, on and off and on again.
+    const pressed = (text) => h.evaluate(`[...document.querySelectorAll('.plots-window .bode-add button')].find((b) => b.textContent.trim() === ${JSON.stringify(text)}).getAttribute('aria-pressed')`);
+    assert.equal(await pressed('Voltage gain'), 'true');
+    assert.equal(await pressed('Output impedance'), 'false');
+    assert.equal(await plotsButton('Output impedance'), true);
+    assert.deepEqual((await bode()).traces.map((t) => t.key), ['transfer', 'transfer', 'output']);
+    assert.equal(await pressed('Output impedance'), 'true');
+    await plotsButton('Output impedance');
+    assert.deepEqual((await bode()).traces.map((t) => t.key), ['transfer', 'transfer']);
+    assert.equal(await pressed('Output impedance'), 'false');
+    await plotsButton('Output impedance');
+    assert.deepEqual((await bode()).traces.map((t) => t.key), ['transfer', 'transfer', 'output']);
+    // One trace removed, one hidden: Place sketch draws the one left shown.
+    await h.evaluate(`document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-remove')[2].click()`);
+    await h.evaluate(`(() => { const c = document.querySelectorAll('.plots-window .bode-legend input[type=checkbox]')[1]; c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const boxes = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.plot).map((l) => l.plot.kind || 'sketch'))`);
+    const placed = (await boxes()).length;
+    assert.equal(await plotsButton('Place sketch'), true);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.plot).length === ${placed + 1})`);
+    // Both shown: Annotate graph puts the two curves on the drawing, named.
+    await h.evaluate(`(() => { const c = document.querySelectorAll('.plots-window .bode-legend input[type=checkbox]')[1]; c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    assert.equal(await plotsButton('Annotate graph'), true);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.plot?.kind === 'response' && l.plot.traces.length === 2))`);
+    await plotsButton('Clear graph');
+    assert.deepEqual((await bode()).traces, []);
+    assert.equal(await shown('#analysis-values'), false);
+  });
+
+  test('a value slider dragged stays under the pointer while the plots follow, and the form is not rebuilt', async () => {
+    await h.click('#analysis-submit');
+    await h.until(`${h.module('bode-ui.js')}.then((m) => m.bodeSnapshot().traces.length === 1)`, 60000);
+    // The plots aside: the analysis window is in reach.
+    if (await shown('.plots-window')) await h.key('W', { shiftKey: true });
+    const sliders = `[...document.querySelectorAll('#analysis-values .bode-value input[type=range]')]`;
+    await h.evaluate(`${sliders}.at(-1).scrollIntoView({ block: 'center' })`);
     await sleep(200);
     // A slider the pointer can reach (the log covers the window's foot).
     const hit = await h.evaluate(`(() => { for (const [i, input] of ${sliders}.entries()) { const r = input.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; if (document.elementFromPoint(x, y) === input) return { i, x, y }; } return null; })()`);
@@ -202,5 +283,13 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.mouse('mouseReleased', hit.x + 64, hit.y);
     assert.notEqual(await h.evaluate(`${sliders}[${hit.i}].value`), start, 'the drag moved the slider');
     assert.equal(await h.evaluate(`document.getElementById('analysis-input').options[1] === window.__option`), true, 'the form was not rebuilt');
+    // One undo takes the whole drag back.
+    const values = (await bode()).values;
+    assert.ok(Object.keys(values.multipliers).length || values.intrinsicGain !== 30);
+    await h.key('u');
+    await sleep(200);
+    const undone = (await bode()).values;
+    assert.deepEqual(undone.multipliers, {});
+    assert.equal(undone.intrinsicGain, 30);
   });
 });

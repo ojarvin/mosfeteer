@@ -25,7 +25,7 @@ import { locusSpec, responseSpec, stepSpec, swingSpec } from '../core/plot-spec.
 import { createPlotView, linkPlots } from './plot-view.js';
 import { arriving } from './motion.js';
 import { installTimePlot, runTime, timeChanged, timePlotUpdate, timeSection } from './time-plot.js';
-import { installPlotsWindow, offerPlots, plotsShown, showPlots } from './plots-window.js';
+import { installPlotsWindow, offerPlots, plotsShown, setPlotsMode, showPlots } from './plots-window.js';
 import { stepPlot } from '../core/analysis/step.js';
 import { locusPlot, locusSteps, rootLocus } from '../core/analysis/locus.js';
 import { dbfsOffset, dbfsSpectrum, inBand, outputSpectrum, plotSpectrum } from '../core/analysis/spectrum.js';
@@ -136,6 +136,7 @@ function setMode(next, { user = false } = {}) {
   for (const button of modeBar.querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
   const title = document.getElementById('analysis-dialog-title');
   if (title) title.textContent = flow ? 'Signal-flow analysis' : 'Small-signal analysis';
+  setPlotsMode(flow ? 'signal-flow' : 'circuit');
   if (flow) {
     fillForm();
     renderPlots();
@@ -1124,6 +1125,13 @@ function annotateGraph() {
 
 const PLOT_LEGEND_ROLE = 'plot-legend';
 
+/** A response plot (signal-flow.js `responsePlot`'s shape) on the drawing,
+ *  as Annotate graph puts this graph there: `shown` names its traces
+ *  ({ label, color }). The small-signal Bode graph's annotation. */
+export function placeResponsePlot(plot, shown) {
+  placePlot(plot, shown, []);
+}
+
 /**
  * A plot on the drawing. Annotating again replaces the data of the plot of
  * that kind already there -- the selected one (or the one whose legend is
@@ -1368,11 +1376,26 @@ function appendSqnr(block, entry, ntf) {
   ]));
 }
 
+/** A result's switch: pressed while its response is on the graph, pressed
+ *  again to take it off. */
 function appendTraceButton(block, entry) {
   const id = `${latest.output.key}\n${entry.input}\n${entry.equation}`;
   const plotted = traces.some((trace) => trace.id === id);
   block.append(el('div', { class: 'signal-flow-entry-actions' }, [
-    el('button', { type: 'button', text: plotted ? 'On the graph' : 'Add to graph', disabled: plotted, onclick: () => { addTrace(entry, latest.variable, latest.output); renderCoefficients(); renderResults(); showPlots(); } }),
+    el('button', {
+      type: 'button',
+      text: 'On the graph',
+      'aria-pressed': String(plotted),
+      title: plotted ? 'On the graph: press to take it off' : 'Put this response on the graph',
+      onclick: () => {
+        if (plotted) traces = traces.filter((trace) => trace.id !== id);
+        else addTrace(entry, latest.variable, latest.output);
+        renderCoefficients();
+        renderResults();
+        renderGraph();
+        if (!plotted) showPlots();
+      },
+    }),
   ]));
 }
 
@@ -1523,7 +1546,7 @@ export function installSignalFlowUi() {
     fillForm();
   });
   plots = el('div', { class: 'signal-flow-plots-view' }, [
-    el('p', { class: 'field-hint signal-flow-plots-empty', text: 'The plots are a signal-flow diagram\'s: draw one (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S). A circuit\'s Bode plot is in the analysis window.' }),
+    el('p', { class: 'field-hint signal-flow-plots-empty', text: 'The plots are a signal-flow diagram\'s: draw one (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S).' }),
     el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
     el('div', { class: 'signal-flow-graph' }),
     locusSection(),
@@ -1531,13 +1554,15 @@ export function installSignalFlowUi() {
     loopSection(),
     timeSection(),
   ]);
-  installPlotsWindow({ view: plots, shown: refreshPlots });
+  installPlotsWindow({ mode: 'signal-flow', view: plots, shown: refreshPlots });
   installTimePlot({ flow, resolved, placePlot: (plot, shown, used) => placePlot(plot, shown, used), symbols: () => currentSymbols(), visible: () => plotsShown() && graphView() === 'time' });
   // Another document starts clean: its own mode, none of the last one's results.
   onDocumentShown(() => {
     chosenThisSession = false;
     clearResults();
     if (!analysisDialog.hidden) setMode(suggestedMode());
+    // The Plots window shows what this drawing is, the analysis window shut.
+    else setPlotsMode(suggestedMode() === 'signal-flow' ? 'signal-flow' : 'circuit');
   });
   // Each opening picks the mode the drawing suggests, unless it was chosen.
   new MutationObserver(() => {

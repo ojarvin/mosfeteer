@@ -13,7 +13,7 @@ import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
-import { renderBode, syncBodePlace } from './bode-ui.js';
+import { installBodeUi, renderBode, syncBodePlace } from './bode-ui.js';
 import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
@@ -122,6 +122,8 @@ function fillAnalysisDialog(targetNetId) {
   }
   fillNoiseSources();
   fillLoopElements();
+  // Filled without events: the folded Options say what is chosen now.
+  optionsSummarySync();
   return defaults;
 }
 
@@ -142,6 +144,8 @@ function parseAnalysisList(value) {
 }
 
 let latestAnalysisReport = null;
+// Refreshes the folded Options' summary (installOptionsSummary).
+let optionsSummarySync = () => {};
 
 export function clearLatestAnalysisResult() {
   latestAnalysisReport = null;
@@ -262,6 +266,7 @@ function restoreAnalysisForm(defaults = {}) {
     setNoiseInputs(options);
     annotationExcluded = new Set();
     collapsedGroups = new Set();
+    optionsSummarySync();
     return false;
   }
   const state = readAnalysisFormState(saved);
@@ -291,6 +296,8 @@ function restoreAnalysisForm(defaults = {}) {
   setNoiseInputs(state.options);
   annotationExcluded = new Set(state.annotationExcluded);
   collapsedGroups = new Set(state.collapsedGroups);
+  // Filled without events: the folded Options say what is chosen now.
+  optionsSummarySync();
   return true;
 }
 
@@ -736,7 +743,7 @@ function renderAnalysisResult(report) {
     renderSmallSignalModel(null);
     if (analysisModelPanel) analysisModelPanel.hidden = true;
     renderBode(null);
-    for (const id of ['analysis-tab-netlist', 'analysis-tab-model', 'analysis-tab-bode']) {
+    for (const id of ['analysis-tab-netlist', 'analysis-tab-model']) {
       const tab = document.getElementById(id);
       if (tab) tab.disabled = true;
     }
@@ -782,9 +789,9 @@ function renderAnalysisResult(report) {
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
   if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
-  const plotted = renderBode(report);
+  renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
-  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn) || (selectedTab === 'bode' && !plotted);
+  const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
   setAnalysisResultTab(stillAvailable ? 'equations' : selectedTab);
 }
 
@@ -1110,6 +1117,38 @@ function installSettingsUndo(root) {
   root.addEventListener('click', (ev) => { if (ev.target?.closest?.('button')) end(); });
 }
 
+/**
+ * The Options fold under the signals, as signal flow keeps only its signals
+ * in view: its summary says what is chosen that is not the default, so
+ * nothing changes the result unseen while it is folded.
+ */
+function installOptionsSummary() {
+  const details = document.getElementById('analysis-options');
+  const summary = document.getElementById('analysis-options-summary');
+  if (!details || !summary) return;
+  const sync = () => {
+    const on = (id) => !!document.getElementById(id)?.checked;
+    const chosen = [
+      ...analysisTransferInputs.filter((input) => input.checked && input.dataset.transferFunction !== 'Av').map((input) => input.dataset.transferFunction.replace(/^(.)(.)$/, '$1_$2')),
+      ...(analysisTransferInputs.some((input) => input.dataset.transferFunction === 'Av' && !input.checked) ? ['no A_v'] : []),
+      ...(analysisLoopElement?.value ? [`loop gain at ${analysisLoopElement.value}`] : []),
+      ...(!on('analysis-approx-body') ? ['body effect'] : []),
+      ...(on('analysis-approx-ro') ? ['r_o → ∞'] : []),
+      ...(!on('analysis-approx-miller') ? ['no Miller'] : []),
+      ...(on('analysis-parasitics') ? ['C_gs, C_gd'] : []),
+      ...(!on('analysis-approx-gmro') ? ['finite g_m r_o'] : []),
+      ...(on('analysis-approx-dominant-pole') ? ['dominant pole'] : []),
+      ...(on('analysis-noise-thermal') || on('analysis-noise-flicker') ? ['noise'] : []),
+      ...(document.getElementById('analysis-device-regions')?.value.trim() ? ['triode devices'] : []),
+    ];
+    summary.textContent = chosen.length ? `· ${chosen.join(', ')}` : '· defaults';
+  };
+  details.addEventListener('input', sync);
+  details.addEventListener('change', sync);
+  sync();
+  optionsSummarySync = sync;
+}
+
 /** Another document is shown: no result from the last one, and an open
  *  window shows this one's own form. */
 function showDocumentAnalysis() {
@@ -1128,6 +1167,8 @@ function showDocumentAnalysis() {
 
 export function installAnalysisUi() {
   onDocumentShown(showDocumentAnalysis);
+  installBodeUi();
+  installOptionsSummary();
   // Long explanations in the window fold to their first sentence.
   installHintFolding(analysisDialog);
   installSettingsUndo(analysisDialog);

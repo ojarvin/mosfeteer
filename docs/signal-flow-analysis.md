@@ -129,7 +129,9 @@ The plots are in a window of their own, **Plots** (`Shift+W`, its
 toolbar button, or More; `src/web/plots-window.js`), a tab per view:
 Magnitude, Phase, Step, Locus, Swing, Loop, and Time. Derive opens it,
 unless it was closed since it was last shown; **Show plots** in the
-analysis window's Plots card (which holds the signal band) opens it too.
+analysis window's Plots card (which holds the signal band) opens it too. A
+circuit's Bode plots share the window, shown in the analysis window's
+circuit mode (symbolic-analysis.md, Bode plots).
 The Loop tab is offered only for a diagram with feedback
 (`feedbackSignals`), and only signals on a loop are offered to break it;
 the simulated output spectrum (on the Magnitude tab) only for a diagram
@@ -137,7 +139,7 @@ with a quantizer. The swing's and the time view's nets are picked in one
 picker (`src/web/net-picker.js`), every net in view.
 
 Every plot -- the graph, the step, swing, locus, loop, and time views, the
-optimizer's run, the Bode tab -- is one interactive plot
+optimizer's run, a circuit's Bode plots -- is one interactive plot
 (`src/web/plot-view.js`, its specs in `src/core/plot-spec.js`): drag pans,
 right-drag zooms to a box (a flat stroke along x only, a tall one along y
 only), a right-click steps back out, Ctrl+wheel or a pinch zooms, a
@@ -170,8 +172,8 @@ rate: f/fs = ω/2π, to 1/2). On f/fs, s and z results share one graph; a z
 result puts the whole graph there. The choice is saved with the document
 (`analysisValues.sAxis`); `z` always plots over `f/fs` from `10^-4` to
 `1/2`. Traces stay across derives, so responses from different settings or
-outputs can be compared; each can be hidden or removed, and **Add to graph**
-brings a removed one back. **Annotate graph**
+outputs can be compared; each can be hidden or removed, and each result's
+**On the graph** switch takes its response off the graph or puts it back. **Annotate graph**
 puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
 traces' names as math labels in their colours beside it, children of its

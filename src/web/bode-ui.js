@@ -1,82 +1,81 @@
 /**
- * The analysis panel's Bode tab: a relative sketch of a port quantity
- * (core/analysis/bode.js). Every g_m starts at one unit, every r_o and
- * resistor at g_m r_o units, capacitors at one unit (loads on the output at
- * ten); sliders scale any of them by ratios, and the plot, its poles and
- * zeros, and their names follow at once.
+ * The small-signal analysis's Bode plots, laid out as the signal-flow
+ * analysis lays out its own: the graph in the Plots window (plots-window.js,
+ * Shift+W), its traces kept across derives so responses -- a gain and a
+ * supply's way to the output, say -- can be set side by side, and the
+ * numbers they are drawn at under **Values** in the analysis window, a
+ * slider and a field for each.
  *
- * A_v, Z_in, and Z_out are plotted from the full model solved in numbers at
- * those values (the report's `numericModel`, engine.js `numericSmallSignal`):
- * the plot is the deliverable, so it does not wait on the symbolic solve,
- * fail with it, or take its approximations. The loop gain is plotted from
- * its derived coefficients.
+ * Every g_m starts at one unit g, every r_o and resistor at g_m r_o units,
+ * capacitors at one unit C (loads on the output at ten); a value scales any
+ * of them. A_v, Z_in, and Z_out are drawn from the full model solved in
+ * numbers at those values (a report's `numericModel`, engine.js
+ * `numericSmallSignal`): the plot is the deliverable, so it does not wait
+ * on the symbolic solve, fail with it, or take its approximations. The
+ * loop gain is drawn from its derived coefficients.
  */
 
 import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
 import {
   DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
-  sketchParameters, sketchValues,
+  responseAt, sketchParameters, sketchValues,
 } from '../core/analysis/bode.js';
+import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
 import { renderExpression } from '../core/analysis/present.js';
 import { negate } from '../core/analysis/rational.js';
 import { cornerNames } from '../core/bode-figure.js';
-import { bodeSpecs } from '../core/plot-spec.js';
-import { createPlotView, linkPlots } from './plot-view.js';
+import { bodeSpecs, responseSpec } from '../core/plot-spec.js';
+import { createPlotView } from './plot-view.js';
 import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
+import { element as el } from './dom.js';
 import { editor } from './editor-state.js';
-import { commit, markSettingsChanged, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
+import { commit, markSettingsChanged, onDocumentShown, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
 import { fitView } from './canvas-view.js';
 import { logLine } from './status-bar-ui.js';
+import { installPlotsWindow, offerPlots, plotsShown, showPlots } from './plots-window.js';
+import { placeResponsePlot } from './signal-flow-ui.js';
 import { GRID, snap } from '../core/grid.js';
 
-const QUANTITIES = [
-  { key: 'transfer', label: 'Voltage gain', tex: 'A_{v}' },
-  { key: 'output', label: 'Output impedance', tex: 'Z_{out}' },
-  { key: 'input', label: 'Input impedance', tex: 'Z_{in}' },
-  { key: 'loop', label: 'Loop gain', tex: 'T' },
-];
-
+const QUANTITIES = {
+  transfer: { name: 'Voltage gain', tex: 'A_{v}' },
+  output: { name: 'Output impedance', tex: 'Z_{out}' },
+  input: { name: 'Input impedance', tex: 'Z_{in}' },
+  loop: { name: 'Loop gain', tex: 'T' },
+};
+const NUMERIC_KEYS = new Set(['transfer', 'input', 'output']);
 const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance', 'other'];
 
-/** The ratios a document was left at (Circuit#analysisValues.bode): the
- *  sketch opens with them. */
+/**
+ * The graph's traces, kept across derives: { id, key (a QUANTITIES key),
+ * label (TeX), color, report (the derive it came from), on }. The latest
+ * report is the one the Add buttons offer quantities from.
+ */
+let traces = [];
+let latest = null;
+let view = 'magnitude';
+let withPhase = false;
+
+/** The values the plots are drawn at (Circuit#analysisValues.bode). */
+const ratios = { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} };
+
 function loadRatios() {
   const saved = editor.circuit.analysisValues?.bode;
-  state.intrinsicGain = saved?.intrinsicGain || DEFAULT_INTRINSIC_GAIN;
-  state.parasiticRatio = saved?.parasiticRatio || DEFAULT_PARASITIC_RATIO;
-  state.multipliers = { ...(saved?.multipliers || {}) };
+  ratios.intrinsicGain = saved?.intrinsicGain || DEFAULT_INTRINSIC_GAIN;
+  ratios.parasiticRatio = saved?.parasiticRatio || DEFAULT_PARASITIC_RATIO;
+  ratios.multipliers = { ...(saved?.multipliers || {}) };
 }
 
 let saveFrame = 0;
-/** Keep the ratios with the document, once a frame while a slider moves. */
+/** Keep the values with the document, once a frame while a slider moves. */
 function saveRatios() {
   if (saveFrame) return;
   saveFrame = requestAnimationFrame(() => {
     saveFrame = 0;
-    const defaults = state.intrinsicGain === DEFAULT_INTRINSIC_GAIN && state.parasiticRatio === DEFAULT_PARASITIC_RATIO && !Object.keys(state.multipliers).length;
-    editor.circuit.analysisValues.bode = defaults ? null : { intrinsicGain: state.intrinsicGain, parasiticRatio: state.parasiticRatio, multipliers: { ...state.multipliers } };
+    const defaults = ratios.intrinsicGain === DEFAULT_INTRINSIC_GAIN && ratios.parasiticRatio === DEFAULT_PARASITIC_RATIO && !Object.keys(ratios.multipliers).length;
+    editor.circuit.analysisValues.bode = defaults ? null : { intrinsicGain: ratios.intrinsicGain, parasiticRatio: ratios.parasiticRatio, multipliers: { ...ratios.multipliers } };
     markSettingsChanged();
   });
-}
-
-/** Ratios chosen so far, by symbol: they outlast a re-analysis. */
-const state = {
-  quantity: 'transfer',
-  withPhase: false,
-  intrinsicGain: DEFAULT_INTRINSIC_GAIN,
-  parasiticRatio: DEFAULT_PARASITIC_RATIO,
-  multipliers: {},
-  report: null,
-};
-
-const panelEl = () => document.getElementById('analysis-panel-bode');
-
-// ----- steps ---------------------------------------------------------------------
-
-/** A slider's plain readout: ×0.002, ×1, ×500. */
-function ratioText(value) {
-  return `×${Number(value.toPrecision(3))}`;
 }
 
 /** A number as a reader wants it: 3 significant figures, powers of ten when
@@ -97,52 +96,36 @@ function formatNumber(value) {
   return String(Number(value.toPrecision(3)));
 }
 
-// ----- the model -------------------------------------------------------------------
+function mathElement(tex, tag = 'span') {
+  const element = document.createElement(tag);
+  element.className = 'bode-math';
+  element.innerHTML = texToMathML(tex);
+  return element;
+}
+
+// ----- the model ---------------------------------------------------------------------
 
 function exactOf(report, key) {
   const exact = report?.reports?.[key]?.exact;
   return exact?.numeratorCoefficients && exact?.denominatorCoefficients ? exact : null;
 }
 
-const NUMERIC_KEYS = new Set(['transfer', 'input', 'output']);
-
-/** Every parameter of the numeric model and its value at the sliders: the
- *  ones the ports reach get sliders. */
-function numericParameters(report) {
-  const model = report?.numericModel;
-  if (!model?.ok) return null;
-  const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
-  return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)), values: sketchValues(all, state) };
-}
-
-let numericMemo = null;
-/** The numeric quantity `key` at the sliders' values, or null: solved once
- *  per set of values, however often the tab redraws. */
-function numericOf(report, key) {
-  if (!NUMERIC_KEYS.has(key)) return null;
-  const parameters = numericParameters(report);
-  if (!parameters) return null;
-  const memoKey = JSON.stringify(parameters.values);
-  if (numericMemo?.model !== report.numericModel || numericMemo.key !== memoKey) {
-    numericMemo = { model: report.numericModel, key: memoKey, result: report.numericModel.at(parameters.values) };
+/** A trace's parameters: every one its model stamps (each needs a value),
+ *  and those the ports reach (the ones worth a slider). */
+function parametersOf(trace) {
+  const { report, key } = trace;
+  if (NUMERIC_KEYS.has(key)) {
+    const model = report.numericModel;
+    if (!model?.ok) return null;
+    const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
+    return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)) };
   }
-  const quantity = numericMemo.result.ok ? numericMemo.result.quantities[key] : null;
-  // A quantity that is zero, or does not change with frequency, has nothing to sketch.
-  if (!quantity || quantity.zero || !(quantity.zeros.length || quantity.poles.length)) return null;
-  return { parameters, quantity };
-}
-
-/** Whether `key` can be plotted: from the numeric model, or (the loop gain)
- *  from derived coefficients that carry s. */
-function plottable(report, key) {
-  if (NUMERIC_KEYS.has(key) && report?.numericModel?.ok) return !!numericOf(report, key);
   const exact = exactOf(report, key);
-  return !!exact && (exact.numeratorDegree > 0 || exact.denominatorDegree > 0);
-}
-
-/** Whether a report has anything with a frequency to plot. */
-function bodeAvailable(report) {
-  return QUANTITIES.some(({ key }) => plottable(report, key));
+  if (!exact) return null;
+  const symbols = new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
+    .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]));
+  const all = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(report) });
+  return { all, reached: all };
 }
 
 function outputComponents(report) {
@@ -151,30 +134,44 @@ function outputComponents(report) {
   return new Set(net ? net.terminals.map((terminal) => terminal.comp) : []);
 }
 
-function currentModel() {
-  const report = state.report;
-  const numeric = numericOf(report, state.quantity);
-  const exact = numeric ? null : exactOf(report, state.quantity);
-  if (!numeric && !exact) return null;
-  let parameters;
-  let values;
+const solved = new WeakMap(); // numericModel -> { key, result }
+/** A report's numeric quantities at `values`: solved once per set of
+ *  values, however often the plots redraw. */
+function numericAt(model, values) {
+  const key = JSON.stringify(values);
+  const memo = solved.get(model);
+  if (memo?.key === key) return memo.result;
+  const result = model.at(values);
+  solved.set(model, { key, result });
+  return result;
+}
+
+/** A trace at the current values: { sketch, corners, values } or null when
+ *  it has nothing to plot (zero, or the same at every frequency). */
+function sketchOf(trace) {
+  const parameters = parametersOf(trace);
+  if (!parameters) return null;
+  const values = sketchValues(parameters.all, ratios);
   let sketch;
-  if (numeric) {
-    const { quantity } = numeric;
-    ({ values } = numeric.parameters);
-    parameters = numeric.parameters.reached;
+  let response;
+  if (NUMERIC_KEYS.has(trace.key)) {
+    const result = numericAt(trace.report.numericModel, values);
+    const quantity = result.ok ? result.quantities[trace.key] : null;
+    if (!quantity || quantity.zero || !(quantity.zeros.length || quantity.poles.length)) return null;
     sketch = bodeSketch(quantity.numerator, quantity.denominator, { roots: { zeros: quantity.zeros, poles: quantity.poles }, response: quantity.response });
+    response = quantity.response;
   } else {
-    const symbols = new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
-      .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]));
-    parameters = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(report) });
-    values = sketchValues(parameters, state);
-    sketch = bodeSketch(numericCoefficients(exact.numeratorCoefficients, values), numericCoefficients(exact.denominatorCoefficients, values));
+    const exact = exactOf(trace.report, trace.key);
+    if (!exact || !(exact.numeratorDegree > 0 || exact.denominatorDegree > 0)) return null;
+    const num = numericCoefficients(exact.numeratorCoefficients, values);
+    const den = numericCoefficients(exact.denominatorCoefficients, values);
+    sketch = bodeSketch(num, den);
+    response = (omega) => responseAt(num, den, omega);
   }
   const corners = cornerNames(sketch.poles, sketch.zeros);
   // A corner whose factor is first order has its exact expression, when the
   // equations have it at the same place.
-  const derived = report.reports?.[state.quantity] || {};
+  const derived = trace.report.reports?.[trace.key] || {};
   const symbolic = [...(derived.poles || []).map((root) => ({ ...root, kind: 'pole' })),
     ...(derived.zeros || []).map((root) => ({ ...root, kind: 'zero' }))];
   for (const corner of corners) {
@@ -188,281 +185,258 @@ function currentModel() {
       }
     }
   }
-  const found = QUANTITIES.find((q) => q.key === state.quantity);
-  // An ideal opamp's loop is its feedback factor (T = A beta, A infinite).
-  const quantity = found.key === 'loop' && report.reports.loop?.infinite ? { ...found, label: 'Feedback factor', tex: '\\beta' } : found;
-  return { parameters, values, sketch, corners, quantity, numeric: !!numeric };
+  return { sketch, corners, values, response };
 }
 
-// ----- drawing -----------------------------------------------------------------------
-
-function mathElement(tex, tag = 'span') {
-  const element = document.createElement(tag);
-  element.className = 'bode-math';
-  element.innerHTML = texToMathML(tex);
-  return element;
+/** Whether `key` of a report has anything to plot. */
+function plottable(report, key) {
+  if (!report) return false;
+  return !!sketchOf({ report, key });
 }
 
-function emphasize(components) {
-  const next = components.filter(Boolean);
-  if (next.join(' ') === editor.equationEmphasis.join(' ')) return;
-  editor.equationEmphasis = next;
-  render();
+// ----- traces -------------------------------------------------------------------------
+
+/** A net's name for a trace's label, as signal flow writes its ratios. */
+const nameOf = (port) => String(port?.name || port?.netId || '?');
+
+function traceOf(report, key) {
+  const input = nameOf(report.inputPort);
+  const output = nameOf(report.outputPort);
+  const element = report.reports?.loop?.element || report.analysisOptions?.loopElement || '';
+  const label = key === 'transfer' ? `\\frac{${output}}{${input}}`
+    : key === 'output' ? `Z_{out}(${output})`
+      : key === 'input' ? `Z_{in}(${input})`
+        : report.reports?.loop?.infinite ? `\\beta_{${element}}` : `T_{${element}}`;
+  // One trace per quantity between the same nets: a newer derive replaces it.
+  return { id: `${key}\n${input}\n${output}\n${key === 'loop' ? element : ''}`, key, label, report, on: true };
 }
 
-function slider({ label, tex, index, min, max, text, onInput, components = [], title = '' }) {
-  const row = document.createElement('label');
-  row.className = 'bode-slider';
-  if (title) row.title = title;
-  const name = tex ? mathElement(tex) : document.createElement('span');
-  if (!tex) name.textContent = label;
-  name.classList.add('bode-slider-name');
-  const input = document.createElement('input');
-  input.type = 'range';
-  input.min = String(min);
-  input.max = String(max);
-  input.step = '1';
-  input.value = String(index);
-  input.setAttribute('aria-label', label);
-  const value = document.createElement('span');
-  value.className = 'bode-slider-value';
-  value.textContent = text(index);
-  input.addEventListener('input', () => {
-    sliding = true;
-    value.textContent = text(Number(input.value));
-    onInput(Number(input.value));
-  });
-  // Let go: the corner list may take its own height again.
-  input.addEventListener('change', () => {
-    sliding = false;
-    const list = panelEl()?.querySelector('.bode-corners');
-    if (list) list.style.minHeight = '';
-  });
-  if (components.length) {
-    row.addEventListener('pointerenter', () => emphasize(components));
-    row.addEventListener('pointerleave', () => emphasize([]));
-    input.addEventListener('focus', () => emphasize(components));
-    input.addEventListener('blur', () => emphasize([]));
+function addTrace(report, key) {
+  const fresh = traceOf(report, key);
+  const old = traces.find((trace) => trace.id === fresh.id);
+  if (old) {
+    old.report = report;
+    old.label = fresh.label;
+    return;
   }
-  row.append(name, input, value);
+  const used = new Set(traces.map((trace) => trace.color));
+  fresh.color = TRACE_COLORS.find((color) => !used.has(color)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  traces.push(fresh);
+}
+
+const shownTraces = () => traces.filter((trace) => trace.on);
+
+// ----- the Plots window ------------------------------------------------------------------
+
+let plotsEl = null;
+let graph = null;
+
+function viewButton(value, text, title) {
+  return el('button', { type: 'button', text, title, 'aria-pressed': String(view === value), onclick: () => { view = value; renderPlots(); } });
+}
+
+/** The sketches of the shown traces, at the current values. */
+function shownSketches() {
+  return shownTraces().map((trace) => ({ trace, ...(sketchOf(trace) || {}) })).filter((entry) => entry.sketch);
+}
+
+const POINTS_PER_DECADE = 40;
+
+/** The graph as a response plot (signal-flow.js `responsePlot`'s shape):
+ *  what the Plots window and an annotation draw. Every trace over the range
+ *  they span together, each from its own exact response. */
+function responsePlotOf(sketches, quantity = view) {
+  if (!sketches.length) return null;
+  const low = Math.min(...sketches.map(({ sketch }) => sketch.range.low));
+  const high = Math.max(low + 1, ...sketches.map(({ sketch }) => sketch.range.high));
+  const grid = Array.from({ length: (high - low) * POINTS_PER_DECADE + 1 }, (_, i) => 10 ** (low + i / POINTS_PER_DECADE));
+  return {
+    kind: 'response',
+    axis: 'omega',
+    range: { low, high },
+    ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
+    traces: sketches.map(({ trace, response }) => {
+      let previous = null;
+      return {
+        label: trace.label,
+        color: trace.color,
+        points: grid.map((f) => {
+          const h = response(f);
+          if (quantity !== 'phase') return { f, db: 20 * Math.log10(Math.hypot(h.re, h.im)) };
+          // Unwrapped, as the sketch's own phase is.
+          let phase = (Math.atan2(h.im, h.re) * 180) / Math.PI;
+          if (previous !== null) {
+            while (phase - previous > 180) phase -= 360;
+            while (phase - previous < -180) phase += 360;
+          }
+          previous = phase;
+          return { f, db: phase };
+        }),
+      };
+    }),
+  };
+}
+
+/** One trace shown: its textbook sketch, asymptote and corners marked;
+ *  several: their curves together. */
+function graphSpec(sketches) {
+  if (sketches.length === 1) {
+    const [{ trace, sketch, corners }] = sketches;
+    const spec = bodeSpecs(sketch, { corners, quantity: trace.label, ...(trace.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })[view];
+    return { ...spec, key: `bode:${view}:${trace.id}`, series: spec.series.map((series) => (series.role === 'curve' ? { ...series, color: trace.color } : series)) };
+  }
+  const spec = responseSpec(responsePlotOf(sketches));
+  return { ...spec, key: `bode:${view}:traces`, x: { ...spec.x, label: 'ω (g/C)' } };
+}
+
+/** A slider is being moved: the corner lists keep their height till it is let go. */
+let sliding = false;
+
+function renderPlots() {
+  if (!plotsEl) return;
+  const head = plotsEl.querySelector('.bode-plots-head');
+  const host = plotsEl.querySelector('.bode-plots-graph');
+  const empty = plotsEl.querySelector('.bode-plots-empty');
+  const list = plotsEl.querySelector('.bode-corners');
+  empty.hidden = traces.length > 0;
+  head.hidden = !traces.length && !latest;
+  head.replaceChildren(
+    el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Plot' }, [
+      viewButton('magnitude', 'Magnitude', 'The magnitudes, in dB'),
+      viewButton('phase', 'Phase', 'The phases, in degrees'),
+    ]),
+    addButtons(),
+  );
+  if (sliding) list.style.minHeight = `${Math.max(parseFloat(list.style.minHeight) || 0, list.offsetHeight)}px`;
+  list.replaceChildren();
+  const sketches = shownSketches();
+  // The plot stays in place while it redraws (a zoomed view stays too).
+  if (!graph) graph = createPlotView({ height: 260, aspect: 0.6 });
+  if (sketches.length) {
+    if (graph.el.parentNode !== host) host.replaceChildren(graph.el);
+    graph.set(graphSpec(sketches));
+  } else {
+    host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
+  }
+  renderLegend();
+  for (const entry of sketches) appendCorners(list, entry, sketches.length > 1);
+}
+
+/** The latest derive's quantities, each a switch: pressed while its trace
+ *  is on the graph, pressed again to take it off. */
+function addButtons() {
+  const row = el('div', { class: 'bode-add', role: 'group', 'aria-label': 'On the graph' });
+  if (!latest) return row;
+  for (const key of ['transfer', 'output', 'input', 'loop']) {
+    if (!plottable(latest, key)) continue;
+    const id = traceOf(latest, key).id;
+    const on = traces.some((trace) => trace.id === id);
+    row.append(el('button', {
+      type: 'button',
+      class: 'bode-add-toggle',
+      text: QUANTITIES[key].name,
+      'aria-pressed': String(on),
+      title: on ? 'On the graph: press to take it off' : `Put the last Derive's ${QUANTITIES[key].name.toLowerCase()} on the graph`,
+      onclick: () => {
+        if (on) traces = traces.filter((trace) => trace.id !== id);
+        else addTrace(latest, key);
+        renderValues();
+        renderPlots();
+      },
+    }));
+  }
   return row;
 }
 
-
-/** A slider is being moved (between its first input and its change). */
-let sliding = false;
-
-// The magnitude and the phase, two plots sharing their frequency axis
-// (plot-view.js), kept across redraws so a zoomed view stays while a slider moves.
-let plots = null;
-function bodePlots() {
-  if (!plots) {
-    plots = { magnitude: createPlotView({ height: 200, aspect: 0.55 }), phase: createPlotView({ height: 130, aspect: 0.36 }) };
-    linkPlots(plots.magnitude, plots.phase);
+function renderLegend() {
+  const legend = plotsEl.querySelector('.bode-legend');
+  legend.replaceChildren();
+  for (const trace of traces) {
+    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
+    check.checked = trace.on;
+    check.addEventListener('change', () => { trace.on = check.checked; renderPlots(); });
+    const math = el('span', { class: 'signal-flow-legend-math' });
+    math.innerHTML = texToMathML(trace.label);
+    math.style.color = trace.color;
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); } });
+    legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
   }
-  return plots;
+  const actions = plotsEl.querySelector('.bode-plots-actions');
+  const one = shownSketches().length === 1;
+  actions.hidden = !traces.length;
+  actions.replaceChildren(
+    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
+    el('button', { type: 'button', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !shownTraces().length, onclick: annotateGraph }),
+    el('button', { type: 'button', class: 'bode-place', text: selectedSketch() ? 'Update sketch' : 'Place sketch', title: 'A textbook sketch of the one trace shown on the drawing: no numbers, the corners named. With a sketch selected, this updates it.', disabled: !one, onclick: () => placeSketch(selectedSketch()) }),
+    el('label', { class: 'bode-phase-toggle' }, [
+      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Sketch with its phase' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
+      ' with phase',
+    ]),
+  );
 }
 
-/** Redraw the figure and the corner list; the sliders stay (so a drag goes on). */
-function drawSketch() {
-  const panel = panelEl();
-  const figureHost = panel?.querySelector('.bode-figure-host');
-  const list = panel?.querySelector('.bode-corners');
-  if (!figureHost || !list) return;
-  const model = currentModel();
-  // Nothing above the sliders may shrink while one is held: the plots stay
-  // in place (taking them out and back would collapse the tab for a moment,
-  // and the scroll with it), and the corner list keeps the height it reached
-  // until the slider is let go, so the slider stays under the pointer.
-  if (sliding) list.style.minHeight = `${Math.max(parseFloat(list.style.minHeight) || 0, list.offsetHeight)}px`;
-  list.replaceChildren();
-  if (!model) {
-    figureHost.replaceChildren();
-    figureHost.textContent = 'This quantity has no derived expression to plot.';
-    return;
-  }
-  const { sketch, corners, quantity } = model;
-  const specs = bodeSpecs(sketch, { corners, quantity: quantity.tex, ...(quantity.key === 'loop' ? { unityText: 'ω_{c}' } : {}) });
-  const views = bodePlots();
-  for (const [name, view] of Object.entries(views)) {
-    if (view.el.parentNode !== figureHost) figureHost.appendChild(view.el);
-    view.set({ ...specs[name], key: `${specs[name].key}:${quantity.key}:${quantity.tex}` });
+/** A trace's corners, its unity-gain or crossover, and what it was solved by. */
+function appendCorners(list, { trace, sketch, corners }, named) {
+  if (named) {
+    const head = el('li', { class: 'bode-corners-trace' });
+    head.append(mathElement(trace.label));
+    head.firstChild.style.color = trace.color;
+    list.append(head);
   }
   for (const corner of corners) {
-    const item = document.createElement('li');
+    const item = el('li');
     const where = `${formatNumber(corner.w)}\\,g/C`;
     const name = corner.text.replace('ω', '\\omega');
-    const tex = corner.tex ? `${name} = ${corner.tex} \\approx ${where}` : `${name} \\approx ${where}`;
-    item.appendChild(mathElement(tex));
+    item.append(mathElement(corner.tex ? `${name} = ${corner.tex} \\approx ${where}` : `${name} \\approx ${where}`));
     if (corner.rightHalf) item.append(' (right half-plane)');
     if (Math.abs(corner.root.im) > 0) item.append(` (complex pair, Q = ${formatNumber(corner.w / (2 * Math.abs(corner.root.re)))})`);
-    list.appendChild(item);
+    list.append(item);
   }
   if (sketch.cancelled) {
-    const item = document.createElement('li');
-    item.className = 'bode-cancelled';
-    item.textContent = `${sketch.cancelled} pole–zero pair${sketch.cancelled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out`;
-    list.appendChild(item);
+    list.append(el('li', { class: 'bode-cancelled', text: `${sketch.cancelled} pole–zero pair${sketch.cancelled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out` }));
   }
-  // A loop gain's crossover, and its phase margin there.
-  if (quantity.key === 'loop' && quantity.tex === 'T') {
-    const item = document.createElement('li');
+  if (trace.key === 'loop' && !trace.report.reports?.loop?.infinite) {
+    const item = el('li');
     if (sketch.unityGain) {
       let phase = sketch.unityGain.phase % 360;
       if (phase > 0) phase -= 360;
       const margin = 180 + phase;
-      item.appendChild(mathElement(`\\omega_{c} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase margin } ${Math.round(margin)}\\text{°}`));
+      item.append(mathElement(`\\omega_{c} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase margin } ${Math.round(margin)}\\text{°}`));
       if (margin < 0) item.classList.add('analysis-error');
     } else {
-      item.textContent = 'No crossover: |T| does not pass 1 at these ratios.';
+      item.textContent = 'No crossover: |T| does not pass 1 at these values.';
     }
-    list.appendChild(item);
+    list.append(item);
+    // Too large for every symbol, the loop was solved at these values' numbers.
+    if (trace.report.reports?.loop?.numeric) list.append(el('li', { class: 'bode-cancelled', text: 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
   }
-  // Too large for every symbol, the loop was solved at these ratios' numbers.
-  if (quantity.key === 'loop' && state.report.reports?.loop?.numeric) {
-    const item = document.createElement('li');
-    item.className = 'bode-cancelled';
-    item.textContent = 'Too large to solve with every symbol: T was solved at the sketch ratios as they were at the last Analyze; analyze again after moving a slider.';
-    list.appendChild(item);
-  }
-  if (sketch.unityGain && quantity.key === 'transfer') {
-    const item = document.createElement('li');
-    item.appendChild(mathElement(`\\omega_{u} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase there } ${Math.round(sketch.unityGain.phase)}\\text{°}`));
-    list.appendChild(item);
+  if (sketch.unityGain && trace.key === 'transfer') {
+    list.append(el('li', {}, [mathElement(`\\omega_{u} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase there } ${Math.round(sketch.unityGain.phase)}\\text{°}`)]));
   }
 }
 
-const selectedPlot = () => (selectedLabel()?.plot ? selectedLabel() : null);
+function annotateGraph() {
+  const sketches = shownSketches();
+  const plot = responsePlotOf(sketches);
+  if (plot) placeResponsePlot(plot, sketches.map(({ trace }) => trace));
+}
+
+const selectedSketch = () => (selectedLabel()?.plot && selectedLabel().plot.kind !== 'response' && selectedLabel().plot.points ? selectedLabel() : null);
 
 /** Name the place button for what a press does now: update the selected
  *  sketch, or place a new one. The selection changes without a new report. */
-export function syncBodePlace(place = panelEl()?.querySelector('.bode-place')) {
+export function syncBodePlace() {
+  const place = plotsEl?.querySelector('.bode-place');
   if (!place) return;
-  const text = selectedPlot() ? 'Update sketch' : 'Place on drawing';
+  const text = selectedSketch() ? 'Update sketch' : 'Place sketch';
   if (place.textContent !== text) place.textContent = text;
 }
 
-/** Rebuild the tab for a new report (or a new quantity). */
-/** The settings came back from undo or redo: draw the sketch at its ratios again. */
-export function bodeSettingsRestored() {
-  if (state.report) renderBode(state.report);
-}
-
-export function renderBode(report) {
-  state.report = report || null;
-  const panel = panelEl();
-  const tab = document.getElementById('analysis-tab-bode');
-  const available = bodeAvailable(report);
-  if (tab) tab.disabled = !available;
-  if (!panel) return available;
-  panel.replaceChildren();
-  if (!available) return available;
-  loadRatios();
-  if (!plottable(report, state.quantity)) state.quantity = QUANTITIES.find(({ key }) => plottable(report, key))?.key || 'transfer';
-
-  const head = document.createElement('div');
-  head.className = 'bode-head';
-  const select = document.createElement('select');
-  select.setAttribute('aria-label', 'Quantity to plot');
-  for (const quantity of QUANTITIES) {
-    if (!plottable(report, quantity.key)) continue;
-    const option = document.createElement('option');
-    option.value = quantity.key;
-    option.textContent = quantity.label;
-    option.selected = quantity.key === state.quantity;
-    select.appendChild(option);
-  }
-  select.addEventListener('change', () => {
-    state.quantity = select.value;
-    renderBode(state.report);
-  });
-  const note = document.createElement('span');
-  note.className = 'bode-note';
-  note.textContent = 'A relative sketch: each gm starts at one unit g, each capacitor at one unit C (loads on the output at 10), each ro and resistor at gm·ro units. Frequency is in g/C.';
-  // Say which way the curve was found: numbers do not show it on their own.
-  const how = document.createElement('span');
-  how.className = 'bode-note bode-how';
-  how.textContent = NUMERIC_KEYS.has(state.quantity) && report.numericModel?.ok
-    ? 'Solved in numbers at these ratios: the full model, exact (no Miller splitting or other approximation), at any size. The equations are the symbolic side.'
-    : 'Evaluated from the derived equation at these ratios.';
-  const reset = document.createElement('button');
-  reset.type = 'button';
-  reset.textContent = 'Reset ratios';
-  reset.addEventListener('click', () => {
-    Object.assign(state, { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} });
-    editor.circuit.analysisValues.bode = null;
-    markSettingsChanged();
-    renderBode(state.report);
-  });
-  const place = document.createElement('button');
-  place.type = 'button';
-  place.className = 'bode-place';
-  place.title = 'A textbook sketch of this plot on the drawing: no numbers, the corners named. With a sketch selected, this updates it.';
-  syncBodePlace(place);
-  place.addEventListener('click', () => placeSketch(selectedPlot()));
-  const phaseToggle = document.createElement('label');
-  phaseToggle.className = 'bode-phase-toggle';
-  const phaseBox = document.createElement('input');
-  phaseBox.type = 'checkbox';
-  phaseBox.checked = state.withPhase;
-  phaseBox.addEventListener('change', () => { state.withPhase = phaseBox.checked; });
-  phaseToggle.append(phaseBox, ' with phase');
-  head.append(select, reset);
-  const placeRow = document.createElement('div');
-  placeRow.className = 'bode-head';
-  placeRow.append(place, phaseToggle);
-  const figureHost = document.createElement('div');
-  figureHost.className = 'bode-figure-host';
-  const corners = document.createElement('ul');
-  corners.className = 'bode-corners';
-  const sliders = document.createElement('div');
-  sliders.className = 'bode-sliders';
-  panel.append(head, note, how, figureHost, placeRow, corners, sliders);
-
-  const model = currentModel();
-  // The one ratio every MOS design has.
-  sliders.appendChild(slider({
-    label: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', index: indexE24(state.intrinsicGain), min: 0, max: 4 * PER_DECADE,
-    text: (i) => String(stepE24(i)), title: 'Every r_o (and resistor) starts at this many units of 1/g',
-    onInput: (i) => { state.intrinsicGain = stepE24(i); saveRatios(); drawSketch(); },
-  }));
-  if (model?.parameters.some((parameter) => parameter.parasitic)) {
-    sliders.appendChild(slider({
-      label: 'Parasitic capacitance', tex: 'C_{par}/C', index: indexE24(state.parasiticRatio), min: -2 * PER_DECADE, max: PER_DECADE,
-      text: (i) => String(stepE24(i)), title: 'Every MOS C_gs and C_gd, in units of C',
-      onInput: (i) => { state.parasiticRatio = stepE24(i); saveRatios(); drawSketch(); },
-    }));
-  }
-  const own = [...(model?.parameters || [])].filter((parameter) => !parameter.parasitic)
-    .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.name.localeCompare(b.name, undefined, { numeric: true }));
-  for (const parameter of own) {
-    sliders.appendChild(slider({
-      label: parameter.name,
-      tex: parameter.tex,
-      index: indexE24(state.multipliers[parameter.name] ?? 1),
-      min: -3 * PER_DECADE,
-      max: 3 * PER_DECADE,
-      text: (i) => ratioText(stepE24(i)),
-      components: [parameter.component],
-      title: parameter.load ? 'A load on the output: starts at 10 units' : '',
-      onInput: (i) => {
-        const value = stepE24(i);
-        if (value === 1) delete state.multipliers[parameter.name];
-        else state.multipliers[parameter.name] = value;
-        saveRatios();
-        drawSketch();
-      },
-    }));
-  }
-  drawSketch();
-  return available;
-}
-
-/** The sketch as it stands, as a plot annotation's data (model.js normalizePlot). */
-function currentPlotData() {
-  const model = currentModel();
-  if (!model) return null;
-  const { sketch, corners, quantity } = model;
+/** The one trace shown, as a textbook sketch's data (model.js normalizePlot). */
+function sketchPlotData() {
+  const sketches = shownSketches();
+  if (sketches.length !== 1) return null;
+  const [{ trace, sketch, corners }] = sketches;
   // Twenty samples a decade are plenty on paper.
   const points = sketch.points.filter((_, index) => index % 2 === 0 || index === sketch.points.length - 1);
   return {
@@ -470,16 +444,16 @@ function currentPlotData() {
     points,
     asymptote: sketch.asymptote,
     corners: corners.map((corner) => ({ w: corner.w, text: corner.text })),
-    unityGain: quantity.key === 'transfer' || quantity.key === 'loop' ? sketch.unityGain : null,
-    quantity: quantity.tex,
-    phase: state.withPhase,
+    unityGain: trace.key === 'transfer' || trace.key === 'loop' ? sketch.unityGain : null,
+    quantity: QUANTITIES[trace.key].tex,
+    phase: withPhase,
   };
 }
 
-/** Put the sketch on the drawing, right of what is there -- or, with a plot
- *  annotation selected, redraw that one in place. One undo entry. */
+/** Put the sketch on the drawing, right of what is there -- or, with a
+ *  sketch selected, redraw that one in place. One undo entry. */
 function placeSketch(existing) {
-  const plot = currentPlotData();
+  const plot = sketchPlotData();
   if (!plot) return;
   let placed = existing;
   commit(() => {
@@ -501,6 +475,198 @@ function placeSketch(existing) {
   setLabelSelection([placed.id]);
   if (!existing) fitView({ animate: true });
   logLine(existing ? 'updated the Bode sketch' : 'placed a Bode sketch on the drawing; drag to move it, its corners to resize');
-  renderBode(state.report);
+  renderPlots();
   render();
+}
+
+// ----- Values, in the analysis window ------------------------------------------------------
+
+let valuesEl = null;
+let shownRows = '';
+
+/** One value's row, as a signal-flow coefficient's: its name, a slider
+ *  through the E24 steps, and a field for any positive number. */
+function valueRow({ name, tex, value, min, max, onValue, components = [], title = '' }) {
+  const label = el('span', { class: 'signal-flow-coefficient-name' });
+  label.innerHTML = texToMathML(tex);
+  const slider = el('input', { type: 'range', min: String(min), max: String(max), step: '1', 'aria-label': `${name}: slide to change` });
+  slider.value = String(indexE24(value));
+  const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'A positive number', value: String(Number(value.toPrecision(4))) });
+  const row = el('div', { class: 'signal-flow-coefficient bode-value', 'data-name': name, ...(title ? { title } : {}) }, [label, slider, field]);
+  slider.addEventListener('input', () => {
+    sliding = true;
+    const next = stepE24(Number(slider.value));
+    field.value = String(next);
+    field.classList.remove('invalid');
+    onValue(next);
+  });
+  slider.addEventListener('change', () => {
+    sliding = false;
+    const list = plotsEl?.querySelector('.bode-corners');
+    if (list) list.style.minHeight = '';
+  });
+  field.addEventListener('input', () => {
+    const number = Number(field.value.trim());
+    const valid = field.value.trim() !== '' && Number.isFinite(number) && number > 0;
+    field.classList.toggle('invalid', !valid);
+    if (!valid) return;
+    slider.value = String(indexE24(number));
+    onValue(number);
+  });
+  if (components.length) {
+    row.addEventListener('pointerenter', () => emphasize(components));
+    row.addEventListener('pointerleave', () => emphasize([]));
+  }
+  return row;
+}
+
+function emphasize(components) {
+  const next = components.filter(Boolean);
+  if (next.join(' ') === editor.equationEmphasis.join(' ')) return;
+  editor.equationEmphasis = next;
+  render();
+}
+
+/** Every parameter the graph's traces reach, each once. */
+function graphParameters() {
+  const byName = new Map();
+  for (const trace of traces) for (const parameter of parametersOf(trace)?.reached || []) if (!byName.has(parameter.name)) byName.set(parameter.name, parameter);
+  return [...byName.values()];
+}
+
+/** The Values rows: rebuilt only when the parameters change, so a slider
+ *  being dragged is never replaced under the pointer. */
+function renderValues({ force = false } = {}) {
+  if (!valuesEl) return;
+  const parameters = graphParameters();
+  valuesEl.hidden = !traces.length;
+  const parasitic = parameters.some((parameter) => parameter.parasitic);
+  const own = parameters.filter((parameter) => !parameter.parasitic)
+    .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const key = `${parasitic}\n${own.map((parameter) => parameter.name).join('\n')}`;
+  const rows = valuesEl.querySelector('.bode-value-rows');
+  if (!force && key === shownRows && rows.children.length) return;
+  shownRows = key;
+  const changed = () => { saveRatios(); renderPlots(); };
+  rows.replaceChildren(
+    valueRow({
+      name: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', value: ratios.intrinsicGain, min: 0, max: 4 * PER_DECADE,
+      title: 'Every r_o (and resistor) starts at this many units of 1/g',
+      onValue: (value) => { ratios.intrinsicGain = value; changed(); },
+    }),
+    ...(parasitic ? [valueRow({
+      name: 'Parasitic capacitance', tex: 'C_{par}/C', value: ratios.parasiticRatio, min: -2 * PER_DECADE, max: PER_DECADE,
+      title: 'Every MOS C_gs and C_gd, in units of C',
+      onValue: (value) => { ratios.parasiticRatio = value; changed(); },
+    })] : []),
+    ...own.map((parameter) => valueRow({
+      name: parameter.name,
+      tex: `${parameter.tex}\\ \\times`,
+      value: ratios.multipliers[parameter.name] ?? 1,
+      min: -3 * PER_DECADE,
+      max: 3 * PER_DECADE,
+      components: [parameter.component],
+      title: parameter.load ? 'A load on the output: starts at 10 units' : '',
+      onValue: (value) => {
+        if (value === 1) delete ratios.multipliers[parameter.name];
+        else ratios.multipliers[parameter.name] = value;
+        changed();
+      },
+    })),
+  );
+}
+
+// ----- the analysis window's side ------------------------------------------------------
+
+/**
+ * A new report: its gain (and its loop gain, if asked for) joins the graph,
+ * beside what is there, and the Plots window opens unless it was closed
+ * since. Returns whether anything of it can be plotted.
+ */
+export function renderBode(report) {
+  if (report && report !== latest) {
+    latest = report;
+    loadRatios();
+    for (const key of ['transfer', 'loop']) if (plottable(report, key)) addTrace(report, key);
+    renderValues({ force: true });
+    renderPlots();
+    if (traces.length) offerPlots();
+  } else if (!report) {
+    latest = null;
+    renderPlots();
+  }
+  const card = document.getElementById('analysis-plots-card');
+  if (card) card.hidden = !traces.length;
+  return traces.length > 0;
+}
+
+/** The values came back from undo or redo: draw the plots at them again. */
+export function bodeSettingsRestored() {
+  loadRatios();
+  renderValues({ force: true });
+  renderPlots();
+}
+
+/** Another document: none of the last one's traces. */
+function clearBode() {
+  traces = [];
+  latest = null;
+  renderValues({ force: true });
+  renderPlots();
+  const card = document.getElementById('analysis-plots-card');
+  if (card) card.hidden = true;
+}
+
+/** The Plots card and the Values in the analysis window, and the circuit's
+ *  view in the Plots window. */
+export function installBodeUi() {
+  const result = document.getElementById('analysis-result');
+  if (result && !document.getElementById('analysis-plots-card')) {
+    const card = el('div', { id: 'analysis-plots-card', class: 'signal-flow-plots', hidden: true }, [
+      el('div', { class: 'card-heading', text: 'Plots' }),
+      el('div', { class: 'signal-flow-plots-open' }, [
+        el('span', { class: 'field-hint', text: 'Bode plots of the gain, the impedances, and the loop gain; each Derive adds its gain to the graph.' }),
+        el('button', { type: 'button', class: 'analysis-show-plots', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, ['Show plots']),
+      ]),
+    ]);
+    valuesEl = el('fieldset', { id: 'analysis-values', class: 'analysis-approximations bode-values', hidden: true }, [
+      el('legend', { text: 'Values' }),
+      el('div', { class: 'bode-value-rows' }),
+      el('p', { class: 'field-hint', text: 'The plots are drawn at these values, solved in numbers: the full model, exact (no Miller splitting or other approximation), at any size; the equations stay symbolic. Each gm starts at one unit g, each capacitor at one unit C (loads on the output at 10), each ro and resistor at gm·ro units; frequency is in g/C. Slide, or type any value.' }),
+      el('div', { class: 'bode-values-actions' }, [
+        el('button', {
+          type: 'button',
+          text: 'Reset values',
+          onclick: () => {
+            Object.assign(ratios, { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} });
+            editor.circuit.analysisValues.bode = null;
+            markSettingsChanged();
+            renderValues({ force: true });
+            renderPlots();
+          },
+        }),
+      ]),
+    ]);
+    result.after(card, valuesEl);
+  }
+  plotsEl = el('div', { class: 'bode-plots-view' }, [
+    el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S), and each gain joins this graph: plot a supply\'s way to the output beside the signal\'s, or any two settings.' }),
+    el('div', { class: 'signal-flow-graph-head bode-plots-head' }),
+    el('div', { class: 'bode-plots-graph' }),
+    el('div', { class: 'signal-flow-legend bode-legend' }),
+    el('div', { class: 'signal-flow-graph-actions bode-plots-actions', hidden: true }),
+    el('ul', { class: 'bode-corners' }),
+  ]);
+  installPlotsWindow({ mode: 'circuit', view: plotsEl, shown: renderPlots });
+  onDocumentShown(clearBode);
+}
+
+/** For tests and the console: what the graph holds. */
+export function bodeSnapshot() {
+  return {
+    view,
+    traces: traces.map((trace) => ({ id: trace.id, key: trace.key, label: trace.label, color: trace.color, on: trace.on })),
+    values: { ...ratios, multipliers: { ...ratios.multipliers } },
+    plotsShown: plotsShown(),
+  };
 }
