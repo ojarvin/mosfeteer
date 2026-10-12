@@ -164,7 +164,8 @@ export function collectAcGrounds(circuit, values = []) {
 function virtualNetAliases(circuit) {
   const byName = new Map();
   for (const net of circuit.nets.values()) {
-    const name = canonicalNetName(net.name);
+    // A rail's spellings are one name, as in the model: VDD is V_{DD}.
+    const name = railNameKey(canonicalNetName(net.name));
     if (!name) continue;
     // Case-sensitive, like `Circuit#logicallyConnected` and the net list's
     // own grouping: one spelling is one name.
@@ -319,6 +320,20 @@ export function resolveAnalysisContext(circuit, options = {}, legacyOptions = {}
   const released = releasePortsFromReference(groundResult.ids, [inputResult, outputResult], virtualAliases);
   if (released && !groundResult.ids.size) {
     diagnostics.push(diagnostic('missing-reference', 'the selected ports are the only AC reference: mark another net as AC ground'));
+  }
+  // A stage is driven from one port: every other input port is quiet, held at
+  // AC ground (a differential pair's other half, or every signal input when
+  // the supply is the input), as the analysis window fills them in. A quiet
+  // input is no reference of its own, so a drawing with none still says so.
+  if (groundResult.ids.size) {
+    const representative = (id) => virtualAliases.get(id) ?? id;
+    const ports = new Set([inputResult, outputResult].filter((result) => result?.ok).map((result) => representative(result.net.id)));
+    for (const component of circuit.components.values()) {
+      if (component.type !== 'input') continue;
+      const net = circuit.netOfTerminal({ comp: component.refdes, term: 'p' });
+      if (net && !ports.has(representative(net.id))) groundResult.ids.add(net.id);
+    }
+    expandGroundsThroughAliases(groundResult.ids, virtualAliases);
   }
 
   const input = inputResult.ok ? normalizedPort(inputResult, 'input', groundResult.ids, virtualAliases) : null;

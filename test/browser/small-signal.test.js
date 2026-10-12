@@ -121,4 +121,34 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith('Ignore channel-length')).getAttribute('aria-checked')`), 'true');
     await h.key('Escape');
   });
+
+  test('a diode can be marked off from its context menu, and back to forward biased', async () => {
+    // The analysis window floats over the drawing: closed, the diode is in reach.
+    await h.evaluate(`document.querySelector('.analysis-dock .floating-window-close')?.click()`);
+    await h.evaluate(`window.__run('add diode D9 --at 800 600')`);
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['D9']); m.render(); })`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(800, 600))`);
+    const menu = async () => {
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
+      await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+      await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    };
+    const press = (text) => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)})).click()`);
+    const resistance = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('D9').analysis?.resistance ?? null)`);
+    await menu();
+    await press('Small-signal attributes');
+    await press('Diode bias');
+    await press('Off (open)');
+    await sleep(100);
+    assert.equal(await resistance(), 'infinite');
+    await menu();
+    await press('Small-signal attributes');
+    await press('Diode bias');
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith('Off (open)')).getAttribute('aria-checked')`), 'true');
+    await press('Forward biased');
+    await sleep(100);
+    assert.equal(await resistance(), null);
+  });
 });

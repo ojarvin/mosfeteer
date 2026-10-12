@@ -208,6 +208,31 @@ test('physical nets sharing a name solve as one node', () => {
   assert.equal(report.dcInputImpedance.equation, 'Z_{in}(0) = R_{1} + R_{2}');
 });
 
+test('a rail\'s spellings are one node when the rail is the input', () => {
+  // The supply marker names its net V_{DD}; a net labelled VDD elsewhere is
+  // the same rail. Driven as the input (supply rejection), both halves must
+  // move: R1 and R3 both feed OUT from the supply.
+  const circuit = new Circuit();
+  circuit.addComponent('supply', { refdes: 'VDD', x: 0, y: -240 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 480, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R3', x: 0, y: 320 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: 480, y: 160 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 640, y: 240 });
+  net(circuit, 'V_{DD}', 'VDD.p', 'R1.a');
+  net(circuit, 'VDD', 'R3.a');
+  net(circuit, 'OUT', 'R1.b', 'R3.b', 'R2.a', 'VOUT.p');
+  net(circuit, 'VSS', 'R2.b', 'GND.gnd');
+  const gains = ['VDD', 'V_{DD}'].map((input) => {
+    const report = analyzeSmallSignal(circuit, { input, output: 'OUT' });
+    assert.equal(report.ok, true, input);
+    return report.dcGain.equation;
+  });
+  assert.match(gains[0], /R_\{1\}/);
+  assert.match(gains[0], /R_\{3\}/);
+  assert.equal(gains[1], gains[0], 'either spelling picks the one rail');
+});
+
 test('frequency detection understands canonical rational expressions', () => {
   const report = analyzeSmallSignal(divider({ capacitor: true }), {
     input: 'VIN',
@@ -217,4 +242,45 @@ test('frequency detection understands canonical rational expressions', () => {
   assert.equal(expressionHasFrequency(report.reports.transfer.expression), true);
   assert.equal(expressionHasFrequency(report.dcGain.expression), false);
   assert.equal(expressionHasFrequency('gain'), false);
+});
+
+// A diode from VDD to OUT over R1 to ground: supply rejection through it.
+function diodeDivider() {
+  const circuit = new Circuit();
+  circuit.addComponent('supply', { refdes: 'VDD', x: 0, y: -240 });
+  circuit.addComponent('output', { refdes: 'VOUT', x: 480, y: 0 });
+  circuit.addComponent('diode', { refdes: 'D1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R1', x: 480, y: 160 });
+  circuit.addComponent('ground', { refdes: 'GND', x: 640, y: 240 });
+  net(circuit, 'V_{DD}', 'VDD.p', 'D1.a');
+  net(circuit, 'OUT', 'D1.b', 'R1.a', 'VOUT.p');
+  net(circuit, 'VSS', 'R1.b', 'GND.gnd');
+  return circuit;
+}
+
+test('a diode is its small-signal resistance r_d; marked off, it is open', () => {
+  const circuit = diodeDivider();
+  const report = analyzeSmallSignal(circuit, { input: 'VDD', output: 'OUT' });
+  assert.equal(report.ok, true, report.error || '');
+  assert.equal(report.dcGain.equation, 'A_v(0) = \\frac{R_{1}}{R_{1} + r_{d1}}');
+
+  // Reverse biased (a clamp), the diode adds nothing: the supply cannot reach OUT.
+  circuit.setComponentAnalysis('D1', { resistance: 'infinite' });
+  const off = analyzeSmallSignal(circuit, { input: 'VDD', output: 'OUT' });
+  assert.equal(off.ok, true, off.error || '');
+  assert.equal(off.dcGain.equation, 'A_v(0) = 0');
+});
+
+test('a part with no small-signal model on the analysed circuit is refused, elsewhere ignored', () => {
+  const circuit = divider();
+  circuit.addComponent('npn', { refdes: 'Q1', x: 1200, y: 1200 });
+  // Unconnected, Q1 changes nothing.
+  const apart = analyzeSmallSignal(circuit, { input: 'VIN', output: 'VOUT' });
+  assert.equal(apart.ok, true, apart.error || '');
+  // On the output it would be an open circuit by omission: refused, never guessed.
+  circuit.nets.get([...circuit.nets.values()].find((n) => n.name === 'VOUT').id).terminals.push({ comp: 'Q1', term: 'c' });
+  circuit.nets.get([...circuit.nets.values()].find((n) => n.name === 'VSS').id).terminals.push({ comp: 'Q1', term: 'e' });
+  const on = analyzeSmallSignal(circuit, { input: 'VIN', output: 'VOUT' });
+  assert.equal(on.ok, false);
+  assert.match(on.error, /Q1 has no small-signal model/);
 });

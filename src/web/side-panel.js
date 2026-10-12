@@ -117,7 +117,7 @@ export function renderComponents() {
     const analysisTags = [];
     if (comp.analysis?.model === 'triode') analysisTags.push('triode');
     if (comp.analysis?.role) analysisTags.push(comp.analysis.role);
-    if (comp.analysis?.resistance === 'infinite' || comp.analysis?.resistance === true) analysisTags.push('R=∞');
+    if (comp.analysis?.resistance === 'infinite' || comp.analysis?.resistance === true) analysisTags.push(comp.type === 'diode' ? 'off' : 'R=∞');
     if (comp.analysis?.resistance === 'finite') analysisTags.push('finite R');
     if (comp.analysis?.channelLengthModulation === 'ignore') analysisTags.push('r_o→∞');
     if (comp.analysis?.channelLengthModulation === 'finite') analysisTags.push('finite r_o');

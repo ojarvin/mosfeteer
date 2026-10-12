@@ -124,6 +124,7 @@ function textbookName(value) {
     return `${match[1]}_{${match[2]}${match[3]}}`;
   }
   if (/^rds[A-Za-z0-9_]*$/.test(raw)) return `r_{ds${raw.slice(3)}}`;
+  if (/^rd[A-Za-z0-9_]*$/.test(raw)) return `r_{d${raw.slice(2)}}`;
   if (/^ro[A-Za-z0-9_]*$/.test(raw)) return `r_{o${raw.slice(2)}}`;
   if (/^[RCL][A-Za-z0-9_]+$/.test(raw)) return `${raw[0]}_{${raw.slice(1)}}`;
   return raw;
@@ -197,6 +198,9 @@ function describePrimitive(primitive, resolveNode, options = {}) {
   const b = resolveNode(nodeOf(primitive, 'b'));
   if (kind === 'resistor' && primitive.metadata?.model === 'triode') {
     return { kind: 'triode-resistance', id: primitiveId(primitive), line: branchLine('RDS', primitive, a, b, parameterOf(primitive, 'rds')), notes: [] };
+  }
+  if (kind === 'resistor' && primitive.metadata?.device === 'diode') {
+    return { kind, id: primitiveId(primitive), line: branchLine('RD', primitive, a, b, parameterOf(primitive, 'rd')), notes: [] };
   }
   if (kind === 'resistor' && primitive.metadata?.device === 'mos') {
     return { kind, id: primitiveId(primitive), line: branchLine('RO', primitive, a, b, parameterOf(primitive, 'ro')), notes: [] };

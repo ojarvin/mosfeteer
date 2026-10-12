@@ -36,7 +36,7 @@ export function sketchParameters(symbols, provenance = {}, { outputComponents = 
     const source = provenance[name] || {};
     const role = source.role || source.kind || '';
     const kind = role === 'gm' || role === 'gmb' ? 'transconductance'
-      : role === 'ro' || role === 'rds' || role === 'resistor' ? 'resistance'
+      : role === 'ro' || role === 'rds' || role === 'rd' || role === 'resistor' ? 'resistance'
         : role === 'capacitor' || PARASITIC_ROLES.has(role) ? 'capacitance'
           : role === 'inductor' ? 'inductance' : 'other';
     return {

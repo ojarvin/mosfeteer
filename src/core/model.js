@@ -3194,8 +3194,8 @@ export class Circuit {
       throw new Error(`unknown small-signal device role "${role}"`);
     }
     if (normalizedResistance !== undefined && normalizedResistance !== null
-      && !['resistor', 'variable_resistor'].includes(component.type)) {
-      throw new Error(`resistance overrides apply only to resistor components, not ${component.type}`);
+      && !['resistor', 'variable_resistor', 'diode'].includes(component.type)) {
+      throw new Error(`resistance overrides apply only to resistors and diodes, not ${component.type}`);
     }
     if (clmValue !== undefined && clmValue !== null && clmValue !== ''
       && !['ignore', 'finite'].includes(String(clmValue).toLowerCase())) {

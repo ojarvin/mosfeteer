@@ -639,6 +639,20 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
     context, conversion: converted, primitives: exactPrimitives, mnaPrimitives, coupled, diagnostics: coupled.diagnostics,
   });
 
+  // A part with no small-signal model on a node of the solved circuit would
+  // be an open circuit there by omission: refuse rather than guess. One on
+  // circuitry the ports never reach (logic, a separate block) changes nothing.
+  const solvedNodes = new Set(coupled.nodeOrder);
+  const unmodelled = (converted.diagnostics || []).filter((item) => item.code === 'unsupported-component'
+    && (item.nodes || []).some((node) => node !== AC_GROUND && solvedNodes.has(node)));
+  if (unmodelled.length) {
+    const parts = unmodelled.map((item) => item.component || item.type).join(', ');
+    return failure('unsupported', `${parts} ${unmodelled.length === 1 ? 'has' : 'have'} no small-signal model but ${unmodelled.length === 1 ? 'is' : 'are'} part of the circuit analysed`, {
+      context, conversion: converted, primitives: exactPrimitives, mnaPrimitives, coupled,
+      diagnostics: unmodelled.map((item) => ({ ...item, severity: 'error' })),
+    });
+  }
+
   const selectedExactUnreduced = coupled.primitiveIndices.map((index) => exactPrimitives[index]);
   const reduction = reduceSelectedNetwork(selectedExactUnreduced, context, options, ops);
   const selectedExact = reduction.primitives;

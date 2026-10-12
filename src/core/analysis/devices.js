@@ -158,10 +158,12 @@ function normalizeDeviceContext(context = {}) {
   return legacy ? { ...context, deviceRegions: legacy } : context;
 }
 
-function parameterName(prefix, refdes) {
+/** `ro` for M1 is `ro1`, `rd` for D1 `rd1`: the device's own letter
+ *  (`letter`) leaves its name. */
+function parameterName(prefix, refdes, letter = 'M') {
   const raw = String(refdes);
   if (['R', 'C', 'L'].includes(prefix) && raw.startsWith(prefix)) return raw;
-  const suffix = raw.replace(/^M(?=[A-Za-z0-9_])/, '').replace(/[^A-Za-z0-9]/g, '_');
+  const suffix = raw.replace(new RegExp(`^${letter}(?=[A-Za-z0-9_])`), '').replace(/[^A-Za-z0-9]/g, '_');
   return `${prefix}${suffix}`;
 }
 
@@ -402,8 +404,31 @@ function convertAmplifier(circuit, component, context) {
   };
 }
 
+/** A diode is its small-signal resistance `r_d = n V_T / I_D` from anode to
+ *  cathode, forward biased; marked off (`analysis.resistance` infinite: a
+ *  reverse-biased clamp, say), it is open and adds nothing. */
+function convertDiode(circuit, component, context) {
+  const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
+  const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);
+  if (diagnostics.length) return { primitives: [], diagnostics, nodes: terminals.map(([, result]) => result.node).filter(Boolean) };
+  const nodes = Object.fromEntries(terminals.map(([terminal, result]) => [terminal, result.node]));
+  if (component.analysis?.resistance === 'infinite') return { primitives: [], diagnostics: [], nodes: [nodes.a, nodes.b] };
+  return {
+    primitives: [{
+      kind: 'resistor',
+      id: `${component.refdes}.rd`,
+      terminals: { a: nodes.a, b: nodes.b },
+      value: parameterName('rd', component.refdes, 'D'),
+      metadata: { component: component.refdes, device: 'diode' },
+    }],
+    diagnostics: [],
+    nodes: [nodes.a, nodes.b],
+  };
+}
+
 function convertOneComponent(circuit, component, context) {
   if (IGNORED_TYPES.has(component.type)) return { primitives: [], diagnostics: [], nodes: [] };
+  if (component.type === 'diode') return convertDiode(circuit, component, context);
   if (MOS_TYPES.has(component.type)) return convertMos(circuit, component, context);
   if (OPAMP_TYPES.has(component.type) || component.type === 'gm') return convertAmplifier(circuit, component, context);
   if (component.type === 'voltage_source' || component.type === 'current_source') {
@@ -438,7 +463,8 @@ function convertOneComponent(circuit, component, context) {
   if (terminals.length) {
     return {
       primitives: [],
-      diagnostics: [diagnostic('unsupported-component', `${component.type} has no exact small-signal primitive conversion`, component, 'warning')],
+      // Its nodes let the pipeline refuse it when it touches the solved circuit.
+      diagnostics: [{ ...diagnostic('unsupported-component', `${component.type} has no exact small-signal primitive conversion`, component, 'warning'), nodes: terminals }],
       nodes: terminals,
     };
   }

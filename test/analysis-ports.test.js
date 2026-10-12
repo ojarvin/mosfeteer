@@ -46,11 +46,28 @@ test('the report says which nodes each quantity was taken between', () => {
 });
 
 test('an analysis that would keep no reference says so', () => {
-  const { circuit, ports } = commonSource();
-  // VSS is this circuit's only reference; taking it as the input leaves none.
+  const { circuit, ports } = corpusCircuit('passive-divider');
+  // VSS is this divider's only reference; taking it as the input leaves none.
+  // The signal input, held quiet, is no reference of its own.
   const report = analyzeSmallSignalV2(circuit, { input: 'VSS', output: ports.output });
   assert.equal(report.ok, false);
-  assert.match(report.error, /only AC reference|singular/i);
+  assert.match(report.error, /only AC reference/i);
+});
+
+test('every other input port is held quiet, as the analysis window does', () => {
+  const { circuit, ports } = commonSource();
+  // The supply as the input: the gate's input port is not left floating (a
+  // singular solve) but held at AC ground, with no AC-ground list given.
+  const report = analyzeSmallSignalV2(circuit, { input: 'VDD', output: ports.output });
+  assert.equal(report.ok, true, report.error || '');
+  const vin = [...circuit.nets.values()].find((net) => net.name === 'VIN');
+  assert.equal(report.context.acGroundIds.has(vin.id), true);
+  const gain = report.equations.find((row) => row.startsWith('A_v(0)'));
+  assert.ok(gain && /R_\{D\}/.test(gain) && /r_\{o1\}/.test(gain), gain);
+  // Chosen as the input, the port is driven, not held.
+  const driven = analyzeSmallSignalV2(circuit, ports);
+  assert.equal(driven.ok, true, driven.error || '');
+  assert.equal(driven.context.acGroundIds.has(vin.id), false);
 });
 
 function corpusCircuit(id) {

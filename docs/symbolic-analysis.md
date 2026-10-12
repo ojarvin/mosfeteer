@@ -54,6 +54,21 @@ Independent DC sources are killed in the small-signal model:
 A capacitor contributes `sC`; an inductor receives its MNA branch-current
 stamp. The same model is used for every circuit topology.
 
+A diode is its small-signal resistance `r_d` (`r_{d1}` for `D1`, `n V_T /
+I_D`) from anode to cathode, forward biased. Marked off (Small-signal
+attributes > Diode bias > Off, `analysis.resistance: 'infinite'`), a
+reverse-biased clamp say, it is open. It carries no noise generator yet.
+
+A part with no small-signal model (a BJT, a switch, a logic gate) that
+touches a node of the analysed circuit is refused, naming it, rather than
+left out as an open circuit; one on circuitry the ports never reach changes
+nothing.
+
+Any node can be the input, a supply rail included: supply rejection is the
+rail as the input. The rail leaves the AC reference with every spelling of
+its name (`VDD` is `V_{DD}`), and every other input port is held at AC
+ground, so the signal inputs are quiet.
+
 ## MOS devices
 
 A saturation-region MOS model includes `g_m`, finite `r_o`, and `g_{mb}`. A

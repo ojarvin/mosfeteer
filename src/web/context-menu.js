@@ -376,7 +376,8 @@ function appendContextSmallSignalMenu(menu, target) {
   const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
   const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
   const opamp = SMALL_SIGNAL_OPAMP_TYPES.has(component.type);
-  if (!transistor && !resistor && !port && !opamp) return;
+  const diode = component.type === 'diode';
+  if (!transistor && !resistor && !port && !opamp && !diode) return;
   appendContextSubmenu(menu, 'Small-signal attributes', (submenu) => {
     if (transistor) {
       const transistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type));
@@ -425,6 +426,16 @@ function appendContextSmallSignalMenu(menu, target) {
         appendContextItem(resistanceMenu, 'Clear resistance override', () => applyComponentAnalysis(component, { resistance: null }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), {
           disabled: !resistorTargets.some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
         });
+      });
+    }
+    if (diode) {
+      // Forward biased, a diode is r_d; reverse biased (a clamp), it is open.
+      const isDiode = (candidate) => candidate.type === 'diode';
+      const diodeTargets = analysisComponentTargets(component, isDiode);
+      const off = (candidate) => (candidate.analysis?.resistance === 'infinite' ? 'off' : 'on');
+      appendContextSubmenu(submenu, 'Diode bias', (biasMenu) => {
+        appendContextItem(biasMenu, 'Forward biased (r_d)', () => applyComponentAnalysis(component, { resistance: null }, isDiode), analysisChoiceState(diodeTargets, off, 'on'));
+        appendContextItem(biasMenu, 'Off (open)', () => applyComponentAnalysis(component, { resistance: 'infinite' }, isDiode), analysisChoiceState(diodeTargets, off, 'off'));
       });
     }
     if (opamp) {
