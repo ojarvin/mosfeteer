@@ -97,18 +97,22 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
   test('a file that changed on disk only in what its windows show does not reload the open design', async () => {
     await h.until(`typeof window.__circuit === 'function' && !document.getElementById('startup-cover')`, 15000);
     await h.open('amp');
-    const log = () => h.evaluate(`[...document.querySelectorAll('#log > *')].map((n) => n.textContent).join(' | ')`);
+    // Reloads counted from here: an earlier test's own change to amp may
+    // still be arriving.
+    const reloads = () => h.evaluate(`[...document.querySelectorAll('#log > *')].filter((n) => /Reloaded amp/.test(n.textContent)).length`);
+    await sleep(2500);
+    const settled = await reloads();
     const path = join(h.workspace, 'amp.json');
     // The same drawing, its windows' state changed: as this window's own
     // window-state save writes it.
     const data = JSON.parse(readFileSync(path, 'utf8'));
     writeFileSync(path, JSON.stringify({ ...data, windows: { scope: { nets: ['VOUT'], chosen: true } } }));
     await sleep(2500);
-    assert.doesNotMatch(await log(), /Reloaded amp/);
+    assert.equal(await reloads(), settled, 'no reload');
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.windows?.scope)`), false, 'what is open stays');
     // A drawing changed on disk still reloads.
     writeFileSync(path, JSON.stringify({ ...data, components: [...data.components, { ...data.components[0], refdes: 'M99', transform: { ...data.components[0].transform, x: data.components[0].transform.x + 2000 } }] }));
-    await h.until(`[...document.querySelectorAll('#log > *')].some((n) => /Reloaded amp/.test(n.textContent))`, 15000);
+    await h.until(`[...document.querySelectorAll('#log > *')].filter((n) => /Reloaded amp/.test(n.textContent)).length > ${settled}`, 15000);
   });
 
   test('a new document is not replaced when another window makes a different one active', async () => {
