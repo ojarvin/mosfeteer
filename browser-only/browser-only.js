@@ -48420,6 +48420,10 @@ async function syncActiveCircuitOnce() {
     editor.lastSeenRevision = remoteRevision || null;
     editor.lastCircuitTag = remoteTag || null;
     if (remoteSnapshot === currentSnapshot) return;
+    // Only what the windows show differs -- this window's own window-state
+    // save coming back, as often as not: the drawing is the same, so keep
+    // what is open rather than reload it under the user.
+    if (drawingText(remoteSnapshot) === drawingText(currentSnapshot)) return;
     if (drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot)) {
       if (!editor.remoteConflictLogged) {
         logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
