@@ -201,6 +201,42 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     assert.equal(await parts(), before, 'one undo for the pair');
   });
 
+  test('with a selection, the copy and move tools start from a click on empty canvas', async () => {
+    const resistors = () => ed(`[...c.components.values()].filter((p) => p.type === 'resistor').map((p) => p.transform.x + ',' + p.transform.y).sort()`);
+    const before = await resistors();
+    const to = async (x, y) => {
+      const p = await at(x, y);
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await until(`(e.cursor.x === ${x} && e.cursor.y === ${y}) || e.drag?.moved`);
+      await press(x, y);
+    };
+    // Copy: the source click on nothing, the drop 400 below it.
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['R2']); m.render(); })`);
+    await h.key('c');
+    await press(600, 240);
+    assert.equal(await ed('e.drag?.mode'), 'copyghost', 'the click started the copy');
+    await to(600, 640);
+    await h.key('Escape');
+    await h.key('Escape');
+    assert.deepEqual(await resistors(), [...before, '600,400'].sort(), 'a copy of R2 400 below it');
+    // Move: the same from empty canvas carries R2 itself.
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['R2']); m.render(); })`);
+    await h.key('m');
+    await press(400, 240);
+    assert.equal(await ed('e.drag?.mode'), 'move', 'the click started the move');
+    await to(400, 400);
+    assert.equal(await ed(`c.components.get('R2').transform.y`), 160);
+    // Labels alone move the same way.
+    const note = await noteId();
+    const y = await ed(`c.labels.get(${JSON.stringify(note)}).anchorWorld().y`);
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection([]); m.setLabelSelection([${JSON.stringify(note)}]); m.render(); })`);
+    await h.key('m');
+    await press(-200, 240);
+    assert.equal(await ed('e.drag?.mode'), 'labelmove', 'the click started the label move');
+    await to(-200, 320);
+    assert.equal(await ed(`c.labels.get(${JSON.stringify(note)}).anchorWorld().y`), y + 80);
+  });
+
   test('a copied wire whose free end lands on the middle of a wire joins it there', async () => {
     await h.evaluate(`window.__load(${JSON.stringify(stubBesideRail())})`);
     await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);

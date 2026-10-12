@@ -58221,10 +58221,20 @@ function canvasMouseDown(ev) {
     commitModalMove();
     return;
   }
-  // Armed move/copy tools use an empty-space drag for box selection. Object
-  // clicks retain their existing source/drag behavior and can start a ghost.
+  // Armed move/copy tools with nothing selected use an empty-space drag for
+  // box selection. With a selection, a click anywhere is the source: the set
+  // moves or copies from that point. Object clicks retain their existing
+  // source/drag behavior and can start a ghost.
   if (!movePending && !copyPending && (moveMode || copyMode) &&
       !hasSelectableObjectAt(startWorld)) {
+    if (copyMode && copySelectionExists()) {
+      beginCopySource(startWorld, startClient);
+      return;
+    }
+    if (moveMode && copySelectionExists()) {
+      if (!armSelectionMove(startWorld, startClient)) hintLine(`${moveMode === 'detached' ? 'detached move' : 'move'}: click a selected wire to move it`);
+      return;
+    }
     beginMarqueeSelection(startWorld, startClient, ev);
     return;
   }
@@ -58882,6 +58892,24 @@ function armModalLabelMove(label, startWorld, startClient) {
   };
   movePending = true;
   render();
+}
+
+/** Arm the move tool on the whole selection from `startWorld`, a point on no
+ *  object: its parts carry the rest, or its labels move on their own. False
+ *  when the selection is only wires, which move from a press on one. */
+function armSelectionMove(startWorld, startClient) {
+  const refdes = [...multi].find((ref) => circuit.components.get(ref)?.type !== 'solder');
+  if (refdes) {
+    cursor = { x: snap(startWorld.x), y: snap(startWorld.y) };
+    armModalMove({ refdes }, startWorld, startClient);
+    return true;
+  }
+  const label = [...selLabels].map((id) => circuit.labels.get(id)).find(Boolean);
+  if (label && !multi.size) {
+    armModalLabelMove(label, startWorld, startClient);
+    return true;
+  }
+  return false;
 }
 
 function armModalMove(hit, startWorld, startClient) {
