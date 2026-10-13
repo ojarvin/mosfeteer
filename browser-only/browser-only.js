@@ -41830,6 +41830,56 @@ function keepKey(ev) {
   (state.queued ||= []).push({ key, code, shiftKey, ctrlKey, metaKey, altKey });
 }
 
+/** Shift+Backspace (Shift+Esc where the browser passes it on): the key
+ *  between the editor and the Atlas, either way. */
+const isAtlasToggle = (ev) => (ev.key === 'Backspace' || ev.key === 'Escape') && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
+
+/**
+ * The Atlas's key in a transition turns it around from where it is, rather
+ * than finishing it and starting the way back: the design in flight
+ * reverses (steer), or, not yet set off, does not go. The editor-to-Atlas
+ * flight returns to the editor; a flight up to the editor returns to the
+ * desk, a design being opened never let in. Pressed again, it turns once
+ * more. Returns whether it turned (not with reduced motion, nor once a
+ * design is already open behind the desk).
+ */
+function turnBack() {
+  if (!state || reducedMotion() || state.committed) return false;
+  // The way back is not hurried, and keys typed toward the other end are
+  // forgotten.
+  settle();
+  state.queued = null;
+  const flight = state.flight;
+  if (state.entering) {
+    if (!flight) return false;
+    // Not flying yet: the editor's page never left the glass.
+    if (flight.goal === undefined) finishClose({ animate: true });
+    else steer(flight.goal === 0 ? 1 : 0);
+    return true;
+  }
+  if (state.closing || state.opening) {
+    // Not flying yet (the toolbars sliding away): it does not set off.
+    if (!flight || flight.goal === undefined) state.turnBack = !state.turnBack;
+    else steer(flight.goal === 1 ? 0 : 1);
+    return true;
+  }
+  return false;
+}
+
+/** A flight up to the editor turned back has landed on the desk: the desk
+ *  is as it was, its names and toolbars back. */
+function stayOnDesk() {
+  landFlight({ ripple: false });
+  state.closing = false;
+  state.opening = false;
+  state.turnBack = false;
+  settle();
+  state.queued = null;
+  state.quiet = false;
+  void slideChrome(rootEl, false);
+  requestDraw();
+}
+
 /** Press the kept keys on `target`, as typed. */
 function replayKeys(target, keys) {
   for (const init of keys) target.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true }));
@@ -41938,14 +41988,35 @@ function startFlight(tile, screen) {
   };
 }
 
-/** Move the design in flight to `depth` over `duration` ms along `ease`. */
-function fly(depth, duration, ease) {
+/**
+ * Fly the design toward `goal` (0 the desk, 1 the glass). Resolves with the
+ * end it reaches: the goal, the other end when it was turned back on the
+ * way (turnBack), or null when the desk went away meanwhile.
+ */
+function flyTo(goal) {
   const flight = state.flight;
+  return new Promise((resolve) => {
+    flight.arrive = resolve;
+    steer(goal);
+  });
+}
+
+/** Aim the flight at `goal` from wherever it is now: a flight turned back
+ *  reverses from that point, in the time the distance left takes. */
+function steer(goal) {
+  const flight = state.flight;
+  flight.goal = goal;
   const from = flight.depth;
-  return animate(duration, (t) => {
+  const duration = flightMs(flight) * Math.max(0.3, Math.min(1, Math.abs(goal - from)));
+  const ease = goal === 0 ? settleEase : riseEase;
+  void animate(duration, (t) => {
     if (state.flight !== flight) return;
-    flight.depth = from + (depth - from) * ease(t);
+    flight.depth = from + (goal - from) * ease(t);
     if (flight.rest) state.view = pushedView(flight.rest, flight.depth, flight.about);
+  }).then(() => {
+    // Steered again meanwhile, a newer aim answers.
+    if (state?.flight === flight && flight.goal !== goal) return;
+    flight.arrive?.(state?.flight === flight ? goal : null);
   });
 }
 
@@ -42462,8 +42533,13 @@ async function openDesk(generation, source, animate, startup) {
     if (!state || state.generation !== generation) return;
     state.revealFrom = flight.about;
     state.revealAt = performance.now() + 140;
-    await fly(0, flightMs(flight), settleEase);
+    const reached = await flyTo(0);
     if (!state || state.generation !== generation) return;
+    // Turned back on the way (turnBack): at the glass again, the editor's.
+    if (reached === 1) {
+      finishClose({ animate: true });
+      return;
+    }
     landFlight();
   } else {
     setView(fitAllView());
@@ -42525,8 +42601,18 @@ async function closeAtlas({ animate = true } = {}) {
     requestDraw();
     await Promise.race([slideChrome(rootEl, true), hurried()]);
     if (!state) return;
+    if (state.turnBack) {
+      stayOnDesk();
+      return;
+    }
     startFlight(currentTile, rectInView(currentTile, back));
-    await fly(1, flightMs(state.flight), riseEase);
+    const reached = await flyTo(1);
+    if (!state) return;
+    // Turned back on the way: it lands on the desk again.
+    if (reached === 0) {
+      stayOnDesk();
+      return;
+    }
   }
   finishClose({ animate: !!back });
 }
@@ -42608,8 +42694,10 @@ async function openTile(tile, { select = null } = {}) {
     // No flight: the design opens behind the desk, and the desk fades away.
     opened = await openDocumentPath(entry.path);
   } else if (hasUnsavedChanges()) {
-    // The discard prompt comes first; the flight follows the answer.
+    // The discard prompt comes first; the flight follows the answer. Once
+    // the design is open, there is no turning back to the desk.
     opened = await openDocumentPath(entry.path);
+    if (landed()) state.committed = !!opened;
     if (opened) await nextFrames(2);
     if (opened && landed()) {
       const exact = editorEquivalentView(tile, entry);
@@ -42618,7 +42706,7 @@ async function openTile(tile, { select = null } = {}) {
         requestDraw();
         await Promise.race([slideChrome(rootEl, true), hurried()]);
         startFlight(tile, rectInView(tile, exact));
-        await fly(1, flightMs(state.flight), riseEase);
+        await flyTo(1);
       }
     }
   } else {
@@ -42634,14 +42722,25 @@ async function openTile(tile, { select = null } = {}) {
     const predicted = editorEquivalentView(tile, entry, fittedView({
       x: entry.box.x + pad, y: entry.box.y + pad, w: entry.box.w - 2 * pad, h: entry.box.h - 2 * pad,
     }));
+    let reached = 1;
     if (predicted) {
       state.quiet = true;
       requestDraw();
       await Promise.race([slideChrome(rootEl, true), hurried()]);
-      startFlight(tile, rectInView(tile, predicted));
-      await fly(1, flightMs(state.flight), riseEase);
+      if (landed() && !state.turnBack) {
+        startFlight(tile, rectInView(tile, predicted));
+        reached = await flyTo(1);
+      }
     }
-    land();
+    // Turned back on the way (or before it set off): the file read meanwhile
+    // is never let in, and the design lands on the desk again.
+    if (!landed() || state.turnBack || reached !== 1) {
+      land(false);
+      await loading;
+      if (landed()) stayOnDesk();
+      return;
+    }
+    land(true);
     opened = await loading;
     // Let the editor measure its labels and fit to them before the last look.
     if (opened) await nextFrames(2);
@@ -42661,18 +42760,12 @@ async function openTile(tile, { select = null } = {}) {
   if (!landed()) return;
   state.opening = false;
   if (!opened) {
-    // Staying on the desk: the design sinks back to it, and its names and
-    // toolbars come back.
+    // Staying on the desk: the design sinks back to it.
     if (state.flight && !reduced) {
-      await fly(0, flightMs(state.flight), settleEase);
+      await flyTo(0);
       if (!landed()) return;
     }
-    landFlight({ ripple: false });
-    settle();
-    state.queued = null;
-    state.quiet = false;
-    void slideChrome(rootEl, false);
-    requestDraw();
+    stayOnDesk();
     return;
   }
   finishClose({ animate: !reduced });
@@ -42706,6 +42799,8 @@ function onAtlasKey(ev) {
   if (ev.target.closest?.('[role="menu"]') || toolbarMenus.some(([, menu]) => !menu.hidden)) return;
   if (inTransition()) {
     ev.preventDefault();
+    // The Atlas's own key turns a transition around; any other hurries it.
+    if (isAtlasToggle(ev) && !ev.repeat && turnBack()) return;
     hurry();
     keepKey(ev);
     return;
@@ -48887,8 +48982,9 @@ async function loadCircuit(path, quiet = false, options = {}) {
   try {
     // Only an interactive open may ask the browser for file access again.
     const data = await (loadOptions.open ? withFileAccess(() => persistence.load(path, loadOptions)) : persistence.load(path, loadOptions));
-    // The Atlas fetches while it zooms, and lets the document in once it lands.
-    if (gate) await gate;
+    // The Atlas fetches while it flies, and lets the document in once it
+    // lands -- or not at all, when the flight turns back (the gate gives false).
+    if (gate && (await gate) === false) return false;
     if (expectedGeneration !== undefined && (editor.saveInFlight || expectedGeneration !== editor.syncGeneration)) return false;
     if (data.notModified) {
       if (data.revision) editor.lastSeenRevision = data.revision;
@@ -49048,7 +49144,8 @@ function requestCircuitLoad(path) {
 
 /** Open a document by path, after the unsaved-changes check. Resolves true
  *  once it is open, false when the load fails or the user keeps editing.
- *  With `gate`, the file is read at once but applied only once it settles. */
+ *  With `gate`, the file is read at once but applied only once it settles
+ *  -- not at all when it settles false (resolving false). */
 function openDocumentPath(path, { gate = null } = {}) {
   return new Promise((resolve) => {
     requestDocumentAction(`Opening "${documentNameForPath(path)}"`,

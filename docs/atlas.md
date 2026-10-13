@@ -56,6 +56,13 @@ the image warm-up), and keys typed on the way act where it arrives -- on
 the desk once the design has landed, in the editor once one has opened (an
 Enter there is dropped: it would only open what just opened). Handed back,
 the desk lets the pointer through to the editor while it fades.
+Shift+Backspace in a transition turns it around instead, from wherever it
+is (`turnBack`): a design flying back to the desk returns to the editor, one
+flying up to the editor lands on the desk again, and a design being opened
+that way is never let in (the read file is dropped). Before the design has
+set off it simply does not go. Pressed again, it turns once more. A design
+already open behind the desk (after the unsaved-changes prompt) cannot be
+turned back.
 
 The desk stays put between visits: this browser remembers where each design
 of a workspace sat, and a design keeps its spot while it still fits there. A

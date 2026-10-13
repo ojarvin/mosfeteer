@@ -263,6 +263,70 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     }
   });
 
+  test('Shift+Backspace mid-flight turns the flight around from where it is, every way', async () => {
+    await h.open('top');
+    await closeDesk();
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    // Every frame's depth until `done`, sampled in the page; Shift+Backspace
+    // pressed (to the Atlas) once the depth passes `at`.
+    const run = (at, done) => h.evaluate(`${h.module('atlas.js')}.then((m) => new Promise((resolve) => {
+      const depths = [];
+      let turned = false;
+      const step = () => {
+        const s = m.atlasSnapshot();
+        const depth = s?.flight ? s.flight.depth : null;
+        depths.push(depth);
+        if (!turned && depth !== null && ${at}) {
+          turned = true;
+          document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', shiftKey: true, bubbles: true }));
+        }
+        if ((turned && ${done}) || depths.length > 900) resolve({ depths, turned });
+        else requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }))`);
+    const after = (depths, from) => depths.slice(from).filter((d) => d !== null);
+    try {
+      // 1. Editor to Atlas, turned back half way: it returns to the editor.
+      await h.key('Backspace', { shiftKey: true });
+      let r = await run('depth < 0.6 && depth > 0.05', '!s');
+      assert.ok(r.turned);
+      let turnedAt = r.depths.findIndex((d) => d !== null && d < 0.6 && d > 0.05);
+      let back = after(r.depths, turnedAt);
+      assert.ok(back.length > 2, JSON.stringify(r.depths));
+      assert.ok(back.every((d) => d >= back[0] - 0.02), `reverses from there, never toward the desk: ${back.join(' ')}`);
+      // (Its last frame at the glass hands over to the editor at once.)
+      assert.ok(back.at(-1) > 0.9, `back at the glass: ${back.at(-1)}`);
+      assert.equal(await snapshot(), null, 'the editor again');
+      assert.equal(await current(), 'top');
+
+      // 2. Atlas to the editor (Back), turned back: it lands on the desk again.
+      await openDesk();
+      await sleep(300);
+      await atlasKey('Backspace');
+      r = await run('depth > 0.4', 's && !s.busy && !s.flight');
+      turnedAt = r.depths.findIndex((d) => d !== null && d > 0.4);
+      back = after(r.depths, turnedAt);
+      assert.ok(back.every((d) => d <= back[0] + 0.02), `reverses toward the desk: ${back.join(' ')}`);
+      assert.ok(Math.min(...back) < 0.05, 'down to the desk');
+      const desk = await snapshot();
+      assert.equal(desk.busy, false);
+      assert.equal(desk.tiles.find((t) => t.name === 'top').selected, true, 'its design still picked');
+
+      // 3. Opening another design, turned back: it is never opened.
+      assert.ok(await pick('alpha'));
+      await atlasKey('Enter');
+      r = await run('depth > 0.4', 's && !s.busy && !s.flight');
+      assert.ok(r.turned);
+      await sleep(300);
+      assert.ok(await snapshot(), 'still on the desk');
+      assert.equal(await current(), 'top', 'alpha was never let in');
+    } finally {
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await atlasKey('Escape');
+    }
+  });
+
   test('keys typed during a flight hurry it and act where it arrives: on the desk, or in the editor', async () => {
     await h.open('child');
     await closeDesk();

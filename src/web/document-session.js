@@ -426,8 +426,9 @@ async function loadCircuit(path, quiet = false, options = {}) {
   try {
     // Only an interactive open may ask the browser for file access again.
     const data = await (loadOptions.open ? withFileAccess(() => persistence.load(path, loadOptions)) : persistence.load(path, loadOptions));
-    // The Atlas fetches while it zooms, and lets the document in once it lands.
-    if (gate) await gate;
+    // The Atlas fetches while it flies, and lets the document in once it
+    // lands -- or not at all, when the flight turns back (the gate gives false).
+    if (gate && (await gate) === false) return false;
     if (expectedGeneration !== undefined && (editor.saveInFlight || expectedGeneration !== editor.syncGeneration)) return false;
     if (data.notModified) {
       if (data.revision) editor.lastSeenRevision = data.revision;
@@ -587,7 +588,8 @@ function requestCircuitLoad(path) {
 
 /** Open a document by path, after the unsaved-changes check. Resolves true
  *  once it is open, false when the load fails or the user keeps editing.
- *  With `gate`, the file is read at once but applied only once it settles. */
+ *  With `gate`, the file is read at once but applied only once it settles
+ *  -- not at all when it settles false (resolving false). */
 export function openDocumentPath(path, { gate = null } = {}) {
   return new Promise((resolve) => {
     requestDocumentAction(`Opening "${documentNameForPath(path)}"`,
