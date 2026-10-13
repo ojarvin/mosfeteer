@@ -40734,12 +40734,25 @@ function drawBeam(ctx, start, frame, palette) {
   const k = scale();
   const narrow = Math.max(0.8, 0.12 * GRID * k);
   const wide = Math.max(4, Math.min(1.6 * GRID * k, (Math.abs(curve.direction.x) > 0 ? frame.h : frame.w) * 0.2));
+  // It comes in straight for a while, longer as it is wider, so its sides
+  // do not fold over each other where it turns to meet the card.
+  const { start: p0, c1, end: p3, direction } = curve;
+  const length = Math.hypot(p3.x - p0.x, p3.y - p0.y);
+  const reach = Math.min(Math.max(Math.hypot(curve.c2.x - p3.x, curve.c2.y - p3.y), wide * 2.5), length * 0.7);
+  const c2 = { x: p3.x - direction.x * reach, y: p3.y - direction.y * reach };
   const bezier = (t) => {
     const u = 1 - t;
-    const { start: p0, c1, c2, end: p3 } = curve;
     return {
       x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p3.x,
       y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y,
+    };
+  };
+  // Its heading at `t`: square to the card where it lands.
+  const tangent = (t) => {
+    const u = 1 - t;
+    return {
+      x: 3 * u * u * (c1.x - p0.x) + 6 * u * t * (c2.x - c1.x) + 3 * t * t * (p3.x - c2.x),
+      y: 3 * u * u * (c1.y - p0.y) + 6 * u * t * (c2.y - c1.y) + 3 * t * t * (p3.y - c2.y),
     };
   };
   // The beam begins where it leaves the part's box: the part stays clear.
@@ -40749,15 +40762,14 @@ function drawBeam(ctx, start, frame, palette) {
   let first = 0;
   while (first < steps - 4 && inside(bezier(first / steps))) first += 1;
   const points = [];
-  for (let i = first; i <= steps; i++) points.push({ t: (i - first) / (steps - first), ...bezier(i / steps) });
+  for (let i = first; i <= steps; i++) points.push({ t: (i - first) / (steps - first), u: i / steps, ...bezier(i / steps) });
   const left = [];
   const right = [];
-  points.forEach((p, i) => {
-    const a = points[Math.max(0, i - 1)];
-    const b = points[Math.min(points.length - 1, i + 1)];
-    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    const nx = -(b.y - a.y) / len;
-    const ny = (b.x - a.x) / len;
+  points.forEach((p) => {
+    const d = p.u === 1 ? direction : tangent(p.u);
+    const len = Math.hypot(d.x, d.y) || 1;
+    const nx = -d.y / len;
+    const ny = d.x / len;
     const half = (narrow + (wide - narrow) * p.t ** 1.6) / 2;
     left.push({ x: p.x + nx * half, y: p.y + ny * half });
     right.push({ x: p.x - nx * half, y: p.y - ny * half });
@@ -40781,6 +40793,16 @@ function drawBeam(ctx, start, frame, palette) {
     ctx.ellipse(cx, cy, r * Math.max(0.6, box.w / Math.max(box.w, box.h)) + 4, r * Math.max(0.6, box.h / Math.max(box.w, box.h)) + 4, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+  // Nothing of it crosses the card's edge: it ends there, cut clean.
+  ctx.beginPath();
+  const far = 1e5;
+  const along = { x: -direction.y, y: direction.x };
+  ctx.moveTo(p3.x + along.x * far, p3.y + along.y * far);
+  ctx.lineTo(p3.x - along.x * far, p3.y - along.y * far);
+  ctx.lineTo(p3.x - along.x * far - direction.x * far, p3.y - along.y * far - direction.y * far);
+  ctx.lineTo(p3.x + along.x * far - direction.x * far, p3.y + along.y * far - direction.y * far);
+  ctx.closePath();
+  ctx.clip();
   const gradient = ctx.createLinearGradient(from.x, from.y, curve.end.x, curve.end.y);
   gradient.addColorStop(0, withAlpha(palette.accent, dark ? 0.55 : 0.4));
   gradient.addColorStop(0.55, withAlpha(palette.accent, dark ? 0.24 : 0.16));
