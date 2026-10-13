@@ -50,7 +50,12 @@ toolbars slide in. Leaving the editor, its focus hairline and selection go
 first and the desk takes the drawing's place unseen, so the toolbars and
 panels (side panel included) slide off over paper and grid; the desk's
 names and picks show only once the design has landed, and go first when it
-leaves. The desk takes no input until it has left.
+leaves. Input never waits for any of it: a key, click, or scroll during a
+transition finishes it at once (what is left of the flight, the slides, and
+the image warm-up), and keys typed on the way act where it arrives -- on
+the desk once the design has landed, in the editor once one has opened (an
+Enter there is dropped: it would only open what just opened). Handed back,
+the desk lets the pointer through to the editor while it fades.
 
 The desk stays put between visits: this browser remembers where each design
 of a workspace sat, and a design keeps its spot while it still fits there. A
@@ -90,7 +95,9 @@ clearing it puts every design back in its place.
 
 The top bar mirrors the editor's: the Mosfeteer mark, the workspace name,
 the search, the file actions (**Folder…**, **Open…**, **New**, **Export**)
-together, then the view toggles (**Links**, the light/dark theme). **New** opens a blank
+together, then **Links**, then the editor's own **Settings** -- the theme,
+animations, scrolling, tips -- lent to the Atlas while it is open, at the
+same end of its top bar. **New** opens a blank
 schematic in the editor, with the name field focused. Unsaved changes in the
 current drawing trigger the usual discard prompt; canceling keeps the Atlas
 open. Name and save the new circuit to add it to the workspace. This button

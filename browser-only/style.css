@@ -505,6 +505,11 @@ button:focus-visible {
   right: 0;
 }
 
+/* A menu opened by a click holds the focus itself, unmarked. */
+.toolbar-menu:focus {
+  outline: none;
+}
+
 .toolbar-menu button {
   width: 100%;
   height: 30px;
@@ -5332,6 +5337,12 @@ button.off {
 .atlas.leaving {
   opacity: 0;
   transition: opacity 180ms var(--ease-in);
+  pointer-events: none;
+}
+
+/* Handed back: the desk still shows while the editor's toolbars return,
+   but the editor beneath already takes the pointer (atlas.js finishClose). */
+.atlas.passing {
   pointer-events: none;
 }
 

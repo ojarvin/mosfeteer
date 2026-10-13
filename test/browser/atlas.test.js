@@ -36,18 +36,47 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     return false;
   })`);
 
-  test("the toolbar's mark opens the Atlas and the Atlas's mark closes it; its theme toggle is the editor's", async () => {
+  test("the toolbar's mark opens the Atlas and the Atlas's mark closes it; the editor's Settings come along", async () => {
     await h.open('top');
+    const inAtlas = () => h.evaluate(`!!document.getElementById('btn-settings').closest('#atlas')`);
+    assert.equal(await inAtlas(), false);
     await openDesk();
     assert.deepEqual((await snapshot()).tiles.map((t) => t.name).sort(), ['alpha', 'beta', 'child', 'top']);
+    assert.equal(await inAtlas(), true, 'Settings in the Atlas top bar');
+    // Opened there, the menu works as in the editor, and Esc closes it
+    // without touching the desk.
+    const menuOpen = () => h.evaluate(`!document.getElementById('settings-menu').hidden`);
+    const pickedBefore = (await snapshot()).tiles.find((t) => t.selected)?.name;
+    await h.click('#btn-settings');
+    assert.equal(await menuOpen(), true);
     const dark = () => h.evaluate(`document.documentElement.classList.contains('dark')`);
     const was = await dark();
-    await h.click('#atlas-theme');
+    await h.click('#btn-theme');
     assert.equal(await dark(), !was);
-    assert.equal(await h.evaluate(`document.getElementById('atlas-theme').getAttribute('aria-pressed')`), String(!was));
     assert.equal(await h.evaluate(`document.getElementById('btn-theme').getAttribute('aria-checked')`), String(!was));
-    await h.click('#atlas-theme');
+    await h.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    assert.equal(await menuOpen(), false);
+    assert.equal((await snapshot()).tiles.find((t) => t.selected)?.name, pickedBefore, 'the pick stays');
+    await h.click('#btn-settings');
+    await h.click('#btn-theme');
+    await h.click('#btn-settings');
+    // After keys on the desk, a real click opens the menu with no item
+    // marked as chosen; from the keyboard the first item takes focus.
+    await atlasKey('Tab');
+    const at = await h.evaluate(`(() => { const r = document.getElementById('btn-settings').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', at.x, at.y);
+    await h.mouse('mouseReleased', at.x, at.y);
+    assert.equal(await menuOpen(), true);
+    assert.equal(await h.evaluate(`document.activeElement.id`), 'settings-menu');
+    assert.equal(await h.evaluate(`!!document.querySelector('#settings-menu :focus-visible')`), false, 'no item looks chosen');
+    await h.click('#btn-settings');
+    await h.click('#btn-settings');
+    assert.equal(await h.evaluate(`document.activeElement.getAttribute('data-page-guide')`), '', 'the keyboard starts at the first item');
+    await h.click('#btn-settings');
     await closeDesk();
+    assert.equal(await inAtlas(), false, 'and back in the editor toolbar');
+    assert.equal(await menuOpen(), false);
   });
 
   test('the open design is marked, and the pick lifts with the designs it links to; the rest dim', async () => {
@@ -209,6 +238,36 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       assert.match(opening[0].flight.id, /alpha/);
       assert.equal(opening.at(-1).flight.depth, 1, 'it reaches the screen');
       assert.equal(await current(), 'alpha');
+    } finally {
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    }
+  });
+
+  test('keys typed during a flight hurry it and act where it arrives: on the desk, or in the editor', async () => {
+    await h.open('child');
+    await closeDesk();
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    try {
+      // Esc on the way to the desk lets go of the design once it has landed.
+      await h.key('Backspace', { shiftKey: true });
+      await atlasKey('Escape');
+      await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+      await sleep(100);
+      const landed = await snapshot();
+      assert.equal(landed.flight, null);
+      assert.equal(landed.tiles.some((t) => t.selected), false, 'the Esc typed on the way let go of the pick');
+
+      // # on the way into a design toggles the editor's grid there.
+      const grid = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.showGrid)`);
+      const before = await grid();
+      assert.ok(await pick('alpha'));
+      await atlasKey('Enter');
+      await atlasKey('#');
+      await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+      await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.showGrid === ${!before})`, 5000);
+      assert.equal(await current(), 'alpha');
+      await h.key('#');
+      assert.equal(await grid(), before);
     } finally {
       await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     }

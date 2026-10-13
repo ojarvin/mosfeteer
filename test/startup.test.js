@@ -4,7 +4,7 @@ import { setReduceMotionSetting } from '../src/web/motion.js';
 import { opensOnAtlas } from '../src/web/startup.js';
 import { bakeTiles } from '../src/web/atlas-cache.js';
 
-test('startup cover fades once, stays until the fade finishes, and respects reduced motion', async () => {
+test('startup cover fades once, stays until the fade finishes but lets the pointer through, and respects reduced motion', async () => {
   for (const reduced of [false, true]) {
     setReduceMotionSetting(reduced);
     let finish;
@@ -16,6 +16,7 @@ test('startup cover fades once, stays until the fade finishes, and respects redu
         return { finished: new Promise((resolve) => { finish = resolve; }) };
       },
       remove() { removed = true; },
+      style: {},
     };
     globalThis.document = { getElementById: () => cover };
     // A fresh module each time: a page reveals its cover once.
@@ -24,6 +25,7 @@ test('startup cover fades once, stays until the fade finishes, and respects redu
     assert.equal(revealStartup(), first);
     assert.equal(removed, false);
     assert.deepEqual(durations, [reduced ? 0 : 700]);
+    assert.equal(cover.style.pointerEvents, 'none', 'fading, it takes no clicks');
     finish();
     await first;
     assert.equal(removed, true);

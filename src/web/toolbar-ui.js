@@ -465,7 +465,7 @@ function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   syncToolCursor();
   for (const button of themeButtons) {
-    // The settings menu's item is a checkbox; the Atlas's a toggle button.
+    // A menu item is a checkbox; a toolbar button a toggle.
     if (button.getAttribute('role') === 'menuitemcheckbox') {
       button.setAttribute('aria-checked', String(dark));
       continue;
@@ -602,7 +602,14 @@ export function installToolbarUi() {
       syncMenuProxies(menu);
       menu.hidden = false;
       button.setAttribute('aria-expanded', 'true');
-      [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled)')].find((item) => item.getClientRects().length)?.focus();
+      // From the keyboard the first item takes focus. A click focuses the
+      // menu itself: no item looks chosen until hovered, and the arrows
+      // still start from the top.
+      if (ev.detail === 0) [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled)')].find((item) => item.getClientRects().length)?.focus();
+      else {
+        menu.tabIndex = -1;
+        menu.focus({ preventScroll: true });
+      }
     });
     menu.addEventListener('click', (ev) => {
       if (ev.target.closest?.('[role="menuitem"]')) closeToolbarMenu(button, menu);

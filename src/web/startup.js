@@ -8,6 +8,8 @@ export function revealStartup() {
   const cover = document.getElementById('startup-cover');
   if (!cover) return Promise.resolve();
   const reduced = reducedMotion();
+  // Fading, it no longer stands in the way: what shows through takes input.
+  cover.style.pointerEvents = 'none';
   reveal = cover.animate([{ opacity: 1 }, { opacity: 0 }], {
     duration: reduced ? 0 : 700, easing: 'ease-out', fill: 'forwards',
   }).finished.finally(() => cover.remove());

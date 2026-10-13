@@ -39827,7 +39827,7 @@ let easeOutCubic, wheelIntent, lerpView; __bind(() => { ({ easeOutCubic, wheelIn
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
-let toggleTheme; __bind(() => { ({ toggleTheme } = __require("src/web/toolbar-ui.js")); });
+let closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus; __bind(() => { ({ closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let render, setLabelSelection, setSelection; __bind(() => { ({ render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
@@ -39894,6 +39894,9 @@ const openFilesEl = document.getElementById('atlas-open-files');
 const exportEl = document.getElementById('atlas-export');
 const linksEl = document.getElementById('atlas-links');
 const LINKS_KEY = 'mosfeteer.atlas.links';
+// The editor's Settings (theme, animations, scrolling, ...) and where they live.
+const settingsEl = document.getElementById('btn-settings')?.closest('.toolbar-popover') || null;
+const settingsHome = settingsEl?.parentElement || null;
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
@@ -41391,7 +41394,7 @@ function setView(view) {
  *  each; resolves when done or cut short (stopAnimation). */
 function animate(duration, frame) {
   stopAnimation();
-  if (reducedMotion() || duration <= 0) {
+  if (reducedMotion() || duration <= 0 || state.hurry) {
     frame(1);
     requestDraw();
     return Promise.resolve();
@@ -41403,7 +41406,8 @@ function animate(duration, frame) {
     animation.resolve = resolve;
     const step = (now) => {
       if (!state) { resolve(); return; }
-      const t = Math.min(1, (now - start) / duration);
+      // Hurried (any input in a transition), it jumps to its end.
+      const t = state.hurry ? 1 : Math.min(1, (now - start) / duration);
       animation.t = t;
       frame(t);
       draw();
@@ -41445,6 +41449,47 @@ function stopAnimation() {
  *  up to another -- the desk takes no input: a key or a scroll then would
  *  cut the flight short and leave a design in flight. */
 const inTransition = () => !!(state?.entering || state?.closing || state?.opening);
+
+/**
+ * Input never waits for a transition. A key, scroll, or click in one hurries
+ * it: what is left of its flight (and the slides and warm-ups around it)
+ * happens at once. The keys are kept and replayed where the transition
+ * arrives -- on the desk once a design has landed, in the editor once one
+ * has opened -- so typing ahead works as if there were no animation.
+ */
+function hurry() {
+  if (!state || state.hurry) return;
+  state.hurry = true;
+  state.onHurry?.();
+}
+
+/** Resolves when the transition under way is hurried. */
+function hurried() {
+  if (!state || state.hurry) return Promise.resolve();
+  return (state.hurryPromise ||= new Promise((resolve) => { state.onHurry = resolve; }));
+}
+
+/** The transition is over: input acts directly again. */
+function settle() {
+  if (!state) return;
+  state.hurry = false;
+  state.hurryPromise = null;
+  state.onHurry = null;
+}
+
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
+
+/** A key pressed in a transition, kept to replay where it arrives. */
+function keepKey(ev) {
+  if (ev.repeat || MODIFIER_KEYS.has(ev.key)) return;
+  const { key, code, shiftKey, ctrlKey, metaKey, altKey } = ev;
+  (state.queued ||= []).push({ key, code, shiftKey, ctrlKey, metaKey, altKey });
+}
+
+/** Press the kept keys on `target`, as typed. */
+function replayKeys(target, keys) {
+  for (const init of keys) target.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true }));
+}
 
 function zoomAbout(factor, clientX, clientY) {
   stopAnimation();
@@ -41880,6 +41925,19 @@ async function openOntoDesk(kind) {
 }
 
 /** Shift+Backspace: step back from the drawing to the whole workspace. */
+/** The Atlas borrows the editor's Settings while it is open (`on`) and
+ *  hands them back: what is set once -- the theme, animations, scrolling --
+ *  is set from either view, in the same place at the end of its top bar. */
+function lendSettings(on) {
+  if (!settingsEl || !settingsHome) return;
+  for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
+  if (on) backEl.before(settingsEl);
+  else if (settingsEl.parentElement !== settingsHome) {
+    settingsHome.append(settingsEl);
+    scheduleToolbarFit();
+  }
+}
+
 async function openAtlas({ source = 'workspace', animate = true, startup = false, focus = null } = {}) {
   if (state || !rootEl) return;
   const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
@@ -41921,8 +41979,10 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   // unseen and the toolbars slide off over it (openDesk); otherwise they go
   // before the desk shows.
   const overDesk = choreographed && source === 'workspace';
-  if (!overDesk) await slideChrome(document.body, true, { animate: choreographed });
+  if (!overDesk) await Promise.race([slideChrome(document.body, true, { animate: choreographed }), hurried()]);
   if (state?.generation !== generation) return;
+  // Settings move over once the editor's toolbar is off screen: unseen.
+  if (!overDesk) lendSettings(true);
   void slideChrome(rootEl, choreographed, { animate: false });
   state.quiet = choreographed;
   if (reduced && !startup) rootEl.classList.add('preparing');
@@ -41938,7 +41998,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   // under it would let the editor's drawing show through both.
   if (startup) rootEl.style.animation = 'none';
   rootEl.hidden = false;
-  rootEl.classList.remove('leaving');
+  rootEl.classList.remove('leaving', 'passing');
   rootEl.focus({ preventScroll: true });
   if (reduced && !startup) {
     try {
@@ -41958,12 +42018,21 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
     await openDesk(generation, source, animate, startup);
     if (state?.generation !== generation) return;
     focusNamed(generation, focus);
-    // Landed: the names and the pick come back with the toolbars.
+    // Landed: the names and the pick come back with the toolbars, and the
+    // desk takes input at once -- first the keys typed on the way.
     state.quiet = false;
     requestDraw();
-    await slideChrome(rootEl, false);
+    state.entering = false;
+    settle();
+    const keys = state.queued || [];
+    state.queued = null;
+    void slideChrome(rootEl, false);
+    replayKeys(rootEl, keys);
   } finally {
-    if (state?.generation === generation) state.entering = false;
+    if (state?.generation === generation) {
+      state.entering = false;
+      settle();
+    }
   }
 }
 
@@ -41980,14 +42049,14 @@ function focusNamed(generation, name) {
 async function openDesk(generation, source, animate, startup) {
   if (source === 'workspace' && animate && !startup) {
     showOpenDesign();
-    await bakeOpenDesign(250);
+    await Promise.race([bakeOpenDesign(250), hurried()]);
     if (!state || state.generation !== generation) return;
     // Now the desk can fade in over the editor: the same design, in place.
     rootEl.classList.remove('preparing');
     rootEl.style.animation = '';
     draw();
     // The editor's toolbars slide off over it; the flight waits for them.
-    state.editorAway = slideChrome(document.body, true);
+    state.editorAway = slideChrome(document.body, true).then(() => { if (state?.generation === generation) lendSettings(true); });
   }
   let ready = false;
   try {
@@ -42025,7 +42094,7 @@ async function openDesk(generation, source, animate, startup) {
     // The designs assemble as the camera settles.
     state.revealAt = performance.now();
     draw();
-    await Promise.all([revealStartup(), animateView(target, 760)]);
+    await Promise.race([Promise.all([revealStartup(), animateView(target, 760)]), hurried()]);
   } else if (state.fromEditor) {
     // The design flies back from the glass and lands on its place on the
     // desk, which rests as it was left; the other designs appear around it,
@@ -42039,7 +42108,7 @@ async function openDesk(generation, source, animate, startup) {
     draw();
     // Decode the small images first, while the page still covers the desk:
     // decoding in the middle of the flight would stall its frames.
-    await Promise.all([warmSmallImages(generation, 400), state.editorAway]);
+    await Promise.race([Promise.all([warmSmallImages(generation, 400), state.editorAway]), hurried()]);
     if (!state || state.generation !== generation) return;
     state.revealFrom = flight.about;
     state.revealAt = performance.now() + 140;
@@ -42103,7 +42172,7 @@ async function closeAtlas({ animate = true } = {}) {
   if (back) {
     state.quiet = true;
     requestDraw();
-    await slideChrome(rootEl, true);
+    await Promise.race([slideChrome(rootEl, true), hurried()]);
     if (!state) return;
     startFlight(currentTile, rectInView(currentTile, back));
     await fly(1, flightMs(state.flight), riseEase);
@@ -42119,7 +42188,15 @@ function finishClose({ animate = true } = {}) {
   stopAnimation();
   clearTimeout(state.arrangeTimer);
   for (const bitmap of state.bitmaps.values()) bitmap.close?.();
+  // The keys typed on the way go to the editor (an Enter would only open
+  // what has just opened), once whatever follows the close has run.
+  const keys = (state.queued || []).filter((init) => init.key !== 'Enter');
   state = null;
+  if (keys.length) setTimeout(() => { if (!state) replayKeys(canvasEl, keys); });
+  // From here the editor takes the pointer, though the desk still shows,
+  // and its Settings go back to its toolbar to slide in with it.
+  rootEl.classList.add('passing');
+  lendSettings(false);
   overlayEl.replaceChildren();
   rootEl.querySelector('.atlas-empty')?.remove();
   rootEl.style.animation = '';
@@ -42135,7 +42212,7 @@ function finishClose({ animate = true } = {}) {
     setTimeout(() => {
       if (state) return;
       rootEl.hidden = true;
-      rootEl.classList.remove('leaving');
+      rootEl.classList.remove('leaving', 'passing');
       document.body.classList.remove('chrome-over');
     }, LEAVE_MS);
   });
@@ -42185,7 +42262,7 @@ async function openTile(tile) {
       if (exact) {
         state.quiet = true;
         requestDraw();
-        await slideChrome(rootEl, true);
+        await Promise.race([slideChrome(rootEl, true), hurried()]);
         startFlight(tile, rectInView(tile, exact));
         await fly(1, flightMs(state.flight), riseEase);
       }
@@ -42206,7 +42283,7 @@ async function openTile(tile) {
     if (predicted) {
       state.quiet = true;
       requestDraw();
-      await slideChrome(rootEl, true);
+      await Promise.race([slideChrome(rootEl, true), hurried()]);
       startFlight(tile, rectInView(tile, predicted));
       await fly(1, flightMs(state.flight), riseEase);
     }
@@ -42237,6 +42314,8 @@ async function openTile(tile) {
       if (!landed()) return;
     }
     landFlight({ ripple: false });
+    settle();
+    state.queued = null;
     state.quiet = false;
     void slideChrome(rootEl, false);
     requestDraw();
@@ -42269,8 +42348,12 @@ function onAtlasKey(ev) {
   // A header button keeps focus after a click (or a dialog it opened hands
   // it back): it takes the keys that press or leave it, the desk the rest.
   if (ev.target.closest?.('.atlas-head button, .atlas-empty button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
+  // An open menu (Settings) takes its own keys: arrows, and Esc to close it.
+  if (ev.target.closest?.('[role="menu"]') || toolbarMenus.some(([, menu]) => !menu.hidden)) return;
   if (inTransition()) {
     ev.preventDefault();
+    hurry();
+    keepKey(ev);
     return;
   }
   const key = ev.key;
@@ -42320,7 +42403,11 @@ function onAtlasKey(ev) {
 
 function onWheel(ev) {
   ev.preventDefault();
-  if (!state || inTransition()) return;
+  if (!state) return;
+  if (inTransition()) {
+    hurry();
+    return;
+  }
   stopAnimation();
   const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? 400 : 1;
   if (wheelIntent(ev, editor.scrollScheme) === 'pan') {
@@ -42338,7 +42425,11 @@ function onWheel(ev) {
 
 function onPointerDown(ev) {
   // The header, tag editor, and an empty desk's prompt take their own clicks.
-  if (!state || inTransition() || ev.target.closest?.('.atlas-head, .atlas-tags, .atlas-empty')) return;
+  if (!state || ev.target.closest?.('.atlas-head, .atlas-tags, .atlas-empty')) return;
+  if (inTransition()) {
+    hurry();
+    return;
+  }
   if (ev.button === 2) {
     ev.preventDefault();
     stopAnimation();
@@ -49551,8 +49642,8 @@ const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 const reduceMotionButton = document.getElementById('btn-reduce-motion');
 const themeBtn = document.getElementById('btn-theme');
-/** The theme toggles: the editor toolbar's and the Atlas header's. */
-const themeButtons = [themeBtn, document.getElementById('atlas-theme')].filter(Boolean);
+/** The theme toggles: Settings → Dark theme (in either top bar). */
+const themeButtons = [themeBtn].filter(Boolean);
 const gridBtn = document.getElementById('btn-grid');
 const crosshairBtn = document.getElementById('btn-crosshair');
 const guidesBtn = document.getElementById('btn-guides');
@@ -69930,6 +70021,8 @@ function revealStartup() {
   const cover = document.getElementById('startup-cover');
   if (!cover) return Promise.resolve();
   const reduced = reducedMotion();
+  // Fading, it no longer stands in the way: what shows through takes input.
+  cover.style.pointerEvents = 'none';
   reveal = cover.animate([{ opacity: 1 }, { opacity: 0 }], {
     duration: reduced ? 0 : 700, easing: 'ease-out', fill: 'forwards',
   }).finished.finally(() => cover.remove());
@@ -71847,7 +71940,7 @@ function applyTheme(dark) {
   document.documentElement.classList.toggle('dark', dark);
   syncToolCursor();
   for (const button of themeButtons) {
-    // The settings menu's item is a checkbox; the Atlas's a toggle button.
+    // A menu item is a checkbox; a toolbar button a toggle.
     if (button.getAttribute('role') === 'menuitemcheckbox') {
       button.setAttribute('aria-checked', String(dark));
       continue;
@@ -71984,7 +72077,14 @@ function installToolbarUi() {
       syncMenuProxies(menu);
       menu.hidden = false;
       button.setAttribute('aria-expanded', 'true');
-      [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled)')].find((item) => item.getClientRects().length)?.focus();
+      // From the keyboard the first item takes focus. A click focuses the
+      // menu itself: no item looks chosen until hovered, and the arrows
+      // still start from the top.
+      if (ev.detail === 0) [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled)')].find((item) => item.getClientRects().length)?.focus();
+      else {
+        menu.tabIndex = -1;
+        menu.focus({ preventScroll: true });
+      }
     });
     menu.addEventListener('click', (ev) => {
       if (ev.target.closest?.('[role="menuitem"]')) closeToolbarMenu(button, menu);

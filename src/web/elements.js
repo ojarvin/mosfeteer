@@ -102,8 +102,8 @@ export const sidePanelToggleEl = document.getElementById('btn-side-panel');
 export const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 export const reduceMotionButton = document.getElementById('btn-reduce-motion');
 export const themeBtn = document.getElementById('btn-theme');
-/** The theme toggles: the editor toolbar's and the Atlas header's. */
-export const themeButtons = [themeBtn, document.getElementById('atlas-theme')].filter(Boolean);
+/** The theme toggles: Settings → Dark theme (in either top bar). */
+export const themeButtons = [themeBtn].filter(Boolean);
 export const gridBtn = document.getElementById('btn-grid');
 export const crosshairBtn = document.getElementById('btn-crosshair');
 export const guidesBtn = document.getElementById('btn-guides');
