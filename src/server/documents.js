@@ -112,23 +112,26 @@ export async function deleteDocumentFile(path) {
   await rm(path);
 }
 
+/** A file's kind (null when it is no document) and the names it was saved
+ *  under (Circuit#savedNames). */
 async function documentKindOf(path) {
   try {
     const data = JSON.parse(await readFile(path, 'utf8'));
     const kind = documentKind(data);
-    loadDocument(data);
-    return kind;
+    const circuit = loadDocument(data);
+    return { kind, names: circuit.savedNames };
   } catch {
-    return null;
+    return { kind: null, names: [] };
   }
 }
 
 /** A document's listing entry. `revision` (the ETag of its content) lets a
  *  client keep derived data, such as the Atlas view's renderings, until the file
- *  changes. */
+ *  changes; `names`, the names it was saved under, let a link to a former
+ *  name find it (core/workspace-check.js). */
 export async function describeDocument(path) {
-  const [kind, revision] = await Promise.all([documentKindOf(path), fileRevision(path)]);
-  return { name: documentNameFromPath(path), path, dir: dirname(path), kind, revision };
+  const [{ kind, names }, revision] = await Promise.all([documentKindOf(path), fileRevision(path)]);
+  return { name: documentNameFromPath(path), path, dir: dirname(path), kind, revision, ...(names.length ? { names } : {}) };
 }
 
 /** Documents saved directly in a folder (not recursive). */

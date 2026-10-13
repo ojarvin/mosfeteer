@@ -16,6 +16,7 @@ import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCommand } from '../core/commands.js';
 import { createDocument, documentKind, loadDocument } from '../core/document.js';
+import { nextSavedNames } from '../core/model.js';
 import {
   absolutePath, browseFolder, browseNearestFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
   fileRevision, isJsonFile, listDocuments, readDocumentFile, serializeDocument, validDocumentName, writeFileAtomic,
@@ -307,7 +308,9 @@ export async function startApp({
         assertCurrentCode();
         let document;
         try {
-          document = loadDocument(body.state);
+          // The document remembers the names it was saved under (a link to
+          // a former name can find it: core/workspace-check.js).
+          document = loadDocument({ ...body.state, names: nextSavedNames(body.state?.names, documentNameFromPath(path)) });
         } catch (error) {
           const hint = error.message.includes('unknown component type') ? '; restart the server after changing the symbol registry' : '';
           throw httpError(`could not save document: ${error.message}${hint}`);
@@ -476,6 +479,7 @@ export async function startApp({
       }
       if (mutated) {
         assertCurrentCode();
+        circuit.savedNames = nextSavedNames(circuit.savedNames, documentNameFromPath(path));
         await writeFileAtomic(path, serializeDocument(circuit));
       }
       await setActive(name);

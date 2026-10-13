@@ -21,6 +21,7 @@ import { svgString } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { designIndex, searchKey } from '../core/design-index.js';
+import { brokenLinks } from '../core/workspace-check.js';
 import { cacheGet, cachePut, renderingKey } from './atlas-cache.js';
 import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
@@ -828,6 +829,19 @@ export function appendDesignChoices(list, designs, { current = null, label = 'Fi
     search.focus();
   });
   return search;
+}
+
+/** The open design's broken links (core/workspace-check.js): its parts
+ *  that name a design the editor does not know, each with the design that
+ *  was saved under that name, when exactly one was. */
+export function openDesignBrokenLinks() {
+  const open = '\u0000open';
+  const designs = knownDesigns().filter((doc) => !doc.missing && doc.path !== editor.currentDocumentPath)
+    .map((doc) => ({ id: doc.path, name: doc.name, names: doc.names || [] }));
+  const parts = [...editor.circuit.components.values()].filter((c) => c.link).map((c) => ({ id: c.refdes, link: c.link }));
+  // The open design under its own name, so a part may still link to it.
+  const self = editor.currentCircuitName ? [{ id: editor.currentDocumentPath || open, name: editor.currentCircuitName }] : [];
+  return brokenLinks([...designs, ...self, { id: open, name: open, parts }]).filter((broken) => broken.design === open);
 }
 
 /** Every design of the workspace (and recent ones), each name once. */

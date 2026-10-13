@@ -11,6 +11,23 @@ documents to the new name, unless another design still has the old one
 the side panel marks the part with a red dot (a linked part's dot is otherwise
 the accent color), its bubble says so, and its menu offers another design.
 
+## Broken links and the workspace check
+
+A document remembers the names it was saved under (`names` in its file,
+`Circuit#savedNames`: its own first, then up to seven before it, most
+recent first), written where it is saved -- the server, or the browser's
+persistence -- and never making it unsaved. A file renamed in a file manager
+keeps them, so a link to its old name can find it again
+(`src/core/workspace-check.js`): when exactly one design was saved under the
+missing name, that is the design the link meant. Two or more (a copy made
+outside the editor) are never guessed between, and a name no design is or
+was called stays broken.
+
+**Design Check** in the editor lists the open design's broken links under
+**Broken links**, with **Relink to ...** where one design was saved under the
+name (one undo step); **Fix safe issues** leaves them alone. The Atlas's
+**Check** checks every design on the desk ([`atlas.md`](atlas.md)).
+
 Code: `src/web/hierarchy.js` (editor), `src/core/link-bubble.js` (bubble
 placement); tests: `test/link-bubble.test.js`, the `link` tests in
 `test/model.test.js` and `test/commands.test.js`.

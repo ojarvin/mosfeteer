@@ -95,13 +95,24 @@ clearing it puts every design back in its place.
 
 The top bar mirrors the editor's: the Mosfeteer mark, the workspace name,
 the search, the file actions (**Folder…**, **Open…**, **New**, **Export**)
-together, then **Links**, then the editor's own **Settings** -- the theme,
+together, then **Check** (below), then **Links**, then the editor's own **Settings** -- the theme,
 animations, scrolling, tips -- lent to the Atlas while it is open, at the
 same end of its top bar. **New** opens a blank
 schematic in the editor, with the name field focused. Unsaved changes in the
 current drawing trigger the usual discard prompt; canceling keeps the Atlas
 open. Name and save the new circuit to add it to the workspace. This button
 is hidden in the Symbols view.
+
+**Check** checks the whole workspace, with a count on the button when
+something needs a look; its menu says what and acts on it. **Broken links**:
+a part linking to a name no design has (`src/core/workspace-check.js`,
+[`hierarchy.md`](hierarchy.md)) is relinked, in its file, to the one
+design saved under that name, or, when none or several were, its design
+opens with those parts selected to relink by hand; **Relink all** when
+several can be. **Unsaved changes**: the editor's design, saved from here.
+**Could not be read**: files the desk could not draw. It is checked afresh
+each time the menu opens; it is hidden on an empty desk and in the Symbols
+view.
 
 The design open in the editor -- where Shift+Backspace and the header's **Back to …**
 button return -- carries an **OPEN** badge before its caption, and the

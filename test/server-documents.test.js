@@ -14,6 +14,9 @@ async function command(app, name, cmd) {
   return response.json();
 }
 
+// A state as saved under `name`: it remembers the name (Circuit#savedNames).
+const named = (state, name) => ({ ...state, names: [name] });
+
 serverTest('documents save by name into the workspace and reopen by path', async (t) => {
   const app = await startServer();
   t.after(() => app.stop());
@@ -26,15 +29,15 @@ serverTest('documents save by name into the workspace and reopen by path', async
   const savedData = await saved.json();
   assert.deepEqual(savedData, { name: 'bulk mos', path: app.file('bulk mos'), dir: app.workspace, kind: 'circuit' });
   assert.ok(saved.headers.get('x-circuit-revision'));
-  assert.deepEqual(JSON.parse(await readFile(app.file('bulk mos'), 'utf8')), state);
+  assert.deepEqual(JSON.parse(await readFile(app.file('bulk mos'), 'utf8')), named(state, 'bulk mos'));
 
   const workspace = await (await app.request('/api/workspace')).json();
   assert.equal(workspace.workspace, app.workspace);
-  assert.deepEqual(workspace.documents.map(({ revision, ...doc }) => doc), [{ name: 'bulk mos', path: app.file('bulk mos'), dir: app.workspace, kind: 'circuit' }]);
+  assert.deepEqual(workspace.documents.map(({ revision, ...doc }) => doc), [{ name: 'bulk mos', path: app.file('bulk mos'), dir: app.workspace, kind: 'circuit', names: ['bulk mos'] }]);
   assert.match(workspace.documents[0].revision, /^[0-9a-z]+-[0-9a-z]+$/);
 
   const loaded = await (await app.request(`/api/document?path=${encodeURIComponent(app.file('bulk mos'))}`)).json();
-  assert.deepEqual(loaded.state, state);
+  assert.deepEqual(loaded.state, named(state, 'bulk mos'));
   assert.equal(loaded.name, 'bulk mos');
   assert.equal((await readdir(app.workspace)).some((file) => file.endsWith('.tmp')), false);
 });
@@ -67,7 +70,7 @@ serverTest('a request body split mid-character keeps its multi-byte label text',
   assert.equal(status, 200);
 
   const roundTripped = JSON.parse(await readFile(app.file('split text'), 'utf8'));
-  assert.deepEqual(roundTripped, state);
+  assert.deepEqual(roundTripped, named(state, 'split text'));
 });
 
 serverTest('saving refuses to replace another file unless asked, and saves anywhere', async (t) => {
@@ -81,7 +84,7 @@ serverTest('saving refuses to replace another file unless asked, and saves anywh
   const conflict = await app.request('/api/document', { method: 'PUT', body: { name: 'amp', state: changed.toJSON() } });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).code, 'exists');
-  assert.deepEqual(JSON.parse(await readFile(app.file('amp'), 'utf8')), empty);
+  assert.deepEqual(JSON.parse(await readFile(app.file('amp'), 'utf8')), named(empty, 'amp'));
   const replaced = await app.request('/api/document', { method: 'PUT', body: { name: 'amp', state: changed.toJSON(), overwrite: true } });
   assert.equal(replaced.status, 200);
 
@@ -134,7 +137,7 @@ serverTest('saves a circuit with check issues and explains an outdated symbol re
   const state = circuit.toJSON();
   assert.equal(evaluate(circuit).ok, false);
   assert.equal((await app.request('/api/document', { method: 'PUT', body: { name: 'unfinished', state } })).status, 200);
-  assert.deepEqual((await (await app.request('/api/circuits/unfinished')).json()).state, state);
+  assert.deepEqual((await (await app.request('/api/circuits/unfinished')).json()).state, named(state, 'unfinished'));
 
   state.components[0].type = 'future_mos';
   const rejected = await app.request('/api/document', { method: 'PUT', body: { name: 'future-symbol', state } });

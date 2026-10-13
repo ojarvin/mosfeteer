@@ -5396,6 +5396,37 @@ button.off {
   border-radius: var(--radius-lg);
 }
 
+/* The workspace check: a count of what needs a look on its button, and a
+   menu whose items may wrap (a design, its parts, and the link). */
+.atlas-check[hidden] {
+  display: none;
+}
+
+.atlas-check-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--on-accent);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.atlas-check-menu {
+  width: 24rem;
+  max-height: min(70vh, 32rem);
+  overflow-y: auto;
+}
+
+.atlas-head .atlas-check-menu button {
+  height: auto;
+  min-height: 30px;
+  padding: 5px 9px;
+  white-space: normal;
+  line-height: 1.35;
+}
+
 /* File actions together, then the view toggles, as in the editor toolbar. */
 .atlas-group {
   display: flex;

@@ -65,6 +65,27 @@ export function normalizeDesignLink(value) {
   return name || null;
 }
 
+/** How many names a document remembers being saved under. */
+const SAVED_NAMES_KEPT = 8;
+
+/** A document's saved names, normalized: its name now first, then the names
+ *  it was saved under before (most recent first), each once. */
+export function normalizeSavedNames(names) {
+  const out = [];
+  for (const raw of Array.isArray(names) ? names : []) {
+    const name = normalizeDesignLink(raw);
+    if (name && name.length <= 120 && !out.includes(name)) out.push(name);
+  }
+  return out.slice(0, SAVED_NAMES_KEPT);
+}
+
+/** The saved names after saving under `name`: it first, the rest after. A
+ *  file renamed outside the editor keeps them, so a link to a former name
+ *  can still find it (core/workspace-check.js). */
+export function nextSavedNames(names, name) {
+  return normalizeSavedNames([name, ...(Array.isArray(names) ? names : [])]);
+}
+
 /** A document's tags, normalized: trimmed, no leading `#`, unique, in order. */
 export function normalizeTags(tags) {
   const seen = new Set();
@@ -2370,6 +2391,9 @@ export class Circuit {
     this.beats = [];
     // Document tags, for finding a design in a workspace (the Atlas search).
     this.tags = [];
+    // The names the document was saved under, its own first (set where it
+    // is written: the server, or the browser's persistence).
+    this.savedNames = [];
     // Numbers the analysis plots with, kept with the drawing: the
     // signal-flow coefficients (a_1 -> 0.5) and the Bode sketch's ratios.
     this.analysisValues = { coefficients: {}, bode: null, links: {} };
@@ -6593,6 +6617,7 @@ export class Circuit {
       ...this._netHighlightsJSON(),
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
+      ...(this.savedNames?.length ? { names: [...this.savedNames] } : {}),
       ...analysisValuesJSON(this.analysisValues),
       ...windowsJSON(this.windows),
     };
@@ -6610,6 +6635,7 @@ export class Circuit {
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
     circuit.tags = normalizeTags(data.tags);
+    circuit.savedNames = normalizeSavedNames(data.names);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     circuit.windows = normalizeWindows(data.windows);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {

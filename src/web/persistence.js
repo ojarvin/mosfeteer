@@ -8,6 +8,7 @@
  */
 
 import { loadDocument, validDocumentName } from '../core/document.js';
+import { nextSavedNames } from '../core/model.js';
 export { validDocumentName };
 
 const BROWSER_DOCUMENTS_KEY = 'mosfeteer:browser-documents';
@@ -275,18 +276,21 @@ export function createBrowserPersistenceAdapter({
     return path;
   }
 
-  /** Whether a document file holds a drawing, parsed once per revision. */
+  /** Whether a document file holds a drawing, parsed once per revision,
+   *  and the names it was saved under. */
   async function validDocument(path, file) {
     const revision = fileRevision(file);
     const known = kinds.get(path);
-    if (known?.revision === revision) return known.valid;
+    if (known?.revision === revision) return known;
     let valid = false;
+    let names = [];
     try {
-      loadDocument(JSON.parse(await file.text()));
+      names = loadDocument(JSON.parse(await file.text())).savedNames;
       valid = true;
     } catch { /* not a drawing */ }
-    kinds.set(path, { revision, valid });
-    return valid;
+    const kind = { revision, valid, names };
+    kinds.set(path, kind);
+    return kind;
   }
 
   /** Re-read the folder's document files; a folder without permission lists nothing. */
@@ -303,18 +307,20 @@ export function createBrowserPersistenceAdapter({
       const path = folderPath(entry.name);
       let file;
       try { file = await entry.getFile(); } catch { continue; }
-      if (!await validDocument(path, file)) continue;
+      const kind = await validDocument(path, file);
+      if (!kind.valid) continue;
       seen.add(path);
       const record = folderDocs.get(path) || { path, name: documentNameFromFile(entry), handle: entry };
       record.handle = entry;
       record.revision = fileRevision(file);
+      record.names = kind.names;
       folderDocs.set(path, record);
     }
     for (const path of folderDocs.keys()) if (!seen.has(path)) folderDocs.delete(path);
   }
 
   async function describe(record) {
-    const entry = { name: record.name, path: record.path, kind: 'circuit' };
+    const entry = { name: record.name, path: record.path, kind: 'circuit', ...(record.names?.length ? { names: record.names } : {}) };
     if (!record.handle) return entry;
     if (!await permitted(record.handle, 'read')) return { ...entry, locked: true };
     try {
@@ -560,7 +566,10 @@ export function createBrowserPersistenceAdapter({
 
   async function save(target = {}, state, { overwrite = false, force = false } = {}) {
     await ready;
-    const content = `${JSON.stringify(state, null, 2)}\n`;
+    // The document remembers the names it was saved under (a link to a
+    // former name can find it: core/workspace-check.js).
+    const stamped = (name) => ({ ...state, names: nextSavedNames(state?.names, name) });
+    const contentFor = (name) => `${JSON.stringify(stamped(name), null, 2)}\n`;
     let record = target.path ? recordFor(target.path) : null;
     const name = validDocumentName(target.name || record?.name || documentNameFromFile({ name: browserName(target.path) })) || 'circuit';
     if (!record && writable() && (!target.dir || target.dir === folder.name)) {
@@ -595,14 +604,16 @@ export function createBrowserPersistenceAdapter({
       }
     }
     if (record.handle) {
-      await writeRecord(record, content, { force: force || !target.path || target.path !== record.path });
-      return { name: record.name, path: record.path, dir: dirOf(record), state, revision: record.revision };
+      const saved = stamped(record.name);
+      await writeRecord(record, contentFor(record.name), { force: force || !target.path || target.path !== record.path });
+      record.names = saved.names;
+      return { name: record.name, path: record.path, dir: dirOf(record), state: saved, revision: record.revision };
     }
     // Without file handles the browser can only download the document.
-    makeDownload(download, content, `${record.name}.json`, 'application/json');
-    record.state = state;
+    makeDownload(download, contentFor(record.name), `${record.name}.json`, 'application/json');
+    record.state = stamped(record.name);
     if (record.legacy) writeLegacy();
-    return { name: record.name, path: record.path, dir: dirOf(record), state, downloaded: true };
+    return { name: record.name, path: record.path, dir: dirOf(record), state: record.state, downloaded: true };
   }
 
   async function load(path, { open = false } = {}) {

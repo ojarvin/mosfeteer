@@ -5,7 +5,7 @@
  * files. Storage itself is behind persistence.js.
  */
 
-import { Circuit } from '../core/model.js';
+import { Circuit, nextSavedNames } from '../core/model.js';
 import { createDocument, loadDocument, relinkDocumentState } from '../core/document.js';
 import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { createWindowSession } from './window-session.js';
@@ -394,6 +394,8 @@ export async function saveCircuit({ saveAs = false } = {}) {
     editor.currentCircuitName = data.name;
     editor.currentDocumentPath = data.path;
     editor.currentDocumentDir = data.dir;
+    // The file remembers the names it was saved under; so does the design.
+    editor.circuit.savedNames = nextSavedNames(editor.circuit.savedNames, data.name);
     editor.activeSyncSuspended = false;
     migrateAnalysisFormStorage(previousScope, analysisFormScope());
     circuitNameEl.value = data.name;
@@ -495,10 +497,13 @@ function openUnsavedDocument(state, name) {
 /** A document as text, without what its windows show: window state is saved
  *  with the design but is no edit, so it never makes the design unsaved. */
 function drawingText(text) {
-  if (!text || !text.includes('"windows"')) return text;
+  if (!text || !(text.includes('"windows"') || text.includes('"names"'))) return text;
   try {
     const data = JSON.parse(text);
+    // Neither what the windows show nor the names the file was saved under
+    // ever make the design unsaved.
     delete data.windows;
+    delete data.names;
     return JSON.stringify(data);
   } catch { return text; }
 }
@@ -812,6 +817,7 @@ async function renameDocument(name) {
       return false;
     }
     await withFileAccess(() => persistence.delete(oldPath));
+    editor.circuit.savedNames = nextSavedNames(editor.circuit.savedNames, data.name);
     editor.currentCircuitName = data.name;
     editor.currentDocumentPath = data.path;
     editor.currentDocumentDir = data.dir;

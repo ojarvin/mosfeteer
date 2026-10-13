@@ -11,7 +11,9 @@
  * the desk behind it (drawFlight).
  */
 
-import { loadDocument } from '../core/document.js';
+import { loadDocument, relinkDocumentState } from '../core/document.js';
+import { brokenLinks } from '../core/workspace-check.js';
+import { element as el } from './dom.js';
 import { svgString } from '../core/render.js';
 import { designIndex, parseTags, searchDesign, tagsText } from '../core/design-index.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
@@ -31,7 +33,7 @@ import { fittedView } from './canvas-view.js';
 import { closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus } from './toolbar-ui.js';
 import { logLine } from './status-bar-ui.js';
 import { canvasEl } from './elements.js';
-import { render, setLabelSelection, setSelection } from './main.js';
+import { commit, render, setLabelSelection, setSelection } from './main.js';
 import { setDocumentTags } from './tags-ui.js';
 import { revealStartup } from './startup.js';
 import { exportAtlasSheet } from './export-ui.js';
@@ -54,6 +56,9 @@ const openFolderEl = document.getElementById('atlas-open-folder');
 const openFilesEl = document.getElementById('atlas-open-files');
 const exportEl = document.getElementById('atlas-export');
 const linksEl = document.getElementById('atlas-links');
+const checkEl = document.getElementById('atlas-check');
+const checkMenuEl = document.getElementById('atlas-check-menu');
+const checkCountEl = document.getElementById('atlas-check-count');
 const LINKS_KEY = 'mosfeteer.atlas.links';
 // The editor's Settings (theme, animations, scrolling, ...) and where they live.
 const settingsEl = document.getElementById('btn-settings')?.closest('.toolbar-popover') || null;
@@ -302,13 +307,15 @@ async function loadWorkspace(generation) {
   // A browser-only file waiting for permission again cannot be read yet.
   const documents = (workspace.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked && !doc.missing);
   const entries = [];
+  const unreadable = [];
   for (const [index, doc] of documents.entries()) {
     const current = doc.path === editor.currentDocumentPath;
     try {
       const { svg, index, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
       const box = viewBoxOf(svg);
-      if (box) entries.push({ id: doc.path, name: doc.name, path: doc.path, dir: doc.dir, revision, current, svg, box, index });
+      if (box) entries.push({ id: doc.path, name: doc.name, names: doc.names || [], path: doc.path, dir: doc.dir, revision, current, svg, box, index });
     } catch (err) {
+      unreadable.push(doc.name);
       logLine(`Atlas: could not draw ${doc.name}: ${err.message}`, 'error');
     }
     if (!state || state.generation !== generation) return false;
@@ -320,6 +327,7 @@ async function loadWorkspace(generation) {
   // An on-going search shows only what it finds from the start.
   const provisional = state.tiles[0];
   state.entries = new Map(entries.map((entry) => [entry.id, entry]));
+  state.unreadable = unreadable;
   applySearch(lastQuery, { arrange: 'instant' });
   const { tiles, bounds } = state;
   // The open design stayed on screen while the rest loaded: move the view
@@ -1042,6 +1050,129 @@ function drawHits(ctx, tile, entry, hits, palette) {
     }
   }
   ctx.restore();
+}
+
+// ----- the workspace check --------------------------------------------------------
+//
+// What in the workspace needs a hand: links naming a design no file is
+// called (core/workspace-check.js finds the design one most likely meant:
+// the one saved under that name, renamed outside the editor), the editor's
+// unsaved changes, and files the desk could not read. Its count shows on the
+// Check button; its menu (a toolbar menu, toolbar-ui.js) relinks, opens a
+// design at the parts concerned, or saves.
+
+/** What the check finds on the desk now. */
+function workspaceFindings() {
+  const designs = [...state.entries.values()].map((entry) => ({
+    id: entry.id, name: entry.name, names: entry.names || [],
+    parts: (entry.index?.items || []).filter((item) => item.kind === 'part' && item.link).map((item) => ({ id: item.id, link: item.link })),
+  }));
+  return {
+    links: brokenLinks(designs),
+    unsaved: hasUnsavedChanges() ? { name: editor.currentCircuitName || '', saved: !!editor.currentDocumentPath } : null,
+    unreadable: state.unreadable || [],
+  };
+}
+
+/** The Check button's count and its menu, from what the desk shows now. */
+function syncCheck() {
+  const wrap = checkEl?.closest('.atlas-check');
+  if (!wrap) return;
+  const shown = state?.source === 'workspace' && state.tiles.length > 0;
+  wrap.hidden = !shown;
+  if (!shown) return;
+  const found = workspaceFindings();
+  const count = found.links.length + (found.unsaved ? 1 : 0) + found.unreadable.length;
+  checkCountEl.hidden = !count;
+  checkCountEl.textContent = String(count);
+  checkEl.title = count ? `Check the workspace: ${count} to look at` : 'Check the workspace';
+  // Redrawn under the keyboard (after a relink), the menu keeps the focus.
+  const focused = checkMenuEl.contains(document.activeElement);
+  checkMenuEl.replaceChildren(...checkMenuItems(found));
+  if (focused) {
+    checkMenuEl.tabIndex = -1;
+    checkMenuEl.focus({ preventScroll: true });
+  }
+}
+
+const parts = (refs) => refs.join(', ');
+
+function checkMenuItems({ links, unsaved, unreadable }) {
+  const items = [];
+  const heading = (text) => el('p', { class: 'toolbar-menu-heading', text });
+  const note = (text) => el('p', { class: 'toolbar-menu-note', text });
+  const item = (text, title, onclick) => el('button', { type: 'button', role: 'menuitem', title, text, onclick });
+  if (links.length) {
+    items.push(heading('Broken links'));
+    for (const broken of links) {
+      const where = `${broken.name}: ${parts(broken.parts)} → ${broken.link}`;
+      if (broken.to) {
+        items.push(item(`Relink ${where} to ${broken.to}`, `No design is called ${broken.link} now; ${broken.to} was saved under that name`, () => void relinkOnDesk([broken])));
+      } else {
+        const why = broken.candidates.length
+          ? `No design is called ${broken.link} now; ${broken.candidates.join(' and ')} were all saved under that name, so pick one`
+          : `No design in the workspace is or was called ${broken.link}`;
+        items.push(item(`Open ${where}`, `${why}: opens ${broken.name} with ${parts(broken.parts)} selected (right-click, Link to design)`, () => void openAtParts(broken)));
+      }
+    }
+    const fixable = links.filter((broken) => broken.to);
+    if (fixable.length > 1) items.push(item(`Relink all ${fixable.length}`, 'Relink each to the design saved under its name', () => void relinkOnDesk(fixable)));
+  }
+  if (unsaved) {
+    items.push(heading('Unsaved changes'));
+    if (unsaved.saved) items.push(item(`Save ${unsaved.name}`, `${unsaved.name}, open in the editor, has changes not saved yet`, () => void saveFromDesk()));
+    else items.push(note(`The drawing in the editor has not been saved as a design yet${unsaved.name ? ` (${unsaved.name})` : ''}.`));
+  }
+  if (unreadable.length) {
+    items.push(heading('Could not be read'));
+    items.push(note(`${unreadable.join(', ')}: not a drawing this version can open (the log says why).`));
+  }
+  if (!items.length) items.push(note('Nothing to fix: every link finds its design, every file reads, and nothing is unsaved.'));
+  return items;
+}
+
+/** Relink each finding's parts to the design saved under its name: in the
+ *  editor when the design is open there (one undo step, then unsaved),
+ *  else in its file. The desk's own index follows at once. */
+async function relinkOnDesk(findings) {
+  const done = [];
+  for (const broken of findings) {
+    const entry = state?.entries.get(broken.design);
+    if (!entry || !broken.to) continue;
+    try {
+      if (entry.current) {
+        commit(() => {
+          for (const ref of broken.parts) if (editor.circuit.components.get(ref)?.link === broken.link) editor.circuit.setLink(ref, broken.to);
+        });
+        render();
+      } else {
+        const loaded = await persistence.load(entry.path);
+        if (relinkDocumentState(loaded.state, broken.link, broken.to)) await persistence.save({ path: entry.path }, loaded.state, { overwrite: true, force: true });
+      }
+    } catch (err) {
+      logLine(`Could not relink ${entry.name}: ${err.message}`, 'error');
+      continue;
+    }
+    if (!state) return;
+    for (const item of entry.index?.items || []) if (item.kind === 'part' && item.link === broken.link) item.link = broken.to;
+    if (entry.index) entry.index.links = [...new Set(entry.index.items.map((item) => item.link).filter(Boolean))];
+    done.push(`${entry.name} (${parts(broken.parts)} → ${broken.to})`);
+  }
+  if (done.length) logLine(`Relinked ${done.join(', ')}.`);
+  if (!state) return;
+  syncCheck();
+  requestDraw();
+}
+
+/** Open a broken link's design with its parts selected, to relink by hand. */
+async function openAtParts(broken) {
+  const tile = tileById(broken.design);
+  if (tile) await openTile(tile, { select: broken.parts });
+}
+
+async function saveFromDesk() {
+  await saveCircuit();
+  if (state) syncCheck();
 }
 
 // ----- search ---------------------------------------------------------------
@@ -2003,6 +2134,7 @@ function showEmptyDesk() {
   rootEl.querySelector('.atlas-empty')?.remove();
   const empty = !!state && state.source === 'workspace' && !state.tiles.length;
   rootEl.classList.toggle('atlas-is-empty', empty);
+  syncCheck();
   if (!empty) return;
   const folder = editor.workspaceState?.folder;
   const drawn = editor.circuit.components.size || editor.circuit.labels.size;
@@ -2390,7 +2522,9 @@ export function toggleSymbolSheet() {
   else void openAtlas({ source: 'symbols' });
 }
 
-async function openTile(tile) {
+/** Open `tile`'s design. What the search found in it becomes the
+ *  selection there, or the parts `select` names (the workspace check's). */
+async function openTile(tile, { select = null } = {}) {
   clearTimeout(state.arrangeTimer);
   if (state.source === 'symbols') {
     focusTile(tile, { zoom: true });
@@ -2398,10 +2532,11 @@ async function openTile(tile) {
   }
   const entry = state.entries.get(tile.id);
   state.selected = tile.id;
-  const hits = state.matches?.get(tile.id)?.hits || [];
+  const hits = select ? select.map((id) => ({ kind: 'part', id })) : state.matches?.get(tile.id)?.hits || [];
+  const found = select ? `${select.join(', ')} selected: ${select.length === 1 ? 'its link is' : 'their links are'} broken · right-click, Link to design` : null;
   if (entry.current) {
     await closeAtlas();
-    selectHits(hits);
+    selectHits(hits, found);
     return;
   }
   if (state.opening) return;
@@ -2483,11 +2618,11 @@ async function openTile(tile) {
     return;
   }
   finishClose({ animate: !reduced });
-  selectHits(hits);
+  selectHits(hits, found);
 }
 
 /** What the search found in the design just opened becomes the selection. */
-function selectHits(hits) {
+function selectHits(hits, message = null) {
   if (!hits.length) return;
   const circuit = editor.circuit;
   const parts = hits.filter((hit) => hit.kind === 'part' && circuit.components.has(hit.id)).map((hit) => hit.id);
@@ -2496,7 +2631,7 @@ function selectHits(hits) {
   setSelection(parts);
   setLabelSelection(labels, undefined, true);
   editor.selectedNets = new Set(nets);
-  logLine(`${hits.length} match${hits.length === 1 ? '' : 'es'} for "${lastQuery.trim()}" selected`);
+  logLine(message || `${hits.length} match${hits.length === 1 ? '' : 'es'} for "${lastQuery.trim()}" selected`);
   render();
 }
 
@@ -2717,6 +2852,9 @@ function onDoubleClick(ev) {
 
 export function installAtlas() {
   if (!rootEl) return;
+  // The check runs afresh each time its menu opens (before the menu does:
+  // a capture listener on the button itself goes first).
+  checkEl?.addEventListener('click', () => { if (state) syncCheck(); }, { capture: true });
   rootEl.addEventListener('wheel', onWheel, { passive: false });
   rootEl.addEventListener('pointerdown', onPointerDown);
   rootEl.addEventListener('pointermove', onPointerMove);

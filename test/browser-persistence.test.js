@@ -5,6 +5,8 @@ import { createBrowserPersistenceAdapter } from '../src/web/persistence.js';
 
 const drawing = () => new Circuit().toJSON();
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
+// A state as saved under `name`: it remembers the name (Circuit#savedNames).
+const named = (state, name) => ({ ...state, names: [name] });
 
 /**
  * A small stand-in for the File System Access API: folders of text files,
@@ -163,7 +165,7 @@ test('a document from the old browser cache stays listed until it is saved to a 
   const saved = await persistence.save({ path: 'browser://amp' }, drawing(), { overwrite: true });
   assert.equal(saved.path, 'browser://amp.json');
   assert.equal(saved.downloaded, undefined);
-  assert.equal(target.files.get('amp.json').text, json(drawing()));
+  assert.equal(target.files.get('amp.json').text, json(named(drawing(), 'amp')));
   assert.equal(storage.values.has('mosfeteer:browser-documents'), false);
   assert.deepEqual((await persistence.workspace()).documents.map(({ path }) => path), ['browser://amp.json']);
 });
@@ -185,7 +187,7 @@ test('opened files stay linked to disk: Save writes them in place, also after a 
   const loaded = await persistence.load(opened.path, { open: true });
   const edited = { ...loaded.state, tags: ['edited'] };
   const saved = await persistence.save({ path: opened.path }, edited, { overwrite: true });
-  assert.equal(home.files.get('amp.json').text, json(edited));
+  assert.equal(home.files.get('amp.json').text, json(named(edited, 'amp')));
   assert.equal(saved.revision, await persistence.revision(opened.path));
 
   // After a reload the browser wants permission again: the file is listed
@@ -198,7 +200,7 @@ test('opened files stay linked to disk: Save writes them in place, also after a 
   await assert.rejects(reloaded.load(opened.path, { open: true }), (error) => error.code === 'needs-access' && error.target === 'amp.json');
   disk.activation = true;
   assert.equal(await reloaded.requestAccess(opened.path, 'read'), true);
-  assert.deepEqual((await reloaded.load(opened.path, { open: true })).state, edited);
+  assert.deepEqual((await reloaded.load(opened.path, { open: true })).state, named(edited, 'amp'));
 
   // Removing it from the list keeps the file.
   assert.equal(reloaded.deletesFile(opened.path), false);
@@ -221,7 +223,7 @@ test('saving over a file another window changed asks first', async () => {
   await assert.rejects(persistence.save({ path }, drawing(), { overwrite: true }), (error) => error.code === 'changed');
   assert.match(home.files.get('amp.json').text, /theirs/);
   await persistence.save({ path }, drawing(), { overwrite: true, force: true });
-  assert.equal(home.files.get('amp.json').text, json(drawing()));
+  assert.equal(home.files.get('amp.json').text, json(named(drawing(), 'amp')));
   // Having written it, this window may save again without asking.
   await persistence.save({ path }, { ...drawing(), tags: ['mine'] }, { overwrite: true });
 });
@@ -260,7 +262,7 @@ test('a folder is the workspace: listed, saved into, and deleted from in place',
   const created = await persistence.save({ name: 'mixer' }, drawing());
   assert.equal(created.path, 'browser://designs/mixer.json');
   assert.equal(created.dir, 'designs');
-  assert.equal(designs.files.get('mixer.json').text, json(drawing()));
+  assert.equal(designs.files.get('mixer.json').text, json(named(drawing(), 'mixer')));
   await assert.rejects(persistence.save({ name: 'amp' }, drawing()), (error) => error.code === 'exists');
   await persistence.save({ name: 'amp' }, drawing(), { overwrite: true });
 

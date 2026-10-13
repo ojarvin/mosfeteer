@@ -6,6 +6,9 @@ import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
 import { linkedTop, tagged, wideAmplifier } from './fixtures.js';
+import { join } from 'node:path';
+import { Circuit } from '../../src/core/model.js';
+import { runCommand } from '../../src/core/commands.js';
 
 describe('Atlas and linked designs', { skip: browserSkip() }, () => {
   let h;
@@ -382,5 +385,62 @@ describe('the Atlas desk takes the window\'s shape', { skip: browserSkip() }, ()
     const wide = await spread(1600, 800);
     assert.ok(narrow.h / narrow.w > wide.h / wide.w, `narrow ${JSON.stringify(narrow)}, wide ${JSON.stringify(wide)}`);
     assert.ok(narrow.h > narrow.w, `narrow ${JSON.stringify(narrow)}`);
+  });
+});
+
+describe('the workspace check', { skip: browserSkip() }, () => {
+  // system links OA1 to "opamp", renamed in a file manager to ota-v2 (its
+  // file remembers it was saved as opamp), and R1 to "nothing", which no
+  // design is or was called.
+  const system = () => {
+    const circuit = new Circuit();
+    for (const line of ['add opamp OA1 --at 0 0', 'add resistor R1 --at -600 -40', 'link OA1 opamp', 'link R1 nothing']) runCommand(circuit, line);
+    return circuit.toJSON();
+  };
+  let h;
+  before(async () => {
+    h = await start({ docs: { system: system(), 'ota-v2': { ...wideAmplifier(), names: ['opamp'] } }, width: 1400, height: 900 });
+  });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+  const snapshot = () => h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`);
+  const link = (ref) => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get(${JSON.stringify(ref)}).link)`);
+  const menuItems = () => h.evaluate(`[...document.querySelectorAll('#atlas-check-menu [role="menuitem"]')].map((b) => b.textContent)`);
+
+  test('in the editor, Design Check lists the open design\'s broken links and relinks the one it can', async () => {
+    await h.open('system');
+    await h.evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-mark').click(); })()`);
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+    const report = await h.evaluate(`${h.module('design-check-ui.js')}.then((m) => m.runCheck().brokenLinks)`);
+    assert.deepEqual(report, ['OA1 → opamp', 'R1 → nothing']);
+    const fixes = await h.evaluate(`[...document.querySelectorAll('#check-summary .check-fix')].map((b) => b.textContent)`);
+    assert.deepEqual(fixes, ['Relink to ota-v2'], 'only the link with one design saved under its name is relinked');
+    await h.evaluate(`[...document.querySelectorAll('#check-summary .check-fix')].find((b) => b.textContent === 'Relink to ota-v2').click()`);
+    assert.equal(await link('OA1'), 'ota-v2');
+    assert.equal(await link('R1'), 'nothing');
+    // One undo step puts it back.
+    await h.key('z', { ctrlKey: true });
+    assert.equal(await link('OA1'), 'opamp');
+  });
+
+  test('in the Atlas, Check counts what needs a look, relinks in the files, and opens a design at its broken parts', async () => {
+    await h.open('ota-v2');
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+    assert.equal(await h.evaluate(`document.getElementById('atlas-check-count').textContent`), '2');
+    await h.click('#atlas-check');
+    assert.deepEqual(await menuItems(), ['Relink system: OA1 → opamp to ota-v2', 'Open system: R1 → nothing']);
+    await h.evaluate(`[...document.querySelectorAll('#atlas-check-menu [role="menuitem"]')][0].click()`);
+    // Written into system's file; the desk's links follow at once.
+    const { readFile } = await import('node:fs/promises');
+    await h.until(`document.getElementById('atlas-check-count').textContent === '1'`, 5000);
+    const saved = JSON.parse(await readFile(join(h.workspace, 'system.json'), 'utf8'));
+    assert.deepEqual(saved.components.map((c) => [c.refdes, c.link]).sort(), [['OA1', 'ota-v2'], ['R1', 'nothing']]);
+    assert.deepEqual(await menuItems(), ['Open system: R1 → nothing']);
+    // Opening it lands on the part to relink by hand.
+    await h.evaluate(`[...document.querySelectorAll('#atlas-check-menu [role="menuitem"]')][0].click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'system')`, 10000);
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+    assert.deepEqual(await h.evaluate(`${h.module('main.js')}.then((m) => m.selectedComps().map((c) => c.refdes))`), ['R1']);
+    assert.equal(await snapshot(), null);
   });
 });

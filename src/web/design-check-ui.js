@@ -13,6 +13,7 @@ import { animateViewTo, maxViewW, minViewW, paneSize } from './canvas-view.js';
 import { setPanelCollapsed, setSidePanelVisible, sidePanelVisible } from './side-panel.js';
 import { commit, render, setLabelSelection, setSelection } from './main.js';
 import { fixAllIssues, issueFix } from '../core/tidy.js';
+import { openDesignBrokenLinks } from './hierarchy.js';
 
 export function resetCheckState() {
   editor.lastCheckReport = null;
@@ -40,6 +41,7 @@ function evaluationText(report) {
     report.labelComponentOverlaps?.length && `${report.labelComponentOverlaps.length} label/component overlap(s)`,
     report.labelOverlaps?.length && `${report.labelOverlaps.length} label overlap(s)`,
     report.netNameWarnings?.length && `${report.netNameWarnings.length} merged net name conflict(s)`,
+    report.brokenLinks?.length && `${report.brokenLinks.length} broken link(s)`,
   ].filter(Boolean);
   return problems.length ? `Check: ${problems.join('; ')}` : 'Check: no evaluator violations';
 }
@@ -53,6 +55,7 @@ const CHECK_CATEGORIES = [
   ['crossNetOverlaps', 'Cross-net wire overlaps'],
   ['labelComponentOverlaps', 'Label/component overlaps'],
   ['labelOverlaps', 'Label overlaps'],
+  ['brokenLinks', 'Broken links'],
 ];
 
 const CHECK_ISSUE_KINDS = {
@@ -64,7 +67,47 @@ const CHECK_ISSUE_KINDS = {
   crossNetOverlaps: 'cross-net-overlap',
   labelComponentOverlaps: 'label-component-overlap',
   labelOverlaps: 'label-overlap',
+  brokenLinks: 'broken-link',
 };
+
+/**
+ * The open design's broken links, as Design Check issues: parts naming a
+ * design no file of the workspace is called (hierarchy.js). When exactly one
+ * design was saved under that name -- renamed outside the editor -- the
+ * issue offers to relink to it; never when several were.
+ */
+function brokenLinkIssues() {
+  return openDesignBrokenLinks().map((broken) => ({
+    kind: 'broken-link',
+    refs: broken.parts,
+    link: broken.link,
+    to: broken.to,
+    message: `${broken.parts.join(', ')} → ${broken.link}`,
+    hint: broken.to
+      ? `No design is called ${broken.link} now; ${broken.to} was saved under that name (renamed outside the editor?)`
+      : broken.candidates.length
+        ? `No design is called ${broken.link} now; ${broken.candidates.join(' and ')} were all saved under that name, so pick one: right-click a part, Link to design`
+        : `No design in the workspace is or was called ${broken.link}: right-click a part, Link to design`,
+  }));
+}
+
+/** The repair an issue offers: a broken link's relink, else tidy.js's. */
+function fixFor(detail) {
+  if (detail?.kind !== 'broken-link') return issueFix(editor.circuit, detail);
+  if (!detail.to) return null;
+  return {
+    label: `Relink to ${detail.to}`,
+    apply: (circuit) => {
+      let changed = false;
+      for (const ref of detail.refs) {
+        if (circuit.components.get(ref)?.link !== detail.link) continue;
+        circuit.setLink(ref, detail.to);
+        changed = true;
+      }
+      return changed;
+    },
+  };
+}
 
 function checkIssueTargets(category, value, structuredIssue) {
   const text = String(value);
@@ -78,6 +121,8 @@ function checkIssueTargets(category, value, structuredIssue) {
     if (structuredIssue?.componentRef && editor.circuit.components.has(structuredIssue.componentRef)) components.add(structuredIssue.componentRef);
   } else if (category === 'labelOverlaps') {
     for (const id of structuredIssue?.labelIds || []) if (editor.circuit.labels.has(id)) labels.add(id);
+  } else if (category === 'brokenLinks') {
+    for (const ref of structuredIssue?.refs || []) if (editor.circuit.components.has(ref)) components.add(ref);
   } else if (category === 'unconnectedTerminals') {
     const match = text.match(/^([A-Za-z][A-Za-z0-9_-]*)\./);
     if (match) components.add(match[1]);
@@ -239,7 +284,7 @@ export function renderCheckSummary() {
       button.title = issue.detail?.hint ? `${spoken}\n${issue.detail.hint}` : spoken;
       button.setAttribute('aria-label', issue.detail?.hint ? `${spoken}. ${issue.detail.hint}` : spoken);
       button.addEventListener('click', () => focusCheckIssue(issue));
-      const fix = issueFix(editor.circuit, issue.detail);
+      const fix = fixFor(issue.detail);
       if (fix) {
         const row = document.createElement('div');
         row.className = 'check-issue-row';
@@ -310,6 +355,12 @@ function focusCheckSummary() {
 export function runCheck() {
   try {
     const report = evaluate(editor.circuit);
+    // Links reach outside the drawing: the workspace says which are broken.
+    const links = brokenLinkIssues();
+    if (links.length) {
+      report.brokenLinks = links.map((issue) => issue.message);
+      report.issues = [...(report.issues || []), ...links];
+    }
     editor.lastCheckReport = report;
     diagnosticFromReport(report);
     setPanelCollapsed('check-summary', false);
