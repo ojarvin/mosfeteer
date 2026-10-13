@@ -138,7 +138,12 @@ renamed, its place on the desk kept, and the designs linking to it
 relinked); a double-click on its tags (or `#`) edits them as `#` does on
 the desk. `Shift+L` opens it holding the keys: ↑/↓ (Home/End) step through
 the designs, picking each on the desk, Enter opens the picked one, and
-`Shift+L` or Esc closes it.
+`Shift+L` or Esc closes it. Several are picked as in any list --
+Ctrl/Cmd+click adds or removes one, Shift+click or Shift+↑/↓ a range from
+the last plain pick -- and the desk picks them too (the last one picked,
+marked, is where the keys go on from). With several picked, `#` (here or on
+the desk) adds the tags typed to each of them; a design that already has
+one keeps it once.
 
 The design open in the editor -- where Shift+Backspace and the header's **Back to …**
 button return -- carries an **OPEN** badge before its caption, and the
@@ -171,7 +176,7 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | Ctrl+Shift+C | copy the picked designs as one image, packed together with their captions |
 | double-click / Enter | open it (after the unsaved-changes check); Enter with nothing picked goes back to the editor |
 | `/` or Ctrl/Cmd+F | search the designs |
-| `#` | edit the picked design's tags |
+| `#` | edit the picked design's tags; with several picked, add tags to each |
 | `l` | show or hide the links |
 | `Shift+L` | the listing (below), opened holding the keys, or closed |
 | Ctrl/Cmd+E | export the desk as one sheet |

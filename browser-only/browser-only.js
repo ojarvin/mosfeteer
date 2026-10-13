@@ -41300,7 +41300,7 @@ function syncList() {
     name.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startRename(nameCell, entry); });
     const tagsCell = el('td', { class: 'atlas-list-tags', title: 'Double-click (or #) to edit the tags', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') });
     tagsCell.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startTagEdit(tagsCell, entry); });
-    const row = el('tr', { class: state.selected === entry.id ? 'picked' : '', 'data-id': entry.id }, [
+    const row = el('tr', { 'data-id': entry.id }, [
       nameCell,
       el('td', { class: 'atlas-list-date', title: entry.modified ? new Date(entry.modified).toLocaleString() : '', text: modified }),
       tagsCell,
@@ -41311,7 +41311,10 @@ function syncList() {
     // A click shows the design on the desk, picked; a double-click (off its
     // name and tags) opens it.
     row.addEventListener('click', (ev) => {
-      if (!ev.target.closest('input')) pickListRow(row);
+      if (ev.target.closest('input')) return;
+      if (ev.shiftKey) pickListRange(row);
+      else if (ev.ctrlKey || ev.metaKey) toggleListRow(row);
+      else pickListRow(row);
     });
     row.addEventListener('dblclick', (ev) => {
       if (!ev.target.closest('input')) void openListRow(row);
@@ -41330,6 +41333,7 @@ function syncList() {
     el('tbody', {}, rows),
   ]);
   listPanelEl.replaceChildren(table);
+  markListRows();
   // Once it shows (toolbar-ui.js opens it after this), it moves left as far
   // as it takes to stay inside the window.
   requestAnimationFrame(placeListPanel);
@@ -41337,6 +41341,8 @@ function syncList() {
 
 function placeListPanel() {
   if (listPanelEl.hidden) return;
+  // A row scrolled to stops below the header that stays on top, not under it.
+  listPanelEl.style.scrollPaddingTop = `${listPanelEl.querySelector('thead')?.offsetHeight || 0}px`;
   listPanelEl.style.left = '0px';
   const box = listPanelEl.getBoundingClientRect();
   const margin = 12;
@@ -41388,8 +41394,18 @@ function startRename(cell, entry) {
   });
 }
 
-/** Edit a design's tags from the listing, as # does on the desk. */
-function startTagEdit(cell, entry) {
+/** Edit a design's tags from the listing, as # does on the desk; with
+ *  several designs picked (`many`), add tags to each of them instead. */
+function startTagEdit(cell, entry, many = null) {
+  if (many?.length > 1) {
+    editCell(cell, {
+      value: '',
+      label: `Tags to add to ${many.length} designs`,
+      placeholder: `tags to add to ${many.length} designs`,
+      commit: (text) => addTags(many, text),
+    });
+    return;
+  }
   editCell(cell, {
     value: tagsText(entry.index?.tags),
     label: `Tags of ${entry.name}`,
@@ -41398,14 +41414,70 @@ function startTagEdit(cell, entry) {
   });
 }
 
-/** Pick a row's design and show it on the desk. */
+/** Add tags to several designs at once: each keeps its own, and gains the
+ *  new ones it does not already have (never a tag twice). */
+async function addTags(entries, text) {
+  const added = parseTags(text);
+  if (!added.length) return;
+  for (const entry of entries) {
+    if (!state) return;
+    await saveTags(entry, tagsText([...(entry.index?.tags || []), ...added]));
+  }
+}
+
+/** The listing's rows marked from the pick: every picked design, and the
+ *  last one picked (where the keys go on from) as the cursor. */
+function markListRows() {
+  const picked = new Set(pickedIds());
+  for (const row of listPanelEl.querySelectorAll('tbody tr')) {
+    row.classList.toggle('picked', picked.has(row.dataset.id));
+    row.classList.toggle('cursor', state.selected === row.dataset.id);
+  }
+}
+
+/** Pick only a row's design and show it on the desk; it anchors a range. */
 function pickListRow(row) {
   const tile = tileById(row.dataset.id);
   if (!tile) return;
   state.picked = null;
+  state.listAnchor = tile.id;
   focusTile(tile);
-  for (const other of listPanelEl.querySelectorAll('tr.picked')) other.classList.remove('picked');
-  row.classList.add('picked');
+  markListRows();
+  row.scrollIntoView({ block: 'nearest' });
+}
+
+/** Ctrl/Cmd+click: a row's design into the pick, or out of it. */
+function toggleListRow(row) {
+  const id = row.dataset.id;
+  state.picked = new Set(pickedIds());
+  if (state.picked.has(id)) {
+    state.picked.delete(id);
+    state.selected = [...state.picked].at(-1) || null;
+  } else {
+    state.picked.add(id);
+    state.selected = id;
+  }
+  state.listAnchor = id;
+  markListRows();
+  requestDraw();
+}
+
+/** Shift+click or Shift+arrow: every design from the anchor row to `row`
+ *  picked, `row` the cursor; shown on the desk. */
+function pickListRange(row) {
+  const rows = [...listPanelEl.querySelectorAll('tbody tr')];
+  const anchor = rows.findIndex((r) => r.dataset.id === (state.listAnchor || state.selected));
+  const to = rows.indexOf(row);
+  if (anchor < 0) {
+    pickListRow(row);
+    return;
+  }
+  const [from, end] = anchor < to ? [anchor, to] : [to, anchor];
+  state.picked = new Set(rows.slice(from, end + 1).map((r) => r.dataset.id));
+  const tile = tileById(row.dataset.id);
+  if (tile) focusTile(tile);
+  else state.selected = row.dataset.id;
+  markListRows();
   row.scrollIntoView({ block: 'nearest' });
 }
 
@@ -41433,7 +41505,8 @@ function onListKey(ev) {
   if (ev.target.closest?.('input') || !state) return;
   const rows = [...listPanelEl.querySelectorAll('tbody tr')];
   if (!rows.length) return;
-  const at = rows.findIndex((row) => row.classList.contains('picked'));
+  // The keys go on from the cursor: the design picked last.
+  const at = rows.findIndex((row) => row.dataset.id === state.selected);
   const step = { ArrowDown: 1, ArrowUp: -1 }[ev.key];
   let target = null;
   if (step) target = rows[at < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, at + step))];
@@ -41442,7 +41515,9 @@ function onListKey(ev) {
   if (target) {
     ev.preventDefault();
     ev.stopPropagation();
-    pickListRow(target);
+    // Shift extends the pick from its anchor, as Shift+click does.
+    if (ev.shiftKey && at >= 0) pickListRange(target);
+    else pickListRow(target);
     return;
   }
   // A key the listing takes goes no further: closed by it, the listing
@@ -41464,7 +41539,8 @@ function onListKey(ev) {
     startRename(row.querySelector('.atlas-list-name-cell'), entry);
   } else if (ev.key === '#' && entry) {
     take();
-    startTagEdit(row.querySelector('.atlas-list-tags'), entry);
+    const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+    startTagEdit(row.querySelector('.atlas-list-tags'), entry, many);
   }
 }
 
@@ -41669,9 +41745,12 @@ function openTagEditor(tile) {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'atlas-tags glass';
-  input.value = tagsText(entry.index?.tags);
-  input.placeholder = 'tags, separated by spaces · Enter saves';
-  input.setAttribute('aria-label', `Tags of ${entry.name}`);
+  // Several designs picked: tags typed here are added to each of them.
+  const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+  const adding = many.length > 1;
+  input.value = adding ? '' : tagsText(entry.index?.tags);
+  input.placeholder = adding ? `tags to add to ${many.length} designs · Enter adds` : 'tags, separated by spaces · Enter saves';
+  input.setAttribute('aria-label', adding ? `Tags to add to ${many.length} designs` : `Tags of ${entry.name}`);
   input.spellcheck = false;
   input.autocomplete = 'off';
   input.style.left = `${Math.max(8, Math.min(rect.x, pane.w - 280))}px`;
@@ -41695,7 +41774,7 @@ function openTagEditor(tile) {
       ev.preventDefault();
       const text = input.value;
       close();
-      void saveTags(entry, text);
+      void (adding ? addTags(many, text) : saveTags(entry, text));
     } else if (ev.key === 'Escape') {
       ev.preventDefault();
       close();

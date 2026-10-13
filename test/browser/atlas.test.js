@@ -723,4 +723,78 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'child-amp')`, 10000);
     await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
   });
+
+  test('Shift and Ctrl pick several; # then adds tags to each of them, never twice', async () => {
+    const atlasKey = (key, init = {}) => h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, ...${JSON.stringify(init)} }))`);
+    const listKey = (key, init = {}) => h.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true, ...${JSON.stringify(init)} }))`);
+    const picked = () => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel tr.picked .atlas-list-name')].map((n) => n.textContent)`);
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+    await atlasKey('Escape');
+    await atlasKey('L', { shiftKey: true });
+    await listKey('ArrowDown');
+    await listKey('ArrowDown', { shiftKey: true });
+    await listKey('ArrowDown', { shiftKey: true });
+    assert.deepEqual(await picked(), ['alpha', 'child-amp', 'gamma']);
+    // The desk picks them too.
+    assert.deepEqual((await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.filter((t) => t.selected).map((t) => t.name).sort())`)), ['alpha', 'child-amp', 'gamma']);
+    // Ctrl+click takes one out, and puts it back.
+    const click = (name, init) => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel tbody tr')].find((tr) => tr.querySelector('.atlas-list-name').textContent === ${JSON.stringify(name)}).dispatchEvent(new MouseEvent('click', { bubbles: true, ...${JSON.stringify(init)} }))`);
+    await click('child-amp', { ctrlKey: true });
+    assert.deepEqual(await picked(), ['alpha', 'gamma']);
+    await click('child-amp', { ctrlKey: true });
+    assert.deepEqual(await picked(), ['alpha', 'child-amp', 'gamma']);
+    await h.evaluate(`document.getElementById('atlas-list-panel').focus()`);
+    await listKey('#');
+    assert.equal(await h.evaluate(`document.querySelector('#atlas-list-panel .atlas-list-edit').placeholder`), 'tags to add to 3 designs');
+    // alpha already has filters (and audio): it is not added twice.
+    await h.evaluate(`(() => { const input = document.querySelector('#atlas-list-panel .atlas-list-edit'); input.value = 'shared filters'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    const { readFile } = await import('node:fs/promises');
+    const tags = async (name) => JSON.parse(await readFile(join(h.workspace, `${name}.json`), 'utf8')).tags;
+    await h.until(`[...document.querySelectorAll('#atlas-list-panel .atlas-list-tags')].filter((td) => td.textContent.includes('#shared')).length === 3`, 10000);
+    assert.deepEqual(await tags('alpha'), ['filters', 'audio', 'shared']);
+    assert.deepEqual(await tags('child-amp'), ['shared', 'filters']);
+    assert.deepEqual(await tags('gamma'), ['shared', 'filters']);
+    assert.equal(await tags('top'), undefined, 'the rest untouched');
+    // A plain click picks one again.
+    await click('top', {});
+    assert.deepEqual(await picked(), ['top']);
+    await h.click('#atlas-list');
+  });
+});
+
+describe('a long Atlas listing scrolls with its keys', { skip: browserSkip() }, () => {
+  let h;
+  before(async () => {
+    const docs = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`design-${String(i).padStart(2, '0')}`, tagged(`T${i}`)]));
+    h = await start({ docs, width: 1100, height: 520 });
+  });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+
+  test('up to the top row, it shows whole below the header; down to the last, at the bottom', async () => {
+    if (!await h.evaluate(`${h.module('atlas.js')}.then((m) => !!m.atlasSnapshot())`)) await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 30; })`, 15000);
+    await h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'L', shiftKey: true, bubbles: true }))`);
+    await sleep(100);
+    const key = (k) => h.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }))`);
+    const shows = () => h.evaluate(`(() => {
+      const panel = document.getElementById('atlas-list-panel');
+      const row = panel.querySelector('tr.cursor');
+      const head = panel.querySelector('thead').getBoundingClientRect();
+      const box = panel.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      return { name: row.querySelector('.atlas-list-name').textContent, below: r.top >= head.bottom - 0.5, inside: r.bottom <= box.bottom + 0.5, scrollTop: panel.scrollTop };
+    })()`);
+    await key('End');
+    let at = await shows();
+    assert.equal(at.name, 'design-29');
+    assert.ok(at.inside && at.scrollTop > 0, JSON.stringify(at));
+    for (let i = 0; i < 29; i++) {
+      await key('ArrowUp');
+      at = await shows();
+      assert.ok(at.below && at.inside, `${at.name} in view: ${JSON.stringify(at)}`);
+    }
+    assert.equal(at.name, 'design-00');
+    assert.equal(at.scrollTop, 0, 'all the way up');
+  });
 });
