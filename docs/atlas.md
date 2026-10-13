@@ -50,9 +50,13 @@ toolbars slide in. Leaving the editor, its focus hairline and selection go
 first and the desk takes the drawing's place unseen, so the toolbars and
 panels (side panel included) slide off over paper and grid; the desk's
 names and picks show only once the design has landed, and go first when it
-leaves. Input never waits for any of it: a key, click, or scroll during a
-transition finishes it at once (what is left of the flight, the slides, and
-the image warm-up), and keys typed on the way act where it arrives -- on
+leaves. Input never waits for any of it. Esc, a click, a scroll, or a key
+that starts an animation of its own where the transition is going (on the
+desk Enter, Backspace, F, Z, Space, the arrows, Tab, Shift+T; in the editor
+F and Alt+arrows) finishes it at once (what is left of the flight, the
+slides, and the image warm-up); any other key leaves it running, and a
+modifier alone is no key at all. Every key typed on the way acts where it
+arrives -- on
 the desk once the design has landed, in the editor once one has opened (an
 Enter there is dropped: it would only open what just opened). Handed back,
 the desk lets the pointer through to the editor while it fades.

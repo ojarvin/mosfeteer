@@ -278,6 +278,8 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
         depths.push(depth);
         if (!turned && depth !== null && ${at}) {
           turned = true;
+          // As typed: Shift goes down first, and alone it is no key at all.
+          document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', shiftKey: true, bubbles: true }));
           document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', shiftKey: true, bubbles: true }));
         }
         if ((turned && ${done}) || depths.length > 900) resolve({ depths, turned });
@@ -324,6 +326,42 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     } finally {
       await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
       await atlasKey('Escape');
+    }
+  });
+
+  test('an ordinary key leaves a flight running and acts where it lands', async () => {
+    await h.open('top');
+    await closeDesk();
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    try {
+      const linksOn = () => h.evaluate(`document.getElementById('atlas-links').getAttribute('aria-pressed')`);
+      const before = await linksOn();
+      await h.key('Backspace', { shiftKey: true });
+      // L (links) pressed once the design is in flight: the flight goes on.
+      const depths = await h.evaluate(`${h.module('atlas.js')}.then((m) => new Promise((resolve) => {
+        const out = [];
+        let pressed = false;
+        const step = () => {
+          const s = m.atlasSnapshot();
+          const depth = s?.flight ? s.flight.depth : null;
+          if (pressed) out.push(depth);
+          if (!pressed && depth !== null && depth < 0.97) {
+            pressed = true;
+            document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'l', bubbles: true }));
+          }
+          if (out.length >= 4 || (s && !s.busy)) resolve(out);
+          else requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      }))`);
+      // Not finished at once: the next frames still come down step by step.
+      assert.ok(depths.length >= 4 && depths[0] > 0.2 && depths.every((d) => d !== null), `still in flight after the key: ${depths.join(' ')}`);
+      await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+      await h.until(`document.getElementById('atlas-links').getAttribute('aria-pressed') === ${JSON.stringify(before === 'true' ? 'false' : 'true')}`);
+      await atlasKey('l');
+      assert.equal(await linksOn(), before);
+    } finally {
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
     }
   });
 

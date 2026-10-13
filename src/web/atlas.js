@@ -1829,6 +1829,19 @@ function settle() {
 
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock']);
 
+/** Whether a key pressed in a transition finishes it at once: Esc, or a
+ *  key that starts an animation of its own where the transition is going
+ *  -- on the desk opening, leaving, fitting, zooming, stepping, or packing
+ *  it; in the editor fitting, or diving through a linked part. */
+function hurries(ev) {
+  const key = ev.key;
+  if (key === 'Escape') return true;
+  if (state.entering) {
+    return ['Enter', 'Backspace', ' ', 'Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'f', 'F', 'z', 'Z', 'T'].includes(key);
+  }
+  return key === 'f' || key === 'F' || (ev.altKey && (key === 'ArrowUp' || key === 'ArrowDown'));
+}
+
 /** A key pressed in a transition, kept to replay where it arrives. */
 function keepKey(ev) {
   if (ev.repeat || MODIFIER_KEYS.has(ev.key)) return;
@@ -2805,9 +2818,12 @@ export function onAtlasKey(ev) {
   if (ev.target.closest?.('[role="menu"]') || toolbarMenus.some(([, menu]) => !menu.hidden)) return;
   if (inTransition()) {
     ev.preventDefault();
-    // The Atlas's own key turns a transition around; any other hurries it.
+    if (MODIFIER_KEYS.has(ev.key)) return;
+    // The Atlas's own key turns a transition around; Esc, or a key that
+    // starts another animation where it is going, finishes it at once; any
+    // other key waits for it. Each acts where it arrives (keepKey).
     if (isAtlasToggle(ev) && !ev.repeat && turnBack()) return;
-    hurry();
+    if (hurries(ev)) hurry();
     keepKey(ev);
     return;
   }
