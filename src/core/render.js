@@ -626,7 +626,14 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   const justify = align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center';
   const aria = escapeSvg(`Math label ${label.text}`);
   const pad = MATH_LABEL_PAD;
-  const sidePadding = Math.max(pad, Math.min(LABEL_ALIGN_INSET, box.w - label.textWidth() - pad));
+  // The aligned side keeps its inset. Measured, the content's width says
+  // how much room is left for it; unmeasured (drawn from a file, as the
+  // Atlas does), the TeX estimate of the width can be far off, but the box
+  // was made to hold the content with its inset (sized at the last save, or
+  // with a cell to spare each side): every label keeps the whole inset, as
+  // the editor shows it once measured.
+  const content = label.textMeasured() ? label.textWidth() : 0;
+  const sidePadding = Math.max(pad, Math.min(LABEL_ALIGN_INSET, box.w - content - pad));
   const padding = `${pad}px ${align === 'right' ? sidePadding : pad}px ${pad}px ${align === 'left' ? sidePadding : pad}px`;
   // Latin Modern Math has one weight, too light beside the drawing's strokes
   // and bold labels; a thin outline in the text color thickens every glyph.

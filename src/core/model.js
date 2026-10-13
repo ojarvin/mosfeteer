@@ -1346,6 +1346,12 @@ export class LabelInstance {
     return Math.max(2, Math.ceil(n / 2) * 2);
   }
 
+  /** Whether a browser has measured the text (setRenderedTextBounds): a
+   *  math label's width is then exact, else only estimated from its TeX. */
+  textMeasured() {
+    return !!this._renderedTextBounds;
+  }
+
   /** Install a tight browser-measured text rectangle in world units. */
   setRenderedTextBounds(width, height) {
     const w = Number(width);

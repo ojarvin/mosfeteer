@@ -1008,3 +1008,22 @@ test('an italic letter before an upright one gets its TeX italic correction', ()
   assert.doesNotMatch(texToMathML('$g_{m2}$'), /mspace/);
   assert.doesNotMatch(texToMathML('$R_{1}$'), /mspace/);
 });
+
+test('an aligned math label keeps its inset whether or not a browser measured it', () => {
+  // As a file has it: the box sized when the label was last measured and
+  // saved, narrower than the TeX estimate of its content.
+  const c = new Circuit();
+  c.addLabel({ text: '$\\text{DC output impedance: } Z_{out}(0) = g_{m} r_{o2} r_{o4} \\parallel g_{m} r_{o6} r_{o8}$', math: true, x: 0, y: 0, align: 'left' });
+  const state = c.toJSON();
+  state.labels = state.labels.map((label) => (label.math ? { ...label, mathBox: { w: 400, h: 80 } } : label));
+  const saved = Circuit.fromJSON(state);
+  const label = [...saved.labels.values()].find((l) => l.math);
+  assert.equal(label.textMeasured(), false);
+  assert.ok(label.textWidth() > 400, 'the estimate overshoots the saved box');
+  const padding = (svg) => svg.match(/class="schematic-math-label" style="[^"]*padding:([^;]+);/)[1];
+  assert.equal(padding(svgString(saved)), `6px 6px 6px ${GRID / 2}px`, 'the whole inset on the aligned side');
+  // Measured (as the editor shows it), the same inset.
+  label.setRenderedTextBounds(340, 40);
+  assert.equal(label.textMeasured(), true);
+  assert.equal(padding(svgString(saved)), `6px 6px 6px ${GRID / 2}px`);
+});

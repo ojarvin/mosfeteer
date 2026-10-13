@@ -60,6 +60,11 @@ const checkEl = document.getElementById('atlas-check');
 const checkMenuEl = document.getElementById('atlas-check-menu');
 const checkCountEl = document.getElementById('atlas-check-count');
 const LINKS_KEY = 'mosfeteer.atlas.links';
+// The cached drawings' and images' versions: bump them when the renderer
+// draws designs differently, or the desk keeps showing the old drawings
+// until each file changes.
+const DRAWING_CACHE = 'svg-v4';
+const IMAGE_CACHE = 'v5';
 // The editor's Settings (theme, animations, scrolling, ...) and where they live.
 const settingsEl = document.getElementById('btn-settings')?.closest('.toolbar-popover') || null;
 const settingsHome = settingsEl?.parentElement || null;
@@ -303,7 +308,7 @@ async function drawingFor(documentInfo, edited) {
     const circuit = openDesignAsSaved();
     return { svg: drawingSvg(circuit), index: designIndex(circuit), revision: null };
   }
-  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v3');
+  const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, DRAWING_CACHE);
   const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v3');
   const [cached, cachedIndex] = key ? await Promise.all([cacheGet(key), cacheGet(indexKey)]) : [null, null];
   if (cached && cachedIndex) return { svg: cached, index: cachedIndex, revision: documentInfo.revision };
@@ -416,7 +421,7 @@ async function rasterize(entry, level) {
 
 /** Decode (or bake and store) one image. */
 async function bake(entry, level) {
-  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-v4`);
+  const cacheKey = entry.revision && renderingKey(entry.path, entry.revision, `${theme()}-${level}-${IMAGE_CACHE}`);
   const blob = cacheKey && await cacheGet(cacheKey);
   if (blob) return createImageBitmap(blob);
   // Drawing an SVG into a bitmap blocks the page; let a zoom finish first.
@@ -1499,7 +1504,7 @@ async function saveTags(entry, text) {
       const index = { ...(entry.index || designIndex(loadDocument(document))), tags };
       const revision = saved?.revision || null;
       if (revision) {
-        await cachePut(renderingKey(entry.path, revision, 'svg-v3'), entry.svg);
+        await cachePut(renderingKey(entry.path, revision, DRAWING_CACHE), entry.svg);
         await cachePut(renderingKey(entry.path, revision, 'index-v3'), index);
         for (const level of ['small', 'large']) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
