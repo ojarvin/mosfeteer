@@ -58,7 +58,6 @@ const exportEl = document.getElementById('atlas-export');
 const linksEl = document.getElementById('atlas-links');
 const checkEl = document.getElementById('atlas-check');
 const checkMenuEl = document.getElementById('atlas-check-menu');
-const checkCountEl = document.getElementById('atlas-check-count');
 const LINKS_KEY = 'mosfeteer.atlas.links';
 // The cached drawings' and images' versions: bump them when the renderer
 // draws designs differently, or the desk keeps showing the old drawings
@@ -1115,8 +1114,8 @@ function drawHits(ctx, tile, entry, hits, palette) {
 // What in the workspace needs a hand: links naming a design no file is
 // called (core/workspace-check.js finds the design one most likely meant:
 // the one saved under that name, renamed outside the editor), the editor's
-// unsaved changes, and files the desk could not read. Its count shows on the
-// Check button; its menu (a toolbar menu, toolbar-ui.js) relinks, opens a
+// unsaved changes, and files the desk could not read. The Check button
+// turns amber while there is any; its menu (a toolbar menu, toolbar-ui.js) relinks, opens a
 // design at the parts concerned, or saves.
 
 /** What the check finds on the desk now. */
@@ -1141,8 +1140,9 @@ function syncCheck() {
   if (!shown) return;
   const found = workspaceFindings();
   const count = found.links.length + (found.unsaved ? 1 : 0) + found.unreadable.length;
-  checkCountEl.hidden = !count;
-  checkCountEl.textContent = String(count);
+  // Something to look at turns the button amber; the count is in its title.
+  checkEl.classList.toggle('atlas-check-findings', count > 0);
+  checkEl.dataset.findings = String(count);
   checkEl.title = count ? `Check the workspace: ${count} to look at` : 'Check the workspace';
   // Redrawn under the keyboard (after a relink), the menu keeps the focus.
   const focused = checkMenuEl.contains(document.activeElement);

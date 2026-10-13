@@ -5399,21 +5399,15 @@ button.off {
   border-radius: var(--radius-lg);
 }
 
-/* The workspace check: a count of what needs a look on its button, and a
-   menu whose items may wrap (a design, its parts, and the link). */
+/* The workspace check: its button amber while something needs a look
+   (its icon too, drawn in the text color), and a menu whose items may wrap
+   (a design, its parts, and the link). */
 .atlas-check[hidden] {
   display: none;
 }
 
-.atlas-check-count {
-  margin-left: 6px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--danger);
-  color: var(--on-accent);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  line-height: 18px;
+.atlas-head .atlas-check-findings {
+  color: var(--warn);
 }
 
 .atlas-check-menu {

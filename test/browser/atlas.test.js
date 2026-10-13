@@ -443,13 +443,14 @@ describe('the workspace check', { skip: browserSkip() }, () => {
     await h.open('ota-v2');
     await h.click('#app-mark');
     await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
-    assert.equal(await h.evaluate(`document.getElementById('atlas-check-count').textContent`), '2');
+    assert.equal(await h.evaluate(`document.getElementById('atlas-check').dataset.findings`), '2');
+    assert.equal(await h.evaluate(`document.getElementById('atlas-check').classList.contains('atlas-check-findings')`), true, 'amber while there is something');
     await h.click('#atlas-check');
     assert.deepEqual(await menuItems(), ['Relink system: OA1 → opamp to ota-v2', 'Open system: R1 → nothing']);
     await h.evaluate(`[...document.querySelectorAll('#atlas-check-menu [role="menuitem"]')][0].click()`);
     // Written into system's file; the desk's links follow at once.
     const { readFile } = await import('node:fs/promises');
-    await h.until(`document.getElementById('atlas-check-count').textContent === '1'`, 5000);
+    await h.until(`document.getElementById('atlas-check').dataset.findings === '1'`, 5000);
     const saved = JSON.parse(await readFile(join(h.workspace, 'system.json'), 'utf8'));
     assert.deepEqual(saved.components.map((c) => [c.refdes, c.link]).sort(), [['OA1', 'ota-v2'], ['R1', 'nothing']]);
     assert.deepEqual(await menuItems(), ['Open system: R1 → nothing']);

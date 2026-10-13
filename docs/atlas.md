@@ -103,8 +103,8 @@ current drawing trigger the usual discard prompt; canceling keeps the Atlas
 open. Name and save the new circuit to add it to the workspace. This button
 is hidden in the Symbols view.
 
-**Check** checks the whole workspace, with a count on the button when
-something needs a look; its menu says what and acts on it. **Broken links**:
+**Check** checks the whole workspace; its button turns amber while
+something needs a look (the count in its tooltip); its menu says what and acts on it. **Broken links**:
 a part linking to a name no design has (`src/core/workspace-check.js`,
 [`hierarchy.md`](hierarchy.md)) is relinked, in its file, to the one
 design saved under that name, or, when none or several were, its design
