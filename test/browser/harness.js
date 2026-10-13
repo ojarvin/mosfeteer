@@ -72,24 +72,44 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   // browsers started at once never race for one.
   // CI runners (GitHub's Ubuntu) do not allow Chromium's sandbox.
   const sandbox = process.env.CI ? ['--no-sandbox'] : [];
-  const chrome = spawn(chromePath(), ['--headless=new', ...sandbox, '--remote-debugging-port=0', `--user-data-dir=${join(root, 'chrome')}`,
-    `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, HOME: home } });
-  let chromeErr = '';
-  chrome.stderr.on('data', (chunk) => { chromeErr = (chromeErr + chunk).slice(-2000); });
-  let ws;
-  try {
+  const launch = (attempt) => {
+    const dir = join(root, attempt ? `chrome-${attempt}` : 'chrome');
+    const child = spawn(chromePath(), ['--headless=new', ...sandbox, '--remote-debugging-port=0', `--user-data-dir=${dir}`,
+      `--window-size=${width},${height}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, HOME: home } });
+    const launched = { child, dir, err: '' };
+    child.stderr.on('data', (chunk) => { launched.err = (launched.err + chunk).slice(-2000); });
+    return launched;
+  };
+  // A cold start can be slow when several browsers start at once on a busy
+  // machine (CI starts six with the unit tests): it is given a deadline,
+  // not a count of polls, and one fresh try before the test fails.
+  const STARTUP_MS = 45000;
+  const pageOf = async (launched) => {
+    const deadline = Date.now() + STARTUP_MS;
     let cdpPort = null;
-    for (let i = 0; i < 100 && !cdpPort; i++) {
-      try { cdpPort = Number((await readFile(join(root, 'chrome', 'DevToolsActivePort'), 'utf8')).split('\n')[0]) || null; } catch { /* not up yet */ }
+    while (!cdpPort && Date.now() < deadline && launched.child.exitCode === null) {
+      try { cdpPort = Number((await readFile(join(launched.dir, 'DevToolsActivePort'), 'utf8')).split('\n')[0]) || null; } catch { /* not up yet */ }
       if (!cdpPort) await sleep(100);
     }
     let targets = [];
-    for (let i = 0; i < 100 && cdpPort && !targets.some((t) => t.type === 'page'); i++) {
+    while (cdpPort && !targets.some((t) => t.type === 'page') && Date.now() < deadline) {
       try { targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json(); } catch { /* not up yet */ }
       if (!targets.some((t) => t.type === 'page')) await sleep(100);
     }
-    const page = targets.find((t) => t.type === 'page');
-    if (!page) throw new Error(`Chromium ${cdpPort ? 'offered no page to drive' : 'did not start'}${chromeErr ? `:\n${chromeErr.trim()}` : ''}`);
+    return { cdpPort, page: targets.find((t) => t.type === 'page') };
+  };
+  let launched = launch(0);
+  let chrome = launched.child;
+  let ws;
+  try {
+    let { cdpPort, page } = await pageOf(launched);
+    if (!page) {
+      launched.child.kill('SIGTERM');
+      launched = launch(1);
+      chrome = launched.child;
+      ({ cdpPort, page } = await pageOf(launched));
+    }
+    if (!page) throw new Error(`Chromium ${cdpPort ? 'offered no page to drive' : 'did not start'}${launched.err ? `:\n${launched.err.trim()}` : ''}`);
     ws = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
       ws.addEventListener('open', resolve, { once: true });
