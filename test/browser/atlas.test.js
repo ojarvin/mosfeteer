@@ -118,6 +118,23 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().beams.length === 0)`);
   });
 
+  test('the hint bar names the design under the pointer, then the pick again', async () => {
+    await openDesk();
+    // beta lifts alone (no links), so nothing floats over alpha.
+    assert.ok(await pick('beta'));
+    await h.until(`/^beta #filters · Enter opens/.test(document.getElementById('atlas-hint').textContent)`);
+    const tiles = (await snapshot()).tiles;
+    const alpha = tiles.find((t) => t.name === 'alpha');
+    const at = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasWorldToClient(${alpha.x + alpha.w / 2}, ${alpha.y + alpha.h / 2}))`);
+    await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });
+    await h.until(`document.getElementById('atlas-hint').textContent === 'alpha #filters · click picks · double-click opens'`);
+    assert.equal(await h.evaluate(`document.querySelector('#atlas-hint .atlas-hint-name').textContent`), 'alpha', 'named as a pick is');
+    // Off every design, the pick has the bar again.
+    await h.mouse('mouseMoved', 30, 450, { button: 'none', buttons: 0 });
+    await h.until(`/^beta #filters · Enter opens/.test(document.getElementById('atlas-hint').textContent)`);
+    await atlasKey('Escape');
+  });
+
   test('the designs lifted with the pick float clear of its card, are picked where they float, and settle back', async () => {
     await openDesk();
     assert.ok(await pick('top'));

@@ -40523,19 +40523,29 @@ function syncHint() {
   if (!hintEl) return;
   const ids = state.source === 'workspace' ? pickedIds() : [];
   const names = ids.map((id) => state.entries.get(id)).filter(Boolean);
-  const key = `${state.source}|${names.map((entry) => `${entry.name}:${entry.index?.tags?.join(',') || ''}`).join('|')}`;
+  // The design under the pointer, when it is not the pick, has the bar
+  // while the pointer is on it: named as a pick is, with what a click does.
+  const hovered = state.source === 'workspace' && state.hover && !ids.includes(state.hover) ? state.entries.get(state.hover) : null;
+  const describe = (entry) => `${entry.name}:${entry.index?.tags?.join(',') || ''}`;
+  const key = `${state.source}|${hovered ? `hover:${describe(hovered)}` : names.map(describe).join('|')}`;
   if (state.hintKey === key) return;
   state.hintKey = key;
+  const name = (entry) => Object.assign(document.createElement('b'), { className: 'atlas-hint-name', textContent: entry.name });
+  const tagsOf = (entry) => {
+    const tags = entry.index?.tags || [];
+    return tags.length ? [' ', Object.assign(document.createElement('span'), { className: 'atlas-hint-tags', textContent: tags.map((tag) => `#${tag}`).join(' ') })] : [];
+  };
+  if (hovered) {
+    hintEl.replaceChildren(name(hovered), ...tagsOf(hovered), ' · click picks · double-click opens');
+    return;
+  }
   if (!names.length) {
     hintEl.textContent = HINTS[state.source];
     return;
   }
-  const name = (entry) => Object.assign(document.createElement('b'), { className: 'atlas-hint-name', textContent: entry.name });
   const parts = [];
   if (names.length === 1) {
-    parts.push(name(names[0]));
-    const tags = names[0].index?.tags || [];
-    if (tags.length) parts.push(' ', Object.assign(document.createElement('span'), { className: 'atlas-hint-tags', textContent: tags.map((tag) => `#${tag}`).join(' ') }));
+    parts.push(name(names[0]), ...tagsOf(names[0]));
     parts.push(' · Enter opens · Z zooms to it · Esc lets go');
   } else {
     const shown = names.slice(0, 3);

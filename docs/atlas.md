@@ -120,7 +120,8 @@ button names it ("Back to amp", or "(not in this workspace)" for a new or
 unsaved drawing). The picked design, which Enter opens, is named in the
 hint bar at the bottom, with its tags and the keys that act on it (several
 picked: their names); a hover draws a faint frame that takes in the
-caption.
+caption, and while the pointer is on a design other than the pick the bar
+names that one the same way, with what a click does.
 
 Opening a design flies it up to exactly where the editor will fit it,
 timed by how far it travels. The file is read during the flight and let in
