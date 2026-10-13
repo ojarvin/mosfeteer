@@ -39304,6 +39304,7 @@ __exports.floatClear = floatClear;
 __exports.tileAt = tileAt;
 __exports.neighbourTile = neighbourTile;
 __exports.viewFitting = viewFitting;
+__exports.throughDepth = throughDepth;
 __exports.viewShowing = viewShowing;
 __exports.carryDeskPlace = carryDeskPlace;
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
@@ -39647,6 +39648,23 @@ function viewFitting(rect, paneW, paneH, margin = 0.08) {
 }
 
 /**
+ * A rect on its way between the desk and the screen, seen in perspective:
+ * the screen is depth 1, the desk lies behind it at depth 0, and something
+ * `ratio` times larger at the screen than on the desk is that much nearer
+ * the eye there. In between, `desk` and `screen` (screen rects) are blended
+ * as a straight path in space projects: its size changes slowly while it
+ * is far and quickly as it comes near. Depths a little past either end
+ * carry on along the same path.
+ */
+function throughDepth(desk, screen, depth, ratio) {
+  const near = depth;
+  const far = (1 - depth) * Math.max(ratio, 1e-3);
+  const sum = near + far;
+  const blend = (key) => (far * desk[key] + near * screen[key]) / sum;
+  return { x: blend('x'), y: blend('y'), w: blend('w'), h: blend('h') };
+}
+
+/**
  * The view, moved as little as it takes to show `rect` whole with `margin`
  * (a share of the view) to spare, at the same zoom. A rect already in full
  * view leaves it as it is, so picking a design near the edge of a fitted
@@ -39803,9 +39821,9 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkGraph } = __require("src/core/design-links.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
 let bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
-let easeInOutQuart, wheelIntent, lerpView, zoomView; __bind(() => { ({ easeInOutQuart, wheelIntent, lerpView, zoomView } = __require("src/web/gestures.js")); });
+let easeOutCubic, wheelIntent, lerpView; __bind(() => { ({ easeOutCubic, wheelIntent, lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
@@ -39830,8 +39848,8 @@ let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
  * images (a small one and a large one per design, kept in IndexedDB by file
  * revision), so a hundred designs pan as smoothly as one. The few tiles that
  * fill the screen get their live SVG on top, crisp at any zoom. Entering and
- * leaving zoom between the editor's view and the design's tile, which works
- * because a tile is the drawing at its real size.
+ * leaving fly a design between the editor, at the screen, and its place on
+ * the desk behind it (drawFlight).
  */
 
 
@@ -39892,7 +39910,6 @@ const MAX_VECTOR_TILES = 6;
 /** Large images decoded at once (each is up to ~6 MB of pixels). */
 const MAX_LARGE_BITMAPS = 24;
 const ZOOM_IN_PX_PER_UNIT = 3; // the editor's closest zoom: 120 px per grid cell
-const ENTER_MS = 480;
 /** Each design's own reveal: it fades and grows in this long, after a delay
  *  that ripples out from the middle of the view (REVEAL_STEP_MS a design,
  *  at most REVEAL_SPREAD_MS), so the desk assembles rather than blinks on. */
@@ -39919,7 +39936,9 @@ function atlasOpen() {
 /** What the desk shows, read-only, for tests and tools (it is drawn on a
  *  canvas): each design's name and place, whether it is the open one, the
  *  pick, matched by the search, how far it is lifted, and how far it has
- *  floated clear of the pick (drawing units); and where the last frame's
+ *  floated clear of the pick (drawing units); the view; a design in
+ *  flight between the desk and the screen (its depth, 1 at the screen);
+ *  and where the last frame's
  *  link beams landed, with the card each landed on (screen pixels); null
  *  when closed. */
 function atlasSnapshot() {
@@ -39929,6 +39948,8 @@ function atlasSnapshot() {
     busy: !!(state.entering || state.closing || state.opening),
     search: state.matches ? [...state.matches.keys()] : null,
     arranged: state.arranged,
+    view: { ...state.view },
+    flight: state.flight ? { id: state.flight.id, depth: state.flight.depth } : null,
     beams: state.beams || [],
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);
@@ -40361,6 +40382,7 @@ function draw() {
   }
   const palette = state.colors;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1;
   ctx.fillStyle = palette.paper;
   ctx.fillRect(0, 0, w, h);
   drawGrid(ctx, palette, w, h);
@@ -40398,6 +40420,9 @@ function draw() {
   // where each is heading, so two trading places do not swap mid-way.
   placed.sort((a, b) => (liftOf(a.tile.id).target ?? 0) - (liftOf(b.tile.id).target ?? 0) || liftOf(a.tile.id).lift - liftOf(b.tile.id).lift);
   for (const { tile, alpha, rect: flatRect, detail } of placed) {
+    // A design in flight is drawn over everything else (drawFlight); its
+    // images are still asked for here.
+    const flying = tile.id === state.flight?.id;
     const reveal = tileReveal(tile);
     const { lift, dim } = liftOf(tile.id);
     const placedRect = lifted(flatRect, tile.id);
@@ -40407,7 +40432,7 @@ function draw() {
       x: placedRect.x + (placedRect.w * (1 - grow)) / 2, y: placedRect.y + (placedRect.h * (1 - grow)) / 2,
       w: placedRect.w * grow, h: placedRect.h * grow,
     } : placedRect;
-    if (lift > 0.004) drawCard(ctx, tile, placedRect, lift, palette);
+    if (lift > 0.004 && !flying) drawCard(ctx, tile, placedRect, lift, palette);
     const entry = state.entries.get(tile.id);
     const found = state.matches?.get(tile.id);
     // A search fades every design it does not find; what it finds in one is
@@ -40420,7 +40445,7 @@ function draw() {
     const level = detail === 'small' ? 'small' : 'large';
     const bitmap = state.bitmaps.get(bitmapKey(entry, level)) ||
       state.bitmaps.get(bitmapKey(entry, level === 'large' ? 'small' : 'large'));
-    if (bitmap && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
+    if (bitmap && !flying && !(live.has(tile.id) && state.overlays.get(tile.id)?.dataset.ready)) {
       // Best filtering at rest; in motion the cheap one, which no one sees.
       ctx.imageSmoothingQuality = moving ? 'low' : 'high';
       // A design whose image has only just arrived fades in; it does not pop.
@@ -40438,10 +40463,12 @@ function draw() {
       if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
     ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6) * (1 - 0.6 * dim);
-    drawCaption(ctx, tile, entry, placedRect, palette);
+    if (!flying) drawCaption(ctx, tile, entry, placedRect, palette);
   }
   ctx.globalAlpha = 1;
+  drawRipple(ctx, palette);
   drawLinks(ctx, palette, shown);
+  if (state.flight) drawFlight(ctx, palette, w, h);
   drawZoomBox(ctx, palette);
   // Every small image first (the whole desk becomes recognizable), then large.
   wanted.sort((a, b) => (a.level === b.level ? a.distance - b.distance : a.level === 'small' ? -1 : 1));
@@ -40468,7 +40495,9 @@ function updateLifts() {
   const dt = Math.min(100, now - (state.liftAt || now));
   state.liftAt = now;
   state.lifts ||= new Map();
-  const focus = state.source === 'workspace' && !state.quiet ? new Set([state.selected, ...(state.picked || [])].filter(Boolean)) : new Set();
+  // Through a transition too the pick stays lifted, its kin part way, and
+  // the rest dimmed: a design flies up from (or down to) the desk as it is.
+  const focus = state.source === 'workspace' ? new Set([state.selected, ...(state.picked || [])].filter(Boolean)) : new Set();
   const related = new Set();
   if (focus.size) {
     for (const { from, to } of deskLinks().edges) {
@@ -40553,10 +40582,6 @@ function tileUnder(point) {
   return tileAt(state.tiles, point);
 }
 
-/** The card a lifted design rests on: the drawing's own paper, raised on a
- *  shadow that deepens and spreads as it rises; its rim a hairline in
- *  drawing units, so it stays fine however far out the desk is zoomed (the
- *  picked one's in the accent). */
 /** The card a lifted design lies on, on screen: its drawing `rect` with a
  *  margin, and its name below when the name shows. */
 function cardFrame(rect) {
@@ -40566,10 +40591,17 @@ function cardFrame(rect) {
   return { x: rect.x - pad, y: rect.y - pad, w: rect.w + 2 * pad, h: rect.h + 2 * pad + caption };
 }
 
+/** The corner radius of a card on screen. */
+const cardRadius = () => Math.max(3, Math.min(16, GRID * 0.6 * scale()));
+
+/** The card a lifted design rests on: the drawing's own paper, raised on a
+ *  shadow that deepens and spreads as it rises; its rim a hairline in
+ *  drawing units, so it stays fine however far out the desk is zoomed (the
+ *  picked one's in the accent). */
 function drawCard(ctx, tile, rect, lift, palette) {
   const k = scale();
   const { x, y, w, h } = cardFrame(rect);
-  const radius = Math.max(3, Math.min(16, GRID * 0.6 * k));
+  const radius = cardRadius();
   const picked = state.selected === tile.id || !!state.picked?.has(tile.id);
   // Solid from the related designs' height up: a lower card is nearer the
   // desk (a smaller shadow), never see-through.
@@ -40598,11 +40630,12 @@ function drawCard(ctx, tile, rect, lift, palette) {
 }
 
 /** How far a design's reveal has come (1 at rest): designs nearer the
- *  middle of the view go first, the rest after them in turn. */
+ *  middle of the view (or `state.revealFrom`, where a design lands) go
+ *  first, the rest after them in turn. */
 function tileReveal(tile) {
   if (!state.revealAt) return 1;
   if (!state.revealOrder || state.revealOrder.at !== state.revealAt) {
-    const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
+    const centre = state.revealFrom || { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
     const ranked = [...state.tiles].sort((a, b) => Math.hypot(a.x + a.w / 2 - centre.x, a.y + a.h / 2 - centre.y) - Math.hypot(b.x + b.w / 2 - centre.x, b.y + b.h / 2 - centre.y));
     state.revealOrder = { at: state.revealAt, delay: new Map(ranked.map((t, i) => [t.id, Math.min(i * REVEAL_STEP_MS, REVEAL_SPREAD_MS)])) };
   }
@@ -40956,26 +40989,7 @@ function shownTile(tile) {
   const from = state.motion?.from.get(tile.id);
   const t = from ? motionProgress() : 1;
   const placed = from ? { ...tile, x: from.x + (tile.x - from.x) * t, y: from.y + (tile.y - from.y) * t } : tile;
-  return scattered(placed);
-}
-
-/**
- * A flight into (or out of) one design parts the desk around it: every other
- * design moves straight away from it, in step with the camera, far enough to
- * clear the editor's view -- so no neighbour lingers at the edges while the
- * editor takes over, and on the way out they gather back in from beyond the
- * edges (state.scatter, set by animateView).
- */
-function scattered(tile) {
-  const scatter = state.scatter;
-  if (!scatter || tile.id === scatter.focus.id) return tile;
-  const t = scatter.animation ? scatter.animation.t : 1;
-  const k = easeInOutQuart(scatter.outward ? t : 1 - t);
-  if (k <= 0) return tile;
-  const dx = tile.x + tile.w / 2 - scatter.centre.x;
-  const dy = tile.y + tile.h / 2 - scatter.centre.y;
-  const length = Math.hypot(dx, dy) || 1;
-  return { ...tile, x: tile.x + (dx / length) * scatter.reach * k, y: tile.y + (dy / length) * scatter.reach * k };
+  return placed;
 }
 
 // ----- export ---------------------------------------------------------------------
@@ -41197,13 +41211,11 @@ function focusSearch() {
 
 /** The editor's grid: one-unit lines every cell, fading out as the cells
  *  shrink to a few pixels instead of turning into a grey wash. */
-function drawGrid(ctx, palette, w, h) {
+function drawGrid(ctx, palette, w, h, { x, y } = state.view, k = scale()) {
   if (!editor.showGrid) return;
-  const k = scale();
   const spacing = GRID * k;
   const alpha = Math.min(1, (spacing - 3) / 6);
   if (alpha <= 0) return;
-  const { x, y } = state.view;
   // Whole device pixels: a line straddling two pixels would antialias into
   // a fainter, wider one, and the grid would shimmer unevenly.
   const dpr = window.devicePixelRatio || 1;
@@ -41213,7 +41225,7 @@ function drawGrid(ctx, palette, w, h) {
   ctx.save();
   // A line thinner than a pixel shows as a fainter one-pixel line, as the
   // editor's one-unit grid does.
-  ctx.globalAlpha = alpha * Math.min(1, (k * dpr) / width);
+  ctx.globalAlpha *= alpha * Math.min(1, (k * dpr) / width);
   ctx.strokeStyle = palette.grid;
   ctx.lineWidth = width / dpr;
   ctx.beginPath();
@@ -41375,22 +41387,17 @@ function setView(view) {
   requestDraw();
 }
 
-/** Animate the view to `target`. `camera` flies there as one zoom
- *  (gestures.js zoomView) rather than easing each edge. */
-function animateView(target, duration = 320, { camera = false, scatter = null } = {}) {
+/** Run `frame(t)` for t from 0 to 1 over `duration` ms, drawing after
+ *  each; resolves when done or cut short (stopAnimation). */
+function animate(duration, frame) {
   stopAnimation();
-  const reduced = reducedMotion();
-  if (reduced || duration <= 0) {
-    setView(target);
+  if (reducedMotion() || duration <= 0) {
+    frame(1);
+    requestDraw();
     return Promise.resolve();
   }
-  const from = { ...state.view };
   const start = performance.now();
-  const blend = camera ? zoomView : lerpView;
-  const animation = { target, frame: 0, t: 0 };
-  // The desk parts around (or gathers back to) `scatter.tile` as the camera
-  // flies, reaching as far as the view at the close end of the flight.
-  if (scatter) partDesk(scatter.tile, scatter.outward, scatter.outward ? target : from, animation);
+  const animation = { frame: 0, t: 0 };
   return new Promise((resolve) => {
     // One cut short (another flight, a wheel) still lets its waiter go on.
     animation.resolve = resolve;
@@ -41398,14 +41405,11 @@ function animateView(target, duration = 320, { camera = false, scatter = null } 
       if (!state) { resolve(); return; }
       const t = Math.min(1, (now - start) / duration);
       animation.t = t;
-      state.view = blend(from, animation.target, t);
+      frame(t);
       draw();
       if (t < 1) animation.frame = requestAnimationFrame(step);
       else {
-        state.animation = null;
-        // Gathered back in, the desk is at rest; parted, it stays parted
-        // until the Atlas is gone.
-        if (state.scatter?.animation === animation && !state.scatter.outward) state.scatter = null;
+        if (state.animation === animation) state.animation = null;
         draw(); // settled: the live drawings return
         resolve();
       }
@@ -41413,6 +41417,12 @@ function animateView(target, duration = 320, { camera = false, scatter = null } 
     animation.frame = requestAnimationFrame(step);
     state.animation = animation;
   });
+}
+
+/** Animate the view to `target`. */
+function animateView(target, duration = 320) {
+  const from = { ...state.view };
+  return animate(duration, (t) => { state.view = lerpView(from, target, t); });
 }
 
 /** Resolve after `count` frames: time for the editor behind to settle. */
@@ -41423,23 +41433,6 @@ function nextFrames(count) {
   });
 }
 
-/** How long a flight between two views takes: longer the more it zooms,
- *  so a far zoom does not rush and a short hop does not dawdle. */
-function flightMs(from, to) {
-  const octaves = Math.abs(Math.log2(to.w / from.w));
-  return Math.round(Math.min(720, Math.max(380, 380 + 85 * octaves)));
-}
-
-/** Part the desk around `tile` for a flight (see scattered): as far as
- *  `near`, the view at the close end, clears; `animation.t` drives it. */
-function partDesk(tile, outward, near, animation) {
-  state.scatter = {
-    focus: tile, outward, animation,
-    centre: { x: tile.x + tile.w / 2, y: tile.y + tile.h / 2 },
-    reach: Math.hypot(near.w, near.h) * 0.75,
-  };
-}
-
 function stopAnimation() {
   if (state?.animation) {
     cancelAnimationFrame(state.animation.frame);
@@ -41448,9 +41441,9 @@ function stopAnimation() {
   }
 }
 
-/** In a transition -- zooming out of the editor, flying back into it, or
- *  into a design -- the desk takes no input: a key or a scroll then would
- *  cut the flight short and leave the desk parted. */
+/** In a transition -- a design flying back from the editor, up into it, or
+ *  up to another -- the desk takes no input: a key or a scroll then would
+ *  cut the flight short and leave a design in flight. */
 const inTransition = () => !!(state?.entering || state?.closing || state?.opening);
 
 function zoomAbout(factor, clientX, clientY) {
@@ -41485,6 +41478,271 @@ function focusTile(tile, { zoom = false } = {}) {
   else void animateView(next);
 }
 
+// ----- the flight between the desk and the screen ---------------------------
+//
+// The screen is a pane of glass and the desk lies some way behind it. The
+// editor is a design brought right up to the glass; the Atlas is the desk,
+// seen through it. Leaving the editor, the design flies back, away from the
+// eye, on its sheet of paper -- the whole editor page, which narrows into the
+// design's card as it goes -- and lands on its place on the desk, picked
+// (floating a little above it), with a ripple of light. Opening a design
+// carries its card on up to the glass, where the editor takes over. The desk
+// itself hardly moves: it sinks into shadow and draws back a little while a
+// design is near the eye (state.flight; throughDepth projects the path).
+
+/** How far the desk draws back while a design is at the glass. */
+const FLIGHT_PUSH = 0.1;
+const RIPPLE_MS = 650;
+/** The desk view left last in this page, per workspace: coming back from the
+ *  editor, the design lands on the desk as it was left. */
+let lastDesk = null;
+
+const smoothstep = (t) => { const x = Math.max(0, Math.min(1, t)); return x * x * (3 - 2 * x); };
+
+/** A screen rect grown about its centre by `lift` (as a picked card is) and
+ *  moved by `dx`, `dy` drawing units. */
+function liftedBy(rect, lift, dx = 0, dy = 0) {
+  const grow = 1 + LIFT_GROW * lift;
+  const k = scale();
+  return { x: rect.x + (rect.w * (1 - grow)) / 2 + dx * k, y: rect.y + (rect.h * (1 - grow)) / 2 + dy * k, w: rect.w * grow, h: rect.h * grow };
+}
+
+/** Where `rect` (desk units) shows on screen in `view`. */
+function rectInView(rect, view) {
+  const k = paneSize().w / view.w;
+  return { x: (rect.x - view.x) * k, y: (rect.y - view.y) * k, w: rect.w * k, h: rect.h * k };
+}
+
+/** The view the desk rests at for a design landing on it: as it was left in
+ *  this workspace (else the whole desk), moved as little as it takes to show
+ *  the design's card. */
+function restingView(tile) {
+  const { w, h } = paneSize();
+  let base = clampView(fitAllView());
+  if (lastDesk?.folder === state.folder) {
+    const v = lastDesk.view;
+    base = clampView({ x: v.x, y: v.y + v.h / 2 - (v.w * h / w) / 2, w: v.w, h: v.w * h / w });
+  }
+  if (!tile) return base;
+  const grow = LIFT_GROW / 2;
+  const pad = ATLAS_GAP * 0.3;
+  return viewShowing(base, { x: tile.x - tile.w * grow - pad, y: tile.y - tile.h * grow - pad, w: tile.w * (1 + LIFT_GROW) + 2 * pad, h: tile.h * (1 + LIFT_GROW) + 2 * pad + ATLAS_CAPTION });
+}
+
+function rememberDesk() {
+  if (state?.source === 'workspace' && state.folder !== undefined) lastDesk = { folder: state.folder, view: { ...(state.flight?.rest || state.view) } };
+}
+
+/** The desk drawn back about `about` (a desk point) as far as `depth` asks. */
+function pushedView(rest, depth, about) {
+  const f = 1 + FLIGHT_PUSH * smoothstep(depth);
+  return { x: about.x - (about.x - rest.x) * f, y: about.y - (about.y - rest.y) * f, w: rest.w * f, h: rest.h * f };
+}
+
+/** Lift `tile` off the desk toward the glass, where it will show at `screen`
+ *  (screen pixels). It starts as it lies now. */
+function startFlight(tile, screen) {
+  const { lift, dx = 0, dy = 0 } = liftOf(tile.id);
+  state.flight = {
+    id: tile.id, depth: 0, screen, from: { lift, dx, dy },
+    rest: { ...state.view }, about: { x: tile.x + tile.w / 2, y: tile.y + tile.h / 2 },
+  };
+}
+
+/** Move the design in flight to `depth` over `duration` ms along `ease`. */
+function fly(depth, duration, ease) {
+  const flight = state.flight;
+  const from = flight.depth;
+  return animate(duration, (t) => {
+    if (state.flight !== flight) return;
+    flight.depth = from + (depth - from) * ease(t);
+    if (flight.rest) state.view = pushedView(flight.rest, flight.depth, flight.about);
+  });
+}
+
+/** How much nearer the eye the glass is than the desk, for the flight. */
+function flightRatio(flight) {
+  const tile = flight.id && tileById(flight.id);
+  if (!tile) return 4;
+  const k = paneSize().w / (flight.rest || state.view).w;
+  return Math.max(1, flight.screen.w / (tile.w * k * (1 + LIFT_GROW * (flight.from?.lift ?? 1))));
+}
+
+/** A flight takes longer the farther it goes, so a long one does not rush. */
+const flightMs = (flight) => Math.round(Math.min(650, 400 + 60 * Math.log2(flightRatio(flight))));
+
+/** Away from the glass: it lets go gently, sweeps back, and settles onto the
+ *  desk with a small bounce (a little past it, and back). */
+function settleEase(t) {
+  const x = t * t * (2 - t);
+  const c = 1.1;
+  return 1 + (c + 1) * (x - 1) ** 3 + c * (x - 1) ** 2;
+}
+
+/** Up to the glass: straight up from where it floats, slowing into place. */
+function riseEase(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
+/** The design has landed: it lies picked on the desk, and the desk rings. */
+function landFlight({ ripple = true } = {}) {
+  const flight = state.flight;
+  if (!flight) return;
+  state.flight = null;
+  if (flight.rest) state.view = flight.rest;
+  if (flight.id) {
+    state.lifts ||= new Map();
+    const lift = flight.from?.lift ?? 1;
+    state.lifts.set(flight.id, { lift, dim: 0, dx: flight.from?.dx || 0, dy: flight.from?.dy || 0, target: lift });
+    if (ripple) state.ripple = { id: flight.id, at: performance.now() };
+  }
+  requestDraw();
+}
+
+/**
+ * The design in flight, over the desk: the desk darkens behind it, and the
+ * design rides on its sheet of paper -- the editor's page at the glass, its
+ * card on the desk, its grid fading as it recedes -- casting a shadow that
+ * spreads and softens the higher it is.
+ */
+function drawFlight(ctx, palette, w, h) {
+  const flight = state.flight;
+  const near = Math.max(0, Math.min(1, flight.depth));
+  const dark = theme() === 'dark';
+  const tile = flight.id ? tileById(flight.id) : null;
+  const entry = tile && state.entries.get(tile.id);
+  ctx.save();
+  ctx.fillStyle = dark ? '#000' : 'rgb(20, 24, 34)';
+  ctx.globalAlpha = (dark ? 0.62 : 0.32) * smoothstep(near);
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+  const pane = { x: 0, y: 0, w, h };
+  let design = null;
+  let card;
+  let ratio;
+  if (tile) {
+    const from = flight.from || { lift: 1, dx: 0, dy: 0 };
+    const desk = liftedBy(worldToScreen(tile), from.lift, from.dx, from.dy);
+    ratio = Math.max(1, flight.screen.w / desk.w);
+    design = throughDepth(desk, flight.screen, flight.depth, ratio);
+    card = cardFrame(desk);
+  } else {
+    // Bare paper (an unsaved or empty drawing) shrinks away into the desk.
+    card = { x: w * 0.42, y: h * 0.42, w: w * 0.16, h: h * 0.16 };
+    ratio = w / card.w;
+  }
+  const sheet = throughDepth(card, pane, flight.depth, ratio);
+  const radius = cardRadius() * (1 - near);
+  const alpha = tile ? 1 : smoothstep(near * 1.4);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = palette.card;
+  ctx.shadowColor = palette.shadow;
+  ctx.shadowBlur = 30 + 150 * near;
+  ctx.shadowOffsetY = 10 + 80 * near;
+  ctx.beginPath();
+  ctx.roundRect(sheet.x, sheet.y, sheet.w, sheet.h, radius);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  // The editor's grid rides on the sheet, fixed to the drawing.
+  let grid = null;
+  if (design) {
+    const k = design.w / tile.w;
+    grid = { x: tile.x - design.x / k, y: tile.y - design.y / k, k };
+  } else if (flight.grid) {
+    const k = flight.grid.k * sheet.w / w;
+    grid = { x: flight.grid.x - sheet.x / k, y: flight.grid.y - sheet.y / k, k };
+  }
+  if (grid) {
+    ctx.save();
+    ctx.clip();
+    ctx.globalAlpha = alpha * smoothstep(near * 1.25);
+    drawGrid(ctx, palette, w, h, grid, grid.k);
+    ctx.restore();
+  }
+  if (design) {
+    const bitmap = state.bitmaps.get(bitmapKey(entry, 'large')) || state.bitmaps.get(bitmapKey(entry, 'small'));
+    if (bitmap) {
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, design.x, design.y, design.w, design.h);
+    }
+  }
+  // In flight its edge catches the light, most of all midway.
+  const glow = Math.sin(Math.PI * near) * (dark ? 0.55 : 0.35);
+  if (glow > 0.01) {
+    ctx.save();
+    if (dark) ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = alpha * glow;
+    ctx.strokeStyle = palette.accent;
+    ctx.shadowColor = palette.accent;
+    ctx.shadowBlur = 24;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(sheet.x, sheet.y, sheet.w, sheet.h, radius);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // The picked card's accent rim, there on the desk and gone at the glass.
+  ctx.globalAlpha = alpha * 0.9 * (1 - smoothstep(near * 2));
+  if (ctx.globalAlpha > 0.01) {
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = Math.max(0.5, Math.min(1.5, 3 * scale()));
+    ctx.beginPath();
+    ctx.roundRect(sheet.x, sheet.y, sheet.w, sheet.h, radius);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** A landing's ripple: two rings of light run out across the desk from the
+ *  card, lighting the grid as they pass. */
+function drawRipple(ctx, palette) {
+  const ripple = state.ripple;
+  if (!ripple) return;
+  const t = (performance.now() - ripple.at) / RIPPLE_MS;
+  const tile = tileById(ripple.id);
+  if (t >= 1 || !tile || reducedMotion()) {
+    state.ripple = null;
+    return;
+  }
+  requestDraw();
+  const card = cardFrame(lifted(worldToScreen(tile), tile.id));
+  const reach = 50 + 0.3 * Math.max(card.w, card.h);
+  const { w, h } = paneSize();
+  const dark = theme() === 'dark';
+  const ring = (grow) => {
+    const g = Math.max(0, grow);
+    ctx.roundRect(card.x - g, card.y - g, card.w + 2 * g, card.h + 2 * g, cardRadius() + g);
+  };
+  ctx.save();
+  if (dark) ctx.globalCompositeOperation = 'lighter';
+  for (const [delay, weight] of [[0, 1], [0.2, 0.55]]) {
+    const local = (t - delay) / (1 - delay);
+    if (local <= 0) continue;
+    const grow = reach * easeOutCubic(local);
+    const fade = (1 - local) ** 2;
+    // The grid lit in a band behind the ring.
+    ctx.save();
+    ctx.beginPath();
+    ring(grow);
+    ring(grow - 36);
+    ctx.clip('evenodd');
+    ctx.globalAlpha = weight * fade * (dark ? 0.9 : 0.6);
+    drawGrid(ctx, { ...palette, grid: palette.accent }, w, h);
+    ctx.restore();
+    // The ring itself, glowing.
+    ctx.globalAlpha = weight * fade * 0.7;
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 1 + 4 * (1 - local);
+    ctx.shadowColor = palette.accent;
+    ctx.shadowBlur = 16 * (1 - local);
+    ctx.beginPath();
+    ring(grow);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // ----- entering and leaving ---------------------------------------------------------
 
 function deskState(generation, source, startup = false) {
@@ -41493,7 +41751,7 @@ function deskState(generation, source, startup = false) {
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
     selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
     arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
-    arrived: new Map(), scatter: null, opening: false,
+    arrived: new Map(), flight: null, ripple: null, opening: false,
   };
 }
 
@@ -41645,21 +41903,21 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
     searchEl.hidden = source !== 'workspace';
     searchEl.value = source === 'workspace' ? lastQuery : '';
   }
-  // With reduced motion there is no zoom out of the design: the desk is laid
+  // With reduced motion the design does not fly back: the desk is laid
   // out unseen, then fades in over the editor (style.css .atlas.preparing).
   // Startup keeps its own cover and reveal. The class goes on before the
   // desk shows: focusing it restyles at once, and a visible first style
   // would fade out and back in.
   const reduced = reducedMotion();
   // A transition the user starts runs in three steps: the editor's toolbars
-  // slide away, the camera moves, the Atlas's slide in (chrome-slide.js).
+  // slide away, the design flies, the Atlas's slide in (chrome-slide.js).
   // On startup the editor's are simply not there yet.
   const choreographed = !reduced && !startup && animate;
   // From here until the editor is back, its toolbars and panels stand above
   // the desk and its drawing shows only itself (style.css body.chrome-over):
   // the focus hairline and selection go first.
   document.body.classList.add('chrome-over');
-  // Zooming out of the open design, the desk takes the drawing's place
+  // Flying the open design back, the desk takes the drawing's place
   // unseen and the toolbars slide off over it (openDesk); otherwise they go
   // before the desk shows.
   const overDesk = choreographed && source === 'workspace';
@@ -41668,7 +41926,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   void slideChrome(rootEl, choreographed, { animate: false });
   state.quiet = choreographed;
   if (reduced && !startup) rootEl.classList.add('preparing');
-  // Zooming out of the open design, the desk shows only once it has drawn
+  // Flying the open design back, the desk shows only once it has drawn
   // that design: fading in over the editor without it, the design would
   // blink out for a moment (see openDesk).
   const bridging = !reduced && !startup && animate && source === 'workspace';
@@ -41728,7 +41986,7 @@ async function openDesk(generation, source, animate, startup) {
     rootEl.classList.remove('preparing');
     rootEl.style.animation = '';
     draw();
-    // The editor's toolbars slide off over it; the zoom waits for them.
+    // The editor's toolbars slide off over it; the flight waits for them.
     state.editorAway = slideChrome(document.body, true);
   }
   let ready = false;
@@ -41746,6 +42004,8 @@ async function openDesk(generation, source, animate, startup) {
   // The open design starts picked; otherwise nothing is until you choose.
   state.selected = source === 'symbols' ? null : currentTile?.id || null;
   if (!state.tiles.length) {
+    // An empty desk shows its own card: the paper stays where it is.
+    state.flight = null;
     if (!state.fromEditor) state.view = { x: -500, y: -500, w: 1000, h: 1000 * paneSize().h / paneSize().w };
     requestDraw();
     return;
@@ -41767,18 +42027,25 @@ async function openDesk(generation, source, animate, startup) {
     draw();
     await Promise.all([revealStartup(), animateView(target, 760)]);
   } else if (state.fromEditor) {
-    // The others wait parted beyond the edges until the camera pulls back:
-    // that gathering is their entrance, not a reveal of their own.
-    state.revealAt = 0;
-    const openTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current);
-    if (openTile) partDesk(openTile, false, state.view, { t: 0 });
+    // The design flies back from the glass and lands on its place on the
+    // desk, which rests as it was left; the other designs appear around it,
+    // nearest first, as its page uncovers them.
+    const openTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current) || null;
+    const flight = state.flight;
+    flight.id = openTile?.id ?? null;
+    flight.rest = restingView(openTile);
+    flight.about = openTile ? { x: openTile.x + openTile.w / 2, y: openTile.y + openTile.h / 2 } : { x: flight.rest.x + flight.rest.w / 2, y: flight.rest.y + flight.rest.h / 2 };
+    state.view = pushedView(flight.rest, 1, flight.about);
     draw();
-    // Decode the small images first, while the view still matches the
-    // editor: decoding in the middle of the zoom would stall its frames.
+    // Decode the small images first, while the page still covers the desk:
+    // decoding in the middle of the flight would stall its frames.
     await Promise.all([warmSmallImages(generation, 400), state.editorAway]);
     if (!state || state.generation !== generation) return;
-    // The other designs gather in from beyond the edges as the camera pulls back.
-    await animateView(clampView(fitAllView()), ENTER_MS, { camera: true, scatter: openTile ? { tile: openTile, outward: false } : null });
+    state.revealFrom = flight.about;
+    state.revealAt = performance.now() + 140;
+    await fly(0, flightMs(flight), settleEase);
+    if (!state || state.generation !== generation) return;
+    landFlight();
   } else {
     setView(fitAllView());
   }
@@ -41810,16 +42077,21 @@ function showOpenDesign() {
   if (!view) return;
   state.view = view;
   state.fromEditor = true;
+  // The editor's page, at the glass, ready to fly back (drawFlight).
+  const { w, h } = paneSize();
+  state.flight = { id: null, depth: 1, screen: { x: 0, y: 0, w, h }, grid: { x: view.x, y: view.y, k: w / view.w } };
   if (path && box && svg !== EMPTY_SVG) {
     const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box, index: designIndex(editor.circuit) };
     state.entries = new Map([[path, entry]]);
     state.tiles = [{ id: path, x: box.x, y: box.y, w: box.w, h: box.h }];
     state.bounds = { ...box };
+    state.flight.id = path;
+    state.flight.screen = rectInView(box, view);
   }
   draw();
 }
 
-/** Leave for the editor. The open design zooms back into place. */
+/** Leave for the editor. The open design flies up to the glass, into its place. */
 async function closeAtlas({ animate = true } = {}) {
   if (!state || state.closing) return;
   state.closing = true;
@@ -41833,7 +42105,8 @@ async function closeAtlas({ animate = true } = {}) {
     requestDraw();
     await slideChrome(rootEl, true);
     if (!state) return;
-    await animateView(back, flightMs(state.view, back), { camera: true, scatter: { tile: currentTile, outward: true } });
+    startFlight(currentTile, rectInView(currentTile, back));
+    await fly(1, flightMs(state.flight), riseEase);
   }
   finishClose({ animate: !!back });
 }
@@ -41842,6 +42115,7 @@ async function closeAtlas({ animate = true } = {}) {
  *  `animate`). */
 function finishClose({ animate = true } = {}) {
   if (!state) return;
+  rememberDesk();
   stopAnimation();
   clearTimeout(state.arrangeTimer);
   for (const bitmap of state.bitmaps.values()) bitmap.close?.();
@@ -41912,14 +42186,15 @@ async function openTile(tile) {
         state.quiet = true;
         requestDraw();
         await slideChrome(rootEl, true);
-        await animateView(exact, flightMs(state.view, exact), { camera: true, scatter: { tile, outward: true } });
+        startFlight(tile, rectInView(tile, exact));
+        await fly(1, flightMs(state.flight), riseEase);
       }
     }
   } else {
-    // Read the file while flying straight to where the editor will fit the
-    // design -- the tile is that drawing with one cell of export padding --
-    // and let it in only once the flight lands, so loading never costs the
-    // zoom a frame. A page guide can widen the fit: then the last stretch
+    // Read the file while the design flies up to where the editor will fit
+    // it -- the tile is that drawing with one cell of export padding -- and
+    // let it in only once the flight lands, so loading never costs the
+    // flight a frame. A page guide can widen the fit: then the last stretch
     // glides to the real place.
     let land;
     const gate = new Promise((resolve) => { land = resolve; });
@@ -41932,23 +42207,36 @@ async function openTile(tile) {
       state.quiet = true;
       requestDraw();
       await slideChrome(rootEl, true);
-      await animateView(predicted, flightMs(state.view, predicted), { camera: true, scatter: { tile, outward: true } });
+      startFlight(tile, rectInView(tile, predicted));
+      await fly(1, flightMs(state.flight), riseEase);
     }
     land();
     opened = await loading;
     // Let the editor measure its labels and fit to them before the last look.
     if (opened) await nextFrames(2);
-    if (opened && landed()) {
+    if (opened && landed() && state.flight) {
       const exact = editorEquivalentView(tile, entry);
       if (exact && predicted && Math.abs(exact.w - predicted.w) + Math.abs(exact.x - predicted.x) + Math.abs(exact.y - predicted.y) > 0.5) {
-        await animateView(exact, 200, { camera: true });
+        const flight = state.flight;
+        const from = flight.screen;
+        const to = rectInView(tile, exact);
+        await animate(200, (t) => {
+          const e = easeOutCubic(t);
+          flight.screen = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, w: from.w + (to.w - from.w) * e, h: from.h + (to.h - from.h) * e };
+        });
       }
     }
   }
   if (!landed()) return;
   state.opening = false;
   if (!opened) {
-    // Staying on the desk: its names and toolbars come back.
+    // Staying on the desk: the design sinks back to it, and its names and
+    // toolbars come back.
+    if (state.flight && !reduced) {
+      await fly(0, flightMs(state.flight), settleEase);
+      if (!landed()) return;
+    }
+    landFlight({ ripple: false });
     state.quiet = false;
     void slideChrome(rootEl, false);
     requestDraw();
@@ -50957,8 +51245,6 @@ __exports.signalSpliceRotation = signalSpliceRotation;
 __exports.pinHandleRadius = pinHandleRadius;
 __exports.wheelIntent = wheelIntent;
 __exports.easeOutCubic = easeOutCubic;
-__exports.easeInOutQuart = easeInOutQuart;
-__exports.zoomView = zoomView;
 __exports.lerpView = lerpView;
 __exports.pinJoinPoints = pinJoinPoints;
 let applyTransform; __bind(() => { ({ applyTransform } = __require("src/core/geometry.js")); });
@@ -51259,32 +51545,6 @@ function easeOutCubic(t) {
 function easeOutQuint(t) {
   const clamped = Math.min(1, Math.max(0, t));
   return 1 - (1 - clamped) ** 5;
-}
-
-/** In and out, the middle swift: a camera flight that leaves and arrives
- *  gently but crosses the distance fast. Symmetric, so half way is half way. */
-function easeInOutQuart(t) {
-  const clamped = Math.min(1, Math.max(0, t));
-  return clamped < 0.5 ? 8 * clamped ** 4 : 1 - (-2 * clamped + 2) ** 4 / 2;
-}
-
-/**
- * A view between `from` and `to` at `t` (0..1) as one camera move: the
- * scale changes geometrically (each moment zooms by the same factor) about
- * the world point both views show at the same place on screen, so a zoom into
- * a design heads straight for it instead of drifting. Views of one size pan.
- */
-function zoomView(from, to, t) {
-  const k = easeInOutQuart(t);
-  const ratio = to.w / from.w;
-  if (Math.abs(ratio - 1) < 1e-6) {
-    return { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k, w: to.w, h: to.h };
-  }
-  const f = ratio ** k;
-  // The fixed point: from and to put it at the same fraction of the pane.
-  const fx = (to.x * from.w - from.x * to.w) / (from.w - to.w);
-  const fy = (to.y * from.h - from.y * to.h) / (from.h - to.h);
-  return { x: fx + (from.x - fx) * f, y: fy + (from.y - fy) * f, w: from.w * f, h: from.h * f };
 }
 
 function lerpView(from, to, t) {

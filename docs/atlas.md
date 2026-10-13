@@ -19,22 +19,38 @@ read asks to **Allow access** again first, and **Back to** returns to the
 drawing on screen when it has anything in it. While the desk is empty the
 header's Export and way back and the hint bar step aside.
 At startup, a dark cover stays up while the drawings load, then fades as the
-Atlas zooms in from afar to fit the workspace. Later visits keep the usual
-editor-to-Atlas zoom. Reduced-motion preferences skip the startup animation.
+Atlas zooms in from afar to fit the workspace. Later visits fly the open
+design back to the desk, as below. Reduced-motion preferences skip the startup animation.
 
 `Shift+Backspace` (or `:atlas`; `Shift+Esc` where the browser passes it
 on, which Chromium does not) steps back from the drawing to the whole
 workspace: every design at its real size on one continuous sheet of the
 editor's paper and grid, to look around, compare, and open. It is a viewing mode with no tools; pan and zoom
-work as in the editor (wheel or trackpad scheme, drag, pinch), and the open
-design zooms out of, and back into, exactly where the editor shows it.
-Each such move runs in three steps (`src/web/chrome-slide.js`): the
-toolbars on screen slide off toward their edges, the camera moves, and the
-next view's toolbars slide in. Leaving the editor, its focus hairline and
-selection go first and the desk takes the drawing's place unseen, so the
-toolbars and panels (side panel included) slide off over paper and grid;
-the desk's names and picks show only once the camera has landed, and go
-first when it leaves. The desk takes no input until it has left.
+work as in the editor (wheel or trackpad scheme, drag, pinch).
+
+The screen is a pane of glass with the desk lying behind it (`drawFlight`).
+The editor is a design brought right up to the glass. Leaving it, the
+design flies back, away from the eye, on its page -- the editor's paper and
+grid, narrowing into the design's card as it goes -- and lands on its place
+on the desk picked, floating, with a small bounce and a ripple of light
+across the desk. Opening a design carries its card on up to the glass,
+exactly where the editor shows it. The path is a straight line in space
+seen in perspective (`throughDepth` in `src/web/atlas-layout.js`), so a
+design shrinks quickly as it leaves the glass and grows quickly as it
+nears it. Meanwhile the desk stays where it is: it falls into shadow and
+draws back a little while a design is near the glass, the page's shadow
+spreads and softens with height, and its edge catches the light midway.
+The other designs appear around the landing one, nearest first. The desk
+rests as it was last left in this page (the whole desk the first time),
+moved only as far as it takes to show the landing design.
+
+Each move runs in three steps (`src/web/chrome-slide.js`): the toolbars on
+screen slide off toward their edges, the design flies, and the next view's
+toolbars slide in. Leaving the editor, its focus hairline and selection go
+first and the desk takes the drawing's place unseen, so the toolbars and
+panels (side panel included) slide off over paper and grid; the desk's
+names and picks show only once the design has landed, and go first when it
+leaves. The desk takes no input until it has left.
 
 The desk stays put between visits: this browser remembers where each design
 of a workspace sat, and a design keeps its spot while it still fits there. A
@@ -88,11 +104,12 @@ hint bar at the bottom, with its tags and the keys that act on it (several
 picked: their names); a hover draws a faint frame that takes in the
 caption.
 
-Opening a design flies the camera straight into it -- one zoom about the
-point that stays put, timed by how far it zooms -- to exactly where the
-editor will fit it. The file is read during the flight and let in when it
-lands, so loading never costs the zoom a frame; then the desk fades into the
-editor. With reduced motion nothing zooms: the Atlas and the editor
+Opening a design flies it up to exactly where the editor will fit it,
+timed by how far it travels. The file is read during the flight and let in
+when it lands, so loading never costs the flight a frame; then the desk
+fades into the editor. If the editor's fit differs (a page guide), the
+design glides the last stretch at the glass; if the open is cancelled, it
+sinks back to the desk. With reduced motion nothing flies: the Atlas and the editor
 cross-fade, and the desk is laid out unseen before it fades in.
 
 **Folder…** switches the workspace to another folder, and the desk lays out

@@ -338,6 +338,23 @@ export function viewFitting(rect, paneW, paneH, margin = 0.08) {
 }
 
 /**
+ * A rect on its way between the desk and the screen, seen in perspective:
+ * the screen is depth 1, the desk lies behind it at depth 0, and something
+ * `ratio` times larger at the screen than on the desk is that much nearer
+ * the eye there. In between, `desk` and `screen` (screen rects) are blended
+ * as a straight path in space projects: its size changes slowly while it
+ * is far and quickly as it comes near. Depths a little past either end
+ * carry on along the same path.
+ */
+export function throughDepth(desk, screen, depth, ratio) {
+  const near = depth;
+  const far = (1 - depth) * Math.max(ratio, 1e-3);
+  const sum = near + far;
+  const blend = (key) => (far * desk[key] + near * screen[key]) / sum;
+  return { x: blend('x'), y: blend('y'), w: blend('w'), h: blend('h') };
+}
+
+/**
  * The view, moved as little as it takes to show `rect` whole with `margin`
  * (a share of the view) to spare, at the same zoom. A rect already in full
  * view leaves it as it is, so picking a design near the edge of a fitted

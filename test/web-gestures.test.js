@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { getSymbol } from '../src/core/components/index.js';
 import { applyTransform } from '../src/core/geometry.js';
 import {
-  arrivalDirection, easeOutCubic, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement, zoomView,
+  arrivalDirection, easeOutCubic, isPinDragCandidate, knifeCrossings, lerpView, quickAddPlacement,
   pinJoinPoints, radialRingRadius, radialSector, segmentsIntersect, signalSpliceRotation, spliceCandidate, upstreamEnd, wheelIntent,
 } from '../src/web/gestures.js';
 import { Circuit } from '../src/core/model.js';
@@ -256,22 +256,4 @@ test('a carried wire\'s free end on the middle of another wire is a join point',
   carried.branches = [path.slice(0, 2)];
   carried.route = carried.branches[0];
   assert.deepEqual(pinJoinPoints(circuit, pins, new Set(['R3'])), []);
-});
-
-test('a camera flight zooms geometrically about the point both views share', () => {
-  const from = { x: 0, y: 0, w: 1000, h: 600 };
-  const to = { x: 300, y: 200, w: 100, h: 60 };
-  assert.deepEqual(zoomView(from, to, 0), from);
-  const end = zoomView(from, to, 1);
-  for (const key of ['x', 'y', 'w', 'h']) assert.ok(Math.abs(end[key] - to[key]) < 1e-9, key);
-  // Half way it is half way in scale: the geometric mean of the widths.
-  assert.ok(Math.abs(zoomView(from, to, 0.5).w - Math.sqrt(from.w * to.w)) < 1e-9);
-  // The shared point stays on the same spot of the pane all the way.
-  const fx = (to.x * from.w - from.x * to.w) / (from.w - to.w);
-  for (const t of [0.2, 0.5, 0.8]) {
-    const v = zoomView(from, to, t);
-    assert.ok(Math.abs((fx - v.x) / v.w - (fx - from.x) / from.w) < 1e-9);
-  }
-  // Views of one size simply pan.
-  assert.deepEqual(zoomView(from, { ...from, x: 500 }, 1), { ...from, x: 500 });
 });

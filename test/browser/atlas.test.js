@@ -167,7 +167,54 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     assert.equal(await snapshot(), null);
   });
 
-  test('leaving the Atlas finishes its flight: keys and scrolls on the way neither cut it short nor leave the desk parted', async () => {
+  test('the open design flies back from the screen onto the still desk and lands picked; opening one flies it up to the screen', async () => {
+    await h.open('child');
+    await closeDesk();
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    // Every frame's flight and view, sampled in the page.
+    const sample = () => h.evaluate(`${h.module('atlas.js')}.then((m) => {
+      window.__samples = [];
+      const step = () => {
+        const s = m.atlasSnapshot();
+        window.__samples.push(s && { flight: s.flight, view: s.view, busy: s.busy });
+        if (window.__samples.length < 600) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    })`);
+    const samples = () => h.evaluate('window.__samples');
+    try {
+      await sample();
+      await h.key('Backspace', { shiftKey: true });
+      await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+      const entering = (await samples()).filter((s) => s?.flight);
+      const flying = entering.filter((s) => s.flight.depth < 1);
+      // However few frames a loaded machine draws, the design passes between.
+      assert.ok(flying.some((s) => s.flight.depth > 0 && s.flight.depth < 1), `a flight: ${JSON.stringify(entering.map((s) => s.flight.depth))}`);
+      assert.equal(entering[0].flight.depth, 1, 'it starts at the screen');
+      // The desk only draws back a little while the design flies: no zoom
+      // out from the editor's view.
+      const widths = flying.map((s) => s.view.w);
+      const rest = (await snapshot()).view.w;
+      assert.ok(Math.max(...widths) <= rest * 1.1 + 1e-6 && Math.min(...widths) >= rest * 0.99, `${rest}: ${Math.min(...widths)}..${Math.max(...widths)}`);
+      const landed = (await snapshot()).tiles.find((t) => t.name === 'child');
+      assert.equal(landed.selected, true, `it lands picked: ${JSON.stringify(landed)}`);
+      await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.name === 'child').lift === 1)`);
+
+      assert.ok(await pick('alpha'));
+      await sample();
+      await atlasKey('Enter');
+      await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+      const opening = (await samples()).filter((s) => s?.flight);
+      assert.ok(opening.some((s) => s.flight.depth > 0 && s.flight.depth < 1), `a flight: ${JSON.stringify(opening.map((s) => s.flight.depth))}`);
+      assert.match(opening[0].flight.id, /alpha/);
+      assert.equal(opening.at(-1).flight.depth, 1, 'it reaches the screen');
+      assert.equal(await current(), 'alpha');
+    } finally {
+      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    }
+  });
+
+  test('leaving the Atlas finishes its flight: keys and scrolls on the way neither cut it short nor leave a design in flight', async () => {
     await h.open('top');
     await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     try {
@@ -180,6 +227,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       const settled = await snapshot();
       if (settled) {
         assert.equal(settled.busy, false);
+        assert.equal(settled.flight, null);
         await h.click('#atlas-mark');
       }
       await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);

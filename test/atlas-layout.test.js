@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -225,4 +225,27 @@ test('cards floating around a picked one step clear of it and of each other, the
   }
   // Already clear: nothing moves.
   assert.deepEqual(floatClear([picked, { id: 'far', x: 3000, y: 0, w: 100, h: 100 }], gap).get('far'), { dx: 0, dy: 0 });
+});
+
+test('a design flies between the desk and the screen in perspective', () => {
+  const desk = { x: 100, y: 100, w: 50, h: 40 };
+  const screen = { x: 0, y: 0, w: 400, h: 320 };
+  const ratio = screen.w / desk.w;
+  assert.deepEqual(throughDepth(desk, screen, 0, ratio), desk);
+  assert.deepEqual(throughDepth(desk, screen, 1, ratio), screen);
+  // Its size goes as one over its distance from the eye: halfway there it
+  // is not yet halfway grown, and it grows fastest at the end.
+  const sizes = [0, 0.25, 0.5, 0.75, 1].map((depth) => throughDepth(desk, screen, depth, ratio).w);
+  for (const [i, w] of sizes.entries()) {
+    const depth = i / 4;
+    assert.ok(Math.abs(1 / w - ((1 - depth) / desk.w + depth / screen.w)) < 1e-12, `w at ${depth}: ${w}`);
+  }
+  assert.ok(sizes[2] < (desk.w + screen.w) / 2);
+  assert.ok(sizes[4] - sizes[3] > sizes[1] - sizes[0]);
+  // Every edge moves along one projected straight path: the shape keeps
+  // its proportions on the way.
+  const mid = throughDepth(desk, screen, 0.5, ratio);
+  assert.ok(Math.abs(mid.w / mid.h - desk.w / desk.h) < 1e-12);
+  // A little past the desk it carries on, smaller still.
+  assert.ok(throughDepth(desk, screen, -0.05, ratio).w < desk.w);
 });
