@@ -67,6 +67,25 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     assert.match(await hint(), /^Drag to move/);
   });
 
+  test("a link's beam ends exactly on the edge of the linked design's card", async () => {
+    await openDesk();
+    assert.ok(await pick('top'));
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return s.tiles.find((t) => t.name === 'top').lift > 0.99 && s.beams.length > 0; })`);
+    await sleep(600);
+    const s = await snapshot();
+    const child = s.tiles.find((t) => t.name === 'child').id;
+    const beams = s.beams.filter((b) => b.to === child);
+    assert.equal(beams.length, 1, JSON.stringify(s.beams));
+    const { end, card } = beams[0];
+    const near = (a, b) => Math.abs(a - b) < 1e-6;
+    const within = (v, lo, hi) => v >= lo - 1e-6 && v <= hi + 1e-6;
+    const onSide = ((near(end.x, card.x) || near(end.x, card.x + card.w)) && within(end.y, card.y, card.y + card.h)) ||
+      ((near(end.y, card.y) || near(end.y, card.y + card.h)) && within(end.x, card.x, card.x + card.w));
+    assert.ok(onSide, `beam end on the card's edge: ${JSON.stringify({ end, card })}`);
+    await atlasKey('Escape');
+    await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().beams.length === 0)`);
+  });
+
   test('the designs lifted with the pick float clear of its card, are picked where they float, and settle back', async () => {
     await openDesk();
     assert.ok(await pick('top'));

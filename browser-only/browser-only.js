@@ -39919,7 +39919,9 @@ function atlasOpen() {
 /** What the desk shows, read-only, for tests and tools (it is drawn on a
  *  canvas): each design's name and place, whether it is the open one, the
  *  pick, matched by the search, how far it is lifted, and how far it has
- *  floated clear of the pick (drawing units); null when closed. */
+ *  floated clear of the pick (drawing units); and where the last frame's
+ *  link beams landed, with the card each landed on (screen pixels); null
+ *  when closed. */
 function atlasSnapshot() {
   if (!state) return null;
   return {
@@ -39927,6 +39929,7 @@ function atlasSnapshot() {
     busy: !!(state.entering || state.closing || state.opening),
     search: state.matches ? [...state.matches.keys()] : null,
     arranged: state.arranged,
+    beams: state.beams || [],
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);
       return {
@@ -40554,14 +40557,18 @@ function tileUnder(point) {
  *  shadow that deepens and spreads as it rises; its rim a hairline in
  *  drawing units, so it stays fine however far out the desk is zoomed (the
  *  picked one's in the accent). */
-function drawCard(ctx, tile, rect, lift, palette) {
+/** The card a lifted design lies on, on screen: its drawing `rect` with a
+ *  margin, and its name below when the name shows. */
+function cardFrame(rect) {
   const k = scale();
   const pad = Math.max(4, ATLAS_GAP * 0.3 * k);
   const caption = Math.min(13, ATLAS_CAPTION * k * 0.45) >= 7 ? Math.min(13, ATLAS_CAPTION * k * 0.45) * 2.1 : 0;
-  const x = rect.x - pad;
-  const y = rect.y - pad;
-  const w = rect.w + 2 * pad;
-  const h = rect.h + 2 * pad + caption;
+  return { x: rect.x - pad, y: rect.y - pad, w: rect.w + 2 * pad, h: rect.h + 2 * pad + caption };
+}
+
+function drawCard(ctx, tile, rect, lift, palette) {
+  const k = scale();
+  const { x, y, w, h } = cardFrame(rect);
   const radius = Math.max(3, Math.min(16, GRID * 0.6 * k));
   const picked = state.selected === tile.id || !!state.picked?.has(tile.id);
   // Solid from the related designs' height up: a lower card is nearer the
@@ -40648,6 +40655,7 @@ function deskLinks() {
  * in a transition (its names and picks are gone then too).
  */
 function drawLinks(ctx, palette, shown) {
+  state.beams = [];
   if (state.source !== 'workspace' || state.quiet || !linksShown()) return;
   const focus = new Set([state.selected, ...(state.picked || [])].filter(Boolean));
   if (!focus.size) return;
@@ -40692,7 +40700,12 @@ function drawLinks(ctx, palette, shown) {
     // The beams come up with the lift, and go with it.
     const rising = Math.max(liftOf(from).lift, liftOf(to).lift);
     ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1) * rising;
-    for (const start of starts) drawBeam(ctx, start, frameOf(b.tile), palette);
+    // It lands on the edge of the card the design is lifted on.
+    const card = cardFrame(lifted(worldToScreen(b.tile), to));
+    for (const start of starts) {
+      const end = drawBeam(ctx, start, card, palette);
+      if (end) state.beams.push({ from, to, end, card });
+    }
   }
   ctx.restore();
 }
@@ -40709,15 +40722,15 @@ function withAlpha(color, alpha) {
 /**
  * A link as a beam of light: a curved band that leaves the linking part --
  * lit by a soft spotlight, never covered -- and widens and fades as it
- * reaches the design it names, sinking into that design's card rather than
- * ending in a head; which way it goes reads from its taper. Its width is in
+ * reaches the design it names, ending flush on that design's card edge
+ * rather than in a head; which way it goes reads from its taper. Its width is in
  * drawing units, so it keeps its proportion to the drawings at any zoom.
  * Drawn additively on a dark desk, so where beams cross they brighten, as
- * light does.
+ * light does. Returns where it lands (null when the part is inside).
  */
 function drawBeam(ctx, start, frame, palette) {
-  const curve = linkCurve({ x: start.x, y: start.y }, frame, -Math.min(18, Math.min(frame.w, frame.h) * 0.08));
-  if (!curve) return;
+  const curve = linkCurve({ x: start.x, y: start.y }, frame, 0);
+  if (!curve) return null;
   const k = scale();
   const narrow = Math.max(0.8, 0.12 * GRID * k);
   const wide = Math.max(4, Math.min(1.6 * GRID * k, (Math.abs(curve.direction.x) > 0 ? frame.h : frame.w) * 0.2));
@@ -40793,6 +40806,7 @@ function drawBeam(ctx, start, frame, palette) {
   for (const p of points.slice(1)) ctx.lineTo(p.x, p.y);
   ctx.stroke();
   ctx.restore();
+  return curve.end;
 }
 
 /** A search's hits in one design: a translucent mark under each. */

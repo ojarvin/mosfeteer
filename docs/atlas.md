@@ -59,7 +59,8 @@ light (`drawBeam`): a translucent curved band from each part that links,
 which a soft spotlight lights (the beam starts at its edge, never over
 it), widening -- in drawing units, so in proportion at any zoom -- and
 fading as it reaches the design it
-names and arriving square to the side facing the part (`linkCurve`) --
+names and arriving square to the side facing the part (`linkCurve`),
+ending exactly on the edge of that design's card --
 its taper says which way it goes; the designs using the picked one send
 theirs the same way. On a dark desk the beams add up as light does. With nothing picked, and while the desk is in a transition, no
 arrows show. **Links** in the top bar, or `L`, turns them off or on; the
