@@ -444,3 +444,54 @@ describe('the workspace check', { skip: browserSkip() }, () => {
     assert.equal(await snapshot(), null);
   });
 });
+
+describe('a design keeps its place on the desk whether or not it is open', { skip: browserSkip() }, () => {
+  // The browser measures an open design's math, tighter than the size the
+  // file saves: the desk must not size (and so move) a design by that.
+  const withMath = () => {
+    const circuit = new Circuit();
+    runCommand(circuit, 'add resistor R1 --at 0 0');
+    circuit.addLabel({ text: '$H(s) = \\frac{g_m}{s C_L} \\cdot \\frac{1}{1 + s / \\omega_p}$', math: true, anchor: { x: 600, y: 0 } });
+    return circuit.toJSON();
+  };
+  let h;
+  before(async () => {
+    h = await start({ docs: { formula: withMath(), plain: wideAmplifier(), other: tagged('CA') }, width: 1300, height: 900 });
+  });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+  const tiles = async ({ repack = false } = {}) => {
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 3; })`, 10000);
+    if (repack) {
+      await h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'T', shiftKey: true, bubbles: true }))`);
+      await sleep(600);
+    }
+    const s = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`);
+    await h.click('#atlas-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+    return Object.fromEntries(s.tiles.map((t) => [t.name, { x: t.x, y: t.y, w: t.w, h: t.h }]));
+  };
+
+  test('opening and leaving designs, with no edits, moves nothing on the desk; nor does packing afresh twice', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const file = join(h.workspace, 'formula.json');
+    const before = await readFile(file, 'utf8');
+    await h.open('formula');
+    // Its math measured in the editor first: that is no edit.
+    await sleep(500);
+    assert.equal(await h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`), false, 'measuring math is no change');
+    assert.equal(await h.evaluate(`document.getElementById('dirty-dot').hidden`), true);
+    const open = await tiles();
+    await h.open('plain');
+    assert.equal(await readFile(file, 'utf8'), before, 'leaving it writes nothing');
+    const closed = await tiles();
+    assert.deepEqual(closed, open);
+    await h.open('formula');
+    await sleep(500);
+    assert.deepEqual(await tiles(), open);
+    // Shift+T packs afresh; with nothing changed, again it packs the same.
+    const packed = await tiles({ repack: true });
+    await h.open('plain');
+    assert.deepEqual(await tiles({ repack: true }), packed);
+  });
+});

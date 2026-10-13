@@ -39399,6 +39399,7 @@ __exports.tileAt = tileAt;
 __exports.neighbourTile = neighbourTile;
 __exports.viewFitting = viewFitting;
 __exports.viewFittingIn = viewFittingIn;
+__exports.extraShapeTries = extraShapeTries;
 __exports.layoutAtlasShaped = layoutAtlasShaped;
 __exports.throughDepth = throughDepth;
 __exports.viewShowing = viewShowing;
@@ -39761,21 +39762,25 @@ function viewFittingIn(rect, paneW, paneH, { top = 0, bottom = 0 } = {}, margin 
  * shown in (`aspect`): relatedness pulls designs together and can leave the
  * desk taller or wider than its window. When the first packing misses the
  * shape by more than a little, a few nearby shapes are tried (the direction
- * of the miss first) and the one that will show largest when fitted is kept
- * -- within `budget` ms, so a large workspace never waits long.
+ * of the miss first) and the one that will show largest when fitted is kept.
+ * How many depends only on how many designs there are (a packing's cost
+ * grows with their square), never on time: the same desk packs the same
+ * way every time, so packing afresh with nothing changed changes nothing.
  */
-function layoutAtlasShaped(items, options = {}, { budget = 250, now = () => performance.now() } = {}) {
+function extraShapeTries(count) {
+  return count <= 80 ? 3 : count <= 160 ? 1 : 0;
+}
+
+function layoutAtlasShaped(items, options = {}) {
   const aspect = options.aspect ?? 1.6;
   const first = layoutAtlas(items, options);
   const shape = (layout) => layout.bounds.w / Math.max(1, layout.bounds.h);
   if (items.length < 3 || Math.abs(Math.log(shape(first) / aspect)) < 0.08) return first;
   // How big the whole desk is, fitted to the area: smaller shows larger.
   const span = (layout) => Math.max(layout.bounds.w / aspect, layout.bounds.h);
-  const deadline = now() + budget;
-  const factors = shape(first) > aspect ? [0.85, 0.7, 1.15] : [1.18, 1.4, 0.87];
+  const factors = (shape(first) > aspect ? [0.85, 0.7, 1.15] : [1.18, 1.4, 0.87]).slice(0, extraShapeTries(items.length));
   let best = first;
   for (const factor of factors) {
-    if (now() > deadline) break;
     const next = layoutAtlas(items, { ...options, aspect: aspect * factor });
     if (span(next) < span(best)) best = next;
   }
@@ -40261,8 +40266,24 @@ const EMPTY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${8 * GRID}" h
 
 /** The design as it stands: the open one from the editor, unsaved edits and
  *  all; the others from their files, through the cache. */
-async function drawingFor(documentInfo, current) {
-  if (current) return { svg: drawingSvg(editor.circuit), index: designIndex(editor.circuit), revision: null };
+/**
+ * The open design as the desk draws it: through its saved form, as its file
+ * would be drawn. The browser measures an open design's math labels tighter
+ * than the boxes a file keeps for them, so drawn live a design would take
+ * another size on the desk while open -- and a design whose size changes
+ * gives up its place, moving the desk around it.
+ */
+function openDesignAsSaved() {
+  return loadDocument(editor.circuit.toJSON());
+}
+
+/** A design's drawing and index: from the editor for the open design with
+ *  unsaved changes (`edited`), else from its file (cached by revision). */
+async function drawingFor(documentInfo, edited) {
+  if (edited) {
+    const circuit = openDesignAsSaved();
+    return { svg: drawingSvg(circuit), index: designIndex(circuit), revision: null };
+  }
   const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'svg-v3');
   const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v3');
   const [cached, cachedIndex] = key ? await Promise.all([cacheGet(key), cacheGet(indexKey)]) : [null, null];
@@ -40305,7 +40326,11 @@ async function loadWorkspace(generation) {
   for (const [index, doc] of documents.entries()) {
     const current = doc.path === editor.currentDocumentPath;
     try {
-      const { svg, index, revision } = current && state.entries.get(doc.path) || await drawingFor(doc, current);
+      // The open design without unsaved changes is drawn from its file, as
+      // when it is not open: its size on the desk, and so its place, never
+      // depend on whether it is (openDesignAsSaved).
+      const edited = current && hasUnsavedChanges();
+      const { svg, index, revision } = edited && state.entries.get(doc.path) || await drawingFor(doc, edited);
       const box = viewBoxOf(svg);
       if (box) entries.push({ id: doc.path, name: doc.name, names: doc.names || [], path: doc.path, dir: doc.dir, revision, current, svg, box, index });
     } catch (err) {
@@ -40387,8 +40412,8 @@ async function bake(entry, level) {
 
 /** Load every cached small image, for at most `budget` ms. */
 async function warmSmallImages(generation, budget) {
-  // The open design is drawn live, never cached: bake both its images now,
-  // so the zoom out can show them instead of its live drawing.
+  // The open design's images are never cached: bake both now, so the
+  // flight back can show them.
   const current = state.tiles.map((tile) => state.entries.get(tile.id)).find((entry) => entry.current);
   const baking = current ? ['small', 'large'].map(async (level) => {
     const key = bitmapKey(current, level);
@@ -40404,7 +40429,12 @@ async function warmSmallImages(generation, budget) {
     if (!bitmap || !state || state.generation !== generation || state.bitmaps.has(key)) return;
     state.bitmaps.set(key, bitmap);
   });
-  await Promise.race([Promise.allSettled([...baking, ...loads]), new Promise((resolve) => setTimeout(resolve, budget))]);
+  // The open design's own images always finish: the flight draws it from
+  // them. The rest are given `budget` ms.
+  await Promise.all([
+    Promise.allSettled(baking),
+    Promise.race([Promise.allSettled(loads), new Promise((resolve) => setTimeout(resolve, budget))]),
+  ]);
 }
 
 /** Startup has no editor drawing to bridge from: prepare the desk before revealing it. */
@@ -42389,6 +42419,11 @@ async function openDesk(generation, source, animate, startup) {
     const openTile = state.tiles.find((tile) => state.entries.get(tile.id)?.current) || null;
     const flight = state.flight;
     flight.id = openTile?.id ?? null;
+    // Drawn from its file now, its box may differ from the editor's copy
+    // the desk first showed: it still starts exactly where the editor has it.
+    const openEntry = openTile && state.entries.get(openTile.id);
+    const exact = openEntry && editorEquivalentView(openTile, openEntry);
+    if (exact) flight.screen = rectInView(openTile, exact);
     flight.rest = restingView(openTile);
     flight.about = openTile ? { x: openTile.x + openTile.w / 2, y: openTile.y + openTile.h / 2 } : { x: flight.rest.x + flight.rest.w / 2, y: flight.rest.y + flight.rest.h / 2 };
     state.view = pushedView(flight.rest, 1, flight.about);
@@ -42425,7 +42460,8 @@ async function bakeOpenDesign(budget) {
  *  it, before the rest of the workspace has loaded. */
 function showOpenDesign() {
   const path = editor.currentDocumentPath;
-  const svg = drawingSvg(editor.circuit);
+  const saved = openDesignAsSaved();
+  const svg = drawingSvg(saved);
   const box = viewBoxOf(svg);
   // Without a design to carry over, start from the editor's own view of
   // the paper: the grid lines stay put and the desk grows out of them.
@@ -42437,7 +42473,7 @@ function showOpenDesign() {
   const { w, h } = paneSize();
   state.flight = { id: null, depth: 1, screen: { x: 0, y: 0, w, h }, grid: { x: view.x, y: view.y, k: w / view.w } };
   if (path && box && svg !== EMPTY_SVG) {
-    const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box, index: designIndex(editor.circuit) };
+    const entry = { id: path, name: editor.currentCircuitName || '', path, revision: null, current: true, svg, box, index: designIndex(saved) };
     state.entries = new Map([[path, entry]]);
     state.tiles = [{ id: path, x: box.x, y: box.y, w: box.w, h: box.h }];
     state.bounds = { ...box };
@@ -48894,20 +48930,28 @@ function openUnsavedDocument(state, name) {
 /** A document as text, without what its windows show: window state is saved
  *  with the design but is no edit, so it never makes the design unsaved. */
 function drawingText(text) {
-  if (!text || !(text.includes('"windows"') || text.includes('"names"'))) return text;
+  if (!text || !['"windows"', '"names"', '"mathBox"'].some((key) => text.includes(key))) return text;
   try {
     const data = JSON.parse(text);
-    // Neither what the windows show nor the names the file was saved under
-    // ever make the design unsaved.
+    // Neither what the windows show, nor the names the file was saved
+    // under, nor the size this browser measured a math label at (saved with
+    // it so a file reads its size back) ever make the design unsaved.
     delete data.windows;
     delete data.names;
+    for (const label of data.labels || []) delete label.mathBox;
     return JSON.stringify(data);
   } catch { return text; }
 }
 
 /** Whether the document differs from its file in its windows' state alone. */
 function windowsChanged() {
-  return !!editor.lastSavedSnapshot && snapshot() !== editor.lastSavedSnapshot && !documentChanged();
+  if (!editor.lastSavedSnapshot || documentChanged()) return false;
+  // The windows themselves: what else is left out of documentChanged (the
+  // saved names, a math label's measured size) is no reason to write.
+  const windowsOf = (text) => {
+    try { return JSON.stringify(JSON.parse(text).windows ?? null); } catch { return null; }
+  };
+  return windowsOf(snapshot()) !== windowsOf(editor.lastSavedSnapshot);
 }
 
 /**

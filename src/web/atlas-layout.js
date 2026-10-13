@@ -355,21 +355,25 @@ export function viewFittingIn(rect, paneW, paneH, { top = 0, bottom = 0 } = {}, 
  * shown in (`aspect`): relatedness pulls designs together and can leave the
  * desk taller or wider than its window. When the first packing misses the
  * shape by more than a little, a few nearby shapes are tried (the direction
- * of the miss first) and the one that will show largest when fitted is kept
- * -- within `budget` ms, so a large workspace never waits long.
+ * of the miss first) and the one that will show largest when fitted is kept.
+ * How many depends only on how many designs there are (a packing's cost
+ * grows with their square), never on time: the same desk packs the same
+ * way every time, so packing afresh with nothing changed changes nothing.
  */
-export function layoutAtlasShaped(items, options = {}, { budget = 250, now = () => performance.now() } = {}) {
+export function extraShapeTries(count) {
+  return count <= 80 ? 3 : count <= 160 ? 1 : 0;
+}
+
+export function layoutAtlasShaped(items, options = {}) {
   const aspect = options.aspect ?? 1.6;
   const first = layoutAtlas(items, options);
   const shape = (layout) => layout.bounds.w / Math.max(1, layout.bounds.h);
   if (items.length < 3 || Math.abs(Math.log(shape(first) / aspect)) < 0.08) return first;
   // How big the whole desk is, fitted to the area: smaller shows larger.
   const span = (layout) => Math.max(layout.bounds.w / aspect, layout.bounds.h);
-  const deadline = now() + budget;
-  const factors = shape(first) > aspect ? [0.85, 0.7, 1.15] : [1.18, 1.4, 0.87];
+  const factors = (shape(first) > aspect ? [0.85, 0.7, 1.15] : [1.18, 1.4, 0.87]).slice(0, extraShapeTries(items.length));
   let best = first;
   for (const factor of factors) {
-    if (now() > deadline) break;
     const next = layoutAtlas(items, { ...options, aspect: aspect * factor });
     if (span(next) < span(best)) best = next;
   }

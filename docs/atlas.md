@@ -206,14 +206,21 @@ the same sheet for scripted visual checks.
 
 ## How it stays fast
 
+- **The same size open or not**: the design open in the editor is drawn
+  on the desk from its file while it has no unsaved changes, exactly as
+  when it is not open; only an edited one is drawn from the editor. The
+  browser measures an open design's math tighter than a file's saved
+  boxes, and a design that changes size gives up its place, so drawn live
+  it would move the desk each time it was opened and left.
 - **Layout** (`src/web/atlas-layout.js`): the designs packed into one
   loose ball shaped like the window's room for designs (between the top
   bar and the hint bar; its width over height, kept between 1:3 and 3:1),
   largest in the middle, each next in the free spot nearest the centre.
   Kinship can pull a fresh packing taller or wider than that: when it
   misses by more than a little, a few nearby shapes are tried and the one
-  that shows largest when fitted is kept, within a quarter second
-  (`layoutAtlasShaped`). Fit (`F`, `Z`) frames the designs in that same
+  that shows largest when fitted is kept: up to three tries, fewer for
+  large workspaces, never depending on time, so `Shift+T` with nothing
+  changed packs the same desk again (`layoutAtlasShaped`). Fit (`F`, `Z`) frames the designs in that same
   room, clear of both bars (`viewFittingIn`). Remembered places stay put while the window keeps their
   shape; opened in a window of another shape (more than 1.25 times
   narrower or wider), the desk is packed again to fill it, each design as

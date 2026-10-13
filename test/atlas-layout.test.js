@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -281,7 +281,7 @@ test('a fresh packing holds the shape it is shown in, kinship notwithstanding', 
   };
   const span = ({ bounds }) => Math.max(bounds.w, bounds.h);
   const plain = layoutAtlas(items, { aspect: 1, related });
-  const shaped = layoutAtlasShaped(items, { aspect: 1, related }, { budget: 10000 });
+  const shaped = layoutAtlasShaped(items, { aspect: 1, related });
   assert.ok(span(shaped) <= span(plain), 'never shown smaller than the first packing');
   assert.ok(Math.abs(Math.log(shaped.bounds.w / shaped.bounds.h)) < Math.abs(Math.log(plain.bounds.w / plain.bounds.h)), `${plain.bounds.w / plain.bounds.h} -> ${shaped.bounds.w / shaped.bounds.h}`);
   // Every design still in it, none overlapping.
@@ -291,7 +291,8 @@ test('a fresh packing holds the shape it is shown in, kinship notwithstanding', 
   const square = items.slice(0, 12);
   const first = layoutAtlas(square, { aspect: 1 });
   if (Math.abs(Math.log(first.bounds.w / first.bounds.h)) < 0.08) assert.deepEqual(layoutAtlasShaped(square, { aspect: 1 }), first);
-  let calls = 0;
-  layoutAtlasShaped(items, { aspect: 1, related }, { budget: 0, now: () => (calls += 1) });
-  assert.ok(calls <= 2, 'out of time, no more tries');
+  // The same desk always packs the same way (nothing depends on time), and
+  // a large workspace tries fewer shapes.
+  assert.deepEqual(layoutAtlasShaped(items, { aspect: 1, related }), shaped);
+  assert.deepEqual([40, 80, 120, 200].map(extraShapeTries), [3, 3, 1, 0]);
 });

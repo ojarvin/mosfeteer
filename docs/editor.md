@@ -74,6 +74,13 @@ through `onDocumentShown` (main.js, counted by document loads, not by
 circuit objects), so nothing of one design is left
 showing in another.
 
+Two more things a file carries never make a design unsaved, and are only
+written with a real save: the names it was saved under (`names`,
+[`hierarchy.md`](hierarchy.md)), and the size this browser measured a math
+label at (`mathBox`). Opening a design, measuring its math, and leaving it
+changes nothing on disk (`drawingText`, `windowsChanged` in
+`src/web/document-session.js`).
+
 The browser exposes `window.__circuit()`, `window.__run(command)`, and
 `window.__load(state)` for isolated verification. Headless browser tests must
 use one persistent CDP connection, temporary ports/directories, real mouse

@@ -497,20 +497,28 @@ function openUnsavedDocument(state, name) {
 /** A document as text, without what its windows show: window state is saved
  *  with the design but is no edit, so it never makes the design unsaved. */
 function drawingText(text) {
-  if (!text || !(text.includes('"windows"') || text.includes('"names"'))) return text;
+  if (!text || !['"windows"', '"names"', '"mathBox"'].some((key) => text.includes(key))) return text;
   try {
     const data = JSON.parse(text);
-    // Neither what the windows show nor the names the file was saved under
-    // ever make the design unsaved.
+    // Neither what the windows show, nor the names the file was saved
+    // under, nor the size this browser measured a math label at (saved with
+    // it so a file reads its size back) ever make the design unsaved.
     delete data.windows;
     delete data.names;
+    for (const label of data.labels || []) delete label.mathBox;
     return JSON.stringify(data);
   } catch { return text; }
 }
 
 /** Whether the document differs from its file in its windows' state alone. */
 function windowsChanged() {
-  return !!editor.lastSavedSnapshot && snapshot() !== editor.lastSavedSnapshot && !documentChanged();
+  if (!editor.lastSavedSnapshot || documentChanged()) return false;
+  // The windows themselves: what else is left out of documentChanged (the
+  // saved names, a math label's measured size) is no reason to write.
+  const windowsOf = (text) => {
+    try { return JSON.stringify(JSON.parse(text).windows ?? null); } catch { return null; }
+  };
+  return windowsOf(snapshot()) !== windowsOf(editor.lastSavedSnapshot);
 }
 
 /**
