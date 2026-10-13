@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewShowing } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -248,4 +248,50 @@ test('a design flies between the desk and the screen in perspective', () => {
   assert.ok(Math.abs(mid.w / mid.h - desk.w / desk.h) < 1e-12);
   // A little past the desk it carries on, smaller still.
   assert.ok(throughDepth(desk, screen, -0.05, ratio).w < desk.w);
+});
+
+test('fitting keeps clear of the top bar and the hint bar', () => {
+  const rect = { x: 0, y: 0, w: 1000, h: 1000 };
+  const view = viewFittingIn(rect, 1200, 1300, { top: 80, bottom: 60 }, 0.05);
+  const k = view.w / 1200; // units per pixel
+  assert.ok(Math.abs(view.h / view.w - 1300 / 1200) < 1e-12, 'the whole pane, its shape');
+  // The rect lands between the bars, centred there, with the margin.
+  const topPx = (rect.y - view.y) / k;
+  const bottomPx = (rect.y + rect.h - view.y) / k;
+  assert.ok(Math.abs((topPx - 80) - (1300 - 60 - bottomPx)) < 1e-6, `centred: ${topPx} ${bottomPx}`);
+  assert.ok(topPx >= 80 && bottomPx <= 1300 - 60);
+  assert.ok(Math.abs((bottomPx - topPx) - (1300 - 140) * 0.9) < 1e-6, 'the margin a share of the free area');
+  // Without bars it is viewFitting's.
+  assert.deepEqual(viewFittingIn(rect, 1200, 1300), viewFitting(rect, 1200, 1300, 0.05));
+});
+
+test('a fresh packing holds the shape it is shown in, kinship notwithstanding', () => {
+  // Relatedness that pulls a neighbourhood into a column: unshaped, the
+  // desk comes out far wider than the square it is shown in.
+  let seed = 19;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const cell = (v) => Math.round(v / GRID) * GRID;
+  const items = Array.from({ length: 34 }, (_, i) => ({ id: `d${i}`, w: cell(600 + rnd() * 2400), h: cell(400 + rnd() * 1800) }));
+  const group = new Map(items.map((item) => [item.id, Math.floor(rnd() * 6)]));
+  const strength = new Map();
+  const related = (a, b) => {
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+    if (!strength.has(key)) strength.set(key, group.get(a) === group.get(b) ? 0.3 + 0.7 * rnd() : rnd() * 0.35);
+    return strength.get(key);
+  };
+  const span = ({ bounds }) => Math.max(bounds.w, bounds.h);
+  const plain = layoutAtlas(items, { aspect: 1, related });
+  const shaped = layoutAtlasShaped(items, { aspect: 1, related }, { budget: 10000 });
+  assert.ok(span(shaped) <= span(plain), 'never shown smaller than the first packing');
+  assert.ok(Math.abs(Math.log(shaped.bounds.w / shaped.bounds.h)) < Math.abs(Math.log(plain.bounds.w / plain.bounds.h)), `${plain.bounds.w / plain.bounds.h} -> ${shaped.bounds.w / shaped.bounds.h}`);
+  // Every design still in it, none overlapping.
+  assert.deepEqual(shaped.tiles.map((tile) => tile.id), items.map((item) => item.id));
+  // A packing already in shape is the first one, untouched; the budget
+  // bounds the extra tries.
+  const square = items.slice(0, 12);
+  const first = layoutAtlas(square, { aspect: 1 });
+  if (Math.abs(Math.log(first.bounds.w / first.bounds.h)) < 0.08) assert.deepEqual(layoutAtlasShaped(square, { aspect: 1 }), first);
+  let calls = 0;
+  layoutAtlasShaped(items, { aspect: 1, related }, { budget: 0, now: () => (calls += 1) });
+  assert.ok(calls <= 2, 'out of time, no more tries');
 });

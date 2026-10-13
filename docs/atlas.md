@@ -207,9 +207,14 @@ the same sheet for scripted visual checks.
 ## How it stays fast
 
 - **Layout** (`src/web/atlas-layout.js`): the designs packed into one
-  loose ball shaped like the window (its width over height, kept between
-  1:3 and 3:1), largest in the middle, each next in the free spot nearest
-  the centre. Remembered places stay put while the window keeps their
+  loose ball shaped like the window's room for designs (between the top
+  bar and the hint bar; its width over height, kept between 1:3 and 3:1),
+  largest in the middle, each next in the free spot nearest the centre.
+  Kinship can pull a fresh packing taller or wider than that: when it
+  misses by more than a little, a few nearby shapes are tried and the one
+  that shows largest when fitted is kept, within a quarter second
+  (`layoutAtlasShaped`). Fit (`F`, `Z`) frames the designs in that same
+  room, clear of both bars (`viewFittingIn`). Remembered places stay put while the window keeps their
   shape; opened in a window of another shape (more than 1.25 times
   narrower or wider), the desk is packed again to fill it, each design as
   near its remembered spot stretched to the new shape as it fits, so

@@ -338,6 +338,45 @@ export function viewFitting(rect, paneW, paneH, margin = 0.08) {
 }
 
 /**
+ * A view of the whole pane (`paneW` x `paneH` pixels) that shows `rect` with
+ * a margin of `margin` inside `area` ({ top, bottom }: the pixels the top
+ * bar and the hint bar take), so nothing fitted lies under them. Without an
+ * area it is viewFitting's.
+ */
+export function viewFittingIn(rect, paneW, paneH, { top = 0, bottom = 0 } = {}, margin = 0.05) {
+  const areaH = Math.max(1, paneH - top - bottom);
+  const inner = viewFitting(rect, paneW, areaH, margin);
+  const k = inner.w / paneW; // drawing units per pixel
+  return { x: inner.x, y: inner.y - top * k, w: inner.w, h: paneH * k };
+}
+
+/**
+ * Pack `items` as layoutAtlas does, holding the shape of the area it will be
+ * shown in (`aspect`): relatedness pulls designs together and can leave the
+ * desk taller or wider than its window. When the first packing misses the
+ * shape by more than a little, a few nearby shapes are tried (the direction
+ * of the miss first) and the one that will show largest when fitted is kept
+ * -- within `budget` ms, so a large workspace never waits long.
+ */
+export function layoutAtlasShaped(items, options = {}, { budget = 250, now = () => performance.now() } = {}) {
+  const aspect = options.aspect ?? 1.6;
+  const first = layoutAtlas(items, options);
+  const shape = (layout) => layout.bounds.w / Math.max(1, layout.bounds.h);
+  if (items.length < 3 || Math.abs(Math.log(shape(first) / aspect)) < 0.08) return first;
+  // How big the whole desk is, fitted to the area: smaller shows larger.
+  const span = (layout) => Math.max(layout.bounds.w / aspect, layout.bounds.h);
+  const deadline = now() + budget;
+  const factors = shape(first) > aspect ? [0.85, 0.7, 1.15] : [1.18, 1.4, 0.87];
+  let best = first;
+  for (const factor of factors) {
+    if (now() > deadline) break;
+    const next = layoutAtlas(items, { ...options, aspect: aspect * factor });
+    if (span(next) < span(best)) best = next;
+  }
+  return best;
+}
+
+/**
  * A rect on its way between the desk and the screen, seen in perspective:
  * the screen is depth 1, the desk lies behind it at depth 0, and something
  * `ratio` times larger at the screen than on the desk is that much nearer

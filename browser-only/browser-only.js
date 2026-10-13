@@ -39398,6 +39398,8 @@ __exports.floatClear = floatClear;
 __exports.tileAt = tileAt;
 __exports.neighbourTile = neighbourTile;
 __exports.viewFitting = viewFitting;
+__exports.viewFittingIn = viewFittingIn;
+__exports.layoutAtlasShaped = layoutAtlasShaped;
 __exports.throughDepth = throughDepth;
 __exports.viewShowing = viewShowing;
 __exports.carryDeskPlace = carryDeskPlace;
@@ -39742,6 +39744,45 @@ function viewFitting(rect, paneW, paneH, margin = 0.08) {
 }
 
 /**
+ * A view of the whole pane (`paneW` x `paneH` pixels) that shows `rect` with
+ * a margin of `margin` inside `area` ({ top, bottom }: the pixels the top
+ * bar and the hint bar take), so nothing fitted lies under them. Without an
+ * area it is viewFitting's.
+ */
+function viewFittingIn(rect, paneW, paneH, { top = 0, bottom = 0 } = {}, margin = 0.05) {
+  const areaH = Math.max(1, paneH - top - bottom);
+  const inner = viewFitting(rect, paneW, areaH, margin);
+  const k = inner.w / paneW; // drawing units per pixel
+  return { x: inner.x, y: inner.y - top * k, w: inner.w, h: paneH * k };
+}
+
+/**
+ * Pack `items` as layoutAtlas does, holding the shape of the area it will be
+ * shown in (`aspect`): relatedness pulls designs together and can leave the
+ * desk taller or wider than its window. When the first packing misses the
+ * shape by more than a little, a few nearby shapes are tried (the direction
+ * of the miss first) and the one that will show largest when fitted is kept
+ * -- within `budget` ms, so a large workspace never waits long.
+ */
+function layoutAtlasShaped(items, options = {}, { budget = 250, now = () => performance.now() } = {}) {
+  const aspect = options.aspect ?? 1.6;
+  const first = layoutAtlas(items, options);
+  const shape = (layout) => layout.bounds.w / Math.max(1, layout.bounds.h);
+  if (items.length < 3 || Math.abs(Math.log(shape(first) / aspect)) < 0.08) return first;
+  // How big the whole desk is, fitted to the area: smaller shows larger.
+  const span = (layout) => Math.max(layout.bounds.w / aspect, layout.bounds.h);
+  const deadline = now() + budget;
+  const factors = shape(first) > aspect ? [0.85, 0.7, 1.15] : [1.18, 1.4, 0.87];
+  let best = first;
+  for (const factor of factors) {
+    if (now() > deadline) break;
+    const next = layoutAtlas(items, { ...options, aspect: aspect * factor });
+    if (span(next) < span(best)) best = next;
+  }
+  return best;
+}
+
+/**
  * A rect on its way between the desk and the screen, seen in perspective:
  * the screen is depth 1, the desk lies behind it at depth 0, and something
  * `ratio` times larger at the screen than on the desk is that much nearer
@@ -39917,7 +39958,7 @@ let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
 let relatednessOf; __bind(() => { ({ relatednessOf } = __require("src/core/design-related.js")); });
 let linkArrow, linkCurve, linkGraph; __bind(() => { ({ linkArrow, linkCurve, linkGraph } = __require("src/core/design-links.js")); });
-let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewShowing } = __require("src/web/atlas-layout.js")); });
+let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing; __bind(() => { ({ ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } = __require("src/web/atlas-layout.js")); });
 let bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeOutCubic, wheelIntent, lerpView; __bind(() => { ({ easeOutCubic, wheelIntent, lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -40125,9 +40166,21 @@ function editorEquivalentView(tile, entry, view = editor.view) {
   return { x: view.x + dx - (pane.left - root.left) / k, y: view.y + dy - (pane.top - root.top) / k, w: w / k, h: h / k };
 }
 
+/** The pixels the top bar and the hint bar take at the pane's top and
+ *  bottom, with a little air: what is fitted stays clear of them. Read
+ *  when fitting or packing, never per frame. */
+function chromeInsets() {
+  const { h } = paneSize();
+  const head = rootEl.querySelector('.atlas-head');
+  const top = head?.offsetHeight ? head.offsetTop + head.offsetHeight + 8 : 0;
+  const bottom = hintEl?.offsetHeight ? h - hintEl.offsetTop + 8 : 0;
+  // A very short window keeps most of itself for the desk.
+  return top + bottom < h / 2 ? { top, bottom } : { top: 0, bottom: 0 };
+}
+
 function fitAllView() {
   const { w, h } = paneSize();
-  return viewFitting({ ...state.bounds, h: state.bounds.h + ATLAS_CAPTION }, w, h, 0.05);
+  return viewFittingIn({ ...state.bounds, h: state.bounds.h + ATLAS_CAPTION }, w, h, chromeInsets(), 0.05);
 }
 
 // ----- the drawings -------------------------------------------------------------
@@ -40149,13 +40202,19 @@ function placeDrawings(entries, previous = null) {
   const idsByName = new Map(entries.map((entry) => [entry.name, entry.id]));
   const linksOf = (entry) => (entry.index?.links || []).map((name) => idsByName.get(name)).filter(Boolean);
   const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: linksOf(entry) })));
-  // The ball takes the window's shape: a narrow window packs tall.
+  // The ball takes the shape of the window's room for designs (between the
+  // top bar and the hint bar): a narrow window packs tall.
   const pane = paneSize();
-  const aspect = Math.min(3, Math.max(1 / 3, pane.w / pane.h || 1.6));
+  const { top, bottom } = chromeInsets();
+  const aspect = Math.min(3, Math.max(1 / 3, pane.w / (pane.h - top - bottom) || 1.6));
   // Remembered places keep the arrangement, stretched to the window if it
-  // is another shape now (narrower, wider) than when they were packed.
+  // is another shape now (narrower, wider) than when they were packed. A
+  // fresh packing holds the shape, kinship's pull notwithstanding.
   const places = reshapedPlaces(previous, aspect);
-  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous: places, keep: !places?.reshaped, related, aspect });
+  const keep = !places?.reshaped;
+  const items = entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h }));
+  const options = { previous: places, keep, related, aspect };
+  const layout = places && keep ? layoutAtlas(items, options) : layoutAtlasShaped(items, options);
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -41740,7 +41799,7 @@ function focusTile(tile, { zoom = false } = {}) {
   state.selected = tile.id;
   const { w, h } = paneSize();
   if (zoom) {
-    void animateView(viewFitting(tile, w, h, 0.1));
+    void animateView(viewFittingIn(tile, w, h, chromeInsets(), 0.1));
     return;
   }
   // Keep the pick and its caption in sight without changing the zoom,

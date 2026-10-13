@@ -22,7 +22,7 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkGraph } from '../core/design-links.js';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
 import { bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -190,9 +190,21 @@ function editorEquivalentView(tile, entry, view = editor.view) {
   return { x: view.x + dx - (pane.left - root.left) / k, y: view.y + dy - (pane.top - root.top) / k, w: w / k, h: h / k };
 }
 
+/** The pixels the top bar and the hint bar take at the pane's top and
+ *  bottom, with a little air: what is fitted stays clear of them. Read
+ *  when fitting or packing, never per frame. */
+function chromeInsets() {
+  const { h } = paneSize();
+  const head = rootEl.querySelector('.atlas-head');
+  const top = head?.offsetHeight ? head.offsetTop + head.offsetHeight + 8 : 0;
+  const bottom = hintEl?.offsetHeight ? h - hintEl.offsetTop + 8 : 0;
+  // A very short window keeps most of itself for the desk.
+  return top + bottom < h / 2 ? { top, bottom } : { top: 0, bottom: 0 };
+}
+
 function fitAllView() {
   const { w, h } = paneSize();
-  return viewFitting({ ...state.bounds, h: state.bounds.h + ATLAS_CAPTION }, w, h, 0.05);
+  return viewFittingIn({ ...state.bounds, h: state.bounds.h + ATLAS_CAPTION }, w, h, chromeInsets(), 0.05);
 }
 
 // ----- the drawings -------------------------------------------------------------
@@ -214,13 +226,19 @@ function placeDrawings(entries, previous = null) {
   const idsByName = new Map(entries.map((entry) => [entry.name, entry.id]));
   const linksOf = (entry) => (entry.index?.links || []).map((name) => idsByName.get(name)).filter(Boolean);
   const related = relatednessOf(entries.map((entry) => ({ id: entry.id, name: entry.name, dir: entry.dir, tags: entry.index?.tags || [], index: entry.index, links: linksOf(entry) })));
-  // The ball takes the window's shape: a narrow window packs tall.
+  // The ball takes the shape of the window's room for designs (between the
+  // top bar and the hint bar): a narrow window packs tall.
   const pane = paneSize();
-  const aspect = Math.min(3, Math.max(1 / 3, pane.w / pane.h || 1.6));
+  const { top, bottom } = chromeInsets();
+  const aspect = Math.min(3, Math.max(1 / 3, pane.w / (pane.h - top - bottom) || 1.6));
   // Remembered places keep the arrangement, stretched to the window if it
-  // is another shape now (narrower, wider) than when they were packed.
+  // is another shape now (narrower, wider) than when they were packed. A
+  // fresh packing holds the shape, kinship's pull notwithstanding.
   const places = reshapedPlaces(previous, aspect);
-  const layout = layoutAtlas(entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h })), { previous: places, keep: !places?.reshaped, related, aspect });
+  const keep = !places?.reshaped;
+  const items = entries.map((entry) => ({ id: entry.id, w: cells.get(entry.id).w, h: cells.get(entry.id).h }));
+  const options = { previous: places, keep, related, aspect };
+  const layout = places && keep ? layoutAtlas(items, options) : layoutAtlasShaped(items, options);
   const tiles = layout.tiles.map((slot) => {
     const box = boxes.get(slot.id);
     const cell = cells.get(slot.id);
@@ -1805,7 +1823,7 @@ function focusTile(tile, { zoom = false } = {}) {
   state.selected = tile.id;
   const { w, h } = paneSize();
   if (zoom) {
-    void animateView(viewFitting(tile, w, h, 0.1));
+    void animateView(viewFittingIn(tile, w, h, chromeInsets(), 0.1));
     return;
   }
   // Keep the pick and its caption in sight without changing the zoom,
