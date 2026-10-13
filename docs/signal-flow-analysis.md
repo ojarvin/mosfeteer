@@ -125,8 +125,9 @@ document (it shows as unsaved) without marking the derived equations stale
 let go, a value typed, the optimizer's Apply -- is one undo step; undoing
 it shows the numbers again and keeps the equations current.
 
-The plots are in a window of their own, **Plots** (`Shift+W`, its
-toolbar button, or More; `src/web/plots-window.js`), a tab per view:
+The plots are in a window of their own, **Plots** (`Shift+W`;
+`src/web/plots-window.js`), which belongs to the analysis window and has
+no toolbar button of its own, a tab per view:
 Magnitude, Phase, Step, Locus, Swing, Loop, and Time. Derive opens it,
 unless it was closed since it was last shown; **Show plots** in the
 analysis window's Plots card (which holds the signal band) opens it too. A

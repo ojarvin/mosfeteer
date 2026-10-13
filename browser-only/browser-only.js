@@ -38084,7 +38084,6 @@ function toggleAnalysisDock({ focus = true } = {}) {
 
 function syncAnalysisButton(open) {
   analysisButton?.setAttribute('aria-pressed', String(open));
-  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis window (Shift+S)`;
 }
 
 function openAnalysisDialog(targetNetId, { focus = true } = {}) {
@@ -66320,9 +66319,9 @@ let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floa
  * analysis window's mode: a signal-flow diagram's (magnitude, phase, step,
  * root locus, swing, loop gain, and the time domain: signal-flow-ui.js's,
  * the time domain time-plot.js's) or a circuit's Bode plots (bode-ui.js's);
- * this module is the window around them. `Shift+W` shows or hides it, as
- * do its toolbar button and the More menu; Derive opens it unless it was
- * closed since.
+ * this module is the window around them. It belongs to the analysis window:
+ * its Show plots opens it, and Derive does unless it was closed since;
+ * `Shift+W` shows or hides it.
  */
 
 
@@ -66354,10 +66353,6 @@ function build() {
   win = { el: node, body, chrome };
 }
 
-function syncButtons() {
-  document.getElementById('btn-window-plots')?.setAttribute('aria-pressed', String(plotsShown()));
-}
-
 function plotsShown() {
   return !!win && !win.el.hidden;
 }
@@ -66371,7 +66366,6 @@ function showPlots() {
     win.el.hidden = false;
     win.chrome.place();
   }
-  syncButtons();
   current().shown();
 }
 
@@ -66379,7 +66373,6 @@ function hidePlots() {
   if (!win || win.el.hidden) return;
   win.el.hidden = true;
   wanted = false;
-  syncButtons();
   canvasEl.focus({ preventScroll: true });
 }
 
@@ -66397,7 +66390,6 @@ function offerPlots() {
 /** `view`: the element the window shows in analysis mode `mode`; `shown`:
  *  called whenever it opens on that view. */
 function installPlotsWindow({ mode: key = 'signal-flow', view, shown }) {
-  if (!views.size) document.getElementById('btn-window-plots')?.addEventListener('click', togglePlots);
   views.set(key, { view, shown });
 }
 
@@ -71970,7 +71962,6 @@ function setGrid(on) {
   editor.showGrid = on;
   if (gridBtn) {
     gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
-    gridBtn.title = editor.showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
   }
   render();
   hintLine(editor.showGrid ? 'grid shown' : 'grid hidden');
@@ -71984,7 +71975,6 @@ function setCrosshair(on, announce = true) {
 
   if (crosshairBtn) {
     crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
-    crosshairBtn.title = editor.crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
   }
   render();
   if (announce) hintLine(editor.crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
@@ -71996,7 +71986,6 @@ function setGuides(on, announce = true) {
   editor.guidesVisible = !!on;
   if (guidesBtn) {
     guidesBtn.setAttribute('aria-pressed', String(editor.guidesVisible));
-    guidesBtn.title = editor.guidesVisible ? 'Hide the spacing and alignment guides (Shift+G)' : 'Show the spacing and alignment guides (Shift+G)';
   }
   render();
   if (announce) hintLine(editor.guidesVisible ? 'placement guides shown' : 'placement guides hidden');
@@ -72145,7 +72134,6 @@ function installToolbarUi() {
   if (gridBtn) {
     gridBtn.addEventListener('click', () => setGrid(!editor.showGrid));
     gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
-    gridBtn.title = editor.showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
   }
 
   if (guidesBtn) {
@@ -72165,7 +72153,6 @@ function installToolbarUi() {
   if (crosshairBtn) {
     crosshairBtn.addEventListener('click', () => setCrosshair(!editor.crosshairVisible));
     crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
-    crosshairBtn.title = editor.crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
   }
 
   if (modeToolbarEl) {

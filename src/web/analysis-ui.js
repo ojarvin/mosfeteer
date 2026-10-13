@@ -804,7 +804,6 @@ export function toggleAnalysisDock({ focus = true } = {}) {
 
 function syncAnalysisButton(open) {
   analysisButton?.setAttribute('aria-pressed', String(open));
-  if (analysisButton) analysisButton.title = `${open ? 'Hide' : 'Show'} the small-signal analysis window (Shift+S)`;
 }
 
 function openAnalysisDialog(targetNetId, { focus = true } = {}) {

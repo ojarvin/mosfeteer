@@ -43,7 +43,7 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     await h.until(`!document.querySelector('.plots-window').hidden`);
     assert.deepEqual(await tabs(), ['Magnitude*', 'Phase', 'Step', 'Locus', 'Swing', 'Loop', 'Time']);
     assert.equal(await shown('.plots-window .signal-flow-spectrum-toggle'), true, 'a quantizer: the simulated spectrum is offered');
-    assert.equal(await h.evaluate(`document.getElementById('btn-window-plots').getAttribute('aria-pressed')`), 'true');
+    assert.equal(await h.evaluate(`${h.module('plots-window.js')}.then((m) => m.plotsShown())`), true);
   });
 
   test('the loop gain breaks only a signal on the loop, and reports its margins', async () => {

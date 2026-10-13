@@ -4,9 +4,9 @@
  * analysis window's mode: a signal-flow diagram's (magnitude, phase, step,
  * root locus, swing, loop gain, and the time domain: signal-flow-ui.js's,
  * the time domain time-plot.js's) or a circuit's Bode plots (bode-ui.js's);
- * this module is the window around them. `Shift+W` shows or hides it, as
- * do its toolbar button and the More menu; Derive opens it unless it was
- * closed since.
+ * this module is the window around them. It belongs to the analysis window:
+ * its Show plots opens it, and Derive does unless it was closed since;
+ * `Shift+W` shows or hides it.
  */
 
 import { canvasEl } from './elements.js';
@@ -38,10 +38,6 @@ function build() {
   win = { el: node, body, chrome };
 }
 
-function syncButtons() {
-  document.getElementById('btn-window-plots')?.setAttribute('aria-pressed', String(plotsShown()));
-}
-
 export function plotsShown() {
   return !!win && !win.el.hidden;
 }
@@ -55,7 +51,6 @@ export function showPlots() {
     win.el.hidden = false;
     win.chrome.place();
   }
-  syncButtons();
   current().shown();
 }
 
@@ -63,7 +58,6 @@ export function hidePlots() {
   if (!win || win.el.hidden) return;
   win.el.hidden = true;
   wanted = false;
-  syncButtons();
   canvasEl.focus({ preventScroll: true });
 }
 
@@ -81,7 +75,6 @@ export function offerPlots() {
 /** `view`: the element the window shows in analysis mode `mode`; `shown`:
  *  called whenever it opens on that view. */
 export function installPlotsWindow({ mode: key = 'signal-flow', view, shown }) {
-  if (!views.size) document.getElementById('btn-window-plots')?.addEventListener('click', togglePlots);
   views.set(key, { view, shown });
 }
 

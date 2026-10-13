@@ -495,7 +495,6 @@ export function setGrid(on) {
   editor.showGrid = on;
   if (gridBtn) {
     gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
-    gridBtn.title = editor.showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
   }
   render();
   hintLine(editor.showGrid ? 'grid shown' : 'grid hidden');
@@ -509,7 +508,6 @@ export function setCrosshair(on, announce = true) {
 
   if (crosshairBtn) {
     crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
-    crosshairBtn.title = editor.crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
   }
   render();
   if (announce) hintLine(editor.crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
@@ -521,7 +519,6 @@ export function setGuides(on, announce = true) {
   editor.guidesVisible = !!on;
   if (guidesBtn) {
     guidesBtn.setAttribute('aria-pressed', String(editor.guidesVisible));
-    guidesBtn.title = editor.guidesVisible ? 'Hide the spacing and alignment guides (Shift+G)' : 'Show the spacing and alignment guides (Shift+G)';
   }
   render();
   if (announce) hintLine(editor.guidesVisible ? 'placement guides shown' : 'placement guides hidden');
@@ -670,7 +667,6 @@ export function installToolbarUi() {
   if (gridBtn) {
     gridBtn.addEventListener('click', () => setGrid(!editor.showGrid));
     gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
-    gridBtn.title = editor.showGrid ? 'Hide the placement grid (#)' : 'Show the placement grid (#)';
   }
 
   if (guidesBtn) {
@@ -690,7 +686,6 @@ export function installToolbarUi() {
   if (crosshairBtn) {
     crosshairBtn.addEventListener('click', () => setCrosshair(!editor.crosshairVisible));
     crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
-    crosshairBtn.title = editor.crosshairVisible ? 'Hide the crosshair (Shift+C)' : 'Show the crosshair (Shift+C)';
   }
 
   if (modeToolbarEl) {
