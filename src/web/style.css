@@ -5534,7 +5534,7 @@ th[aria-sort="descending"] .atlas-list-sort {
   font-weight: 700;
 }
 
-.atlas-list-rename {
+.atlas-list-edit {
   box-sizing: border-box;
   min-width: 14em;
   height: 24px;

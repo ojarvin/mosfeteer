@@ -670,7 +670,7 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
     const rename = (from, to, key) => h.evaluate(`(() => {
       const name = [...document.querySelectorAll('#atlas-list-panel .atlas-list-name')].find((n) => n.textContent === ${JSON.stringify(from)});
       name.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-      const input = document.querySelector('#atlas-list-panel .atlas-list-rename');
+      const input = document.querySelector('#atlas-list-panel .atlas-list-edit');
       input.value = ${JSON.stringify(to)};
       input.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true }));
     })()`);
@@ -687,5 +687,40 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
     const top = JSON.parse(await readFile(join(h.workspace, 'top.json'), 'utf8'));
     assert.equal(top.components.find((c) => c.refdes === 'OA1').link, 'child-amp');
     assert.equal((await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.selected)?.name)`)), 'child-amp', 'picked on the desk');
+  });
+
+  test('Shift+L opens it for the keys: arrows step through the designs, # edits tags, Enter opens one', async () => {
+    const atlasKey = (key, init = {}) => h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, ...${JSON.stringify(init)} }))`);
+    const listKey = (key, init = {}) => h.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true, ...${JSON.stringify(init)} }))`);
+    const open = () => h.evaluate(`!document.getElementById('atlas-list-panel').hidden`);
+    const picked = () => h.evaluate(`document.querySelector('#atlas-list-panel tr.picked .atlas-list-name')?.textContent ?? null`);
+    if (await open()) await h.click('#atlas-list');
+    // Let go of the pick, so the arrows start from the top.
+    await atlasKey('Escape');
+    await atlasKey('L', { shiftKey: true });
+    assert.equal(await open(), true);
+    assert.equal(await h.evaluate(`document.activeElement.id`), 'atlas-list-panel', 'it has the keys');
+    assert.equal(await picked(), null);
+    await listKey('ArrowDown');
+    assert.equal(await picked(), 'alpha');
+    await listKey('ArrowDown');
+    assert.equal(await picked(), 'child-amp');
+    await listKey('ArrowUp');
+    assert.equal(await picked(), 'alpha');
+    assert.equal((await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.selected)?.name)`)), 'alpha', 'picked on the desk too');
+    // # edits the picked design's tags, saved as # on the desk saves them.
+    await listKey('#');
+    await h.evaluate(`(() => { const input = document.querySelector('#atlas-list-panel .atlas-list-edit'); input.value = 'filters audio'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await h.until(`[...document.querySelectorAll('#atlas-list-panel .atlas-list-tags')].some((td) => td.textContent === '#filters #audio')`, 5000);
+    const { readFile } = await import('node:fs/promises');
+    assert.deepEqual(JSON.parse(await readFile(join(h.workspace, 'alpha.json'), 'utf8')).tags, ['filters', 'audio']);
+    // Shift+L again closes it; open again, Enter opens the picked design.
+    await listKey('L', { shiftKey: true });
+    assert.equal(await open(), false);
+    await atlasKey('L', { shiftKey: true });
+    await listKey('ArrowDown');
+    await listKey('Enter');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'child-amp')`, 10000);
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
   });
 });

@@ -41295,26 +41295,26 @@ function syncList() {
   const flag = (on, what) => el('td', { class: 'atlas-list-flag', 'aria-label': on ? what : `no ${what}` }, on ? [el('span', { class: 'atlas-list-check', text: '✓' })] : []);
   const rows = listedEntries().map((entry) => {
     const modified = entry.modified ? formatModifiedTime(entry.modified) : '';
-    const name = el('span', { class: 'atlas-list-name', title: 'Double-click to rename', text: entry.name });
+    const name = el('span', { class: 'atlas-list-name', title: 'Double-click (or F2) to rename', text: entry.name });
     const nameCell = el('td', { class: 'atlas-list-name-cell' }, [name, entry.current ? el('span', { class: 'atlas-list-open', text: 'open' }) : '']);
     name.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startRename(nameCell, entry); });
+    const tagsCell = el('td', { class: 'atlas-list-tags', title: 'Double-click (or #) to edit the tags', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') });
+    tagsCell.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startTagEdit(tagsCell, entry); });
     const row = el('tr', { class: state.selected === entry.id ? 'picked' : '', 'data-id': entry.id }, [
       nameCell,
       el('td', { class: 'atlas-list-date', title: entry.modified ? new Date(entry.modified).toLocaleString() : '', text: modified }),
-      el('td', { class: 'atlas-list-tags', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') }),
+      tagsCell,
       flag(!!entry.index?.beats, 'beats'),
       flag(!!entry.index?.timing, 'timing diagram'),
       flag(!!entry.index?.links?.length, 'links'),
     ]);
-    // A click shows the design on the desk, picked.
+    // A click shows the design on the desk, picked; a double-click (off its
+    // name and tags) opens it.
     row.addEventListener('click', (ev) => {
-      if (ev.target.closest('input')) return;
-      const tile = tileById(entry.id);
-      if (!tile) return;
-      state.picked = null;
-      focusTile(tile);
-      for (const other of listPanelEl.querySelectorAll('tr.picked')) other.classList.remove('picked');
-      row.classList.add('picked');
+      if (!ev.target.closest('input')) pickListRow(row);
+    });
+    row.addEventListener('dblclick', (ev) => {
+      if (!ev.target.closest('input')) void openListRow(row);
     });
     return row;
   });
@@ -41344,27 +41344,27 @@ function placeListPanel() {
   if (over > 0) listPanelEl.style.left = `${-Math.min(over, box.left - margin)}px`;
 }
 
-/** Rename a design in place: its name becomes a field; Enter renames, Esc
- *  or leaving the field keeps the name. */
-function startRename(cell, entry) {
-  const input = el('input', { type: 'text', class: 'atlas-list-rename', value: entry.name, 'aria-label': `New name for ${entry.name}`, spellcheck: 'false', autocomplete: 'off' });
+/** A cell of the listing edited in place: it becomes a field holding
+ *  `value`; Enter gives the text to `commit` (unless unchanged), Esc or
+ *  leaving the field keeps what was there. The listing keeps the keys. */
+function editCell(cell, { value, label, placeholder = '', commit }) {
+  const input = el('input', { type: 'text', class: 'atlas-list-edit', value, placeholder, 'aria-label': label, spellcheck: 'false', autocomplete: 'off' });
   let done = false;
-  const finish = async (rename) => {
+  const finish = async (apply) => {
     if (done) return;
     done = true;
-    const name = input.value.trim();
-    if (!rename || !name || name === entry.name) {
-      syncList();
-      return;
+    const text = input.value.trim();
+    if (apply && text !== value.trim()) {
+      input.disabled = true;
+      await commit(text);
     }
-    input.disabled = true;
-    const saved = await renameDesign(entry.path, name, entry.dir ? { dir: entry.dir } : {});
     if (!state) return;
-    if (saved) await reloadDesk({ quiet: true, pick: saved.path });
     syncList();
+    listPanelEl.focus({ preventScroll: true });
   };
   input.addEventListener('keydown', (ev) => {
-    // The field's own keys: never the desk's, nor the menu's Esc.
+    // The field's own keys: never the desk's, nor the listing's, nor the
+    // menu's Esc.
     ev.stopPropagation();
     if (ev.key === 'Enter') { ev.preventDefault(); void finish(true); }
     else if (ev.key === 'Escape') { ev.preventDefault(); void finish(false); }
@@ -41373,6 +41373,99 @@ function startRename(cell, entry) {
   cell.replaceChildren(input);
   input.focus();
   input.select();
+}
+
+/** Rename a design from the listing, as the editor renames. */
+function startRename(cell, entry) {
+  editCell(cell, {
+    value: entry.name,
+    label: `New name for ${entry.name}`,
+    commit: async (name) => {
+      if (!name) return;
+      const saved = await renameDesign(entry.path, name, entry.dir ? { dir: entry.dir } : {});
+      if (state && saved) await reloadDesk({ quiet: true, pick: saved.path });
+    },
+  });
+}
+
+/** Edit a design's tags from the listing, as # does on the desk. */
+function startTagEdit(cell, entry) {
+  editCell(cell, {
+    value: tagsText(entry.index?.tags),
+    label: `Tags of ${entry.name}`,
+    placeholder: 'tags, separated by spaces',
+    commit: (text) => saveTags(entry, text),
+  });
+}
+
+/** Pick a row's design and show it on the desk. */
+function pickListRow(row) {
+  const tile = tileById(row.dataset.id);
+  if (!tile) return;
+  state.picked = null;
+  focusTile(tile);
+  for (const other of listPanelEl.querySelectorAll('tr.picked')) other.classList.remove('picked');
+  row.classList.add('picked');
+  row.scrollIntoView({ block: 'nearest' });
+}
+
+/** Open a row's design, the listing closed first. */
+async function openListRow(row) {
+  const tile = tileById(row.dataset.id);
+  if (!tile) return;
+  closeToolbarMenu(listEl, listPanelEl);
+  await openTile(tile);
+}
+
+/** Shift+L: the listing, opened (holding the keys) or closed. */
+function toggleList() {
+  if (!listEl || listEl.closest('.atlas-list')?.hidden) return;
+  listEl.click();
+  if (!listPanelEl.hidden) {
+    listPanelEl.tabIndex = -1;
+    listPanelEl.focus({ preventScroll: true });
+  }
+}
+
+/** The listing's keys: ↑/↓ (Home/End) step through the designs, picking
+ *  each; Enter opens the picked one; F2 renames it, # edits its tags. */
+function onListKey(ev) {
+  if (ev.target.closest?.('input') || !state) return;
+  const rows = [...listPanelEl.querySelectorAll('tbody tr')];
+  if (!rows.length) return;
+  const at = rows.findIndex((row) => row.classList.contains('picked'));
+  const step = { ArrowDown: 1, ArrowUp: -1 }[ev.key];
+  let target = null;
+  if (step) target = rows[at < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, at + step))];
+  else if (ev.key === 'Home') target = rows[0];
+  else if (ev.key === 'End') target = rows.at(-1);
+  if (target) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    pickListRow(target);
+    return;
+  }
+  // A key the listing takes goes no further: closed by it, the listing
+  // would otherwise hand the same key on to the desk.
+  const take = () => { ev.preventDefault(); ev.stopPropagation(); };
+  if (ev.key === 'L') {
+    take();
+    toggleList();
+    return;
+  }
+  const row = rows[at];
+  if (!row) return;
+  const entry = state.entries.get(row.dataset.id);
+  if (ev.key === 'Enter') {
+    take();
+    void openListRow(row);
+  } else if (ev.key === 'F2' && entry) {
+    take();
+    startRename(row.querySelector('.atlas-list-name-cell'), entry);
+  } else if (ev.key === '#' && entry) {
+    take();
+    startTagEdit(row.querySelector('.atlas-list-tags'), entry);
+  }
 }
 
 // ----- search ---------------------------------------------------------------
@@ -41654,6 +41747,7 @@ async function saveTags(entry, text) {
         }
       }
       entry.revision = revision;
+      entry.modified = revisionTime(revision) ?? entry.modified;
       entry.index = index;
       logLine(`${entry.name}: ${tags.length ? tags.map((tag) => `#${tag}`).join(' ') : 'tags cleared'} (saved)`);
     }
@@ -43012,7 +43106,8 @@ function onAtlasKey(ev) {
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
   else if (key === 'T' && state.source === 'workspace') repackDesk();
-  else if ((key === 'l' || key === 'L') && state.source === 'workspace') toggleLinks();
+  else if (key === 'L' && state.source === 'workspace') toggleList();
+  else if (key === 'l' && state.source === 'workspace') toggleLinks();
   else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centreOf().x, centreOf().y);
   else if (key === '-' || key === '_') zoomAbout(1.5, centreOf().x, centreOf().y);
   else if (key === 'D' || (key === 'd' && ev.shiftKey)) toggleTheme();
@@ -43181,6 +43276,8 @@ function installAtlas() {
   // a capture listener on the button itself goes first).
   checkEl?.addEventListener('click', () => { if (state) syncCheck(); }, { capture: true });
   listEl?.addEventListener('click', () => { if (state) syncList(); }, { capture: true });
+  // Capture: before the menus' own arrow keys (toolbar-ui.js).
+  listPanelEl?.addEventListener('keydown', onListKey, { capture: true });
   rootEl.addEventListener('wheel', onWheel, { passive: false });
   rootEl.addEventListener('pointerdown', onPointerDown);
   rootEl.addEventListener('pointermove', onPointerMove);
@@ -73201,6 +73298,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['z', 'zoom to the picked design'],
     ['f', 'fit every design'],
     ['l', 'show or hide the links between designs'],
+    ['Shift+L', 'list every design: ↑/↓ steps through them, Enter opens one, F2 or a double-click renames, # edits tags'],
     ['Shift+T', 'repack the desk by kinship'],
     ['Esc', 'clear the search, then the pick'],
     ['Enter (nothing picked) / Shift+Backspace', 'back to the drawing'],

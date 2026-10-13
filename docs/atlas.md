@@ -131,10 +131,14 @@ it was last saved, its tags, and a check for each of beats, a timing
 diagram, and links it holds (`designIndex`). **Name** sorts A to Z and
 **Saved** newest first; clicking the same heading again reverses it (kept
 in this browser). A click on a row picks that design and shows it on the
-desk; a double-click on its name renames it there -- Enter renames, Esc or
-leaving the field keeps it -- exactly as the editor's rename does
-(`renameDesign`: the file renamed, its place on the desk kept, and the
-designs linking to it relinked).
+desk, a double-click elsewhere on the row opens it. A double-click on its
+name (or F2) renames it there -- Enter renames, Esc or leaving the field
+keeps it -- exactly as the editor's rename does (`renameDesign`: the file
+renamed, its place on the desk kept, and the designs linking to it
+relinked); a double-click on its tags (or `#`) edits them as `#` does on
+the desk. `Shift+L` opens it holding the keys: ↑/↓ (Home/End) step through
+the designs, picking each on the desk, Enter opens the picked one, and
+`Shift+L` or Esc closes it.
 
 The design open in the editor -- where Shift+Backspace and the header's **Back to …**
 button return -- carries an **OPEN** badge before its caption, and the
@@ -168,6 +172,8 @@ folder on the Atlas does the same. Symbols view hides both buttons.
 | double-click / Enter | open it (after the unsaved-changes check); Enter with nothing picked goes back to the editor |
 | `/` or Ctrl/Cmd+F | search the designs |
 | `#` | edit the picked design's tags |
+| `l` | show or hide the links |
+| `Shift+L` | the listing (below), opened holding the keys, or closed |
 | Ctrl/Cmd+E | export the desk as one sheet |
 | Ctrl/Cmd+O | another workspace folder (browser-only: add files) |
 | `z` or Space | zoom to the picked design |

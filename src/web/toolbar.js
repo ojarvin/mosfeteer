@@ -270,6 +270,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['z', 'zoom to the picked design'],
     ['f', 'fit every design'],
     ['l', 'show or hide the links between designs'],
+    ['Shift+L', 'list every design: ↑/↓ steps through them, Enter opens one, F2 or a double-click renames, # edits tags'],
     ['Shift+T', 'repack the desk by kinship'],
     ['Esc', 'clear the search, then the pick'],
     ['Enter (nothing picked) / Shift+Backspace', 'back to the drawing'],
