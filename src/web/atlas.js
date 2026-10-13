@@ -484,7 +484,7 @@ function colors() {
     faint: read('--svg-faint', '#7a7d85'),
     text: read('--text', '#17181c'),
     dim: read('--text-dim', '#5a6372'),
-    accent: read('--accent', '#1a56db'),
+    accent: read('--accent', '#0e7c7b'),
     // A lifted design's card -- the paper its drawing was rendered on, so
     // what the drawing fills with paper (a plot, a block) blends in -- and
     // the shadow it casts.

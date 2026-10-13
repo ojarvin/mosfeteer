@@ -1238,12 +1238,12 @@ export function svgString(circuit, opts = {}) {
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
  */
 // Editor overlay colors are semantic and theme-aware (style.css tokens):
-// SELECT (accent blue) = selection, focus, and previews of pending edits;
+// SELECT (the accent teal) = selection, focus, and previews of pending edits;
 // WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
 // DANGER (red) = errors such as cross-net overlaps and focused check issues.
 // Sky-blue center guides are measurement aids and deliberately separate from
-// the accent blue used for selection and pending edits.
-const SELECT = 'var(--accent, #2563eb)';
+// the accent teal used for selection and pending edits.
+const SELECT = 'var(--accent, #0e7c7b)';
 
 /** A part's signal directions (editor overlay): beside each pin with a
  *  signal role, outside the body, an arrowhead along the pin -- pointing

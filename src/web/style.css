@@ -24,8 +24,11 @@
   --border: #d9d9de;
   --text: #1d1d1f;
   --text-dim: #6e6e73;
-  --accent: #0a6cdf;
-  --accent-dim: #dce9fb;
+  /* A darker teal: every highlight of the interface (selection, focus,
+     the active tool, toggles that are on, the Atlas's picks and link
+     beams). Never a probe's or a plot's colors, which are their own. */
+  --accent: #0e7c7b;
+  --accent-dim: #d3ecea;
   /* Semantic colors: accent = selection/focus/active tool, ok = success,
      warn = needs attention, danger = error or destructive. */
   --danger: #d70015;
@@ -2464,7 +2467,7 @@ button:disabled {
 .canvas.hover-move svg { cursor: move; }
 
 /* Placement/move target: intentionally lighter than selection and wire
-   overlays, while still using the editor's established blue accent. */
+   overlays, while still using the editor's accent. */
 .editor-cursor-crosshair {
   stroke: var(--svg-faint);
   stroke-width: 1px;
@@ -3934,8 +3937,8 @@ html.dark {
   --border: #38383d;
   --text: #f2f2f5;
   --text-dim: #98989f;
-  --accent: #2f8cff;
-  --accent-dim: #17375e;
+  --accent: #1a9e93;
+  --accent-dim: #123f3c;
   --danger: #ff5a52;
   --warn: #ffb340;
   --ok: #3ddc68;
@@ -3962,7 +3965,7 @@ html.dark {
 html.dark .canvas svg [fill="#fff"] { fill: var(--paper); }
 html.dark .canvas svg .net-name { fill: var(--svg-faint); }
 /* The crosshair is a neutral navigation aid in both themes: it must not
-   borrow the selection (blue) or warning (amber) colors. */
+   borrow the selection (teal) or warning (amber) colors. */
 html.dark .editor-cursor-crosshair {
   opacity: 0.5;
 }

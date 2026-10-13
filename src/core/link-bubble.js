@@ -167,7 +167,9 @@ export function bubbleAt(bubbles, point) {
 
 // Bubbles are drawn in drawing units, like a dashed box annotation, so
 // they scale with the drawing on the canvas and in an export alike.
-const BUBBLE_COLOR = '#1a56db';
+// The interface's accent (style.css --accent, the light theme's): a bubble
+// is drawn in drawing units and exported, so it carries the color itself.
+const BUBBLE_COLOR = '#0e7c7b';
 const BUBBLE_STROKE = 6;
 const BUBBLE_DASH = '12 12';
 export const BUBBLE_RADIUS = GRID;

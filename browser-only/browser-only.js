@@ -22312,7 +22312,9 @@ function bubbleAt(bubbles, point) {
 
 // Bubbles are drawn in drawing units, like a dashed box annotation, so
 // they scale with the drawing on the canvas and in an export alike.
-const BUBBLE_COLOR = '#1a56db';
+// The interface's accent (style.css --accent, the light theme's): a bubble
+// is drawn in drawing units and exported, so it carries the color itself.
+const BUBBLE_COLOR = '#0e7c7b';
 const BUBBLE_STROKE = 6;
 const BUBBLE_DASH = '12 12';
 const BUBBLE_RADIUS = GRID;
@@ -31519,12 +31521,12 @@ function svgString(circuit, opts = {}) {
  * opts.wirePreview {from:{x,y},to:{x,y}}: dashed routed preview line.
  */
 // Editor overlay colors are semantic and theme-aware (style.css tokens):
-// SELECT (accent blue) = selection, focus, and previews of pending edits;
+// SELECT (the accent teal) = selection, focus, and previews of pending edits;
 // WARN (amber) = needs attention, e.g. an unconnected pin while wiring;
 // DANGER (red) = errors such as cross-net overlaps and focused check issues.
 // Sky-blue center guides are measurement aids and deliberately separate from
-// the accent blue used for selection and pending edits.
-const SELECT = 'var(--accent, #2563eb)';
+// the accent teal used for selection and pending edits.
+const SELECT = 'var(--accent, #0e7c7b)';
 
 /** A part's signal directions (editor overlay): beside each pin with a
  *  signal role, outside the body, an arrowhead along the pin -- pointing
@@ -40417,7 +40419,7 @@ function colors() {
     faint: read('--svg-faint', '#7a7d85'),
     text: read('--text', '#17181c'),
     dim: read('--text-dim', '#5a6372'),
-    accent: read('--accent', '#1a56db'),
+    accent: read('--accent', '#0e7c7b'),
     // A lifted design's card -- the paper its drawing was rendered on, so
     // what the drawing fills with paper (a plot, a block) blends in -- and
     // the shadow it casts.
