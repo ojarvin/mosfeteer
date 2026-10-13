@@ -5424,6 +5424,129 @@ button.off {
   line-height: 1.35;
 }
 
+/* The listing: every design in one table, its columns aligned, no rules
+   between cells; the header stays in view as the rows scroll. */
+.atlas-list[hidden] {
+  display: none;
+}
+
+.atlas-list-panel {
+  width: max-content;
+  /* Never wider than the window: placeListPanel keeps it inside. */
+  max-width: calc(100vw - 24px);
+  max-height: min(70vh, 40rem);
+  overflow: auto;
+  /* Room for the vertical scrollbar beside the table, not taken from it:
+     no sideways scrolling while the table fits the window. */
+  scrollbar-gutter: stable;
+  padding: 0 4px 6px;
+  /* Solid: the desk's drawings must not show through rows being read. */
+  background: var(--bg-panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.atlas-list-table {
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.atlas-list-table th,
+.atlas-list-table td {
+  padding: 5px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.atlas-list-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: 8px;
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.atlas-list-table .atlas-list-flag {
+  text-align: center;
+}
+
+.atlas-list-table tbody tr {
+  cursor: pointer;
+}
+
+.atlas-list-table tbody tr:hover td {
+  background: var(--bg-hover);
+}
+
+.atlas-list-table tbody tr.picked td {
+  background: var(--accent-tint);
+}
+
+.atlas-list-table tbody tr td:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.atlas-list-table tbody tr td:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+
+.atlas-head .atlas-list-panel .atlas-list-sort {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.atlas-list-sort:hover,
+th[aria-sort="ascending"] .atlas-list-sort,
+th[aria-sort="descending"] .atlas-list-sort {
+  color: var(--text);
+}
+
+.atlas-list-name {
+  font-weight: 600;
+  cursor: text;
+}
+
+.atlas-list-open {
+  margin-left: 8px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.atlas-list-date,
+.atlas-list-tags {
+  color: var(--text-dim);
+}
+
+.atlas-list-check {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.atlas-list-rename {
+  box-sizing: border-box;
+  min-width: 14em;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+}
+
 /* File actions together, then the view toggles, as in the editor toolbar. */
 .atlas-group {
   display: flex;

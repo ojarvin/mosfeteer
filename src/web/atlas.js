@@ -23,11 +23,11 @@ import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js'
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkGraph } from '../core/design-links.js';
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
-import { bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
+import { INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
 import {
-  addDocumentFiles, allowFolderAccess, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument,
+  addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument,
 } from './document-session.js';
 import { fittedView } from './canvas-view.js';
 import { closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus } from './toolbar-ui.js';
@@ -40,6 +40,7 @@ import { exportAtlasSheet } from './export-ui.js';
 import { atlasSheetSvg, sheetCaption } from './atlas-sheet.js';
 import { writeDrawingToClipboard } from './clipboard.js';
 import { slideChrome } from './chrome-slide.js';
+import { formatModifiedTime, revisionTime } from './modified-time.js';
 import { reducedMotion } from './motion.js';
 import { showHelp } from './help.js';
 
@@ -58,6 +59,9 @@ const exportEl = document.getElementById('atlas-export');
 const linksEl = document.getElementById('atlas-links');
 const checkEl = document.getElementById('atlas-check');
 const checkMenuEl = document.getElementById('atlas-check-menu');
+const listEl = document.getElementById('atlas-list');
+const listPanelEl = document.getElementById('atlas-list-panel');
+const LIST_SORT_KEY = 'mosfeteer.atlas.listSort';
 const LINKS_KEY = 'mosfeteer.atlas.links';
 // The cached drawings' and images' versions: bump them when the renderer
 // draws designs differently, or the desk keeps showing the old drawings
@@ -308,7 +312,7 @@ async function drawingFor(documentInfo, edited) {
     return { svg: drawingSvg(circuit), index: designIndex(circuit), revision: null };
   }
   const key = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, DRAWING_CACHE);
-  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, 'index-v3');
+  const indexKey = documentInfo.revision && renderingKey(documentInfo.path, documentInfo.revision, INDEX_CACHE);
   const [cached, cachedIndex] = key ? await Promise.all([cacheGet(key), cacheGet(indexKey)]) : [null, null];
   if (cached && cachedIndex) return { svg: cached, index: cachedIndex, revision: documentInfo.revision };
   const data = await persistence.load(documentInfo.path);
@@ -355,7 +359,7 @@ async function loadWorkspace(generation) {
       const edited = current && hasUnsavedChanges();
       const { svg, index, revision } = edited && state.entries.get(doc.path) || await drawingFor(doc, edited);
       const box = viewBoxOf(svg);
-      if (box) entries.push({ id: doc.path, name: doc.name, names: doc.names || [], path: doc.path, dir: doc.dir, revision, current, svg, box, index });
+      if (box) entries.push({ id: doc.path, name: doc.name, names: doc.names || [], path: doc.path, dir: doc.dir, revision, modified: revisionTime(doc.revision), current, svg, box, index });
     } catch (err) {
       unreadable.push(doc.name);
       logLine(`Atlas: could not draw ${doc.name}: ${err.message}`, 'error');
@@ -1233,6 +1237,140 @@ async function saveFromDesk() {
   if (state) syncCheck();
 }
 
+// ----- the listing ------------------------------------------------------------------
+//
+// Every design on the desk in one table, to keep a workspace's names and
+// tags in order: its name, when it was last saved, its tags, and whether it
+// holds beats, a timing diagram, or links. Sorted by name or by date, either
+// way round (the choice kept in this browser). A click picks the design and
+// shows it on the desk; a double-click on its name renames it as the editor
+// does (renameDesign: other designs' links follow).
+
+function listSort() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LIST_SORT_KEY) || 'null');
+    if (saved && (saved.by === 'name' || saved.by === 'date')) return { by: saved.by, reverse: !!saved.reverse };
+  } catch { /* the default */ }
+  return { by: 'name', reverse: false };
+}
+
+function setListSort(by) {
+  const now = listSort();
+  const next = { by, reverse: now.by === by ? !now.reverse : false };
+  try { localStorage.setItem(LIST_SORT_KEY, JSON.stringify(next)); } catch { /* this visit only */ }
+  syncList();
+}
+
+/** The designs in the listing's order: by name A to Z, or by date newest
+ *  first; reversed on a second click. */
+function listedEntries() {
+  const { by, reverse } = listSort();
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  const compare = by === 'date' ? (a, b) => (b.modified ?? 0) - (a.modified ?? 0) || byName(a, b) : byName;
+  const entries = [...state.entries.values()].sort(compare);
+  return reverse ? entries.reverse() : entries;
+}
+
+/** The List button and its table, from what the desk holds now. */
+function syncList() {
+  const wrap = listEl?.closest('.atlas-list');
+  if (!wrap) return;
+  const shown = state?.source === 'workspace' && state.tiles.length > 0;
+  wrap.hidden = !shown;
+  if (!shown) return;
+  const { by, reverse } = listSort();
+  const sortHeader = (key, text) => {
+    const active = by === key;
+    const ascending = key === 'name' ? !reverse : reverse;
+    return el('th', { scope: 'col', 'aria-sort': active ? (ascending ? 'ascending' : 'descending') : 'none' }, [
+      el('button', { type: 'button', class: 'atlas-list-sort', title: `Sort by ${key}`, onclick: () => setListSort(key) }, [
+        text, active ? el('span', { class: 'atlas-list-arrow', text: ascending ? ' ▲' : ' ▼' }) : '',
+      ]),
+    ]);
+  };
+  const flag = (on, what) => el('td', { class: 'atlas-list-flag', 'aria-label': on ? what : `no ${what}` }, on ? [el('span', { class: 'atlas-list-check', text: '✓' })] : []);
+  const rows = listedEntries().map((entry) => {
+    const modified = entry.modified ? formatModifiedTime(entry.modified) : '';
+    const name = el('span', { class: 'atlas-list-name', title: 'Double-click to rename', text: entry.name });
+    const nameCell = el('td', { class: 'atlas-list-name-cell' }, [name, entry.current ? el('span', { class: 'atlas-list-open', text: 'open' }) : '']);
+    name.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startRename(nameCell, entry); });
+    const row = el('tr', { class: state.selected === entry.id ? 'picked' : '', 'data-id': entry.id }, [
+      nameCell,
+      el('td', { class: 'atlas-list-date', title: entry.modified ? new Date(entry.modified).toLocaleString() : '', text: modified }),
+      el('td', { class: 'atlas-list-tags', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') }),
+      flag(!!entry.index?.beats, 'beats'),
+      flag(!!entry.index?.timing, 'timing diagram'),
+      flag(!!entry.index?.links?.length, 'links'),
+    ]);
+    // A click shows the design on the desk, picked.
+    row.addEventListener('click', (ev) => {
+      if (ev.target.closest('input')) return;
+      const tile = tileById(entry.id);
+      if (!tile) return;
+      state.picked = null;
+      focusTile(tile);
+      for (const other of listPanelEl.querySelectorAll('tr.picked')) other.classList.remove('picked');
+      row.classList.add('picked');
+    });
+    return row;
+  });
+  const table = el('table', { class: 'atlas-list-table' }, [
+    el('thead', {}, [el('tr', {}, [
+      sortHeader('name', 'Name'),
+      sortHeader('date', 'Saved'),
+      el('th', { scope: 'col', text: 'Tags' }),
+      el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Beats' }),
+      el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Timing' }),
+      el('th', { scope: 'col', class: 'atlas-list-flag', text: 'Links' }),
+    ])]),
+    el('tbody', {}, rows),
+  ]);
+  listPanelEl.replaceChildren(table);
+  // Once it shows (toolbar-ui.js opens it after this), it moves left as far
+  // as it takes to stay inside the window.
+  requestAnimationFrame(placeListPanel);
+}
+
+function placeListPanel() {
+  if (listPanelEl.hidden) return;
+  listPanelEl.style.left = '0px';
+  const box = listPanelEl.getBoundingClientRect();
+  const margin = 12;
+  const over = box.right - (window.innerWidth - margin);
+  if (over > 0) listPanelEl.style.left = `${-Math.min(over, box.left - margin)}px`;
+}
+
+/** Rename a design in place: its name becomes a field; Enter renames, Esc
+ *  or leaving the field keeps the name. */
+function startRename(cell, entry) {
+  const input = el('input', { type: 'text', class: 'atlas-list-rename', value: entry.name, 'aria-label': `New name for ${entry.name}`, spellcheck: 'false', autocomplete: 'off' });
+  let done = false;
+  const finish = async (rename) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    if (!rename || !name || name === entry.name) {
+      syncList();
+      return;
+    }
+    input.disabled = true;
+    const saved = await renameDesign(entry.path, name, entry.dir ? { dir: entry.dir } : {});
+    if (!state) return;
+    if (saved) await reloadDesk({ quiet: true, pick: saved.path });
+    syncList();
+  };
+  input.addEventListener('keydown', (ev) => {
+    // The field's own keys: never the desk's, nor the menu's Esc.
+    ev.stopPropagation();
+    if (ev.key === 'Enter') { ev.preventDefault(); void finish(true); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); void finish(false); }
+  });
+  input.addEventListener('blur', () => void finish(false));
+  cell.replaceChildren(input);
+  input.focus();
+  input.select();
+}
+
 // ----- search ---------------------------------------------------------------
 
 /** Search the designs for `query` (core/design-index.js); an empty query
@@ -1505,7 +1643,7 @@ async function saveTags(entry, text) {
       const revision = saved?.revision || null;
       if (revision) {
         await cachePut(renderingKey(entry.path, revision, DRAWING_CACHE), entry.svg);
-        await cachePut(renderingKey(entry.path, revision, 'index-v3'), index);
+        await cachePut(renderingKey(entry.path, revision, INDEX_CACHE), index);
         for (const level of ['small', 'large']) {
           const bitmap = state?.bitmaps.get(bitmapKey(entry, level));
           if (bitmap) state.bitmaps.set(`${entry.id}\n${revision}\n${theme()}\n${level}`, bitmap);
@@ -2236,7 +2374,9 @@ function deskState(generation, source, startup = false) {
 
 /** Lay the desk out again from the document list, after another folder or
  *  more files were opened over it. Resolves false when the Atlas is closed. */
-async function reloadDesk() {
+/** `quiet` (after a rename from the listing): the view, the pick (`pick`,
+ *  an id), and the designs stay as they are, without a reveal. */
+async function reloadDesk({ quiet = false, pick = null } = {}) {
   if (!state || state.source !== 'workspace') return false;
   stopAnimation();
   clearTimeout(state.arrangeTimer);
@@ -2251,9 +2391,12 @@ async function reloadDesk() {
     logLine(`Could not show the workspace: ${err.message}`, 'error');
   }
   if (!ready || !state || state.generation !== generation) return true;
-  state.selected = state.tiles.find((tile) => state.entries.get(tile.id).current)?.id || null;
+  state.selected = (pick && tileById(pick)?.id) || state.tiles.find((tile) => state.entries.get(tile.id).current)?.id || null;
   showEmptyDesk();
-  if (!state.tiles.length) {
+  if (quiet) {
+    state.revealAt = 0;
+    requestDraw();
+  } else if (!state.tiles.length) {
     requestDraw();
   } else {
     void animateView(clampView(fitAllView()));
@@ -2277,6 +2420,7 @@ function showEmptyDesk() {
   const empty = !!state && state.source === 'workspace' && !state.tiles.length;
   rootEl.classList.toggle('atlas-is-empty', empty);
   syncCheck();
+  syncList();
   if (!empty) return;
   const folder = editor.workspaceState?.folder;
   const drawn = editor.circuit.components.size || editor.circuit.labels.size;
@@ -2873,6 +3017,8 @@ export function onAtlasKey(ev) {
 }
 
 function onWheel(ev) {
+  // A menu or the listing over the desk scrolls itself.
+  if (ev.target.closest?.('.toolbar-menu')) return;
   ev.preventDefault();
   if (!state) return;
   if (inTransition()) {
@@ -3030,6 +3176,7 @@ export function installAtlas() {
   // The check runs afresh each time its menu opens (before the menu does:
   // a capture listener on the button itself goes first).
   checkEl?.addEventListener('click', () => { if (state) syncCheck(); }, { capture: true });
+  listEl?.addEventListener('click', () => { if (state) syncList(); }, { capture: true });
   rootEl.addEventListener('wheel', onWheel, { passive: false });
   rootEl.addEventListener('pointerdown', onPointerDown);
   rootEl.addEventListener('pointermove', onPointerMove);

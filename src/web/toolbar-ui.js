@@ -431,6 +431,7 @@ export const toolbarMenus = [
   [document.getElementById('btn-document-menu'), document.getElementById('document-menu')],
   [document.getElementById('btn-settings'), document.getElementById('settings-menu')],
   [document.getElementById('atlas-check'), document.getElementById('atlas-check-menu')],
+  [document.getElementById('atlas-list'), document.getElementById('atlas-list-panel')],
   [document.getElementById('style-line-pattern'), document.getElementById('style-line-menu')],
 ].filter(([button, menu]) => button && menu);
 

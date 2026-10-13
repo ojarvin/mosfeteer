@@ -66,7 +66,11 @@ export function designIndex(circuit) {
     items.push({ kind: 'text', id: label.id, text: label.text, boxes: [box(label.inkRect())] });
   }
   const links = [...new Set([...circuit.components.values()].map((component) => component.link).filter(Boolean))];
-  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), items };
+  // What else the design holds, for the Atlas's listing: beats, and a
+  // timing diagram (its annotations carry `timing`).
+  const beats = circuit.beats.length;
+  const timing = [...circuit.labels.values()].some((label) => label.timing);
+  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), items };
 }
 
 /**

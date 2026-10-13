@@ -22,7 +22,7 @@ import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
 import { GRID } from '../core/grid.js';
 import { designIndex, searchKey } from '../core/design-index.js';
 import { brokenLinks } from '../core/workspace-check.js';
-import { cacheGet, cachePut, renderingKey } from './atlas-cache.js';
+import { INDEX_CACHE, cacheGet, cachePut, renderingKey } from './atlas-cache.js';
 import { BUBBLE_DOT, BUBBLE_RADIUS, captionAnchor, bubbleAt, bubbleExtras, bubbleOffset, connectorPath, layoutBubbles } from '../core/link-bubble.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { logLine, hintLine } from './status-bar-ui.js';
@@ -522,7 +522,7 @@ const linkLists = new Map(); // path -> { revision, links }
 async function linksOfDocument(doc) {
   const known = linkLists.get(doc.path);
   if (known && doc.revision && known.revision === doc.revision) return known.links;
-  const key = doc.revision && renderingKey(doc.path, doc.revision, 'index-v3');
+  const key = doc.revision && renderingKey(doc.path, doc.revision, INDEX_CACHE);
   let index = key ? await cacheGet(key) : null;
   if (!index) {
     index = designIndex(loadDocument((await persistence.load(doc.path)).state));

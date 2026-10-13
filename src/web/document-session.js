@@ -804,47 +804,64 @@ function endDocumentRename() {
  * content is written under the new name, then the old file goes. Unsaved
  * edits stay unsaved. A name already taken is refused.
  */
+/** The editor's rename (the name field, More → Rename document…): the
+ *  open design's file, in its folder. */
 async function renameDocument(name) {
-  const oldPath = editor.currentDocumentPath;
-  const oldName = editor.currentCircuitName;
-  if (!oldPath || name === editor.currentCircuitName) return false;
+  return !!await renameDesign(editor.currentDocumentPath, name, { dir: editor.currentDocumentDir });
+}
+
+/**
+ * Rename a design's file: saved under `name` beside it (in `dir`), the old
+ * file removed, its place on the Atlas carried over, and every other design
+ * linking to it relinked (relinkWorkspace). The open design's own state
+ * follows when it is the one renamed; its unsaved changes stay unsaved.
+ * The editor's rename and the Atlas's listing both rename this way.
+ * Resolves the saved document ({ name, path, dir }), or null.
+ */
+export async function renameDesign(oldPath, name, { dir = null } = {}) {
+  const current = !!oldPath && oldPath === editor.currentDocumentPath;
+  const oldName = current ? editor.currentCircuitName : documentNameForPath(oldPath);
+  if (!oldPath || name === oldName) return null;
   if (!validDocumentName(name)) {
     logLine('Enter a document name. Names cannot start with "." or contain / \\ : * ? " < > |.', 'error');
-    return false;
+    return null;
   }
   editor.syncGeneration += 1;
   editor.saveInFlight += 1;
   renderSaveState();
-  const previousScope = analysisFormScope();
+  const previousScope = current ? analysisFormScope() : null;
   try {
     const saved = await withFileAccess(() => persistence.load(oldPath));
     let data;
     try {
-      data = await withFileAccess(() => persistence.save({ ...(editor.currentDocumentDir ? { dir: editor.currentDocumentDir } : {}), name }, saved.state, { overwrite: false }));
+      data = await withFileAccess(() => persistence.save({ ...(dir ? { dir } : {}), name }, saved.state, { overwrite: false }));
     } catch (err) {
       if (err.code !== 'exists') throw err;
       logLine(`A document named "${name}" already exists there; pick another name.`, 'error');
-      return false;
+      return null;
     }
     await withFileAccess(() => persistence.delete(oldPath));
-    editor.circuit.savedNames = nextSavedNames(editor.circuit.savedNames, data.name);
-    editor.currentCircuitName = data.name;
-    editor.currentDocumentPath = data.path;
-    editor.currentDocumentDir = data.dir;
-    editor.activeSyncSuspended = false;
-    migrateAnalysisFormStorage(previousScope, analysisFormScope());
+    if (current) {
+      editor.circuit.savedNames = nextSavedNames(editor.circuit.savedNames, data.name);
+      editor.currentCircuitName = data.name;
+      editor.currentDocumentPath = data.path;
+      editor.currentDocumentDir = data.dir;
+      editor.activeSyncSuspended = false;
+      migrateAnalysisFormStorage(previousScope, analysisFormScope());
+      editor.lastSeenRevision = data.revision || null;
+      editor.lastCircuitTag = data.etag || null;
+      circuitNameEl.value = data.name;
+      persistDraft();
+    }
     carryDeskPlace(oldPath, data.path);
-    editor.lastSeenRevision = data.revision || null;
-    editor.lastCircuitTag = data.etag || null;
-    persistDraft();
     await refreshCircuitList();
     logLine(`Renamed ${displayPath(oldPath)} to ${displayPath(data.path)}.`);
     await relinkWorkspace(oldName, data.name, data.path);
-    return true;
+    return data;
   } catch (err) {
     if (err.code === 'canceled') logLine('Rename canceled.');
     else logLine(`Could not rename the document: ${err.message}`, 'error');
-    return false;
+    return null;
   } finally {
     editor.saveInFlight -= 1;
     editor.syncGeneration += 1;

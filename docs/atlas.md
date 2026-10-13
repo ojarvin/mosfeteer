@@ -106,7 +106,7 @@ clearing it puts every design back in its place.
 
 The top bar mirrors the editor's: the Mosfeteer mark, the workspace name,
 the search, the file actions (**Folder…**, **Open…**, **New**, **Export**)
-together, then **Check** (below), then **Links**, then the editor's own **Settings** -- the theme,
+together, then **Check** and **List** (below), then **Links**, then the editor's own **Settings** -- the theme,
 animations, scrolling, tips -- lent to the Atlas while it is open, at the
 same end of its top bar. **New** opens a blank
 schematic in the editor, with the name field focused. Unsaved changes in the
@@ -124,6 +124,17 @@ several can be. **Unsaved changes**: the editor's design, saved from here.
 **Could not be read**: files the desk could not draw. It is checked afresh
 each time the menu opens; it is hidden on an empty desk and in the Symbols
 view.
+
+**List** shows every design on the desk in one table, to keep a
+workspace's names and tags in order: its name (the open one marked), when
+it was last saved, its tags, and a check for each of beats, a timing
+diagram, and links it holds (`designIndex`). **Name** sorts A to Z and
+**Saved** newest first; clicking the same heading again reverses it (kept
+in this browser). A click on a row picks that design and shows it on the
+desk; a double-click on its name renames it there -- Enter renames, Esc or
+leaving the field keeps it -- exactly as the editor's rename does
+(`renameDesign`: the file renamed, its place on the desk kept, and the
+designs linking to it relinked).
 
 The design open in the editor -- where Shift+Backspace and the header's **Back to …**
 button return -- carries an **OPEN** badge before its caption, and the

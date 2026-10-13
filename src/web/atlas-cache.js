@@ -51,6 +51,10 @@ function transact(db, mode, run) {
 }
 
 /** The cache key of one rendering of a document revision. */
+/** The cached design index's version (core/design-index.js): bump it when
+ *  the index gains or changes what it holds. */
+export const INDEX_CACHE = 'index-v4';
+
 export function renderingKey(path, revision, part) {
   return `${path}\n${revision}\n${part}`;
 }

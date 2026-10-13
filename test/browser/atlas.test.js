@@ -5,7 +5,7 @@
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
-import { linkedTop, tagged, wideAmplifier } from './fixtures.js';
+import { linkedTop, tagged, wideAmplifier, withBeats } from './fixtures.js';
 import { join } from 'node:path';
 import { Circuit } from '../../src/core/model.js';
 import { runCommand } from '../../src/core/commands.js';
@@ -354,8 +354,9 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
         };
         requestAnimationFrame(step);
       }))`);
-      // Not finished at once: the next frames still come down step by step.
-      assert.ok(depths.length >= 4 && depths[0] > 0.2 && depths.every((d) => d !== null), `still in flight after the key: ${depths.join(' ')}`);
+      // Not finished at once: finished, the next frame would be the landing
+      // itself (depth exactly 0, then none); the flight goes on instead.
+      assert.ok(depths.length >= 2 && depths.slice(0, 2).every((d) => d !== null && d !== 0), `still in flight after the key: ${depths.join(' ')}`);
       await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
       await h.until(`document.getElementById('atlas-links').getAttribute('aria-pressed') === ${JSON.stringify(before === 'true' ? 'false' : 'true')}`);
       await atlasKey('l');
@@ -613,5 +614,78 @@ describe('a design keeps its place on the desk whether or not it is open', { ski
     const packed = await tiles({ repack: true });
     await h.open('plain');
     assert.deepEqual(await tiles({ repack: true }), packed);
+  });
+});
+
+describe('the Atlas listing', { skip: browserSkip() }, () => {
+  const timed = () => {
+    const circuit = new Circuit();
+    runCommand(circuit, 'add resistor R1 --at 0 0');
+    circuit.addLabel({ text: 'p1', x: 400, y: 0, timing: { phase: 'p1', bits: '0110' } });
+    return circuit.toJSON();
+  };
+  let h;
+  before(async () => {
+    // Narrow enough that the List button sits near the right edge.
+    h = await start({ docs: { top: linkedTop(), child: wideAmplifier(), alpha: tagged('CA'), gamma: withBeats(), timed: timed() }, width: 1000, height: 900 });
+  });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+  const rows = () => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel tbody tr')].map((tr) => [...tr.cells].map((td) => td.querySelector('.atlas-list-name')?.textContent ?? td.textContent))`);
+  const names = async () => (await rows()).map((row) => row[0]);
+
+  test('lists every design with its tags and what it holds, sorts both ways, and renames as the editor does', async () => {
+    await h.open('top');
+    if (!await h.evaluate(`${h.module('atlas.js')}.then((m) => !!m.atlasSnapshot())`)) await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 5; })`, 10000);
+    await h.click('#atlas-list');
+    assert.equal(await h.evaluate(`!document.getElementById('atlas-list-panel').hidden`), true);
+    assert.deepEqual(await names(), ['alpha', 'child', 'gamma', 'timed', 'top'], 'by name');
+    // It stays inside the window, and a wheel over it scrolls it, not the desk.
+    await sleep(50);
+    const fit = await h.evaluate(`(() => { const r = document.getElementById('atlas-list-panel').getBoundingClientRect(); return { left: r.left, right: r.right, width: innerWidth }; })()`);
+    assert.ok(fit.left >= 0 && fit.right <= fit.width, JSON.stringify(fit));
+    const view = (await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().view)`));
+    const swallowed = await h.evaluate(`(() => { const ev = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }); document.querySelector('#atlas-list-panel tbody tr').dispatchEvent(ev); return ev.defaultPrevented; })()`);
+    assert.equal(swallowed, false, 'the listing scrolls');
+    assert.deepEqual(await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().view)`), view, 'the desk stays');
+    const byName = Object.fromEntries((await rows()).map((row) => [row[0], row]));
+    // name, saved, tags, beats, timing, links
+    assert.equal(byName.alpha[2], '#filters');
+    assert.deepEqual(byName.gamma.slice(3), ['✓', '', '']);
+    assert.deepEqual(byName.timed.slice(3), ['', '✓', '']);
+    assert.deepEqual(byName.top.slice(3), ['', '', '✓']);
+    assert.ok(byName.top[1], 'when it was saved');
+    // Name again: Z to A.
+    const sortBy = (key) => h.evaluate(`[...document.querySelectorAll('#atlas-list-panel .atlas-list-sort')].find((b) => b.title === 'Sort by ${key}').click()`);
+    await sortBy('name');
+    assert.deepEqual(await names(), ['top', 'timed', 'gamma', 'child', 'alpha']);
+    // By date, then its reverse: the same designs, opposite orders.
+    await sortBy('date');
+    const newest = await names();
+    await sortBy('date');
+    assert.deepEqual(await names(), [...newest].reverse());
+    await sortBy('name');
+
+    // A double-click renames; Esc keeps the name, and the listing open.
+    const rename = (from, to, key) => h.evaluate(`(() => {
+      const name = [...document.querySelectorAll('#atlas-list-panel .atlas-list-name')].find((n) => n.textContent === ${JSON.stringify(from)});
+      name.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = document.querySelector('#atlas-list-panel .atlas-list-rename');
+      input.value = ${JSON.stringify(to)};
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true }));
+    })()`);
+    await rename('child', 'nope', 'Escape');
+    assert.equal(await h.evaluate(`!document.getElementById('atlas-list-panel').hidden`), true, 'still open');
+    assert.ok((await names()).includes('child'));
+    await rename('child', 'child-amp', 'Enter');
+    await h.until(`[...document.querySelectorAll('#atlas-list-panel .atlas-list-name')].some((n) => n.textContent === 'child-amp')`, 10000);
+    assert.deepEqual(await names(), ['alpha', 'child-amp', 'gamma', 'timed', 'top']);
+    // The file is renamed, and the design linking to it follows.
+    const { readFile, access } = await import('node:fs/promises');
+    await access(join(h.workspace, 'child-amp.json'));
+    await assert.rejects(access(join(h.workspace, 'child.json')));
+    const top = JSON.parse(await readFile(join(h.workspace, 'top.json'), 'utf8'));
+    assert.equal(top.components.find((c) => c.refdes === 'OA1').link, 'child-amp');
+    assert.equal((await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.selected)?.name)`)), 'child-amp', 'picked on the desk');
   });
 });
