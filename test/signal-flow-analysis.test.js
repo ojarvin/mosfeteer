@@ -910,3 +910,33 @@ test('plot traces take the highlight palette, so a trace and a highlighted net a
   for (const color of [...TRACE_COLORS, MUTED_TRACE_COLOR]) assert.ok(palette.has(color), color);
   assert.equal(new Set(TRACE_COLORS).size, TRACE_COLORS.length);
 });
+
+/** Two continuous paths sampled into one sum, at periods `a` and `b`. */
+function twoSamplers(a, b) {
+  return diagram([
+    'add input U --at -1200 0', 'add tf_s H1 --at -800 -400 --value "1/s"', 'add tf_s H2 --at -800 400 --value "1/s"',
+    `add sampler SMP1 --at -400 -400 --value ${a}`, `add sampler SMP2 --at -400 400 --value ${b}`,
+    'add signal_sum S1 --at 0 0', 'add output V --at 400 0',
+    'connect U.p H1.in', 'connect U.p H2.in', 'connect H1.out SMP1.in', 'connect H2.out SMP2.in',
+    'connect SMP1.out S1.n', 'connect SMP2.out S1.s', 'connect S1.e V.p',
+  ]);
+}
+
+test('samplers at periods written differently are refused, whatever their values; one period is solved', () => {
+  // Every unset coefficient counts as 1, so T1 and T2 would pass as one
+  // rate if compared by value: two clocks are refused as written.
+  for (const values of [undefined, { T1: 1, T2: 1 }]) {
+    const report = analyzeSignalFlow(twoSamplers('T1', 'T2'), { output: 'V', sources: { U: 'input' }, values });
+    assert.equal(report.ok, false);
+    assert.equal(report.code, 'mixed-periods');
+    assert.match(report.error, /SMP1 at T1, SMP2 at T2/);
+    const sim = prepareSimulation(twoSamplers('T1', 'T2'), { values: { T1: 1, T2: 1 }, input: 'U', output: 'name:V' });
+    assert.equal(sim.ok, false);
+    assert.equal(sim.code, 'mixed-periods');
+  }
+  // One period, however spelled, is one rate.
+  const same = analyzeSignalFlow(twoSamplers('2*T', 'T*2'), { output: 'V', sources: { U: 'input' }, values: { T: 1 } });
+  assert.equal(same.ok, true, same.error);
+  assert.equal(same.variable, 'z');
+  assert.notEqual(prepareSimulation(twoSamplers('T', 'T'), { values: { T: 1 }, input: 'U', output: 'name:V' }).code, 'mixed-periods');
+});

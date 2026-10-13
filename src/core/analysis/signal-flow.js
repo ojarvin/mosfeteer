@@ -144,6 +144,20 @@ export function coefficientValue(token) {
   return negative ? negate(value) : value;
 }
 
+/**
+ * One rate is supported: every sampler must run at the same period, written
+ * the same way (`T` and `T`, or `2*T` and `T*2`). Periods written
+ * differently are refused whatever their values -- `T1` and `T2` are two
+ * clocks even while both are 1, as every unset coefficient is. A failure
+ * naming the samplers' periods, or null for one rate.
+ */
+export function mixedPeriods(samplers, periods) {
+  const keys = periods.map((period) => keyOf(period));
+  if (keys.every((key) => key === keys[0])) return null;
+  const named = samplers.map((component) => `${component.refdes} at ${component.value || 'T'}`).join(', ');
+  return failure('mixed-periods', `the samplers run at different periods (${named}): one rate is supported, so give every sampler the same period`);
+}
+
 // ----- delays -------------------------------------------------------------------------
 
 // A delay e^{-sT} is a symbol of its own in the exact algebra, named by its
@@ -698,6 +712,8 @@ function analyzeSampled(context, output, inputs, initialValues) {
   } catch (err) {
     return failure('bad-gain', `sampler: ${err.message}`);
   }
+  const mixed = mixedPeriods(samplers, periods);
+  if (mixed) return mixed;
 
   // The continuous side: unknowns its driven signals, inputs its sources and
   // the sampled signals H(s) blocks read.
@@ -749,7 +765,6 @@ function analyzeSampled(context, output, inputs, initialValues) {
   const solveSampledAt = (given) => {
     const T = periods.map((period) => evaluateExpression(period, given));
     if (T.some((t) => !(t > 0))) return failure('bad-period', 'a sampler\'s period must be positive');
-    if (T.some((t) => Math.abs(t - T[0]) > 1e-9 * T[0])) return failure('mixed-periods', 'the samplers run at different periods: one rate is supported');
     const sampled = [];
     for (const [i, path] of paths.entries()) {
       const fd = [];

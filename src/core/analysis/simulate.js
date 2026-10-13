@@ -19,7 +19,7 @@
  * every impulse.
  */
 
-import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, signalDomains, signalFlowGraph, withCoefficients } from './signal-flow.js';
+import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficients, hasDelays, mixedPeriods, signalDomains, signalFlowGraph, withCoefficients } from './signal-flow.js';
 import { expm } from './sampling.js';
 import { evaluateExpression } from './bode.js';
 import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels } from '../transfer-function.js';
@@ -120,9 +120,10 @@ export function prepareSimulation(circuit, options = {}) {
   const num = (expression) => evaluateExpression(coefficientValue(String(expression).replace(/\s/g, '')), values);
   let T = 1;
   try {
+    const mixed = mixedPeriods(samplers, samplers.map((c) => coefficientValue(String(parseGain(c.value || 'T')).replace(/\s/g, ''))));
+    if (mixed) return mixed;
     const periods = samplers.map((c) => num(parseGain(c.value || 'T')));
     if (periods.some((t) => !(t > 0))) return failure('bad-period', 'a sampler\'s period must be positive');
-    if (periods.some((t) => Math.abs(t - periods[0]) > 1e-9 * periods[0])) return failure('mixed-periods', 'the samplers run at different periods: one rate is supported');
     if (periods.length) T = periods[0];
   } catch (err) {
     return failure('bad-value', err.message);
