@@ -49389,7 +49389,7 @@ function openUnsavedDocument(state, name) {
   editor.currentDocumentDir = null;
   editor.activeSyncSuspended = true;
   editor.remoteConflictLogged = false;
-  lastSeenActive = null;
+  // The server's active document is what it was (see startNewDocument).
   editor.lastSeenRevision = null;
   editor.lastCircuitTag = null;
   circuitNameEl.value = validDocumentName(name) || '';
@@ -50026,7 +50026,9 @@ function startNewDocument() {
   applyJson(JSON.stringify(createDocument().toJSON()), { document: true });
   clearLatestAnalysisResult();
   editor.lastSavedSnapshot = snapshot();
-  lastSeenActive = null;
+  // A new document leaves the server's active one as it was, and so what
+  // the sync last saw of it: forgotten, a document saved before the next
+  // poll would see the active one as newly chosen and be replaced by it.
   editor.lastSeenRevision = null;
   editor.lastCircuitTag = null;
   editor.remoteConflictLogged = false;

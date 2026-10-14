@@ -33,19 +33,26 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   /** Export through the dialog with `set` applied to its form; the requests it sent. */
-  const exportWith = async (name, set) => {
+  // `count`: how many requests the export sends (exporting every beat sends
+  // its files and its PDF apart); all of them are waited for, never a pause.
+  const exportWith = async (name, set, count = 1) => {
     // Each request the export sends, kept as it goes to the server.
     await h.evaluate(`${h.module('document-session.js')}.then(({ persistence }) => {
       window.__exports = [];
+      window.__exported = 0;
       if (!persistence.__realExport) persistence.__realExport = persistence.exportFiles;
-      persistence.exportFiles = (request) => { window.__exports.push(request); return persistence.__realExport(request); };
+      // Counted once the server has written the files: printing a PDF can
+      // take a cold Chromium start (seconds on a busy CI runner).
+      persistence.exportFiles = async (request) => {
+        window.__exports.push(request);
+        try { return await persistence.__realExport(request); } finally { window.__exported += 1; }
+      };
     })`);
     await h.key('e', { ctrlKey: true });
     await h.until(`document.getElementById('export-dialog').open`);
     await h.evaluate(`(() => { const form = document.getElementById('export-form'); document.getElementById('export-name').value = ${JSON.stringify(name)}; (${set})(form); })()`);
     await h.click('#export-submit');
-    await h.until(`window.__exports.length > 0 && !document.getElementById('export-dialog').open`, 20000);
-    await sleep(300);
+    await h.until(`window.__exported >= ${count} && !document.getElementById('export-dialog').open`, 90000);
     return h.evaluate(`window.__exports`);
   };
 
@@ -69,7 +76,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
       const beat = document.getElementById('export-beat');
       beat.value = 'all';
       beat.dispatchEvent(new Event('change', { bubbles: true }));
-    }`);
+    }`, 3);
     const pdf = requests.filter((r) => r.formats.includes('pdf'));
     assert.equal(pdf.length, 1, 'one PDF');
     assert.equal(pdf[0].pdfPages.length, 2, 'a page per beat');
@@ -100,8 +107,15 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     // Reloads counted from here: an earlier test's own change to amp may
     // still be arriving.
     const reloads = () => h.evaluate(`[...document.querySelectorAll('#log > *')].filter((n) => /Reloaded amp/.test(n.textContent)).length`);
-    await sleep(2500);
-    const settled = await reloads();
+    // Settled: the count unchanged over two sync polls in a row, however
+    // long a busy machine takes to deliver what is still arriving.
+    let settled = await reloads();
+    for (let steady = 0; steady < 2;) {
+      await sleep(1500);
+      const now = await reloads();
+      steady = now === settled ? steady + 1 : 0;
+      settled = now;
+    }
     const path = join(h.workspace, 'amp.json');
     // The same drawing, its windows' state changed: as this window's own
     // window-state save writes it.
@@ -145,6 +159,23 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     assert.equal(await results(), 1, 'and after it');
     await h.open('other');
     assert.equal(await results(), 0, 'another document has its own');
+  });
+
+  test('a new design saved at once stays open, though the CLI made another active earlier', async () => {
+    // amp open, the CLI changes it: amp is the server's active document,
+    // and the editor reloads it.
+    await h.open('amp');
+    const response = await fetch(`http://127.0.0.1:${h.port}/api/circuits/amp/cmd`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cmd: 'add resistor R6 --at 2000 0' }) });
+    assert.ok(response.ok, await response.text());
+    await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.has('R6'))`);
+    // A new design, named and saved before the next sync poll.
+    await h.evaluate(`${h.module('document-session.js')}.then(async (m) => {
+      m.startNewDocument();
+      document.getElementById('circuit-name').value = 'fresh';
+      await m.saveCircuit();
+    })`);
+    await sleep(1600);
+    assert.match(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.currentDocumentPath)`), /fresh\.json$/, 'not replaced by amp');
   });
 
   test('opening another design ends the tutorial; its own design reloaded does not', async () => {

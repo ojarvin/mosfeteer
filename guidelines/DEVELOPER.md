@@ -252,7 +252,8 @@ A test that watches an animation on its way must not depend on the frame
 rate: CI's headless Chromium draws on the CPU, and one frame can take as long
 as a whole animation. Slow the page's clock instead (atlas.test.js's
 `motion()`), and try the test against a slow machine with `THROTTLE=8` (the
-page's CPU slowed that many times) before pushing.
+page's CPU slowed that many times) before pushing. CI runs `npm run test:ci`: the same suite,
+three files at a time on GitHub's small runner.
 
 ## Style & code quality
 
