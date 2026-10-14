@@ -39,6 +39,33 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     return false;
   })`);
 
+  // Animations on, the page's clock slowed: a flight then lasts seconds
+  // however slowly a machine draws its frames (CI's headless Chromium can
+  // take as long for one frame as a whole flight takes), so a test watching
+  // it sees it on its way. Undone by stillness().
+  const SLOWER = 0.2;
+  const motion = async () => {
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    await h.evaluate(`(() => {
+      if (window.__realTime) return;
+      const now = performance.now.bind(performance);
+      const frame = window.requestAnimationFrame.bind(window);
+      const t0 = now();
+      window.__realTime = { now, frame };
+      performance.now = () => t0 + (now() - t0) * ${SLOWER};
+      window.requestAnimationFrame = (callback) => frame(() => callback(performance.now()));
+    })()`);
+  };
+  const stillness = async () => {
+    await h.evaluate(`(() => {
+      if (!window.__realTime) return;
+      performance.now = window.__realTime.now;
+      window.requestAnimationFrame = window.__realTime.frame;
+      delete window.__realTime;
+    })()`);
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  };
+
   test("the toolbar's mark opens the Atlas and the Atlas's mark closes it; the editor's Settings come along", async () => {
     await h.open('top');
     const inAtlas = () => h.evaluate(`!!document.getElementById('btn-settings').closest('#atlas')`);
@@ -219,7 +246,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
   test('the open design flies back from the screen onto the still desk and lands picked; opening one flies it up to the screen', async () => {
     await h.open('child');
     await closeDesk();
-    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    await motion();
     // Every frame's flight and view, sampled in the page.
     const sample = () => h.evaluate(`${h.module('atlas.js')}.then((m) => {
       window.__samples = [];
@@ -259,14 +286,14 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       assert.equal(opening.at(-1).flight.depth, 1, 'it reaches the screen');
       assert.equal(await current(), 'alpha');
     } finally {
-      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await stillness();
     }
   });
 
   test('Shift+Backspace mid-flight turns the flight around from where it is, every way', async () => {
     await h.open('top');
     await closeDesk();
-    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    await motion();
     // Every frame's depth until `done`, sampled in the page; Shift+Backspace
     // pressed (to the Atlas) once the depth passes `at`.
     const run = (at, done) => h.evaluate(`${h.module('atlas.js')}.then((m) => new Promise((resolve) => {
@@ -297,8 +324,10 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       let back = after(r.depths, turnedAt);
       assert.ok(back.length > 2, JSON.stringify(r.depths));
       assert.ok(back.every((d) => d >= back[0] - 0.02), `reverses from there, never toward the desk: ${back.join(' ')}`);
-      // (Its last frame at the glass hands over to the editor at once.)
-      assert.ok(back.at(-1) > 0.9, `back at the glass: ${back.at(-1)}`);
+      // Up from where it turned (its last frame at the glass hands over to
+      // the editor at once, so how near the last one seen comes depends on
+      // the frame rate); the editor then has it again.
+      assert.ok(back.at(-1) > back[0], `back up toward the glass: ${back.join(' ')}`);
       assert.equal(await snapshot(), null, 'the editor again');
       assert.equal(await current(), 'top');
 
@@ -324,7 +353,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       assert.ok(await snapshot(), 'still on the desk');
       assert.equal(await current(), 'top', 'alpha was never let in');
     } finally {
-      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await stillness();
       await atlasKey('Escape');
     }
   });
@@ -332,7 +361,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
   test('an ordinary key leaves a flight running and acts where it lands', async () => {
     await h.open('top');
     await closeDesk();
-    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    await motion();
     try {
       const linksOn = () => h.evaluate(`document.getElementById('atlas-links').getAttribute('aria-pressed')`);
       const before = await linksOn();
@@ -362,14 +391,14 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       await atlasKey('l');
       assert.equal(await linksOn(), before);
     } finally {
-      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await stillness();
     }
   });
 
   test('keys typed during a flight hurry it and act where it arrives: on the desk, or in the editor', async () => {
     await h.open('child');
     await closeDesk();
-    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+    await motion();
     try {
       // Esc on the way to the desk lets go of the design once it has landed.
       await h.key('Backspace', { shiftKey: true });
@@ -392,7 +421,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       await h.key('#');
       assert.equal(await grid(), before);
     } finally {
-      await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      await stillness();
     }
   });
 

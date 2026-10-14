@@ -143,6 +143,9 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   });
   await send('Runtime.enable');
   await send('Page.enable');
+  // THROTTLE=8 slows the page's CPU that many times, as a busy CI runner's
+  // headless Chromium is: a way to try a test against a slow machine.
+  if (process.env.THROTTLE) await send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
   await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
   // Motion reduced: animations and view transitions finish at once.
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });

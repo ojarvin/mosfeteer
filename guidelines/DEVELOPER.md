@@ -248,6 +248,12 @@ open dialogs and the focused element. Headless Chromium **never fires a native
 `dblclick`**: send `h.mouse('mousePressed', x, y, { clickCount: 2 })`. Each
 file's `after` stops the browser before it checks `h.exceptions()`.
 
+A test that watches an animation on its way must not depend on the frame
+rate: CI's headless Chromium draws on the CPU, and one frame can take as long
+as a whole animation. Slow the page's clock instead (atlas.test.js's
+`motion()`), and try the test against a slow machine with `THROTTLE=8` (the
+page's CPU slowed that many times) before pushing.
+
 ## Style & code quality
 
 - **Pure functions where possible.** `Circuit` ops that take a `circuit`
