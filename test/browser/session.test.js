@@ -118,9 +118,11 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     }
     const path = join(h.workspace, 'amp.json');
     // The same drawing, its windows' state changed: as this window's own
-    // window-state save writes it.
+    // window-state save writes it -- from what the window holds (a machine
+    // with other fonts lays text out apart from the file's own sizes).
+    const held = JSON.parse(await h.evaluate(`${h.module('main.js')}.then((m) => m.snapshot())`));
+    writeFileSync(path, JSON.stringify({ ...held, windows: { scope: { nets: ['VOUT'], chosen: true } } }));
     const data = JSON.parse(readFileSync(path, 'utf8'));
-    writeFileSync(path, JSON.stringify({ ...data, windows: { scope: { nets: ['VOUT'], chosen: true } } }));
     await sleep(2500);
     assert.equal(await reloads(), settled, 'no reload');
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.windows?.scope)`), false, 'what is open stays');
