@@ -39,12 +39,36 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.evaluate(`document.querySelector('.sc-derive').click()`);
     await h.until(`document.querySelector('.sc-equation')?.textContent === 'VOUTVIN=CSCFz−11−z−1'`);
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.readout)`), '$\\varphi_1$', 'the choice is the design\'s');
-    // Its magnitude and phase in the Plots window.
+    // Each Derive's result on the Plots window's graph, as the Bode graph's.
     await h.until(`!document.querySelector('.plots-window')?.hidden && document.querySelectorAll('.sc-plots-view .plot-view path').length > 0`);
-    // A capacitance's number moves the plots, not the equation.
-    await h.evaluate(`(() => { const i = document.querySelector('.sc-value-input[aria-label="CS"]'); i.value = '4'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.values.CS)`), 4);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.sc-legend .signal-flow-legend-row').length`), 2, 'both readouts on the graph');
+    // A capacitance is a Values row: a slider and a field. Its number moves
+    // the plots, not the equation, and is the design's.
+    assert.equal(await h.evaluate(`document.querySelectorAll('.sc-values .signal-flow-coefficient input[type="range"]').length`), 2);
+    await h.evaluate(`(() => { const i = document.querySelector('.sc-values .signal-flow-coefficient-value[aria-label="CS: value"]'); i.value = '4'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.values.CS === 4)`);
     assert.equal(await text('.sc-equation'), 'VOUTVIN=CSCFz−11−z−1');
+    // Annotate graph puts the graph on the drawing.
+    const plots = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'box' && l.plot).length)`);
+    const before = await plots();
+    await h.evaluate(`document.querySelector('.sc-annotate-graph').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'box' && l.plot).length === ${before + 1})`);
+    await h.key('z', { ctrlKey: true });
+  });
+
+  test('a port of any kind, or any net, can be the input or the output', async () => {
+    await openWindow();
+    const options = (id) => h.evaluate(`[...document.querySelectorAll('#${id} optgroup')].map((g) => g.label + ': ' + [...g.querySelectorAll('option')].map((o) => o.textContent).join(', '))`);
+    const output = await options('sc-output');
+    assert.match(output[0], /^Ports: VOUT/);
+    assert.match(output[1], /^Nets: /);
+    // The virtual-ground net as the output: an integrator's input node stays
+    // at ground, so H is 0 there.
+    const net = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.netOfTerminal({ comp: 'U1', term: 'im' }).id)`);
+    await h.evaluate(`(() => { const s = document.getElementById('sc-output'); s.value = ${JSON.stringify(net)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.evaluate(`document.querySelector('.sc-derive').click()`);
+    await h.until(`/=0$/.test(document.querySelector('.sc-equation')?.textContent || '')`);
+    await h.evaluate(`(() => { const s = document.getElementById('sc-output'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   });
 
   test('without a timing diagram or beats it says what is missing', async () => {

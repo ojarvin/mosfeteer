@@ -71,14 +71,20 @@ node nothing sets) each say so, naming the part or the state.
 
 ## The window
 
-**Signals** picks the input and output ports (one of each is found when the
-drawing has only one) and the state to read at. **Phases** lists the clock.
-**Derive** (or Enter) gives the equation, with its poles and zeros at the
-capacitances' numbers; **Capacitances** sets those numbers (1 unless set),
-which also draw the magnitude and phase over f/f_s in the Plots window
-(`Shift+W`). **Annotate equation** writes it under the drawing. The choices
-and numbers are the design's (`Circuit#analysisValues.sc`): saved with it,
-one undo step each, never making it unsaved.
+It works as the other modes do. **Signals** picks the input and output --
+the drawing's ports of that role (input, output, in/out, or plain ports)
+first, then every net, by name or, unnamed, by id; one of each is found when
+the drawing has only one -- and the state to read at. **Phases** lists the
+clock. **Derive** (or Enter) gives the equation, with its poles and zeros at
+the capacitances' numbers, and adds it to the Plots window's graph (`Shift+W`)
+as each Derive adds its gain to the Bode graph: magnitude or phase over
+f/f_s, a legend to show or take off each trace, **Clear graph**, and
+**Annotate graph** to put it on the drawing (`placeResponsePlot`).
+**Capacitances** are Values rows (`src/web/value-row.js`, shared with the
+small-signal Values): a slider over E24 steps and a field, 1 unless set.
+**Annotate equation** writes the equation under the drawing. The choices and
+numbers are the design's (`Circuit#analysisValues.sc`): saved with it, one
+undo step a finished adjustment, never making it unsaved.
 
 Not yet: kT/C noise per sampling capacitor, finite op-amp gain, and parasitic
 capacitances (the integrators are stray-insensitive by design, so these

@@ -44933,7 +44933,7 @@ __exports.renderBode = renderBode;
 __exports.bodeSettingsRestored = bodeSettingsRestored;
 __exports.installBodeUi = installBodeUi;
 __exports.bodeSnapshot = bodeSnapshot;
-let PER_DECADE, indexE24, stepE24; __bind(() => { ({ PER_DECADE, indexE24, stepE24 } = __require("src/web/e-series.js")); });
+let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
 let DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, responseAt, sketchParameters, sketchValues; __bind(() => { ({ DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients, responseAt, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
 let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysis/signal-flow.js")); });
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
@@ -44941,6 +44941,7 @@ let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.j
 let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figure.js")); });
 let bodeSpecs, responseSpec; __bind(() => { ({ bodeSpecs, responseSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
+let sharedValueRow; __bind(() => { ({ valueRow: sharedValueRow } = __require("src/web/value-row.js")); });
 let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
@@ -44967,6 +44968,7 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
  * on the symbolic solve, fail with it, or take its approximations. The
  * loop gain is drawn from its derived coefficients.
  */
+
 
 
 
@@ -45436,32 +45438,17 @@ let shownRows = '';
 
 /** One value's row, as a signal-flow coefficient's: its name, a slider
  *  through the E24 steps, and a field for any positive number. */
-function valueRow({ name, tex, value, min, max, onValue, components = [], title = '' }) {
-  const label = el('span', { class: 'signal-flow-coefficient-name' });
-  label.innerHTML = texToMathML(tex);
-  const slider = el('input', { type: 'range', min: String(min), max: String(max), step: '1', 'aria-label': `${name}: slide to change` });
-  slider.value = String(indexE24(value));
-  const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'A positive number', value: String(Number(value.toPrecision(4))) });
-  const row = el('div', { class: 'signal-flow-coefficient bode-value', 'data-name': name, ...(title ? { title } : {}) }, [label, slider, field]);
-  slider.addEventListener('input', () => {
-    sliding = true;
-    const next = stepE24(Number(slider.value));
-    field.value = String(next);
-    field.classList.remove('invalid');
-    onValue(next);
-  });
-  slider.addEventListener('change', () => {
-    sliding = false;
-    const list = plotsEl?.querySelector('.bode-corners');
-    if (list) list.style.minHeight = '';
-  });
-  field.addEventListener('input', () => {
-    const number = Number(field.value.trim());
-    const valid = field.value.trim() !== '' && Number.isFinite(number) && number > 0;
-    field.classList.toggle('invalid', !valid);
-    if (!valid) return;
-    slider.value = String(indexE24(number));
-    onValue(number);
+/** A Values row (value-row.js), its components emphasized while hovered. */
+function valueRow({ components = [], ...options }) {
+  const row = sharedValueRow({
+    ...options,
+    className: 'bode-value',
+    onSlide: (taken) => {
+      sliding = taken;
+      if (taken) return;
+      const list = plotsEl?.querySelector('.bode-corners');
+      if (list) list.style.minHeight = '';
+    },
   });
   if (components.length) {
     row.addEventListener('pointerenter', () => emphasize(components));
@@ -72191,14 +72178,17 @@ __modules["src/web/switched-cap-ui.js"] = function (__require, __exports) {
 __exports.installSwitchedCapUi = installSwitchedCapUi;
 let analyzeSwitchedCap, switchedCapPhases; __bind(() => { ({ analyzeSwitchedCap, switchedCapPhases } = __require("src/core/analysis/switched-cap.js")); });
 let TRACE_COLORS, complexText, numericRootsOf, responsePlot, resultSymbols, withCoefficients; __bind(() => { ({ TRACE_COLORS, complexText, numericRootsOf, responsePlot, resultSymbols, withCoefficients } = __require("src/core/analysis/signal-flow.js")); });
+let symbolText; __bind(() => { ({ symbolText } = __require("src/core/analysis/present.js")); });
 let responseSpec; __bind(() => { ({ responseSpec } = __require("src/core/plot-spec.js")); });
 let plainTexText, texToMathML; __bind(() => { ({ plainTexText, texToMathML } = __require("src/core/render.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
-let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
+let createPlotView; __bind(() => { ({ createPlotView } = __require("src/web/plot-view.js")); });
 let installPlotsWindow, offerPlots, showPlots; __bind(() => { ({ installPlotsWindow, offerPlots, showPlots } = __require("src/web/plots-window.js")); });
-let registerAnalysisMode; __bind(() => { ({ registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
+let placeResponsePlot, registerAnalysisMode; __bind(() => { ({ placeResponsePlot, registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
+let valueRow; __bind(() => { ({ valueRow } = __require("src/web/value-row.js")); });
+let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection; __bind(() => { ({ commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -72208,11 +72198,17 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * The analysis window's switched-capacitor mode: a drawn SC circuit's exact
  * H(z) (core/analysis/switched-cap.js), beside the circuit and signal-flow
  * modes. The clock is the timing diagram's (or the beats'); the form picks
- * the input, the output, and the phase whose end the output is read at,
- * shows each phase's closed switches, and Derive gives the equation. The
- * capacitances' numbers (saved with the design, `analysisValues.sc`) draw
- * its magnitude and phase over f/f_s in the Plots window.
+ * the input and output (a port of any kind, or any net) and the phase whose
+ * end the output is read at, shows each phase's closed switches, and Derive
+ * gives the equation. It works as the other modes do: the capacitances are
+ * Values rows (value-row.js, saved with the design as `analysisValues.sc`),
+ * and each Derive adds its result to the Plots window's graph -- magnitude
+ * or phase over f/f_s, a legend to show or take off each, Annotate graph to
+ * put it on the drawing.
  */
+
+
+
 
 
 
@@ -72235,7 +72231,13 @@ const settings = () => (editor.circuit.analysisValues.sc ||= { input: '', output
 let section = null;
 let annotateButton = null; // in the window's footer, shown with a result
 let latest = null; // { revision, result }
-let plots = null; // { magnitude, phase } plot views in the Plots window
+// The graph's traces, as the Bode graph keeps them: each Derive's result,
+// { id, label, color, value, on }; and its view, magnitude or phase.
+let traces = [];
+let view = 'magnitude';
+let plotsEl = null;
+let graph = null;
+let saveFrame = 0;
 
 /** A drawing the mode suits: switches and capacitors, and nothing an SC
  *  circuit is not made of. */
@@ -72256,39 +72258,69 @@ function math(tex, display = false) {
 /** A phase's name as written: TeX drawn as math, plain text as it is. */
 const phaseName = (name) => (/^\$.*\$$/.test(name) ? math(name.replace(/^\$+|\$+$/g, '')) : el('span', { text: name }));
 
-/** The ports a select offers: the drawing's ports of that kind, by net name. */
-function portChoices(type) {
-  const names = new Set();
-  for (const component of editor.circuit.components.values()) {
-    if (component.type !== type) continue;
-    const net = editor.circuit.netOfTerminal({ comp: component.refdes, term: 'p' });
-    const name = canonicalNetName(net?.name) || component.refdes;
-    names.add(name);
+// The port kinds a select offers first for each role.
+const PORT_TYPES = { input: ['input', 'inputoutput', 'port'], output: ['output', 'inputoutput', 'port'] };
+
+/** What a select offers: the drawing's ports of that role (input, output,
+ *  in/out, or plain ports), then every other net -- named ones by name,
+ *  the rest by id. Each as { value, text }. */
+function netChoices(role) {
+  const circuit = editor.circuit;
+  const valueOf = (net) => canonicalNetName(net.name) || net.id;
+  const ports = [];
+  const seen = new Set();
+  for (const component of circuit.components.values()) {
+    if (!PORT_TYPES[role].includes(component.type)) continue;
+    const net = circuit.netOfTerminal({ comp: component.refdes, term: 'p' });
+    if (!net || seen.has(valueOf(net))) continue;
+    seen.add(valueOf(net));
+    ports.push({ value: valueOf(net), text: plainTexText(valueOf(net)) });
   }
-  return [...names];
+  const nets = [];
+  for (const net of circuit.nets.values()) {
+    const value = valueOf(net);
+    if (seen.has(value)) continue;
+    seen.add(value);
+    nets.push({ value, text: net.name ? plainTexText(value) : `${net.id} (unnamed)` });
+  }
+  nets.sort((a, b) => a.text.localeCompare(b.text, undefined, { numeric: true }));
+  return { ports, nets };
 }
 
-function fillSelect(select, choices, chosen, automatic) {
-  select.replaceChildren(el('option', { value: '', text: automatic }), ...choices.map(({ value, text }) => el('option', { value, text })));
-  select.value = choices.some((choice) => choice.value === chosen) ? chosen : '';
+function fillPortSelect(select, role, chosen) {
+  const { ports, nets } = netChoices(role);
+  const option = ({ value, text }) => el('option', { value, text });
+  select.replaceChildren(
+    el('option', { value: '', text: `the ${role} port` }),
+    ...(ports.length ? [el('optgroup', { label: 'Ports' }, ports.map(option))] : []),
+    ...(nets.length ? [el('optgroup', { label: 'Nets' }, nets.map(option))] : []),
+  );
+  // A net chosen before keeps its place even if nothing offers it now.
+  if (chosen && ![...ports, ...nets].some((choice) => choice.value === chosen)) select.append(option({ value: chosen, text: plainTexText(chosen) }));
+  select.value = chosen || '';
 }
 
 /** The form from the drawing as it is now: ports, phases, and the clock. */
 function fillForm() {
   if (!section) return;
   const s = settings();
-  fillSelect(section.querySelector('#sc-input'), portChoices('input').map((name) => ({ value: name, text: plainTexText(name) })), s.input, 'the input port');
-  fillSelect(section.querySelector('#sc-output'), portChoices('output').map((name) => ({ value: name, text: plainTexText(name) })), s.output, 'the output port');
+  fillPortSelect(section.querySelector('#sc-input'), 'input', s.input);
+  fillPortSelect(section.querySelector('#sc-output'), 'output', s.output);
   const phases = switchedCapPhases(editor.circuit);
   const readout = section.querySelector('#sc-readout');
-  fillSelect(readout, phases.ok ? phases.states.map((state) => ({ value: state.name, text: `end of ${plainTexText(state.name)}` })) : [], s.readout, 'end of the last phase');
+  const states = phases.ok ? phases.states : [];
+  readout.replaceChildren(
+    el('option', { value: '', text: 'end of the last phase' }),
+    ...states.map((state) => el('option', { value: state.name, text: `end of ${plainTexText(state.name)}` })),
+  );
+  readout.value = states.some((state) => state.name === s.readout) ? s.readout : '';
   const card = section.querySelector('.sc-phases');
   if (!phases.ok) {
     card.replaceChildren(el('p', { class: 'field-hint', text: phases.error }));
     return;
   }
   card.replaceChildren(el('table', { class: 'sc-phase-table' }, [
-    el('tbody', {}, phases.states.map((state, index) => el('tr', {}, [
+    el('tbody', {}, states.map((state, index) => el('tr', {}, [
       el('td', { class: 'sc-phase-index', text: String(index + 1) }),
       el('td', { class: 'sc-phase-name' }, [phaseName(state.name)]),
       el('td', { class: 'sc-phase-closed', text: state.closed.size ? `${[...state.closed].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(', ')} closed` : 'all open' }),
@@ -72296,86 +72328,180 @@ function fillForm() {
   ]), el('p', { class: 'field-hint', text: `From the ${phases.source === 'timing' ? 'timing diagram' : 'beats'}: one period, phase after phase.` }));
 }
 
-/** The capacitances' numbers for the plots: a result's symbols, 1 unless set. */
-function valuesFor(result) {
-  const values = {};
-  for (const name of resultSymbols(result.value, result.variable)) values[name] = settings().values[name] ?? 1;
-  return values;
+// ----- the capacitances ------------------------------------------------------------------
+
+/** A capacitance's number: as set, else 1. */
+const capacitance = (name) => settings().values[name] ?? 1;
+
+/** Every capacitance the latest result and the graph's traces reach. */
+function shownSymbols() {
+  const names = new Set();
+  const add = (value) => { for (const name of resultSymbols(value, 'z')) names.add(name); };
+  if (latest?.result.ok) add(latest.result.value);
+  for (const trace of traces) add(trace.value);
+  return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
+
+/** A result at the capacitances' numbers. */
+function numbered(value) {
+  return withCoefficients(value, Object.fromEntries(resultSymbols(value, 'z').map((name) => [name, capacitance(name)])));
+}
+
+/** Saved once a frame while a slider moves: one undo step a finished
+ *  adjustment (markSettingsChanged), as the Bode graph's Values. */
+function saveValues() {
+  if (saveFrame) return;
+  saveFrame = requestAnimationFrame(() => {
+    saveFrame = 0;
+    markSettingsChanged();
+  });
+}
+
+let shownRows = '';
+/** The Capacitances rows: rebuilt only when the symbols change, so a
+ *  slider being dragged is never replaced under the pointer. */
+function renderValues({ force = false } = {}) {
+  const host = section.querySelector('.sc-values');
+  const names = shownSymbols();
+  host.hidden = !names.length;
+  const rows = host.querySelector('.sc-value-rows');
+  const key = names.join('\n');
+  if (!force && key === shownRows && rows.children.length) return;
+  shownRows = key;
+  rows.replaceChildren(...names.map((name) => valueRow({
+    name,
+    tex: symbolText(name),
+    value: capacitance(name),
+    min: -3 * PER_DECADE,
+    max: 3 * PER_DECADE,
+    onValue: (number) => {
+      settings().values[name] = number;
+      saveValues();
+      renderRoots();
+      renderPlots();
+    },
+  })));
+}
+
+// ----- deriving --------------------------------------------------------------------------
 
 function derive() {
   const s = settings();
   const result = analyzeSwitchedCap(editor.circuit, { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined });
   latest = { revision: editor.modelRevision, result };
+  if (result.ok) addTrace(result);
   renderResult();
   renderPlots();
   if (result.ok) offerPlots();
 }
 
-/** What Derive found: the equation (or why there is none), its poles and
- *  zeros at the numbers, and the capacitances' fields. */
+/** A result onto the graph, as each Derive adds its gain to the Bode graph:
+ *  the same equation again replaces its trace. */
+function addTrace(result) {
+  const label = result.equation;
+  const existing = traces.find((trace) => trace.label === label);
+  if (existing) {
+    existing.value = result.value;
+    existing.on = true;
+    return;
+  }
+  const used = new Set(traces.map((trace) => trace.color));
+  const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
+  traces.push({ id: `sc-${traces.length}-${label}`, label, color, value: result.value, on: true });
+}
+
+/** What Derive found: the equation (or why there is none), and its poles
+ *  and zeros at the capacitances' numbers. */
 function renderResult() {
   const host = section.querySelector('.sc-results');
-  const valuesHost = section.querySelector('.sc-values');
   section.querySelector('.sc-stale').hidden = !latest || latest.revision === editor.modelRevision;
   if (annotateButton) annotateButton.hidden = !latest?.result.ok;
-  if (!latest) { host.replaceChildren(); valuesHost.hidden = true; return; }
+  if (!latest) { host.replaceChildren(); renderValues(); return; }
   const { result } = latest;
   if (!result.ok) {
     host.replaceChildren(el('div', { class: 'analysis-error sc-error', role: 'status', text: result.error }));
-    valuesHost.hidden = true;
+    renderValues();
     return;
   }
-  const values = valuesFor(result);
-  const roots = numericRootsOf(withCoefficients(result.value, values));
-  const list = (label, items) => (items?.length ? el('p', { class: 'sc-roots' }, [`${label}: `, items.map((root) => `z = ${complexText(root)}`).join(', ')]) : null);
-  host.replaceChildren(...[
+  host.replaceChildren(
     el('div', { class: 'sc-equation' }, [math(result.equation, true)]),
-    el('p', { class: 'field-hint' }, ['Read at the end of ', phaseName(result.states[result.readout].name), `, the input held through each period.`]),
-    list('Poles', roots.poles),
-    list('Zeros', roots.zeros),
-  ].filter(Boolean));
-  // A field per capacitance: the numbers the plots and the roots use.
-  const rows = Object.entries(values).map(([name, value]) => {
-    const input = el('input', { type: 'number', min: '0', step: 'any', value: String(value), 'aria-label': `${name}`, class: 'sc-value-input' });
-    input.addEventListener('change', () => {
-      const number = Number(input.value);
-      if (!(number > 0)) { input.value = String(settings().values[name] ?? 1); return; }
-      settings().values[name] = number;
-      markSettingsChanged();
-      renderResult();
-      renderPlots();
-    });
-    return el('label', { class: 'sc-value' }, [math(name.replace(/^([A-Za-z])([A-Za-z0-9]+)$/, '$1_{$2}')), input]);
-  });
-  valuesHost.querySelector('.sc-value-rows').replaceChildren(...rows);
-  valuesHost.hidden = !rows.length;
+    el('p', { class: 'field-hint' }, ['Read at the end of ', phaseName(result.states[result.readout].name), ', the input held through each period.']),
+    el('div', { class: 'sc-roots' }),
+  );
+  renderRoots();
+  renderValues();
 }
 
-/** Magnitude and phase over f/f_s, at the capacitances' numbers. */
+function renderRoots() {
+  const host = section?.querySelector('.sc-roots');
+  if (!host || !latest?.result.ok) return;
+  const roots = numericRootsOf(numbered(latest.result.value));
+  const line = (label, items) => (items?.length ? el('p', { class: 'sc-root-line' }, [`${label}: `, items.map((root) => `z = ${complexText(root)}`).join(', ')]) : null);
+  host.replaceChildren(...[line('Poles', roots.poles), line('Zeros', roots.zeros)].filter(Boolean));
+}
+
+// ----- the graph -------------------------------------------------------------------------
+
+const shownTraces = () => traces.filter((trace) => trace.on);
+
+/** The graph's plot: the shown traces at the numbers, magnitude or phase. */
+function graphPlot() {
+  const shown = shownTraces();
+  if (!shown.length) return null;
+  return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity: view });
+}
+
+function viewButton(key, text, title) {
+  return el('button', { type: 'button', text, title, 'aria-pressed': String(view === key), onclick: () => { view = key; renderPlots(); } });
+}
+
+/** The Plots window's view of this mode: as the Bode graph -- its view,
+ *  the graph, a legend to show or take off each trace, then Clear and
+ *  Annotate graph. */
 function renderPlots() {
-  if (!plots) return;
-  const result = latest?.result;
-  const empty = plots.view.querySelector('.sc-plots-empty');
-  if (!result?.ok) {
-    empty.hidden = false;
-    plots.magnitude.set(null);
-    plots.phase.set(null);
-    return;
+  if (!plotsEl) return;
+  const head = plotsEl.querySelector('.sc-plots-head');
+  const host = plotsEl.querySelector('.sc-graph');
+  plotsEl.querySelector('.sc-plots-empty').hidden = traces.length > 0;
+  head.hidden = !traces.length;
+  head.replaceChildren(el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Plot' }, [
+    viewButton('magnitude', 'Magnitude', 'The magnitudes, in dB'),
+    viewButton('phase', 'Phase', 'The phases, in degrees'),
+  ]));
+  const plot = graphPlot();
+  // The plot stays in place while it redraws (a zoomed view stays too).
+  if (!graph) graph = createPlotView({ height: 260, aspect: 0.6 });
+  if (plot) {
+    if (graph.el.parentNode !== host) host.replaceChildren(graph.el);
+    graph.set(responseSpec(plot));
+  } else {
+    host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
   }
-  empty.hidden = true;
-  const trace = { label: result.label, color: TRACE_COLORS[0], value: withCoefficients(result.value, valuesFor(result)), variable: 'z' };
-  const magnitude = responsePlot([trace], 'z', { quantity: 'magnitude' });
-  const phase = responsePlot([trace], 'z', { quantity: 'phase' });
-  plots.magnitude.set(magnitude ? responseSpec(magnitude) : null);
-  plots.phase.set(phase ? responseSpec(phase) : null);
+  const legend = plotsEl.querySelector('.sc-legend');
+  legend.replaceChildren(...traces.map((trace) => {
+    const check = el('input', { type: 'checkbox', 'aria-label': 'Show this trace' });
+    check.checked = trace.on;
+    check.addEventListener('change', () => { trace.on = check.checked; renderPlots(); });
+    const label = el('span', { class: 'signal-flow-legend-math' });
+    label.innerHTML = texToMathML(trace.label);
+    label.style.color = trace.color;
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderValues(); renderPlots(); } });
+    return el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), label, remove]);
+  }));
+  const actions = plotsEl.querySelector('.sc-plots-actions');
+  actions.hidden = !traces.length;
+  actions.replaceChildren(
+    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
+    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces()); } }),
+  );
 }
 
-/** Write the equation under the drawing, as the other modes do. */
+// ----- the drawing -----------------------------------------------------------------------
+
+/** Write the equation under the drawing, as the signal-flow mode writes its. */
 function annotate() {
   const result = latest?.result;
   if (!result?.ok) return;
-  // As the signal-flow mode writes its equations: under the drawing, left.
   const bounds = editor.circuit.bounds();
   const left = bounds.w > 0 ? bounds.x : editor.cursor.x;
   const top = (bounds.h > 0 ? bounds.y + bounds.h : editor.cursor.y) + 2 * GRID;
@@ -72392,6 +72518,8 @@ function annotate() {
   logLine('equation written under the drawing');
 }
 
+// ----- install ---------------------------------------------------------------------------
+
 function installSwitchedCapUi() {
   const select = (id, key) => el('select', { id, onchange: (ev) => { settings()[key] = ev.target.value; markSettingsChanged(); } });
   const row = (label, id, control) => el('div', { class: 'signal-flow-source' }, [el('label', { for: id, class: 'signal-flow-source-name', text: label }), control]);
@@ -72402,18 +72530,22 @@ function installSwitchedCapUi() {
       row('Input', 'sc-input', select('sc-input', 'input')),
       row('Output', 'sc-output', select('sc-output', 'output')),
       row('Read at', 'sc-readout', select('sc-readout', 'readout')),
+      el('p', { class: 'field-hint', text: 'A port of any kind, or any net.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations' }, [el('legend', { text: 'Phases' }), el('div', { class: 'sc-phases' })]),
     el('p', { class: 'analysis-stale sc-stale', hidden: true, text: 'The circuit changed since this was derived.' }),
     el('div', { class: 'sc-results', 'aria-live': 'polite' }),
-    el('fieldset', { class: 'analysis-approximations sc-values', hidden: true }, [
-      el('legend', { text: 'Capacitances' }),
-      el('div', { class: 'sc-value-rows' }),
-      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equation stays symbolic. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
+    el('div', { class: 'signal-flow-plots' }, [
+      el('div', { class: 'card-heading', text: 'Plots' }),
+      el('div', { class: 'signal-flow-plots-open' }, [
+        el('span', { class: 'field-hint', text: 'Each Derive adds its result to the graph: magnitude and phase over f/f_s.' }),
+        el('button', { type: 'button', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
+      ]),
     ]),
-    el('div', { class: 'signal-flow-plots-open' }, [
-      el('span', { class: 'field-hint', text: 'Magnitude and phase over f/f_s.' }),
-      el('button', { type: 'button', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
+    el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
+      el('legend', { text: 'Capacitances' }),
+      el('div', { class: 'signal-flow-coefficient-rows sc-value-rows' }),
+      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equation stays symbolic. Slide, or type any value. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
     ]),
   ]);
   annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Write the equation under the drawing', onclick: annotate });
@@ -72445,19 +72577,19 @@ function installSwitchedCapUi() {
     suggested,
     shown: () => { fillForm(); renderResult(); },
   });
-  // Its view in the Plots window.
-  const magnitude = createPlotView({ aspect: 0.6 });
-  const phase = createPlotView({ height: 150, aspect: 0.38 });
-  linkPlots(magnitude, phase);
-  const view = el('div', { class: 'sc-plots-view' }, [
+  // Its view in the Plots window, laid out as the Bode graph's.
+  plotsEl = el('div', { class: 'sc-plots-view' }, [
     el('p', { class: 'field-hint sc-plots-empty', text: 'Derive a switched-capacitor circuit (Shift+S, Switched-cap) to plot its response.' }),
-    magnitude.el, phase.el,
+    el('div', { class: 'signal-flow-graph-head sc-plots-head', hidden: true }),
+    el('div', { class: 'sc-graph' }),
+    el('div', { class: 'signal-flow-legend sc-legend' }),
+    el('div', { class: 'signal-flow-graph-actions sc-plots-actions', hidden: true }),
   ]);
-  plots = { view, magnitude, phase };
-  installPlotsWindow({ mode: 'switched-cap', view, shown: () => renderPlots() });
+  installPlotsWindow({ mode: 'switched-cap', view: plotsEl, shown: () => renderPlots() });
   // Another design starts with none of this one's results.
   onDocumentShown(() => {
     latest = null;
+    traces = [];
     if (!section.hidden) { fillForm(); renderResult(); }
     renderPlots();
   });
@@ -74440,6 +74572,56 @@ function tutorialRuns(text) {
 
 __exports.TUTORIAL_TARGETS = TUTORIAL_TARGETS;
 __exports.TUTORIAL_STEPS = TUTORIAL_STEPS;
+};
+
+__modules["src/web/value-row.js"] = function (__require, __exports) {
+__exports.valueRow = valueRow;
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+let indexE24, stepE24; __bind(() => { ({ indexE24, stepE24 } = __require("src/web/e-series.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+/**
+ * A value as the analysis windows set one: its symbol, a slider stepping
+ * through E24 values (log scale), and a field to type any positive number.
+ * The small-signal analysis's Values (bode-ui.js) and the switched-capacitor
+ * mode's capacitances (switched-cap-ui.js) are rows of these; the
+ * signal-flow coefficients are the same row with links and fractions.
+ */
+
+
+
+
+
+/**
+ * `onValue(number)` hears every change, sliding or typed; `onSlide(true)`
+ * and `onSlide(false)` the slider taken and let go. `min`/`max` are the
+ * slider's E24 steps (e-series.js PER_DECADE a decade).
+ */
+function valueRow({ name, tex, value, min, max, onValue, onSlide = () => {}, title = '', className = '' }) {
+  const label = el('span', { class: 'signal-flow-coefficient-name' });
+  label.innerHTML = texToMathML(tex);
+  const slider = el('input', { type: 'range', min: String(min), max: String(max), step: '1', 'aria-label': `${name}: slide to change` });
+  slider.value = String(indexE24(value));
+  const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'A positive number', value: String(Number(value.toPrecision(4))) });
+  const row = el('div', { class: `signal-flow-coefficient${className ? ` ${className}` : ''}`, 'data-name': name, ...(title ? { title } : {}) }, [label, slider, field]);
+  slider.addEventListener('input', () => {
+    onSlide(true);
+    const next = stepE24(Number(slider.value));
+    field.value = String(next);
+    field.classList.remove('invalid');
+    onValue(next);
+  });
+  slider.addEventListener('change', () => onSlide(false));
+  field.addEventListener('input', () => {
+    const number = Number(field.value.trim());
+    const valid = field.value.trim() !== '' && Number.isFinite(number) && number > 0;
+    field.classList.toggle('invalid', !valid);
+    if (!valid) return;
+    slider.value = String(indexE24(number));
+    onValue(number);
+  });
+  return row;
+}
+
 };
 
 __modules["src/web/window-session.js"] = function (__require, __exports) {

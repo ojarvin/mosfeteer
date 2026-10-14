@@ -15,7 +15,7 @@
  * loop gain is drawn from its derived coefficients.
  */
 
-import { PER_DECADE, indexE24, stepE24 } from './e-series.js';
+import { PER_DECADE } from './e-series.js';
 import {
   DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
   responseAt, sketchParameters, sketchValues,
@@ -26,6 +26,7 @@ import { negate } from '../core/analysis/rational.js';
 import { cornerNames } from '../core/bode-figure.js';
 import { bodeSpecs, responseSpec } from '../core/plot-spec.js';
 import { createPlotView } from './plot-view.js';
+import { valueRow as sharedValueRow } from './value-row.js';
 import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
@@ -486,32 +487,17 @@ let shownRows = '';
 
 /** One value's row, as a signal-flow coefficient's: its name, a slider
  *  through the E24 steps, and a field for any positive number. */
-function valueRow({ name, tex, value, min, max, onValue, components = [], title = '' }) {
-  const label = el('span', { class: 'signal-flow-coefficient-name' });
-  label.innerHTML = texToMathML(tex);
-  const slider = el('input', { type: 'range', min: String(min), max: String(max), step: '1', 'aria-label': `${name}: slide to change` });
-  slider.value = String(indexE24(value));
-  const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'A positive number', value: String(Number(value.toPrecision(4))) });
-  const row = el('div', { class: 'signal-flow-coefficient bode-value', 'data-name': name, ...(title ? { title } : {}) }, [label, slider, field]);
-  slider.addEventListener('input', () => {
-    sliding = true;
-    const next = stepE24(Number(slider.value));
-    field.value = String(next);
-    field.classList.remove('invalid');
-    onValue(next);
-  });
-  slider.addEventListener('change', () => {
-    sliding = false;
-    const list = plotsEl?.querySelector('.bode-corners');
-    if (list) list.style.minHeight = '';
-  });
-  field.addEventListener('input', () => {
-    const number = Number(field.value.trim());
-    const valid = field.value.trim() !== '' && Number.isFinite(number) && number > 0;
-    field.classList.toggle('invalid', !valid);
-    if (!valid) return;
-    slider.value = String(indexE24(number));
-    onValue(number);
+/** A Values row (value-row.js), its components emphasized while hovered. */
+function valueRow({ components = [], ...options }) {
+  const row = sharedValueRow({
+    ...options,
+    className: 'bode-value',
+    onSlide: (taken) => {
+      sliding = taken;
+      if (taken) return;
+      const list = plotsEl?.querySelector('.bode-corners');
+      if (list) list.style.minHeight = '';
+    },
   });
   if (components.length) {
     row.addEventListener('pointerenter', () => emphasize(components));

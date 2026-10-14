@@ -7719,28 +7719,9 @@ body.chrome-away [data-editor-edge="right"] {
   display: block;
 }
 
-.sc-roots {
+.sc-root-line {
   margin: 2px 0;
   font-size: var(--text-sm);
   color: var(--text-dim);
 }
 
-.sc-value-rows {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-}
-
-.sc-value {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.sc-value-input {
-  width: 6em;
-}
-
-.sc-plots-view .plot-view + .plot-view {
-  margin-top: 8px;
-}
