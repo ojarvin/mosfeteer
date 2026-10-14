@@ -71,6 +71,20 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { const s = document.getElementById('sc-output'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   });
 
+  test('a finite-gain op-amp: its gain in the equation, a Values row from 1 to 10^6 starting at 60 dB', async () => {
+    await h.open('integrator');
+    await openWindow();
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.components.get('U1').analysis.model = 'finite-gain'; })`);
+    await h.evaluate(`document.querySelector('.sc-derive').click()`);
+    await h.until(`/A1/.test(document.querySelector('.sc-equation')?.textContent || '')`);
+    const row = await h.evaluate(`(() => { const r = document.querySelector('.sc-values .signal-flow-coefficient[data-name="A1"]'); const s = r.querySelector('input[type="range"]'); return { value: r.querySelector('.signal-flow-coefficient-value').value, min: s.min, max: s.max }; })()`);
+    assert.equal(row.value, '1000');
+    assert.equal(Number(row.min), 0);
+    assert.ok(Number(row.max) > 0, JSON.stringify(row));
+    assert.equal(await h.evaluate(`document.querySelector('.sc-values legend').textContent`), 'Values');
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.components.get('U1').analysis.model = undefined; })`);
+  });
+
   test('without a timing diagram or beats it says what is missing', async () => {
     await h.open('unclocked');
     await openWindow();

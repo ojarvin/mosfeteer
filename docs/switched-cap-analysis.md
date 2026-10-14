@@ -30,9 +30,15 @@ Within a state, closed switches join nodes into one. Every joined node is:
   -- is what those plates held at the end of the state before (a period
   earlier across the period's start, one z^-1).
 
-Op-amps are ideal: an `opamp`'s inputs are at one voltage and draw no
-current; an `opamp_diff`'s also, with its two outputs averaging to ground (an
-ideal common-mode feedback). The netlist is the small-signal analysis's
+An op-amp is modelled as its small-signal parameters say (`opampModel`,
+[`symbolic-analysis.md`](symbolic-analysis.md)). Ideal, an `opamp`'s inputs
+are at one voltage and draw no current; with **finite gain** its output is
+A times their difference (A1 for U1: v_ip - v_im - v_o/A = 0), so a virtual
+ground sits at -v_o/A and an integrator leaks -- its pole moves inside the
+unit circle, to the ideal one as A grows. An `opamp_diff` does the same with
+its outputs' difference, its outputs averaging to ground (an ideal
+common-mode feedback). A gain-bandwidth model is refused: it needs settling
+in time within a phase, which charge from phase to phase does not see. The netlist is the small-signal analysis's
 (`resolveAnalysisContext`): same-named nets are one node, every DC reference
 is the AC ground, and other input ports are held there.
 
@@ -80,12 +86,14 @@ the capacitances' numbers, and adds it to the Plots window's graph (`Shift+W`)
 as each Derive adds its gain to the Bode graph: magnitude or phase over
 f/f_s, a legend to show or take off each trace, **Clear graph**, and
 **Annotate graph** to put it on the drawing (`placeResponsePlot`).
-**Capacitances** are Values rows (`src/web/value-row.js`, shared with the
-small-signal Values): a slider over E24 steps and a field, 1 unless set.
+**Values** are rows (`src/web/value-row.js`, shared with the small-signal
+Values): a slider over E24 steps and a field -- each capacitance (1 unless
+set, three decades either way) and each finite gain (60 dB unless set, from 1
+to 10^6).
 **Annotate equation** writes the equation under the drawing. The choices and
 numbers are the design's (`Circuit#analysisValues.sc`): saved with it, one
 undo step a finished adjustment, never making it unsaved.
 
-Not yet: kT/C noise per sampling capacitor, finite op-amp gain, and parasitic
-capacitances (the integrators are stray-insensitive by design, so these
-would show which ones are not).
+Not yet: kT/C noise per sampling capacitor, and parasitic capacitances (the
+integrators are stray-insensitive by design, so these would show which ones
+are not).

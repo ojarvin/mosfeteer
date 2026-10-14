@@ -40,6 +40,7 @@ import { parseGain } from '../transfer-function.js';
 import { timingStates } from '../timing-diagram.js';
 import { samePhase, switchGroupKey, switchState, switchStateAt } from '../beats.js';
 import { isReferenceMarker } from '../model.js';
+import { opampModel } from './devices.js';
 
 const VARIABLE = 'z';
 // Drawn parts that carry no charge and no current of their own: ports and
@@ -135,7 +136,12 @@ export function analyzeSwitchedCap(circuit, options = {}) {
       const nodes = Object.fromEntries(terms.map((term) => [term, node(component.refdes, term)]));
       const missing = terms.filter((term) => !nodes[term]);
       if (missing.length) return failure('unconnected', `${component.refdes}: ${missing.join(', ')} not connected`);
-      opamps.push({ refdes: component.refdes, type, ...nodes });
+      // Its gain as the small-signal analysis models it: ideal, or finite
+      // A (A1 for U1). A gain-bandwidth needs settling in time, which
+      // charge from phase to phase does not see.
+      const { model, parameter } = opampModel(component);
+      if (model === 'gbw') return failure('opamp-model', `${component.refdes} is modelled by its gain-bandwidth, which needs settling in time within a phase: this analysis takes an ideal or a finite-gain op-amp (its small-signal parameters).`);
+      opamps.push({ refdes: component.refdes, type, ...nodes, gain: model === 'finite-gain' ? parameter : null });
     } else if (!PORTS.has(type) && !isReferenceMarker(component)) {
       return failure('unsupported-part', `${component.refdes} (${type}): the switched-capacitor analysis takes capacitors, switches, op-amps, and ports.`);
     }
@@ -231,12 +237,21 @@ export function analyzeSwitchedCap(circuit, options = {}) {
         B[r][1 + i] = ops.add(B[r][1 + i], sign > 0 ? values[i] : ops.neg(values[i]));
       }
     }
-    // The op-amps: inputs at one voltage; a differential one's outputs
-    // about ground.
+    // The op-amps: inputs at one voltage (ideal), or the output A times
+    // their difference (v_ip - v_im - v_o / A = 0); a differential one's
+    // outputs about ground.
     for (const opamp of opamps) {
       const r = newRow();
       term(r, opamp.ip, ops.one);
       term(r, opamp.im, ops.neg(ops.one));
+      if (opamp.gain) {
+        const inverse = ops.div(ops.one, lift(symbol(opamp.gain)));
+        if (opamp.type === 'opamp') term(r, opamp.o, ops.neg(inverse));
+        else {
+          term(r, opamp.op, ops.neg(inverse));
+          term(r, opamp.om, inverse);
+        }
+      }
       if (opamp.type === 'opamp_diff') {
         const cm = newRow();
         term(cm, opamp.op, ops.one);
@@ -294,7 +309,7 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   // pole and zero cancel, and the result is as low an order as it really is.
   // A factor in the capacitances alone ((C_S + C_F)^2 over and under) goes
   // too: each capacitance in turn taken as the variable.
-  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable: VARIABLE, maxWork: 400_000 }), capacitors);
+  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable: VARIABLE, maxWork: 400_000 }), capacitors, opamps.map((opamp) => opamp.gain).filter(Boolean));
 
   // In the textbook form: the denominator's constant term 1 (C_F divided out).
   const tex = transferTex(value, VARIABLE, { symbolicLead: true });
@@ -308,6 +323,8 @@ export function analyzeSwitchedCap(circuit, options = {}) {
     input: context.input.name,
     output: context.output.name,
     capacitors: capacitors.map((cap) => cap.refdes),
+    // The op-amps' finite gains' symbols (A1), apart from the capacitances.
+    gains: opamps.filter((opamp) => opamp.gain).map((opamp) => opamp.gain),
     value,
     tex,
     label,
@@ -334,9 +351,9 @@ function capacitance(component) {
 
 /** `value` with each factor common to its numerator and denominator that
  *  depends on a capacitance cancelled; back as a function of z. */
-function cancelCapacitanceFactors(value, capacitors) {
+function cancelCapacitanceFactors(value, capacitors, gains = []) {
   if (value?.kind !== 'rational') return value;
-  const names = new Set();
+  const names = new Set(gains);
   for (const cap of capacitors) expressionSymbols(cap.value, VARIABLE, names);
   let current = value;
   for (const name of names) {

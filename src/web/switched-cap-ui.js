@@ -134,8 +134,14 @@ function fillForm() {
 
 // ----- the capacitances ------------------------------------------------------------------
 
-/** A capacitance's number: as set, else 1. */
-const capacitance = (name) => settings().values[name] ?? 1;
+// A finite-gain op-amp's gain (A1) starts at 60 dB; a capacitance at 1.
+const DEFAULT_GAIN = 1000;
+/** The gains' symbols the latest result and the graph's traces hold. */
+function gainSymbols() {
+  return new Set([...(latest?.result.gains || []), ...traces.flatMap((trace) => trace.gains || [])]);
+}
+/** A value's number: as set, else its kind's default. */
+const capacitance = (name) => settings().values[name] ?? (gainSymbols().has(name) ? DEFAULT_GAIN : 1);
 
 /** Every capacitance the latest result and the graph's traces reach. */
 function shownSymbols() {
@@ -172,12 +178,14 @@ function renderValues({ force = false } = {}) {
   const key = names.join('\n');
   if (!force && key === shownRows && rows.children.length) return;
   shownRows = key;
+  const gains = gainSymbols();
   rows.replaceChildren(...names.map((name) => valueRow({
     name,
     tex: symbolText(name),
     value: capacitance(name),
-    min: -3 * PER_DECADE,
-    max: 3 * PER_DECADE,
+    // A gain from 1 to 10^6; a capacitance three decades either way of 1.
+    min: gains.has(name) ? 0 : -3 * PER_DECADE,
+    max: gains.has(name) ? 6 * PER_DECADE : 3 * PER_DECADE,
     onValue: (number) => {
       settings().values[name] = number;
       saveValues();
@@ -206,12 +214,13 @@ function addTrace(result) {
   const existing = traces.find((trace) => trace.label === label);
   if (existing) {
     existing.value = result.value;
+    existing.gains = result.gains;
     existing.on = true;
     return;
   }
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
-  traces.push({ id: `sc-${traces.length}-${label}`, label, color, value: result.value, on: true });
+  traces.push({ id: `sc-${traces.length}-${label}`, label, color, value: result.value, gains: result.gains, on: true });
 }
 
 /** What Derive found: the equation (or why there is none), and its poles
@@ -347,9 +356,9 @@ export function installSwitchedCapUi() {
       ]),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
-      el('legend', { text: 'Capacitances' }),
+      el('legend', { text: 'Values' }),
       el('div', { class: 'signal-flow-coefficient-rows sc-value-rows' }),
-      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equation stays symbolic. Slide, or type any value. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
+      el('p', { class: 'field-hint', text: 'The capacitances, and the gain of each finite-gain op-amp (its small-signal model): the graph and the poles and zeros use these numbers; the equation stays symbolic. Slide, or type any value. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
     ]),
   ]);
   annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Write the equation under the drawing', onclick: annotate });

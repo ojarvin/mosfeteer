@@ -157,3 +157,30 @@ test('the switched-capacitor settings are saved with the design, and only sound 
   // Nothing set, nothing saved.
   assert.equal('analysisValues' in integrator().toJSON(), false);
 });
+
+test('a finite-gain op-amp (its small-signal model, gain A1): the integrator leaks, and tends to the ideal one', () => {
+  const circuit = integrator();
+  circuit.components.get('U1').analysis.model = 'finite-gain';
+  const result = analyzeSwitchedCap(circuit);
+  assert.equal(result.ok, true, result.error);
+  assert.deepEqual(result.gains, ['A1']);
+  // By hand, read at the end of φ2 with the virtual ground at -v_o / A:
+  // H = C_S / (C_F (1 + 1/A) + C_S / A - C_F (1 + 1/A) z^-1).
+  const at = (values, z) => {
+    const numbered = substituteRational(result.value, new Map(Object.entries(values).map(([name, value]) => [name, integer(value)])));
+    const value = rationalAt(numbered, integer(z));
+    return Number(value.numerator) / Number(value.denominator);
+  };
+  const byHand = ({ CS, CF, A1 }, z) => CS / (CF * (1 + 1 / A1) + CS / A1 - CF * (1 + 1 / A1) / z);
+  for (const values of [{ CS: 2, CF: 1, A1: 10 }, { CS: 3, CF: 2, A1: 100 }]) {
+    for (const z of [-1, 2, 5]) assert.ok(Math.abs(at(values, z) - byHand(values, z)) < 1e-12, `${JSON.stringify(values)} z=${z}`);
+  }
+  // Its pole moves inside the unit circle: the integrator leaks.
+  const pole = (A1) => (1 + 1 / A1) / ((1 + 1 / A1) + 2 / A1); // CS = 2, CF = 1
+  assert.ok(pole(10) < 1 && pole(1e6) > 0.99999);
+  // The gain-bandwidth model needs settling in time: refused, saying so.
+  circuit.components.get('U1').analysis.model = 'gbw';
+  const gbw = analyzeSwitchedCap(circuit);
+  assert.equal(gbw.code, 'opamp-model');
+  assert.match(gbw.error, /U1/);
+});

@@ -15320,6 +15320,7 @@ let parseGain; __bind(() => { ({ parseGain } = __require("src/core/transfer-func
 let timingStates; __bind(() => { ({ timingStates } = __require("src/core/timing-diagram.js")); });
 let samePhase, switchGroupKey, switchState, switchStateAt; __bind(() => { ({ samePhase, switchGroupKey, switchState, switchStateAt } = __require("src/core/beats.js")); });
 let isReferenceMarker; __bind(() => { ({ isReferenceMarker } = __require("src/core/model.js")); });
+let opampModel; __bind(() => { ({ opampModel } = __require("src/core/analysis/devices.js")); });
 /**
  * Switched-capacitor analysis: a drawn SC circuit's exact z-domain transfer
  * function, by charge conservation from phase to phase.
@@ -15350,6 +15351,7 @@ let isReferenceMarker; __bind(() => { ({ isReferenceMarker } = __require("src/co
  * (an op-amp without feedback, an input shorted to ground): the analysis
  * says so rather than guessing.
  */
+
 
 
 
@@ -15457,7 +15459,12 @@ function analyzeSwitchedCap(circuit, options = {}) {
       const nodes = Object.fromEntries(terms.map((term) => [term, node(component.refdes, term)]));
       const missing = terms.filter((term) => !nodes[term]);
       if (missing.length) return failure('unconnected', `${component.refdes}: ${missing.join(', ')} not connected`);
-      opamps.push({ refdes: component.refdes, type, ...nodes });
+      // Its gain as the small-signal analysis models it: ideal, or finite
+      // A (A1 for U1). A gain-bandwidth needs settling in time, which
+      // charge from phase to phase does not see.
+      const { model, parameter } = opampModel(component);
+      if (model === 'gbw') return failure('opamp-model', `${component.refdes} is modelled by its gain-bandwidth, which needs settling in time within a phase: this analysis takes an ideal or a finite-gain op-amp (its small-signal parameters).`);
+      opamps.push({ refdes: component.refdes, type, ...nodes, gain: model === 'finite-gain' ? parameter : null });
     } else if (!PORTS.has(type) && !isReferenceMarker(component)) {
       return failure('unsupported-part', `${component.refdes} (${type}): the switched-capacitor analysis takes capacitors, switches, op-amps, and ports.`);
     }
@@ -15553,12 +15560,21 @@ function analyzeSwitchedCap(circuit, options = {}) {
         B[r][1 + i] = ops.add(B[r][1 + i], sign > 0 ? values[i] : ops.neg(values[i]));
       }
     }
-    // The op-amps: inputs at one voltage; a differential one's outputs
-    // about ground.
+    // The op-amps: inputs at one voltage (ideal), or the output A times
+    // their difference (v_ip - v_im - v_o / A = 0); a differential one's
+    // outputs about ground.
     for (const opamp of opamps) {
       const r = newRow();
       term(r, opamp.ip, ops.one);
       term(r, opamp.im, ops.neg(ops.one));
+      if (opamp.gain) {
+        const inverse = ops.div(ops.one, lift(symbol(opamp.gain)));
+        if (opamp.type === 'opamp') term(r, opamp.o, ops.neg(inverse));
+        else {
+          term(r, opamp.op, ops.neg(inverse));
+          term(r, opamp.om, inverse);
+        }
+      }
       if (opamp.type === 'opamp_diff') {
         const cm = newRow();
         term(cm, opamp.op, ops.one);
@@ -15616,7 +15632,7 @@ function analyzeSwitchedCap(circuit, options = {}) {
   // pole and zero cancel, and the result is as low an order as it really is.
   // A factor in the capacitances alone ((C_S + C_F)^2 over and under) goes
   // too: each capacitance in turn taken as the variable.
-  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable: VARIABLE, maxWork: 400_000 }), capacitors);
+  const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable: VARIABLE, maxWork: 400_000 }), capacitors, opamps.map((opamp) => opamp.gain).filter(Boolean));
 
   // In the textbook form: the denominator's constant term 1 (C_F divided out).
   const tex = transferTex(value, VARIABLE, { symbolicLead: true });
@@ -15630,6 +15646,8 @@ function analyzeSwitchedCap(circuit, options = {}) {
     input: context.input.name,
     output: context.output.name,
     capacitors: capacitors.map((cap) => cap.refdes),
+    // The op-amps' finite gains' symbols (A1), apart from the capacitances.
+    gains: opamps.filter((opamp) => opamp.gain).map((opamp) => opamp.gain),
     value,
     tex,
     label,
@@ -15656,9 +15674,9 @@ function capacitance(component) {
 
 /** `value` with each factor common to its numerator and denominator that
  *  depends on a capacitance cancelled; back as a function of z. */
-function cancelCapacitanceFactors(value, capacitors) {
+function cancelCapacitanceFactors(value, capacitors, gains = []) {
   if (value?.kind !== 'rational') return value;
-  const names = new Set();
+  const names = new Set(gains);
   for (const cap of capacitors) expressionSymbols(cap.value, VARIABLE, names);
   let current = value;
   for (const name of names) {
@@ -72330,8 +72348,14 @@ function fillForm() {
 
 // ----- the capacitances ------------------------------------------------------------------
 
-/** A capacitance's number: as set, else 1. */
-const capacitance = (name) => settings().values[name] ?? 1;
+// A finite-gain op-amp's gain (A1) starts at 60 dB; a capacitance at 1.
+const DEFAULT_GAIN = 1000;
+/** The gains' symbols the latest result and the graph's traces hold. */
+function gainSymbols() {
+  return new Set([...(latest?.result.gains || []), ...traces.flatMap((trace) => trace.gains || [])]);
+}
+/** A value's number: as set, else its kind's default. */
+const capacitance = (name) => settings().values[name] ?? (gainSymbols().has(name) ? DEFAULT_GAIN : 1);
 
 /** Every capacitance the latest result and the graph's traces reach. */
 function shownSymbols() {
@@ -72368,12 +72392,14 @@ function renderValues({ force = false } = {}) {
   const key = names.join('\n');
   if (!force && key === shownRows && rows.children.length) return;
   shownRows = key;
+  const gains = gainSymbols();
   rows.replaceChildren(...names.map((name) => valueRow({
     name,
     tex: symbolText(name),
     value: capacitance(name),
-    min: -3 * PER_DECADE,
-    max: 3 * PER_DECADE,
+    // A gain from 1 to 10^6; a capacitance three decades either way of 1.
+    min: gains.has(name) ? 0 : -3 * PER_DECADE,
+    max: gains.has(name) ? 6 * PER_DECADE : 3 * PER_DECADE,
     onValue: (number) => {
       settings().values[name] = number;
       saveValues();
@@ -72402,12 +72428,13 @@ function addTrace(result) {
   const existing = traces.find((trace) => trace.label === label);
   if (existing) {
     existing.value = result.value;
+    existing.gains = result.gains;
     existing.on = true;
     return;
   }
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
-  traces.push({ id: `sc-${traces.length}-${label}`, label, color, value: result.value, on: true });
+  traces.push({ id: `sc-${traces.length}-${label}`, label, color, value: result.value, gains: result.gains, on: true });
 }
 
 /** What Derive found: the equation (or why there is none), and its poles
@@ -72543,9 +72570,9 @@ function installSwitchedCapUi() {
       ]),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
-      el('legend', { text: 'Capacitances' }),
+      el('legend', { text: 'Values' }),
       el('div', { class: 'signal-flow-coefficient-rows sc-value-rows' }),
-      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equation stays symbolic. Slide, or type any value. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
+      el('p', { class: 'field-hint', text: 'The capacitances, and the gain of each finite-gain op-amp (its small-signal model): the graph and the poles and zeros use these numbers; the equation stays symbolic. Slide, or type any value. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
     ]),
   ]);
   annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Write the equation under the drawing', onclick: annotate });
