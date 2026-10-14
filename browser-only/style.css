@@ -7686,3 +7686,61 @@ body.chrome-away [data-editor-edge="right"] {
 :root[data-reduce-motion] :is(.signal-flow-results, #analysis-equation, .signal-flow-optimize-result) > * {
   animation: none;
 }
+
+/* ----- switched-capacitor analysis (switched-cap-ui.js) ----------------- */
+
+.sc-phase-table {
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.sc-phase-table td {
+  padding: 3px 10px 3px 0;
+  vertical-align: middle;
+}
+
+.sc-phase-index {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-phase-closed {
+  color: var(--text-dim);
+}
+
+.sc-equation {
+  margin: 4px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  font-size: 1.15em;
+}
+
+.sc-math.display math {
+  display: block;
+}
+
+.sc-roots {
+  margin: 2px 0;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+.sc-value-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.sc-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sc-value-input {
+  width: 6em;
+}
+
+.sc-plots-view .plot-view + .plot-view {
+  margin-top: 8px;
+}

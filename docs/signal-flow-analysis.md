@@ -1,7 +1,9 @@
 # Signal-flow analysis
 
 The analysis window's second mode (`Shift+S`, then **Signal flow** at its
-top): transfer functions of a block diagram rather than a circuit. A drawing
+top; the third, **Switched-cap**, is
+[`switched-cap-analysis.md`](switched-cap-analysis.md)): transfer functions
+of a block diagram rather than a circuit. A drawing
 with signal-flow parts and no devices opens in it. Code:
 `src/core/analysis/signal-flow.js` (the analysis), `src/web/signal-flow-ui.js`
 (the mode); tests: `test/signal-flow-analysis.test.js`.

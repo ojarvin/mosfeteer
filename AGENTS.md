@@ -23,6 +23,7 @@ read the one for the area you change before changing it.
 | Editor, persistence, keys, windows | [`docs/editor.md`](docs/editor.md) |
 | Small-signal analysis | [`docs/symbolic-analysis.md`](docs/symbolic-analysis.md) |
 | Signal-flow analysis, swing, optimizer | [`docs/signal-flow-analysis.md`](docs/signal-flow-analysis.md) |
+| Switched-capacitor analysis | [`docs/switched-cap-analysis.md`](docs/switched-cap-analysis.md) |
 | Wiring internals | [`docs/wiring-architecture.md`](docs/wiring-architecture.md) |
 | Beats, linked designs, Atlas | [`docs/beats.md`](docs/beats.md), [`docs/hierarchy.md`](docs/hierarchy.md), [`docs/atlas.md`](docs/atlas.md) |
 
@@ -85,8 +86,8 @@ markers.
 **Analysis.** The small-signal GUI calls
 `adaptCombinedReport(analyzeSmallSignalV2(...))`; every transfer function
 and noise column comes from the one MNA solve; ambiguous selections return a
-diagnostic, never a guess. Signal-flow analysis refuses rather than guesses
-too. Analysis settings and slider values are document data
+diagnostic, never a guess. Signal-flow and switched-capacitor
+analysis refuse rather than guess too. Analysis settings and slider values are document data
 (`Circuit#analysisValues`): a change is `markSettingsChanged`, saved but never
 stale, one undo entry per finished adjustment.
 

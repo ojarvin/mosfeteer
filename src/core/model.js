@@ -1018,7 +1018,18 @@ function normalizeAnalysisValues(value) {
     // The coefficient optimizer's setup (analysis/optimize-setup.js).
     ...(rawFlow.optimize && typeof rawFlow.optimize === 'object' ? { optimize: normalizeOptimizeSetup(rawFlow.optimize) } : {}),
   } : null;
-  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}) };
+  // The switched-capacitor mode's settings: its ports, the phase the
+  // output is read at, and the capacitances' numbers for its plots.
+  const rawSc = value?.sc;
+  let sc = null;
+  if (rawSc && typeof rawSc === 'object') {
+    const values = {};
+    for (const [name, number] of Object.entries(rawSc.values || {})) {
+      if (/^[A-Za-z][\w]{0,40}$/.test(name) && Number.isFinite(number) && number > 0) values[name] = number;
+    }
+    sc = { input: text(rawSc.input), output: text(rawSc.output), readout: text(rawSc.readout), values };
+  }
+  return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}), ...(sc ? { sc } : {}) };
 }
 
 function analysisValuesJSON(values) {
@@ -1030,7 +1041,8 @@ function analysisValuesJSON(values) {
   const fractions = values?.fractions || {};
   const band = normalizeBand(values?.band);
   const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize) ? values.flow : null;
-  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow) return {};
+  const sc = values?.sc && (values.sc.input || values.sc.output || values.sc.readout || Object.keys(values.sc.values || {}).length) ? values.sc : null;
+  if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow && !sc) return {};
   const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
   return { analysisValues: {
     ...(Object.keys(coefficients).length ? { coefficients: { ...coefficients } } : {}),
@@ -1038,6 +1050,7 @@ function analysisValuesJSON(values) {
     ...(fractionList.length ? { fractions: Object.fromEntries(fractionList) } : {}),
     ...(band ? { band } : {}),
     ...(flow ? { flow: { ...flow, sources: { ...flow.sources } } } : {}),
+    ...(sc ? { sc: { ...sc, values: { ...sc.values } } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
   } };

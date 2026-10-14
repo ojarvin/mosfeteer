@@ -148,3 +148,12 @@ test('a fully differential op-amp: its outputs symmetric about ground, each half
   assert.equal(at(plus), -0.5);
   assert.equal(at(minus), 0.5);
 });
+
+test('the switched-capacitor settings are saved with the design, and only sound ones', () => {
+  const circuit = integrator();
+  circuit.analysisValues.sc = { input: 'V_{IN}', output: 'V_{OUT}', readout: '$\\varphi_1$', values: { CS: 2, CF: 1, bad: -1, 'not a name': 3 } };
+  const back = Circuit.fromJSON(circuit.toJSON()).analysisValues.sc;
+  assert.deepEqual(back, { input: 'V_{IN}', output: 'V_{OUT}', readout: '$\\varphi_1$', values: { CS: 2, CF: 1 } });
+  // Nothing set, nothing saved.
+  assert.equal('analysisValues' in integrator().toJSON(), false);
+});

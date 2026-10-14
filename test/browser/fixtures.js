@@ -114,3 +114,24 @@ export function millerBuffer() {
   net('VB', 'M5.g', 'M7.g');
   return circuit.toJSON();
 }
+
+/** The stray-insensitive SC integrator (test/switched-cap.test.js): S1 and
+ *  S3 on φ1, S2 and S4 on φ2, with its timing diagram; `timing: false`
+ *  leaves the clock undrawn. */
+export function scIntegrator({ timing = true } = {}) {
+  const circuit = new Circuit();
+  const p1 = '"$\\varphi_1$"';
+  const p2 = '"$\\varphi_2$"';
+  for (const line of [
+    'add input VIN --at -1400 0', 'add output VOUT --at 600 0',
+    `add switch_open S1 --at -1200 0 --value ${p1}`, 'add capacitor CS --at -800 0',
+    `add switch_open S2 --at -1000 400 --value ${p2}`, `add switch_open S3 --at -600 400 --value ${p1}`,
+    `add switch_open S4 --at -400 0 --value ${p2}`, 'add opamp U1 --at 0 0', 'add capacitor CF --at 0 -400',
+    'add ground G1 --at -1000 800', 'add ground G2 --at -600 800', 'add ground G3 --at -400 400',
+    'connect VIN.p S1.a', 'connect S1.b CS.a', 'connect CS.a S2.a', 'connect S2.b G1.gnd',
+    'connect CS.b S3.a', 'connect S3.b G2.gnd', 'connect CS.b S4.a', 'connect S4.b U1.im',
+    'connect U1.ip G3.gnd', 'connect CF.a U1.im', 'connect CF.b U1.o', 'connect U1.o VOUT.p',
+  ]) runCommand(circuit, line);
+  if (timing) runCommand(circuit, 'timing 1=10 2=01');
+  return circuit.toJSON();
+}

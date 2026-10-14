@@ -48,7 +48,7 @@ import { netPicker } from './net-picker.js';
 // Devices the small-signal analysis models: a drawing with any opens in it.
 const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
 
-let mode = null; // 'circuit' | 'signal-flow'; chosen per opening unless switched
+let mode = null; // 'circuit' | 'signal-flow' | a registered mode; chosen per opening unless switched
 let chosenThisSession = false;
 // The mode's settings, kept in the document so it reopens as it was left:
 // the output, each source's mode (source id -> 'input' | 'zero' |
@@ -114,33 +114,62 @@ function circuitParts() {
   return [...editor.circuit.components.values()].filter((component) => CIRCUIT_TYPES.test(component.type)).length;
 }
 
-/** The mode a drawing opens in: signal flow when it has signal-flow parts and no devices. */
+// Modes of their own beside these two, each from its module
+// (switched-cap-ui.js): { mode, label, hint, title, section, actions,
+// suggested(circuit), shown() }.
+const extraModes = [];
+
+/** Add a mode to the window: its button on the mode bar, its section after
+ *  the others, its buttons in the footer. */
+export function registerAnalysisMode(spec) {
+  extraModes.push(spec);
+  modeBar.append(el('button', { type: 'button', 'data-mode': spec.mode, text: spec.label, title: spec.hint, onclick: () => setMode(spec.mode, { user: true }) }));
+  const after = extraModes.length > 1 ? extraModes.at(-2).section : section;
+  after.after(spec.section);
+  for (const button of spec.actions) if (button.dataset.icon && !button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
+  document.getElementById('analysis-submit')?.before(...spec.actions);
+  setMode(mode || 'circuit');
+}
+
+/** The mode a drawing opens in: a registered mode's when it suits the
+ *  drawing (an SC circuit), signal flow when it has signal-flow parts and no
+ *  devices, else the circuit's. */
 function suggestedMode() {
+  const fitting = extraModes.find((spec) => spec.suggested?.(editor.circuit));
+  if (fitting) return fitting.mode;
   return hasSignalFlow(editor.circuit) && !circuitParts() ? 'signal-flow' : 'circuit';
 }
 
 function circuitChildren() {
   const scroll = analysisDialog.querySelector('.analysis-scroll');
-  return [...scroll.children].filter((child) => child !== modeBar && child !== section);
+  const own = new Set([modeBar, section, ...extraModes.map((spec) => spec.section)]);
+  return [...scroll.children].filter((child) => !own.has(child));
 }
 
 function setMode(next, { user = false } = {}) {
   mode = next;
   if (user) chosenThisSession = true;
   const flow = mode === 'signal-flow';
-  for (const child of circuitChildren()) child.classList.toggle('analysis-mode-hidden', flow);
+  const extra = extraModes.find((spec) => spec.mode === mode) || null;
+  const circuit = !flow && !extra;
+  for (const child of circuitChildren()) child.classList.toggle('analysis-mode-hidden', !circuit);
   // One footer: the circuit's buttons there, or this mode's.
-  for (const id of ['analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', flow);
+  for (const id of ['analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', !circuit);
   for (const button of actions) button.classList.toggle('analysis-mode-hidden', !flow);
   section.hidden = !flow;
+  for (const spec of extraModes) {
+    spec.section.hidden = spec !== extra;
+    for (const button of spec.actions) button.classList.toggle('analysis-mode-hidden', spec !== extra);
+  }
   for (const button of modeBar.querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
   const title = document.getElementById('analysis-dialog-title');
-  if (title) title.textContent = flow ? 'Signal-flow analysis' : 'Small-signal analysis';
-  setPlotsMode(flow ? 'signal-flow' : 'circuit');
+  if (title) title.textContent = extra ? extra.title : flow ? 'Signal-flow analysis' : 'Small-signal analysis';
+  setPlotsMode(extra ? extra.mode : flow ? 'signal-flow' : 'circuit');
   if (flow) {
     fillForm();
     renderPlots();
   }
+  if (extra) extra.shown();
 }
 
 // ----- the form -------------------------------------------------------------------------
@@ -1562,7 +1591,7 @@ export function installSignalFlowUi() {
     clearResults();
     if (!analysisDialog.hidden) setMode(suggestedMode());
     // The Plots window shows what this drawing is, the analysis window shut.
-    else setPlotsMode(suggestedMode() === 'signal-flow' ? 'signal-flow' : 'circuit');
+    else setPlotsMode(suggestedMode());
   });
   // Each opening picks the mode the drawing suggests, unless it was chosen.
   new MutationObserver(() => {
