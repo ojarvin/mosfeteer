@@ -1051,15 +1051,28 @@ function decimalTex(value, digits) {
   return /e/.test(text) ? text.replace(/e([-+]?\d+)/, (m, e) => `\\cdot 10^{${Number(e)}}`) : text;
 }
 
-export function transferTex(value, variable, { digits = 0 } = {}) {
+/** One term: a number, a symbol, or a product (and powers) of those. */
+function isMonomial(value) {
+  if (!value) return false;
+  if (value.kind === 'number' || value.kind === 'symbol') return true;
+  if (value.kind === 'power') return isMonomial(value.base);
+  if (value.kind === 'multiply') return value.factors.every(isMonomial);
+  return false;
+}
+
+export function transferTex(value, variable, { digits = 0, symbolicLead = false } = {}) {
   const numerator = coefficientList(value.numerator, variable);
   const denominator = coefficientList(value.denominator, variable);
   if (!numerator || !denominator) return `\\frac{${renderExpression(value.numerator, { variable })}}{${renderExpression(value.denominator, { variable })}}`;
   if (!numerator.length) return '0';
-  // Normalize by the denominator's leading coefficient when it is a number.
+  // Normalize by the denominator's leading coefficient when it is a number
+  // -- or, asked (`symbolicLead`: an SC circuit's -C_F), a single term.
   const lead = denominator[0].coefficient;
-  const scale = isPlainNumber(lead) ? lead : null;
-  const norm = (list) => list.map(({ power: p, coefficient }) => ({ power: p, coefficient: scale ? multiply(coefficient, power(scale, -1)) : coefficient }));
+  const scale = isPlainNumber(lead) || (symbolicLead && isMonomial(lead)) ? lead : null;
+  // A term inverted factor by factor (-C_F: -1 and C_F apart), so it
+  // cancels the same factors in the coefficients it divides.
+  const inverse = scale && (scale.kind === 'multiply' ? multiply(...scale.factors.map((factor) => power(factor, -1))) : power(scale, -1));
+  const norm = (list) => list.map(({ power: p, coefficient }) => ({ power: p, coefficient: scale ? multiply(coefficient, inverse) : coefficient }));
   const num = norm(numerator);
   const den = norm(denominator);
   // In z, every power is taken relative to the denominator's highest, so the
