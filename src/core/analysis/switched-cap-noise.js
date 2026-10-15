@@ -312,7 +312,7 @@ function opampResponse({ layout, capacitors, opamps, held, opampNodes, ops, lift
       if (opamp.type === 'opamp') at(opamp.o, ops.neg(inverse));
       else { at(opamp.op, ops.neg(inverse)); at(opamp.om, inverse); }
     }
-    if (opamp.type === 'opamp_diff') {
+    if (opamp.type !== 'opamp') {
       const cm = row();
       const atCm = (node) => { const u = unknownOf(node); if (u !== null) A[cm][u] = ops.add(A[cm][u], ops.one); };
       atCm(opamp.op);

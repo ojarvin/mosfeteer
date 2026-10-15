@@ -49,7 +49,7 @@ let saveFrame = 0;
 function suggested(circuit) {
   const parts = [...circuit.components.values()];
   return parts.some((c) => switchState(c)) && parts.some((c) => c.type === 'capacitor')
-    && !parts.some((c) => /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|inductor|current_source|voltage_source|vccs|vcvs|gm|diode)$/.test(c.type));
+    && !parts.some((c) => /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|inductor|current_source|voltage_source|vccs|vcvs|gm|gm_cmfb|diode)$/.test(c.type));
 }
 
 /** TeX as MathML, inline or on a line of its own. */

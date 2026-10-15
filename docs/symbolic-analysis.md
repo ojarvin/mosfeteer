@@ -101,7 +101,10 @@ gain `A` (`A_{1}` for `U1`) or a single pole `A = omega_t / s`
 (`\omega_{t1}`), ideal at DC. MNA stamps the inverse gain, `0`, `1/A`, or
 `s/omega_t`, so one stamp serves all three. An `opamp_diff` adds its
 outputs' common mode held at AC ground. A `gm` cell is a VCCS,
-`G_{m1} (v_ip - v_im)` into `op` and out of `om`.
+`G_{m1} (v_ip - v_im)` into `op` and out of `om`. Their `_cmfb` variants
+(`opamp_diff_cmfb`, `gm_cmfb`) add a common-mode feedback input that is
+drawn only: the outputs' common mode stays held, so the pin takes no part
+and may be left open.
 
 Ideal opamps are folded out of the system before it is solved
 (`reduceNullors`): each input pair holds `V(-) = V(+)`, so `V(-)` stops

@@ -46,7 +46,7 @@ import { element as el } from './dom.js';
 import { netPicker } from './net-picker.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
-const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|gm|diode)$/;
+const CIRCUIT_TYPES = /^(nmos|pmos|nmosb|pmosb|npn|pnp|resistor|capacitor|inductor|current_source|voltage_source|vccs|vcvs|impedance|opamp|opamp_diff|opamp_diff_cmfb|gm|gm_cmfb|diode)$/;
 
 let mode = null; // 'circuit' | 'signal-flow' | a registered mode; chosen per opening unless switched
 let chosenThisSession = false;

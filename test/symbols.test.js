@@ -649,3 +649,15 @@ test('a voltage source shows a sine, a pulse or noise in its circle, kept when s
   assert.equal((swapped.component || swapped).waveform ?? null, null);
   assert.ok([...circuit.components.values()].every((c) => !c.waveform));
 });
+
+test('the fully differential op-amp and Gm cell come with a CMFB input below the body', () => {
+  for (const [type, base, x] of [['opamp_diff_cmfb', 'opamp_diff', -80], ['gm_cmfb', 'gm', -40]]) {
+    const def = getSymbol(type);
+    const plain = getSymbol(base);
+    assert.deepEqual(def.terminals.slice(0, -1), plain.terminals, `${type}: the same pins`);
+    assert.deepEqual({ ...def.terminals.at(-1) }, { name: 'cmfb', x, y: 120, direction: 'input', dir: { x: 0, y: 1 } });
+    assert.deepEqual(def.bbox, plain.bbox);
+    assert.equal(def.graphics[0].terminalLead, true, 'its lead joins the wire');
+    assert.match(def.graphics[0].d, new RegExp(`^M ${x} 120 L ${x} `));
+  }
+});

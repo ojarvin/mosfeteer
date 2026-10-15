@@ -87,6 +87,19 @@ test('a fully differential opamp holds its outputs\' common mode; a Gm cell is a
     [['VIN', 'VIN.p', 'G1.ip'], ['VOUT', 'G1.op', 'C1.a', 'VOUT.p'], ['VSS', 'G1.im', 'G1.om', 'C1.b', 'GND.gnd']],
   );
   assert.deepEqual(analyze(gmC).transfer.equations, ['A_v(s) = \\frac{G_{m1}}{s \\, C_{1}}']);
+  // With a CMFB input, drawn only: the same answers, the pin open or tied.
+  const withCmfb = (parts, nets) => build(parts.map(([type, ref]) => [type === 'opamp_diff' ? 'opamp_diff_cmfb' : type === 'gm' ? 'gm_cmfb' : type, ref]), nets);
+  const cmfbDiff = withCmfb(
+    [['input', 'VIN'], ['output', 'VOUT'], ['resistor', 'R1'], ['resistor', 'R2'], ['resistor', 'R3'], ['resistor', 'R4'], ['opamp_diff', 'U1'], ['ground', 'GND']],
+    [['VIN', 'VIN.p', 'R1.a'], ['X1', 'R1.b', 'R3.a', 'U1.im'], ['X2', 'R2.b', 'R4.a', 'U1.ip'],
+      ['VOUT', 'U1.op', 'R3.b', 'VOUT.p'], ['OM', 'U1.om', 'R4.b'], ['VSS', 'R2.a', 'GND.gnd']],
+  );
+  assert.equal(analyze(cmfbDiff).transfer.equations[0], analyze(differential).transfer.equations[0]);
+  const cmfbGm = withCmfb(
+    [['input', 'VIN'], ['output', 'VOUT'], ['gm', 'G1'], ['capacitor', 'C1'], ['ground', 'GND']],
+    [['VIN', 'VIN.p', 'G1.ip'], ['VOUT', 'G1.op', 'C1.a', 'VOUT.p'], ['VSS', 'G1.im', 'G1.om', 'C1.b', 'G1.cmfb', 'GND.gnd']],
+  );
+  assert.deepEqual(analyze(cmfbGm).transfer.equations, ['A_v(s) = \\frac{G_{m1}}{s \\, C_{1}}']);
 });
 
 test('MNA folds an ideal opamp as a nullor and reports its input voltage as an alias', () => {

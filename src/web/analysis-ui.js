@@ -1052,7 +1052,7 @@ function suggestedAnalysisTarget() {
 export const SMALL_SIGNAL_TRANSISTOR_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 
 export const SMALL_SIGNAL_RESISTOR_TYPES = new Set(['resistor', 'variable_resistor']);
-export const SMALL_SIGNAL_OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
+export const SMALL_SIGNAL_OPAMP_TYPES = new Set(['opamp', 'opamp_diff', 'opamp_diff_cmfb']);
 
 export const SMALL_SIGNAL_PORT_TYPES = INTERFACE_PIN_TYPES;
 

@@ -292,4 +292,24 @@ export const nor3_gate = gate('nor3_gate', '3-input NOR Gate', OR_BODY, { inputs
 export const xor3_gate = gate('xor3_gate', '3-input XOR Gate', [...XOR_BODY, ...XOR_FRONT], { inputs: [-120, -120, -120], inputNames: ['a', 'b', 'c'], inputLeadEnds: [-76.88, -67, -76.88], output: 160, outputLead: 72.55, width: 280 });
 export const xnor3_gate = gate('xnor3_gate', '3-input XNOR Gate', [...XOR_BODY, ...XOR_FRONT], { inputs: [-120, -120, -120], inputNames: ['a', 'b', 'c'], inputLeadEnds: [-76.88, -67, -76.88], output: 160, outputLead: 102.87, bubbleAt: [89.37, 0], width: 280 });
 
-export { opamp, opampDiff, gm, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer };
+/**
+ * The fully differential op-amp and Gm cell with a common-mode feedback
+ * input: the same symbol and pins, plus `cmfb` below the body, a lead from
+ * its lower edge (at `x`) down to the box's edge -- clear of the output
+ * marks, about a cell long on either.
+ */
+function withCmfb(def, type, description, x, edgeY) {
+  return defineSymbol({
+    ...def,
+    type,
+    description,
+    terminals: [...def.terminals, { name: 'cmfb', x, y: 120, direction: 'input', dir: { x: 0, y: 1 } }],
+    graphics: [{ kind: 'path', d: `M ${x} 120 L ${x} ${edgeY}`, style: 'symbol' }, ...def.graphics],
+  });
+}
+// Where the lead meets the body's lower edge: the triangle's from
+// (-107.19, 100) to (92.81, 0), the trapezoid's to (52.81, 60).
+const opampDiffCmfb = withCmfb(opampDiff, 'opamp_diff_cmfb', 'Fully Differential Op-Amp with CMFB input', -80, 86.4);
+const gmCmfb = withCmfb(gm, 'gm_cmfb', 'Transconductor (Gm cell), differential, with CMFB input', -40, 83.2);
+
+export { opamp, opampDiff, opampDiffCmfb, gm, gmCmfb, comparator, comparatorClocked, inverter, buffer, tristateInverter, tristateBuffer };

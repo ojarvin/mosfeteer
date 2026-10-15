@@ -47,7 +47,7 @@ const VARIABLE = 'z';
 // Drawn parts that carry no charge and no current of their own: ports and
 // solder dots (rails and ground are reference markers, isReferenceMarker).
 const PORTS = new Set(['input', 'output', 'inputoutput', 'port', 'solder']);
-const OPAMPS = new Set(['opamp', 'opamp_diff']);
+const OPAMPS = new Set(['opamp', 'opamp_diff', 'opamp_diff_cmfb']);
 
 function failure(code, error, extra = {}) {
   return { ok: false, code, error, ...extra };
@@ -256,7 +256,7 @@ export function analyzeSwitchedCap(circuit, options = {}) {
           term(r, opamp.om, inverse);
         }
       }
-      if (opamp.type === 'opamp_diff') {
+      if (opamp.type !== 'opamp') {
         const cm = newRow();
         term(cm, opamp.op, ops.one);
         term(cm, opamp.om, ops.one);

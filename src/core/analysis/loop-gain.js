@@ -19,7 +19,7 @@ import { solveMNA } from './solve.js';
 import { AC_GROUND } from './context.js';
 
 /** The parts a circuit's loop can be broken at: opamps and transistors. */
-export const LOOP_ELEMENT_TYPES = new Set(['opamp', 'opamp_diff', 'nmos', 'pmos', 'nmosb', 'pmosb']);
+export const LOOP_ELEMENT_TYPES = new Set(['opamp', 'opamp_diff', 'opamp_diff_cmfb', 'nmos', 'pmos', 'nmosb', 'pmosb']);
 
 /**
  * `pipeline` a built exact pipeline (no Miller splitting: it removes the

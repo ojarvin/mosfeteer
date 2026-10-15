@@ -3290,7 +3290,7 @@ export class Circuit {
     }
     const normalizedModel = model === undefined ? undefined : normalizeSmallSignalDeviceModel(model);
     const opampModel = ['ideal', 'finite-gain', 'gbw'].includes(normalizedModel);
-    if (normalizedModel && opampModel !== ['opamp', 'opamp_diff'].includes(component.type)) {
+    if (normalizedModel && opampModel !== ['opamp', 'opamp_diff', 'opamp_diff_cmfb'].includes(component.type)) {
       throw new Error(opampModel ? `opamp models apply only to opamps, not ${component.type}` : `the ${normalizedModel} model does not apply to an opamp`);
     }
     if (role !== undefined && role !== null && role !== '' && !['dc-bias', 'input', 'output'].includes(String(role))) {

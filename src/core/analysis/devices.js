@@ -346,8 +346,11 @@ function convertMos(circuit, component, context) {
 // inputs' difference to its output, ideal (infinite gain, the inputs held
 // equal: a nullor) unless its model says finite gain A or a single pole of
 // gain-bandwidth omega_t (A = omega_t / s); a fully differential one adds
-// its outputs' common mode held at AC ground. A Gm cell is a VCCS.
-const OPAMP_TYPES = new Set(['opamp', 'opamp_diff']);
+// its outputs' common mode held at AC ground. A Gm cell is a VCCS. A CMFB
+// input is drawn only: the outputs' common mode stays held, so it takes no
+// part (and may be left open).
+const OPAMP_TYPES = new Set(['opamp', 'opamp_diff', 'opamp_diff_cmfb']);
+const GM_TYPES = new Set(['gm', 'gm_cmfb']);
 
 /** The opamp's gain parameters: its inverse gain is what MNA stamps (0 when ideal). */
 export function opampModel(component) {
@@ -359,14 +362,14 @@ export function opampModel(component) {
 }
 
 function convertAmplifier(circuit, component, context) {
-  const names = component.def.terminals.map((terminal) => terminal.name);
+  const names = component.def.terminals.map((terminal) => terminal.name).filter((name) => name !== 'cmfb');
   const results = names.map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
   const diagnostics = results.map(([, result]) => result.error).filter(Boolean);
   const nodes = Object.fromEntries(results.map(([terminal, result]) => [terminal, result.node]));
   const touched = results.map(([, result]) => result.node).filter(Boolean);
   if (diagnostics.length) return { primitives: [], diagnostics, nodes: touched };
   const metadata = { component: component.refdes, device: component.type };
-  if (component.type === 'gm') {
+  if (GM_TYPES.has(component.type)) {
     const gm = `Gm${String(component.refdes).replace(/^G(?=\d)/, '')}`;
     return {
       primitives: [{
@@ -430,7 +433,7 @@ function convertOneComponent(circuit, component, context) {
   if (IGNORED_TYPES.has(component.type)) return { primitives: [], diagnostics: [], nodes: [] };
   if (component.type === 'diode') return convertDiode(circuit, component, context);
   if (MOS_TYPES.has(component.type)) return convertMos(circuit, component, context);
-  if (OPAMP_TYPES.has(component.type) || component.type === 'gm') return convertAmplifier(circuit, component, context);
+  if (OPAMP_TYPES.has(component.type) || GM_TYPES.has(component.type)) return convertAmplifier(circuit, component, context);
   if (component.type === 'voltage_source' || component.type === 'current_source') {
     const terminals = ['a', 'b'].map((terminal) => [terminal, nodeFor(circuit, component, terminal, context)]);
     const diagnostics = terminals.map(([, result]) => result.error).filter(Boolean);

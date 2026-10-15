@@ -72,7 +72,7 @@ const PALETTE = [
   { ...part('current_source', 'I source'), children: [part('current_source', 'I'), part('voltage_source', 'V'), part('vccs', 'VCCS'), part('vcvs', 'VCVS')] },
   { ...part('ground', 'Rails'), children: [part('ground', 'Ground'), part('supply', 'Supply'), part('vcm', 'VCM')] },
   { ...part('port', 'Port'), children: [part('input', 'In'), part('output', 'Out'), part('inputoutput', 'In/out'), part('port', 'Port')] },
-  { ...part('opamp', 'Op-amp'), children: [part('opamp', 'Op-amp'), part('opamp_diff', 'Diff'), part('gm', 'Gm'), part('comparator', 'Comp.')] },
+  { ...part('opamp', 'Op-amp'), children: [part('opamp', 'Op-amp'), part('opamp_diff', 'Diff'), part('opamp_diff_cmfb', 'CMFB'), part('gm', 'Gm'), part('comparator', 'Comp.')] },
   { ...part('pmos', 'PMOS'), children: [part('pmos', 'PMOS'), part('pmosb', 'PMOS bulk'), part('pnp', 'PNP')] },
 ];
 
