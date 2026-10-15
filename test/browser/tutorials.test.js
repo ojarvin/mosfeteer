@@ -26,6 +26,19 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
     assert.equal(await h.evaluate(`document.querySelector('#help-tutorials [data-tutorial="ota"]').id`), 'btn-tutorial');
   });
 
+  test('started over the Atlas, a tutorial opens in the editor', async () => {
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+    // Learn is reached from the Atlas too.
+    await h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))`);
+    await h.until(`document.getElementById('help-dialog').open`);
+    await h.evaluate(`document.querySelector('#help-dialog [data-help-tab="tutorial"]').click()`);
+    await begin('ota');
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 5000);
+    assert.equal(await h.evaluate(`document.getElementById('tutorial-card').hidden`), false);
+    await h.click('#tutorial-close');
+  });
+
   test('the switched-cap tutorial starts on its integrator and follows phases, clock, beats and the analysis', async () => {
     await begin('switched-cap');
     assert.equal(await h.evaluate(`document.getElementById('tutorial-title').textContent`), 'Tutorial · SC integrator');

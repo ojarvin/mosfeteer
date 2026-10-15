@@ -13,6 +13,7 @@ import { logLine } from './status-bar-ui.js';
 import { fitView, paneSize } from './canvas-view.js';
 import { renderSaveState, requestDocumentAction, startNewDocument } from './document-session.js';
 import { applyJson, render } from './main.js';
+import { leaveAtlasNow } from './atlas.js';
 
 // ----- contextual tips ---------------------------------------------------------
 // One quiet line in the canvas corner when a faster way exists for what the
@@ -189,6 +190,8 @@ export function syncTutorial() {
 export function offerTutorial(id = 'ota') {
   const tutorial = tutorialById(id);
   requestDocumentAction('Starting the tutorial', () => {
+    // Started over the Atlas (Learn is there too), it opens in the editor.
+    leaveAtlasNow();
     startNewDocument();
     if (tutorial.start) applyJson(JSON.stringify(tutorial.start()), { document: true });
     startTutorial(tutorial);

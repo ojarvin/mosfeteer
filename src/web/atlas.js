@@ -3008,6 +3008,12 @@ function finishClose({ animate = true } = {}) {
   });
 }
 
+/** Leave the desk at once, for something that starts in the editor (a
+ *  tutorial from Learn): no flight back, as New does. */
+export function leaveAtlasNow() {
+  if (state) finishClose();
+}
+
 export function toggleAtlas() {
   if (state) void closeAtlas();
   else void openAtlas();

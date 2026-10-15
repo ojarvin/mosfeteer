@@ -41303,6 +41303,7 @@ __exports.atlasSnapshot = atlasSnapshot;
 __exports.atlasWorldToClient = atlasWorldToClient;
 __exports.openAtlas = openAtlas;
 __exports.closeAtlas = closeAtlas;
+__exports.leaveAtlasNow = leaveAtlasNow;
 __exports.toggleAtlas = toggleAtlas;
 __exports.toggleSymbolSheet = toggleSymbolSheet;
 __exports.onAtlasKey = onAtlasKey;
@@ -44343,6 +44344,12 @@ function finishClose({ animate = true } = {}) {
       document.body.classList.remove('chrome-over');
     }, LEAVE_MS);
   });
+}
+
+/** Leave the desk at once, for something that starts in the editor (a
+ *  tutorial from Learn): no flight back, as New does. */
+function leaveAtlasNow() {
+  if (state) finishClose();
 }
 
 function toggleAtlas() {
@@ -66218,10 +66225,12 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let fitView, paneSize; __bind(() => { ({ fitView, paneSize } = __require("src/web/canvas-view.js")); });
 let renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
 let applyJson, render; __bind(() => { ({ applyJson, render } = __require("src/web/main.js")); });
+let leaveAtlasNow; __bind(() => { ({ leaveAtlasNow } = __require("src/web/atlas.js")); });
 /**
  * Onboarding in the editor: the contextual tip card and the first-drawing
  * tutorial. The rules live in tips.js and tutorial.js; this shows them.
  */
+
 
 
 
@@ -66409,6 +66418,8 @@ function syncTutorial() {
 function offerTutorial(id = 'ota') {
   const tutorial = tutorialById(id);
   requestDocumentAction('Starting the tutorial', () => {
+    // Started over the Atlas (Learn is there too), it opens in the editor.
+    leaveAtlasNow();
     startNewDocument();
     if (tutorial.start) applyJson(JSON.stringify(tutorial.start()), { document: true });
     startTutorial(tutorial);
