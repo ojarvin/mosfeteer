@@ -99,7 +99,8 @@ ending exactly on the edge of that design's card --
 its taper says which way it goes; the designs using the picked one send
 theirs the same way. Each child lifted below them sends beams to its own
 children, fainter a level at a time. On a dark desk the beams add up as light does. With nothing picked, and while the desk is in a transition, no
-arrows show. **Links** in the top bar, or `L`, turns them off or on; the
+arrows show. **Links** in the top bar, or `L`, turns them off or on --
+off, the pick lifts alone, its kin lying flat and dimmed with the rest; the
 choice is kept in this browser.
 
 Kinship (`src/core/design-related.js`) adds up weak hints: a shared tag or a

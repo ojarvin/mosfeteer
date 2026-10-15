@@ -861,4 +861,14 @@ describe('Atlas hierarchy chain', { skip: browserSkip() }, () => {
     const depthOf = (from, to) => s.beams.find((b) => b.from === t[from].id && b.to === t[to].id)?.depth;
     assert.deepEqual([depthOf('top', 'mid'), depthOf('user', 'top'), depthOf('mid', 'leaf'), depthOf('leaf', 'deep'), depthOf('deep', 'deeper')], [1, 1, 2, 3, undefined]);
   });
+
+  test('with the links hidden the pick lifts alone; shown again, its kin float back up', async () => {
+    const atlasKey = (key) => h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true }))`);
+    const lifts = `${h.module('atlas.js')}.then((m) => Object.fromEntries(m.atlasSnapshot().tiles.map((t) => [t.name, t])))`;
+    await h.until(`${lifts}.then((t) => t.top.lift === 1 && t.mid.lift > 0)`);
+    await atlasKey('l');
+    await h.until(`${lifts}.then((t) => t.top.lift === 1 && ['mid', 'leaf', 'deep', 'user'].every((n) => t[n].lift === 0 && t[n].dim === 1 && !t[n].float.dx && !t[n].float.dy))`);
+    await atlasKey('l');
+    await h.until(`${lifts}.then((t) => t.mid.lift > 0.2 && t.deep.lift > 0)`);
+  });
 });

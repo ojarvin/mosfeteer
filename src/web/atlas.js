@@ -736,7 +736,8 @@ function updateLifts() {
   // Through a transition too the pick stays lifted, its kin part way, and
   // the rest dimmed: a design flies up from (or down to) the desk as it is.
   const focus = state.source === 'workspace' ? new Set([state.selected, ...(state.picked || [])].filter(Boolean)) : new Set();
-  const depths = focus.size ? hierarchyOf(focus).depths : new Map();
+  // With the links hidden the pick lifts alone: its kin lie flat with the rest.
+  const depths = !focus.size ? new Map() : linksShown() ? hierarchyOf(focus).depths : new Map([...focus].map((id) => [id, 0]));
   const floats = floatTargets(depths);
   const rate = reducedMotion() ? 1 : 1 - Math.exp(-dt / 85);
   let moving = false;
