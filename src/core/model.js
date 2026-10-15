@@ -1028,6 +1028,19 @@ function normalizeAnalysisValues(value) {
       if (/^[A-Za-z][\w]{0,40}$/.test(name) && Number.isFinite(number) && number > 0) values[name] = number;
     }
     sc = { input: text(rawSc.input), output: text(rawSc.output), readout: text(rawSc.readout), values };
+    // Its kT/C noise: worked out with each Derive when on; the calculator's
+    // fields as typed (a value per symbol, the temperature in Celsius, f_s).
+    if (rawSc.noise === true) sc.noise = true;
+    const rawCalc = rawSc.calc;
+    if (rawCalc && typeof rawCalc === 'object') {
+      const field = (raw) => (typeof raw === 'string' ? raw.trim().slice(0, 60) : typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : '');
+      const calcValues = {};
+      for (const [name, raw] of Object.entries(rawCalc.values || {})) {
+        if (/^[A-Za-z][\w]{0,40}$/.test(name) && field(raw)) calcValues[name] = field(raw);
+      }
+      const calc = { values: calcValues, ...(field(rawCalc.celsius) ? { celsius: field(rawCalc.celsius) } : {}), ...(field(rawCalc.fs) ? { fs: field(rawCalc.fs) } : {}) };
+      if (Object.keys(calcValues).length || calc.celsius || calc.fs) sc.calc = calc;
+    }
   }
   return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}), ...(sc ? { sc } : {}) };
 }
@@ -1041,7 +1054,7 @@ function analysisValuesJSON(values) {
   const fractions = values?.fractions || {};
   const band = normalizeBand(values?.band);
   const flow = values?.flow && (values.flow.output || Object.keys(values.flow.sources || {}).length || values.flow.swingInput || values.flow.swingFrequency || values.flow.graphView || values.flow.spectrum || values.flow.optimize) ? values.flow : null;
-  const sc = values?.sc && (values.sc.input || values.sc.output || values.sc.readout || Object.keys(values.sc.values || {}).length) ? values.sc : null;
+  const sc = values?.sc && (values.sc.input || values.sc.output || values.sc.readout || Object.keys(values.sc.values || {}).length || values.sc.noise || values.sc.calc) ? values.sc : null;
   if (!Object.keys(coefficients).length && !hasBode && !sAxis && !Object.keys(links).length && !band && !flow && !sc) return {};
   const fractionList = Object.entries(fractions).filter(([name, text]) => Number.isFinite(coefficients[name]) && typeof text === 'string');
   return { analysisValues: {
@@ -1050,7 +1063,7 @@ function analysisValuesJSON(values) {
     ...(fractionList.length ? { fractions: Object.fromEntries(fractionList) } : {}),
     ...(band ? { band } : {}),
     ...(flow ? { flow: { ...flow, sources: { ...flow.sources } } } : {}),
-    ...(sc ? { sc: { ...sc, values: { ...sc.values } } } : {}),
+    ...(sc ? { sc: { ...sc, values: { ...sc.values }, ...(sc.calc ? { calc: { ...sc.calc, values: { ...sc.calc.values } } } : {}) } } : {}),
     ...(hasBode ? { bode: { ...bode, multipliers: { ...bode.multipliers } } } : {}),
     ...(sAxis ? { sAxis: 'normalized' } : {}),
   } };

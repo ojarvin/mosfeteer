@@ -33,7 +33,7 @@ import { resolveAnalysisContext, AC_GROUND } from './context.js';
 import { createRationalOps } from './algebra-ops.js';
 import { solveLinearSystem } from './solve.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
-import { rationalFunction, symbol } from './rational.js';
+import { integer, polynomialCoefficients, rational, rationalFunction, substitute, symbol } from './rational.js';
 import { expressionSymbols } from './bode.js';
 import { coefficientValue, numericRootsOf, transferTex } from './signal-flow.js';
 import { parseGain } from '../transfer-function.js';
@@ -41,6 +41,7 @@ import { timingStates } from '../timing-diagram.js';
 import { samePhase, switchGroupKey, switchState, switchStateAt } from '../beats.js';
 import { isReferenceMarker } from '../model.js';
 import { opampModel } from './devices.js';
+import { switchedCapNoise } from './switched-cap-noise.js';
 
 const VARIABLE = 'z';
 // Drawn parts that carry no charge and no current of their own: ports and
@@ -186,7 +187,10 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   // period, the last phase's vc is s = z^-1 Phi s + gamma u, and only that
   // -- as large as the number of capacitors -- is solved in z.
   const ops = createRationalOps({ variable: VARIABLE, maxOperations: options.maxOperations });
-  const lift = (expression) => ops.add(ops.zero, expression);
+  // `numbers` puts numbers in for the capacitances and gains before solving
+  // (the calculator's route: quick for any circuit).
+  const numbers = options.numbers ? new Map(Object.entries(options.numbers).map(([name, number]) => [name, exactNumber(number)])) : null;
+  const lift = numbers ? (expression) => ops.add(ops.zero, substitute(expression, numbers)) : (expression) => ops.add(ops.zero, expression);
   const n = capacitors.length;
   const width = 1 + n; // a node as [u, vc_1 .. vc_n] (before the phase)
   const values = capacitors.map((cap) => lift(cap.value));
@@ -311,6 +315,26 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   // too: each capacitance in turn taken as the variable.
   const value = cancelCapacitanceFactors(cancelCommonPolynomialFactor(raw, { variable: VARIABLE, maxWork: 400_000 }), capacitors, opamps.map((opamp) => opamp.gain).filter(Boolean));
 
+  // kT/C noise, in the same symbols (over kT), when asked for (it is its
+  // own, heavier work); its failure leaves H(z).
+  let noise = null;
+  if (options.noise) try {
+    // Its own budget: the transfer function's may be spent.
+    // In symbols it can grow past reading (unmatched halves): then it is
+    // refused, quickly, and the calculator's numbers still come.
+    const noiseOps = createRationalOps({ variable: VARIABLE, maxOperations: options.noiseMaxOperations ?? (numbers ? 2_000_000 : 300_000) });
+    const noiseLift = numbers ? (expression) => noiseOps.add(noiseOps.zero, substitute(expression, numbers)) : (expression) => noiseOps.add(noiseOps.zero, expression);
+    noise = switchedCapNoise({ states, layouts, capacitors, switches, opamps, nodes: { ground: AC_GROUND, input: inputNode, output: outputNode }, ops: noiseOps, lift: noiseLift, maxTerms: numbers ? 0 : 400, phaseMaps, Phi, readout, transfer: value, variable: VARIABLE });
+    if (noiseOps.budget.exceeded || noise.tooLarge) noise = { ok: false, error: numbers ? 'The noise is too large to work out.' : 'The noise is too large to show in symbols; the calculator still gives its numbers.' };
+  } catch (error) {
+    noise = { ok: false, error: error.message };
+  }
+  if (noise?.ok) {
+    const gainNames = opamps.map((opamp) => opamp.gain).filter(Boolean);
+    const tidy = (entry) => ({ input: cancelCapacitanceFactors(entry.input, capacitors, gainNames) });
+    noise = { ok: true, contributors: noise.contributors.map((contributor) => ({ ...contributor, ...tidy(contributor) })), total: tidy(noise.total) };
+  }
+
   // In the textbook form: the denominator's constant term 1 (C_F divided out).
   const tex = transferTex(value, VARIABLE, { symbolicLead: true });
   const label = `\\frac{${texName(context.output.name)}}{${texName(context.input.name)}}`;
@@ -325,12 +349,102 @@ export function analyzeSwitchedCap(circuit, options = {}) {
     capacitors: capacitors.map((cap) => cap.refdes),
     // The op-amps' finite gains' symbols (A1), apart from the capacitances.
     gains: opamps.filter((opamp) => opamp.gain).map((opamp) => opamp.gain),
+    // Every symbol a number can be given for: the capacitances, the gains.
+    symbols: [...new Set([...capacitors.flatMap((cap) => [...expressionSymbols(cap.value, VARIABLE)]), ...opamps.map((opamp) => opamp.gain).filter(Boolean)])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
     value,
     tex,
     label,
     equation: `${label} = ${tex}`,
+    noise,
     ...numericRootsOf(value),
   };
+}
+
+const BOLTZMANN = 1.380649e-23;
+// Points over half the unit circle the mean of a coloured noise is taken at.
+const NOISE_POINTS = 1024;
+
+/**
+ * The kT/C noise in numbers: the calculator. `options`: the analysis's
+ * (`input`, `output`, `readout`), `values` (a number for each symbol of
+ * `result.symbols`: farads, gains; `symbols` and `gains` as a result has
+ * them spare finding them again), `celsius`, `fs` (the sample rate, Hz).
+ * Each contributor's input-referred noise, and their total: `rms` (V, over
+ * the band to f_s/2) and `density` (V/sqrt(Hz), the white noise with that
+ * RMS: rms / sqrt(f_s / 2)). Returns `{ ok, contributors: [{ phaseName,
+ * switches, capacitors, rms, density }], total: { rms, density } }` or a
+ * failure.
+ */
+export function switchedCapNoiseFigures(circuit, options = {}) {
+  const { values = {}, celsius = 27, fs = 1 } = options;
+  if (!(Number(fs) > 0)) return failure('noise', 'Give the sample rate f_s, above 0.');
+  const kelvin = Number(celsius) + 273.15;
+  if (!(kelvin > 0)) return failure('noise', 'The temperature is below absolute zero.');
+  const missing = [];
+  // Capacitances in units of the first one, so the exact numbers stay small;
+  // the noise, over capacitance, is scaled back.
+  // The symbols to give numbers to: as given (a result's), else found.
+  const symbols = options.symbols ? { symbols: options.symbols, gains: options.gains || [] } : analyzeSwitchedCap(circuit, { input: options.input, output: options.output, readout: options.readout });
+  if (symbols.ok === false) return symbols;
+  const gains = new Set(symbols.gains);
+  const capacitances = symbols.symbols.filter((name) => !gains.has(name));
+  for (const name of symbols.symbols) if (!(Number(values[name]) > 0)) missing.push(name);
+  if (missing.length) return failure('values', `Give ${missing.join(', ')} a value above 0.`, { missing });
+  const unit = capacitances.length ? Number(values[capacitances[0]]) : 1;
+  const numbers = Object.fromEntries(symbols.symbols.map((name) => [name, gains.has(name) ? Number(values[name]) : Number(values[name]) / unit]));
+  const result = analyzeSwitchedCap(circuit, { input: options.input, output: options.output, readout: options.readout, noise: true, numbers });
+  if (!result.ok) return result;
+  if (!result.noise?.ok) return failure('noise', result.noise?.error || 'No noise.');
+  const kT = BOLTZMANN * kelvin;
+  // A value over kT (per capacitance unit) as its mean over the band.
+  const figures = (value) => {
+    const mean = meanOnCircle(value) / unit;
+    const power = kT * mean;
+    return { rms: Math.sqrt(power), density: Math.sqrt(power / (Number(fs) / 2)), power };
+  };
+  return {
+    ok: true,
+    contributors: result.noise.contributors.map((contributor) => ({ phaseName: contributor.phaseName, switches: contributor.switches, capacitors: contributor.capacitors, ...figures(contributor.input) })),
+    total: figures(result.noise.total.input),
+    kelvin,
+  };
+}
+
+/** A rational in z with number coefficients, as a number from BigInts. */
+function bigRatio(numerator, denominator) {
+  const scale = (value) => value.toString().replace('-', '').length;
+  const shift = Math.max(0, Math.max(scale(numerator), scale(denominator)) - 300);
+  const cut = 10n ** BigInt(shift);
+  return Number(numerator / cut) / Number(denominator / cut);
+}
+
+/** The mean of a real noise ratio E(z) over z = e^(j w), 0 < w < pi
+ *  (midpoints: a zero of H on the circle is never landed on). */
+function meanOnCircle(value) {
+  const terms = (expression) => (polynomialCoefficients(expression, VARIABLE) || []).map(({ power, coefficient }) => {
+    if (coefficient?.kind !== 'number') throw new Error('The noise still has a symbol in it.');
+    return { power, value: bigRatio(coefficient.numerator, coefficient.denominator) };
+  });
+  if (value?.kind === 'number') return bigRatio(value.numerator, value.denominator);
+  const top = terms(value.numerator ?? value);
+  const bottom = value.denominator ? terms(value.denominator) : [{ power: 0, value: 1 }];
+  const at = (list, w) => list.reduce(([re, im], { power, value: c }) => [re + c * Math.cos(power * w), im + c * Math.sin(power * w)], [0, 0]);
+  let sum = 0;
+  for (let i = 0; i < NOISE_POINTS; i += 1) {
+    const w = Math.PI * (i + 0.5) / NOISE_POINTS;
+    const [a, b] = at(top, w);
+    const [c, d] = at(bottom, w);
+    sum += (a * c + b * d) / (c * c + d * d);
+  }
+  return sum / NOISE_POINTS;
+}
+
+/** A number as an exact rational (twelve significant digits). */
+function exactNumber(value) {
+  const [mantissa, exponent] = Number(value).toExponential(11).split('e');
+  const digits = BigInt(mantissa.replace('.', ''));
+  const power = Number(exponent) - 11;
+  return power >= 0 ? integer(digits * 10n ** BigInt(power)) : rational(digits, 10n ** BigInt(-power));
 }
 
 /**

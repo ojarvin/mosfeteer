@@ -5,6 +5,7 @@ top): the exact z-domain transfer function of a drawn switched-capacitor
 circuit, by charge conservation from phase to phase. A drawing with switches
 and capacitors and no transistors, resistors, or other devices opens in it.
 Code: `src/core/analysis/switched-cap.js` (the analysis),
+`src/core/analysis/switched-cap-noise.js` (its kT/C noise),
 `src/web/switched-cap-ui.js` (the mode, registered on the window's mode bar
 by `registerAnalysisMode` in `src/web/signal-flow-ui.js`); tests:
 `test/switched-cap.test.js`, `test/browser/switched-cap.test.js`.
@@ -75,6 +76,45 @@ switched onto ground or the input or onto another op-amp's output, and a
 state whose equations have no single solution (an op-amp without feedback, a
 node nothing sets) each say so, naming the part or the state.
 
+## kT/C noise
+
+Asked for (`noise: true`; the window's **Noise** checkbox), each phase's
+switch noise as it is frozen on the capacitors at the phase's end. Settled,
+the phases' samples are independent of each other and from period to period:
+
+- **Sampling**, by equipartition. With the op-amps' terminals held, every
+  other node that touches a capacitor moves as its closed switches let it:
+  switched to something held, freely; a group switched to nothing held,
+  keeping its charge. Each independent way the capacitor voltages can move
+  holds kT: their covariance is kT B (B^T D B)^-1 B^T, B a basis of the moves,
+  D the capacitances. Nodes joined neither by a capacitor nor by a switch
+  into an unheld group are separate contributors (both halves of a
+  differential circuit grounding a plate are two rows, not one).
+- **The op-amps** then move the sampled charge on as they move signal
+  charge: a virtual ground's group keeps its charge, so what a switch drew
+  from it is made up through the feedback capacitor.
+- **To the output**, what phase j leaves reaches the output read at phase m
+  by the signal's own phase maps: N_j(z) = y (M_(K-1) ... M_(j+1)) + [j < m]
+  c (M_(m-1) ... M_(j+1)), with y = z^-1 c (M_(m-1) ... M_0) (I - z^-1 Phi)^-1
+  solved once for every phase. Each path over H(z) first (they share H's
+  denominator), the input-referred noise per sample is R G^-1 R(1/z)^T, over
+  kT.
+
+Each contributor is a row: the switches it samples through, its capacitors,
+its phase, and its input-referred noise over kT in the same symbols as H(z)
+(1/C_S for each phase of the integrator, 2/C_S in all; the same with a finite
+gain, which moves noise and signal alike). The op-amps' own noise is not
+modelled. A result past reading in symbols (unmatched differential halves,
+each capacitance its own symbol) is refused within a second, and the
+calculator still gives its numbers.
+
+**The calculator** (`switchedCapNoiseFigures`) takes a number for every
+symbol (farads, gains), the temperature in °C, and f_s; it solves the same
+analysis with the numbers put in before solving, so it is quick for any
+circuit. Per contributor and in total: the input-referred RMS over the band
+to f_s/2 (kT times the mean of the noise ratio over the unit circle), and the
+density of the white noise with that RMS, rms / sqrt(f_s / 2).
+
 ## The window
 
 It works as the other modes do. **Signals** picks the input and output --
@@ -84,16 +124,22 @@ the drawing has only one -- and the state to read at. **Phases** lists the
 clock. **Derive** (or Enter) gives the equation, with its poles and zeros at
 the capacitances' numbers, and adds it to the Plots window's graph (`Shift+W`)
 as each Derive adds its gain to the Bode graph: magnitude or phase over
-f/f_s, a legend to show or take off each trace, **Clear graph**, and
+f/f_s, a legend naming each trace by its ratio (V_OUT/V_IN, as the
+signal-flow graph's) to show or take off, **Clear graph**, and
 **Annotate graph** to put it on the drawing (`placeResponsePlot`).
 **Values** are rows (`src/web/value-row.js`, shared with the small-signal
 Values): a slider over E24 steps and a field -- each capacitance (1 unless
 set, three decades either way) and each finite gain (60 dB unless set, from 1
 to 10^6).
+**Noise**, checked, works the kT/C noise out with each Derive: its table, as
+the small-signal noise table, a row per contributor (pointing at one lights
+its switches and capacitors on the drawing). The **Noise calculator** under
+it takes each symbol's value (1p unless set), T (27 °C) and f_s (1M), and
+gives each row's RMS and density and their total.
 **Annotate equation** writes the equation under the drawing. The choices and
-numbers are the design's (`Circuit#analysisValues.sc`): saved with it, one
-undo step a finished adjustment, never making it unsaved.
+numbers -- the noise switch and the calculator's fields too, as typed -- are
+the design's (`Circuit#analysisValues.sc`): saved with it, one undo step a
+finished adjustment, never making it unsaved.
 
-Not yet: kT/C noise per sampling capacitor, and parasitic capacitances (the
-integrators are stray-insensitive by design, so these would show which ones
-are not).
+Not yet: parasitic capacitances (the integrators are stray-insensitive by
+design, so these would show which ones are not), and the op-amps' own noise.

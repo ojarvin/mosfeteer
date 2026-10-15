@@ -85,6 +85,37 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.circuit.components.get('U1').analysis.model = undefined; })`);
   });
 
+  test('the graph\'s legend names each trace by its ratio, not its whole equation', async () => {
+    await h.open('integrator');
+    await openWindow();
+    await h.evaluate(`document.querySelector('.sc-derive').click()`);
+    await h.until(`document.querySelectorAll('.sc-legend .signal-flow-legend-row').length > 0`);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.sc-legend .signal-flow-legend-math')].map((m) => m.textContent)`), ['VOUTVIN']);
+  });
+
+  test('kT/C noise: off until asked, then a row per sampling, and the calculator\'s numbers, saved with the design', async () => {
+    await h.open('integrator');
+    await openWindow();
+    await h.evaluate(`document.querySelector('.sc-derive').click()`);
+    await h.until(`!!document.querySelector('.sc-equation')`);
+    assert.equal(await h.evaluate(`!!document.querySelector('.sc-noise-result table')`), false, 'no noise unless asked');
+    assert.equal(await h.evaluate(`document.querySelector('.sc-calc').hidden`), true);
+    // Checking it works the noise out at once, and with each Derive after.
+    await h.evaluate(`document.getElementById('sc-noise-on').click()`);
+    await h.until(`!!document.querySelector('.sc-noise-result table')`, 10000);
+    const rows = await h.evaluate(`[...document.querySelectorAll('.sc-noise-result tbody tr')].map((tr) => [tr.dataset.components || '', tr.firstChild.textContent])`);
+    assert.deepEqual(rows, [['S1 S3 CS', 'S1, S3'], ['S2 S4 CS', 'S2, S4'], ['', 'Total']]);
+    // The calculator: 1 pF at 27 °C samples sqrt(kT/C) = 64.37 µV; two such.
+    await h.until(`!!document.querySelector('.sc-calc-result table')`, 10000);
+    const cells = () => h.evaluate(`[...document.querySelectorAll('.sc-calc-result tbody tr')].map((tr) => [...tr.querySelectorAll('.sc-noise-value')].map((td) => td.textContent).join(' | '))`);
+    assert.deepEqual(await cells(), ['64.37 µV | 91.04 nV/√Hz', '64.37 µV | 91.04 nV/√Hz', '91.04 µV | 128.7 nV/√Hz']);
+    // A value typed in moves the numbers, and is the design's.
+    await h.evaluate(`(() => { const i = document.querySelector('.sc-calc-field[aria-label="C_S"]') || document.querySelectorAll('.sc-calc-field')[1]; i.value = '4p'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await h.until(`document.querySelector('.sc-calc-result tbody tr .sc-noise-value')?.textContent === '32.19 µV'`, 10000);
+    const saved = await h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify({ noise: m.editor.circuit.analysisValues.sc.noise, calc: m.editor.circuit.analysisValues.sc.calc }))`);
+    assert.deepEqual(JSON.parse(saved), { noise: true, calc: { values: { CS: '4p' } } });
+  });
+
   test('without a timing diagram or beats it says what is missing', async () => {
     await h.open('unclocked');
     await openWindow();

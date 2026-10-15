@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { removeTimingDiagram } from '../src/core/timing-diagram.js';
-import { analyzeSwitchedCap, switchedCapPhases } from '../src/core/analysis/switched-cap.js';
+import { analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases } from '../src/core/analysis/switched-cap.js';
 import { integer, rationalAt, substituteRational } from '../src/core/analysis/rational.js';
+import { transferTex } from '../src/core/analysis/signal-flow.js';
 
 /**
  * The stray-insensitive SC integrator: in φ1 S1 samples V_IN onto CS while
@@ -154,6 +155,9 @@ test('the switched-capacitor settings are saved with the design, and only sound 
   circuit.analysisValues.sc = { input: 'V_{IN}', output: 'V_{OUT}', readout: '$\\varphi_1$', values: { CS: 2, CF: 1, bad: -1, 'not a name': 3 } };
   const back = Circuit.fromJSON(circuit.toJSON()).analysisValues.sc;
   assert.deepEqual(back, { input: 'V_{IN}', output: 'V_{OUT}', readout: '$\\varphi_1$', values: { CS: 2, CF: 1 } });
+  // The noise switch and the calculator's fields, as typed.
+  circuit.analysisValues.sc = { input: '', output: '', readout: '', values: {}, noise: true, calc: { values: { CS: ' 1p ', 'bad name': '2', CF: '' }, celsius: 85, fs: '1M' } };
+  assert.deepEqual(Circuit.fromJSON(circuit.toJSON()).analysisValues.sc, { input: '', output: '', readout: '', values: {}, noise: true, calc: { values: { CS: '1p' }, celsius: '85', fs: '1M' } });
   // Nothing set, nothing saved.
   assert.equal('analysisValues' in integrator().toJSON(), false);
 });
@@ -183,4 +187,77 @@ test('a finite-gain op-amp (its small-signal model, gain A1): the integrator lea
   const gbw = analyzeSwitchedCap(circuit);
   assert.equal(gbw.code, 'opamp-model');
   assert.match(gbw.error, /U1/);
+});
+
+/** A noise entry in numbers, at z = `z` (white noise is the same at any). */
+const noiseAt = (value, values, z = 1) => {
+  const numbered = substituteRational(value, new Map(Object.entries(values).map(([name, number]) => [name, integer(number)])));
+  const at = rationalAt(numbered, integer(z));
+  return Number(at.numerator) / Number(at.denominator);
+};
+
+test('kT/C noise: the integrator samples kT/C_S in each phase, 2kT/C_S in all, input-referred', () => {
+  for (const options of [{ readout: 0 }, {}, { inverting: true }]) {
+    const result = analyzeSwitchedCap(integrator({ inverting: options.inverting }), { readout: options.readout, noise: true });
+    assert.equal(result.noise.ok, true, result.noise.error);
+    const rows = result.noise.contributors;
+    assert.deepEqual(rows.map((row) => row.capacitors), [['CS'], ['CS']]);
+    assert.deepEqual(rows.map((row) => row.switches), options.inverting ? [['S1', 'S4'], ['S2', 'S3']] : [['S1', 'S3'], ['S2', 'S4']]);
+    assert.equal(noiseAt(rows[0].input, { CS: 4 }), 0.25);
+    assert.equal(noiseAt(result.noise.total.input, { CS: 4 }), 0.5);
+  }
+});
+
+test('kT/C noise only when asked: Derive alone does not work it out', () => {
+  assert.equal(analyzeSwitchedCap(integrator()).noise, null);
+});
+
+test('kT/C noise with a finite-gain op-amp: the gain moves noise and signal alike, 2kT/C_S still', () => {
+  const circuit = integrator();
+  circuit.components.get('U1').analysis.model = 'finite-gain';
+  const result = analyzeSwitchedCap(circuit, { readout: 0, noise: true });
+  assert.equal(result.noise.ok, true, result.noise.error);
+  assert.equal(noiseAt(result.noise.total.input, { CS: 4, A1: 7 }), 0.5);
+  // Each row reduced: no (1 + A1)^2 over and under.
+  for (const row of result.noise.contributors) assert.equal(transferTex(row.input, 'z', { symbolicLead: true }), '\\frac{1}{C_{S}}');
+});
+
+test('kT/C noise of matched differential halves: each half samples twice, every switch pair its own row', () => {
+  const circuit = differentialIntegrator();
+  for (const half of ['P', 'M']) {
+    runCommand(circuit, `value CS${half} C_S`);
+    runCommand(circuit, `value CF${half} C_F`);
+  }
+  const result = analyzeSwitchedCap(circuit, { input: 'VINP', output: 'VOUTP', readout: 0, noise: true });
+  assert.equal(result.noise.ok, true, result.noise.error);
+  assert.deepEqual(result.noise.contributors.map((row) => row.capacitors.join()), ['CSP', 'CSM', 'CSP', 'CSM']);
+  // Referred to the one input V_INP (H = C_S / 2C_F): kT/C_S a sample each.
+  assert.equal(noiseAt(result.noise.total.input, { C_S: 2 }), 2);
+});
+
+test('kT/C noise past reading in symbols is refused quickly, and the calculator still gives its numbers', () => {
+  const circuit = differentialIntegrator();
+  const started = Date.now();
+  const result = analyzeSwitchedCap(circuit, { input: 'VINP', output: 'VOUTP', readout: 0, noise: true });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.noise.ok, false);
+  assert.match(result.noise.error, /too large to show in symbols/);
+  assert.ok(Date.now() - started < 10_000, 'refused, not ground through');
+  const values = Object.fromEntries(result.symbols.map((name) => [name, 1e-12]));
+  const figures = switchedCapNoiseFigures(circuit, { input: 'VINP', output: 'VOUTP', readout: 0, values, celsius: 27, fs: 1e6 });
+  assert.equal(figures.ok, true, figures.error);
+  assert.equal(figures.contributors.length, 4);
+  assert.ok(figures.total.rms > 0 && Number.isFinite(figures.total.rms));
+});
+
+test('the noise calculator: sqrt(kT/C) a sample, the RMS over the band to f_s/2, its white density', () => {
+  const kT = 1.380649e-23 * 300.15;
+  const figures = switchedCapNoiseFigures(integrator(), { values: { CS: 1e-12, CF: 2e-12 }, celsius: 27, fs: 1e6 });
+  assert.equal(figures.ok, true, figures.error);
+  for (const row of figures.contributors) assert.ok(Math.abs(row.rms / Math.sqrt(kT / 1e-12) - 1) < 1e-9);
+  assert.ok(Math.abs(figures.total.rms / Math.sqrt(2 * kT / 1e-12) - 1) < 1e-9);
+  assert.ok(Math.abs(figures.total.density / (figures.total.rms / Math.sqrt(0.5e6)) - 1) < 1e-12);
+  // Every symbol needs a number, and the sample rate one above 0.
+  assert.equal(switchedCapNoiseFigures(integrator(), { values: { CS: 1e-12 }, fs: 1e6 }).code, 'values');
+  assert.equal(switchedCapNoiseFigures(integrator(), { values: { CS: 1e-12, CF: 1e-12 }, fs: 0 }).code, 'noise');
 });

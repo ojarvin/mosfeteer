@@ -5829,9 +5829,10 @@ html.dark .presenter svg [fill="#fff"] { fill: var(--paper); }
 
 /* The small-signal Options fold under the signals: its summary reads as a
    fieldset's legend, with what is chosen beside it. */
-.analysis-options {
-  display: grid;
-  gap: 10px;
+/* A details' grid gap falls only between its summary and the rest: the
+   cards inside are spaced by margins, as the column spaces its sections. */
+details.analysis-options > * + * {
+  margin-top: 12px;
 }
 
 .analysis-options > summary {
@@ -6758,6 +6759,12 @@ body.chrome-away [data-editor-edge="right"] {
   display: none;
 }
 
+/* A holder with nothing in it yet (no result, no issues) takes no room:
+   in the column's gap it would double the space between its neighbours. */
+.signal-flow-section > div:empty {
+  display: none;
+}
+
 .signal-flow-sources {
   display: grid;
   gap: 6px;
@@ -7550,9 +7557,10 @@ body.chrome-away [data-editor-edge="right"] {
   font-size: var(--text-md);
 }
 
-/* Between s and z: a short guide folded under the intro. */
+/* Between s and z: a short guide folded under the intro, spaced as every
+   other section (the column's gap). */
 .signal-flow-guide {
-  margin: 4px 0 10px;
+  margin: 0;
 }
 
 .signal-flow-guide-head {
@@ -7717,6 +7725,49 @@ body.chrome-away [data-editor-edge="right"] {
 
 .sc-math.display math {
   display: block;
+}
+
+/* The noise tables: a contributor's names left, its values right. */
+.sc-noise-table th,
+.sc-noise-table td {
+  text-align: left;
+}
+
+.sc-noise-table .sc-noise-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-noise-total th,
+.sc-noise-total td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.sc-noise-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The calculator's fields in one grid: names, fields, and units aligned. */
+.sc-calc-fields {
+  display: grid;
+  grid-template-columns: minmax(3rem, max-content) minmax(0, 1fr) 3.5em;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.sc-calc-row {
+  display: contents;
+}
+
+.sc-calc-field {
+  width: 100%;
+}
+
+.sc-calc-unit {
+  color: var(--text-dim);
 }
 
 .sc-root-line {

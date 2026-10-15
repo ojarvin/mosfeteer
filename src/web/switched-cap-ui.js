@@ -11,8 +11,9 @@
  * put it on the drawing.
  */
 
-import { analyzeSwitchedCap, switchedCapPhases } from '../core/analysis/switched-cap.js';
-import { TRACE_COLORS, complexText, numericRootsOf, responsePlot, resultSymbols, withCoefficients } from '../core/analysis/signal-flow.js';
+import { analyzeSwitchedCap, switchedCapNoiseFigures, switchedCapPhases } from '../core/analysis/switched-cap.js';
+import { calculate, siResult } from '../core/calculator.js';
+import { TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, resultSymbols, withCoefficients } from '../core/analysis/signal-flow.js';
 import { symbolText } from '../core/analysis/present.js';
 import { responseSpec } from '../core/plot-spec.js';
 import { plainTexText, texToMathML } from '../core/render.js';
@@ -199,19 +200,20 @@ function renderValues({ force = false } = {}) {
 
 function derive() {
   const s = settings();
-  const result = analyzeSwitchedCap(editor.circuit, { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined });
+  const result = analyzeSwitchedCap(editor.circuit, { input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined, noise: !!s.noise });
   latest = { revision: editor.modelRevision, result };
   if (result.ok) addTrace(result);
   renderResult();
+  runCalculator();
   renderPlots();
   if (result.ok) offerPlots();
 }
 
 /** A result onto the graph, as each Derive adds its gain to the Bode graph:
- *  the same equation again replaces its trace. */
+ *  the same equation again replaces its trace. A trace is named by its ratio
+ *  (V_OUT/V_IN), as the signal-flow graph's; the equation is its identity. */
 function addTrace(result) {
-  const label = result.equation;
-  const existing = traces.find((trace) => trace.label === label);
+  const existing = traces.find((trace) => trace.equation === result.equation);
   if (existing) {
     existing.value = result.value;
     existing.gains = result.gains;
@@ -220,7 +222,7 @@ function addTrace(result) {
   }
   const used = new Set(traces.map((trace) => trace.color));
   const color = TRACE_COLORS.find((candidate) => !used.has(candidate)) || TRACE_COLORS[traces.length % TRACE_COLORS.length];
-  traces.push({ id: `sc-${traces.length}-${label}`, label, color, value: result.value, gains: result.gains, on: true });
+  traces.push({ id: `sc-${traces.length}-${result.equation}`, label: result.label, equation: result.equation, color, value: result.value, gains: result.gains, on: true });
 }
 
 /** What Derive found: the equation (or why there is none), and its poles
@@ -229,6 +231,7 @@ function renderResult() {
   const host = section.querySelector('.sc-results');
   section.querySelector('.sc-stale').hidden = !latest || latest.revision === editor.modelRevision;
   if (annotateButton) annotateButton.hidden = !latest?.result.ok;
+  renderNoise();
   if (!latest) { host.replaceChildren(); renderValues(); return; }
   const { result } = latest;
   if (!result.ok) {
@@ -251,6 +254,121 @@ function renderRoots() {
   const roots = numericRootsOf(numbered(latest.result.value));
   const line = (label, items) => (items?.length ? el('p', { class: 'sc-root-line' }, [`${label}: `, items.map((root) => `z = ${complexText(root)}`).join(', ')]) : null);
   host.replaceChildren(...[line('Poles', roots.poles), line('Zeros', roots.zeros)].filter(Boolean));
+}
+
+// ----- noise -----------------------------------------------------------------------------
+
+/** A contributor's parts, for the canvas to light up (as the small-signal
+ *  noise table's devices do). */
+const partsOf = (row) => [...row.switches, ...row.capacitors];
+
+/** Light up `parts` on the drawing while a row is pointed at. */
+function emphasize(parts) {
+  const next = parts || [];
+  if (next.length === editor.equationEmphasis.length && next.every((ref, i) => ref === editor.equationEmphasis[i])) return;
+  editor.equationEmphasis = next;
+  render();
+}
+
+/** A table in the small-signal noise table's style: a row per contributor
+ *  (the switches it samples through, the capacitors, the phase), then the
+ *  total; `cells(row)` gives each row's value cells. */
+function noiseTable(headers, rows, total, cells) {
+  const th = (content, attrs = {}) => el('th', attrs, [content]);
+  const value = (cell) => el('td', { class: 'sc-noise-value' }, [cell]);
+  const head = el('tr', {}, [th('Switches', { scope: 'col' }), th('Capacitors', { scope: 'col' }), th('Phase', { scope: 'col' }), ...headers.map((header) => th(header, { scope: 'col', class: 'sc-noise-value' }))]);
+  const body = rows.map((row) => el('tr', { 'data-components': partsOf(row).join(' ') }, [
+    th(row.switches.join(', '), { scope: 'row' }),
+    el('td', { text: row.capacitors.join(', ') }),
+    el('td', {}, [phaseName(row.phaseName)]),
+    ...cells(row).map(value),
+  ]));
+  const totalRow = el('tr', { class: 'sc-noise-total' }, [th('Total', { scope: 'row', colspan: '3' }), ...cells(total).map(value)]);
+  const table = el('table', {}, [el('thead', {}, [head]), el('tbody', {}, [...body, totalRow])]);
+  table.addEventListener('pointerover', (ev) => {
+    const row = ev.target.closest?.('tr[data-components]');
+    emphasize(row ? row.dataset.components.split(' ') : []);
+  });
+  table.addEventListener('pointerleave', () => emphasize([]));
+  return el('div', { class: 'analysis-noise-table sc-noise-table' }, [el('div', { class: 'analysis-noise-table-scroll' }, [table])]);
+}
+
+/** The noise section: off, a hint; on, each contributor in symbols. */
+function renderNoise() {
+  const host = section?.querySelector('.sc-noise-result');
+  if (!host) return;
+  const on = !!settings().noise;
+  section.querySelector('#sc-noise-on').checked = on;
+  section.querySelector('.sc-calc').hidden = !on;
+  const result = latest?.result;
+  if (!on || !result?.ok) { host.replaceChildren(); return; }
+  const noise = result.noise;
+  if (!noise) { host.replaceChildren(el('p', { class: 'field-hint', text: 'Derive to work it out.' })); return; }
+  if (!noise.ok) { host.replaceChildren(el('p', { class: 'field-hint', role: 'status', text: noise.error })); return; }
+  host.replaceChildren(noiseTable(
+    [math('\\frac{\\overline{v^2_{n,in}}}{kT}')],
+    noise.contributors,
+    noise.total,
+    (row) => [math(transferTex(row.input, 'z', { symbolicLead: true }))],
+  ));
+}
+
+// The calculator's defaults: a capacitance 1 pF, a gain 60 dB, 27 °C, 1 MHz.
+const CALC_DEFAULTS = { capacitance: '1p', gain: '1000', celsius: '27', fs: '1M' };
+let calcTimer = 0;
+
+const calc = () => (settings().calc ||= { values: {} });
+
+/** A field's number (SI suffixes and arithmetic, as the calculator takes
+ *  them), or NaN. */
+function fieldNumber(text) {
+  try { return Number(calculate(String(text)).value); } catch { return NaN; }
+}
+
+/** The calculator's fields: a value for each symbol, the temperature, f_s. */
+function renderCalculatorFields() {
+  const host = section?.querySelector('.sc-calc-fields');
+  if (!host) return;
+  const result = latest?.result;
+  const symbols = result?.ok ? result.symbols : [];
+  const gains = new Set(result?.gains || []);
+  const field = (label, value, placeholder, onInput, unit) => {
+    const input = el('input', { type: 'text', class: 'sc-calc-field', value: value ?? '', placeholder, 'aria-label': plainTexText(label) });
+    input.addEventListener('input', () => { onInput(input.value.trim()); clearTimeout(calcTimer); calcTimer = setTimeout(() => { markSettingsChanged(); runCalculator(); }, 300); });
+    return el('div', { class: 'sc-calc-row' }, [el('span', { class: 'signal-flow-source-name' }, [math(label)]), input, el('span', { class: 'sc-calc-unit', text: unit })]);
+  };
+  host.replaceChildren(
+    ...symbols.map((name) => field(symbolText(name), calc().values[name], gains.has(name) ? CALC_DEFAULTS.gain : CALC_DEFAULTS.capacitance, (text) => { if (text) calc().values[name] = text; else delete calc().values[name]; }, gains.has(name) ? '' : 'F')),
+    field('T', calc().celsius, CALC_DEFAULTS.celsius, (text) => { calc().celsius = text; }, '°C'),
+    field('f_s', calc().fs, CALC_DEFAULTS.fs, (text) => { calc().fs = text; }, 'Hz'),
+  );
+}
+
+/** A value with its unit, prefixed: 64.37 µV, 91.04 nV/√Hz. */
+function volts(value, unit) {
+  const prefixed = siResult(Number(value.toPrecision(4)));
+  const [, number, prefix] = /^(-?[\d.e+-]+?)([a-zµ]?|[A-Z]?)$/i.exec(prefixed || '') || [null, String(Number(value.toPrecision(4))), ''];
+  return `${Number(Number(number).toPrecision(4))} ${prefix}${unit}`;
+}
+
+/** The numbers: each contributor's input-referred RMS and density, and
+ *  their total, at the calculator's values. */
+function runCalculator() {
+  const host = section?.querySelector('.sc-calc-result');
+  if (!host) return;
+  renderCalculatorFields();
+  const result = latest?.result;
+  if (!settings().noise || !result?.ok) { host.replaceChildren(); return; }
+  const gains = new Set(result.gains || []);
+  const values = Object.fromEntries(result.symbols.map((name) => [name, fieldNumber(calc().values[name] || (gains.has(name) ? CALC_DEFAULTS.gain : CALC_DEFAULTS.capacitance))]));
+  const s = settings();
+  const figures = switchedCapNoiseFigures(editor.circuit, {
+    input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined,
+    symbols: result.symbols, gains: result.gains,
+    values, celsius: fieldNumber(calc().celsius || CALC_DEFAULTS.celsius), fs: fieldNumber(calc().fs || CALC_DEFAULTS.fs),
+  });
+  if (!figures.ok) { host.replaceChildren(el('p', { class: 'field-hint', role: 'status', text: figures.error })); return; }
+  host.replaceChildren(noiseTable(['RMS', 'Density'], figures.contributors, figures.total, (row) => [volts(row.rms, 'V'), volts(row.density, 'V/√Hz')]));
 }
 
 // ----- the graph -------------------------------------------------------------------------
@@ -337,7 +455,7 @@ export function installSwitchedCapUi() {
   const select = (id, key) => el('select', { id, onchange: (ev) => { settings()[key] = ev.target.value; markSettingsChanged(); } });
   const row = (label, id, control) => el('div', { class: 'signal-flow-source' }, [el('label', { for: id, class: 'signal-flow-source-name', text: label }), control]);
   section = el('div', { id: 'analysis-switched-cap', class: 'signal-flow-section sc-section', hidden: true }, [
-    el('p', { class: 'analysis-intro', text: 'Each phase of the clock closes its switches; charge is kept from phase to phase. Op-amps are ideal, the input is held through each period, and the output is read at the end of the phase you pick: Derive gives its exact H(z).' }),
+    el('p', { class: 'analysis-intro', text: 'Each phase of the clock closes its switches; charge is kept from phase to phase. Op-amps are as their small-signal model says (ideal, or a finite gain), the input is held through each period, and the output is read at the end of the phase you pick: Derive gives its exact H(z), and its kT/C noise when asked.' }),
     el('fieldset', { class: 'analysis-approximations' }, [
       el('legend', { text: 'Signals' }),
       row('Input', 'sc-input', select('sc-input', 'input')),
@@ -354,6 +472,21 @@ export function installSwitchedCapUi() {
         el('span', { class: 'field-hint', text: 'Each Derive adds its result to the graph: magnitude and phase over f/f_s.' }),
         el('button', { type: 'button', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
       ]),
+    ]),
+    el('fieldset', { class: 'analysis-approximations sc-noise' }, [
+      el('legend', { text: 'Noise' }),
+      el('label', { class: 'sc-noise-toggle' }, [
+        el('input', { type: 'checkbox', id: 'sc-noise-on', onchange: (ev) => { settings().noise = ev.target.checked; markSettingsChanged(); if (ev.target.checked && latest?.result.ok && !latest.result.noise) derive(); else { renderNoise(); runCalculator(); } } }),
+        ' kT/C noise with each Derive',
+      ]),
+      el('div', { class: 'sc-noise-result' }),
+      el('p', { class: 'field-hint', text: 'Each phase leaves its switches\' thermal noise on the capacitors they touch as it ends: kT over the capacitance it sees, moved on by the op-amps as the signal is, here referred to the input. The op-amps\' own noise is not included.' }),
+    ]),
+    el('fieldset', { class: 'analysis-approximations sc-calc', hidden: true }, [
+      el('legend', { text: 'Noise calculator' }),
+      el('div', { class: 'sc-calc-fields' }),
+      el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
+      el('p', { class: 'field-hint', text: 'Each capacitance in farads (1p), each gain, the temperature, and the sample rate f_s: the input-referred RMS over the band to f_s/2, and the density of the white noise with that RMS.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
       el('legend', { text: 'Values' }),
@@ -388,7 +521,7 @@ export function installSwitchedCapUi() {
     section,
     actions,
     suggested,
-    shown: () => { fillForm(); renderResult(); },
+    shown: () => { fillForm(); renderResult(); runCalculator(); },
   });
   // Its view in the Plots window, laid out as the Bode graph's.
   plotsEl = el('div', { class: 'sc-plots-view' }, [
@@ -403,7 +536,7 @@ export function installSwitchedCapUi() {
   onDocumentShown(() => {
     latest = null;
     traces = [];
-    if (!section.hidden) { fillForm(); renderResult(); }
+    if (!section.hidden) { fillForm(); renderResult(); runCalculator(); }
     renderPlots();
   });
 }
