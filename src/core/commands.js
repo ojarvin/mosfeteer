@@ -459,6 +459,7 @@ export function commandHelp() {
     '                                   or a gain (k): in s highest power first, in z ascending powers of z^-1 (tf([1 -1], [1]) is 1 - z^-1;',
     '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
+    '  waveform <refdes> [sine|pulse|noise|none] - draw a voltage source with a sine, a pulse, or noise in its circle (drawing only)',
     '  size <refdes> [W/L] [xM] [replace|beside] - a transistor\'s sizing label, W/L = M·W/L (2u/400n x4; bare numbers are μm); replace puts it in place of',
     '                                   the name label, beside under it; size <refdes> off removes it; no size prints it',
     '  rename <refdes> <new>          - rename a component',
@@ -799,6 +800,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (cmd === 'link' && !name) return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} links to no design`, { refdes: c.refdes, link: c.link });
     circuit.setLink(c.refdes, name);
     return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} unlinked`, { refdes: c.refdes, link: c.link }, true);
+  }
+  if (cmd === 'waveform') {
+    if (!pos[0]) throw new Error('usage: waveform <refdes> [sine|pulse|noise|none]');
+    const c = circuit.getComponent(pos[0]);
+    if (!pos[1]) return result(`${c.refdes} shows ${c.waveform || 'no waveform'}`, { refdes: c.refdes, waveform: c.waveform });
+    circuit.setWaveform(c.refdes, pos[1]);
+    return result(`${c.refdes} shows ${c.waveform || 'no waveform'}`, { refdes: c.refdes, waveform: c.waveform }, true);
   }
   if (cmd === 'size') {
     if (!pos[0]) throw new Error('usage: size <refdes> [W/L] [xM] [replace|beside] ; size <refdes> off');

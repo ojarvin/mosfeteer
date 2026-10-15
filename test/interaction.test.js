@@ -16,7 +16,7 @@ test('insert categories keep switches and macros separate and include vccs with 
   assert.ok(groups.Sequential.includes('dff') && groups.Sequential.includes('latch_enb_rstb_qb'));
   assert.deepEqual(groups['Signal flow'], ['signal_sum', 'signal_multiply', 'tf_s', 'tf_z', 'tf_dac', 'tf_dac_rz', 'tf_delay', 'tf_zdelay', 'gain', 'sampler', 'quantizer', 'dither']);
   // Filters draw block diagrams; the signal-flow analysis does not read them.
-  assert.deepEqual(groups['Block diagram'], ['block', 'filter_lpf', 'filter_hpf', 'filter_bpf', 'filter_notch']);
+  assert.deepEqual(groups['Block diagram'], ['block', 'filter_lpf', 'filter_hpf', 'filter_bpf', 'filter_notch', 'oscillator']);
   assert.equal(groups.Other, undefined, 'every registered symbol has a category');
 });
 

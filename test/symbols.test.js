@@ -6,7 +6,9 @@ import { symbolTypes, symbolTypeNames, getSymbol } from '../src/core/components/
 import { SOLDER_DOT_RADIUS } from '../src/core/components/solder.js';
 import { symbolSheet, symbolSheetRows } from '../src/core/symbol-sheet.js';
 import { symbolCategories } from '../src/core/components/categories.js';
-import { evaluate } from '../src/core/commands.js';
+import { evaluate, runCommand } from '../src/core/commands.js';
+import { svgString } from '../src/core/render.js';
+import { swapComponentType } from '../src/core/swap.js';
 import { Circuit } from '../src/core/model.js';
 
 test('every registered symbol validates clean (grid contract)', () => {
@@ -614,4 +616,36 @@ test('filter blocks are boxes with their response sketched inside, in on the lef
     assert.equal(def.graphics[1].d, shape);
     assert.equal(def.refPrefix, 'F');
   }
+});
+
+test('an oscillator is a four-cell circle holding a period of a sine, its output on the right', () => {
+  const def = getSymbol('oscillator');
+  assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [{ name: 'out', x: 80, y: 0 }]);
+  assert.deepEqual(def.bbox, { x: -80, y: -80, w: 160, h: 160 });
+  assert.deepEqual(def.graphics[0], { kind: 'circle', cx: 0, cy: 0, r: 80, style: 'emph' });
+  assert.match(def.graphics[1].d, /^M -48 0 C .* 48 0$/);
+  assert.ok(symbolCategories().find((group) => group.title === 'Block diagram').types.includes('oscillator'));
+});
+
+test('a voltage source shows a sine, a pulse or noise in its circle, kept when saved and dropped when swapped', () => {
+  const circuit = new Circuit();
+  runCommand(circuit, 'add voltage_source V1 --at 0 0');
+  const plain = svgString(circuit, {});
+  assert.match(runCommand(circuit, 'waveform V1 sine').text, /V1 shows sine/);
+  const sine = svgString(circuit, {});
+  assert.ok(sine.includes('C -14.7 -17 -7.3 -17 0 0') && !plain.includes('C -14.7 -17'));
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal(loaded.getComponent('V1').waveform, 'sine');
+  runCommand(circuit, 'waveform V1 pulse');
+  assert.equal(circuit.getComponent('V1').waveform, 'pulse');
+  runCommand(circuit, 'waveform V1 none');
+  assert.equal(circuit.getComponent('V1').waveform, null);
+  assert.equal(circuit.toJSON().components.find((c) => c.refdes === 'V1').waveform, undefined);
+  assert.throws(() => runCommand(circuit, 'waveform V1 square'), /sine, pulse, noise or none/);
+  runCommand(circuit, 'add current_source I1 --at 400 0');
+  assert.throws(() => runCommand(circuit, 'waveform I1 sine'), /not a voltage source/);
+  runCommand(circuit, 'waveform V1 noise');
+  const swapped = swapComponentType(circuit, 'V1', 'current_source');
+  assert.equal((swapped.component || swapped).waveform ?? null, null);
+  assert.ok([...circuit.components.values()].every((c) => !c.waveform));
 });

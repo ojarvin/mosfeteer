@@ -6,6 +6,7 @@ import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance,
 import { arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { sizeReplacedNameLabels } from './mos-size.js';
+import { SOURCE_WAVEFORMS } from './components/current.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
 import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
@@ -754,6 +755,11 @@ function plotAnnotationSvg(label, opacity = '') {
   return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}</g>`;
 }
 
+/** The waveform a voltage source shows inside its circle, if any. */
+function waveformGraphics(c) {
+  return (c.waveform && SOURCE_WAVEFORMS[c.waveform]) || [];
+}
+
 /**
  * Bare drawable geometry of one component (body graphics plus symbol text),
  * without ids, labels, or accessibility wrappers. Editor effects restyle it
@@ -766,7 +772,7 @@ export function componentShapeSvg(c, def = c.def) {
   const size = c.bodySize;
   const body = size
     ? `<rect x="${fmt(-size.w / 2)}" y="${fmt(-size.h / 2)}" width="${fmt(size.w)}" height="${fmt(size.h)}" fill="#fff" ${styleAttrs(c.style, 'emph')}/>`
-    : def.graphics.filter((g) => g.kind !== 'text').map((g) => graphicsToSvg(g, '', c.style)).join('');
+    : [...def.graphics.filter((g) => g.kind !== 'text'), ...waveformGraphics(c)].map((g) => graphicsToSvg(g, '', c.style)).join('');
   // A sized body's text is its own (a block's caption, a transfer function's math label).
   const text = size ? '' : def.graphics.filter((g) => g.kind === 'text').map((g) => symbolTextSvg(g, t, c.style?.color || '#111')).join('');
   return `<g transform="${transformToSvg(t)}">${body}</g>${text}`;
@@ -1122,7 +1128,7 @@ export function svgString(circuit, opts = {}) {
     // A sized body (a block, a transfer function) draws its own outline and text.
     const sizedBody = c.bodySize;
     const textGraphics = sizedBody ? [] : defOf(c).graphics.filter((g) => g.kind === 'text');
-    const bodyGraphics = defOf(c).graphics.filter((g) => g.kind !== 'text');
+    const bodyGraphics = [...defOf(c).graphics.filter((g) => g.kind !== 'text'), ...waveformGraphics(c)];
     parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (sizedBody) {
       const r = sizedBody;

@@ -28,9 +28,11 @@ function valueReads(type, value) {
   }
 }
 import { MOS_SIZE_OFFSET, MOS_SIZE_TYPES } from './mos-size.js';
+import { WAVEFORM_TYPES } from './components/current.js';
 
 const BJT_TYPES = new Set(['npn', 'pnp']);
-const UNSWAPPABLE = new Set(['solder', 'block']);
+// An oscillator only drives: no other part takes its place, nor it another's.
+const UNSWAPPABLE = new Set(['solder', 'block', 'oscillator']);
 
 // Terminals that play the same role under different names.
 const MOS_TO_BJT = { g: 'b', d: 'c', s: 'e' };
@@ -246,6 +248,8 @@ export function swapComponentType(circuit, refdes, type) {
   // A size stays with a transistor swapped for another, under its name
   // label's new slot unless it was moved; any other part drops it.
   if (!MOS_SIZE_TYPES.has(type)) component.size = null;
+  // So does a voltage source's waveform.
+  if (!WAVEFORM_TYPES.has(type)) component.waveform = null;
   const sizeLabel = circuit.sizeLabelOf(component.refdes);
   if (sizeLabel && fromDef.labelOffset && toDef.labelOffset && component.size) {
     const slot = (def) => (component.size.replacesName ? def.labelOffset : { x: def.labelOffset.x, y: def.labelOffset.y + MOS_SIZE_OFFSET.y });

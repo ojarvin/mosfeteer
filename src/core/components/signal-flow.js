@@ -78,6 +78,26 @@ function filterBlock(kind) {
 }
 
 export const filter_lpf = filterBlock('lpf');
+
+/** An oscillator: a block diagram's circle, four cells across, holding one
+ *  period of a sine; its output on the right. */
+export const oscillator = defineSymbol({
+  type: 'oscillator',
+  description: 'Oscillator',
+  refPrefix: 'OSC',
+  terminals: [
+    { name: 'out', x: 80, y: 0, direction: 'output', dir: { x: 1, y: 0 } },
+  ],
+  bbox: { x: -80, y: -80, w: 160, h: 160 },
+  graphics: [
+    { kind: 'circle', cx: 0, cy: 0, r: 80, style: 'emph' },
+    { kind: 'path', d: 'M -48 0 C -32 -38 -16 -38 0 0 C 16 38 32 38 48 0', style: 'symbol' },
+  ],
+  textPos: null,
+  refPos: null,
+  labelOffset: { x: 0, y: -120 },
+  defaultValue: '',
+});
 export const filter_hpf = filterBlock('hpf');
 export const filter_bpf = filterBlock('bpf');
 export const filter_notch = filterBlock('notch');

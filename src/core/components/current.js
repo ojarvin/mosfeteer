@@ -36,3 +36,15 @@ export const voltage_source = source('voltage_source', 'Voltage Source', 'V', [
     { kind: 'path', d: 'M 0 -35 L 0 -80', style: 'symbol' },
     { kind: 'path', d: 'M 0 35 L 0 80', style: 'symbol' },
 ]);
+
+/**
+ * What a voltage source may show inside its circle (ComponentInstance#waveform):
+ * a period of a sine, a pulse, or a noise squiggle -- drawn only, it changes
+ * nothing the analysis reads. None leaves the circle empty.
+ */
+export const SOURCE_WAVEFORMS = Object.freeze({
+  sine: [{ kind: 'path', d: 'M -22 0 C -14.7 -17 -7.3 -17 0 0 C 7.3 17 14.7 17 22 0', style: 'line' }],
+  pulse: [{ kind: 'path', d: 'M -22 12 L -10 12 L -10 -12 L 10 -12 L 10 12 L 22 12', style: 'line' }],
+  noise: [{ kind: 'path', d: 'M -23 1 L -16 -9 L -10 6 L -4 -13 L 2 10 L 8 -6 L 14 12 L 23 -2', style: 'line', miterLimit: 1 }],
+});
+export const WAVEFORM_TYPES = new Set(['voltage_source']);

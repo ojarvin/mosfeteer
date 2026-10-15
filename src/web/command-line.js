@@ -116,6 +116,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'value', aliases: ['setvalue'], help: 'value <refdes> <V>' },
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
+  { name: 'waveform', aliases: ['sine', 'pulse-source', 'noise-source'], help: 'waveform <refdes> [sine|pulse|noise|none] (what a voltage source shows in its circle)' },
   { name: 'size', aliases: ['sizing', 'wl', 'transistor-size'], help: 'size <refdes> [W/L] [xM] [replace|beside] (a transistor\'s W/L label; off removes it)' },
   { name: 'renumber', aliases: ['number', 'renumber-parts'], help: 'renumber [--order right-down|up-right|...] [refdes ...] (along each row or column, then row by row)' },
   { name: 'rm', aliases: ['remove', 'delete'], help: 'rm <refdes>' },

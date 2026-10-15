@@ -14,6 +14,7 @@ import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNA
 import { editor } from './editor-state.js';
 import { editComponentSize, inlineEditLabel } from './label-editor.js';
 import { MOS_SIZE_ROLE, MOS_SIZE_TYPES } from '../core/mos-size.js';
+import { WAVEFORM_TYPES } from '../core/components/current.js';
 import { joinSelectedLines, selectedLines } from './annotation-tools.js';
 import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hierarchy.js';
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
@@ -322,6 +323,22 @@ function appendSwitchPhaseMenu(menu, target) {
   });
 }
 
+/** A voltage source's waveform: what it shows inside its circle. */
+function appendWaveformMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value : null;
+  if (!component || !WAVEFORM_TYPES.has(component.type)) return;
+  const sources = selectedComps().filter((c) => WAVEFORM_TYPES.has(c.type));
+  const scope = sources.length ? sources : [component];
+  appendContextSubmenu(menu, 'Waveform', (submenu) => {
+    for (const [label, value] of [['None', null], ['Sine', 'sine'], ['Pulse', 'pulse'], ['Noise', 'noise']]) {
+      appendContextItem(submenu, label, () => {
+        commit(() => { for (const c of scope) editor.circuit.setWaveform(c.refdes, value); });
+        logLine(`${scope.map((c) => c.refdes).join(', ')} ${value ? `shows ${value}` : 'shows no waveform'}`);
+      }, { active: scope.every((c) => c.waveform === value) });
+    }
+  });
+}
+
 /** A transistor's W/L label: add or edit it, put it in place of the name,
  *  or take it away. Offered on the part and on its size label. */
 function appendSizingMenu(menu, target) {
@@ -560,6 +577,7 @@ export function openComponentContextMenu(target, x, y) {
   appendSignalFlowPolarityMenu(menu, target);
   appendSwitchPhaseMenu(menu, target);
   appendSizingMenu(menu, target);
+  appendWaveformMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   // No Close item: Escape or a click elsewhere closes the menu, as menus do.
   appendContextDelete(menu);

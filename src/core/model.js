@@ -4,6 +4,7 @@ import { normalizeBand, normalizeOptimizeSetup } from './analysis/optimize-setup
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
+import { SOURCE_WAVEFORMS, WAVEFORM_TYPES } from './components/current.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
 import { busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesConnect } from './bus.js';
@@ -1889,6 +1890,8 @@ export class ComponentInstance {
     // A transistor's optional W/L and multiplier (mos-size.js), drawn as an
     // owned math label.
     this.size = MOS_SIZE_TYPES.has(type) ? normalizeMosSize(opts.size) : null;
+    // A voltage source's drawn waveform (sine, pulse, noise), or none.
+    this.waveform = WAVEFORM_TYPES.has(type) && Object.hasOwn(SOURCE_WAVEFORMS, opts.waveform) ? opts.waveform : null;
     // Schematic blocks are the one resizable symbol. Keep their geometry and
     // perimeter terminal slots on the instance rather than mutating the shared
     // symbol definition (which would resize every block in the document).
@@ -2103,6 +2106,7 @@ export class ComponentInstance {
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
       ...(this.size ? { size: { ...this.size } } : {}),
+      ...(this.waveform ? { waveform: this.waveform } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -2810,6 +2814,17 @@ export class Circuit {
   /** Set (or with null clear) a transistor's size: a compact string such as
    * `2u/400n x4` or a `{ w, l, m }` object. `replacesName` (kept when
    * omitted) makes the size label stand in for the name label. */
+  /** Draw a voltage source with a waveform inside (sine, pulse, noise), or
+   *  none; only a drawing, nothing the analysis reads. */
+  setWaveform(refdes, waveform) {
+    const component = this.getComponent(refdes);
+    if (!WAVEFORM_TYPES.has(component.type)) throw new Error(`${component.refdes} is not a voltage source; only voltage sources show a waveform`);
+    const value = waveform === 'none' || !waveform ? null : String(waveform).toLowerCase();
+    if (value !== null && !Object.hasOwn(SOURCE_WAVEFORMS, value)) throw new Error(`a waveform is ${Object.keys(SOURCE_WAVEFORMS).join(', ')} or none, not "${waveform}"`);
+    component.waveform = value;
+    return component;
+  }
+
   setComponentSize(refdes, size, { replacesName } = {}) {
     const component = this.getComponent(refdes);
     if (!MOS_SIZE_TYPES.has(component.type)) throw new Error(`${component.refdes} is not a transistor; only MOS parts take a size`);
@@ -6721,6 +6736,7 @@ export class Circuit {
         joinBar: c.joinBar,
         link: c.link,
         size: c.size,
+        waveform: c.waveform,
         style: c.style,
         analysis: c.analysis,
         drawOrder: c.drawOrder,

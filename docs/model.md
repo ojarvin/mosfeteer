@@ -26,7 +26,7 @@ The routing-sensitive symbol contract is:
 | NMOS / PMOS | `g=(-120,0)`, `d=(0,-80)`, `s=(0,80)` | bbox `{-120,-80,120,160}`; PMOS mirrors Y by default |
 | bulk MOS | plain MOS plus `b=(0,0)` | bulk label offset `{40,-40}` |
 | NPN / PNP | `b=(-160,0)`, `c=(0,-120)`, `e=(0,120)` | bbox `{-160,-120,160,240}`; PNP collector/emitter are inverted |
-| current/voltage source, VCCS, VCVS | `a=(0,-80)`, `b=(0,80)` | bbox `{-40,-80,80,160}`; VCCS/VCVS are the diamond controlled sources |
+| current/voltage source, VCCS, VCVS | `a=(0,-80)`, `b=(0,80)` | bbox `{-40,-80,80,160}`; VCCS/VCVS are the diamond controlled sources; a voltage source may show a sine, a pulse, or noise in its circle (`waveform`, `SOURCE_WAVEFORMS`), drawn only |
 | opamp, comparator, gm | `ip=(-200,-40)`, `im=(-200,40)`, `o=(160,0)` | `+` on top; differential variant adds `om=(160,-40)`, `op=(160,40)`; `gm` is the differential pins on a blunt (trapezoid) body; comparators share the single-ended body, the clocked one adds `clk=(-200,0)` between the inputs |
 | inverter/buffer | `a=(-120,0)`, `y=(120,0)` | tri-state variants add `en=(0,80)` |
 | 2-input logic | `a=(-120,-40)`, `b=(-120,40)`, `y=(120,0)` | XOR/XNOR output is at `x=160`; 3-input adds `c` at `y=40` |
@@ -38,6 +38,7 @@ The routing-sensitive symbol contract is:
 | block | `T1`…`T12` around the perimeter | default bbox `{-80,-80,160,160}`, resizable in even cell counts |
 | signal_sum / signal_multiply | `n`, `s`, `w` inputs and `e` output on the circle at `(0,-40)`, `(0,40)`, `(-40,0)`, `(40,0)` | bbox `{-40,-40,80,80}`, 40-unit-radius circle with plus or multiply mark; unused terminals do not fail Design Check; optional negative inputs are owned sign labels |
 | filter blocks | `in=(-80,0)`, `out=(80,0)` | `filter_lpf`/`hpf`/`bpf`/`notch`: bbox `{-80,-80,160,160}`, a box with the response sketched inside |
+| oscillator | `out=(80,0)` | bbox `{-80,-80,160,160}`, a four-cell circle holding one period of a sine; drawing only |
 | gain | `in=(-80,0)`, `out=(80,0)` | `gain`: bbox `{-80,-80,160,160}`, a triangle with its tip on `out` and its centroid on the origin; its value is one coefficient, an owned math label inside it when short (`gainFitsInside`), else above it (horizontal flow) or right of it (vertical), in world terms |
 | transfer function | `in=(-w/2,0)`, `out=(w/2,0)` | `tf_s`/`tf_z` (and the presets `tf_dac`, `tf_dac_rz`, `tf_delay`, `tf_zdelay`, which start with a DAC's NRZ or RZ pulse or a delay): the value is a MATLAB-style `tf([num], [den])` or a gain, in `s` highest power first and in `z` ascending powers of z^-1 (`'Variable','z'` for descending powers of z, `src/core/transfer-function.js`); an `s` block may instead be an expression in `s` with delays `exp(-s*T)` (or `'InputDelay', T`) drawn as an owned math label; the box (`ComponentInstance#bodySize`, at least `160x160`, whole pairs of cells) fits the equation by the model's own estimate, and a new definition reroutes its wires (`setPartValue`) |
 | sampler | `in=(-80,0)`, `out=(80,0)` | `sampler`: bbox `{-80,-80,160,160}`, a sampling switch (s to z) whose value is its period `T`, drawn beside it like a long gain coefficient; z to s needs no part (an `H(s)` block reading a sampled signal is the DAC, its `H(s)` the pulse) |
