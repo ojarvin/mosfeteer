@@ -49,15 +49,19 @@ test('arrowhead tip insets pull the filled point back from a stroked target', ()
   assert.deepEqual(geometry.heads[0].shaft, { x: 0, y: -116.8 });
 });
 
-test('a curved arrow leaves heading right: an S with room ahead, else a bow back', () => {
-  const ahead = curvedArrowGeometry({ x: 0, y: 0 }, { x: 400, y: 240 });
-  assert.equal(ahead.c1.y, 0, 'leaves level');
-  assert.equal(ahead.c2.y, 240, 'arrives level');
-  assert.ok(ahead.c2.x < 400, 'from the left');
-  const below = curvedArrowGeometry({ x: 0, y: 0 }, { x: 0, y: 240 });
-  assert.ok(below.c1.x > 0 && below.c2.x > 0, 'bows out to the right and comes back');
-  // The head ends on the point; the shaft stops where it begins.
-  assert.deepEqual(below.head.tip, { x: 0, y: 240 });
-  assert.ok(Math.abs(Math.hypot(below.shaft.end.x, below.shaft.end.y - 240) - 26) < 2);
+test('a curved arrow always leaves heading right and arrives from the left, its head level', () => {
+  for (const end of [{ x: 400, y: 240 }, { x: 0, y: 240 }, { x: -80, y: 120 }, { x: 40, y: 120 }]) {
+    const curve = curvedArrowGeometry({ x: 0, y: 0 }, end);
+    assert.equal(curve.c1.y, 0, 'leaves level');
+    assert.ok(curve.c1.x > 0, 'to the right');
+    assert.equal(curve.shaft.c2.y, end.y, 'arrives level');
+    assert.ok(curve.shaft.c2.x < curve.shaft.end.x, 'from the left');
+    // The head ends on the point, level, the shaft stopping where it begins.
+    assert.deepEqual(curve.head.tip, end);
+    assert.deepEqual(curve.shaft.end, { x: end.x - 26, y: end.y });
+    assert.equal(curve.head.left.y - end.y, -(curve.head.right.y - end.y));
+  }
+  // Turning back takes it further out.
+  assert.ok(curvedArrowGeometry({ x: 0, y: 0 }, { x: 0, y: 120 }).c1.x > curvedArrowGeometry({ x: 0, y: 0 }, { x: 80, y: 120 }).c1.x);
   assert.equal(curvedArrowGeometry({ x: 1, y: 1 }, { x: 1, y: 1 }), null);
 });

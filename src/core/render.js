@@ -666,8 +666,9 @@ function curvedArrowSvg(points, style, opacity = '') {
   const curve = curvedArrowGeometry(points[0], points[1]);
   if (!curve) return '';
   const head = arrowheadEnds(style?.arrowhead, 'end').end && curve.head;
-  const { c1, c2, end } = head ? curve.shaft : curve;
-  const d = `M ${pt(curve.start.x, curve.start.y)} C ${pt(c1.x, c1.y)} ${pt(c2.x, c2.y)} ${pt(end.x, end.y)}`;
+  const { c1, c2, end } = curve.shaft;
+  // Without a head the shaft runs on, level, to the point.
+  const d = `M ${pt(curve.start.x, curve.start.y)} C ${pt(c1.x, c1.y)} ${pt(c2.x, c2.y)} ${pt(end.x, end.y)}${head ? '' : ` L ${pt(curve.end.x, curve.end.y)}`}`;
   return `<path d="${d}" fill="none"${opacity} ${styleAttrs(style, 'annotation')}/>${head ? arrowheadsSvg([head], style?.color, opacity) : ''}`;
 }
 

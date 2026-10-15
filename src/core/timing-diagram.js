@@ -378,7 +378,8 @@ function timingNotes({ arrows = [], marks = [], spans = [] }) {
  * Where the diagram's arrows, marks and spans go, from the waves' top-left
  * corner: `edgeOf(ref)` finds a drawn edge ({ x, row }) or null. An arrow
  * runs from the middle of one edge to the middle of the other. A mark is a
- * dashed line down through every row at its edge; a span is a dashed line
+ * dashed line through every row at its edge, a cell past the waves above
+ * and below; a span is a dashed line
  * at each of its two edges, reaching below the waves to an arrow between
  * them -- in a lane of its own where spans overlap -- with its text under
  * that. Returns the pieces, the guides ({ kind, index, x, bottom }), the items whose
@@ -399,7 +400,7 @@ function notesLayout(notes, edgeOf, rowCount) {
   notes.marks.forEach((item, index) => {
     const edge = edgeOf(item);
     if (!edge) missing.push({ kind: 'mark', index });
-    else guide('mark', index, edge.x, wavesBottom);
+    else guide('mark', index, edge.x, wavesBottom + GRID);
   });
   const placed = [];
   notes.spans.forEach((item, index) => {
@@ -577,9 +578,9 @@ function drawNotes(circuit, notes, layout, origin, settings) {
     ...(kind === 'arrow' ? { curve: true } : {}),
   });
   for (const { index, from, to } of layout.arrows) shape('arrow', [at(from), at(to)], 'arrow', notes.arrows[index].from, index, {});
-  // A dashed guide down from the top of the waves at each mark and span end.
+  // A dashed guide at each mark and span end, from a cell above the waves.
   for (const { kind, index, x, bottom } of layout.guides) {
-    shape('line', [at({ x, y: 0 }), at({ x, y: bottom })], kind, kind === 'mark' ? notes.marks[index] : notes.spans[index].from, index, { lineStyle: 'dashed' });
+    shape('line', [at({ x, y: -GRID }), at({ x, y: bottom })], kind, kind === 'mark' ? notes.marks[index] : notes.spans[index].from, index, { lineStyle: 'dashed' });
   }
   for (const { index, text, x0, x1, y } of layout.spans) {
     const ref = notes.spans[index].from;

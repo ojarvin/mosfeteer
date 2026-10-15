@@ -144,44 +144,25 @@ export function polylineArrowheads(points = [], value = 'none', options = {}) {
 
 /**
  * A curved arrow from `start` to `end`, as a timing diagram draws one from
- * the edge that causes a transition to the transition: it leaves `start`
- * heading right. With room ahead (`end` a cell or more to the right) it
- * bends into an S and arrives heading right; with none it bows out to the
- * right and comes back to arrive heading left. Returns the cubic's control
- * points, its shaft (the cubic cut short where the filled head begins),
- * and the head; null when the two points meet.
+ * the edge that causes a transition to the transition: it always leaves
+ * `start` heading right and arrives at `end` heading right, from the left,
+ * its head level. Between them it bends as far as it must -- an S into a
+ * later point, a reversed one (out to the right, back, and in from the
+ * left) into one at the same time or earlier. Returns the cubic's control
+ * points, its shaft (the cubic, ending where the head begins), and the
+ * head; null when the two points meet.
  */
 export function curvedArrowGeometry(start, end, { unit = 40, length = 26, halfWidth = 13 } = {}) {
   if (start.x === end.x && start.y === end.y) return null;
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const ahead = dx >= unit;
-  const reach = ahead ? dx / 2 : Math.max(1.5 * unit, 0.35 * Math.abs(dy), 1.5 * unit - dx);
+  // The shaft ends a head's length short of the point, level with it.
+  const base = { x: end.x - length, y: end.y };
+  const dx = base.x - start.x;
+  const dy = base.y - start.y;
+  // Far enough out each way to leave and arrive level, further the more
+  // it has to turn back or drop.
+  const reach = Math.max(dx / 2, unit / 2 + 0.25 * Math.abs(dy) + Math.max(0, -dx) / 2);
   const c1 = { x: start.x + reach, y: start.y };
-  const c2 = { x: ahead ? end.x - reach : end.x + reach, y: end.y };
-  const at = (t) => {
-    const u = 1 - t;
-    return {
-      x: u * u * u * start.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * end.x,
-      y: u * u * u * start.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * end.y,
-    };
-  };
-  // Where the head's base meets the curve: the last point `length` from the tip.
-  let cut = 1;
-  for (let i = 199; i >= 0; i--) {
-    const t = i / 200;
-    const p = at(t);
-    if (Math.hypot(p.x - end.x, p.y - end.y) >= length) { cut = t; break; }
-  }
-  if (cut === 1) cut = 0;
-  // The cubic up to `cut` (de Casteljau).
-  const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-  const ab = lerp(start, c1, cut);
-  const bc = lerp(c1, c2, cut);
-  const cd = lerp(c2, end, cut);
-  const abc = lerp(ab, bc, cut);
-  const bcd = lerp(bc, cd, cut);
-  const base = lerp(abc, bcd, cut);
-  const head = arrowheadGeometry(base, end, Math.hypot(end.x - base.x, end.y - base.y), halfWidth);
-  return { start, c1, c2, end, shaft: { c1: ab, c2: abc, end: base }, head };
+  const c2 = { x: base.x - reach, y: base.y };
+  const head = arrowheadGeometry(base, end, length, halfWidth);
+  return { start, c1, c2, end, shaft: { c1, c2, end: base }, head };
 }

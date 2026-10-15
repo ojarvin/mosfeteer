@@ -147,9 +147,10 @@ has room again. Rows move up and down with Alt+↑/↓ (or the **Move** buttons;
 and the slot boundary it changes level at -- so it follows the edge as the
 waves, gaps, shifts and slot width change, and inserted or removed slots
 carry it along. An **Arrow** runs from an edge to the transition it causes:
-a curve leaving the first edge heading right, an S into a later edge, or a
-bow out and back to one at the same time or earlier. A **Mark** is a dashed
-line through every row. A **Span** is a time between two edges: a dashed
+a curve that always leaves the first edge heading right and arrives at the
+other from the left, bending as far as it must (back on itself into an edge
+at the same time or earlier). A **Mark** is a dashed line through every
+row, reaching a cell above and below the waves. A **Span** is a time between two edges: a dashed
 line at each, reaching below the waves to an arrow between them (pointing in
 from outside when it is under three cells), its text under the arrow (beside
 it when narrow); spans that overlap take lanes of their own. In the editor
