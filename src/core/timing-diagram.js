@@ -418,12 +418,14 @@ function notesLayout(notes, edgeOf, rowCount) {
     let lane = lanes.findIndex((end) => end + GRID <= reach(span).left);
     if (lane < 0) lane = lanes.length;
     lanes[lane] = reach(span).right;
-    const y = wavesBottom + GRID + lane * 2 * GRID;
+    // Two cells clear of the waves, so the arrow and its text stand apart;
+    // a lane's text a cell under its arrow, the next lane a cell under that.
+    const y = wavesBottom + 2 * GRID + lane * 3 * GRID;
     guide('span', span.index, span.x0, y);
     guide('span', span.index, span.x1, y);
     return { ...span, y };
   });
-  const height = lanes.length ? wavesBottom + lanes.length * 2 * GRID + GRID : wavesBottom;
+  const height = lanes.length ? wavesBottom + (lanes.length - 1) * 3 * GRID + 4 * GRID : wavesBottom;
   return { arrows, guides, spans, missing, height };
 }
 
@@ -585,8 +587,8 @@ function drawNotes(circuit, notes, layout, origin, settings) {
   for (const { index, text, x0, x1, y } of layout.spans) {
     const ref = notes.spans[index].from;
     // A narrow span is pointed at from outside, an arrow at each end, its
-    // text beside the right one (centred under so little, it would snap
-    // off the middle).
+    // text right after the right one's tail -- only its own margin between
+    // (centred under so little, it would snap off the middle).
     const narrow = x1 - x0 < 3 * GRID;
     if (!narrow) shape('line', [at({ x: x0, y }), at({ x: x1, y })], 'span', ref, index, { arrowhead: 'both' });
     else {
@@ -595,6 +597,8 @@ function drawNotes(circuit, notes, layout, origin, settings) {
     }
     if (!text) continue;
     const label = circuit.addLabel({ text, math: isTexSource(text), align: narrow ? 'left' : 'center', ...at({ x: (x0 + x1) / 2, y: y + GRID }), timing: timing('note', ref, index) });
-    if (narrow) label.moveTo(origin.x + x1 + 2 * GRID + GRID / 2 + label.bbox().w / 2, origin.y + y);
+    // Its box's left edge on the tail; a box an odd number of cells wide
+    // cannot centre on the grid there, so it starts half a cell on.
+    if (narrow) label.moveTo(ceilGrid(origin.x + x1 + 2 * GRID + label.bbox().w / 2), origin.y + y);
   }
 }

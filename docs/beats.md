@@ -152,8 +152,9 @@ other from the left, bending as far as it must (back on itself into an edge
 at the same time or earlier). A **Mark** is a dashed line through every
 row, reaching a cell above and below the waves. A **Span** is a time between two edges: a dashed
 line at each, reaching below the waves to an arrow between them (pointing in
-from outside when it is under three cells), its text under the arrow (beside
-it when narrow); spans that overlap take lanes of their own. In the editor
+from outside when it is under three cells), its text under the arrow (just
+after the right arrow's tail when narrow); the arrows run two cells below the
+waves; spans that overlap take lanes of their own. In the editor
 the cursor's edge is the one at the left of its slot, or click the bar
 between two slots: `a` begins an arrow and `a` at another edge ends it, `s`
 the same for a span, `m` marks (or unmarks); Esc cancels. The list under the
