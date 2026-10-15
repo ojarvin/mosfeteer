@@ -10,7 +10,9 @@ another designer; neither is ever drawn or exported with the figure.
 empty). `n`, the toolbar's Notes, More → Notes, or `:notes` shows the notes
 window (`src/web/notes-window.js`): the notes rendered, or -- Edit, a
 double-click, Enter -- their source, until Esc or Ctrl/Cmd+Enter. Empty
-notes open ready to write.
+notes open ready to write. In the source, Tab indents the lines under the
+caret or selection by two spaces and Shift+Tab takes up to two away (the
+field's own Ctrl+Z undoes either).
 
 The notes are document data that never go stale, like the analysis
 settings: typing marks the design unsaved (`markSettingsChanged`, and
@@ -22,7 +24,9 @@ line; the rest of the command line is taken as written, so TeX keeps its
 backslashes), `notes clear`.
 
 Rendering (`src/core/notes-markdown.js`, pure): `#` headings, paragraphs,
-`-`/`*`/`1.` lists and `- [ ]` task lists, `>` quotes, fenced code, `|`
+`-`/`*`/`1.` lists and `- [ ]` task lists (an item indented two spaces
+more than the one before starts a sublist under it; any other line
+indented past an item continues it; a tab counts as two spaces), `>` quotes, fenced code, `|`
 tables, `---` rules, `**bold**`, `*italic*`, `~~struck~~`, `` `code` ``,
 `[text](https://...)` links (http, https, mailto only), and `$...$` /
 `$$...$$` math through the labels' own TeX (`texToMathML`). Everything else

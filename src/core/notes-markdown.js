@@ -76,10 +76,60 @@ function tableStart(lines, i) {
   return /^\s*\|.*\|\s*$/.test(lines[i]) && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1] || '');
 }
 
+const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+
+/** How far a line is indented, a tab counting two spaces. */
+function indentOf(line) {
+  return line.match(/^[ \t]*/)[0].replace(/\t/g, '  ').length;
+}
+
+function listItemHtml(text, children, context) {
+  const task = text.match(/^\[([ xX])\]\s+(.*)$/s);
+  const body = (task ? task[2] : text).split('\n').map((part) => inlineHtml(part, context)).join('<br>') + children.join('');
+  return task ? `<li class="note-task${task[1] === ' ' ? '' : ' done'}"><span class="note-check" aria-hidden="true"></span>${body}</li>` : `<li>${body}</li>`;
+}
+
+/**
+ * The list starting at `lines[start]`, with the lists nested in it: an item
+ * indented two or more spaces past this list's items starts a sublist under
+ * the item before it, and any other line indented past them continues that
+ * item. Returns `{ html, end }`, `end` the first line after it.
+ */
+function listBlock(lines, start, context) {
+  const first = lines[start].match(LIST_ITEM);
+  const indent = indentOf(lines[start]);
+  const ordered = /\d/.test(first[2]);
+  const items = [];
+  let i = start;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) break;
+    const item = line.match(LIST_ITEM);
+    const depth = indentOf(line);
+    if (item && depth > indent + 1 && items.length) {
+      const sub = listBlock(lines, i, context);
+      items.at(-1).children.push(sub.html);
+      i = sub.end;
+    } else if (item && depth >= indent && /\d/.test(item[2]) === ordered) {
+      items.push({ text: item[3], children: [] });
+      i += 1;
+    } else if (!item && items.length && (depth > indent || (depth === indent && indent > 0))) {
+      // More of the item: its text, or after its sublist a line of its own.
+      const last = items.at(-1);
+      if (last.children.length) last.children.push(`<div>${inlineHtml(line.trim(), context)}</div>`);
+      else last.text += `\n${line.trim()}`;
+      i += 1;
+    } else break;
+  }
+  const tag = ordered ? 'ol' : 'ul';
+  return { html: `<${tag}>${items.map((item) => listItemHtml(item.text, item.children, context)).join('')}</${tag}>`, end: i };
+}
+
 /**
  * The notes as HTML. `context` is `{ mention(name), design(name) }`
  * (both optional): what a mention resolves to, and whether a linked design
- * exists. Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists, `>`
+ * exists. Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists (nested
+ * by indenting two spaces), `>`
  * quotes, fenced code, `$$` display math, `|` tables, `---` rules.
  */
 export function renderNotes(source, context = {}) {
@@ -142,25 +192,11 @@ export function renderNotes(source, context = {}) {
       out.push(`<blockquote>${renderNotes(body.join('\n'), context)}</blockquote>`);
       continue;
     }
-    const item = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
-    if (item) {
+    if (LIST_ITEM.test(line)) {
       flush();
-      const ordered = /\d/.test(item[2]);
-      const items = [];
-      for (; i < lines.length; i++) {
-        const next = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
-        if (next && /\d/.test(next[2]) === ordered) items.push(next[3]);
-        else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) items[items.length - 1] += `\n${lines[i].trim()}`;
-        else break;
-      }
-      i -= 1;
-      const tag = ordered ? 'ol' : 'ul';
-      const html = items.map((text) => {
-        const task = text.match(/^\[([ xX])\]\s+(.*)$/s);
-        const body = (task ? task[2] : text).split('\n').map((part) => inlineHtml(part, context)).join('<br>');
-        return task ? `<li class="note-task${task[1] === ' ' ? '' : ' done'}"><span class="note-check" aria-hidden="true"></span>${body}</li>` : `<li>${body}</li>`;
-      }).join('');
-      out.push(`<${tag}>${html}</${tag}>`);
+      const list = listBlock(lines, i, context);
+      out.push(list.html);
+      i = list.end - 1;
       continue;
     }
     paragraph.push(line);

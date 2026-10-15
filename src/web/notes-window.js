@@ -3,7 +3,8 @@
  * rendered (core/notes-markdown.js) and edited as Markdown source. `n` (or
  * the toolbar's Notes) shows or hides it; Edit, a double-click, or Enter
  * on the rendered notes opens the source, and Esc or Ctrl/Cmd+Enter
- * finishes. The notes are document data that never go stale: typing marks
+ * finishes; there Tab and Shift+Tab indent and unindent lines (lists nest
+ * by indentation). The notes are document data that never go stale: typing marks
  * the design unsaved (`markSettingsChanged`), and each finished edit -- a
  * pause or leaving the field -- is one undo step.
  *
@@ -114,7 +115,39 @@ function stopEditing({ focusCanvas = false } = {}) {
   if (focusCanvas) canvasEl.focus({ preventScroll: true });
 }
 
+/** Tab indents the lines the caret or selection is on by two spaces (a
+ *  list item becomes a sublist item); Shift+Tab takes up to two away. */
+function indentLines(field, outdent) {
+  const { value } = field;
+  const start = value.lastIndexOf('\n', field.selectionStart - 1) + 1;
+  let end = value.indexOf('\n', Math.max(field.selectionStart, field.selectionEnd - (field.selectionEnd > field.selectionStart ? 1 : 0)));
+  if (end < 0) end = value.length;
+  const lines = value.slice(start, end).split('\n');
+  const changed = lines.map((line) => (outdent ? line.replace(/^ {1,2}|^\t/, '') : `  ${line}`));
+  const text = changed.join('\n');
+  if (text === value.slice(start, end)) return;
+  const caret = field.selectionStart;
+  const shift = changed[0].length - lines[0].length;
+  const single = field.selectionStart === field.selectionEnd && lines.length === 1;
+  field.focus();
+  field.setSelectionRange(start, end);
+  // insertText keeps the field's own undo (Ctrl+Z) working.
+  if (!document.execCommand?.('insertText', false, text)) {
+    field.setRangeText(text, start, end, 'end');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  if (single) {
+    const at = Math.max(start, caret + shift);
+    field.setSelectionRange(at, at);
+  } else field.setSelectionRange(start, start + text.length);
+}
+
 function onSourceKey(ev) {
+  if (ev.key === 'Tab' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    ev.preventDefault();
+    indentLines(win.source, ev.shiftKey);
+    return;
+  }
   if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) {
     ev.preventDefault();
     ev.stopPropagation();

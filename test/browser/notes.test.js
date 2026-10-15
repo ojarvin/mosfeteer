@@ -86,6 +86,28 @@ describe('design notes', { skip: browserSkip() }, () => {
     assert.equal(saved.notes, 'First line\nSecond');
   });
 
+  test('Tab indents the lines under the caret into a sublist, Shift+Tab takes them back', async () => {
+    await h.click('.notes-edit');
+    await typeNotes('- bias\n- tail\n- mirror');
+    const tab = (shiftKey, from, to) => h.evaluate(`(() => {
+      const field = document.querySelector('.notes-source');
+      field.focus();
+      field.setSelectionRange(${from}, ${to});
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: ${shiftKey}, bubbles: true, cancelable: true }));
+      return field.value;
+    })()`);
+    // The caret in "- tail", then a selection over "- tail" and "- mirror".
+    assert.equal(await tab(false, 10, 10), '- bias\n  - tail\n- mirror');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-source').selectionStart`), 12, 'the caret moves with its text');
+    assert.equal(await tab(false, 9, 24), '- bias\n    - tail\n  - mirror');
+    assert.equal(await tab(true, 9, 26), '- bias\n  - tail\n- mirror');
+    assert.equal(await editor('editor.circuit.notes'), '- bias\n  - tail\n- mirror');
+    assert.equal(await h.evaluate(`document.activeElement === document.querySelector('.notes-source')`), true, 'Tab stays in the field');
+    await finish();
+    await h.until(`!!document.querySelector('.notes-view ul ul li')`);
+    assert.equal(await h.evaluate(`document.querySelector('.notes-view ul ul li').textContent`), 'tail');
+  });
+
   test('another design shows its own notes, and n closes the window', async () => {
     await h.open('child');
     await h.until(`!document.querySelector('.notes-view h3') && document.querySelector('.notes-source')?.hidden === false || !!document.querySelector('.notes-empty:not([hidden])')`);

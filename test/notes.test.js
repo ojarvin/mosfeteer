@@ -149,3 +149,10 @@ test('notes command: print, set, append, clear, and a usage error', () => {
   assert.equal(circuit.notes, '');
   assert.throws(() => runCommand(circuit, 'notes bogus'), /usage: notes/);
 });
+
+test('lists nest by indentation, and indented lines continue their item', () => {
+  const html = renderNotes(['- bias', '  - tail', '    1. size', '    2. check', '  - [x] mirror', '    ratio 1:4', '- output', '', 'after'].join('\n'));
+  assert.equal(html, '<ul><li>bias<ul><li>tail<ol><li>size</li><li>check</li></ol></li><li class="note-task done"><span class="note-check" aria-hidden="true"></span>mirror<br>ratio 1:4</li></ul></li><li>output</li></ul>\n<p>after</p>');
+  // A tab counts as two spaces.
+  assert.equal(renderNotes('- a\n\t- b'), '<ul><li>a<ul><li>b</li></ul></li></ul>');
+});

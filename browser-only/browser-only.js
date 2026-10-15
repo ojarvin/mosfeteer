@@ -30624,10 +30624,60 @@ function tableStart(lines, i) {
   return /^\s*\|.*\|\s*$/.test(lines[i]) && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1] || '');
 }
 
+const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+
+/** How far a line is indented, a tab counting two spaces. */
+function indentOf(line) {
+  return line.match(/^[ \t]*/)[0].replace(/\t/g, '  ').length;
+}
+
+function listItemHtml(text, children, context) {
+  const task = text.match(/^\[([ xX])\]\s+(.*)$/s);
+  const body = (task ? task[2] : text).split('\n').map((part) => inlineHtml(part, context)).join('<br>') + children.join('');
+  return task ? `<li class="note-task${task[1] === ' ' ? '' : ' done'}"><span class="note-check" aria-hidden="true"></span>${body}</li>` : `<li>${body}</li>`;
+}
+
+/**
+ * The list starting at `lines[start]`, with the lists nested in it: an item
+ * indented two or more spaces past this list's items starts a sublist under
+ * the item before it, and any other line indented past them continues that
+ * item. Returns `{ html, end }`, `end` the first line after it.
+ */
+function listBlock(lines, start, context) {
+  const first = lines[start].match(LIST_ITEM);
+  const indent = indentOf(lines[start]);
+  const ordered = /\d/.test(first[2]);
+  const items = [];
+  let i = start;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) break;
+    const item = line.match(LIST_ITEM);
+    const depth = indentOf(line);
+    if (item && depth > indent + 1 && items.length) {
+      const sub = listBlock(lines, i, context);
+      items.at(-1).children.push(sub.html);
+      i = sub.end;
+    } else if (item && depth >= indent && /\d/.test(item[2]) === ordered) {
+      items.push({ text: item[3], children: [] });
+      i += 1;
+    } else if (!item && items.length && (depth > indent || (depth === indent && indent > 0))) {
+      // More of the item: its text, or after its sublist a line of its own.
+      const last = items.at(-1);
+      if (last.children.length) last.children.push(`<div>${inlineHtml(line.trim(), context)}</div>`);
+      else last.text += `\n${line.trim()}`;
+      i += 1;
+    } else break;
+  }
+  const tag = ordered ? 'ol' : 'ul';
+  return { html: `<${tag}>${items.map((item) => listItemHtml(item.text, item.children, context)).join('')}</${tag}>`, end: i };
+}
+
 /**
  * The notes as HTML. `context` is `{ mention(name), design(name) }`
  * (both optional): what a mention resolves to, and whether a linked design
- * exists. Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists, `>`
+ * exists. Blocks: `#`-`###` headings, paragraphs, `-`/`*`/`1.` lists (nested
+ * by indenting two spaces), `>`
  * quotes, fenced code, `$$` display math, `|` tables, `---` rules.
  */
 function renderNotes(source, context = {}) {
@@ -30690,25 +30740,11 @@ function renderNotes(source, context = {}) {
       out.push(`<blockquote>${renderNotes(body.join('\n'), context)}</blockquote>`);
       continue;
     }
-    const item = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
-    if (item) {
+    if (LIST_ITEM.test(line)) {
       flush();
-      const ordered = /\d/.test(item[2]);
-      const items = [];
-      for (; i < lines.length; i++) {
-        const next = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
-        if (next && /\d/.test(next[2]) === ordered) items.push(next[3]);
-        else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) items[items.length - 1] += `\n${lines[i].trim()}`;
-        else break;
-      }
-      i -= 1;
-      const tag = ordered ? 'ol' : 'ul';
-      const html = items.map((text) => {
-        const task = text.match(/^\[([ xX])\]\s+(.*)$/s);
-        const body = (task ? task[2] : text).split('\n').map((part) => inlineHtml(part, context)).join('<br>');
-        return task ? `<li class="note-task${task[1] === ' ' ? '' : ' done'}"><span class="note-check" aria-hidden="true"></span>${body}</li>` : `<li>${body}</li>`;
-      }).join('');
-      out.push(`<${tag}>${html}</${tag}>`);
+      const list = listBlock(lines, i, context);
+      out.push(list.html);
+      i = list.end - 1;
       continue;
     }
     paragraph.push(line);
@@ -67424,7 +67460,8 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * rendered (core/notes-markdown.js) and edited as Markdown source. `n` (or
  * the toolbar's Notes) shows or hides it; Edit, a double-click, or Enter
  * on the rendered notes opens the source, and Esc or Ctrl/Cmd+Enter
- * finishes. The notes are document data that never go stale: typing marks
+ * finishes; there Tab and Shift+Tab indent and unindent lines (lists nest
+ * by indentation). The notes are document data that never go stale: typing marks
  * the design unsaved (`markSettingsChanged`), and each finished edit -- a
  * pause or leaving the field -- is one undo step.
  *
@@ -67535,7 +67572,39 @@ function stopEditing({ focusCanvas = false } = {}) {
   if (focusCanvas) canvasEl.focus({ preventScroll: true });
 }
 
+/** Tab indents the lines the caret or selection is on by two spaces (a
+ *  list item becomes a sublist item); Shift+Tab takes up to two away. */
+function indentLines(field, outdent) {
+  const { value } = field;
+  const start = value.lastIndexOf('\n', field.selectionStart - 1) + 1;
+  let end = value.indexOf('\n', Math.max(field.selectionStart, field.selectionEnd - (field.selectionEnd > field.selectionStart ? 1 : 0)));
+  if (end < 0) end = value.length;
+  const lines = value.slice(start, end).split('\n');
+  const changed = lines.map((line) => (outdent ? line.replace(/^ {1,2}|^\t/, '') : `  ${line}`));
+  const text = changed.join('\n');
+  if (text === value.slice(start, end)) return;
+  const caret = field.selectionStart;
+  const shift = changed[0].length - lines[0].length;
+  const single = field.selectionStart === field.selectionEnd && lines.length === 1;
+  field.focus();
+  field.setSelectionRange(start, end);
+  // insertText keeps the field's own undo (Ctrl+Z) working.
+  if (!document.execCommand?.('insertText', false, text)) {
+    field.setRangeText(text, start, end, 'end');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  if (single) {
+    const at = Math.max(start, caret + shift);
+    field.setSelectionRange(at, at);
+  } else field.setSelectionRange(start, start + text.length);
+}
+
 function onSourceKey(ev) {
+  if (ev.key === 'Tab' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    ev.preventDefault();
+    indentLines(win.source, ev.shiftKey);
+    return;
+  }
   if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) {
     ev.preventDefault();
     ev.stopPropagation();
@@ -77112,7 +77181,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
     ['Shift+W', 'show or hide the plots of a signal-flow diagram: responses, step, root locus, swing, loop gain, and the nets in time; drag pans, right-drag zooms, double-click fits'],
     ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall, clear starts afresh'],
-    ['n', 'show or hide the design\'s notes: Markdown with $math$; @M1 or @V_{out} mentions a part or net (hover glows it, click selects it), [[amp]] links a design; double-click to edit, Esc finishes'],
+    ['n', 'show or hide the design\'s notes: Markdown with $math$; @M1 or @V_{out} mentions a part or net (hover glows it, click selects it), [[amp]] links a design; double-click to edit (Tab / Shift+Tab indent and unindent: lists nest by indentation), Esc finishes'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
