@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { plainTexText } from '../src/core/render.js';
 import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
-import { addTimingDiagram, defaultTimingPairs, parseTimingBits, timingColumns, timingPairs, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
+import { addTimingDiagram, defaultTimingPairs, existingTimingDiagram, parseTimingBits, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -290,4 +290,90 @@ test('shifting an edge leaves the diagram where it stands', () => {
     assert.deepEqual(names(), where, line);
   }
   assert.ok(firstWave());
+});
+
+test('a row knows its edges and the slot boundary each belongs to, gaps and shifts included', () => {
+  const { columns, levels } = timingColumns(['10', '01'], { slotCells: 4, pairs: [[0, 1]] });
+  // φ1 = 10: rises at the start (from the lead-in), falls into the gap.
+  assert.deepEqual(timingRowEdges(levels[0], columns, 0, 0).map(({ at, rise }) => [at, rise]), [[0, true], [1, false], [2, true]]);
+  // The gap's rise comes late, at the slot after it, yet belongs to the same boundary.
+  const late = timingRowEdges(levels[1], columns, 0, 0);
+  assert.deepEqual(late.map(({ at, rise }) => [at, rise]), [[0, false], [1, true], [2, false]]);
+  const gap = columns.findIndex((column) => column.kind === 'gap' && column.at === 1);
+  assert.equal(late[1].x, columns.slice(0, gap + 1).reduce((sum, column) => sum + column.w, 0), 'φ2 rises at the end of the gap');
+  // A shifted fall moves with its edge.
+  const early = timingRowEdges(levels[0], columns, 0, 0, { fall: -1 });
+  assert.equal(early[1].x, timingRowEdges(levels[0], columns, 0, 0)[1].x - 40);
+});
+
+test('arrows, marks and spans sit on the edges, follow them, and wait while an edge is gone', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK,D,Q', 'timing CLK=0101 D=0011 Q=0001');
+  const edgeX = (row, at) => {
+    const label = [...circuit.labels.values()].find((l) => l.timing?.phase === row && l.kind === 'line' && !l.timing.part);
+    return label.points.filter((p, i, all) => i && p.x === all[i - 1].x).map((p) => p.x);
+  };
+  const result = runCommand(circuit, 'timing --arrow CLK:4>Q:4 --mark CLK:2 --span "D:3>CLK:4=$t_{su}$"');
+  assert.match(result.text, /1 arrow, 1 mark, 1 span/);
+  const parts = () => [...circuit.labels.values()].filter((l) => l.timing?.part);
+  const arrow = parts().find((l) => l.timing.part === 'arrow');
+  assert.equal(arrow.kind, 'arrow');
+  assert.equal(arrow.curve, true);
+  // From the middle of CLK's fourth-slot rise to the middle of Q's.
+  const names = Object.fromEntries([...circuit.labels.values()].filter((l) => l.timing && l.kind === 'label' && !l.timing.part).map((l) => [l.timing.phase, l.anchorWorld().y]));
+  assert.deepEqual(arrow.points.map((p) => p.y), [names.CLK, names.Q]);
+  assert.ok(edgeX('CLK').includes(arrow.points[0].x) && edgeX('Q').includes(arrow.points[1].x));
+  // The mark and the span's ends are dashed guides; the span's text is a label under its arrow.
+  const guides = parts().filter((l) => l.kind === 'line' && l.style.lineStyle === 'dashed');
+  assert.equal(guides.length, 3);
+  const note = parts().find((l) => l.timing.part === 'note');
+  assert.equal(note.text, '$t_{su}$');
+  const spanLine = parts().find((l) => l.timing.part === 'span' && l.style.lineStyle !== 'dashed');
+  assert.equal(spanLine.style.arrowhead, 'both');
+  assert.ok(note.anchorWorld().y > spanLine.points[0].y && spanLine.points[0].y > names.Q);
+  // An edge shifted later carries what sits on it.
+  run(circuit, 'timing --rise Q=1');
+  assert.equal(parts().find((l) => l.timing.part === 'arrow').points[1].x, arrow.points[1].x + 40);
+  // D's rise gone: the span waits, the rest stays drawn; back, it is drawn again.
+  assert.match(runCommand(circuit, 'timing D=0001').text, /1 annotation waits for an edge that has gone/);
+  assert.equal(parts().filter((l) => l.timing.part === 'span' || l.timing.part === 'note').length, 0);
+  assert.deepEqual(existingTimingDiagram(circuit).missing, [{ kind: 'span', index: 0 }]);
+  run(circuit, 'timing D=0011');
+  assert.deepEqual(existingTimingDiagram(circuit).missing, []);
+  assert.ok(parts().some((l) => l.timing.part === 'note'));
+  // Saved and loaded, the diagram keeps them and still knows its rows.
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  const again = existingTimingDiagram(loaded);
+  assert.deepEqual(again.order, ['CLK', 'D', 'Q']);
+  assert.equal(again.arrows.length + again.marks.length + again.spans.length, 3);
+  assert.equal([...loaded.labels.values()].filter((l) => l.curve).length, 1);
+  run(circuit, 'timing --clear arrows,marks');
+  assert.deepEqual(parts().map((l) => l.timing.part).sort(), ['note', 'span', 'span', 'span']);
+  run(circuit, 'timing --clear all');
+  assert.equal(parts().length, 0);
+});
+
+test('an arrow or mark asked for must land on an edge; nothing changes when it does not', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK,Q', 'timing CLK=0101 Q=0001');
+  const before = JSON.stringify(circuit.toJSON());
+  assert.throws(() => runCommand(circuit, 'timing --arrow CLK:2>Q:2'), /Q at the start of slot 2 has no edge/);
+  assert.throws(() => runCommand(circuit, 'timing --mark CLK:9'), /no edge/);
+  assert.throws(() => runCommand(circuit, 'timing --arrow CLK:2>CLK:2'), /two different edges/);
+  assert.throws(() => runCommand(circuit, 'timing --span "CLK:2>Q"'), /ROW:N/);
+  assert.throws(() => runCommand(circuit, 'timing --arrow X:2>Q:4'), /no row "X"/);
+  assert.throws(() => runCommand(circuit, 'timing --clear wires'), /--clear takes/);
+  assert.equal(JSON.stringify(circuit.toJSON()), before);
+});
+
+test('a narrow span is pointed at from outside; overlapping spans take lanes of their own', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01');
+  // P1 falls into the gap, P2 rises out of it: one cell apart.
+  run(circuit, 'timing --span "P1:2>P2:2=nov;P1:1>P1:3=T"');
+  const spans = [...circuit.labels.values()].filter((l) => l.timing?.part === 'span' && l.style.lineStyle !== 'dashed');
+  const narrow = spans.filter((l) => l.style.arrowhead === 'end');
+  assert.equal(narrow.length, 2, 'two arrows pointing in');
+  const wide = spans.find((l) => l.style.arrowhead === 'both');
+  assert.notEqual(wide.points[0].y, narrow[0].points[0].y, 'the overlapping span in another lane');
 });

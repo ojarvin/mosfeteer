@@ -661,6 +661,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           points: l.points?.map((point) => ({ x: point.x + dx, y: point.y + dy })), style: l.style,
           ...(l.plot ? { plot: l.plot } : {}),
           ...(l.image ? { image: l.image } : {}),
+          ...(l.curve ? { curve: true } : {}),
         });
         labelMap.set(l.id, shape.id);
         addedLabels.push(shape.id);

@@ -106,7 +106,9 @@ export function defaultTimingPairs(waves, skip = new Set()) {
 
 /**
  * The columns every row shares, and each row's level in each: [{ w, kind:
- * 'lead'|'slot'|'gap' }] and, per row, ['0'|'1', ...]. `waves` are the
+ * 'lead'|'slot'|'gap', at }] and, per row, ['0'|'1', ...]. A column's `at`
+ * is the slot boundary a change of level there belongs to: 0 before the
+ * first slot, `count` after the last (-1 for the lead-in). `waves` are the
  * rows' own waves ('' for low throughout); `inverted[row]` draws a row as
  * that other row's levels inverted (a complement); `pairs` ([a, b] row
  * indices) are the rows kept from overlapping. The waves repeat: a lead
@@ -127,12 +129,12 @@ export function timingColumns(waves, { slotCells = DEFAULT_SLOT_CELLS, pairs = [
     const apart = index > 0 ? pairs.filter(([a, b]) => (falls(a) && rises(b)) || (rises(a) && falls(b))) : [];
     if (apart.length) {
       const kept = new Set(apart.flat());
-      columns.push({ w: GRID, kind: 'gap' });
+      columns.push({ w: GRID, kind: 'gap', at: index - 1 });
       // The pair falls early and rises late; the rest change as the gap opens.
       sequence.forEach((row, r) => levels[r].push(kept.has(r) ? gapLevel(row[index - 1], row[index]) : row[index]));
     }
     const edge = index === 0 || index === sequence[0].length - 1;
-    columns.push({ w: edge ? lead : slotCells * GRID, kind: edge ? 'lead' : 'slot' });
+    columns.push({ w: edge ? lead : slotCells * GRID, kind: edge ? 'lead' : 'slot', at: index - 1 });
     sequence.forEach((row, r) => levels[r].push(row[index]));
   });
   const drawn = levels.map((row, r) => (inverted[r] !== undefined && inverted[r] !== null ? levels[inverted[r]].map(invert) : row));
@@ -150,11 +152,23 @@ export const MAX_EDGE_SHIFT = 8;
  * columns on either side of it and after the edge before it.
  */
 export function timingRowGeometry(levels, columns, x, top, shift = {}) {
+  return traceRow(levels, columns, x, top, shift).points;
+}
+
+/** The edges one row draws (as timingRowGeometry): [{ at, x, rise }], `at`
+ *  the slot boundary each belongs to (see timingColumns). An edge cancelled
+ *  by its neighbour shifted onto it is not drawn. */
+export function timingRowEdges(levels, columns, x, top, shift = {}) {
+  return traceRow(levels, columns, x, top, shift).edges;
+}
+
+function traceRow(levels, columns, x, top, shift) {
   const y = (level) => (level === '1' ? top : top + WAVE_HEIGHT);
   const starts = [];
   columns.reduce((at, column) => { starts.push(at); return at + column.w; }, x);
   const end = x + columns.reduce((sum, column) => sum + column.w, 0);
   const points = [{ x, y: y(levels[0]) }];
+  const edges = [];
   let last = x;
   for (let index = 1; index < columns.length; index += 1) {
     if (levels[index] === levels[index - 1]) continue;
@@ -163,6 +177,7 @@ export function timingRowGeometry(levels, columns, x, top, shift = {}) {
     const hi = starts[index] + columns[index].w;
     const at = Math.max(lo, Math.min(hi, starts[index] + cells * GRID));
     points.push({ x: at, y: y(levels[index - 1]) }, { x: at, y: y(levels[index]) });
+    edges.push({ at: columns[index].at, x: at, rise: levels[index] === '1' });
     last = at;
   }
   points.push({ x: end, y: y(levels.at(-1)) });
@@ -172,7 +187,9 @@ export function timingRowGeometry(levels, columns, x, top, shift = {}) {
     const [a, b, c] = [points[i - 1], points[i], points[i + 1]];
     if ((a.y === b.y && b.y === c.y) || (a.x === b.x && b.x === c.x)) points.splice(i, 1);
   }
-  return points.filter((point, i) => i === 0 || point.x !== points[i - 1].x || point.y !== points[i - 1].y);
+  const drawn = points.filter((point, i) => i === 0 || point.x !== points[i - 1].x || point.y !== points[i - 1].y);
+  const vertical = new Set(drawn.flatMap((point, i) => (i && point.x === drawn[i - 1].x ? [point.x] : [])));
+  return { points: drawn, edges: edges.filter((edge) => vertical.has(edge.x)) };
 }
 
 /** A row's edge shift as saved or given: whole cells within the limit. */
@@ -264,7 +281,9 @@ export function timingPhaseNamed(phases, name) {
 }
 
 /** The diagram already drawn: its annotations' ids, each phase's own wave
- *  and edge shift, its slot width and non-overlap setting, and where it stands ({ x, y }:
+ *  and edge shift, its slot width and non-overlap setting, its arrows,
+ *  marks and spans (and which of them wait for an edge that has gone:
+ *  `missing`, [{ kind, index }]), and where it stands ({ x, y }:
  *  its waves' left edge and first row's top). Null when there is none. */
 export function existingTimingDiagram(circuit) {
   const parts = [...circuit.labels.values()].filter((label) => label.timing);
@@ -275,8 +294,9 @@ export function existingTimingDiagram(circuit) {
     if (typeof label.timing.bits === 'string') bits.set(label.timing.phase, label.timing.bits);
     if (label.timing.shift) shifts.set(label.timing.phase, normalizeEdgeShift(label.timing.shift));
   }
-  const waves = parts.filter((label) => label.kind !== 'label');
-  const names = parts.filter((label) => label.kind === 'label');
+  // Its arrows, marks and spans (`timing.part`) are neither waves nor names.
+  const waves = parts.filter((label) => label.kind === 'line' && !label.timing.part);
+  const names = parts.filter((label) => label.kind === 'label' && !label.timing.part);
   // Where it stands, from its names: they keep one place beside the waves,
   // while a wave's own extent moves with its edges (one shifted early at
   // the start reaches left) and its levels (a top row low throughout).
@@ -288,7 +308,12 @@ export function existingTimingDiagram(circuit) {
   const order = sorted.map((label) => label.timing.phase);
   // The diagram's own signals, spelled as their names are.
   const signals = sorted.filter((label) => label.timing.signal).map((label) => ({ key: label.timing.phase, source: label.text }));
-  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto' };
+  const { arrows = [], marks = [], spans = [] } = first.timing;
+  // The arrows, marks and spans not drawn: their edges have gone.
+  const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${label.timing.part === 'note' ? 'span' : label.timing.part}:${label.timing.item}`));
+  const missing = Object.entries({ arrow: arrows, mark: marks, span: spans })
+    .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
+  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -334,6 +359,73 @@ export function timingRowSources(circuit, { fromBeats = false, typed = new Map()
   });
 }
 
+/** Two edge references ({ row, at }) the same edge. */
+const sameEdge = (a, b) => samePhase(a.row, b.row) && a.at === b.at;
+
+/** The diagram's arrows, marks and spans as given (edge references by row
+ *  key), each once; a span's text trimmed. */
+function timingNotes({ arrows = [], marks = [], spans = [] }) {
+  const edge = (ref) => ({ row: String(ref.row), at: Math.round(Number(ref.at)) });
+  const unique = (list, same) => list.filter((item, i) => list.findIndex((other) => same(item, other)) === i);
+  return {
+    arrows: unique(arrows.map((a) => ({ from: edge(a.from), to: edge(a.to) })), (a, b) => sameEdge(a.from, b.from) && sameEdge(a.to, b.to)),
+    marks: unique(marks.map(edge), sameEdge),
+    spans: unique(spans.map((span) => ({ from: edge(span.from), to: edge(span.to), text: String(span.text ?? '').trim() })), (a, b) => sameEdge(a.from, b.from) && sameEdge(a.to, b.to)),
+  };
+}
+
+/**
+ * Where the diagram's arrows, marks and spans go, from the waves' top-left
+ * corner: `edgeOf(ref)` finds a drawn edge ({ x, row }) or null. An arrow
+ * runs from the middle of one edge to the middle of the other. A mark is a
+ * dashed line down through every row at its edge; a span is a dashed line
+ * at each of its two edges, reaching below the waves to an arrow between
+ * them -- in a lane of its own where spans overlap -- with its text under
+ * that. Returns the pieces, the guides ({ kind, index, x, bottom }), the items whose
+ * edges are not drawn ({ kind, index }), and the height they all reach.
+ */
+function notesLayout(notes, edgeOf, rowCount) {
+  const mid = (edge) => ({ x: edge.x, y: edge.row * ROW_PITCH + WAVE_HEIGHT / 2 });
+  const wavesBottom = (rowCount - 1) * ROW_PITCH + WAVE_HEIGHT;
+  const missing = [];
+  const guides = [];
+  const guide = (kind, index, x, bottom) => guides.push({ kind, index, x, bottom });
+  const arrows = [];
+  notes.arrows.forEach((item, index) => {
+    const [a, b] = [edgeOf(item.from), edgeOf(item.to)];
+    if (!a || !b || (a.x === b.x && a.row === b.row)) missing.push({ kind: 'arrow', index });
+    else arrows.push({ index, from: mid(a), to: mid(b) });
+  });
+  notes.marks.forEach((item, index) => {
+    const edge = edgeOf(item);
+    if (!edge) missing.push({ kind: 'mark', index });
+    else guide('mark', index, edge.x, wavesBottom);
+  });
+  const placed = [];
+  notes.spans.forEach((item, index) => {
+    const [a, b] = [edgeOf(item.from), edgeOf(item.to)];
+    if (!a || !b || a.x === b.x) missing.push({ kind: 'span', index });
+    else placed.push({ index, text: item.text, x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x) });
+  });
+  // Lanes, top down: a span takes the first whose last span ends a cell or
+  // more before it starts.
+  const lanes = [];
+  // A narrow span (under three cells) reaches further: an arrow either
+  // side, and its text after the right one.
+  const reach = (span) => (span.x1 - span.x0 < 3 * GRID ? { left: span.x0 - 2 * GRID, right: span.x1 + 5 * GRID } : { left: span.x0, right: span.x1 });
+  const spans = [...placed].sort((a, b) => reach(a).left - reach(b).left || a.x1 - b.x1).map((span) => {
+    let lane = lanes.findIndex((end) => end + GRID <= reach(span).left);
+    if (lane < 0) lane = lanes.length;
+    lanes[lane] = reach(span).right;
+    const y = wavesBottom + GRID + lane * 2 * GRID;
+    guide('span', span.index, span.x0, y);
+    guide('span', span.index, span.x1, y);
+    return { ...span, y };
+  });
+  const height = lanes.length ? wavesBottom + lanes.length * 2 * GRID + GRID : wavesBottom;
+  return { arrows, guides, spans, missing, height };
+}
+
 /** Take the drawn diagram away; returns whether there was one. */
 export function removeTimingDiagram(circuit) {
   const before = existingTimingDiagram(circuit);
@@ -355,7 +447,7 @@ export function removeTimingDiagram(circuit) {
  * plus its own. Returns the rows: [{ phase, bits, from, shift, label, line,
  * lines }].
  */
-export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [] } = {}) {
+export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, need = [] } = {}) {
   const current = timingPhases(circuit);
   for (const name of add) {
     if (!String(name).trim()) throw new Error('a signal needs a name');
@@ -397,12 +489,43 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   const { columns, levels } = timingColumns(rows.map((row) => row.bits), {
     slotCells, pairs: timingPairs(rows, setting), inverted: rows.map((row) => row.complementOf ?? null),
   });
+  // The edges each row draws, from the waves' top-left corner; the arrows,
+  // marks and spans placed on them.
+  const edges = rows.map((row, r) => timingRowEdges(levels[r], columns, 0, 0, drawnShift[r]));
+  const edgeOf = (ref) => {
+    const r = rows.findIndex((row) => samePhase(row.key, ref.row));
+    const edge = r < 0 ? null : edges[r].find((candidate) => candidate.at === ref.at);
+    return edge ? { x: edge.x, row: r } : null;
+  };
+  const notes = timingNotes({ arrows: arrows ?? before?.arrows ?? [], marks: marks ?? before?.marks ?? [], spans: spans ?? before?.spans ?? [] });
+  const layout = notesLayout(notes, edgeOf, rows.length);
+  // What was just asked for must be drawn; one kept from before whose edge
+  // has gone waits for it.
+  const describe = (ref) => {
+    const row = rows.find((candidate) => samePhase(candidate.key, ref.row));
+    return `${row ? plainTexText(row.source) : ref.row} at the start of slot ${ref.at + 1}`;
+  };
+  for (const { kind, item } of need) {
+    const list = notes[`${kind}s`];
+    const index = list.findIndex((other) => (kind === 'mark' ? sameEdge(other, item) : sameEdge(other.from, item.from) && sameEdge(other.to, item.to)));
+    if (index < 0 || !layout.missing.some((m) => m.kind === kind && m.index === index)) continue;
+    const ends = kind === 'mark' ? [item] : [item.from, item.to];
+    const gone = ends.find((ref) => !edgeOf(ref));
+    if (gone) throw new Error(`${describe(gone)} has no edge (an edge is where a row changes level; the one at the end of the last slot is slot ${columns.at(-1).at + 1})`);
+    throw new Error(kind === 'arrow' ? 'an arrow runs between two different edges' : 'a span runs between edges at two different times');
+  }
 
   if (before) for (const id of before.ids) circuit.removeLabel(id);
   const drawn = circuit.inkBounds(0, { labels: (label) => !label.timing });
   // A complement drawn as its phase inverted keeps following it: its wave is
   // not remembered as its own.
-  const settings = { slot: slotCells, ...(setting === 'auto' ? {} : { gaps: setting === 'none' ? false : setting }) };
+  const settings = {
+    slot: slotCells,
+    ...(setting === 'auto' ? {} : { gaps: setting === 'none' ? false : setting }),
+    ...(notes.arrows.length ? { arrows: notes.arrows } : {}),
+    ...(notes.marks.length ? { marks: notes.marks } : {}),
+    ...(notes.spans.length ? { spans: notes.spans } : {}),
+  };
   const labels = rows.map(({ key, source, bits, from, signal }, row) => circuit.addLabel({
     text: source,
     math: isTexSource(source),
@@ -423,7 +546,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   // drawing's width, as high as the drawing leaves room for it, else below.
   const waves = columns.reduce((sum, c) => sum + c.w, 0);
   const column = Math.max(...labels.map((label) => label.bbox().w));
-  const height = (rows.length - 1) * ROW_PITCH + WAVE_HEIGHT;
+  const height = layout.height;
   let waveX;
   let top;
   if (before && !place) {
@@ -434,10 +557,43 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     top = timingSpot(circuit, { x: waveX - LABEL_GAP - column, w: column + LABEL_GAP + waves, h: height }, drawn);
   }
   labels.forEach((label, row) => label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, top + row * ROW_PITCH + WAVE_HEIGHT / 2));
+  drawNotes(circuit, notes, layout, { x: waveX, y: top }, settings);
   return labels.map((label, row) => {
     const { key, bits, from, signal } = rows[row];
     const points = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH, drawnShift[row]);
     const line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
     return { phase: key, bits, from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
   });
+}
+
+/** Draw the arrows, marks and spans laid out by notesLayout, the waves'
+ *  top-left corner at `origin`: thin ink, each remembering what it is
+ *  (`timing.part`, and `item`, its place in the diagram's list). */
+function drawNotes(circuit, notes, layout, origin, settings) {
+  const at = (point) => ({ x: origin.x + point.x, y: origin.y + point.y });
+  const timing = (part, ref, item) => ({ phase: ref.row, part, item, ...settings });
+  const shape = (kind, points, part, ref, item, style) => circuit.addLabel({
+    kind, text: '', x: points[0].x, y: points[0].y, end: points.at(-1), points, timing: timing(part, ref, item), style: { width: 'thin', ...style },
+    ...(kind === 'arrow' ? { curve: true } : {}),
+  });
+  for (const { index, from, to } of layout.arrows) shape('arrow', [at(from), at(to)], 'arrow', notes.arrows[index].from, index, {});
+  // A dashed guide down from the top of the waves at each mark and span end.
+  for (const { kind, index, x, bottom } of layout.guides) {
+    shape('line', [at({ x, y: 0 }), at({ x, y: bottom })], kind, kind === 'mark' ? notes.marks[index] : notes.spans[index].from, index, { lineStyle: 'dashed' });
+  }
+  for (const { index, text, x0, x1, y } of layout.spans) {
+    const ref = notes.spans[index].from;
+    // A narrow span is pointed at from outside, an arrow at each end, its
+    // text beside the right one (centred under so little, it would snap
+    // off the middle).
+    const narrow = x1 - x0 < 3 * GRID;
+    if (!narrow) shape('line', [at({ x: x0, y }), at({ x: x1, y })], 'span', ref, index, { arrowhead: 'both' });
+    else {
+      shape('line', [at({ x: x0 - 2 * GRID, y }), at({ x: x0, y })], 'span', ref, index, { arrowhead: 'end' });
+      shape('line', [at({ x: x1 + 2 * GRID, y }), at({ x: x1, y })], 'span', ref, index, { arrowhead: 'end' });
+    }
+    if (!text) continue;
+    const label = circuit.addLabel({ text, math: isTexSource(text), align: narrow ? 'left' : 'center', ...at({ x: (x0 + x1) / 2, y: y + GRID }), timing: timing('note', ref, index) });
+    if (narrow) label.moveTo(origin.x + x1 + 2 * GRID + GRID / 2 + label.bbox().w / 2, origin.y + y);
+  }
 }

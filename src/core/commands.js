@@ -89,6 +89,10 @@ const FLAG_ARITY = {
   replace: 0,
   add: 1,
   rm: 1,
+  arrow: 1,
+  mark: 1,
+  span: 1,
+  clear: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -523,7 +527,13 @@ export function commandHelp() {
     '                                   falls as the other rises): auto (any two never high together), none, or pairs.',
     '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier);',
     '                                   --order φ2,φ1 sets the rows\' order; a drawn diagram stays where it stands,',
-    '                                   --place puts it again where the drawing has room for it',
+    '                                   --place puts it again where the drawing has room for it.',
+    '                                   On the edges (ROW:N, the row\'s edge at the start of slot N; N = slots+1 is the one',
+    '                                   after the last): --arrow CLK:2>Q:2,... draws a curved arrow from an edge to the',
+    '                                   transition it causes; --mark ROW:N,... a dashed line through every row; --span',
+    '                                   "A:N>B:M=TEXT;..." dashed lines at two edges and an arrow between them below the',
+    '                                   waves, TEXT under it. --clear arrows,marks,spans (or all) takes them away first.',
+    '                                   They follow their edges as the waves change; one whose edge has gone waits for it',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
     'Flags: --json prints machine-readable result. All coordinates are 40-grid.',
@@ -1025,11 +1035,48 @@ function dispatch(circuit, cmd, pos, flags, io) {
       shifts[name] = { fall: shift.fall ?? kept?.fall ?? 0, rise: shift.rise ?? kept?.rise ?? 0 };
     }
     const order = flags.order ? String(flags.order[0]).split(',').map((name) => name.trim()).filter(Boolean) : null;
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved });
+    // Arrows, marks and spans on the edges: ROW:N is the row's edge at the
+    // start of slot N.
+    const phases = timingPhases(circuit, { add: signalsAdded });
+    const edge = (text, flag) => {
+      const at = text.lastIndexOf(':');
+      const slotNumber = Number(text.slice(at + 1));
+      if (at <= 0 || !Number.isInteger(slotNumber) || slotNumber < 1) throw new Error(`--${flag} takes edges as ROW:N (the row's edge at the start of slot N), not "${text}"`);
+      const phase = timingPhaseNamed(phases, text.slice(0, at).trim());
+      if (!phase) throw new Error(`no row "${text.slice(0, at).trim()}"; rows: ${phases.map((p, i) => `${i + 1} ${plainTexText(p.source)}`).join(', ')}`);
+      return { row: phase.key, at: slotNumber - 1 };
+    };
+    const ends = (text, flag) => {
+      const parts = text.split('>');
+      if (parts.length !== 2) throw new Error(`--${flag} runs from one edge to another, as CLK:2>Q:2, not "${text}"`);
+      return { from: edge(parts[0].trim(), flag), to: edge(parts[1].trim(), flag) };
+    };
+    const clearText = flags.clear ? String(flags.clear[0]).split(',').map((kind) => kind.trim()).filter(Boolean) : [];
+    for (const kind of clearText) if (!['arrows', 'marks', 'spans', 'all'].includes(kind)) throw new Error(`--clear takes arrows, marks, spans or all, not "${kind}"`);
+    const cleared = (kind) => clearText.includes(kind) || clearText.includes('all');
+    const need = [];
+    const notes = {};
+    for (const [kind, flag, separator, parse] of [
+      ['arrows', 'arrow', ',', (text) => ends(text, 'arrow')],
+      ['marks', 'mark', ',', (text) => edge(text, 'mark')],
+      ['spans', 'span', ';', (text) => {
+        const at = text.indexOf('=');
+        return { ...ends(at < 0 ? text : text.slice(0, at), 'span'), text: at < 0 ? '' : text.slice(at + 1).trim() };
+      }],
+    ]) {
+      const added = flags[flag] ? String(flags[flag][0]).split(separator).map((item) => item.trim()).filter(Boolean).map(parse) : [];
+      need.push(...added.map((item) => ({ kind: flag, item })));
+      if (added.length || cleared(kind)) notes[kind] = [...(cleared(kind) ? [] : current?.[kind] || []), ...added];
+    }
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need });
     if (!rows.length) return result('removed the timing diagram: it had no rows left', [], true);
     const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
-    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}`, rows, true);
+    const drawn = existingTimingDiagram(circuit);
+    const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const extras = [[drawn.arrows.length, 'arrow'], [drawn.marks.length, 'mark'], [drawn.spans.length, 'span']].filter(([n]) => n).map(([n, word]) => count(n, word));
+    const waiting = drawn.missing.length ? `; ${count(drawn.missing.length, 'annotation')} wait${drawn.missing.length === 1 ? 's' : ''} for an edge that has gone` : '';
+    return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}${extras.length ? `; ${extras.join(', ')}` : ''}${waiting}`, rows, true);
   }
   if (cmd === 'switch') {
     const [ref, state] = pos;

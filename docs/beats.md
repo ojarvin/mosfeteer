@@ -143,6 +143,26 @@ of later drawing; **Move under drawing** (`timing --place`) puts it where the dr
 has room again. Rows move up and down with Alt+↑/↓ (or the **Move** buttons;
 `timing --order φ2,φ1`), and keep that order.
 
+**On the edges** draws on the diagram, each thing tied to an edge -- a row
+and the slot boundary it changes level at -- so it follows the edge as the
+waves, gaps, shifts and slot width change, and inserted or removed slots
+carry it along. An **Arrow** runs from an edge to the transition it causes:
+a curve leaving the first edge heading right, an S into a later edge, or a
+bow out and back to one at the same time or earlier. A **Mark** is a dashed
+line through every row. A **Span** is a time between two edges: a dashed
+line at each, reaching below the waves to an arrow between them (pointing in
+from outside when it is under three cells), its text under the arrow (beside
+it when narrow); spans that overlap take lanes of their own. In the editor
+the cursor's edge is the one at the left of its slot, or click the bar
+between two slots: `a` begins an arrow and `a` at another edge ends it, `s`
+the same for a span, `m` marks (or unmarks); Esc cancels. The list under the
+buttons removes them and edits a span's text. Something whose edge has gone
+(its slot changed level) is kept, struck through in the list, and drawn
+again when the edge returns. The command takes them as `ROW:N`, the row's
+edge at the start of slot N (slots+1 for the one after the last): `timing
+--arrow CLK:2>Q:2 --mark CLK:4 --span "φ1:3>φ2:3=$t_{nov}$"`, `--clear
+arrows,marks,spans|all`; one asked for that lands on no edge is refused.
+
 The diagram's annotations remember their phase and wave, so drawing it again
 replaces it rather than adding another. They are ordinary lines otherwise:
 drag vertices to adjust one by hand (a redraw then replaces that edit).

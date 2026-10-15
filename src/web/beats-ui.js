@@ -559,6 +559,11 @@ function openTimingDialog() {
     gaps: before?.gaps ?? 'auto',
     session: null,
     place: false,
+    // Arrows, marks and spans on the edges (edge: { row: phase key, at:
+    // slot boundary }), and an arrow or span begun at an edge, waiting for
+    // its other end.
+    notes: { arrows: [...(before?.arrows || [])], marks: [...(before?.marks || [])], spans: (before?.spans || []).map((span) => ({ ...span })) },
+    pending: null,
   };
   const length = () => Math.max(1, ...rows.map((row) => row.wave.length));
   const at = (row, slot) => (row.wave.length ? row.wave[Math.min(slot, row.wave.length - 1)] : '0');
@@ -573,6 +578,25 @@ function openTimingDialog() {
     if (!row.follows) return;
     row.wave = Array.from({ length: length() }, (_, i) => shown(row, i));
     row.follows = false;
+  };
+
+  // The edge at the cursor: its row's change of level at the left of the
+  // cursor's slot (the empty cell after the last: the edge after it). The
+  // waves repeat, so the first slot's edge comes from the last.
+  const edgeRef = (r, slot) => ({ row: rows[r].key, at: slot });
+  const levelAround = (row, at) => {
+    const n = length();
+    return [shown(row, (at + n - 1) % n), shown(row, at % n)];
+  };
+  const hasEdge = (r, at) => { const [a, b] = levelAround(rows[r], at); return a !== b; };
+  const sameRef = (a, b) => samePhase(a.row, b.row) && a.at === b.at;
+  const usesEdge = (ref) => state.notes.marks.some((mark) => sameRef(mark, ref))
+    || [...state.notes.arrows, ...state.notes.spans].some((item) => sameRef(item.from, ref) || sameRef(item.to, ref));
+  const edgeName = (ref) => {
+    const r = rows.findIndex((row) => samePhase(row.key, ref.row));
+    if (r < 0) return `${plainMarkup(ref.row)} ${ref.at + 1}`;
+    const [a, b] = levelAround(rows[r], ref.at);
+    return `${plainMarkup(rows[r].source)} ${a === b ? '·' : b === '1' ? '↑' : '↓'}${ref.at + 1}`;
   };
 
   const grid = element('div', { class: 'timing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Timing slots: arrows move, 1 and 0 set, Space flips, + repeats a slot, Delete removes it' });
@@ -592,13 +616,14 @@ function openTimingDialog() {
     const remove = drawnRows.filter((phase) => phase.signal && !rows.some((row) => samePhase(row.key, phase.key))).map((phase) => phase.source);
     const start = snapshot();
     try {
-      if (rows.length) addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps: state.gaps, shifts, order, place, fromBeats: true, add, remove });
+      if (rows.length) addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps: state.gaps, shifts, order, place, fromBeats: true, add, remove, ...state.notes });
       else removeTimingDiagram(editor.circuit);
     } catch (err) {
       status.textContent = err.message;
       return;
     }
     status.textContent = '';
+    renderNotes();
     if (snapshot() === start) return;
     // One undo entry for the session, unless something else was edited since.
     const first = !state.session;
@@ -669,6 +694,7 @@ function openTimingDialog() {
           grid.focus();
           setCell(level === '1' ? '0' : '1');
         });
+        edgeHandle(cell, r, slot);
         cells.append(cell);
       }
       // After the last slot, an empty cell to type a new one into.
@@ -679,6 +705,7 @@ function openTimingDialog() {
         grid.focus();
         renderGrid();
       });
+      edgeHandle(add, r, n);
       cells.append(add);
       const edge = (arrow, cells) => (cells ? `${arrow}${cells > 0 ? '+' : '−'}${Math.abs(cells)}` : '');
       const shift = element('span', {
@@ -696,7 +723,137 @@ function openTimingDialog() {
     removeRow.disabled = !rows[state.cursor.row]?.signal;
   };
 
+  // An edge between two slots, where the row changes level: a click puts
+  // the cursor on it (without flipping the slot), or ends the arrow or span
+  // begun at another.
+  function edgeHandle(cell, r, at) {
+    if (!hasEdge(r, at)) return;
+    const ref = edgeRef(r, at);
+    const pending = state.pending && sameRef(state.pending.from, ref);
+    const handle = element('span', {
+      class: `timing-edge${usesEdge(ref) ? ' used' : ''}${pending ? ' pending' : ''}`,
+      title: state.pending ? `${edgeName(ref)}: click to end the ${state.pending.kind} here` : `${edgeName(ref)}: click to pick this edge (a arrow, m mark, s span)`,
+    });
+    handle.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state.cursor = { row: r, slot: at };
+      grid.focus();
+      if (state.pending) noteAt(state.pending.kind);
+      else renderGrid();
+    });
+    cell.append(handle);
+  }
+
   const change = () => { renderGrid(); renderPairs(); redraw(); };
+
+  // Arrows, marks and spans: `kind` at the edge under the cursor. A mark
+  // goes on (or comes off) at once; an arrow or a span begins there and
+  // ends at the next edge picked the same way.
+  const noteAt = (kind) => {
+    const { row: r, slot } = state.cursor;
+    if (!rows[r]) return;
+    const ref = edgeRef(r, slot);
+    if (!hasEdge(r, slot)) {
+      status.textContent = `${plainMarkup(rows[r].source)} has no edge at the start of slot ${slot + 1}: put the cursor on a slot whose row changes level as it begins`;
+      return;
+    }
+    status.textContent = '';
+    if (kind === 'mark') {
+      const at = state.notes.marks.findIndex((mark) => sameRef(mark, ref));
+      if (at >= 0) state.notes.marks.splice(at, 1);
+      else state.notes.marks.push(ref);
+      state.pending = null;
+    } else if (!state.pending || state.pending.kind !== kind) {
+      state.pending = { kind, from: ref };
+      renderGrid();
+      renderNotes();
+      return;
+    } else {
+      const { from } = state.pending;
+      state.pending = null;
+      if (sameRef(from, ref)) {
+        status.textContent = `${kind === 'arrow' ? 'an arrow' : 'a span'} runs between two edges: pick another`;
+        renderGrid();
+        renderNotes();
+        return;
+      }
+      const list = kind === 'arrow' ? state.notes.arrows : state.notes.spans;
+      if (!list.some((item) => sameRef(item.from, from) && sameRef(item.to, ref))) list.push(kind === 'arrow' ? { from, to: ref } : { from, to: ref, text: '' });
+    }
+    change();
+    // A new span asks for its text.
+    if (kind === 'span') notesBox.querySelector('.timing-note:last-of-type input')?.focus();
+  };
+  const cancelPending = () => {
+    if (!state.pending) return false;
+    state.pending = null;
+    renderGrid();
+    renderNotes();
+    return true;
+  };
+  // Slots inserted or removed move the edges after them along.
+  const moveEdges = (from, by) => {
+    const move = (ref) => (ref.at > from ? { ...ref, at: ref.at + by } : ref);
+    state.notes.marks = state.notes.marks.map(move);
+    state.notes.arrows = state.notes.arrows.map((item) => ({ ...item, from: move(item.from), to: move(item.to) }));
+    state.notes.spans = state.notes.spans.map((item) => ({ ...item, from: move(item.from), to: move(item.to) }));
+    if (state.pending) state.pending = { ...state.pending, from: move(state.pending.from) };
+  };
+  const notesBox = element('div', { class: 'timing-section timing-notes' });
+  function renderNotes() {
+    notesBox.replaceChildren();
+    const missing = existingTimingDiagram(editor.circuit)?.missing || [];
+    const list = element('div', { class: 'timing-note-list' });
+    const item = (kind, index, text, extra = []) => {
+      const gone = missing.some((m) => m.kind === kind && m.index === index);
+      const remove = element('button', { type: 'button', class: 'icon-button', 'aria-label': `Remove the ${kind}`, title: `Remove the ${kind}` }, [buttonIcon('trash')]);
+      remove.addEventListener('click', () => {
+        state.notes[`${kind}s`].splice(index, 1);
+        change();
+        grid.focus();
+      });
+      list.append(element('div', { class: `timing-note${gone ? ' missing' : ''}`, title: gone ? 'Its edge has gone; it is drawn again when the edge comes back' : '' }, [
+        element('span', { class: 'timing-note-kind', text: kind }),
+        element('span', { class: 'timing-note-edges', text }),
+        ...extra,
+        remove,
+      ]));
+    };
+    state.notes.arrows.forEach((arrow, index) => item('arrow', index, `${edgeName(arrow.from)} → ${edgeName(arrow.to)}`));
+    state.notes.marks.forEach((mark, index) => item('mark', index, edgeName(mark)));
+    state.notes.spans.forEach((span, index) => {
+      const input = element('input', { type: 'text', value: span.text, placeholder: 'text, e.g. $t_{su}$', 'aria-label': 'Span text', spellcheck: 'false' });
+      input.addEventListener('change', () => { span.text = input.value.trim(); redraw(); });
+      input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        input.blur();
+        grid.focus();
+      });
+      item('span', index, `${edgeName(span.from)} ↔ ${edgeName(span.to)}`, [input]);
+    });
+    const hint = state.pending
+      ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
+      : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
+    notesBox.append(
+      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows from an edge to the transition it causes, dashed marks, and spans with their text below the diagram' }),
+      element('div', { class: 'timing-dialog-options' }, [
+        element('div', { class: 'segmented', role: 'group', 'aria-label': 'On the edges' }, [
+          noteButton('Arrow', 'An arrow from the edge at the cursor to the edge it causes: then pick that one (a)', 'arrow'),
+          noteButton('Mark', 'A dashed line through every row at the edge at the cursor; again takes it away (m)', 'mark'),
+          noteButton('Span', 'A time between the edge at the cursor and another: dashed lines and an arrow below the diagram, its text under it (s)', 'span'),
+        ]),
+      ]),
+      ...(hint ? [element('p', { class: 'timing-note-hint', text: hint })] : []),
+      list,
+    );
+  }
+  function noteButton(text, title, kind) {
+    const node = element('button', { type: 'button', text, title, 'aria-pressed': String(state.pending?.kind === kind) });
+    node.addEventListener('click', () => { grid.focus(); noteAt(kind); });
+    return node;
+  }
   const setCell = (level, { advance = false } = {}) => {
     const row = rows[state.cursor.row];
     if (!row) return;
@@ -729,6 +886,12 @@ function openTimingDialog() {
     const row = rows[state.cursor.row];
     if (!row?.signal) return;
     rows.splice(state.cursor.row, 1);
+    // What sat on its edges goes with it.
+    const on = (ref) => samePhase(ref.row, row.key);
+    state.notes.marks = state.notes.marks.filter((mark) => !on(mark));
+    state.notes.arrows = state.notes.arrows.filter((item) => !on(item.from) && !on(item.to));
+    state.notes.spans = state.notes.spans.filter((item) => !on(item.from) && !on(item.to));
+    if (state.pending && on(state.pending.from)) state.pending = null;
     // A complement that followed it keeps the wave it showed.
     for (const other of rows) {
       if (other.baseKey !== undefined && samePhase(other.baseKey, row.key)) {
@@ -761,6 +924,7 @@ function openTimingDialog() {
     settle();
     const slot = cursorSlot();
     for (const row of rows) if (!row.follows) row.wave.splice(slot + 1, 0, row.wave[slot]);
+    moveEdges(slot, 1);
     state.cursor.slot = slot + 1;
     change();
   };
@@ -778,6 +942,7 @@ function openTimingDialog() {
     if (length() <= 1) return;
     const slot = cursorSlot();
     for (const row of rows) if (!row.follows) row.wave.splice(slot, 1);
+    moveEdges(slot, -1);
     state.cursor.slot = Math.min(slot, length() - 1);
     change();
   };
@@ -802,6 +967,8 @@ function openTimingDialog() {
       repeatSlot();
     } else if (event.key === '*') {
       repeatSequence();
+    } else if (['a', 'm', 's'].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      noteAt({ a: 'arrow', m: 'mark', s: 'span' }[event.key]);
     } else if (event.key === 'Delete' || event.key === 'Backspace' || event.key === '-') {
       removeSlot();
     } else return;
@@ -874,7 +1041,7 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole period. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole period. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
       ]),
       section('Slots', [
         segmented('Slots', [
@@ -902,6 +1069,7 @@ function openTimingDialog() {
       ]),
       section('Signals', [element('div', { class: 'timing-signal-field' }, [signalInput, addButton]), removeRow], 'timing-signal-controls'),
       pairsBox,
+      notesBox,
       status,
       // The two ways between the timing and the beats, and where the
       // diagram sits, each said once.
@@ -914,13 +1082,16 @@ function openTimingDialog() {
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
     // Shift+K closes it again, except while typing a number.
-    if (event.key === 'Escape' || (event.key === 'K' && !event.ctrlKey && !event.metaKey && !event.altKey && event.target.tagName !== 'INPUT')) {
+    if (event.key === 'Escape' && cancelPending()) {
+      event.preventDefault();
+    } else if (event.key === 'Escape' || (event.key === 'K' && !event.ctrlKey && !event.metaKey && !event.altKey && event.target.tagName !== 'INPUT')) {
       event.preventDefault();
       close();
     }
   });
   renderGrid();
   renderPairs();
+  renderNotes();
   canvasEl.closest('.canvas-pane').append(dialog);
   timingEditor = { dialog, grid, close, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
   timingEditor.window.place();

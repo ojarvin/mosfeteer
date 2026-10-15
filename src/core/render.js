@@ -3,7 +3,7 @@ import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
-import { arrowheadEnds, defaultArrowhead, polylineArrowheads } from './line-style.js';
+import { arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { sizeReplacedNameLabels } from './mos-size.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
@@ -660,8 +660,20 @@ function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '')
   return `<path d="${polylineD(geometry.shaftPoints)}" fill="none"${opacity} ${attrs}/>${arrowheadsSvg(geometry.heads, style?.color, opacity)}`;
 }
 
+/** A curved arrow (curvedArrowGeometry): its shaft and, unless turned
+ *  off, its head at the end. */
+function curvedArrowSvg(points, style, opacity = '') {
+  const curve = curvedArrowGeometry(points[0], points[1]);
+  if (!curve) return '';
+  const head = arrowheadEnds(style?.arrowhead, 'end').end && curve.head;
+  const { c1, c2, end } = head ? curve.shaft : curve;
+  const d = `M ${pt(curve.start.x, curve.start.y)} C ${pt(c1.x, c1.y)} ${pt(c2.x, c2.y)} ${pt(end.x, end.y)}`;
+  return `<path d="${d}" fill="none"${opacity} ${styleAttrs(style, 'annotation')}/>${head ? arrowheadsSvg([head], style?.color, opacity) : ''}`;
+}
+
 function shapeAnnotationSvg(label, opacity = '') {
   const a = label.anchor; const b = label.end;
+  if (label.kind === 'arrow' && label.curve) return curvedArrowSvg(label.points, label.style, opacity);
   if (label.kind === 'line' || label.kind === 'arrow') {
     const points = label.points?.length ? label.points : [a, b];
     return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);

@@ -9,7 +9,7 @@ import { collapseCollinear } from './wireedit.js';
 import { busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneLiteralPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
-import { defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
+import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
@@ -921,6 +921,23 @@ function normalizeTiming(timing) {
   // Edge shifts in whole cells, earlier negative (timing-diagram.js).
   const cells = (value) => Math.max(-8, Math.min(8, Math.round(Number(value)) || 0));
   const shift = timing.shift && typeof timing.shift === 'object' ? { fall: cells(timing.shift.fall), rise: cells(timing.shift.rise) } : null;
+  // Arrows, marks and spans on the diagram's edges: an edge is a row (its
+  // phase key) and the slot boundary it changes at.
+  const edge = (ref) => (ref && typeof ref === 'object' && typeof ref.row === 'string' && ref.row && Number.isInteger(ref.at) && ref.at >= 0 && ref.at <= 1024
+    ? { row: ref.row.slice(0, 200), at: ref.at } : null);
+  const list = (value, item) => (Array.isArray(value) ? value.slice(0, 64).map(item).filter(Boolean) : []);
+  const pair = (value) => {
+    const [from, to] = [edge(value?.from), edge(value?.to)];
+    return from && to ? { from, to } : null;
+  };
+  const arrows = list(timing.arrows, pair);
+  const marks = list(timing.marks, edge);
+  const spans = list(timing.spans, (value) => {
+    const ends = pair(value);
+    return ends ? { ...ends, text: typeof value.text === 'string' ? value.text.slice(0, 200) : '' } : null;
+  });
+  // A drawn arrow, mark or span (or a span's text) says which it is.
+  const part = ['arrow', 'mark', 'span', 'note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
   return {
     phase: timing.phase.slice(0, 200),
     ...(bits ? { bits } : {}),
@@ -928,6 +945,10 @@ function normalizeTiming(timing) {
     ...(gaps !== undefined ? { gaps } : {}),
     ...(shift && (shift.fall || shift.rise) ? { shift } : {}),
     ...(timing.signal === true ? { signal: true } : {}),
+    ...(arrows.length ? { arrows } : {}),
+    ...(marks.length ? { marks } : {}),
+    ...(spans.length ? { spans } : {}),
+    ...(part ? { part, item: timing.item } : {}),
   };
 }
 
@@ -1224,6 +1245,9 @@ export class LabelInstance {
     const e = points.at(-1) || (opts.end ? snapPoint(opts.end.x, opts.end.y) : p);
     this.end = { x: e.x, y: e.y };
     this.points = ['arrow', 'line'].includes(this.kind) ? (points.length ? points : [{ ...p }, { ...e }]) : null;
+    // A two-point arrow may be drawn as a curve between its ends
+    // (curvedArrowGeometry), as a timing diagram's arrows are.
+    this.curve = this.kind === 'arrow' && opts.curve === true && this.points.length === 2;
     const textPoint = opts.textAnchor ? snapPoint(opts.textAnchor.x, opts.textAnchor.y) : { x: snap((p.x + e.x) / 2), y: snap((p.y + e.y) / 2) };
     this.textAnchor = { x: textPoint.x, y: textPoint.y };
     // A box may carry a Bode sketch (bode-figure.js) drawn in its place.
@@ -1425,9 +1449,18 @@ export class LabelInstance {
     return true;
   }
 
+  /** The points a shape's geometry stays within: a curve's control points
+   *  too, which hold it. */
+  shapePoints() {
+    const points = this.points?.length ? this.points : [this.anchor, this.end];
+    if (!this.curve) return points;
+    const curve = curvedArrowGeometry(points[0], points[1]);
+    return curve ? [curve.start, curve.c1, curve.c2, curve.end] : points;
+  }
+
   bbox() {
     if (this.kind === 'arrow') {
-      const points = this.points?.length ? this.points : [this.anchor, this.end];
+      const points = this.shapePoints();
       const x = Math.min(...points.map((point) => point.x));
       const y = Math.min(...points.map((point) => point.y));
       const x1 = Math.max(...points.map((point) => point.x));
@@ -1505,9 +1538,7 @@ export class LabelInstance {
    * A math label not yet measured by a browser falls back to its box.
    */
   inkRect() {
-    if (this.kind === 'arrow' || this.kind === 'line') {
-      return rectFromPoints(this.points?.length ? this.points : [this.anchor, this.end]);
-    }
+    if (this.kind === 'arrow' || this.kind === 'line') return rectFromPoints(this.shapePoints());
     if (this.kind === 'box') return rectFromPoints([this.anchor, this.end]);
     const b = this.bbox();
     const align = this.textAlign();
@@ -1791,6 +1822,7 @@ export class LabelInstance {
       anchor: this.owner ? null : { ...this.anchor },
       end: this.kind === 'label' ? null : { ...this.end },
       points: ['arrow', 'line'].includes(this.kind) ? this.points.map((point) => ({ ...point })) : null,
+      ...(this.curve ? { curve: true } : {}),
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       ...(this.image ? { image: { ...this.image } } : {}),
@@ -6762,6 +6794,7 @@ export class Circuit {
           y: l.anchor ? l.anchor.y : 0,
           end: l.end || null,
           points: l.points || null,
+          curve: l.curve === true,
           textAnchor: l.textAnchor || null,
           plot: l.plot || null,
           image: l.image || null,

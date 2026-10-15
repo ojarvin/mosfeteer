@@ -6355,6 +6355,96 @@ details.analysis-options > * + * {
   opacity: 0.6;
 }
 
+/* An edge between two slots: a click picks it. Arrows, marks and spans on
+   it show as a bar; the one an arrow or span is begun at, in the accent. */
+.timing-cell {
+  position: relative;
+}
+
+.timing-edge {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: -6px;
+  width: 8px;
+  cursor: crosshair;
+  z-index: 1;
+}
+
+.timing-edge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+}
+
+.timing-edge:hover::before {
+  background: color-mix(in srgb, var(--text) 45%, transparent);
+}
+
+.timing-edge.used::before {
+  background: var(--text);
+}
+
+.timing-edge.pending::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-tint);
+}
+
+.timing-notes > .timing-note-hint,
+.timing-notes > .timing-note-list {
+  grid-column: 2;
+}
+
+.timing-note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.timing-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+
+.timing-note-kind {
+  color: var(--text-dim);
+  min-width: 2.75rem;
+}
+
+.timing-note-edges {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.timing-note input {
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+
+.timing-note .icon-button {
+  margin-left: auto;
+}
+
+.timing-note.missing .timing-note-edges {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.timing-note-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
 /* The label tools ask for the text first, in a small field by the cursor. */
 .label-prompt {
   position: fixed;

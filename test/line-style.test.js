@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { arrowheadEnds, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, polylineArrowheadValues, polylineArrowheads } from '../src/core/line-style.js';
+import { arrowheadEnds, curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, polylineArrowheadValues, polylineArrowheads } from '../src/core/line-style.js';
 
 test('the shared arrowhead choice has one shape and four endpoint placements', () => {
   assert.deepEqual(arrowheadEnds('none'), { start: false, end: false });
@@ -47,4 +47,17 @@ test('arrowhead tip insets pull the filled point back from a stroked target', ()
   const geometry = polylineArrowheads([{ x: 0, y: -240 }, { x: 0, y: -80 }], 'end', { endInset: 4.8 });
   assert.deepEqual(geometry.heads[0].tip, { x: 0, y: -84.8 });
   assert.deepEqual(geometry.heads[0].shaft, { x: 0, y: -116.8 });
+});
+
+test('a curved arrow leaves heading right: an S with room ahead, else a bow back', () => {
+  const ahead = curvedArrowGeometry({ x: 0, y: 0 }, { x: 400, y: 240 });
+  assert.equal(ahead.c1.y, 0, 'leaves level');
+  assert.equal(ahead.c2.y, 240, 'arrives level');
+  assert.ok(ahead.c2.x < 400, 'from the left');
+  const below = curvedArrowGeometry({ x: 0, y: 0 }, { x: 0, y: 240 });
+  assert.ok(below.c1.x > 0 && below.c2.x > 0, 'bows out to the right and comes back');
+  // The head ends on the point; the shaft stops where it begins.
+  assert.deepEqual(below.head.tip, { x: 0, y: 240 });
+  assert.ok(Math.abs(Math.hypot(below.shaft.end.x, below.shaft.end.y - 240) - 26) < 2);
+  assert.equal(curvedArrowGeometry({ x: 1, y: 1 }, { x: 1, y: 1 }), null);
 });
