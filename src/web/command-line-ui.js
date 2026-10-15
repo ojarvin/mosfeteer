@@ -29,8 +29,11 @@ import { openSwapPicker } from './insert-menu.js';
 import { referenceWindowsShown, toggleReferenceWindows } from './reference-window.js';
 import { calculatorShown, toggleCalculator } from './calculator-window.js';
 import { plotsShown, togglePlots } from './plots-window.js';
+import { offerTutorial } from './onboarding.js';
 
 const click = (id) => document.getElementById(id)?.click();
+// What `tutorial` takes after it, for each tutorial's id.
+const TUTORIAL_ALIASES = { ota: 'ota', '5t': 'ota', sc: 'switched-cap', 'switched-cap': 'switched-cap', sdm: 'sdm', dsm: 'sdm', 'delta-sigma': 'sdm', 'sigma-delta': 'sdm' };
 const checked = (button) => button?.getAttribute('aria-checked') === 'true';
 
 /** Flip a toggle unless it already shows the requested state. */
@@ -79,7 +82,8 @@ export const ACTIONS = {
   export: () => click('btn-export'),
   present: () => openPresenter(),
   workspace: () => click('btn-workspace'),
-  tutorial: () => click('btn-tutorial'),
+  // `tutorial sc` or `tutorial sdm` starts that one; bare, the OTA.
+  tutorial: (which) => offerTutorial(TUTORIAL_ALIASES[String(which || '').toLowerCase()] || 'ota'),
   'phase-beats': () => click('btn-phase-beats'),
   'show-in-folder': () => click('btn-reveal-document'),
   'rename-document': () => click('btn-rename-document'),

@@ -52,7 +52,7 @@ export const EDITOR_COMMANDS = [
   { name: 'present', aliases: ['presentation', 'slideshow', 'play'], help: 'present the beats full screen (Shift+F5)' },
   { name: 'workspace', aliases: ['folder'], help: 'choose the workspace folder' },
   { name: 'more', aliases: ['menu', 'document-menu'], help: 'open the More menu of document actions' },
-  { name: 'tutorial', aliases: ['learn', 'tour'], help: 'draw a 5T OTA step by step, in a new document' },
+  { name: 'tutorial', aliases: ['learn', 'tour'], choices: ['ota', '5t', 'sc', 'switched-cap', 'sdm', 'dsm', 'delta-sigma', 'sigma-delta'], help: 'tutorial [ota|sc|sdm] — a 5T OTA drawn step by step, a switched-cap integrator clocked and analysed, or a delta-sigma modulator\'s signal flow, in a new document' },
   { name: 'phase-beats', aliases: ['beats-from-phases'], help: 'make beats from the switch phases: one per state of the timing diagram, or one per phase (More menu)' },
   { name: 'show-in-folder', aliases: ['reveal'], help: 'show the document file in the file manager' },
   { name: 'rename-document', aliases: ['rename-file', 'rename-design'], help: 'rename the current document\'s file: type the new name in the name field' },

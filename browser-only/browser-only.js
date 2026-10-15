@@ -47357,6 +47357,7 @@ let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/inse
 let referenceWindowsShown, toggleReferenceWindows; __bind(() => { ({ referenceWindowsShown, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let calculatorShown, toggleCalculator; __bind(() => { ({ calculatorShown, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let plotsShown, togglePlots; __bind(() => { ({ plotsShown, togglePlots } = __require("src/web/plots-window.js")); });
+let offerTutorial; __bind(() => { ({ offerTutorial } = __require("src/web/onboarding.js")); });
 /**
  * The `:` command line: history, Tab completion with a suggestion list, and
  * the editor commands (panels, view toggles, menus, dialogs). Everything else
@@ -47387,7 +47388,10 @@ let plotsShown, togglePlots; __bind(() => { ({ plotsShown, togglePlots } = __req
 
 
 
+
 const click = (id) => document.getElementById(id)?.click();
+// What `tutorial` takes after it, for each tutorial's id.
+const TUTORIAL_ALIASES = { ota: 'ota', '5t': 'ota', sc: 'switched-cap', 'switched-cap': 'switched-cap', sdm: 'sdm', dsm: 'sdm', 'delta-sigma': 'sdm', 'sigma-delta': 'sdm' };
 const checked = (button) => button?.getAttribute('aria-checked') === 'true';
 
 /** Flip a toggle unless it already shows the requested state. */
@@ -47436,7 +47440,8 @@ const ACTIONS = {
   export: () => click('btn-export'),
   present: () => openPresenter(),
   workspace: () => click('btn-workspace'),
-  tutorial: () => click('btn-tutorial'),
+  // `tutorial sc` or `tutorial sdm` starts that one; bare, the OTA.
+  tutorial: (which) => offerTutorial(TUTORIAL_ALIASES[String(which || '').toLowerCase()] || 'ota'),
   'phase-beats': () => click('btn-phase-beats'),
   'show-in-folder': () => click('btn-reveal-document'),
   'rename-document': () => click('btn-rename-document'),
@@ -47712,7 +47717,7 @@ const EDITOR_COMMANDS = [
   { name: 'present', aliases: ['presentation', 'slideshow', 'play'], help: 'present the beats full screen (Shift+F5)' },
   { name: 'workspace', aliases: ['folder'], help: 'choose the workspace folder' },
   { name: 'more', aliases: ['menu', 'document-menu'], help: 'open the More menu of document actions' },
-  { name: 'tutorial', aliases: ['learn', 'tour'], help: 'draw a 5T OTA step by step, in a new document' },
+  { name: 'tutorial', aliases: ['learn', 'tour'], choices: ['ota', '5t', 'sc', 'switched-cap', 'sdm', 'dsm', 'delta-sigma', 'sigma-delta'], help: 'tutorial [ota|sc|sdm] — a 5T OTA drawn step by step, a switched-cap integrator clocked and analysed, or a delta-sigma modulator\'s signal flow, in a new document' },
   { name: 'phase-beats', aliases: ['beats-from-phases'], help: 'make beats from the switch phases: one per state of the timing diagram, or one per phase (More menu)' },
   { name: 'show-in-folder', aliases: ['reveal'], help: 'show the document file in the file manager' },
   { name: 'rename-document', aliases: ['rename-file', 'rename-design'], help: 'rename the current document\'s file: type the new name in the name field' },
@@ -54132,11 +54137,13 @@ let PLACEMENT_LABELS, editorKeymap; __bind(() => { ({ PLACEMENT_LABELS, editorKe
 let helpDialog, helpDialogContent, helpSearch; __bind(() => { ({ helpDialog, helpDialogContent, helpSearch } = __require("src/web/elements.js")); });
 let beginPlacing, symbolPreviewSvg; __bind(() => { ({ beginPlacing, symbolPreviewSvg } = __require("src/web/insert-menu.js")); });
 let offerTutorial, tipStates, tipsOn; __bind(() => { ({ offerTutorial, tipStates, tipsOn } = __require("src/web/onboarding.js")); });
+let TUTORIALS; __bind(() => { ({ TUTORIALS } = __require("src/web/tutorial.js")); });
 /**
  * Learn (?): the one place to learn the editor. Its tabs are the keymap and
  * command reference (searchable), the tutorial, every symbol (click one to
  * place it), and every tip. Settings holds preferences only.
  */
+
 
 
 
@@ -54311,11 +54318,26 @@ function installHelp() {
   for (const tab of helpDialog?.querySelectorAll('[data-help-tab]') || []) {
     tab.addEventListener('click', () => showTab(tab.dataset.helpTab));
   }
-  // Starting something from Learn leaves it.
-  document.getElementById('btn-tutorial')?.addEventListener('click', () => {
-    helpDialog.close();
-    offerTutorial();
-  });
+  // Starting something from Learn leaves it. Each tutorial is an entry;
+  // the first's button keeps the id the command line clicks.
+  const tutorials = document.getElementById('help-tutorials');
+  tutorials?.replaceChildren(...TUTORIALS.map((tutorial, index) => {
+    const start = Object.assign(document.createElement('button'), { type: 'button', className: 'confirm-action', textContent: 'Start' });
+    start.dataset.tutorial = tutorial.id;
+    if (index === 0) start.id = 'btn-tutorial';
+    start.addEventListener('click', () => {
+      helpDialog.close();
+      offerTutorial(tutorial.id);
+    });
+    const entry = document.createElement('section');
+    entry.className = 'help-tutorial';
+    entry.append(
+      Object.assign(document.createElement('h3'), { textContent: tutorial.title }),
+      Object.assign(document.createElement('p'), { textContent: tutorial.blurb }),
+      start,
+    );
+    return entry;
+  }) || []);
   document.getElementById('btn-symbols')?.addEventListener('click', () => helpDialog.close(), true);
 }
 
@@ -66167,14 +66189,14 @@ __exports.dropTutorial = dropTutorial;
 __exports.installOnboarding = installOnboarding;
 let getSymbol; __bind(() => { ({ getSymbol } = __require("src/core/components/index.js")); });
 let TIPS, TipBook; __bind(() => { ({ TIPS, TipBook } = __require("src/web/tips.js")); });
-let TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns; __bind(() => { ({ TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
+let openTutorialTargets, tutorialById, tutorialProgress, tutorialRuns; __bind(() => { ({ openTutorialTargets, tutorialById, tutorialProgress, tutorialRuns } = __require("src/web/tutorial.js")); });
 let transformRect; __bind(() => { ({ transformRect } = __require("src/core/geometry.js")); });
 let canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl; __bind(() => { ({ canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let fitView, paneSize; __bind(() => { ({ fitView, paneSize } = __require("src/web/canvas-view.js")); });
 let renderSaveState, requestDocumentAction, startNewDocument; __bind(() => { ({ renderSaveState, requestDocumentAction, startNewDocument } = __require("src/web/document-session.js")); });
-let render; __bind(() => { ({ render } = __require("src/web/main.js")); });
+let applyJson, render; __bind(() => { ({ applyJson, render } = __require("src/web/main.js")); });
 /**
  * Onboarding in the editor: the contextual tip card and the first-drawing
  * tutorial. The rules live in tips.js and tutorial.js; this shows them.
@@ -66247,20 +66269,43 @@ function syncTipsButton() {
   tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
 }
 
-// ----- first-drawing tutorial ------------------------------------------------
-// Optional and never offered by itself: it starts only from Learn (?) or
-// the empty-canvas card, and closing it leaves the drawing as it is. Steps are
-// checked from the drawing's structure in tutorial.js.
+// ----- tutorials ---------------------------------------------------------------
+// Optional and never offered by themselves: one starts only from Learn (?),
+// the empty-canvas card, or the command line, and closing it leaves the
+// drawing as it is. Steps are checked from the drawing's structure in
+// tutorial.js, or from what the windows show (tutorialUi).
 let tutorialKey = '';
 let tutorialState = null;
 let tutorialCheerTimer = 0;
+let tutorialWatch = 0;
+
+/** What the editor shows that a step may ask about: the beat on screen, the
+ *  switched-cap equation, how many signal-flow results there are, and the
+ *  Plots window's tab. Read from the page, so no window needs to tell. */
+function tutorialUi() {
+  const visible = (el) => !!el && !el.hidden && !!el.offsetParent;
+  const plots = document.querySelector('.plots-window');
+  const beats = editor.circuit.beats || [];
+  const active = beats.findIndex((beat) => beat.id === editor.activeBeatId);
+  return {
+    activeBeat: active >= 0 ? active : null,
+    scEquation: document.querySelector('.sc-equation')?.textContent || '',
+    signalFlowResults: document.querySelectorAll('.signal-flow-results .signal-flow-entry').length,
+    plotsTab: visible(plots) ? plots.querySelector('.signal-flow-view button[aria-pressed="true"]')?.textContent || '' : '',
+  };
+}
+
+function currentTutorial() {
+  return editor.tutorial ? tutorialById(editor.tutorial.id) : null;
+}
 
 function currentTutorialProgress() {
   if (!editor.tutorial) return null;
-  const key = `${editor.modelRevision}:${[...editor.tutorial.skipped].join(',')}:${editor.circuit.netHighlights.size}`;
+  const ui = tutorialUi();
+  const key = `${editor.tutorial.id}:${editor.modelRevision}:${[...editor.tutorial.skipped].join(',')}:${editor.circuit.netHighlights.size}:${JSON.stringify(ui)}`;
   if (key !== tutorialKey) {
     tutorialKey = key;
-    tutorialState = tutorialProgress(editor.circuit, editor.tutorial.skipped);
+    tutorialState = tutorialProgress(editor.circuit, editor.tutorial.skipped, { tutorial: currentTutorial(), ui });
   }
   return tutorialState;
 }
@@ -66268,7 +66313,7 @@ function currentTutorialProgress() {
 function tutorialTargetRects() {
   const progress = currentTutorialProgress();
   if (!progress?.current) return [];
-  return openTutorialTargets(editor.circuit, progress.current).map((target) => {
+  return openTutorialTargets(editor.circuit, progress.current, currentTutorial()).map((target) => {
     const def = getSymbol(target.type);
     const transform = { x: target.x, y: target.y, rotation: 0, mirrorX: target.mirrorX, mirrorY: !!def.defaultMirrorY };
     return { rect: transformRect(transform, def.bbox), caption: target.caption };
@@ -66291,11 +66336,14 @@ function syncTutorial() {
   tutorialCardEl.hidden = !editor.tutorial;
   const progress = currentTutorialProgress();
   if (!progress) return;
+  const tutorial = currentTutorial();
+  const titleEl = document.getElementById('tutorial-title');
+  if (titleEl) titleEl.textContent = `Tutorial · ${tutorial.card}`;
   // A step finished since the last look earns a short cheer.
   const fresh = progress.steps.filter((step) => step.done && !editor.tutorial.cheered.has(step.id));
   for (const step of fresh) editor.tutorial.cheered.add(step.id);
   if (fresh.length) {
-    editor.tutorial.cheer = TUTORIAL_STEPS.find((step) => step.id === fresh.at(-1).id).title;
+    editor.tutorial.cheer = tutorial.steps.find((step) => step.id === fresh.at(-1).id).title;
     window.clearTimeout(tutorialCheerTimer);
     tutorialCheerTimer = window.setTimeout(() => {
       if (editor.tutorial) editor.tutorial.cheer = null;
@@ -66303,7 +66351,7 @@ function syncTutorial() {
     }, 2600);
   }
   if (progress.finished && !editor.tutorial.finishedAt) editor.tutorial.finishedAt = Date.now();
-  const total = TUTORIAL_STEPS.length;
+  const total = tutorial.steps.length;
   tutorialCountEl.textContent = `${progress.doneCount} / ${total}`;
   tutorialBarEl.style.width = `${(progress.doneCount / total) * 100}%`;
   tutorialStepEl.replaceChildren();
@@ -66317,15 +66365,15 @@ function syncTutorial() {
     appendTutorialText(body, progress.current.text);
   } else {
     const skippedCount = progress.steps.filter((step) => step.skipped).length;
-    heading.textContent = skippedCount ? 'Through the tutorial' : 'You drew a 5T OTA!';
-    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.`);
+    heading.textContent = skippedCount ? 'Through the tutorial' : tutorial.done;
+    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} ${tutorial.finish}`);
   }
   tutorialStepEl.append(heading, body);
   tutorialStepsEl.hidden = !editor.tutorial.showSteps;
   tutorialStepsToggleEl.textContent = editor.tutorial.showSteps ? 'Hide steps' : 'All steps';
   tutorialStepsEl.replaceChildren(...progress.steps.map((step) => {
     const item = document.createElement('li');
-    item.textContent = TUTORIAL_STEPS.find((candidate) => candidate.id === step.id).title;
+    item.textContent = tutorial.steps.find((candidate) => candidate.id === step.id).title;
     item.classList.toggle('done', step.done);
     item.classList.toggle('skipped', step.skipped);
     item.classList.toggle('current', step.id === progress.current?.id);
@@ -66334,36 +66382,57 @@ function syncTutorial() {
   tutorialSkipEl.hidden = !progress.current;
 }
 
-/** Begin the tutorial in a fresh document (after the usual unsaved-changes check). */
-function offerTutorial() {
+/** Begin a tutorial (the OTA unless `id` names another) in a fresh
+ *  document, from its own drawing if it has one (after the usual
+ *  unsaved-changes check). */
+function offerTutorial(id = 'ota') {
+  const tutorial = tutorialById(id);
   requestDocumentAction('Starting the tutorial', () => {
     startNewDocument();
-    startTutorial();
+    if (tutorial.start) applyJson(JSON.stringify(tutorial.start()), { document: true });
+    startTutorial(tutorial);
   });
 }
 
-function startTutorial() {
-  circuitNameEl.value = 'tutorial-5t-ota';
+function startTutorial(tutorial) {
+  circuitNameEl.value = tutorial.name;
   renderSaveState();
-  editor.tutorial = { startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
+  editor.tutorial = { id: tutorial.id, startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
   tutorialKey = '';
+  // A step about a window finishes without an edit: look again while it runs.
+  window.clearInterval(tutorialWatch);
+  tutorialWatch = window.setInterval(() => {
+    if (!editor.tutorial) { window.clearInterval(tutorialWatch); return; }
+    const before = tutorialKey;
+    currentTutorialProgress();
+    if (tutorialKey !== before) render();
+  }, 400);
   hideTip();
   fitView();
-  // Keep the marked spots clear of the card at the bottom left.
+  // Keep the marked spots -- or the drawing the tutorial starts from --
+  // clear of the card at the bottom left.
   const pane = paneSize();
   if (pane && tutorialCardEl) {
     const cardWorld = ((tutorialCardEl.getBoundingClientRect().width || 340) + 68) * (editor.view.w / pane.w);
-    editor.view = { ...editor.view, x: editor.view.x - cardWorld / 2 };
+    if (!tutorial.start) editor.view = { ...editor.view, x: editor.view.x - cardWorld / 2 };
+    else {
+      // The fitted drawing moves right of the card, the view widened to
+      // keep all of it.
+      const w = editor.view.w + cardWorld;
+      const h = editor.view.h * (w / editor.view.w);
+      editor.view = { ...editor.view, x: editor.view.x - cardWorld, y: editor.view.y - (h - editor.view.h) / 2, w, h };
+    }
   }
   render();
   canvasEl.focus();
-  logLine('Tutorial started: follow the card at the bottom left, or close it any time.', 'status');
+  logLine(`Tutorial started (${tutorial.card}): follow the card at the bottom left, or close it any time.`, 'status');
 }
 
 /** Drop the tutorial's state; the card hides on the next render. The tutorial
  *  belongs to its own drawing, so opening another design ends it. */
 function dropTutorial() {
   editor.tutorial = null;
+  window.clearInterval(tutorialWatch);
   window.clearTimeout(tutorialCheerTimer);
 }
 
@@ -75633,15 +75702,26 @@ __exports.naturalCompare = naturalCompare;
 };
 
 __modules["src/web/tutorial.js"] = function (__require, __exports) {
+__exports.tutorialById = tutorialById;
 __exports.tutorialProgress = tutorialProgress;
 __exports.openTutorialTargets = openTutorialTargets;
 __exports.tutorialRuns = tutorialRuns;
-let INTERFACE_PIN_TYPES; __bind(() => { ({ INTERFACE_PIN_TYPES } = __require("src/core/model.js")); });
-// The first-drawing tutorial: a five-transistor OTA drawn step by step. It is
-// optional and self-contained. Each step is checked from the drawing's
-// structure (which parts exist, which pins share a net), never from exact
-// coordinates, so any sensible layout completes it; the marked spots are only
-// suggestions. Everything here is pure; the editor draws the card and targets.
+let Circuit, INTERFACE_PIN_TYPES; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES } = __require("src/core/model.js")); });
+let runCommand; __bind(() => { ({ runCommand } = __require("src/core/commands.js")); });
+let switchGroupKey, switchPhase; __bind(() => { ({ switchGroupKey, switchPhase } = __require("src/core/beats.js")); });
+let existingTimingDiagram, timingStates; __bind(() => { ({ existingTimingDiagram, timingStates } = __require("src/core/timing-diagram.js")); });
+// The tutorials: a five-transistor OTA drawn step by step (the first
+// drawing), a switched-capacitor integrator's clock, beats and analysis, and
+// a first-order delta-sigma modulator's signal-flow analysis. The last two
+// start from a drawing of their own and assume the basics. Each is optional
+// and self-contained. A step is checked from the drawing's structure (which
+// parts exist, which pins share a net), never from exact coordinates, or --
+// where it is about a window -- from what the editor shows (`ui`), so any
+// sensible layout completes it; the marked spots are only suggestions.
+// Everything here is pure; the editor draws the card and targets.
+
+
+
 
 
 
@@ -75798,19 +75878,213 @@ const TUTORIAL_STEPS = Object.freeze([
   },
 ]);
 
-/** Progress through the tutorial for the current drawing. Steps can finish in
- *  any order; `current` is the first one neither done nor skipped. */
-function tutorialProgress(circuit, skipped = new Set()) {
-  const roles = tutorialRoles(circuit);
-  const steps = TUTORIAL_STEPS.map((step) => {
+// ----- a switched-capacitor integrator: clock, beats, analysis ---------------
+
+/** The stray-insensitive integrator, drawn but not yet clocked: no phases
+ *  on its switches. S1 and S3 sample V_IN onto C_S, S2 and S4 dump it into
+ *  the virtual ground. */
+function scIntegratorDrawing() {
+  const circuit = new Circuit();
+  for (const line of [
+    'add input VIN --at -1240 0', 'add switch_open S1 --at -1040 0', 'add capacitor CS --at -640 0',
+    'add switch_open S4 --at -240 0', 'add opamp U1 --at 200 40 --mirrorY', 'add output VOUT --at 640 40',
+    'add switch_open S2 --at -840 160 --rot 90', 'add ground G1 --at -840 320',
+    'add switch_open S3 --at -440 160 --rot 90', 'add ground G2 --at -440 320',
+    'add ground G3 --at -40 160', 'add capacitor CF --at 200 -160',
+    'connect VIN.p S1.a', 'connect S1.b CS.a', 'connect S2.a CS.a', 'connect S2.b G1.gnd',
+    'connect CS.b S4.a', 'connect S3.a CS.b', 'connect S3.b G2.gnd', 'connect S4.b U1.im',
+    'connect U1.ip G3.gnd', 'connect CF.a U1.im', 'connect CF.b U1.o', 'connect U1.o VOUT.p',
+  ]) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
+/** The integrator's two phases as drawn: S1 and S3's, and S2 and S4's --
+ *  each pair on one phase, the two different. Null until then. */
+function scPhases(circuit) {
+  const key = (refdes) => {
+    const component = circuit.components.get(refdes);
+    return component && switchPhase(component) ? switchGroupKey(component) : null;
+  };
+  const [a, b, c, d] = ['S1', 'S3', 'S2', 'S4'].map(key);
+  return a && b && c && d && a === b && c === d && a !== c ? { sample: a, transfer: c } : null;
+}
+
+const SC_STEPS = Object.freeze([
+  {
+    id: 'phases',
+    title: 'Give the switches their phases',
+    text: 'S1 and S3 sample V_IN onto C_S; S2 and S4 dump it into the virtual ground. Select S1 and S3, right-click one, and choose **Phase → New phase…**: type **$\\varphi_1$**. Then put S2 and S4 on **$\\varphi_2$** the same way (a phase in use is listed in the menu).',
+    done: (circuit) => !!scPhases(circuit),
+  },
+  {
+    id: 'clock',
+    title: 'Draw the clock',
+    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. The two never overlap, so a gap opens between them by itself.',
+    done: (circuit) => {
+      const phases = scPhases(circuit);
+      const states = phases && timingStates(circuit);
+      return !!states && states.some((state) => state.closed.has(phases.sample)) && states.some((state) => state.closed.has(phases.transfer))
+        && !states.some((state) => state.closed.has(phases.sample) && state.closed.has(phases.transfer));
+    },
+  },
+  {
+    id: 'span',
+    title: 'Mark the non-overlap',
+    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges, drawn under the diagram. Type **$t_{nov}$** into its field in the editor\'s list.',
+    done: (circuit) => (existingTimingDiagram(circuit)?.spans.length || 0) > 0,
+  },
+  {
+    id: 'beats',
+    title: 'Make the beats',
+    text: 'Press **Make beats** in the timing editor: one beat per state of the clock, each closing the switches whose phase is high.',
+    done: (circuit) => (circuit.beats?.length || 0) >= 2,
+  },
+  {
+    id: 'step',
+    title: 'Step through the clock',
+    text: 'Close the timing editor (**Shift+K**) and step through the beats with **Alt+→**: open switches are drawn open, and what they cut off dims.',
+    done: (circuit, roles, ui) => (ui.activeBeat ?? -1) >= 1,
+  },
+  {
+    id: 'derive',
+    title: 'Find H(z)',
+    text: 'Press **Shift+S**: the analysis window opens in its **Switched-cap** mode, the clock\'s states listed. Press **Derive** for the exact H(z), by charge from phase to phase.',
+    done: (circuit, roles, ui) => !!ui.scEquation,
+  },
+  {
+    id: 'finite-gain',
+    title: 'Give the op-amp a finite gain',
+    text: 'Right-click the op-amp: **Small-signal attributes → Opamp model → Finite gain A**, and **Derive** again. A appears in H(z): the integrator leaks, its pole inside the unit circle.',
+    done: (circuit, roles, ui) => circuit.components.get('U1')?.analysis?.model === 'finite-gain' && /A/.test(ui.scEquation || ''),
+  },
+]);
+
+// ----- a first-order delta-sigma modulator: signal-flow analysis ------------
+
+/** The modulator's parts, its forward path and feedback not yet wired: the
+ *  input into a sum (its lower input negative), a gain a, a delaying
+ *  integrator z^-1 / (1 - z^-1), and a quantizer to the output. */
+function sdmDrawing() {
+  const circuit = new Circuit();
+  for (const line of [
+    'add input U --at -1200 0', 'add signal_sum S1 --at -800 0', 'add gain K1 --at -400 0 --value a',
+    'add tf_z H1 --at 0 0 --value "tf([0 1], [1 -1])"', 'add quantizer QZ1 --at 400 0', 'add output V --at 800 0',
+    'connect U.p S1.w', 'connect QZ1.out V.p',
+  ]) runCommand(circuit, line);
+  circuit.setSignalInputNegative('S1', 's', true);
+  return circuit.toJSON();
+}
+
+const SDM_STEPS = Object.freeze([
+  {
+    id: 'forward',
+    title: 'Wire the forward path',
+    text: 'Wire the sum\'s output into the gain **a**, the gain into the integrator H(z), and the integrator into the quantizer: drag from a pin, or press **w**.',
+    done: (circuit) => {
+      const net = (ref, term) => (circuit.components.get(ref) ? netId(circuit, circuit.components.get(ref), term) : null);
+      const joined = (a, b) => !!a && a === b;
+      return joined(net('S1', 'e'), net('K1', 'in')) && joined(net('K1', 'out'), net('H1', 'in')) && joined(net('H1', 'out'), net('QZ1', 'in'));
+    },
+  },
+  {
+    id: 'feedback',
+    title: 'Close the loop',
+    text: 'Wire the output back into the sum\'s lower input. That input is negative already (the − beside it); right-click a sum for **Input polarity** to flip one.',
+    done: (circuit) => {
+      const quantizer = circuit.components.get('QZ1');
+      const sum = circuit.components.get('S1');
+      const out = quantizer && netId(circuit, quantizer, 'out');
+      return !!out && out === (sum && netId(circuit, sum, 's'));
+    },
+  },
+  {
+    id: 'derive',
+    title: 'Find the STF and the NTF',
+    text: 'Press **Shift+S**: the analysis window opens in its **Signal flow** mode. Press **Derive**: from one solve, the signal transfer function from U and the noise transfer function from the quantizer\'s error, **E_QZ1**.',
+    done: (circuit, roles, ui) => (ui.signalFlowResults || 0) >= 2,
+  },
+  {
+    id: 'coefficient',
+    title: 'Move a coefficient',
+    text: 'Under **Coefficients**, drag **a**\'s slider: the poles move and the plots follow, the equations staying symbolic. At a = 1 the NTF is 1 − z⁻¹.',
+    done: (circuit) => {
+      const value = circuit.analysisValues?.coefficients?.a;
+      return Number.isFinite(value) && value !== 1;
+    },
+  },
+  {
+    id: 'time',
+    title: 'Watch it in time',
+    text: 'In the Plots window (**Shift+W**), open the **Time** tab: a sine through the modulator, and the quantizer\'s output toggling around it.',
+    done: (circuit, roles, ui) => ui.plotsTab === 'Time',
+  },
+  {
+    id: 'annotate',
+    title: 'Put the graph on the drawing',
+    text: 'Back on **Magnitude**, press **Annotate graph**: the responses go under the drawing, named in their colours.',
+    done: (circuit) => [...circuit.labels.values()].some((label) => label.plot?.kind === 'response'),
+  },
+]);
+
+/** Every tutorial, as Learn lists them. `start` is the drawing it begins
+ *  from (none: a blank page); `targets` its marked spots; `roles` what its
+ *  steps find in the drawing; `finish(skipped)` the card's last words. */
+const TUTORIALS = Object.freeze([
+  {
+    id: 'ota',
+    title: 'Draw a five-transistor OTA',
+    card: '5T OTA',
+    name: 'tutorial-5t-ota',
+    blurb: 'About five minutes, in a new document: place the transistors, wire them, add the rails and ports, and label the nets. The card marks where each part goes.',
+    steps: TUTORIAL_STEPS,
+    targets: TUTORIAL_TARGETS,
+    roles: tutorialRoles,
+    done: 'You drew a 5T OTA!',
+    finish: 'Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.',
+  },
+  {
+    id: 'switched-cap',
+    title: 'Clock a switched-capacitor integrator',
+    card: 'SC integrator',
+    name: 'tutorial-sc-integrator',
+    blurb: 'An integrator drawn for you: give its switches phases, draw the clock in the timing editor, step through it as beats, and find its H(z). Assumes the basics.',
+    start: scIntegratorDrawing,
+    steps: SC_STEPS,
+    done: 'You clocked and analysed an SC integrator!',
+    finish: 'Tick **Noise** in the analysis window for its kT/C noise, or press **Shift+F5** to present the beats.',
+  },
+  {
+    id: 'sdm',
+    title: 'Analyse a delta-sigma modulator',
+    card: 'First-order ΣΔ',
+    name: 'tutorial-sdm',
+    blurb: 'A first-order modulator\'s blocks placed for you: close its loop, derive the STF and NTF, move a coefficient, watch it in time, and put the graph on the drawing. Assumes the basics.',
+    start: sdmDrawing,
+    steps: SDM_STEPS,
+    done: 'You analysed a ΣΔ modulator!',
+    finish: 'Try the **Swing** and **Loop** tabs, or add a second integrator for a second-order loop.',
+  },
+]);
+
+/** A tutorial by id (the OTA when there is none such). */
+function tutorialById(id) {
+  return TUTORIALS.find((tutorial) => tutorial.id === id) || TUTORIALS[0];
+}
+
+/** Progress through `tutorial` (the OTA by default) for the current drawing,
+ *  `ui` what the editor shows (see onboarding.js). Steps can finish in any
+ *  order; `current` is the first one neither done nor skipped. */
+function tutorialProgress(circuit, skipped = new Set(), { tutorial = TUTORIALS[0], ui = {} } = {}) {
+  const roles = tutorial.roles ? tutorial.roles(circuit) : {};
+  const steps = tutorial.steps.map((step) => {
     let done = false;
-    try { done = !!step.done(circuit, roles); } catch { done = false; }
+    try { done = !!step.done(circuit, roles, ui); } catch { done = false; }
     return { id: step.id, done, skipped: !done && skipped.has(step.id) };
   });
   const current = steps.find((step) => !step.done && !step.skipped) || null;
   return {
     steps,
-    current: current ? TUTORIAL_STEPS.find((step) => step.id === current.id) : null,
+    current: current ? tutorial.steps.find((step) => step.id === current.id) : null,
     doneCount: steps.filter((step) => step.done).length,
     finished: !current,
   };
@@ -75818,8 +76092,8 @@ function tutorialProgress(circuit, skipped = new Set()) {
 
 /** The suggested spots still open for a step: a spot counts as taken once a
  *  part of the same kind stands on it. */
-function openTutorialTargets(circuit, step) {
-  const targets = TUTORIAL_TARGETS[step?.targets] || [];
+function openTutorialTargets(circuit, step, tutorial = TUTORIALS[0]) {
+  const targets = tutorial.targets?.[step?.targets] || [];
   const parts = [...circuit.components.values()];
   return targets.filter((target) => !parts.some((c) => c.type.startsWith(target.type)
     && c.transform.x === target.x && c.transform.y === target.y));
@@ -75833,6 +76107,7 @@ function tutorialRuns(text) {
 
 __exports.TUTORIAL_TARGETS = TUTORIAL_TARGETS;
 __exports.TUTORIAL_STEPS = TUTORIAL_STEPS;
+__exports.TUTORIALS = TUTORIALS;
 };
 
 __modules["src/web/value-row.js"] = function (__require, __exports) {

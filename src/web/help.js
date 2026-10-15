@@ -11,6 +11,7 @@ import { PLACEMENT_LABELS, editorKeymap } from './toolbar.js';
 import { helpDialog, helpDialogContent, helpSearch } from './elements.js';
 import { beginPlacing, symbolPreviewSvg } from './insert-menu.js';
 import { offerTutorial, tipStates, tipsOn } from './onboarding.js';
+import { TUTORIALS } from './tutorial.js';
 
 let helpCommandText = '';
 
@@ -177,10 +178,25 @@ export function installHelp() {
   for (const tab of helpDialog?.querySelectorAll('[data-help-tab]') || []) {
     tab.addEventListener('click', () => showTab(tab.dataset.helpTab));
   }
-  // Starting something from Learn leaves it.
-  document.getElementById('btn-tutorial')?.addEventListener('click', () => {
-    helpDialog.close();
-    offerTutorial();
-  });
+  // Starting something from Learn leaves it. Each tutorial is an entry;
+  // the first's button keeps the id the command line clicks.
+  const tutorials = document.getElementById('help-tutorials');
+  tutorials?.replaceChildren(...TUTORIALS.map((tutorial, index) => {
+    const start = Object.assign(document.createElement('button'), { type: 'button', className: 'confirm-action', textContent: 'Start' });
+    start.dataset.tutorial = tutorial.id;
+    if (index === 0) start.id = 'btn-tutorial';
+    start.addEventListener('click', () => {
+      helpDialog.close();
+      offerTutorial(tutorial.id);
+    });
+    const entry = document.createElement('section');
+    entry.className = 'help-tutorial';
+    entry.append(
+      Object.assign(document.createElement('h3'), { textContent: tutorial.title }),
+      Object.assign(document.createElement('p'), { textContent: tutorial.blurb }),
+      start,
+    );
+    return entry;
+  }) || []);
   document.getElementById('btn-symbols')?.addEventListener('click', () => helpDialog.close(), true);
 }

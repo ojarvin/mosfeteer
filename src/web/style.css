@@ -1523,6 +1523,30 @@ button:disabled {
   align-self: flex-start;
 }
 
+/* The tutorials, one entry each: its name, what it covers, and Start. */
+.help-tutorials {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.help-tutorial {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.help-tutorial:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.help-tutorial p {
+  margin: 0 0 10px;
+}
+
 .help-link {
   padding: 0;
   border: 0;

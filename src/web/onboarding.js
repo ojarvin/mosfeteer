@@ -5,14 +5,14 @@
 
 import { getSymbol } from '../core/components/index.js';
 import { TIPS, TipBook } from './tips.js';
-import { TUTORIAL_STEPS, openTutorialTargets, tutorialProgress, tutorialRuns } from './tutorial.js';
+import { openTutorialTargets, tutorialById, tutorialProgress, tutorialRuns } from './tutorial.js';
 import { transformRect } from '../core/geometry.js';
 import { canvasEl, circuitNameEl, tipCardEl, tipTextEl, tipsButton, tutorialCardEl, tutorialStepEl, tutorialStepsEl, tutorialCountEl, tutorialBarEl, tutorialSkipEl, tutorialStepsToggleEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { logLine } from './status-bar-ui.js';
 import { fitView, paneSize } from './canvas-view.js';
 import { renderSaveState, requestDocumentAction, startNewDocument } from './document-session.js';
-import { render } from './main.js';
+import { applyJson, render } from './main.js';
 
 // ----- contextual tips ---------------------------------------------------------
 // One quiet line in the canvas corner when a faster way exists for what the
@@ -70,20 +70,43 @@ function syncTipsButton() {
   tipsButton?.setAttribute('aria-checked', String(!tipBook.state.off));
 }
 
-// ----- first-drawing tutorial ------------------------------------------------
-// Optional and never offered by itself: it starts only from Learn (?) or
-// the empty-canvas card, and closing it leaves the drawing as it is. Steps are
-// checked from the drawing's structure in tutorial.js.
+// ----- tutorials ---------------------------------------------------------------
+// Optional and never offered by themselves: one starts only from Learn (?),
+// the empty-canvas card, or the command line, and closing it leaves the
+// drawing as it is. Steps are checked from the drawing's structure in
+// tutorial.js, or from what the windows show (tutorialUi).
 let tutorialKey = '';
 let tutorialState = null;
 let tutorialCheerTimer = 0;
+let tutorialWatch = 0;
+
+/** What the editor shows that a step may ask about: the beat on screen, the
+ *  switched-cap equation, how many signal-flow results there are, and the
+ *  Plots window's tab. Read from the page, so no window needs to tell. */
+function tutorialUi() {
+  const visible = (el) => !!el && !el.hidden && !!el.offsetParent;
+  const plots = document.querySelector('.plots-window');
+  const beats = editor.circuit.beats || [];
+  const active = beats.findIndex((beat) => beat.id === editor.activeBeatId);
+  return {
+    activeBeat: active >= 0 ? active : null,
+    scEquation: document.querySelector('.sc-equation')?.textContent || '',
+    signalFlowResults: document.querySelectorAll('.signal-flow-results .signal-flow-entry').length,
+    plotsTab: visible(plots) ? plots.querySelector('.signal-flow-view button[aria-pressed="true"]')?.textContent || '' : '',
+  };
+}
+
+function currentTutorial() {
+  return editor.tutorial ? tutorialById(editor.tutorial.id) : null;
+}
 
 function currentTutorialProgress() {
   if (!editor.tutorial) return null;
-  const key = `${editor.modelRevision}:${[...editor.tutorial.skipped].join(',')}:${editor.circuit.netHighlights.size}`;
+  const ui = tutorialUi();
+  const key = `${editor.tutorial.id}:${editor.modelRevision}:${[...editor.tutorial.skipped].join(',')}:${editor.circuit.netHighlights.size}:${JSON.stringify(ui)}`;
   if (key !== tutorialKey) {
     tutorialKey = key;
-    tutorialState = tutorialProgress(editor.circuit, editor.tutorial.skipped);
+    tutorialState = tutorialProgress(editor.circuit, editor.tutorial.skipped, { tutorial: currentTutorial(), ui });
   }
   return tutorialState;
 }
@@ -91,7 +114,7 @@ function currentTutorialProgress() {
 export function tutorialTargetRects() {
   const progress = currentTutorialProgress();
   if (!progress?.current) return [];
-  return openTutorialTargets(editor.circuit, progress.current).map((target) => {
+  return openTutorialTargets(editor.circuit, progress.current, currentTutorial()).map((target) => {
     const def = getSymbol(target.type);
     const transform = { x: target.x, y: target.y, rotation: 0, mirrorX: target.mirrorX, mirrorY: !!def.defaultMirrorY };
     return { rect: transformRect(transform, def.bbox), caption: target.caption };
@@ -114,11 +137,14 @@ export function syncTutorial() {
   tutorialCardEl.hidden = !editor.tutorial;
   const progress = currentTutorialProgress();
   if (!progress) return;
+  const tutorial = currentTutorial();
+  const titleEl = document.getElementById('tutorial-title');
+  if (titleEl) titleEl.textContent = `Tutorial · ${tutorial.card}`;
   // A step finished since the last look earns a short cheer.
   const fresh = progress.steps.filter((step) => step.done && !editor.tutorial.cheered.has(step.id));
   for (const step of fresh) editor.tutorial.cheered.add(step.id);
   if (fresh.length) {
-    editor.tutorial.cheer = TUTORIAL_STEPS.find((step) => step.id === fresh.at(-1).id).title;
+    editor.tutorial.cheer = tutorial.steps.find((step) => step.id === fresh.at(-1).id).title;
     window.clearTimeout(tutorialCheerTimer);
     tutorialCheerTimer = window.setTimeout(() => {
       if (editor.tutorial) editor.tutorial.cheer = null;
@@ -126,7 +152,7 @@ export function syncTutorial() {
     }, 2600);
   }
   if (progress.finished && !editor.tutorial.finishedAt) editor.tutorial.finishedAt = Date.now();
-  const total = TUTORIAL_STEPS.length;
+  const total = tutorial.steps.length;
   tutorialCountEl.textContent = `${progress.doneCount} / ${total}`;
   tutorialBarEl.style.width = `${(progress.doneCount / total) * 100}%`;
   tutorialStepEl.replaceChildren();
@@ -140,15 +166,15 @@ export function syncTutorial() {
     appendTutorialText(body, progress.current.text);
   } else {
     const skippedCount = progress.steps.filter((step) => step.skipped).length;
-    heading.textContent = skippedCount ? 'Through the tutorial' : 'You drew a 5T OTA!';
-    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.`);
+    heading.textContent = skippedCount ? 'Through the tutorial' : tutorial.done;
+    appendTutorialText(body, `${skippedCount ? `All steps visited in ${tutorialElapsed()}; skipped ones tick off whenever you finish them.` : `Done in ${tutorialElapsed()}.`} ${tutorial.finish}`);
   }
   tutorialStepEl.append(heading, body);
   tutorialStepsEl.hidden = !editor.tutorial.showSteps;
   tutorialStepsToggleEl.textContent = editor.tutorial.showSteps ? 'Hide steps' : 'All steps';
   tutorialStepsEl.replaceChildren(...progress.steps.map((step) => {
     const item = document.createElement('li');
-    item.textContent = TUTORIAL_STEPS.find((candidate) => candidate.id === step.id).title;
+    item.textContent = tutorial.steps.find((candidate) => candidate.id === step.id).title;
     item.classList.toggle('done', step.done);
     item.classList.toggle('skipped', step.skipped);
     item.classList.toggle('current', step.id === progress.current?.id);
@@ -157,36 +183,57 @@ export function syncTutorial() {
   tutorialSkipEl.hidden = !progress.current;
 }
 
-/** Begin the tutorial in a fresh document (after the usual unsaved-changes check). */
-export function offerTutorial() {
+/** Begin a tutorial (the OTA unless `id` names another) in a fresh
+ *  document, from its own drawing if it has one (after the usual
+ *  unsaved-changes check). */
+export function offerTutorial(id = 'ota') {
+  const tutorial = tutorialById(id);
   requestDocumentAction('Starting the tutorial', () => {
     startNewDocument();
-    startTutorial();
+    if (tutorial.start) applyJson(JSON.stringify(tutorial.start()), { document: true });
+    startTutorial(tutorial);
   });
 }
 
-function startTutorial() {
-  circuitNameEl.value = 'tutorial-5t-ota';
+function startTutorial(tutorial) {
+  circuitNameEl.value = tutorial.name;
   renderSaveState();
-  editor.tutorial = { startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
+  editor.tutorial = { id: tutorial.id, startedAt: Date.now(), skipped: new Set(), cheered: new Set(), cheer: null, finishedAt: null };
   tutorialKey = '';
+  // A step about a window finishes without an edit: look again while it runs.
+  window.clearInterval(tutorialWatch);
+  tutorialWatch = window.setInterval(() => {
+    if (!editor.tutorial) { window.clearInterval(tutorialWatch); return; }
+    const before = tutorialKey;
+    currentTutorialProgress();
+    if (tutorialKey !== before) render();
+  }, 400);
   hideTip();
   fitView();
-  // Keep the marked spots clear of the card at the bottom left.
+  // Keep the marked spots -- or the drawing the tutorial starts from --
+  // clear of the card at the bottom left.
   const pane = paneSize();
   if (pane && tutorialCardEl) {
     const cardWorld = ((tutorialCardEl.getBoundingClientRect().width || 340) + 68) * (editor.view.w / pane.w);
-    editor.view = { ...editor.view, x: editor.view.x - cardWorld / 2 };
+    if (!tutorial.start) editor.view = { ...editor.view, x: editor.view.x - cardWorld / 2 };
+    else {
+      // The fitted drawing moves right of the card, the view widened to
+      // keep all of it.
+      const w = editor.view.w + cardWorld;
+      const h = editor.view.h * (w / editor.view.w);
+      editor.view = { ...editor.view, x: editor.view.x - cardWorld, y: editor.view.y - (h - editor.view.h) / 2, w, h };
+    }
   }
   render();
   canvasEl.focus();
-  logLine('Tutorial started: follow the card at the bottom left, or close it any time.', 'status');
+  logLine(`Tutorial started (${tutorial.card}): follow the card at the bottom left, or close it any time.`, 'status');
 }
 
 /** Drop the tutorial's state; the card hides on the next render. The tutorial
  *  belongs to its own drawing, so opening another design ends it. */
 export function dropTutorial() {
   editor.tutorial = null;
+  window.clearInterval(tutorialWatch);
   window.clearTimeout(tutorialCheerTimer);
 }
 

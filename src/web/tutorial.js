@@ -1,10 +1,17 @@
-// The first-drawing tutorial: a five-transistor OTA drawn step by step. It is
-// optional and self-contained. Each step is checked from the drawing's
-// structure (which parts exist, which pins share a net), never from exact
-// coordinates, so any sensible layout completes it; the marked spots are only
-// suggestions. Everything here is pure; the editor draws the card and targets.
+// The tutorials: a five-transistor OTA drawn step by step (the first
+// drawing), a switched-capacitor integrator's clock, beats and analysis, and
+// a first-order delta-sigma modulator's signal-flow analysis. The last two
+// start from a drawing of their own and assume the basics. Each is optional
+// and self-contained. A step is checked from the drawing's structure (which
+// parts exist, which pins share a net), never from exact coordinates, or --
+// where it is about a window -- from what the editor shows (`ui`), so any
+// sensible layout completes it; the marked spots are only suggestions.
+// Everything here is pure; the editor draws the card and targets.
 
-import { INTERFACE_PIN_TYPES } from '../core/model.js';
+import { Circuit, INTERFACE_PIN_TYPES } from '../core/model.js';
+import { runCommand } from '../core/commands.js';
+import { switchGroupKey, switchPhase } from '../core/beats.js';
+import { existingTimingDiagram, timingStates } from '../core/timing-diagram.js';
 
 const NMOS = new Set(['nmos', 'nmosb']);
 const PMOS = new Set(['pmos', 'pmosb']);
@@ -159,19 +166,213 @@ export const TUTORIAL_STEPS = Object.freeze([
   },
 ]);
 
-/** Progress through the tutorial for the current drawing. Steps can finish in
- *  any order; `current` is the first one neither done nor skipped. */
-export function tutorialProgress(circuit, skipped = new Set()) {
-  const roles = tutorialRoles(circuit);
-  const steps = TUTORIAL_STEPS.map((step) => {
+// ----- a switched-capacitor integrator: clock, beats, analysis ---------------
+
+/** The stray-insensitive integrator, drawn but not yet clocked: no phases
+ *  on its switches. S1 and S3 sample V_IN onto C_S, S2 and S4 dump it into
+ *  the virtual ground. */
+function scIntegratorDrawing() {
+  const circuit = new Circuit();
+  for (const line of [
+    'add input VIN --at -1240 0', 'add switch_open S1 --at -1040 0', 'add capacitor CS --at -640 0',
+    'add switch_open S4 --at -240 0', 'add opamp U1 --at 200 40 --mirrorY', 'add output VOUT --at 640 40',
+    'add switch_open S2 --at -840 160 --rot 90', 'add ground G1 --at -840 320',
+    'add switch_open S3 --at -440 160 --rot 90', 'add ground G2 --at -440 320',
+    'add ground G3 --at -40 160', 'add capacitor CF --at 200 -160',
+    'connect VIN.p S1.a', 'connect S1.b CS.a', 'connect S2.a CS.a', 'connect S2.b G1.gnd',
+    'connect CS.b S4.a', 'connect S3.a CS.b', 'connect S3.b G2.gnd', 'connect S4.b U1.im',
+    'connect U1.ip G3.gnd', 'connect CF.a U1.im', 'connect CF.b U1.o', 'connect U1.o VOUT.p',
+  ]) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
+/** The integrator's two phases as drawn: S1 and S3's, and S2 and S4's --
+ *  each pair on one phase, the two different. Null until then. */
+function scPhases(circuit) {
+  const key = (refdes) => {
+    const component = circuit.components.get(refdes);
+    return component && switchPhase(component) ? switchGroupKey(component) : null;
+  };
+  const [a, b, c, d] = ['S1', 'S3', 'S2', 'S4'].map(key);
+  return a && b && c && d && a === b && c === d && a !== c ? { sample: a, transfer: c } : null;
+}
+
+const SC_STEPS = Object.freeze([
+  {
+    id: 'phases',
+    title: 'Give the switches their phases',
+    text: 'S1 and S3 sample V_IN onto C_S; S2 and S4 dump it into the virtual ground. Select S1 and S3, right-click one, and choose **Phase → New phase…**: type **$\\varphi_1$**. Then put S2 and S4 on **$\\varphi_2$** the same way (a phase in use is listed in the menu).',
+    done: (circuit) => !!scPhases(circuit),
+  },
+  {
+    id: 'clock',
+    title: 'Draw the clock',
+    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. The two never overlap, so a gap opens between them by itself.',
+    done: (circuit) => {
+      const phases = scPhases(circuit);
+      const states = phases && timingStates(circuit);
+      return !!states && states.some((state) => state.closed.has(phases.sample)) && states.some((state) => state.closed.has(phases.transfer))
+        && !states.some((state) => state.closed.has(phases.sample) && state.closed.has(phases.transfer));
+    },
+  },
+  {
+    id: 'span',
+    title: 'Mark the non-overlap',
+    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges, drawn under the diagram. Type **$t_{nov}$** into its field in the editor\'s list.',
+    done: (circuit) => (existingTimingDiagram(circuit)?.spans.length || 0) > 0,
+  },
+  {
+    id: 'beats',
+    title: 'Make the beats',
+    text: 'Press **Make beats** in the timing editor: one beat per state of the clock, each closing the switches whose phase is high.',
+    done: (circuit) => (circuit.beats?.length || 0) >= 2,
+  },
+  {
+    id: 'step',
+    title: 'Step through the clock',
+    text: 'Close the timing editor (**Shift+K**) and step through the beats with **Alt+→**: open switches are drawn open, and what they cut off dims.',
+    done: (circuit, roles, ui) => (ui.activeBeat ?? -1) >= 1,
+  },
+  {
+    id: 'derive',
+    title: 'Find H(z)',
+    text: 'Press **Shift+S**: the analysis window opens in its **Switched-cap** mode, the clock\'s states listed. Press **Derive** for the exact H(z), by charge from phase to phase.',
+    done: (circuit, roles, ui) => !!ui.scEquation,
+  },
+  {
+    id: 'finite-gain',
+    title: 'Give the op-amp a finite gain',
+    text: 'Right-click the op-amp: **Small-signal attributes → Opamp model → Finite gain A**, and **Derive** again. A appears in H(z): the integrator leaks, its pole inside the unit circle.',
+    done: (circuit, roles, ui) => circuit.components.get('U1')?.analysis?.model === 'finite-gain' && /A/.test(ui.scEquation || ''),
+  },
+]);
+
+// ----- a first-order delta-sigma modulator: signal-flow analysis ------------
+
+/** The modulator's parts, its forward path and feedback not yet wired: the
+ *  input into a sum (its lower input negative), a gain a, a delaying
+ *  integrator z^-1 / (1 - z^-1), and a quantizer to the output. */
+function sdmDrawing() {
+  const circuit = new Circuit();
+  for (const line of [
+    'add input U --at -1200 0', 'add signal_sum S1 --at -800 0', 'add gain K1 --at -400 0 --value a',
+    'add tf_z H1 --at 0 0 --value "tf([0 1], [1 -1])"', 'add quantizer QZ1 --at 400 0', 'add output V --at 800 0',
+    'connect U.p S1.w', 'connect QZ1.out V.p',
+  ]) runCommand(circuit, line);
+  circuit.setSignalInputNegative('S1', 's', true);
+  return circuit.toJSON();
+}
+
+const SDM_STEPS = Object.freeze([
+  {
+    id: 'forward',
+    title: 'Wire the forward path',
+    text: 'Wire the sum\'s output into the gain **a**, the gain into the integrator H(z), and the integrator into the quantizer: drag from a pin, or press **w**.',
+    done: (circuit) => {
+      const net = (ref, term) => (circuit.components.get(ref) ? netId(circuit, circuit.components.get(ref), term) : null);
+      const joined = (a, b) => !!a && a === b;
+      return joined(net('S1', 'e'), net('K1', 'in')) && joined(net('K1', 'out'), net('H1', 'in')) && joined(net('H1', 'out'), net('QZ1', 'in'));
+    },
+  },
+  {
+    id: 'feedback',
+    title: 'Close the loop',
+    text: 'Wire the output back into the sum\'s lower input. That input is negative already (the − beside it); right-click a sum for **Input polarity** to flip one.',
+    done: (circuit) => {
+      const quantizer = circuit.components.get('QZ1');
+      const sum = circuit.components.get('S1');
+      const out = quantizer && netId(circuit, quantizer, 'out');
+      return !!out && out === (sum && netId(circuit, sum, 's'));
+    },
+  },
+  {
+    id: 'derive',
+    title: 'Find the STF and the NTF',
+    text: 'Press **Shift+S**: the analysis window opens in its **Signal flow** mode. Press **Derive**: from one solve, the signal transfer function from U and the noise transfer function from the quantizer\'s error, **E_QZ1**.',
+    done: (circuit, roles, ui) => (ui.signalFlowResults || 0) >= 2,
+  },
+  {
+    id: 'coefficient',
+    title: 'Move a coefficient',
+    text: 'Under **Coefficients**, drag **a**\'s slider: the poles move and the plots follow, the equations staying symbolic. At a = 1 the NTF is 1 − z⁻¹.',
+    done: (circuit) => {
+      const value = circuit.analysisValues?.coefficients?.a;
+      return Number.isFinite(value) && value !== 1;
+    },
+  },
+  {
+    id: 'time',
+    title: 'Watch it in time',
+    text: 'In the Plots window (**Shift+W**), open the **Time** tab: a sine through the modulator, and the quantizer\'s output toggling around it.',
+    done: (circuit, roles, ui) => ui.plotsTab === 'Time',
+  },
+  {
+    id: 'annotate',
+    title: 'Put the graph on the drawing',
+    text: 'Back on **Magnitude**, press **Annotate graph**: the responses go under the drawing, named in their colours.',
+    done: (circuit) => [...circuit.labels.values()].some((label) => label.plot?.kind === 'response'),
+  },
+]);
+
+/** Every tutorial, as Learn lists them. `start` is the drawing it begins
+ *  from (none: a blank page); `targets` its marked spots; `roles` what its
+ *  steps find in the drawing; `finish(skipped)` the card's last words. */
+export const TUTORIALS = Object.freeze([
+  {
+    id: 'ota',
+    title: 'Draw a five-transistor OTA',
+    card: '5T OTA',
+    name: 'tutorial-5t-ota',
+    blurb: 'About five minutes, in a new document: place the transistors, wire them, add the rails and ports, and label the nets. The card marks where each part goes.',
+    steps: TUTORIAL_STEPS,
+    targets: TUTORIAL_TARGETS,
+    roles: tutorialRoles,
+    done: 'You drew a 5T OTA!',
+    finish: 'Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.',
+  },
+  {
+    id: 'switched-cap',
+    title: 'Clock a switched-capacitor integrator',
+    card: 'SC integrator',
+    name: 'tutorial-sc-integrator',
+    blurb: 'An integrator drawn for you: give its switches phases, draw the clock in the timing editor, step through it as beats, and find its H(z). Assumes the basics.',
+    start: scIntegratorDrawing,
+    steps: SC_STEPS,
+    done: 'You clocked and analysed an SC integrator!',
+    finish: 'Tick **Noise** in the analysis window for its kT/C noise, or press **Shift+F5** to present the beats.',
+  },
+  {
+    id: 'sdm',
+    title: 'Analyse a delta-sigma modulator',
+    card: 'First-order ΣΔ',
+    name: 'tutorial-sdm',
+    blurb: 'A first-order modulator\'s blocks placed for you: close its loop, derive the STF and NTF, move a coefficient, watch it in time, and put the graph on the drawing. Assumes the basics.',
+    start: sdmDrawing,
+    steps: SDM_STEPS,
+    done: 'You analysed a ΣΔ modulator!',
+    finish: 'Try the **Swing** and **Loop** tabs, or add a second integrator for a second-order loop.',
+  },
+]);
+
+/** A tutorial by id (the OTA when there is none such). */
+export function tutorialById(id) {
+  return TUTORIALS.find((tutorial) => tutorial.id === id) || TUTORIALS[0];
+}
+
+/** Progress through `tutorial` (the OTA by default) for the current drawing,
+ *  `ui` what the editor shows (see onboarding.js). Steps can finish in any
+ *  order; `current` is the first one neither done nor skipped. */
+export function tutorialProgress(circuit, skipped = new Set(), { tutorial = TUTORIALS[0], ui = {} } = {}) {
+  const roles = tutorial.roles ? tutorial.roles(circuit) : {};
+  const steps = tutorial.steps.map((step) => {
     let done = false;
-    try { done = !!step.done(circuit, roles); } catch { done = false; }
+    try { done = !!step.done(circuit, roles, ui); } catch { done = false; }
     return { id: step.id, done, skipped: !done && skipped.has(step.id) };
   });
   const current = steps.find((step) => !step.done && !step.skipped) || null;
   return {
     steps,
-    current: current ? TUTORIAL_STEPS.find((step) => step.id === current.id) : null,
+    current: current ? tutorial.steps.find((step) => step.id === current.id) : null,
     doneCount: steps.filter((step) => step.done).length,
     finished: !current,
   };
@@ -179,8 +380,8 @@ export function tutorialProgress(circuit, skipped = new Set()) {
 
 /** The suggested spots still open for a step: a spot counts as taken once a
  *  part of the same kind stands on it. */
-export function openTutorialTargets(circuit, step) {
-  const targets = TUTORIAL_TARGETS[step?.targets] || [];
+export function openTutorialTargets(circuit, step, tutorial = TUTORIALS[0]) {
+  const targets = tutorial.targets?.[step?.targets] || [];
   const parts = [...circuit.components.values()];
   return targets.filter((target) => !parts.some((c) => c.type.startsWith(target.type)
     && c.transform.x === target.x && c.transform.y === target.y));
