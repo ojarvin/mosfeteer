@@ -250,8 +250,9 @@ const SC_STEPS = Object.freeze([
 // ----- a first-order delta-sigma modulator: signal-flow analysis ------------
 
 /** The modulator's parts, its forward path and feedback not yet wired: the
- *  input into a sum (its lower input negative), a gain a, a delaying
- *  integrator z^-1 / (1 - z^-1), and a quantizer to the output. */
+ *  input into a sum, a gain a, a delaying integrator z^-1 / (1 - z^-1),
+ *  and a quantizer to the output. The sum's inputs are all positive: making
+ *  the feedback negative is a step. */
 function sdmDrawing() {
   const circuit = new Circuit();
   for (const line of [
@@ -259,7 +260,6 @@ function sdmDrawing() {
     'add tf_z H1 --at 0 0 --value "tf([0 1], [1 -1])"', 'add quantizer QZ1 --at 400 0', 'add output V --at 800 0',
     'connect U.p S1.w', 'connect QZ1.out V.p',
   ]) runCommand(circuit, line);
-  circuit.setSignalInputNegative('S1', 's', true);
   return circuit.toJSON();
 }
 
@@ -276,13 +276,13 @@ const SDM_STEPS = Object.freeze([
   },
   {
     id: 'feedback',
-    title: 'Close the loop',
-    text: 'Wire the output back into the sum\'s lower input. That input is negative already (the − beside it); right-click a sum for **Input polarity** to flip one.',
+    title: 'Close the loop, negatively',
+    text: 'Wire the output back into the sum\'s south (lower) input. A sum adds every input, so the feedback must be made negative: right-click the sum, **Input polarity → s input: positive** flips it, and a − appears beside it.',
     done: (circuit) => {
       const quantizer = circuit.components.get('QZ1');
       const sum = circuit.components.get('S1');
       const out = quantizer && netId(circuit, quantizer, 'out');
-      return !!out && out === (sum && netId(circuit, sum, 's'));
+      return !!out && out === (sum && netId(circuit, sum, 's')) && !!sum.negativeInputs?.has('s');
     },
   },
   {

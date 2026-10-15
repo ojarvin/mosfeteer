@@ -109,6 +109,8 @@ test('the delta-sigma tutorial: the forward path, the loop closed, STF and NTF, 
   run(circuit, 'connect H1.out QZ1.in');
   assert.deepEqual(doneOf('sdm', circuit), ['forward']);
   run(circuit, 'connect V.p S1.s');
+  assert.deepEqual(doneOf('sdm', circuit), ['forward'], 'fed back positive, the loop is not closed yet');
+  circuit.setSignalInputNegative('S1', 's', true);
   assert.deepEqual(doneOf('sdm', circuit), ['forward', 'feedback']);
   assert.ok(doneOf('sdm', circuit, { signalFlowResults: 2 }).includes('derive'));
   circuit.analysisValues.coefficients.a = 1;

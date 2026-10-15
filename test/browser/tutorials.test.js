@@ -68,8 +68,17 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
     await begin('sdm');
     assert.equal(await heading(), 'Wire the forward path');
     for (const line of ['connect S1.e K1.in', 'connect K1.out H1.in', 'connect H1.out QZ1.in']) await run(line);
-    await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Close the loop'`);
+    await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Close the loop, negatively'`);
     await run('connect V.p S1.s');
+    // Wired back positive, the step waits for the input to be flipped -- from the sum's menu.
+    assert.equal(await heading(), 'Close the loop, negatively');
+    const sum = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(-800, 0))`);
+    await h.mouse('mouseMoved', sum.x, sum.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', sum.x, sum.y, { button: 'right' });
+    await h.mouse('mouseReleased', sum.x, sum.y, { button: 'right' });
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith('Input polarity')).click()`);
+    await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="Input polarity"] button')].find((b) => b.textContent.trim() === 's input: positive').click()`);
     await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Find the STF and the NTF'`);
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.key('S');
     await h.until(`!document.getElementById('analysis-dialog').hidden && !document.getElementById('analysis-signal-flow').hidden`);
