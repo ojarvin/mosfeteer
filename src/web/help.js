@@ -1,15 +1,16 @@
 /**
  * Learn (?): the one place to learn the editor. Its tabs are the keymap and
- * command reference (searchable), the tutorial, every symbol (click one to
- * place it), and every tip. Settings holds preferences only.
+ * command reference (searchable), the tutorials, every symbol (to look at:
+ * hovering one names its type and pins), and every tip. Settings holds
+ * preferences only.
  */
 
 import { commandHelp } from '../core/commands.js';
-import { symbolTypeNames } from '../core/components/index.js';
+import { getSymbol, symbolTypeNames } from '../core/components/index.js';
 import { symbolCategories } from '../core/components/categories.js';
 import { PLACEMENT_LABELS, editorKeymap } from './toolbar.js';
 import { helpDialog, helpDialogContent, helpSearch } from './elements.js';
-import { beginPlacing, symbolPreviewSvg } from './insert-menu.js';
+import { symbolPreviewSvg } from './insert-menu.js';
 import { offerTutorial, tipStates, tipsOn } from './onboarding.js';
 import { TUTORIALS } from './tutorial.js';
 
@@ -90,7 +91,9 @@ export function renderHelpSearch() {
   }
 }
 
-/** Every placeable symbol by category, each a button that places it. */
+/** Every placeable symbol by category: a tile each, to look at -- no click
+ *  action; hovering one tells what it is, the type to search for when
+ *  inserting it, and its pins. */
 function renderSymbols() {
   const host = document.getElementById('help-symbols');
   if (!host || host.childElementCount) return;
@@ -101,19 +104,17 @@ function renderSymbols() {
     heading.textContent = title;
     const grid = document.createElement('div');
     grid.className = 'help-symbol-grid';
+    grid.setAttribute('role', 'list');
     for (const type of types) {
-      const tile = document.createElement('button');
-      tile.type = 'button';
+      const tile = document.createElement('div');
       tile.className = 'help-symbol';
-      tile.title = `Place ${PLACEMENT_LABELS[type] || type}`;
+      tile.setAttribute('role', 'listitem');
+      const def = getSymbol(type);
+      tile.title = `${def.description || PLACEMENT_LABELS[type] || type}\ntype: ${type}\npins: ${def.terminals.map((t) => t.name).join(', ') || 'none'}`;
       tile.innerHTML = `<span class="help-symbol-art" aria-hidden="true">${symbolPreviewSvg(type)}</span>`;
       const name = document.createElement('span');
       name.textContent = PLACEMENT_LABELS[type] || type;
       tile.append(name);
-      tile.addEventListener('click', () => {
-        helpDialog.close();
-        beginPlacing(type);
-      });
       grid.append(tile);
     }
     section.append(heading, grid);

@@ -54159,17 +54159,18 @@ __exports.renderHelpSearch = renderHelpSearch;
 __exports.showHelp = showHelp;
 __exports.installHelp = installHelp;
 let commandHelp; __bind(() => { ({ commandHelp } = __require("src/core/commands.js")); });
-let symbolTypeNames; __bind(() => { ({ symbolTypeNames } = __require("src/core/components/index.js")); });
+let getSymbol, symbolTypeNames; __bind(() => { ({ getSymbol, symbolTypeNames } = __require("src/core/components/index.js")); });
 let symbolCategories; __bind(() => { ({ symbolCategories } = __require("src/core/components/categories.js")); });
 let PLACEMENT_LABELS, editorKeymap; __bind(() => { ({ PLACEMENT_LABELS, editorKeymap } = __require("src/web/toolbar.js")); });
 let helpDialog, helpDialogContent, helpSearch; __bind(() => { ({ helpDialog, helpDialogContent, helpSearch } = __require("src/web/elements.js")); });
-let beginPlacing, symbolPreviewSvg; __bind(() => { ({ beginPlacing, symbolPreviewSvg } = __require("src/web/insert-menu.js")); });
+let symbolPreviewSvg; __bind(() => { ({ symbolPreviewSvg } = __require("src/web/insert-menu.js")); });
 let offerTutorial, tipStates, tipsOn; __bind(() => { ({ offerTutorial, tipStates, tipsOn } = __require("src/web/onboarding.js")); });
 let TUTORIALS; __bind(() => { ({ TUTORIALS } = __require("src/web/tutorial.js")); });
 /**
  * Learn (?): the one place to learn the editor. Its tabs are the keymap and
- * command reference (searchable), the tutorial, every symbol (click one to
- * place it), and every tip. Settings holds preferences only.
+ * command reference (searchable), the tutorials, every symbol (to look at:
+ * hovering one names its type and pins), and every tip. Settings holds
+ * preferences only.
  */
 
 
@@ -54258,7 +54259,9 @@ function renderHelpSearch() {
   }
 }
 
-/** Every placeable symbol by category, each a button that places it. */
+/** Every placeable symbol by category: a tile each, to look at -- no click
+ *  action; hovering one tells what it is, the type to search for when
+ *  inserting it, and its pins. */
 function renderSymbols() {
   const host = document.getElementById('help-symbols');
   if (!host || host.childElementCount) return;
@@ -54269,19 +54272,17 @@ function renderSymbols() {
     heading.textContent = title;
     const grid = document.createElement('div');
     grid.className = 'help-symbol-grid';
+    grid.setAttribute('role', 'list');
     for (const type of types) {
-      const tile = document.createElement('button');
-      tile.type = 'button';
+      const tile = document.createElement('div');
       tile.className = 'help-symbol';
-      tile.title = `Place ${PLACEMENT_LABELS[type] || type}`;
+      tile.setAttribute('role', 'listitem');
+      const def = getSymbol(type);
+      tile.title = `${def.description || PLACEMENT_LABELS[type] || type}\ntype: ${type}\npins: ${def.terminals.map((t) => t.name).join(', ') || 'none'}`;
       tile.innerHTML = `<span class="help-symbol-art" aria-hidden="true">${symbolPreviewSvg(type)}</span>`;
       const name = document.createElement('span');
       name.textContent = PLACEMENT_LABELS[type] || type;
       tile.append(name);
-      tile.addEventListener('click', () => {
-        helpDialog.close();
-        beginPlacing(type);
-      });
       grid.append(tile);
     }
     section.append(heading, grid);

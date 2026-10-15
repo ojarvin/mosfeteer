@@ -1590,9 +1590,6 @@ button:disabled {
   white-space: normal;
 }
 
-.help-symbol:hover {
-  border-color: var(--accent);
-}
 
 .help-symbol-art {
   display: block;

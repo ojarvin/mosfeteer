@@ -1,6 +1,7 @@
-/** The switched-cap and delta-sigma tutorials in a browser: started from
- *  Learn on a drawing of their own, their card following the steps --
- *  edits, the beat on screen, and the analysis window's results. */
+/** Learn's tutorials and symbols in a browser: the switched-cap and
+ *  delta-sigma tutorials started on a drawing of their own (over the Atlas
+ *  too), their card following the steps -- edits, the beat on screen, and
+ *  the analysis window's results; and the symbols, there to look at. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -76,5 +77,27 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
     await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Move a coefficient'`, 8000);
     await h.evaluate(`(() => { const i = document.querySelector('.signal-flow-coefficient[data-name="a"] .signal-flow-coefficient-value'); i.value = '0.5'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Watch it in time'`, 5000);
+  });
+});
+
+describe('Learn: the symbols', { skip: browserSkip() }, () => {
+  let h;
+  before(async () => { h = await start(); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+
+  test('a symbol is there to look at: a click places nothing, hovering tells its type and pins', async () => {
+    await h.key('?');
+    await h.until(`document.getElementById('help-dialog').open`);
+    await h.evaluate(`document.querySelector('#help-dialog [data-help-tab="symbols"]').click()`);
+    await h.until(`document.querySelectorAll('#help-symbols .help-symbol').length > 20`);
+    const tile = `[...document.querySelectorAll('#help-symbols .help-symbol')].find((t) => t.textContent.trim() === 'Resistor')`;
+    assert.equal(await h.evaluate(`${tile}.tagName`), 'DIV', 'not a button');
+    assert.match(await h.evaluate(`${tile}.title`), /type: resistor\npins: a, b/);
+    const at = await h.evaluate(`(() => { const r = ${tile}.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });
+    await h.mouse('mousePressed', at.x, at.y);
+    await h.mouse('mouseReleased', at.x, at.y);
+    assert.equal(await h.evaluate(`document.getElementById('help-dialog').open`), true, 'Learn stays open');
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.mode)`), 'normal', 'no insert mode');
   });
 });
