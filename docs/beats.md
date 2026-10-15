@@ -149,7 +149,8 @@ waves, gaps, shifts and slot width change, and inserted or removed slots
 carry it along. An **Arrow** runs from an edge to the transition it causes:
 a curve that always leaves the first edge heading right and arrives at the
 other from the left, bending as far as it must (back on itself into an edge
-at the same time or earlier). A **Mark** is a dashed line through every
+at the same time or earlier); its optional text goes in the row it points
+into, just after the edge. A **Mark** is a dashed line through every
 row, reaching a cell above and below the waves. A **Span** is a time between two edges: a dashed
 line at each, reaching below the waves to an arrow between them (pointing in
 from outside when it is under three cells), its text under the arrow (just
@@ -162,7 +163,7 @@ buttons removes them and edits a span's text. Something whose edge has gone
 (its slot changed level) is kept, struck through in the list, and drawn
 again when the edge returns. The command takes them as `ROW:N`, the row's
 edge at the start of slot N (slots+1 for the one after the last): `timing
---arrow CLK:2>Q:2 --mark CLK:4 --span "φ1:3>φ2:3=$t_{nov}$"`, `--clear
+--arrow "CLK:2>Q:2=$t_{cq}$" --mark CLK:4 --span "φ1:3>φ2:3=$t_{nov}$"`, `--clear
 arrows,marks,spans|all`; one asked for that lands on no edge is refused.
 
 The diagram's annotations remember their phase and wave, so drawing it again

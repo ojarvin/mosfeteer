@@ -377,3 +377,27 @@ test('a narrow span is pointed at from outside; overlapping spans take lanes of 
   const wide = spans.find((l) => l.style.arrowhead === 'both');
   assert.notEqual(wide.points[0].y, narrow[0].points[0].y, 'the overlapping span in another lane');
 });
+
+test('an arrow may carry text: just after the edge it points at, in that row, kept with the diagram', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK,D,Q', 'timing CLK=0101 D=0110 Q=0011', 'timing --rise Q=1');
+  // With text, several arrows part at ';' (TeX may hold commas).
+  run(circuit, 'timing --arrow "CLK:2>Q:3=$t_{c,q}$;CLK:4>D:4"');
+  const diagram = existingTimingDiagram(circuit);
+  assert.deepEqual(diagram.arrows, [
+    { from: { row: 'CLK', at: 1 }, to: { row: 'Q', at: 2 }, text: '$t_{c,q}$' },
+    { from: { row: 'CLK', at: 3 }, to: { row: 'D', at: 3 } },
+  ]);
+  const notes = [...circuit.labels.values()].filter((l) => l.timing?.part === 'arrow-note');
+  assert.equal(notes.length, 1, 'only the arrow with text has a label');
+  const arrow = [...circuit.labels.values()].find((l) => l.timing?.part === 'arrow' && l.timing.item === 0);
+  const tip = arrow.points[1];
+  assert.equal(notes[0].anchorWorld().y, tip.y, 'in the middle of the row it points into');
+  assert.ok(notes[0].bbox().x >= tip.x && notes[0].bbox().x < tip.x + 40, 'starting at the edge');
+  // Saved, the text stays; the edge gone, the label waits with its arrow.
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal(existingTimingDiagram(loaded).arrows[0].text, '$t_{c,q}$');
+  run(circuit, 'timing Q=0000');
+  assert.equal([...circuit.labels.values()].filter((l) => l.timing?.part === 'arrow-note').length, 0);
+  assert.deepEqual(existingTimingDiagram(circuit).missing, [{ kind: 'arrow', index: 0 }]);
+});

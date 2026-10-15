@@ -531,7 +531,7 @@ export function commandHelp() {
     '                                   --place puts it again where the drawing has room for it.',
     '                                   On the edges (ROW:N, the row\'s edge at the start of slot N; N = slots+1 is the one',
     '                                   after the last): --arrow CLK:2>Q:2,... draws a curved arrow from an edge to the',
-    '                                   transition it causes; --mark ROW:N,... a dashed line through every row; --span',
+    '                                   transition it causes ("CLK:2>Q:2=TEXT;..." labels it); --mark ROW:N,... a dashed line through every row; --span',
     '                                   "A:N>B:M=TEXT;..." dashed lines at two edges and an arrow between them below the',
     '                                   waves, TEXT under it. --clear arrows,marks,spans (or all) takes them away first.',
     '                                   They follow their edges as the waves change; one whose edge has gone waits for it',
@@ -1064,13 +1064,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const cleared = (kind) => clearText.includes(kind) || clearText.includes('all');
     const need = [];
     const notes = {};
+    // An arrow's or a span's text follows `=`; with text, items part at `;`.
+    const withText = (flag) => (text) => {
+      const at = text.indexOf('=');
+      return { ...ends(at < 0 ? text : text.slice(0, at), flag), text: at < 0 ? '' : text.slice(at + 1).trim() };
+    };
     for (const [kind, flag, separator, parse] of [
-      ['arrows', 'arrow', ',', (text) => ends(text, 'arrow')],
+      ['arrows', 'arrow', /=|;/.test(String(flags.arrow?.[0] ?? '')) ? ';' : ',', withText('arrow')],
       ['marks', 'mark', ',', (text) => edge(text, 'mark')],
-      ['spans', 'span', ';', (text) => {
-        const at = text.indexOf('=');
-        return { ...ends(at < 0 ? text : text.slice(0, at), 'span'), text: at < 0 ? '' : text.slice(at + 1).trim() };
-      }],
+      ['spans', 'span', ';', withText('span')],
     ]) {
       const added = flags[flag] ? String(flags[flag][0]).split(separator).map((item) => item.trim()).filter(Boolean).map(parse) : [];
       need.push(...added.map((item) => ({ kind: flag, item })));

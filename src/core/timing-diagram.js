@@ -310,7 +310,8 @@ export function existingTimingDiagram(circuit) {
   const signals = sorted.filter((label) => label.timing.signal).map((label) => ({ key: label.timing.phase, source: label.text }));
   const { arrows = [], marks = [], spans = [] } = first.timing;
   // The arrows, marks and spans not drawn: their edges have gone.
-  const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${label.timing.part === 'note' ? 'span' : label.timing.part}:${label.timing.item}`));
+  const owner = { note: 'span', 'arrow-note': 'arrow' };
+  const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${owner[label.timing.part] || label.timing.part}:${label.timing.item}`));
   const missing = Object.entries({ arrow: arrows, mark: marks, span: spans })
     .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
   return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
@@ -368,7 +369,10 @@ function timingNotes({ arrows = [], marks = [], spans = [] }) {
   const edge = (ref) => ({ row: String(ref.row), at: Math.round(Number(ref.at)) });
   const unique = (list, same) => list.filter((item, i) => list.findIndex((other) => same(item, other)) === i);
   return {
-    arrows: unique(arrows.map((a) => ({ from: edge(a.from), to: edge(a.to) })), (a, b) => sameEdge(a.from, b.from) && sameEdge(a.to, b.to)),
+    arrows: unique(arrows.map((a) => {
+      const text = String(a.text ?? '').trim();
+      return { from: edge(a.from), to: edge(a.to), ...(text ? { text } : {}) };
+    }), (a, b) => sameEdge(a.from, b.from) && sameEdge(a.to, b.to)),
     marks: unique(marks.map(edge), sameEdge),
     spans: unique(spans.map((span) => ({ from: edge(span.from), to: edge(span.to), text: String(span.text ?? '').trim() })), (a, b) => sameEdge(a.from, b.from) && sameEdge(a.to, b.to)),
   };
@@ -579,7 +583,18 @@ function drawNotes(circuit, notes, layout, origin, settings) {
     kind, text: '', x: points[0].x, y: points[0].y, end: points.at(-1), points, timing: timing(part, ref, item), style: { width: 'thin', ...style },
     ...(kind === 'arrow' ? { curve: true } : {}),
   });
-  for (const { index, from, to } of layout.arrows) shape('arrow', [at(from), at(to)], 'arrow', notes.arrows[index].from, index, {});
+  for (const { index, from, to } of layout.arrows) {
+    const ref = notes.arrows[index].from;
+    shape('arrow', [at(from), at(to)], 'arrow', ref, index, {});
+    // Its text, if any, just after the edge it points at, in the middle of
+    // that row: clear of the row's levels, and of the arrow, which comes in
+    // from the left.
+    const text = notes.arrows[index].text;
+    if (!text) continue;
+    const tip = at(to);
+    const label = circuit.addLabel({ text, math: isTexSource(text), align: 'left', x: tip.x, y: tip.y, timing: timing('arrow-note', ref, index) });
+    label.moveTo(ceilGrid(tip.x + label.bbox().w / 2), tip.y);
+  }
   // A dashed guide at each mark and span end, from a cell above the waves.
   for (const { kind, index, x, bottom } of layout.guides) {
     shape('line', [at({ x, y: -GRID }), at({ x, y: bottom })], kind, kind === 'mark' ? notes.marks[index] : notes.spans[index].from, index, { lineStyle: 'dashed' });

@@ -820,19 +820,21 @@ function openTimingDialog() {
         remove,
       ]));
     };
-    state.notes.arrows.forEach((arrow, index) => item('arrow', index, `${edgeName(arrow.from)} → ${edgeName(arrow.to)}`));
-    state.notes.marks.forEach((mark, index) => item('mark', index, edgeName(mark)));
-    state.notes.spans.forEach((span, index) => {
-      const input = element('input', { type: 'text', value: span.text, placeholder: 'text, e.g. $t_{su}$', 'aria-label': 'Span text', spellcheck: 'false' });
-      input.addEventListener('change', () => { span.text = input.value.trim(); redraw(); });
+    // An arrow's and a span's text, typed in place.
+    const textField = (note, placeholder, label) => {
+      const input = element('input', { type: 'text', value: note.text || '', placeholder, 'aria-label': label, spellcheck: 'false' });
+      input.addEventListener('change', () => { note.text = input.value.trim(); redraw(); });
       input.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter') return;
         event.preventDefault();
         input.blur();
         grid.focus();
       });
-      item('span', index, `${edgeName(span.from)} ↔ ${edgeName(span.to)}`, [input]);
-    });
+      return input;
+    };
+    state.notes.arrows.forEach((arrow, index) => item('arrow', index, `${edgeName(arrow.from)} → ${edgeName(arrow.to)}`, [textField(arrow, 'text (optional)', 'Arrow text')]));
+    state.notes.marks.forEach((mark, index) => item('mark', index, edgeName(mark)));
+    state.notes.spans.forEach((span, index) => item('span', index, `${edgeName(span.from)} ↔ ${edgeName(span.to)}`, [textField(span, 'text, e.g. $t_{su}$', 'Span text')]));
     const hint = state.pending
       ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
       : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';

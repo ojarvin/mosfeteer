@@ -55,6 +55,10 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.until(`window.__circuit().labels.some((l) => l.timing?.part === 'arrow')`);
     assert.deepEqual((await notes()).arrows, [{ from: { row: 'CLK', at: 3 }, to: { row: 'Q', at: 2 } }]);
     assert.equal((await parts()).find((p) => p.part === 'arrow').curve, true);
+    // Its text from the list, drawn after the edge it points at.
+    await h.evaluate(`(() => { const i = document.querySelector('.timing-note input[aria-label="Arrow text"]'); i.value = '$t_{d}$'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`window.__circuit().labels.some((l) => l.timing?.part === 'arrow-note' && l.text === '$t_{d}$')`);
+    assert.equal((await notes()).arrows[0].text, '$t_{d}$');
     // m marks the edge at the cursor, and again takes it away.
     await clickEdge(0, 1);
     await gridKey('m');
@@ -76,7 +80,7 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await gridKey('ArrowLeft');
     await gridKey('+');
     const moved = await notes();
-    assert.deepEqual(moved.arrows, [{ from: { row: 'CLK', at: 4 }, to: { row: 'Q', at: 3 } }]);
+    assert.deepEqual(moved.arrows, [{ from: { row: 'CLK', at: 4 }, to: { row: 'Q', at: 3 }, text: '$t_{d}$' }]);
     assert.deepEqual(moved.marks, [{ row: 'CLK', at: 2 }]);
     assert.deepEqual(moved.spans[0].to, { row: 'CLK', at: 4 });
     // Removed from the list, the arrow is gone from the drawing.

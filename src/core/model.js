@@ -931,14 +931,16 @@ function normalizeTiming(timing) {
     const [from, to] = [edge(value?.from), edge(value?.to)];
     return from && to ? { from, to } : null;
   };
-  const arrows = list(timing.arrows, pair);
-  const marks = list(timing.marks, edge);
-  const spans = list(timing.spans, (value) => {
+  // Arrows and spans may carry text.
+  const withText = (value) => {
     const ends = pair(value);
     return ends ? { ...ends, text: typeof value.text === 'string' ? value.text.slice(0, 200) : '' } : null;
-  });
-  // A drawn arrow, mark or span (or a span's text) says which it is.
-  const part = ['arrow', 'mark', 'span', 'note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
+  };
+  const arrows = list(timing.arrows, withText).map(({ text, ...arrow }) => (text ? { ...arrow, text } : arrow));
+  const marks = list(timing.marks, edge);
+  const spans = list(timing.spans, withText);
+  // A drawn arrow, mark or span (or a span's or an arrow's text) says which it is.
+  const part = ['arrow', 'mark', 'span', 'note', 'arrow-note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
   return {
     phase: timing.phase.slice(0, 200),
     ...(bits ? { bits } : {}),
