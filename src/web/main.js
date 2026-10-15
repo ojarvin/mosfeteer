@@ -81,6 +81,8 @@ import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncMod
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
+import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
+import { historyDocumentShown, installHistory, renderHistoryWindow } from './history-window.js';
 import { togglePlots } from './plots-window.js';
 import { paddedLineBounds } from './label-measure.js';
 import { captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } from './net-geometry.js';
@@ -461,6 +463,8 @@ function drawingOf(text) {
   const data = JSON.parse(text);
   delete data.analysisValues;
   delete data.windows;
+  delete data.notes;
+  delete data.history;
   return JSON.stringify(data);
 }
 
@@ -535,8 +539,10 @@ function beginPreviewTransaction(startSnapshot = snapshot()) {
     startSnapshot,
   };
   circuit = loadDocument(JSON.parse(startSnapshot));
-  // The working copy shares the windows' state: it is the same document.
+  // The working copy shares the windows' state and the save history: it is
+  // the same document.
   circuit.windows = previewTransaction.baseCircuit.windows;
+  circuit.history = previewTransaction.baseCircuit.history;
   circuit.adoptTextMetrics(previewTransaction.baseCircuit);
   previewRevision += 1;
   circuit.invalidateRoutingCache();
@@ -621,8 +627,9 @@ installCopyPaste();
 let toolbarFitKey = '';
 
 /** Replace the circuit with a snapshot. Undo, redo, and a cancelled edit
- *  keep the windows' state (window-state.js) as it is; `document: true` is
- *  another document (or another version of it) shown, its own windows' with it. */
+ *  keep the windows' state (window-state.js) and the save history as they
+ *  are; `document: true` is another document (or another version of it)
+ *  shown, its own windows' and history with it. */
 export function applyJson(blob, { document: replacesDocument = false } = {}) {
   if (previewTransaction) cancelPreviewTransaction();
   // Loads, undo, and redo replace the document; they are not new commits.
@@ -645,7 +652,11 @@ export function applyJson(blob, { document: replacesDocument = false } = {}) {
   resetCheckState();
   const previous = circuit;
   circuit = loadDocument(JSON.parse(blob));
-  if (!replacesDocument && previous) circuit.windows = previous.windows;
+  // The save history is the file's, never undone (core/save-history.js).
+  if (!replacesDocument && previous) {
+    circuit.windows = previous.windows;
+    circuit.history = previous.history;
+  }
   if (replacesDocument) documentGeneration += 1;
   // Labels whose text is unchanged keep their measured size, instead of
   // every label being measured again (a forced layout each).
@@ -2443,6 +2454,8 @@ export function render() {
     renderDetail();
   }
   renderTagsField();
+  renderNotesWindow();
+  renderHistoryWindow();
   renderCheckSummary();
   syncAnalysisDock();
   renderBeatStrip();
@@ -6246,6 +6259,10 @@ installContextMenu();
 installHierarchy();
 installReferenceWindows();
 installCalculator();
+installNotes();
+onDocumentShown(notesDocumentShown);
+installHistory();
+onDocumentShown(historyDocumentShown);
 installRenumberUi();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
@@ -6706,6 +6723,12 @@ function onNormalKey(key, shiftKey = false) {
   // Shift+E: the calculator (E for evaluate), open or closed.
   if (key === 'E') {
     toggleCalculator();
+    return;
+  }
+
+  // n: the design's notes, open or closed.
+  if (key === 'n') {
+    toggleNotes();
     return;
   }
 

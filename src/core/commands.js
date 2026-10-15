@@ -21,6 +21,7 @@ import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
+import { normalizeNotes } from './notes.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -472,6 +473,8 @@ export function commandHelp() {
     '  disconnect REF.TERM            - detach one terminal from its net',
     '  swap <refdes> [type]           - change a part\'s type in place, keeping its wiring (no type: list the choices)',
     '  tag [list] | tag add|rm|set NAME ... - the document\'s tags, for finding it in the Atlas (#NAME searches them)',
+    '  notes | notes set TEXT | notes append TEXT | notes clear - the design\'s notes (Markdown, $math$, @M1 or @V_{out} mention',
+    '                                   a part or net, [[design]] links another design); append adds TEXT as a new line',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
@@ -542,9 +545,26 @@ export function commandHelp() {
 }
 
 export function runCommand(circuit, line, io) {
+  // The notes take the rest of the line as written: Markdown and TeX keep
+  // their quotes, backslashes, and double dashes.
+  const notes = String(line).match(/^\s*notes?\s+(set|append)(?:\s([\s\S]*))?$/i);
+  if (notes) return notesCommand(circuit, notes[1].toLowerCase(), notes[2] ?? '');
   const { pos, flags } = parseArgs(splitArgs(line));
   const cmd = pos.shift() || 'help';
   return dispatch(circuit, cmd, pos, flags, io);
+}
+
+/** `notes set TEXT` replaces the design's notes; `notes append TEXT` adds
+ *  TEXT as a line after them (an empty one for a paragraph break). One pair
+ *  of quotes around the whole of TEXT is taken off. */
+function notesCommand(circuit, action, raw) {
+  const quoted = raw.trim().match(/^"([\s\S]*)"$/);
+  const text = quoted ? quoted[1] : raw.trim();
+  const before = circuit.notes;
+  const next = action === 'set' ? text : before ? `${before.replace(/\n+$/, '')}\n${text}` : text;
+  circuit.notes = normalizeNotes(next);
+  const lines = circuit.notes ? circuit.notes.split('\n').length : 0;
+  return { text: circuit.notes ? `notes: ${lines} line${lines === 1 ? '' : 's'}` : '(no notes)', json: { notes: circuit.notes }, mutated: circuit.notes !== before };
 }
 
 function dispatch(circuit, cmd, pos, flags, io) {
@@ -927,6 +947,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const from = circuit.getComponent(pos[0]).type;
     const c = swapComponentType(circuit, pos[0], pos[1]);
     return result(`${pos[0]} (${from}) is now ${c.refdes} (${c.type})`, { refdes: c.refdes, type: c.type }, true);
+  }
+  if (cmd === 'notes' || cmd === 'note') {
+    if (!pos.length) return result(circuit.notes || '(no notes)', { notes: circuit.notes });
+    if (pos.length === 1 && pos[0] === 'clear') {
+      const changed = !!circuit.notes;
+      circuit.notes = '';
+      return result('(no notes)', { notes: '' }, changed);
+    }
+    throw new Error('usage: notes | notes set TEXT | notes append TEXT | notes clear');
   }
   if (cmd === 'tag' || cmd === 'tags') {
     const [action, ...names] = pos;

@@ -30,7 +30,7 @@ Core keyboard vocabulary:
 | Context | Keys |
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `Shift+A` align to (selection outline edge/point, then another object's), `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
-| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis window, `Shift+V` reference windows (another design beside this one, `src/web/reference-window.js`), `Shift+E` calculator (`src/core/calculator.js`, `src/web/calculator-window.js`), `Shift+W` plots (a signal-flow diagram's responses, locus, swing, loop gain, and nets in time, `src/web/plots-window.js`), `Shift+Backspace` Atlas view ([`docs/atlas.md`](atlas.md)), `?` Learn (keys, tutorials, symbols, tips; `src/web/help.js`; the tutorials -- a 5T OTA drawn from scratch, a switched-cap integrator's clock, beats and H(z), a delta-sigma modulator's signal flow -- are `src/web/tutorial.js`, each step checked from the drawing or what the windows show; `tutorial sc` / `tutorial sdm` on the command line), `:` command line (log drawer), which also searches and runs every editor action by description (`src/web/command-line.js`) |
+| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis window, `Shift+V` reference windows (another design beside this one, `src/web/reference-window.js`), `Shift+E` calculator (`src/core/calculator.js`, `src/web/calculator-window.js`), `n` notes (Markdown about the design, with mentions of its parts and nets: [`docs/notes-and-history.md`](notes-and-history.md)), `Shift+W` plots (a signal-flow diagram's responses, locus, swing, loop gain, and nets in time, `src/web/plots-window.js`), `Shift+Backspace` Atlas view ([`docs/atlas.md`](atlas.md)), `?` Learn (keys, tutorials, symbols, tips; `src/web/help.js`; the tutorials -- a 5T OTA drawn from scratch, a switched-cap integrator's clock, beats and H(z), a delta-sigma modulator's signal flow -- are `src/web/tutorial.js`, each step checked from the drawing or what the windows show; `tutorial sc` / `tutorial sdm` on the command line), `:` command line (log drawer), which also searches and runs every editor action by description (`src/web/command-line.js`) |
 | editing | `dd`/Delete delete, `Ctrl/Cmd+C`/`Ctrl/Cmd+V` copy/paste, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `/` or `Ctrl/Cmd+F` find (in the Atlas: search every design) / `Ctrl/Cmd+H` replace in label text (`src/core/label-search.js`), `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped), `q` swap the selected or pointed-at parts' type in place (`src/core/swap.js`), `g`/`v` over an unconnected pin wire a ground/supply to it (`src/core/pin-rails.js`), `.` repeat the last rotate, mirror, swap, rail, stubs, or tidy, `Shift+T` tidy the selection, `t`/`=`/`F2` edit the selected or pointed-at text (several selected switches or rails take one phase or rail name, `src/core/shared-labels.js`) |
 | beats | `Shift+B` beats window, `Shift+K` timing diagram editor, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or cursor snapping to the nearest terminal or free wire end while wiring; a click on a free wire end (`Circuit#openWireEnds`) finishes a draft there like a terminal; a placed, moved, or copied part's pin that will join a pin, a free wire end, or (unconnected) a wire's middle on commit is ringed first (`pinJoinPoints`) |
@@ -62,6 +62,9 @@ modules split out of it reach that state through the `editor` accessor
 loads. A module's `installX()` runs its load-time wiring where `main.js` calls
 it, so the call's position keeps the original load order.
 
+More → History… (`:history`) lists the design's save points and checkpoints,
+kept in its file ([`docs/notes-and-history.md`](notes-and-history.md)).
+
 What the editor's windows show for a design is saved with it
 (`Circuit#windows`, `src/core/window-state.js`): the reference windows
 (pasted pictures included), the calculator's results, the time-domain plot's
@@ -77,7 +80,8 @@ showing in another.
 Two more things a file carries never make a design unsaved, and are only
 written with a real save: the names it was saved under (`names`,
 [`hierarchy.md`](hierarchy.md)), and the size this browser measured a math
-label at (`mathBox`). Opening a design, measuring its math, and leaving it
+label at (`mathBox`). Nor does its save history (`history`), which the
+history window writes to the file as it changes. Opening a design, measuring its math, and leaving it
 changes nothing on disk (`drawingText`, `windowsChanged` in
 `src/web/document-session.js`).
 

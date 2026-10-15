@@ -26,6 +26,7 @@ read the one for the area you change before changing it.
 | Switched-capacitor analysis | [`docs/switched-cap-analysis.md`](docs/switched-cap-analysis.md) |
 | Wiring internals | [`docs/wiring-architecture.md`](docs/wiring-architecture.md) |
 | Beats, linked designs, Atlas | [`docs/beats.md`](docs/beats.md), [`docs/hierarchy.md`](docs/hierarchy.md), [`docs/atlas.md`](docs/atlas.md) |
+| Notes, save history | [`docs/notes-and-history.md`](docs/notes-and-history.md) |
 
 ## Repository map
 
@@ -95,14 +96,19 @@ stale, one undo entry per finished adjustment.
 the one command language for the prompt, `window.__run`, the CLI, and the
 HTTP API; a new command goes in `dispatch()` and `commandHelp()` with a
 success and an error test. Beats, peek bubbles, and the trail are view
-state, never geometry. What the windows show (`Circuit#windows`) is saved
-with the design but never makes it unsaved and survives undo. Feature
+state, never geometry. What the windows show (`Circuit#windows`) and the
+save history (`Circuit#history`) are saved with the design but never make
+it unsaved and survive undo; the notes (`Circuit#notes`) are settings-like
+document data. Feature
 modules reach editor state through `editor` (`editor-state.js`) and import
 `main.js` only as `./main.js`.
 
 **Persistence.** The server serializes load/run/save per document and writes
 atomically; `src/server/documents.js` and `src/web/persistence.js` are the
-boundary. Only `.json` files that load as a design join a workspace.
+boundary. Only `.json` files that load as a design join a workspace. Every
+writer of a document file passes it through `settledHistory`
+(`src/core/save-history.js`) with the file's previous contents, so its save
+history follows the drawing; only the editor's Save adds a save point.
 
 ## Workflow
 

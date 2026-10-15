@@ -35,7 +35,8 @@ function segmentBox(a, b, pad = 10) {
 }
 
 /**
- * The index of one circuit: `{ tags, items }`, each item
+ * The index of one circuit: `{ tags, notes?, items }` (`notes` as one
+ * search key), each item
  * `{ kind: 'part'|'net'|'text', id, text, type?, boxes }` in drawing units.
  */
 export function designIndex(circuit) {
@@ -70,12 +71,14 @@ export function designIndex(circuit) {
   // timing diagram (its annotations carry `timing`).
   const beats = circuit.beats.length;
   const timing = [...circuit.labels.values()].some((label) => label.timing);
-  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), items };
+  // The notes are searched as one text, drawn nowhere (notes.js).
+  const notes = circuit.notes ? searchKey(circuit.notes) : '';
+  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(notes ? { notes } : {}), items };
 }
 
 /**
  * Search one design. Every word of `query` must be found -- in the design's
- * name, its tags, or one of its items (a part's type counts: `pmos`,
+ * name, its tags, its notes, or one of its items (a part's type counts: `pmos`,
  * `current source`); `#word` looks only at tags. Returns null when the design
  * does not match, else `{ hits }`: the items that matched a word.
  */
@@ -96,7 +99,7 @@ export function searchDesign(index, name, query) {
     }
     const matching = items.filter((item) => searchKey(item.text).includes(key) || (item.type && searchKey(item.type).includes(key)));
     for (const item of matching) hits.add(item);
-    if (!matching.length && !inTags && !searchKey(name).includes(key)) return null;
+    if (!matching.length && !inTags && !searchKey(name).includes(key) && !index?.notes?.includes(key)) return null;
   }
   return { hits: [...hits] };
 }

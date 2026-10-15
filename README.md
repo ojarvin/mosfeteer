@@ -43,6 +43,7 @@
 | **Analyze block diagrams** | Draw a loop of gains, sums, H(s) and H(z) blocks, samplers, and quantizers, and get its exact transfer functions, plots, and a time-domain simulation. |
 | **Tune it** | An optimizer searches the free coefficients for the best in-band noise, peaking, or pole Q that keeps your limits and signal swings. |
 | **Work across designs** | Parts link to the circuits they stand for. Peek into them, dive in, or keep another design open in a reference window. |
+| **Keep the story** | Notes in Markdown with math beside each design, mentioning its parts and nets. Every save is kept in the file; pin the one that works as a checkpoint and roll back to it later. |
 | **Keep tools at hand** | A calculator that speaks engineering units, reference windows with another design beside this one, a design check, and a command line for every action. |
 | **Share it** | SVG, PDF, and PNG export sized for papers, and a browser-only build that runs from a folder. |
 
@@ -64,7 +65,7 @@ The **Plots** window (`Shift+W`) shows the result as tabs: magnitude and phase, 
 
 The **optimizer** searches the free coefficients for the best goal that keeps every limit. Goals and limits are specs on a transfer function over a band (in-band noise, peak, lowest point), pole specs (the highest Q, the largest radius), relations between coefficients (`c_1 >= c_2`), and a swing test that simulates the loop with a sine and keeps chosen nets under their limits. Lee's rule for a modulator is one line: the NTF's peak below 3.5 dB.
 
-Alongside: a **calculator** (`Shift+E`) that reads `1/(2pi*10k*1n)` and `20*log(ans)`, **reference windows** (`Shift+V`) that keep another design in view, and a **design check** (`x`) for unconnected pins, overlapping nets and labels, and other slips.
+Alongside: a **calculator** (`Shift+E`) that reads `1/(2pi*10k*1n)` and `20*log(ans)`, **reference windows** (`Shift+V`) that keep another design in view, **notes** (`n`) where `@M1` points at a part, a **history** (More → History…) of the last ten saves and the checkpoints you pin, and a **design check** (`x`) for unconnected pins, overlapping nets and labels, and other slips.
 
 ## Quick start
 
@@ -90,7 +91,7 @@ The editor opens in its own window and quits when you close it.
 | `Shift+B` · `Shift+K` | beats · timing diagram |
 | `Shift+S` · `Shift+W` | analysis · plots |
 | `Shift+E` · `x` | calculator · design check |
-| `Shift+V` | reference windows |
+| `Shift+V` · `n` | reference windows · notes |
 | `Shift+Backspace` | the Atlas |
 | `?` | everything else: keys, tutorial, symbols, tips |
 

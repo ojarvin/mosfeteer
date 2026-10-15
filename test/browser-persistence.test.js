@@ -282,6 +282,26 @@ test('a folder is the workspace: listed, saved into, and deleted from in place',
   assert.equal((await reloaded.workspace()).documents.length, 2);
 });
 
+test('a Save in a folder adds a save point read against the file it replaces', async () => {
+  const { historyEntries, historyText } = await import('../src/core/save-history.js');
+  const disk = fakeDisk();
+  const designs = disk.folder('designs', {});
+  const persistence = createBrowserPersistenceAdapter({ storage: memoryStorage(), windowImpl: { showDirectoryPicker: async () => designs }, handleStore: memoryHandleStore() });
+  await persistence.pickFile({ mode: 'folder' });
+  await persistence.setWorkspace('designs');
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 240, y: 240 });
+  const first = await persistence.save({ name: 'amp' }, circuit.toJSON(), { savePoint: true });
+  assert.equal(first.history.entries.length, 1);
+  circuit.addComponent('resistor', { refdes: 'R1', x: 600, y: 240 });
+  // The editor's history is stale here (none): the file's own carries on.
+  await persistence.save({ path: first.path }, circuit.toJSON(), { overwrite: true, savePoint: true });
+  const saved = JSON.parse(designs.files.get('amp.json').text);
+  const entries = historyEntries(saved.history, historyText(saved));
+  assert.equal(entries.length, 2);
+  assert.equal(entries[1].text.includes('"R1"'), false);
+});
+
 test('without a folder picker, a folder is read once and saving downloads', async () => {
   const downloads = [];
   const persistence = createBrowserPersistenceAdapter({

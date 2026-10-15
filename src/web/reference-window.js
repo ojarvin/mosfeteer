@@ -379,6 +379,43 @@ function setPicture(win, image) {
   remember();
 }
 
+/** Show a design's state that is no file (a save point from its history,
+ *  history-window.js), titled `title`: read-only, never followed or saved
+ *  with the windows. */
+async function setState(win, title, state) {
+  win.doc = null;
+  win.pasted = null;
+  win.picture = null;
+  win.etag = null;
+  win.revision = null;
+  win.fitted = true;
+  win.swap.disabled = true;
+  win.title.textContent = `${title} ▾`;
+  showMessage(win, 'Loading…');
+  remember();
+  try {
+    const picture = await pictureOf(loadDocument(state));
+    if (!windows.includes(win) || win.doc || win.pasted) return;
+    win.picture = picture;
+    if (!picture) {
+      showMessage(win, `${title} is empty`);
+      return;
+    }
+    showMessage(win, '');
+    fit(win);
+  } catch (err) {
+    showMessage(win, `${title} could not be drawn: ${err.message}`);
+  }
+}
+
+/** Open a reference window on `state` (a save point), titled `title`. */
+export function showStateInReference(title, state) {
+  if (hidden) toggleReferenceWindows();
+  const win = createWindow();
+  if (win) void setState(win, title, state);
+  return !!win;
+}
+
 function setDocument(win, doc) {
   win.pasted = null;
   win.swap.disabled = false;

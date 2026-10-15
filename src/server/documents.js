@@ -71,6 +71,18 @@ export async function readDocumentFile(path) {
   return state;
 }
 
+/** What a file holds before it is written over: its parsed state, or null
+ *  when there is no file or it is no JSON (the save history reads its
+ *  drawing, core/save-history.js). */
+export async function readPreviousState(path) {
+  try {
+    const value = JSON.parse(await readFile(path, 'utf8'));
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export function serializeDocument(document) {
   return `${JSON.stringify(document.toJSON(), null, 2)}\n`;
 }

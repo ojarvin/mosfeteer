@@ -1,5 +1,7 @@
 import { RAIL_NAMES, railNameKey } from './rail-names.js';
 import { normalizeWindows, windowsJSON } from './window-state.js';
+import { normalizeNotes, renameMentions } from './notes.js';
+import { normalizeHistory } from './save-history.js';
 import { normalizeBand, normalizeOptimizeSetup } from './analysis/optimize-setup.js';
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
@@ -1067,6 +1069,11 @@ function normalizeAnalysisValues(value) {
     }
   }
   return { coefficients, bode, links, ...(Object.keys(fractions).length ? { fractions } : {}), ...(sAxis ? { sAxis } : {}), ...(band ? { band } : {}), ...(flow ? { flow } : {}), ...(sc ? { sc } : {}) };
+}
+
+/** Names as notes' mentions compare them (notes.js). */
+function searchMentionKey(text) {
+  return String(text ?? '').toLowerCase().replace(/[\s$\\_^{}]/g, '');
 }
 
 function analysisValuesJSON(values) {
@@ -2469,6 +2476,11 @@ export class Circuit {
     this.analysisValues = { coefficients: {}, bode: null, links: {} };
     // What the editor's windows show for this design (window-state.js).
     this.windows = {};
+    // The design's notes: Markdown, never drawn (notes.js).
+    this.notes = '';
+    // Its save points and checkpoints, as stored (save-history.js): not
+    // drawing, written and read by whoever writes the file.
+    this.history = null;
     this._routingEnvCache = new Map();
   }
 
@@ -2678,6 +2690,8 @@ export class Circuit {
     }
     this._ensureComponentInstanceLabel(component);
     this._syncSizeLabel(component);
+    // The notes' mentions follow the part.
+    this.notes = renameMentions(this.notes, current, next);
     return component;
   }
 
@@ -3464,6 +3478,7 @@ export class Circuit {
     this.invalidateRoutingCache();
     const net = this._resolveNet(netOrId);
     const previousGroup = this.netGroupKey(net);
+    const previousName = net.name;
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
     net.name = canonical;
@@ -3495,7 +3510,20 @@ export class Circuit {
     this._syncReferenceMarkerLabels(net);
     this.netNameWarnings = this.netNameWarnings.filter((warning) => warning.netId !== net.id);
     this._carryNetHighlight(previousGroup, this.netGroupKey(net));
+    this._renameNetMentions(previousName, canonical);
     return net;
+  }
+
+  /** The notes' mentions of a net renamed from `from` follow it to `to`,
+   *  once nothing else answers to the old name: a net of an equally named
+   *  group renamed alone leaves it to the others, and a part of the name
+   *  keeps it (mentions find parts first). */
+  _renameNetMentions(from, to) {
+    if (!this.notes || !from || !to || from === to) return;
+    const key = searchMentionKey(from);
+    if ([...this.nets.values()].some((other) => other.name && searchMentionKey(other.name) === key)) return;
+    if ([...this.components.values()].some((component) => searchMentionKey(component.refdes) === key)) return;
+    this.notes = renameMentions(this.notes, from, to);
   }
 
   /** Rename a net together with every net in its electrical group (equally
@@ -6700,7 +6728,9 @@ export class Circuit {
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
       ...(this.savedNames?.length ? { names: [...this.savedNames] } : {}),
       ...analysisValuesJSON(this.analysisValues),
+      ...(this.notes ? { notes: this.notes } : {}),
       ...windowsJSON(this.windows),
+      ...(this.history ? { history: this.history } : {}),
     };
   }
 
@@ -6719,6 +6749,8 @@ export class Circuit {
     circuit.savedNames = normalizeSavedNames(data.names);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);
     circuit.windows = normalizeWindows(data.windows);
+    circuit.notes = normalizeNotes(data.notes);
+    circuit.history = normalizeHistory(data.history);
     for (const [key, color] of Object.entries(data.netHighlights || {})) {
       if (NET_HIGHLIGHT_COLORS.includes(color)) circuit.netHighlights.set(key, color);
     }

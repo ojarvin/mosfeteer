@@ -7,6 +7,7 @@
 
 import { Circuit, nextSavedNames } from '../core/model.js';
 import { createDocument, loadDocument, relinkDocumentState } from '../core/document.js';
+import { historyText, textHash } from '../core/save-history.js';
 import { createPersistenceAdapter, validDocumentName } from './persistence.js';
 import { createWindowSession } from './window-session.js';
 import { confirmChoice, showFileDialog } from './file-dialog.js';
@@ -323,6 +324,25 @@ function askForName() {
   circuitNameEl.focus();
 }
 
+// The text the open design's save history was read against: its file's
+// drawing as last read or written (core/save-history.js). A save sends it,
+// so a design saved under a new name, or first saved from a dropped file,
+// keeps its history. Null when unknown: the writer reads the file instead.
+let historyBase = null;
+
+/** The history a write stored, and the drawing it is now read against. */
+function adoptWrittenHistory(sent, data) {
+  const history = data.history ?? data.state?.history ?? null;
+  if (history) editor.circuit.history = history;
+  const text = historyText(sent);
+  historyBase = !history || history.base === textHash(text) ? text : null;
+}
+
+/** The save history's base text, for the history window. */
+export function savedHistoryBase() {
+  return historyBase;
+}
+
 export async function saveCircuit({ saveAs = false } = {}) {
   let name = circuitNameEl.value.trim();
   let target;
@@ -368,7 +388,7 @@ export async function saveCircuit({ saveAs = false } = {}) {
   const previousScope = analysisFormScope();
   try {
     const state = editor.circuit.toJSON();
-    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, options));
+    const saveWith = (options) => withFileAccess(() => persistence.save(target, state, { ...options, savePoint: true, historyBase }));
     let data;
     try {
       data = await saveWith({ overwrite: !!target.path });
@@ -396,6 +416,7 @@ export async function saveCircuit({ saveAs = false } = {}) {
     editor.currentDocumentDir = data.dir;
     // The file remembers the names it was saved under; so does the design.
     editor.circuit.savedNames = nextSavedNames(editor.circuit.savedNames, data.name);
+    adoptWrittenHistory(state, data);
     editor.activeSyncSuspended = false;
     migrateAnalysisFormStorage(previousScope, analysisFormScope());
     circuitNameEl.value = data.name;
@@ -408,6 +429,8 @@ export async function saveCircuit({ saveAs = false } = {}) {
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
       : `Saved ${displayPath(data.path)}.`);
     if (!data.downloaded) folderTipOnce();
+    // What follows the file (the history window's save points) reads it again.
+    render();
     return true;
   } catch (err) {
     if (err.code === 'canceled') logLine(`Save canceled${err.message === 'save canceled' ? '' : `: ${err.message}`}.`);
@@ -443,6 +466,7 @@ async function loadCircuit(path, quiet = false, options = {}) {
     editor.history = [];
     editor.future = [];
     applyJson(JSON.stringify(data.state), { document: true });
+    historyBase = historyText(data.state);
     clearLatestAnalysisResult();
     setSelection([]);
     editor.cursor = { x: 0, y: 0 };
@@ -469,12 +493,21 @@ async function loadCircuit(path, quiet = false, options = {}) {
   }
 }
 
+/** Open a design's state as a new design not saved yet, after the
+ *  unsaved-changes check: a save point started afresh (history-window.js). */
+export function openStateAsNewDesign(state, name, message) {
+  return new Promise((resolve) => {
+    requestDocumentAction('Starting a new design', () => { openUnsavedDocument(state, name, message); resolve(true); }, () => resolve(false));
+  });
+}
+
 /** Open document contents that have no file path (a dropped file). Saving puts it in the workspace. */
-function openUnsavedDocument(state, name) {
+function openUnsavedDocument(state, name, message = null) {
   dropTutorial();
   editor.history = [];
   editor.future = [];
   applyJson(JSON.stringify(state), { document: true });
+  historyBase = historyText(state);
   clearLatestAnalysisResult();
   setSelection([]);
   editor.cursor = { x: 0, y: 0 };
@@ -492,20 +525,22 @@ function openUnsavedDocument(state, name) {
   fitView();
   renderSaveState();
   persistDraft();
-  logLine(`Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
+  logLine(message || `Imported "${name}". Save (Ctrl/Cmd+S) to keep it in your workspace, or Save as to choose a folder.`);
 }
 
 /** A document as text, without what its windows show: window state is saved
  *  with the design but is no edit, so it never makes the design unsaved. */
 function drawingText(text) {
-  if (!text || !['"windows"', '"names"', '"mathBox"'].some((key) => text.includes(key))) return text;
+  if (!text || !['"windows"', '"names"', '"mathBox"', '"history"'].some((key) => text.includes(key))) return text;
   try {
     const data = JSON.parse(text);
     // Neither what the windows show, nor the names the file was saved
     // under, nor the size this browser measured a math label at (saved with
-    // it so a file reads its size back) ever make the design unsaved.
+    // it so a file reads its size back), nor the save history (the file's,
+    // written as it changes: history-window.js) ever make the design unsaved.
     delete data.windows;
     delete data.names;
+    delete data.history;
     for (const label of data.labels || []) delete label.mathBox;
     return JSON.stringify(data);
   } catch { return text; }
@@ -533,9 +568,11 @@ export async function saveWindowState() {
   const text = snapshot();
   try {
     editor.syncGeneration += 1;
-    const data = await persistence.save({ path }, JSON.parse(text), { overwrite: true });
+    const sent = JSON.parse(text);
+    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase });
     if (path !== editor.currentDocumentPath) return;
-    editor.lastSavedSnapshot = text;
+    adoptWrittenHistory(sent, data);
+    editor.lastSavedSnapshot = snapshot();
     editor.lastSeenRevision = data.revision || null;
     editor.lastCircuitTag = data.etag || null;
   } catch { /* the windows' state waits for the next save */ } finally {
@@ -1076,7 +1113,13 @@ async function syncActiveCircuitOnce() {
     // Only what the windows show differs -- this window's own window-state
     // save coming back, as often as not: the drawing is the same, so keep
     // what is open rather than reload it under the user.
-    if (drawingText(remoteSnapshot) === drawingText(currentSnapshot)) return;
+    if (drawingText(remoteSnapshot) === drawingText(currentSnapshot)) {
+      // Another window's checkpoint, say: the file's history is the one to keep.
+      const remoteHistory = JSON.parse(remoteSnapshot).history ?? null;
+      editor.circuit.history = remoteHistory;
+      historyBase = historyText(data.state);
+      return;
+    }
     if (drawingText(currentSnapshot) !== drawingText(editor.lastSavedSnapshot)) {
       if (!editor.remoteConflictLogged) {
         logLine(`${editor.currentCircuitName} changed on disk, but this window has unsaved changes. Saving will overwrite the other version.`, 'error');
@@ -1085,6 +1128,7 @@ async function syncActiveCircuitOnce() {
       return;
     }
     applyJson(remoteSnapshot, { document: true });
+    historyBase = historyText(data.state);
     editor.lastSavedSnapshot = snapshot();
     editor.remoteConflictLogged = false;
     fitView();
@@ -1118,6 +1162,7 @@ export function startNewDocument() {
   editor.history = [];
   editor.future = [];
   applyJson(JSON.stringify(createDocument().toJSON()), { document: true });
+  historyBase = null;
   clearLatestAnalysisResult();
   editor.lastSavedSnapshot = snapshot();
   // A new document leaves the server's active one as it was, and so what
@@ -1185,6 +1230,7 @@ async function checkOpenFileChanged() {
   try { data = await persistence.load(path); } catch { return; }
   if (path !== editor.currentDocumentPath || documentChanged()) return;
   applyJson(JSON.stringify(loadDocument(data.state).toJSON()), { document: true });
+  historyBase = historyText(data.state);
   editor.lastSavedSnapshot = snapshot();
   editor.lastSeenRevision = data.revision || null;
   editor.remoteConflictLogged = false;

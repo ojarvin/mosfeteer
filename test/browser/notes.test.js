@@ -1,0 +1,96 @@
+/** The notes window in a browser: writing Markdown, its rendered view,
+ *  mentions that glow and select, renames that follow into the notes, one
+ *  undo step per edit, and the notes saved with the design. */
+
+import { describe, before, after, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { start, browserSkip } from './harness.js';
+import { amplifier } from './fixtures.js';
+
+describe('design notes', { skip: browserSkip() }, () => {
+  let h;
+  before(async () => { h = await start({ docs: { amp: amplifier(), child: amplifier() } }); });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+
+  const editor = (expression) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const editor = m.editor; return ${expression}; })`);
+  const typeNotes = (text) => h.evaluate(`(() => {
+    const field = document.querySelector('.notes-source');
+    field.focus();
+    field.value = ${JSON.stringify(text)};
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  const finish = () => h.evaluate(`document.querySelector('.notes-source').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+
+  test('n opens empty notes ready to write; Esc shows them rendered, mentions and links live', async () => {
+    await h.open('amp');
+    await h.key('n');
+    await h.until(`!!document.querySelector('.notes-window:not([hidden])') && document.activeElement === document.querySelector('.notes-source')`);
+    await typeNotes('# Bias\nGain from @M1 into @V_{SS}; see [[child]] and [[gone]]. $g_m r_o$');
+    assert.equal(await editor('editor.circuit.notes'), '# Bias\nGain from @M1 into @V_{SS}; see [[child]] and [[gone]]. $g_m r_o$');
+    assert.equal(await h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`), true, 'unsaved');
+    await finish();
+    await h.until(`!!document.querySelector('.notes-view:not([hidden]) h3')`);
+    const view = await h.evaluate(`(() => {
+      const v = document.querySelector('.notes-view');
+      return {
+        heading: v.querySelector('h3').textContent,
+        part: v.querySelector('.note-mention-component')?.dataset.mention,
+        net: v.querySelector('.note-mention-net')?.dataset.mention,
+        link: v.querySelector('.note-design:not(.broken)')?.dataset.design,
+        broken: v.querySelector('.note-design.broken')?.dataset.design,
+        math: !!v.querySelector('math'),
+        source: document.querySelector('.notes-source').hidden,
+      };
+    })()`);
+    assert.deepEqual(view, { heading: 'Bias', part: 'M1', net: 'V_{SS}', link: 'child', broken: 'gone', math: true, source: true });
+  });
+
+  test('a mention glows its part or net while hovered, and a click selects it', async () => {
+    await h.evaluate(`document.querySelector('.note-mention-component').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+    assert.deepEqual(await editor('editor.hoverTarget'), { kind: 'component', refdes: 'M1' });
+    await h.evaluate(`document.querySelector('.note-mention-component').dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))`);
+    assert.equal(await editor('editor.hoverTarget'), null);
+    await h.evaluate(`document.querySelector('.note-mention-net').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+    assert.equal(await editor('editor.hoverTarget?.kind'), 'net');
+    await h.evaluate(`document.querySelector('.note-mention-net').dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))`);
+    await h.click('.note-mention-component');
+    assert.deepEqual(await editor('[...editor.multi]'), ['M1']);
+    await h.click('.note-mention-net');
+    assert.equal(await editor('editor.selectedNets.size'), 1);
+  });
+
+  test('renaming a part rewrites its mention, and undo takes both back', async () => {
+    await h.evaluate(`window.__run('rename M1 Min')`);
+    await h.until(`document.querySelector('.note-mention-component')?.dataset.mention === 'Min'`);
+    assert.match(await editor('editor.circuit.notes'), /Gain from @Min into/);
+    await h.key('u');
+    await h.until(`document.querySelector('.note-mention-component')?.dataset.mention === 'M1'`);
+    assert.match(await editor('editor.circuit.notes'), /Gain from @M1 into/);
+  });
+
+  test('an edit is one undo step, and the notes are saved with the design', async () => {
+    await h.click('.notes-edit');
+    await typeNotes('First');
+    await typeNotes('First line\nSecond');
+    await finish();
+    await h.until(`document.querySelector('.notes-view p')?.textContent.startsWith('First line')`);
+    await h.key('u');
+    await h.until(`document.querySelector('.notes-view h3')?.textContent === 'Bias'`);
+    await h.key('U', { shiftKey: true });
+    await h.until(`document.querySelector('.notes-view p')?.textContent.startsWith('First line')`);
+    await h.key('s', { ctrlKey: true });
+    await h.until(`${h.module('document-session.js')}.then((m) => !m.hasUnsavedChanges())`);
+    const saved = JSON.parse(await readFile(join(h.workspace, 'amp.json'), 'utf8'));
+    assert.equal(saved.notes, 'First line\nSecond');
+  });
+
+  test('another design shows its own notes, and n closes the window', async () => {
+    await h.open('child');
+    await h.until(`!document.querySelector('.notes-view h3') && document.querySelector('.notes-source')?.hidden === false || !!document.querySelector('.notes-empty:not([hidden])')`);
+    assert.equal(await editor('editor.circuit.notes'), '');
+    await h.key('n');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-window').hidden`), true);
+  });
+});

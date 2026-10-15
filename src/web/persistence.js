@@ -9,6 +9,7 @@
 
 import { loadDocument, validDocumentName } from '../core/document.js';
 import { nextSavedNames } from '../core/model.js';
+import { settledHistory } from '../core/save-history.js';
 export { validDocumentName };
 
 const BROWSER_DOCUMENTS_KEY = 'mosfeteer:browser-documents';
@@ -564,12 +565,29 @@ export function createBrowserPersistenceAdapter({
     setLocation(record.handle);
   }
 
-  async function save(target = {}, state, { overwrite = false, force = false } = {}) {
+  /** What a document's file holds before it is written over, or null. */
+  async function previousState(record) {
+    if (!record?.handle) return record?.state || null;
+    try {
+      const value = JSON.parse(await (await record.handle.getFile()).text());
+      return value && typeof value === 'object' ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function save(target = {}, state, { overwrite = false, force = false, savePoint = false, historyBase = null } = {}) {
     await ready;
     // The document remembers the names it was saved under (a link to a
-    // former name can find it: core/workspace-check.js).
-    const stamped = (name) => ({ ...state, names: nextSavedNames(state?.names, name) });
-    const contentFor = (name) => `${JSON.stringify(stamped(name), null, 2)}\n`;
+    // former name can find it: core/workspace-check.js), and its save
+    // history follows the drawing (core/save-history.js), as in Node mode.
+    const stamped = (name, previous) => {
+      const next = { ...state, names: nextSavedNames(state?.names, name) };
+      const history = settledHistory(next, { previous, baseText: historyBase, savePoint });
+      delete next.history;
+      return history ? { ...next, history } : next;
+    };
+    const contentFor = (saved) => `${JSON.stringify(saved, null, 2)}\n`;
     let record = target.path ? recordFor(target.path) : null;
     const name = validDocumentName(target.name || record?.name || documentNameFromFile({ name: browserName(target.path) })) || 'circuit';
     if (!record && writable() && (!target.dir || target.dir === folder.name)) {
@@ -604,16 +622,18 @@ export function createBrowserPersistenceAdapter({
       }
     }
     if (record.handle) {
-      const saved = stamped(record.name);
-      await writeRecord(record, contentFor(record.name), { force: force || !target.path || target.path !== record.path });
+      await requireAccess(record, 'readwrite', true);
+      const saved = stamped(record.name, await previousState(record));
+      await writeRecord(record, contentFor(saved), { force: force || !target.path || target.path !== record.path });
       record.names = saved.names;
-      return { name: record.name, path: record.path, dir: dirOf(record), state: saved, revision: record.revision };
+      return { name: record.name, path: record.path, dir: dirOf(record), state: saved, revision: record.revision, ...(saved.history ? { history: saved.history } : {}) };
     }
     // Without file handles the browser can only download the document.
-    makeDownload(download, contentFor(record.name), `${record.name}.json`, 'application/json');
-    record.state = stamped(record.name);
+    const saved = stamped(record.name, await previousState(record));
+    makeDownload(download, contentFor(saved), `${record.name}.json`, 'application/json');
+    record.state = saved;
     if (record.legacy) writeLegacy();
-    return { name: record.name, path: record.path, dir: dirOf(record), state: record.state, downloaded: true };
+    return { name: record.name, path: record.path, dir: dirOf(record), state: record.state, downloaded: true, ...(saved.history ? { history: saved.history } : {}) };
   }
 
   async function load(path, { open = false } = {}) {
@@ -871,7 +891,11 @@ export function createPersistenceAdapter({ fetchImpl = globalThis.fetch, retry }
       ...(ifNoneMatch ? { headers: { 'If-None-Match': ifNoneMatch } } : {}),
     }),
     /** Target is `{ path }` or `{ dir?, name }` (dir defaults to the workspace). */
-    save: (target, state, { overwrite = false } = {}) => httpJson(fetchImpl, '/api/document', jsonBody('PUT', { ...target, state, overwrite })),
+    /** `savePoint`: the editor's Save, kept in the save history; `historyBase`:
+     *  the text the state's history was read against (core/save-history.js). */
+    save: (target, state, { overwrite = false, savePoint = false, historyBase = null } = {}) => httpJson(fetchImpl, '/api/document', jsonBody('PUT', {
+      ...target, state, overwrite, ...(savePoint ? { savePoint: true } : {}), ...(typeof historyBase === 'string' ? { historyBase } : {}),
+    })),
     delete: (path) => httpJson(fetchImpl, `/api/document?${query({ path })}`, { method: 'DELETE' }),
     active: () => httpJson(fetchImpl, '/api/active'),
     heartbeat: (id) => fetchImpl('/api/session', { ...jsonBody('POST', { id }), keepalive: true }).catch(() => {}),

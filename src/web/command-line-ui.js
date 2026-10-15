@@ -28,6 +28,8 @@ import { pasteClipboard } from './copy-paste.js';
 import { openSwapPicker } from './insert-menu.js';
 import { referenceWindowsShown, toggleReferenceWindows } from './reference-window.js';
 import { calculatorShown, toggleCalculator } from './calculator-window.js';
+import { notesShown, toggleNotes } from './notes-window.js';
+import { historyShown, toggleHistory } from './history-window.js';
 import { plotsShown, togglePlots } from './plots-window.js';
 import { offerTutorial } from './onboarding.js';
 
@@ -54,6 +56,8 @@ export const ACTIONS = {
   analysis: (state) => toggleTo(state, !analysisDialog.hidden, () => toggleAnalysisDock()),
   reference: (state) => toggleTo(state, referenceWindowsShown(), toggleReferenceWindows),
   calculator: (state) => toggleTo(state, calculatorShown(), toggleCalculator),
+  notes: (state) => toggleTo(state, notesShown(), toggleNotes),
+  history: (state) => toggleTo(state, historyShown(), toggleHistory),
   plots: (state) => toggleTo(state, plotsShown(), togglePlots),
   grid: (state) => setGrid(state ?? !editor.showGrid),
   guides: (state) => setGuides(state ?? !editor.guidesVisible),

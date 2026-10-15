@@ -1,5 +1,6 @@
 import { Circuit, normalizeDesignLink } from './model.js';
 import { svgString } from './render.js';
+import { relinkNotes } from './notes.js';
 
 const FORBIDDEN_NAME_CHARS = /[/\\:*?"<>|\u0000-\u001f\u007f]/;
 
@@ -27,8 +28,8 @@ export function renderDocument(document, options = {}) { return svgString(docume
 
 /**
  * Point every link in a document's saved state that names design `from` at
- * `to` instead (a design renamed). The state is changed in place; returns how
- * many parts were relinked.
+ * `to` instead (a design renamed): its parts' links and its notes' `[[design]]`
+ * links. The state is changed in place; returns how many links were changed.
  */
 export function relinkDocumentState(state, from, to) {
   const old = normalizeDesignLink(from);
@@ -40,6 +41,12 @@ export function relinkDocumentState(state, from, to) {
       component.link = next;
       count += 1;
     }
+  }
+  // The notes' [[design]] links too (notes.js).
+  if (typeof state.notes === 'string') {
+    const relinked = relinkNotes(state.notes, old, next);
+    state.notes = relinked.text;
+    count += relinked.count;
   }
   return count;
 }

@@ -16,10 +16,11 @@ import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCommand } from '../core/commands.js';
 import { createDocument, documentKind, loadDocument } from '../core/document.js';
+import { settledHistory } from '../core/save-history.js';
 import { nextSavedNames } from '../core/model.js';
 import {
   absolutePath, browseFolder, browseNearestFolder, deleteDocumentFile, describeDocument, documentNameFromPath, documentPathFor,
-  fileRevision, isJsonFile, listDocuments, readDocumentFile, serializeDocument, validDocumentName, writeFileAtomic,
+  fileRevision, isJsonFile, listDocuments, readDocumentFile, readPreviousState, serializeDocument, validDocumentName, writeFileAtomic,
 } from './documents.js';
 import { findChromium, printSvgToPdf } from './browser.js';
 import { svgPixelSize, svgString } from '../core/render.js';
@@ -316,11 +317,19 @@ export async function startApp({
           throw httpError(`could not save document: ${error.message}${hint}`);
         }
         const revision = await withLock(path, async () => {
+          // The save history follows the drawing (core/save-history.js):
+          // read against the file as it was, the editor's Save a save point.
+          document.history = settledHistory(document.toJSON(), {
+            previous: await readPreviousState(path),
+            sent: body.state,
+            baseText: typeof body.historyBase === 'string' ? body.historyBase : null,
+            savePoint: body.savePoint === true,
+          });
           await writeFileAtomic(path, serializeDocument(document), { overwrite: body.overwrite === true });
           return fileRevision(path);
         });
         await settings.addRecent(path);
-        json(res, 200, { name: documentNameFromPath(path), path, dir: dirname(path), kind: documentKind(body.state) }, revisionHeaders(revision));
+        json(res, 200, { name: documentNameFromPath(path), path, dir: dirname(path), kind: documentKind(body.state), ...(document.history ? { history: document.history } : {}) }, revisionHeaders(revision));
         return;
       }
       if (method === 'DELETE') {
@@ -459,8 +468,10 @@ export async function startApp({
       : String(rawCmd).split('\n').map((line) => line.trim()).filter(Boolean);
     const { revision, ...response } = await withLock(path, async () => {
       let circuit;
+      let previous = null;
       try {
-        circuit = loadDocument(await readDocumentFile(path));
+        previous = await readDocumentFile(path);
+        circuit = loadDocument(previous);
       } catch (error) {
         if (error.status !== 404) throw error;
         circuit = createDocument();
@@ -480,6 +491,8 @@ export async function startApp({
       if (mutated) {
         assertCurrentCode();
         circuit.savedNames = nextSavedNames(circuit.savedNames, documentNameFromPath(path));
+        // A scripted edit is no save point; the history follows it.
+        circuit.history = settledHistory(circuit.toJSON(), { previous });
         await writeFileAtomic(path, serializeDocument(circuit));
       }
       await setActive(name);

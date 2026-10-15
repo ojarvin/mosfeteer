@@ -381,3 +381,35 @@ serverTest('an oversized document is refused with a reason, not a dropped connec
   assert.equal(response.status, 413);
   assert.match((await response.json()).error, /too large/);
 });
+
+serverTest('the editor\'s Save adds a save point, a scripted edit carries the history over', async (t) => {
+  const { historyEntries, historyText } = await import('../src/core/save-history.js');
+  const app = await startServer();
+  t.after(() => app.stop());
+  const path = app.file('amp');
+  const onDisk = async () => JSON.parse(await readFile(path, 'utf8'));
+  const entriesOf = (state) => historyEntries(state.history, historyText(state));
+
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 240, y: 240 });
+  const first = await (await app.request('/api/document', { method: 'PUT', body: { name: 'amp', state: circuit.toJSON(), savePoint: true } })).json();
+  assert.equal(first.history.entries.length, 1, 'the response carries the history written');
+  circuit.history = first.history;
+  circuit.addComponent('resistor', { refdes: 'R1', x: 600, y: 240 });
+  const second = await app.request('/api/document', { method: 'PUT', body: { path, state: circuit.toJSON(), overwrite: true, savePoint: true } });
+  assert.equal(second.status, 200);
+  let state = await onDisk();
+  assert.equal(entriesOf(state).length, 2);
+  assert.equal(entriesOf(state)[1].text.includes('"R1"'), false, 'the older save point is before R1');
+
+  // A write that is not a Save (what the windows show, a tag) adds none.
+  await app.request('/api/document', { method: 'PUT', body: { path, state: { ...state, tags: ['ota'] }, overwrite: true } });
+  assert.equal(entriesOf(await onDisk()).length, 2);
+
+  // A script edits the file: the history is read against the new drawing.
+  await command(app, 'amp', 'move R1 640 240');
+  state = await onDisk();
+  const list = entriesOf(state);
+  assert.equal(list.length, 2);
+  assert.notEqual(list[0].text, historyText(state));
+});
