@@ -29,6 +29,39 @@ export function linkGraph(designs) {
   return { edges, children, parents };
 }
 
+/**
+ * How far each design is from the picked ones (`focus`, a set of ids) in the
+ * hierarchy below them, for a `linkGraph`. The picks are at 0; the designs
+ * they link to and those using them at 1; below that only children are
+ * followed -- a child's children at 2, theirs at 3, up to `depth` -- never
+ * back up to a parent or across to a sibling. Returns `{ depths, chain }`:
+ * depths maps id -> level (the nearest, when reached more than one way);
+ * chain lists the edges `{ from, to, depth }` that carry the hierarchy on
+ * below the picks' own links, `depth` being the child's level.
+ */
+export function linkDepths(graph, focus, depth = 3) {
+  const depths = new Map([...focus].map((id) => [id, 0]));
+  let frontier = [];
+  for (const id of focus) {
+    for (const child of graph.children.get(id) || []) if (!depths.has(child)) { depths.set(child, 1); frontier.push(child); }
+  }
+  for (const id of focus) {
+    for (const parent of graph.parents.get(id) || []) if (!depths.has(parent)) depths.set(parent, 1);
+  }
+  const chain = [];
+  for (let level = 2; level <= depth && frontier.length; level++) {
+    const next = [];
+    for (const id of frontier) {
+      for (const child of graph.children.get(id) || []) {
+        if (!depths.has(child)) { depths.set(child, level); next.push(child); }
+        if (depths.get(child) === level) chain.push({ from: id, to: child, depth: level });
+      }
+    }
+    frontier = next;
+  }
+  return { depths, chain };
+}
+
 /** Where the line from `r`'s centre toward `toward` leaves the rectangle. */
 function exitPoint(r, toward) {
   const cx = r.x + r.w / 2;

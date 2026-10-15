@@ -827,3 +827,38 @@ describe('a long Atlas listing scrolls with its keys', { skip: browserSkip() }, 
     assert.equal(at.scrollTop, 0, 'all the way up');
   });
 });
+
+describe('Atlas hierarchy chain', { skip: browserSkip() }, () => {
+  let h;
+  // top -> mid -> leaf -> deep -> deeper, and a design using top.
+  const linking = (to) => {
+    const circuit = new Circuit();
+    for (const line of ['add opamp OA1 --at 0 0', ...(to ? [`link OA1 ${to}`] : [])]) runCommand(circuit, line);
+    return circuit.toJSON();
+  };
+  before(async () => {
+    h = await start({ docs: { top: linking('mid'), mid: linking('leaf'), leaf: linking('deep'), deep: linking('deeper'), deeper: linking(null), user: linking('top'), other: linking(null) }, width: 1400, height: 900 });
+  });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+
+  test("the pick's children lift less a level at a time, three levels down, with fainter beams", async () => {
+    await h.open('top');
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 7; })`, 10000);
+    await h.evaluate(`${h.module('atlas.js')}.then(async (m) => {
+      for (let i = 0; i < 12 && m.atlasSnapshot().tiles.find((t) => t.selected)?.name !== 'top'; i++) {
+        document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+        await new Promise((r) => setTimeout(r, 30));
+      }
+    })`);
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return s.tiles.find((t) => t.name === 'top').lift === 1 && s.tiles.every((t) => t.lift === 0 || t.lift > 0.05) && s.beams.length >= 4; })`);
+    const s = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`);
+    const t = Object.fromEntries(s.tiles.map((tile) => [tile.name, tile]));
+    assert.ok(t.top.lift > t.mid.lift && t.mid.lift > t.leaf.lift && t.leaf.lift > t.deep.lift && t.deep.lift > 0, JSON.stringify(s.tiles.map((x) => [x.name, x.lift])));
+    assert.equal(t.user.lift, t.mid.lift, 'a design using the pick lifts as its children do');
+    assert.ok(t.deeper.lift === 0 && t.deeper.dim === 1 && t.other.dim === 1, 'past three levels, and off the chain, the rest lie flat and dim');
+    assert.ok(t.mid.dim === 0 && t.leaf.dim > 0 && t.deep.dim > t.leaf.dim, 'the chain dims a little as it goes down');
+    const depthOf = (from, to) => s.beams.find((b) => b.from === t[from].id && b.to === t[to].id)?.depth;
+    assert.deepEqual([depthOf('top', 'mid'), depthOf('user', 'top'), depthOf('mid', 'leaf'), depthOf('leaf', 'deep'), depthOf('deep', 'deeper')], [1, 1, 2, 3, undefined]);
+  });
+});

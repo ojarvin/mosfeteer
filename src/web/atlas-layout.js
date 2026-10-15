@@ -262,15 +262,16 @@ export function rectsIntersect(a, b) {
  * ({ id, x, y, w, h, fixed }) are the lifted cards in world units, `gap`
  * the space kept between them. Fixed cards (the picked designs) stay put;
  * the others, nearest first, each step out along the shorter way clear of
- * every card already placed, never doubling back on an axis. Returns id ->
- * { dx, dy } for each card that floats.
+ * every card already placed, never doubling back on an axis; cards with a
+ * lower `rank` (nearer the pick in the hierarchy) go before higher ones.
+ * Returns id -> { dx, dy } for each card that floats.
  */
 export function floatClear(cards, gap) {
   const centre = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
   const placed = cards.filter((card) => card.fixed);
   const anchors = placed.map(centre);
   const reach = (card) => Math.min(...anchors.map((a) => Math.hypot(centre(card).x - a.x, centre(card).y - a.y)));
-  const floating = cards.filter((card) => !card.fixed).sort((a, b) => reach(a) - reach(b) || String(a.id).localeCompare(String(b.id)));
+  const floating = cards.filter((card) => !card.fixed).sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0) || reach(a) - reach(b) || String(a.id).localeCompare(String(b.id)));
   const offsets = new Map();
   for (const card of floating) {
     let dx = 0;

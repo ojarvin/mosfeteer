@@ -79,10 +79,13 @@ With nothing picked every design lies flat at its true size, for
 comparison. A picked design lifts off the desk: it eases up onto a card
 larger than the flat drawing, on a deep soft shadow, its rim a hairline in
 drawing units (the accent's); the designs it links to and those using it
-lift only part way, on lower cards of their own, and every other design dims. Grown
+lift only part way, on lower cards of their own. Below them the hierarchy
+goes on downward only (`linkDepths`): their children lift lower still and
+dim a little, and theirs lower again, three levels in all -- never back up
+to a parent or across to a sibling -- and every other design dims. Grown
 on their cards they would overlap the picked one (or each other), so each
-linked card floats out of the way, the shortest way clear (`floatClear`),
-and is picked where it floats. Letting go lays them flat
+lifted card floats out of the way, the shortest way clear (`floatClear`),
+a level at a time down the hierarchy, and is picked where it floats. Letting go lays them flat
 again (`drawCard`, each design easing on its own, stacked by where it is
 heading so neighbours trade places smoothly).
 
@@ -94,7 +97,8 @@ fading as it reaches the design it
 names and arriving square to the side facing the part (`linkCurve`),
 ending exactly on the edge of that design's card --
 its taper says which way it goes; the designs using the picked one send
-theirs the same way. On a dark desk the beams add up as light does. With nothing picked, and while the desk is in a transition, no
+theirs the same way. Each child lifted below them sends beams to its own
+children, fainter a level at a time. On a dark desk the beams add up as light does. With nothing picked, and while the desk is in a transition, no
 arrows show. **Links** in the top bar, or `L`, turns them off or on; the
 choice is kept in this browser.
 

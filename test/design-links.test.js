@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { linkArrow, linkGraph } from '../src/core/design-links.js';
+import { linkArrow, linkDepths, linkGraph } from '../src/core/design-links.js';
 
 test('linkGraph joins designs by the names their parts link to', () => {
   const { edges, children, parents } = linkGraph([
@@ -28,6 +28,32 @@ test('a name two designs share resolves to the first, as a link does', () => {
     { id: 'top.json', name: 'top', links: ['ota'] },
   ]);
   assert.deepEqual(edges, [{ from: 'top.json', to: 'x/ota.json' }]);
+});
+
+test('linkDepths follows the hierarchy down from the pick, three levels deep', () => {
+  // top -> mid -> leaf -> deep -> deeper; user uses top; mid's other parent is aunt.
+  const graph = linkGraph([
+    { id: 'user', name: 'user', links: ['top'] },
+    { id: 'top', name: 'top', links: ['mid', 'leaf'] },
+    { id: 'aunt', name: 'aunt', links: ['mid', 'cousin'] },
+    { id: 'cousin', name: 'cousin', links: [] },
+    { id: 'mid', name: 'mid', links: ['leaf', 'other'] },
+    { id: 'other', name: 'other', links: ['deep'] },
+    { id: 'leaf', name: 'leaf', links: ['deep'] },
+    { id: 'deep', name: 'deep', links: ['deeper'] },
+    { id: 'deeper', name: 'deeper', links: [] },
+    { id: 'grand', name: 'grand', links: ['user'] },
+  ]);
+  const { depths, chain } = linkDepths(graph, new Set(['top']));
+  assert.deepEqual(Object.fromEntries(depths), { top: 0, mid: 1, leaf: 1, user: 1, other: 2, deep: 2, deeper: 3 });
+  // Not up past the user, nor across to a child's other parent; the nearest
+  // level wins (leaf is the pick's own child as well as mid's).
+  assert.deepEqual(chain, [
+    { from: 'mid', to: 'other', depth: 2 },
+    { from: 'leaf', to: 'deep', depth: 2 },
+    { from: 'deep', to: 'deeper', depth: 3 },
+  ]);
+  assert.deepEqual([...linkDepths(graph, new Set(['top']), 1).depths.keys()].sort(), ['leaf', 'mid', 'top', 'user']);
 });
 
 test('linkArrow runs between tile edges along the centre line, a gap outside each', () => {

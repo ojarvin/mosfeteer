@@ -21,7 +21,7 @@ import { symbolSheet } from '../core/symbol-sheet.js';
 import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
-import { linkArrow, linkCurve, linkGraph } from '../core/design-links.js';
+import { linkArrow, linkCurve, linkDepths, linkGraph } from '../core/design-links.js';
 import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
 import { INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
@@ -720,6 +720,11 @@ function draw() {
 
 const LIFT_GROW = 0.12;
 const RELATED_LIFT = 0.3;
+/** How far each level of the hierarchy lifts and dims: the pick, the
+ *  designs it links to and those using it, then their children and theirs
+ *  -- each lower than the one above, so the chain reads as depth. */
+const LEVEL_LIFT = [1, RELATED_LIFT, 0.13, 0.055];
+const LEVEL_DIM = [0, 0, 0.25, 0.45];
 
 /** Every design's lift (0 flat .. 1 picked) and dim (0 .. 1), eased toward
  *  what the pick asks for; asks for frames while any is on its way. */
@@ -731,19 +736,14 @@ function updateLifts() {
   // Through a transition too the pick stays lifted, its kin part way, and
   // the rest dimmed: a design flies up from (or down to) the desk as it is.
   const focus = state.source === 'workspace' ? new Set([state.selected, ...(state.picked || [])].filter(Boolean)) : new Set();
-  const related = new Set();
-  if (focus.size) {
-    for (const { from, to } of deskLinks().edges) {
-      if (focus.has(from) && !focus.has(to)) related.add(to);
-      if (focus.has(to) && !focus.has(from)) related.add(from);
-    }
-  }
-  const floats = floatTargets(focus, related);
+  const depths = focus.size ? hierarchyOf(focus).depths : new Map();
+  const floats = floatTargets(depths);
   const rate = reducedMotion() ? 1 : 1 - Math.exp(-dt / 85);
   let moving = false;
   for (const tile of state.tiles) {
     const float = floats.get(tile.id) || { dx: 0, dy: 0 };
-    const target = { lift: focus.has(tile.id) ? 1 : related.has(tile.id) ? RELATED_LIFT : 0, dim: focus.size && !focus.has(tile.id) && !related.has(tile.id) ? 1 : 0, dx: float.dx, dy: float.dy };
+    const level = depths.get(tile.id);
+    const target = { lift: level === undefined ? 0 : LEVEL_LIFT[level], dim: !focus.size ? 0 : level === undefined ? 1 : LEVEL_DIM[level], dx: float.dx, dy: float.dy };
     const now = state.lifts.get(tile.id) || { lift: 0, dim: 0, dx: 0, dy: 0 };
     const next = {};
     for (const key of ['lift', 'dim', 'dx', 'dy']) {
@@ -752,6 +752,9 @@ function updateLifts() {
       if (next[key] !== target[key]) moving = true;
     }
     next.target = target.lift;
+    // The height its card turns solid at: the lowest it rests at on the
+    // way up, kept on the way down so a card fades as it lands.
+    next.solidAt = target.lift ? Math.min(RELATED_LIFT, target.lift) : now.solidAt ?? RELATED_LIFT;
     state.lifts.set(tile.id, next);
   }
   if (moving) requestDraw();
@@ -759,22 +762,28 @@ function updateLifts() {
 
 const liftOf = (id) => state.lifts?.get(id) || { lift: 0, dim: 0, dx: 0, dy: 0 };
 
+/** The picked designs' place in the hierarchy (linkDepths), three levels down. */
+function hierarchyOf(focus) {
+  return linkDepths(deskLinks(), focus, LEVEL_LIFT.length - 1);
+}
+
 /** Where the designs lifted with the pick float to (id -> { dx, dy }, in
  *  drawing units): grown on their cards they would overlap the picked one
- *  or each other, so each steps clear (floatClear). Kept while the pick
- *  and the desk stay the same. */
-function floatTargets(focus, related) {
-  const key = [...focus].sort().join('|') + '>' + [...related].sort().join('|');
+ *  or each other, so each steps clear (floatClear), a level at a time down
+ *  the hierarchy. Kept while the pick and the desk stay the same. */
+function floatTargets(depths) {
+  const key = [...depths].map(([id, level]) => `${id}:${level}`).sort().join('|');
   if (state.floats?.key === key && state.floats.tiles === state.tiles) return state.floats.offsets;
   const card = (tile, lift) => {
     const grow = 1 + LIFT_GROW * lift;
     const pad = ATLAS_GAP * 0.3;
     const w = tile.w * grow;
     const h = tile.h * grow;
-    return { id: tile.id, x: tile.x + (tile.w - w) / 2 - pad, y: tile.y + (tile.h - h) / 2 - pad, w: w + 2 * pad, h: h + 2 * pad + ATLAS_CAPTION, fixed: focus.has(tile.id) };
+    const level = depths.get(tile.id);
+    return { id: tile.id, x: tile.x + (tile.w - w) / 2 - pad, y: tile.y + (tile.h - h) / 2 - pad, w: w + 2 * pad, h: h + 2 * pad + ATLAS_CAPTION, fixed: level === 0, rank: level };
   };
-  const cards = state.tiles.filter((tile) => focus.has(tile.id) || related.has(tile.id)).map((tile) => card(tile, focus.has(tile.id) ? 1 : RELATED_LIFT));
-  const offsets = related.size ? floatClear(cards, 2 * ATLAS_GAP) : new Map();
+  const cards = state.tiles.filter((tile) => depths.has(tile.id)).map((tile) => card(tile, LEVEL_LIFT[depths.get(tile.id)]));
+  const offsets = cards.some((c) => !c.fixed) ? floatClear(cards, 2 * ATLAS_GAP) : new Map();
   state.floats = { key, tiles: state.tiles, offsets };
   return offsets;
 }
@@ -836,9 +845,9 @@ function drawCard(ctx, tile, rect, lift, palette) {
   const { x, y, w, h } = cardFrame(rect);
   const radius = cardRadius();
   const picked = state.selected === tile.id || !!state.picked?.has(tile.id);
-  // Solid from the related designs' height up: a lower card is nearer the
-  // desk (a smaller shadow), never see-through.
-  const solid = Math.min(1, lift / RELATED_LIFT);
+  // Solid from the height it rests at up: a lower card is nearer the desk
+  // (a smaller shadow), never see-through.
+  const solid = Math.min(1, lift / (liftOf(tile.id).solidAt ?? RELATED_LIFT));
   ctx.save();
   ctx.globalAlpha = solid;
   // Two shadows: a wide soft one far below, a tighter one close under it.
@@ -916,6 +925,8 @@ function deskLinks() {
  * which is lifted (drawCard),
  * the curve arriving square to the side facing the part with a clear head.
  * A design using a picked one is linked to it the same way, from its part.
+ * Below them the hierarchy goes on (hierarchyOf): each child's own links
+ * to its children, fainter a level at a time, as lifted as they are.
  * Each curve runs over a halo of the paper, so it reads cleanly across
  * drawings. Nothing is drawn with no design picked, nor while the desk is
  * in a transition (its names and picks are gone then too).
@@ -925,7 +936,10 @@ function drawLinks(ctx, palette, shown) {
   if (state.source !== 'workspace' || state.quiet || !linksShown()) return;
   const focus = new Set([state.selected, ...(state.picked || [])].filter(Boolean));
   if (!focus.size) return;
-  const edges = deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to));
+  const edges = [
+    ...deskLinks().edges.filter(({ from, to }) => focus.has(from) || focus.has(to)).map((edge) => ({ ...edge, depth: 1 })),
+    ...hierarchyOf(focus).chain,
+  ];
   if (!edges.length) return;
   const tiles = new Map(shown.map(({ tile, alpha }) => [tile.id, { tile, alpha }]));
   // The drawing and its name on screen, a little out from them.
@@ -940,7 +954,7 @@ function drawLinks(ctx, palette, shown) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.setLineDash([]);
-  for (const { from, to } of edges) {
+  for (const { from, to, depth } of edges) {
     const a = tiles.get(from);
     const b = tiles.get(to);
     if (!a || !b) continue;
@@ -963,14 +977,16 @@ function drawLinks(ctx, palette, shown) {
         return { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2, box: { x: p0.x, y: p0.y, w: p1.x - p0.x, h: p1.y - p0.y } };
       })
       : (() => { const arrow = linkArrow(frameOf(a.tile), frameOf(b.tile), 0); return arrow ? [{ x: arrow.x1, y: arrow.y1, box: null }] : []; })();
-    // The beams come up with the lift, and go with it.
-    const rising = Math.max(liftOf(from).lift, liftOf(to).lift);
+    // The beams come up with the lift, and go with it; down the chain each
+    // level's are fainter.
+    const rising = depth === 1 ? Math.max(liftOf(from).lift, liftOf(to).lift)
+      : (depth === 2 ? 0.55 : 0.32) * Math.min(1, liftOf(to).lift / LEVEL_LIFT[depth]);
     ctx.globalAlpha = Math.min(a.alpha, b.alpha) * (fadedOf(from, to) ? 0.3 : 1) * rising;
     // It lands on the edge of the card the design is lifted on.
     const card = cardFrame(lifted(worldToScreen(b.tile), to));
     for (const start of starts) {
       const end = drawBeam(ctx, start, card, palette);
-      if (end) state.beams.push({ from, to, end, card });
+      if (end) state.beams.push({ from, to, depth, end, card });
     }
   }
   ctx.restore();

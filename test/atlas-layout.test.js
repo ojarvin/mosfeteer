@@ -227,6 +227,20 @@ test('cards floating around a picked one step clear of it and of each other, the
   assert.deepEqual(floatClear([picked, { id: 'far', x: 3000, y: 0, w: 100, h: 100 }], gap).get('far'), { dx: 0, dy: 0 });
 });
 
+test('cards lower in the hierarchy step clear after those above them, however near', () => {
+  const gap = 20;
+  const picked = { id: 'p', x: 0, y: 0, w: 400, h: 400, fixed: true };
+  // The grandchild is nearer the pick, but the child places first and keeps
+  // the shorter way out; the grandchild then steps clear of both.
+  const child = { id: 'child', x: 380, y: 300, w: 300, h: 300, rank: 1 };
+  const grandchild = { id: 'grand', x: 390, y: 0, w: 200, h: 200, rank: 2 };
+  const offsets = floatClear([picked, grandchild, child], gap);
+  assert.deepEqual(offsets.get('child'), { dx: 40, dy: 0 });
+  const g = offsets.get('grand');
+  const at = { x: grandchild.x + g.dx, y: grandchild.y + g.dy, w: 200, h: 200 };
+  for (const other of [picked, { ...child, x: child.x + 40 }]) assert.equal(rectsIntersect(at, other), false);
+});
+
 test('a design flies between the desk and the screen in perspective', () => {
   const desk = { x: 100, y: 100, w: 50, h: 40 };
   const screen = { x: 0, y: 0, w: 400, h: 320 };
