@@ -412,8 +412,8 @@ export function texToMathML(source) {
   let index = 0;
   const commandSymbols = {
     parallel: '∥', cdot: '·', times: '×', pm: '±', mp: '∓',
-    infty: '∞', approx: '≈', le: '≤', ge: '≥', neq: '≠', to: '→', gg: '≫',
-    ll: '≪', equiv: '≡', propto: '∝', partial: '∂',
+    infty: '∞', approx: '≈', le: '≤', ge: '≥', leq: '≤', geq: '≥', neq: '≠', ne: '≠', to: '→', gg: '≫',
+    ll: '≪', equiv: '≡', propto: '∝', partial: '∂', sim: '∼', lesssim: '≲', gtrsim: '≳',
   };
   let requestedParallelSize = null;
   const skipSpaces = () => { while (text[index] === ' ') index += 1; };

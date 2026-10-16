@@ -1000,6 +1000,14 @@ test('multiline text keeps its blank lines, its spacing, and a monospace face', 
   assert.doesNotMatch(svgString(circuit), /xml:space/);
 });
 
+test('inequalities read in either spelling: \\le and \\leq, \\ge and \\geq, and the near ones', () => {
+  for (const [tex, glyph] of [['\\leq', '≤'], ['\\geq', '≥'], ['\\le', '≤'], ['\\ge', '≥'], ['\\ne', '≠'], ['\\gtrsim', '≳'], ['\\lesssim', '≲'], ['\\sim', '∼']]) {
+    const mathml = texToMathML(`$a ${tex} b$`);
+    assert.ok(mathml.includes(glyph), `${tex}: ${mathml}`);
+    assert.doesNotMatch(mathml, /[a-z]{2,}<\/mi>/, `${tex} is not spelled out`);
+  }
+});
+
 test('an italic letter before an upright one gets its TeX italic correction', () => {
   // C_{P0}: P leans into the 0 without it, as TeX never sets it.
   assert.match(texToMathML('$C_{P0}$'), /<mi>P<\/mi><mspace width="0.139em"\/><mn>0<\/mn>/);
