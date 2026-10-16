@@ -235,6 +235,11 @@ function stateName(sources) {
  * keys }], named after the phases high in it. Null without a diagram.
  */
 export function timingStates(circuit) {
+  return stateRuns(circuit)?.map(({ name, closed }) => ({ name, closed })) ?? null;
+}
+
+/** timingStates, each with the slots it spans (`slots`, slot indices). */
+function stateRuns(circuit) {
   if (!existingTimingDiagram(circuit)) return null;
   // The diagram's own signals switch nothing.
   const rows = timingRowSources(circuit).filter((row) => !row.signal);
@@ -246,12 +251,74 @@ export function timingStates(circuit) {
   for (let slot = 0; slot < count; slot += 1) {
     const closed = rows.filter((row) => high(row, slot));
     const key = closed.map((row) => row.key).join('|');
-    if (states.at(-1)?.key === key) continue;
-    states.push({ key, name: closed.length ? stateName(closed.map((row) => row.source)) : 'all open', closed: new Set(closed.map((row) => row.key)) });
+    if (states.at(-1)?.key === key) {
+      states.at(-1).slots.push(slot);
+      continue;
+    }
+    states.push({ key, name: closed.length ? stateName(closed.map((row) => row.source)) : 'all open', closed: new Set(closed.map((row) => row.key)), slots: [slot] });
   }
   // A wave that ends as it starts goes round: its last state is its first.
-  if (states.length > 1 && states[0].key === states.at(-1).key) states.pop();
-  return states.map(({ name, closed }) => ({ name, closed }));
+  if (states.length > 1 && states[0].key === states.at(-1).key) states[0].slots.push(...states.pop().slots);
+  return states;
+}
+
+/**
+ * The state of the drawn diagram each beat shows, where the beats and the
+ * diagram are in step: a Map of beat index to state index, for every run of
+ * consecutive beats that goes through all the diagram's states in order
+ * (as Make beats makes them), each beat closing exactly the switches of the
+ * phases high in its state. Beats outside such a run are not in it.
+ */
+export function timingBeatStates(circuit) {
+  const states = stateRuns(circuit);
+  const beats = circuit.beats || [];
+  const found = new Map();
+  if (!states?.length || beats.length < states.length) return found;
+  const switched = [...new Set(timingRowSources(circuit).filter((row) => !row.signal).map((row) => row.key))]
+    .map((key) => ({ key, first: switchesOf(circuit, key)[0] }))
+    .filter((row) => row.first);
+  if (!switched.length) return found;
+  const shows = (beat, state) => switched.every(({ key, first }) => (switchStateAt(circuit, first.refdes, beat) === 'closed') === [...states[state].closed].some((closed) => samePhase(closed, key)));
+  for (let start = 0; start + states.length <= beats.length; start += 1) {
+    if (!states.every((_, state) => shows(start + state, state))) continue;
+    states.forEach((_, state) => found.set(start + state, state));
+  }
+  return found;
+}
+
+/**
+ * Where the drawn diagram shows beat `index`'s state, for shading it: world
+ * rects ({ x, y, w, h }) over the waves, one per run of the state's slot
+ * columns (the lead-in and lead-out included, which repeat the last and
+ * first slot; the gaps between states left out). Empty when the beat is
+ * not in step with the diagram (timingBeatStates).
+ */
+export function timingBeatBands(circuit, index) {
+  const state = timingBeatStates(circuit).get(index);
+  if (state === undefined) return [];
+  const before = existingTimingDiagram(circuit);
+  const rows = timingRowSources(circuit);
+  const { columns, count } = timingColumns(rows.map((row) => row.bits), {
+    slotCells: before.slot || DEFAULT_SLOT_CELLS, pairs: timingPairs(rows, before.gaps), inverted: rows.map((row) => row.complementOf ?? null),
+  });
+  const runs = stateRuns(circuit);
+  const slots = new Set(runs[state].slots);
+  // A signal may run longer than the phases, which hold their last level.
+  const last = Math.max(...runs.flatMap((run) => run.slots));
+  const slotOf = (column) => (column.kind === 'gap' ? null : Math.min(last, column.at < 0 ? count - 1 : column.at >= count ? 0 : column.at));
+  const top = before.y - GRID / 2;
+  const h = (rows.length - 1) * ROW_PITCH + WAVE_HEIGHT + GRID;
+  const bands = [];
+  let x = before.x;
+  let open = false;
+  for (const column of columns) {
+    const shaded = slots.has(slotOf(column));
+    if (shaded && open) bands.at(-1).w += column.w;
+    else if (shaded) bands.push({ x, y: top, w: column.w, h });
+    open = shaded;
+    x += column.w;
+  }
+  return bands;
 }
 
 /** Phases in drawing order, each complement right after its phase; a pair

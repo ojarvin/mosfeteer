@@ -21,9 +21,16 @@ function twoPhases() {
   return circuit.toJSON();
 }
 
+/** Two phases with the beats made from their diagram. */
+function beaten() {
+  const circuit = Circuit.fromJSON(twoPhases());
+  runCommand(circuit, 'beat phases');
+  return circuit.toJSON();
+}
+
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ(), beaten: beaten() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -84,6 +91,20 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
       await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.timing?.part === 'arrow-note' && l.textMeasured()))`);
       assert.deepEqual(await h.evaluate(`${note}.anchor`), placed, `reopened ${round + 1}`);
     }
+  });
+
+  test('the beat on screen is shaded where the diagram shows it', async () => {
+    await h.open('beaten');
+    const bands = () => h.evaluate(`[...document.querySelectorAll('#canvas .timing-beat rect')].map((r) => Number(r.getAttribute('x')))`);
+    assert.deepEqual(await bands(), [], 'no beat, no band');
+    await h.key('ArrowRight', { altKey: true });
+    await h.until(`document.querySelectorAll('#canvas .timing-beat rect').length > 0`);
+    const first = await bands();
+    await h.key('ArrowRight', { altKey: true });
+    await h.until(`(() => { const x = [...document.querySelectorAll('#canvas .timing-beat rect')].map((r) => r.getAttribute('x')).join(); return x && x !== ${JSON.stringify(first.join())}; })()`);
+    // Each state's slot, and the lead it repeats into at one end.
+    assert.equal(first.length, 2);
+    assert.equal((await bands()).length, 2);
   });
 
   test('an arrow from a clicked edge to another, a mark at the cursor, a span with its text; slot edits carry them', async () => {

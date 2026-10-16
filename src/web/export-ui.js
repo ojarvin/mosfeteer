@@ -5,6 +5,7 @@
  */
 
 import { resolveBeat } from '../core/beats.js';
+import { timingBeatBands } from '../core/timing-diagram.js';
 import { circuitPageGuideFrame, pageGuideCaption } from '../core/page-guide.js';
 import { DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } from '../core/png-export.js';
 import { renderDocument } from '../core/document.js';
@@ -154,7 +155,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
         grid,
         pageGuide: editor.pageGuide,
         ...(extras ? { extras } : {}),
-        ...(view ? { beat: { view } } : {}),
+        ...(view ? { beat: { view, timing: timingBeatBands(editor.circuit, view.index) } } : {}),
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
       if (onePdf) pages.push(svg);

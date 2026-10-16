@@ -243,6 +243,8 @@ const MONO_FONT_FAMILY = "'DejaVu Sans Mono','Menlo','Consolas','Liberation Mono
  * presenter use the theme's --svg-dim / --svg-faded instead. */
 export const BEAT_DIM_INK = '#b8b8b8';
 export const BEAT_FADE_INK = '#e2e2e2';
+/** The tint a beat's band in the timing diagram takes (the editor's accent). */
+const TIMING_BEAT_FILL = '#0e7c7b';
 
 /** Outline that gives drawing math the weight of the other labels. */
 const MATH_LABEL_STROKE = '0.02em';
@@ -835,9 +837,10 @@ function viewportGridSvg(vp) {
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
  * opts.extras {bounds, svg}: drawing beside the circuit -- rects that widen
  * the frame, and markup drawn above everything (linked-design bubbles).
- * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it dims
+ * opts.beat {view, fade, timing}: draw one beat (beats.js resolveBeat). What it dims
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
- * still so the editor can reach it.
+ * still so the editor can reach it. `timing` (timing-diagram.js
+ * timingBeatBands) shades where the timing diagram shows the beat.
  * The frame stays the whole drawing's, so every beat lines up.
  */
 export function svgString(circuit, opts = {}) {
@@ -946,6 +949,11 @@ export function svgString(circuit, opts = {}) {
     const { x, y } = o.cursor;
     const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
+  }
+  // The beat's place in the timing diagram, a pale band under its waves.
+  if (beat && o.beat.timing?.length) {
+    const fill = o.themeInk ? `var(--accent, ${TIMING_BEAT_FILL})` : TIMING_BEAT_FILL;
+    parts.push(`<g class="timing-beat" pointer-events="none">${o.beat.timing.map((r) => `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${fill}" fill-opacity="0.14"/>`).join('')}</g>`);
   }
   const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
   const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);

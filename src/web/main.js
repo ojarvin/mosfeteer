@@ -27,6 +27,7 @@ import { addBoxAround } from '../core/wrap-box.js';
 import { busBits, busWidth, netNamesConnect } from '../core/bus.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { drawnBusCounts, editorOverlay, svgString } from '../core/render.js';
+import { timingBeatBands } from '../core/timing-diagram.js';
 import { themeInkSvg } from '../core/style.js';
 import { loadDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
@@ -2864,7 +2865,7 @@ export function renderCanvas(modelKey) {
       ghostLabels,
       ghostNets,
       editingLabel: editingLabelId,
-      ...(beatView ? { beat: { view: beatView, fade: true } } : {}),
+      ...(beatView ? { beat: { view: beatView, fade: true, timing: timingBeatBands(circuit, beatView.index) } } : {}),
     });
     // Swap the drawing alone: the math layer beside it stays in the page.
     const template = document.createElement('template');

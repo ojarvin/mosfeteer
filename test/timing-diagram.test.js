@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { plainTexText } from '../src/core/render.js';
 import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
-import { addTimingDiagram, defaultTimingPairs, existingTimingDiagram, parseTimingBits, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
+import { addTimingDiagram, defaultTimingPairs, existingTimingDiagram, parseTimingBits, timingBeatBands, timingBeatStates, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -425,4 +425,36 @@ test('an arrow may carry text: just after the edge it points at, in that row, ke
   run(circuit, 'timing Q=0000');
   assert.equal([...circuit.labels.values()].filter((l) => l.timing?.part === 'arrow-note').length, 0);
   assert.deepEqual(existingTimingDiagram(circuit).missing, [{ kind: 'arrow', index: 0 }]);
+});
+
+test('beats made from the diagram are in step with it; each shades its state\'s slots', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=1100 P2=0010 --gaps P1:P2', 'beat phases');
+  // P1, P2 and an all-open slot: three states, three beats.
+  assert.equal(circuit.beats.length, 3);
+  assert.deepEqual([...timingBeatStates(circuit)], [[0, 0], [1, 1], [2, 2]]);
+  const diagram = existingTimingDiagram(circuit);
+  const first = timingBeatBands(circuit, 0);
+  // P1's two slots in one band, from the waves' left edge (its lead-out
+  // repeats the first slot: a band at the far end too); the gap to φ2 is not in it.
+  assert.equal(first.length, 2);
+  assert.equal(first[0].w, 8 * 40, 'two slots; the lead-in before them is the last slot, not P1');
+  const second = timingBeatBands(circuit, 1);
+  assert.equal(second.length, 1);
+  assert.equal(second[0].w, 4 * 40);
+  assert.equal(second[0].x, first[0].x + first[0].w + 40, 'the gap between them in neither');
+  assert.ok(second[0].y < diagram.y && second[0].y + second[0].h > diagram.y + 120 + 80, 'over every row');
+  // A beat out of step shades nothing.
+  setSwitchFrom(circuit, 1, 'P1', 'closed');
+  assert.equal(timingBeatStates(circuit).size, 0);
+  assert.deepEqual(timingBeatBands(circuit, 1), []);
+});
+
+test('a beat drawn with its bands shades them under the waves; the svg command draws them for --beat', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01', 'beat phases');
+  const svg = runCommand(circuit, 'svg --beat 2').json.svg;
+  assert.match(svg, /<g class="timing-beat"[^>]*><rect /);
+  const firstWave = svg.indexOf('data-label-id');
+  assert.ok(svg.indexOf('class="timing-beat"') < firstWave, 'under the waves');
 });

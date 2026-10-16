@@ -13,7 +13,7 @@ import { formatMosSize, sizeReplacedNameLabels } from './mos-size.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
-import { addTimingDiagram, existingTimingDiagram, timingPhaseNamed, timingPhases, timingStates } from './timing-diagram.js';
+import { addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { addBoxAround } from './wrap-box.js';
 import { RENUMBER_ORDERS, renumberParts } from './renumber.js';
@@ -1128,7 +1128,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'svg' || cmd === 'export') {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.svg';
     const beat = flags.beat ? resolveBeat(circuit, beatIndex(circuit, flags.beat[0])) : null;
-    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat } } : {}) });
+    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat, timing: timingBeatBands(circuit, beat.index) } } : {}) });
     if (io) {
       io.writeTextFile(file, svg);
       return result(`wrote ${file} (${svg.length} bytes)`, null);

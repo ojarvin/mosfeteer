@@ -18632,7 +18632,7 @@ let formatMosSize, sizeReplacedNameLabels; __bind(() => { ({ formatMosSize, size
 let analyzeSmallSignal; __bind(() => { ({ analyzeSmallSignal } = __require("src/core/analysis/index.js")); });
 let joinLineAnnotations; __bind(() => { ({ joinLineAnnotations } = __require("src/core/line-join.js")); });
 let addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom; __bind(() => { ({ addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } = __require("src/core/beats.js")); });
-let addTimingDiagram, existingTimingDiagram, timingPhaseNamed, timingPhases, timingStates; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingPhaseNamed, timingPhases, timingStates } = __require("src/core/timing-diagram.js")); });
+let addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates; __bind(() => { ({ addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates } = __require("src/core/timing-diagram.js")); });
 let addTerminalStubs; __bind(() => { ({ addTerminalStubs } = __require("src/core/stubs.js")); });
 let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-box.js")); });
 let RENUMBER_ORDERS, renumberParts; __bind(() => { ({ RENUMBER_ORDERS, renumberParts } = __require("src/core/renumber.js")); });
@@ -19771,7 +19771,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'svg' || cmd === 'export') {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.svg';
     const beat = flags.beat ? resolveBeat(circuit, beatIndex(circuit, flags.beat[0])) : null;
-    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat } } : {}) });
+    const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat, timing: timingBeatBands(circuit, beat.index) } } : {}) });
     if (io) {
       io.writeTextFile(file, svg);
       return result(`wrote ${file} (${svg.length} bytes)`, null);
@@ -32111,6 +32111,8 @@ const MONO_FONT_FAMILY = "'DejaVu Sans Mono','Menlo','Consolas','Liberation Mono
  * presenter use the theme's --svg-dim / --svg-faded instead. */
 const BEAT_DIM_INK = '#b8b8b8';
 const BEAT_FADE_INK = '#e2e2e2';
+/** The tint a beat's band in the timing diagram takes (the editor's accent). */
+const TIMING_BEAT_FILL = '#0e7c7b';
 
 /** Outline that gives drawing math the weight of the other labels. */
 const MATH_LABEL_STROKE = '0.02em';
@@ -32703,9 +32705,10 @@ function viewportGridSvg(vp) {
  * absent, the view auto-fits the circuit contents (used for exports / PNG).
  * opts.extras {bounds, svg}: drawing beside the circuit -- rects that widen
  * the frame, and markup drawn above everything (linked-design bubbles).
- * opts.beat {view, fade}: draw one beat (beats.js resolveBeat). What it dims
+ * opts.beat {view, fade, timing}: draw one beat (beats.js resolveBeat). What it dims
  * is drawn faint; what it hides is left out, or with `fade` drawn fainter
- * still so the editor can reach it.
+ * still so the editor can reach it. `timing` (timing-diagram.js
+ * timingBeatBands) shades where the timing diagram shows the beat.
  * The frame stays the whole drawing's, so every beat lines up.
  */
 function svgString(circuit, opts = {}) {
@@ -32814,6 +32817,11 @@ function svgString(circuit, opts = {}) {
     const { x, y } = o.cursor;
     const { x: vx, y: vy, w: vw, h: vh } = o.cursorCrosshair;
     parts.push(`<path class="editor-cursor-crosshair" d="M ${fmt(vx)} ${fmt(y)} L ${fmt(vx + vw)} ${fmt(y)} M ${fmt(x)} ${fmt(vy)} L ${fmt(x)} ${fmt(vy + vh)}" fill="none"/>`);
+  }
+  // The beat's place in the timing diagram, a pale band under its waves.
+  if (beat && o.beat.timing?.length) {
+    const fill = o.themeInk ? `var(--accent, ${TIMING_BEAT_FILL})` : TIMING_BEAT_FILL;
+    parts.push(`<g class="timing-beat" pointer-events="none">${o.beat.timing.map((r) => `<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${fill}" fill-opacity="0.14"/>`).join('')}</g>`);
   }
   const drawOrder = (item) => Number.isFinite(item?.drawOrder) ? item.drawOrder : 0;
   const byDrawOrder = (a, b, tie) => drawOrder(a) - drawOrder(b) || tie(a, b);
@@ -36730,6 +36738,8 @@ __exports.timingColumns = timingColumns;
 __exports.timingRowGeometry = timingRowGeometry;
 __exports.timingRowEdges = timingRowEdges;
 __exports.timingStates = timingStates;
+__exports.timingBeatStates = timingBeatStates;
+__exports.timingBeatBands = timingBeatBands;
 __exports.timingPhaseNamed = timingPhaseNamed;
 __exports.existingTimingDiagram = existingTimingDiagram;
 __exports.timingPairs = timingPairs;
@@ -36976,6 +36986,11 @@ function stateName(sources) {
  * keys }], named after the phases high in it. Null without a diagram.
  */
 function timingStates(circuit) {
+  return stateRuns(circuit)?.map(({ name, closed }) => ({ name, closed })) ?? null;
+}
+
+/** timingStates, each with the slots it spans (`slots`, slot indices). */
+function stateRuns(circuit) {
   if (!existingTimingDiagram(circuit)) return null;
   // The diagram's own signals switch nothing.
   const rows = timingRowSources(circuit).filter((row) => !row.signal);
@@ -36987,12 +37002,74 @@ function timingStates(circuit) {
   for (let slot = 0; slot < count; slot += 1) {
     const closed = rows.filter((row) => high(row, slot));
     const key = closed.map((row) => row.key).join('|');
-    if (states.at(-1)?.key === key) continue;
-    states.push({ key, name: closed.length ? stateName(closed.map((row) => row.source)) : 'all open', closed: new Set(closed.map((row) => row.key)) });
+    if (states.at(-1)?.key === key) {
+      states.at(-1).slots.push(slot);
+      continue;
+    }
+    states.push({ key, name: closed.length ? stateName(closed.map((row) => row.source)) : 'all open', closed: new Set(closed.map((row) => row.key)), slots: [slot] });
   }
   // A wave that ends as it starts goes round: its last state is its first.
-  if (states.length > 1 && states[0].key === states.at(-1).key) states.pop();
-  return states.map(({ name, closed }) => ({ name, closed }));
+  if (states.length > 1 && states[0].key === states.at(-1).key) states[0].slots.push(...states.pop().slots);
+  return states;
+}
+
+/**
+ * The state of the drawn diagram each beat shows, where the beats and the
+ * diagram are in step: a Map of beat index to state index, for every run of
+ * consecutive beats that goes through all the diagram's states in order
+ * (as Make beats makes them), each beat closing exactly the switches of the
+ * phases high in its state. Beats outside such a run are not in it.
+ */
+function timingBeatStates(circuit) {
+  const states = stateRuns(circuit);
+  const beats = circuit.beats || [];
+  const found = new Map();
+  if (!states?.length || beats.length < states.length) return found;
+  const switched = [...new Set(timingRowSources(circuit).filter((row) => !row.signal).map((row) => row.key))]
+    .map((key) => ({ key, first: switchesOf(circuit, key)[0] }))
+    .filter((row) => row.first);
+  if (!switched.length) return found;
+  const shows = (beat, state) => switched.every(({ key, first }) => (switchStateAt(circuit, first.refdes, beat) === 'closed') === [...states[state].closed].some((closed) => samePhase(closed, key)));
+  for (let start = 0; start + states.length <= beats.length; start += 1) {
+    if (!states.every((_, state) => shows(start + state, state))) continue;
+    states.forEach((_, state) => found.set(start + state, state));
+  }
+  return found;
+}
+
+/**
+ * Where the drawn diagram shows beat `index`'s state, for shading it: world
+ * rects ({ x, y, w, h }) over the waves, one per run of the state's slot
+ * columns (the lead-in and lead-out included, which repeat the last and
+ * first slot; the gaps between states left out). Empty when the beat is
+ * not in step with the diagram (timingBeatStates).
+ */
+function timingBeatBands(circuit, index) {
+  const state = timingBeatStates(circuit).get(index);
+  if (state === undefined) return [];
+  const before = existingTimingDiagram(circuit);
+  const rows = timingRowSources(circuit);
+  const { columns, count } = timingColumns(rows.map((row) => row.bits), {
+    slotCells: before.slot || DEFAULT_SLOT_CELLS, pairs: timingPairs(rows, before.gaps), inverted: rows.map((row) => row.complementOf ?? null),
+  });
+  const runs = stateRuns(circuit);
+  const slots = new Set(runs[state].slots);
+  // A signal may run longer than the phases, which hold their last level.
+  const last = Math.max(...runs.flatMap((run) => run.slots));
+  const slotOf = (column) => (column.kind === 'gap' ? null : Math.min(last, column.at < 0 ? count - 1 : column.at >= count ? 0 : column.at));
+  const top = before.y - GRID / 2;
+  const h = (rows.length - 1) * ROW_PITCH + WAVE_HEIGHT + GRID;
+  const bands = [];
+  let x = before.x;
+  let open = false;
+  for (const column of columns) {
+    const shaded = slots.has(slotOf(column));
+    if (shaded && open) bands.at(-1).w += column.w;
+    else if (shaded) bands.push({ x, y: top, w: column.w, h });
+    open = shaded;
+    x += column.w;
+  }
+  return bands;
 }
 
 /** Phases in drawing order, each complement right after its phase; a pair
@@ -45596,7 +45673,7 @@ __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
 let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
-let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
+let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingBeatBands, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingBeatBands, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
 let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
 let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
@@ -46784,7 +46861,7 @@ function showPresenterFrame(animate = true) {
   frame.className = 'presenter-frame';
   if (!editor.presenter.blank) {
     // Theme ink, like the canvas: the presentation follows light or dark mode.
-    frame.innerHTML = svgString(editor.circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(editor.circuit, editor.presenter.index) } });
+    frame.innerHTML = svgString(editor.circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(editor.circuit, editor.presenter.index), timing: timingBeatBands(editor.circuit, editor.presenter.index) } });
     const svg = frame.querySelector('svg');
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');
@@ -53071,6 +53148,7 @@ __exports.exportCircuit = exportCircuit;
 __exports.exportAtlasSheet = exportAtlasSheet;
 __exports.installExportUi = installExportUi;
 let resolveBeat; __bind(() => { ({ resolveBeat } = __require("src/core/beats.js")); });
+let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/timing-diagram.js")); });
 let circuitPageGuideFrame, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale; __bind(() => { ({ DEFAULT_EXPORT_TEXT_PT, normalizePngDpi, pngRasterScale } = __require("src/core/png-export.js")); });
 let renderDocument; __bind(() => { ({ renderDocument } = __require("src/core/document.js")); });
@@ -53093,6 +53171,7 @@ let render, syncRenderedLabelMetrics; __bind(() => { ({ render, syncRenderedLabe
  * page guide), writing the files, and copying the drawing as an image. The
  * drawing itself comes from core/document.js and drawing-export.js.
  */
+
 
 
 
@@ -53244,7 +53323,7 @@ async function runExport({ dir, name, formats, grid = false, dark = false, pngDp
         grid,
         pageGuide: editor.pageGuide,
         ...(extras ? { extras } : {}),
-        ...(view ? { beat: { view } } : {}),
+        ...(view ? { beat: { view, timing: timingBeatBands(editor.circuit, view.index) } } : {}),
       });
       const svg = await withEmbeddedMathFont(dark ? applyExportDarkTheme(renderedSvg) : renderedSvg);
       if (onePdf) pages.push(svg);
@@ -58931,6 +59010,7 @@ let addBoxAround; __bind(() => { ({ addBoxAround } = __require("src/core/wrap-bo
 let busBits, busWidth, netNamesConnect; __bind(() => { ({ busBits, busWidth, netNamesConnect } = __require("src/core/bus.js")); });
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let drawnBusCounts, editorOverlay, svgString; __bind(() => { ({ drawnBusCounts, editorOverlay, svgString } = __require("src/core/render.js")); });
+let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/timing-diagram.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
@@ -58999,6 +59079,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -61846,7 +61927,7 @@ function renderCanvas(modelKey) {
       ghostLabels,
       ghostNets,
       editingLabel: editingLabelId,
-      ...(beatView ? { beat: { view: beatView, fade: true } } : {}),
+      ...(beatView ? { beat: { view: beatView, fade: true, timing: timingBeatBands(circuit, beatView.index) } } : {}),
     });
     // Swap the drawing alone: the math layer beside it stays in the page.
     const template = document.createElement('template');

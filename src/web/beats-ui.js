@@ -5,7 +5,7 @@
  */
 
 import { element } from './dom.js';
-import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingPhases, timingRowSources } from '../core/timing-diagram.js';
+import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingBeatBands, timingPhases, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
@@ -1170,7 +1170,7 @@ function showPresenterFrame(animate = true) {
   frame.className = 'presenter-frame';
   if (!editor.presenter.blank) {
     // Theme ink, like the canvas: the presentation follows light or dark mode.
-    frame.innerHTML = svgString(editor.circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(editor.circuit, editor.presenter.index) } });
+    frame.innerHTML = svgString(editor.circuit, { ...DRAWING_EXPORT_OPTIONS, themeInk: true, beat: { view: resolveBeat(editor.circuit, editor.presenter.index), timing: timingBeatBands(editor.circuit, editor.presenter.index) } });
     const svg = frame.querySelector('svg');
     svg?.removeAttribute('width');
     svg?.removeAttribute('height');

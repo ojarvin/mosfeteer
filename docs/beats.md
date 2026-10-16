@@ -86,6 +86,15 @@ drawn position. Only phases some switch is on make beats: a complement merely
 offered in the menu makes none. The beats are ordinary beats, inserted after
 the one on screen as one undoable edit.
 
+While the beats are in step with a drawn timing diagram -- a run of
+consecutive beats going through all its states in order, each closing
+exactly the switches of the phases high in its state, as Make beats makes
+them -- the beat on screen (in the editor, the presenter, and a beat's
+export) shades the diagram's slots for its state in a pale accent band
+under the waves; the non-overlap gaps between states stay unshaded
+(`timingBeatBands` in `src/core/timing-diagram.js`). A beat edited out of
+step shades nothing.
+
 **Timing diagram** (More menu or `Shift+K`, which also closes it; `timing`) draws one row per phase under the
 drawing, in the phases' order with each complement right after its phase:
 its wave, two cells tall with vertical edges, the waves centred on the
