@@ -80,7 +80,9 @@ showing in another.
 Two more things a file carries never make a design unsaved, and are only
 written with a real save: the names it was saved under (`names`,
 [`hierarchy.md`](hierarchy.md)), and the size this browser measured a math
-label at (`mathBox`). Nor does its save history (`history`), which the
+label, or an aligned plain annotation, at (`mathBox`; reopened, the label
+is measured against it rather than the estimate, so it never steps
+sideways). Nor does its save history (`history`), which the
 history window writes to the file as it changes. Opening a design, measuring its math, and leaving it
 changes nothing on disk (`drawingText`, `windowsChanged` in
 `src/web/document-session.js`).

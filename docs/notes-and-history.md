@@ -60,7 +60,7 @@ rotated out.
 - **What a save point is.** `historyText(state)`: the document without its
   history, windows, saved names, and tags, one JSON value a line. Notes and
   analysis settings are in it; restoring a save point brings them back. Math
-  labels keep their measured size (`mathBox`), so a save point viewed
+  labels (and aligned plain annotations) keep their measured size (`mathBox`), so a save point viewed
   outside the editor lays its math out as the editor did; a label merely
   measured again is no change of drawing (no new save point).
 - **Storage.** Entries newest first, each a line patch from the entry before
