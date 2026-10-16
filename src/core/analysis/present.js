@@ -614,6 +614,9 @@ const QUANTITY_LABELS = Object.freeze({
   ai: 'A_i',
   t: 'T',
   beta: '\\beta',
+  // The asymptotic gain model's ideal gain and direct feedthrough (loop-gain.js).
+  avideal: 'A_{v\\infty}',
+  avdirect: 'A_{v0}',
 });
 
 /** Return the standard analysis label for AC or DC quantities. */

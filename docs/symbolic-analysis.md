@@ -135,6 +135,18 @@ beta, list under Loop gain; the Bode plots sketch T (or beta) with its
 crossover omega_c and the phase margin there, at the sliders' relative
 values -- a phase margin needs no design values.
 
+The closed loop is also split at the same element (`feedbackParts` in
+`loop-gain.js`; Middlebrook's general feedback theorem, the asymptotic gain
+model): A_v = A_{v\infty} T/(1 + T) + A_{v0}/(1 + T), exactly. The ideal
+gain A_{v\infty} is A_v with the element's gain infinite -- its control held
+at zero by a nullor in its place -- and the direct feedthrough A_{v0} is A_v
+with its gain zero: a transistor's g_m gone, an opamp's output at zero. A
+source-degenerated stage shows -R_D/R_S and A_{v0} = 0; a shunt-feedback
+stage -R_F/R_I, with what R_F carries straight through as A_{v0}. They list
+under Loop gain after T, solved in T's model and its budget after T is
+done, so a split too large to solve is left out and never costs T. An ideal
+opamp has none: its T is infinite and A_v is its ideal gain.
+
 The loop has an operation budget of its own, so a loop too large to solve
 never takes the port quantities down with it. Past that budget (a two-stage
 Miller OTA, whose plain A_v is already too large), it is solved again with

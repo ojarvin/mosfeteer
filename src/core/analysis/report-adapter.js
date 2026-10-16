@@ -677,6 +677,18 @@ function equationEntries(reports, report, presentation = {}) {
     if (loop.dc?.equation) add(`DC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.dc.equation }, 'loop');
     if (loop.infinite) add('Loop gain', { ok: true, equation: 'T = A \\beta \\to \\infty' }, 'loop');
     if (loop.beta) add(`Feedback factor${at}`, { ok: true, equation: loop.beta.equation }, 'loop');
+    // The closed loop split at the same element (the asymptotic gain model):
+    // its ideal gain, with the element's control nulled, and what gets
+    // through with its gain at zero.
+    const split = loop.split;
+    if (split) {
+      add(`Gain split${at}`, { ok: true, equation: split.identity }, 'loop');
+      for (const [part, title] of [[split.ideal, `ideal gain (${loop.element}'s gain infinite)`], [split.direct, `direct feedthrough (${loop.element}'s gain zero)`]]) {
+        if (!part) continue;
+        if (part.ac?.equation) add(`AC ${title}`, { ok: true, equation: part.ac.equation }, 'loop');
+        if (part.dc?.equation) add(`DC ${title}`, { ok: true, equation: part.dc.equation }, 'loop');
+      }
+    }
   } else if (loop) {
     add('Loop gain', { ok: true, equation: `\\text{${String(loop.error).replace(/[{}\\]/g, '')}}` }, 'loop');
   }

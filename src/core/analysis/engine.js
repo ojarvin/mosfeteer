@@ -1,5 +1,5 @@
 import { MOS_TYPES, firstDefined } from './shared.js';
-import { returnRatio } from './loop-gain.js';
+import { feedbackParts, returnRatio } from './loop-gain.js';
 import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
@@ -479,6 +479,7 @@ function loopGainReport(circuit, pipeline, pipelineOptions, element, ops, option
     beta = { expression: betaValue.expression, equation: renderQuantityEquation('beta', betaValue.hasFrequency ? 's' : null, betaValue.expression, options) };
   }
   if (ops.budget?.exceeded) return tooLarge();
+  const split = result.loop ? asymptoticGain(loopPipeline, element, ops, options, approximationOptions, tidy) : null;
   return {
     ok: true,
     element,
@@ -487,8 +488,37 @@ function loopGainReport(circuit, pipeline, pipelineOptions, element, ops, option
     infinite: !result.loop,
     ...displayed,
     ...(beta ? { beta } : {}),
-    equations: [...displayed.equations, ...(beta ? [beta.equation] : [])],
+    ...(split ? { split } : {}),
+    equations: [...displayed.equations, ...(beta ? [beta.equation] : []), ...(split?.equations || [])],
   };
+}
+
+/**
+ * The closed loop's A_v split at the loop's element (feedbackParts, the
+ * asymptotic gain model): its ideal gain A_v_inf and direct feedthrough
+ * A_v0, each presented as T is, and the identity they make with T. Null
+ * when they do not solve within what is left of the loop's budget: they
+ * add to T, never cost it.
+ */
+function asymptoticGain(loopPipeline, element, ops, options, approximationOptions, tidy) {
+  try {
+    const parts = feedbackParts(loopPipeline, element, ops);
+    if (!parts.ok || ops.budget?.exceeded) return null;
+    const part = (name, value) => {
+      const exact = canonicalResponseValue(tidy(value), options);
+      return displayResponse(name, exact.expression, applyApproximations(exact.expression, approximationOptions), options, approximationOptions);
+    };
+    const ideal = part('Avideal', parts.ideal);
+    const direct = ops.isZero(parts.direct) ? null : part('Avdirect', parts.direct);
+    if (ops.budget?.exceeded) return null;
+    const rows = (shown) => [shown.ac?.equation, shown.dc?.equation].filter(Boolean);
+    const identity = direct
+      ? 'A_v = A_{v\\infty} \\frac{T}{1 + T} + \\frac{A_{v0}}{1 + T}'
+      : 'A_v = A_{v\\infty} \\frac{T}{1 + T} \\quad (A_{v0} = 0)';
+    return { ideal, direct, identity, equations: [identity, ...rows(ideal), ...(direct ? rows(direct) : [])] };
+  } catch {
+    return null;
+  }
 }
 
 function displayResponse(name, exact, approximation, options, approximationOptions = null) {

@@ -69,3 +69,48 @@ export function returnRatio(pipeline, element, ops) {
   }
   return { ok: true, kind: 'transistor', model: null, loop: ops.neg(ops.mul(target.value, control)), beta: null };
 }
+
+/**
+ * The closed-loop voltage gain split at the element the loop is broken at
+ * (Middlebrook's general feedback theorem, the asymptotic gain model):
+ *
+ *   A_v = A_v_inf T / (1 + T) + A_v0 / (1 + T)
+ *
+ * with T the return ratio at the same element (returnRatio). A_v_inf, the
+ * ideal gain, is A_v with the element's gain infinite: its control held at
+ * zero, its output whatever that takes (a nullor). A_v0, the direct
+ * feedthrough, is A_v with its gain zero: a transistor's g_m gone, an
+ * opamp's output at zero. Both are exact in the same model as T, and the
+ * identity holds exactly. Returns `{ ok, ideal, direct, gain }` (`gain` the
+ * closed loop in this model, to check the identity against), or a failure;
+ * an ideal opamp has nothing to split (its T is infinite, A_v = A_v_inf).
+ */
+export function feedbackParts(pipeline, element, ops) {
+  const primitives = pipeline.selectedMna || [];
+  const opamp = primitives.find((p) => p.kind === 'opamp' && p.metadata?.component === element);
+  const gm = primitives.find((p) => p.kind === 'vccs' && p.id === `${element}.gm`);
+  const target = opamp || gm;
+  if (!target) return { ok: false, error: `${element} is not in the analysed circuit` };
+  if (opamp && ops.isZero(opamp.value)) return { ok: false, error: 'an ideal opamp\'s loop gain is infinite: A_v is its ideal gain' };
+  const input = { ...pipeline.excitations.input, value: ops.one };
+  const others = primitives.filter((p) => p !== target);
+  const nullor = { kind: 'opamp', id: `${target.id}@ideal`, terminals: target.terminals, control: target.control, value: ops.zero };
+  const dead = opamp ? [{ kind: 'voltage-source', id: `${target.id}@dead`, terminals: target.terminals, value: ops.zero }] : [];
+  const gainOf = (elements, what) => {
+    const system = buildMNA([...elements, input], { ops, ground: AC_GROUND, grounds: [...pipeline.context.acGroundIds] });
+    const solution = solveMNA(system, { ops });
+    if (!solution.ok) throw new Error(`${what} does not solve: ${solution.error || 'singular'}`);
+    const index = solution.variables.indexOf(`V(${pipeline.context.output.node})`);
+    return index < 0 ? ops.zero : solution.columns[0][index];
+  };
+  try {
+    return {
+      ok: true,
+      ideal: gainOf([...others, nullor], `the gain with ${element}'s control nulled`),
+      direct: gainOf([...others, ...dead], `the gain with ${element}'s gain at zero`),
+      gain: gainOf(primitives, 'the closed loop'),
+    };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}

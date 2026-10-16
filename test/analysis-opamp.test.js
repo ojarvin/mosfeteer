@@ -126,7 +126,7 @@ test('loop gain as a return ratio: an opamp\'s T = A beta, a transistor\'s at it
   assert.equal(ideal.loop.ok, true, ideal.loop.error);
   assert.equal(ideal.loop.infinite, true);
   assert.deepEqual(ideal.loop.equations, ['\\beta(0) = \\frac{R_{1}}{R_{1} + R_{2}}']);
-  assert.deepEqual(loopOf(inverting('finite-gain'), 'U1').loop.equations, ['T(0) = \\frac{A_{1} \\, R_{1}}{R_{1} + R_{2}}', '\\beta = \\frac{R_{1}}{R_{1} + R_{2}}']);
+  assert.deepEqual(loopOf(inverting('finite-gain'), 'U1').loop.equations.slice(0, 2), ['T(0) = \\frac{A_{1} \\, R_{1}}{R_{1} + R_{2}}', '\\beta = \\frac{R_{1}}{R_{1} + R_{2}}']);
   assert.equal(loopOf(inverting('gbw'), 'U1').loop.equations[0], 'T(s) = \\frac{\\omega_{t1} \\, R_{1}}{s \\, \\left(R_{1} + R_{2}\\right)}');
   // A source-degenerated common-source stage, broken at M1's g_m.
   const stage = build(
@@ -134,7 +134,7 @@ test('loop gain as a return ratio: an opamp\'s T = A beta, a transistor\'s at it
     [['VIN', 'VIN.p', 'M1.g'], ['VOUT', 'M1.d', 'RD.a', 'VOUT.p'], ['S', 'M1.s', 'RS.a'], ['VSS', 'RS.b', 'GND.gnd'], ['VDD', 'RD.b', 'VDD.p']],
   );
   const degenerated = loopOf(stage, 'M1', { ignoreBodyEffect: true });
-  assert.deepEqual(degenerated.loop.equations, ['T(0) = \\frac{g_{m1} \\, r_{o1} \\, R_{S}}{R_{D} + r_{o1} + R_{S}}']);
+  assert.deepEqual(degenerated.loop.equations.slice(0, 1), ['T(0) = \\frac{g_{m1} \\, r_{o1} \\, R_{S}}{R_{D} + r_{o1} + R_{S}}']);
   // The adapted report lists it under Loop gain and hands the Bode tab its coefficients.
   const adapted = adaptCombinedReport(loopOf(inverting('gbw'), 'U1'));
   assert.ok(adapted.equationEntries.some((entry) => entry.group === 'loop' && /T\(s\)/.test(entry.result.equation)));
@@ -166,4 +166,41 @@ test('a loop gain too large to keep its symbols is solved at the Bode sketch\'s 
   const adapted = adaptCombinedReport(report);
   assert.equal(adapted.reports.loop.numeric, true);
   assert.ok(adapted.equationEntries.some((entry) => entry.group === 'loop' && /numeric/.test(entry.title || entry.label || JSON.stringify(entry))));
+});
+
+test('the closed loop splits at the loop\'s element: A_v = A_v_inf T/(1+T) + A_v0/(1+T)', async () => {
+  const { buildExactAnalysisPipeline } = await import('../src/core/analysis/pipeline.js');
+  const { createRationalOps } = await import('../src/core/analysis/algebra-ops.js');
+  const { feedbackParts, returnRatio } = await import('../src/core/analysis/loop-gain.js');
+  const loopOf = (circuit, element) => analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT', loopGain: { element }, ignoreBodyEffect: true });
+  // Series feedback: the ideal gain is -R_D/R_S, and nothing gets through with g_m gone.
+  const degenerated = build(
+    [['input', 'VIN'], ['output', 'VOUT'], ['nmos', 'M1'], ['resistor', 'RD'], ['resistor', 'RS'], ['ground', 'GND'], ['supply', 'VDD']],
+    [['VIN', 'VIN.p', 'M1.g'], ['VOUT', 'M1.d', 'RD.a', 'VOUT.p'], ['S', 'M1.s', 'RS.a'], ['VSS', 'RS.b', 'GND.gnd'], ['VDD', 'RD.b', 'VDD.p']],
+  );
+  const series = loopOf(degenerated, 'M1').loop;
+  assert.ok(series.equations.includes('A_v = A_{v\\infty} \\frac{T}{1 + T} \\quad (A_{v0} = 0)'));
+  assert.ok(series.equations.includes('A_{v\\infty}(0) = -\\frac{R_{D}}{R_{S}}'));
+  // Shunt feedback: -R_F/R_I ideally, and R_F feeds the input straight through.
+  const shunt = build(
+    [['input', 'VIN'], ['output', 'VOUT'], ['nmos', 'M1'], ['resistor', 'RD'], ['resistor', 'RF'], ['resistor', 'RI'], ['ground', 'GND'], ['supply', 'VDD']],
+    [['VIN', 'VIN.p', 'RI.a'], ['G', 'RI.b', 'M1.g', 'RF.a'], ['VOUT', 'M1.d', 'RD.a', 'RF.b', 'VOUT.p'], ['VSS', 'M1.s', 'GND.gnd'], ['VDD', 'RD.b', 'VDD.p']],
+  );
+  const parallel = loopOf(shunt, 'M1').loop;
+  assert.ok(parallel.equations.includes('A_{v\\infty}(0) = -\\frac{R_{F}}{R_{I}}'));
+  assert.ok(parallel.equations.some((line) => line.startsWith('A_{v0}(0) = ')));
+  // The identity is exact: at any values, the parts rebuild the closed loop.
+  const ops = createRationalOps({ variable: 's' });
+  const number = (n) => Array.from({ length: n }).reduce((sum) => ops.add(sum, ops.one), ops.zero);
+  const values = { gm1: 2, ro1: 7, RD: 3, RF: 5, RI: 11 };
+  const pipeline = buildExactAnalysisPipeline(shunt, { input: 'VIN', output: 'VOUT', ops, s: ops.s(), valueOf: (value) => (value?.kind ? value : number(values[value] || 1)), millerApproximation: false, solve: false });
+  const parts = feedbackParts(pipeline, 'M1', ops);
+  const T = returnRatio(pipeline, 'M1', ops).loop;
+  assert.ok(ops.isZero(ops.sub(parts.gain, ops.div(ops.add(ops.mul(parts.ideal, T), parts.direct), ops.add(ops.one, T)))));
+  // A finite-gain opamp: its ideal gain is the inverting amplifier's -R_2/R_1; an ideal one has nothing to split.
+  assert.ok(loopOf(inverting('finite-gain'), 'U1').loop.equations.includes('A_{v\\infty}(0) = -\\frac{R_{2}}{R_{1}}'));
+  assert.equal(loopOf(inverting(), 'U1').loop.split, undefined);
+  // The Equations tab lists the split under Loop gain.
+  const titles = adaptCombinedReport(loopOf(shunt, 'M1')).equationEntries.filter((entry) => entry.group === 'loop').map((entry) => entry.title);
+  assert.deepEqual(titles.slice(-3), ['Gain split at M1', 'DC ideal gain (M1\'s gain infinite)', 'DC direct feedthrough (M1\'s gain zero)']);
 });
