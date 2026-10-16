@@ -89,3 +89,19 @@ test('a splice cuts a named net into two signals: the name stays where it comes 
   plain.spliceIntoSegment(plain.addComponent('resistor', { refdes: 'R3', x: 400, y: 0 }).refdes, named.id, 0, 1);
   assert.equal([nameOf(plain, 'R3', 'a'), nameOf(plain, 'R3', 'b')].filter(Boolean).length, 1);
 });
+
+test('a deleted segment cuts a named net in two: the name stays with its label, the other piece is unnamed', () => {
+  const nameOf = (circuit, comp, term) => circuit.netOfTerminal({ comp, term })?.name || null;
+  const circuit = new Circuit();
+  circuit.addComponent('resistor', { refdes: 'R1', x: 0, y: 0 });
+  circuit.addComponent('resistor', { refdes: 'R2', x: 800, y: 400 });
+  const net = circuit.connect('R1.b', 'R2.a');
+  circuit.renameNet(net, 'OUT');
+  // The label sits on R2's side of the wire; the vertical leg is cut.
+  circuit.addNetLabel(net.id, { anchor: { x: 400, y: 400 } });
+  assert.deepEqual(net.paths()[0].map((p) => [p.x, p.y]), [[80, 0], [120, 0], [120, 400], [720, 400]]);
+  circuit.deleteWireSegment(net.id, 0, 2);
+  assert.equal(nameOf(circuit, 'R2', 'a'), 'OUT');
+  assert.equal(nameOf(circuit, 'R1', 'b'), null, 'R1 keeps a stub of wire but not the name');
+  assert.notEqual(circuit.netOfTerminal({ comp: 'R1', term: 'b' }), circuit.netOfTerminal({ comp: 'R2', term: 'a' }));
+});

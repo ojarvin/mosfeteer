@@ -6204,7 +6204,10 @@ export class Circuit {
     net.branches = next.map((p) => clonePath(p, net.allowDiagonal));
     net.route = net.branches?.[0] ? clonePath(net.branches[0], net.allowDiagonal) : null;
     net.junctions = this._netJunctions(net, next);
-    this._splitDisconnectedNet(net);
+    // Cut apart, the pieces are separate signals: the name stays with the
+    // piece its label, port, or rail gives it to, and the rest are unnamed
+    // (as a part spliced in leaves them), not joined by name.
+    this._keepSplitNameAtSource(this._splitDisconnectedNet(net));
     this.syncJunctionSolders();
     return net;
   }
@@ -6368,7 +6371,7 @@ export class Circuit {
   }
 
   /**
-   * A net cut in series (a part spliced into it) is two signals now, not one
+   * A net cut in series (a part spliced into it, a segment deleted) is two signals now, not one
    * name in two places: the name stays with the pieces that give it -- an
    * interface port, a rail marker, a net label -- and the rest are unnamed.
    * With no such piece, the first (the original net) keeps it.
