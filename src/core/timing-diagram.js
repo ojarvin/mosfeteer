@@ -412,14 +412,14 @@ function notesLayout(notes, edgeOf, rowCount) {
     if (!a || !b || a.x === b.x) missing.push({ kind: 'span', index });
     else placed.push({ index, text: item.text, x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x) });
   });
-  // Lanes, top down: a span takes the first whose last span ends a cell or
-  // more before it starts.
+  // Lanes, top down: a span takes the first whose last span ends no later
+  // than it starts, so spans meeting at an edge read as one line, |--|--|.
   const lanes = [];
   // A narrow span (under three cells) reaches further: an arrow either
   // side, and its text after the right one.
   const reach = (span) => (span.x1 - span.x0 < 3 * GRID ? { left: span.x0 - 2 * GRID, right: span.x1 + 5 * GRID } : { left: span.x0, right: span.x1 });
   const spans = [...placed].sort((a, b) => reach(a).left - reach(b).left || a.x1 - b.x1).map((span) => {
-    let lane = lanes.findIndex((end) => end + GRID <= reach(span).left);
+    let lane = lanes.findIndex((end) => end <= reach(span).left);
     if (lane < 0) lane = lanes.length;
     lanes[lane] = reach(span).right;
     // Two cells clear of the waves, so the arrow and its text stand apart;

@@ -378,6 +378,14 @@ test('a narrow span is pointed at from outside; overlapping spans take lanes of 
   assert.notEqual(wide.points[0].y, narrow[0].points[0].y, 'the overlapping span in another lane');
 });
 
+test('spans that only meet at an edge share a lane', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK', 'timing CLK=0101', 'timing --span "CLK:2>CLK:3=a;CLK:3>CLK:4=b"');
+  const spans = [...circuit.labels.values()].filter((l) => l.timing?.part === 'span' && l.style.lineStyle !== 'dashed');
+  assert.equal(spans.length, 2);
+  assert.equal(spans[0].points[0].y, spans[1].points[0].y, '|--|--| is one line');
+});
+
 test('an arrow may carry text: just after the edge it points at, in that row, kept with the diagram', () => {
   const circuit = new Circuit();
   run(circuit, 'timing --add CLK,D,Q', 'timing CLK=0101 D=0110 Q=0011', 'timing --rise Q=1');
