@@ -19171,7 +19171,7 @@ function commandHelp() {
     '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',
     '                                   retakes them from the beats. Waves repeat past both ends; --slot N is a slot\'s',
     '                                   width in cells. --gaps sets which phases never overlap (a one-cell gap where one',
-    '                                   falls as the other rises): auto (any two never high together), none, or pairs.',
+    '                                   falls as the other rises): none (a new diagram\'s), auto (any two never high together), or pairs.',
     '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier);',
     '                                   --order φ2,φ1 sets the rows\' order; a drawn diagram stays where it stands,',
     '                                   --place puts it again where the drawing has room for it.',
@@ -36742,8 +36742,9 @@ let plainTexText; __bind(() => { ({ plainTexText } = __require("src/core/render.
  * shows a little of its last slot before the start and of its first after
  * the end, where its transitions are.
  *
- * Non-overlap is kept between pairs of phases: by default every two that
- * are never high in the same slot. Where one of a pair falls and the other
+ * Non-overlap is kept between the pairs of phases asked for: none in a new
+ * diagram; 'auto' picks every two that are never high in the same slot (and
+ * a diagram saved before the setting was its own keeps that). Where one of a pair falls and the other
  * rises, a one-cell gap opens in every row; in it the pair's fall comes early
  * and its rise late, so the two are never high at once. Other phases change
  * at the start of the gap.
@@ -37011,7 +37012,8 @@ function timingPhaseNamed(phases, name) {
 }
 
 /** The diagram already drawn: its annotations' ids, each phase's own wave
- *  and edge shift, its slot width and non-overlap setting, its arrows,
+ *  and edge shift, its slot width and non-overlap setting ('auto', 'none',
+ *  or pairs of phase keys), its arrows,
  *  marks and spans (and which of them wait for an edge that has gone:
  *  `missing`, [{ kind, index }]), and where it stands ({ x, y }:
  *  its waves' left edge and first row's top). Null when there is none. */
@@ -37044,7 +37046,7 @@ function existingTimingDiagram(circuit) {
   const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${owner[label.timing.part] || label.timing.part}:${label.timing.item}`));
   const missing = Object.entries({ arrow: arrows, mark: marks, span: spans })
     .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
-  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
+  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -37177,7 +37179,8 @@ function removeTimingDiagram(circuit) {
  * by phase name (see timingPhaseNamed); `fromBeats` takes the waves not given
  * from the beats rather than the diagram already drawn; `slot` is a slot's
  * width in cells; `gaps` is 'auto', 'none', or pairs of phase names kept from
- * overlapping (both kept from the diagram drawn before when not given);
+ * overlapping (both kept from the diagram drawn before when not given; a new
+ * diagram has none);
  * `shifts` gives rows' edge shifts ({ fall, rise } cells) by phase name, the
  * rest keeping theirs. A complement following its phase takes the phase's
  * shifts the other way round -- the phase falling early, it rises early --
@@ -37220,7 +37223,7 @@ function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot =
     return normalizeEdgeShift({ fall: base.rise + mine.fall, rise: base.fall + mine.rise });
   });
   const slotCells = Math.max(1, Math.round(Number(slot) || before?.slot || DEFAULT_SLOT_CELLS));
-  const setting = gaps === null || gaps === undefined ? before?.gaps ?? 'auto'
+  const setting = gaps === null || gaps === undefined ? before?.gaps ?? 'none'
     : gaps === false ? 'none'
       : Array.isArray(gaps) ? gaps.map(([a, b]) => [named(a).key, named(b).key]) : gaps;
   const { columns, levels } = timingColumns(rows.map((row) => row.bits), {
@@ -46156,7 +46159,7 @@ function openTimingDialog() {
   const state = {
     cursor: { row: 0, slot: 0 },
     slot: before?.slot || DEFAULT_SLOT_CELLS,
-    gaps: before?.gaps ?? 'auto',
+    gaps: before?.gaps ?? 'none',
     session: null,
     place: false,
     // Arrows, marks and spans on the edges (edge: { row: phase key, at:
@@ -46245,34 +46248,50 @@ function openTimingDialog() {
     return defaultTimingPairs(waves, new Set(rows.flatMap((row, index) => (row.baseKey !== undefined || row.signal ? [index] : []))))
       .map(([a, b]) => [rows[a].key, rows[b].key]);
   };
+  // A row's name as the grid shows it: TeX drawn as markup, a bar spelled out.
+  const nameText = (target, source) => {
+    if (/\\(?:overline|bar)\{/.test(source)) target.textContent = plainMarkup(source);
+    else appendMarkupText(target, texToLabelMarkup(source));
+    return target;
+  };
+  // The pairs as a square of checkboxes, the rows' names along the top and
+  // the left; both halves are the same pair, and the diagonal is blocked, as
+  // a row cannot overlap itself.
   const renderPairs = () => {
     pairsBox.replaceChildren();
     const own = rows.filter((row) => row.baseKey === undefined);
     const active = activePairs();
-    // A pair is a chip that is on while the two are kept apart.
-    const list = element('div', { class: 'timing-dialog-options timing-pairs-list' });
-    pairsBox.append(element('span', { class: 'timing-pairs-title', text: 'Gaps', title: 'A pair that is on gets a one-cell gap where one falls as the other rises, as non-overlapping clocks have' }), list);
-    const auto = element('button', { type: 'button', class: 'timing-chip', text: 'Auto', 'aria-pressed': String(state.gaps === 'auto'), title: 'Gap every two phases that are never high in the same slot' });
+    const head = element('div', { class: 'timing-dialog-options' });
+    const body = element('div', { class: 'timing-pairs-body' }, [head]);
+    pairsBox.append(element('span', { class: 'timing-pairs-title', text: 'Non-overlap', title: 'A pair that is ticked gets a one-cell gap where one falls as the other rises, as non-overlapping clocks have' }), body);
+    const auto = element('button', { type: 'button', class: 'timing-chip', text: 'Auto', 'aria-pressed': String(state.gaps === 'auto'), title: 'Keep apart every two phases that are never high in the same slot' });
     auto.addEventListener('click', () => { state.gaps = state.gaps === 'auto' ? activePairs() : 'auto'; renderPairs(); redraw(); });
-    list.append(auto);
-    for (let a = 0; a < own.length; a += 1) {
-      for (let b = a + 1; b < own.length; b += 1) {
-        const pair = [own[a].key, own[b].key];
+    head.append(auto);
+    if (own.length < 2) {
+      head.append(element('span', { class: 'timing-pairs-none', text: 'two rows needed' }));
+      return;
+    }
+    const matrix = element('table', { class: 'timing-pairs-matrix' });
+    matrix.append(element('tr', {}, [element('th', {}), ...own.map((row) => nameText(element('th', { scope: 'col' }), row.source))]));
+    for (const a of own) {
+      const cells = own.map((b) => {
+        if (a === b) return element('td', { class: 'blocked', 'aria-hidden': 'true' });
+        const pair = [a.key, b.key];
         const on = active.some((other) => samePair(other, pair));
-        const chip = element('button', { type: 'button', class: 'timing-chip', 'aria-pressed': String(on), title: on ? 'Kept apart by a gap; click to let them meet' : 'Click to keep them apart by a gap' }, [
-          element('span', { text: `${plainMarkup(own[a].source)} · ${plainMarkup(own[b].source)}` }),
-        ]);
-        chip.addEventListener('click', () => {
+        const box = element('input', { type: 'checkbox', 'aria-label': `${plainMarkup(a.source)} and ${plainMarkup(b.source)} never overlap` });
+        box.checked = on;
+        box.addEventListener('change', () => {
           const next = activePairs().filter((other) => !samePair(other, pair));
-          if (!on) next.push(pair);
-          state.gaps = next;
+          if (box.checked) next.push(pair);
+          state.gaps = next.length ? next : 'none';
           renderPairs();
           redraw();
         });
-        list.append(chip);
-      }
+        return element('td', {}, [box]);
+      });
+      matrix.append(element('tr', {}, [nameText(element('th', { scope: 'row' }), a.source), ...cells]));
     }
-    if (own.length < 2) list.append(element('span', { class: 'timing-pairs-none', text: 'two rows needed' }));
+    body.append(matrix);
   };
 
   const renderGrid = () => {
@@ -46280,9 +46299,7 @@ function openTimingDialog() {
     const n = length();
     state.cursor.slot = Math.min(state.cursor.slot, n);
     rows.forEach((row, r) => {
-      const name = element('span', { class: 'timing-grid-name' });
-      if (/\\(?:overline|bar)\{/.test(row.source)) name.textContent = plainMarkup(row.source);
-      else appendMarkupText(name, texToLabelMarkup(row.source));
+      const name = nameText(element('span', { class: 'timing-grid-name' }), row.source);
       if (row.follows) name.title = `${plainMarkup(baseOf(row).source)} inverted; edit it to give it a wave of its own`;
       const cells = element('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
       for (let slot = 0; slot < n; slot += 1) {

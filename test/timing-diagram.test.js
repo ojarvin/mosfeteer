@@ -368,7 +368,7 @@ test('an arrow or mark asked for must land on an edge; nothing changes when it d
 
 test('a narrow span is pointed at from outside; overlapping spans take lanes of their own', () => {
   const circuit = new Circuit();
-  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01');
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01 --gaps auto');
   // P1 falls into the gap, P2 rises out of it: one cell apart.
   run(circuit, 'timing --span "P1:2>P2:2=nov;P1:1>P1:3=T"');
   const spans = [...circuit.labels.values()].filter((l) => l.timing?.part === 'span' && l.style.lineStyle !== 'dashed');
@@ -376,6 +376,23 @@ test('a narrow span is pointed at from outside; overlapping spans take lanes of 
   assert.equal(narrow.length, 2, 'two arrows pointing in');
   const wide = spans.find((l) => l.style.arrowhead === 'both');
   assert.notEqual(wide.points[0].y, narrow[0].points[0].y, 'the overlapping span in another lane');
+});
+
+test('a new diagram keeps no pair apart; one saved before the setting keeps auto', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01');
+  assert.equal(existingTimingDiagram(circuit).gaps, 'none');
+  const width = () => Math.max(...wavesOf(circuit).map((l) => l.bbox().w));
+  const narrow = width();
+  run(circuit, 'timing --gaps auto');
+  assert.equal(existingTimingDiagram(circuit).gaps, 'auto');
+  assert.ok(width() > narrow, 'gaps widen the waves');
+  // An older file: no gaps key at all.
+  const saved = circuit.toJSON();
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(saved)));
+  assert.equal(existingTimingDiagram(loaded).gaps, 'auto');
+  run(loaded, 'timing P1=10');
+  assert.equal(existingTimingDiagram(loaded).gaps, 'auto', 'redrawn, it keeps them');
 });
 
 test('spans that only meet at an edge share a lane', () => {

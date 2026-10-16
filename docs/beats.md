@@ -95,8 +95,11 @@ A wave is a row of slots, each high or low; a short wave holds its last
 level. The waves repeat, so each row shows half a slot of its last level
 before the start and of its first after the end, where its transitions are.
 
-Non-overlap is kept between pairs of phases: by default every two that are
-never high in the same slot. Where one of a pair falls as the other rises, a
+Non-overlap is kept between the pairs of phases asked for: none in a new
+diagram, or with `auto` every two that are never high in the same slot (a
+diagram saved without the setting keeps `auto`). The timing window shows the
+pairs as a square of checkboxes, the rows' names along two sides and the
+diagonal blocked. Where one of a pair falls as the other rises, a
 one-cell gap opens in every row; in it the pair's fall comes early and its
 rise late, so the two are never high at once, and other phases change as the
 gap opens. A complement is its phase inverted, high in the gaps.
@@ -155,7 +158,8 @@ row, reaching a cell above and below the waves. A **Span** is a time between two
 line at each, reaching below the waves to an arrow between them (pointing in
 from outside when it is under three cells), its text under the arrow (just
 after the right arrow's tail when narrow); the arrows run two cells below the
-waves; spans that overlap take lanes of their own, while spans that only meet at an edge share one. In the editor
+waves; spans that overlap take lanes of their own, while spans that only
+meet at an edge share one. In the editor
 the cursor's edge is the one at the left of its slot, or click the bar
 between two slots: `a` begins an arrow and `a` at another edge ends it, `s`
 the same for a span, `m` marks (or unmarks); Esc cancels. The list under the

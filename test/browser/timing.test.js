@@ -14,9 +14,16 @@ function clockAndQ() {
   return circuit.toJSON();
 }
 
+/** Two switch phases never high together: what auto would keep apart. */
+function twoPhases() {
+  const circuit = new Circuit();
+  for (const line of ['add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01']) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -37,6 +44,31 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.mouse('mousePressed', at.x, at.y);
     await h.mouse('mouseReleased', at.x, at.y);
   };
+
+  test('non-overlap is a square of checkboxes: names along two sides, the diagonal blocked, none ticked at first', async () => {
+    await h.open('phased');
+    await h.key('K', { shiftKey: true });
+    await h.until(`!!document.querySelector('.timing-dialog .timing-pairs-matrix')`);
+    const matrix = () => h.evaluate(`(() => {
+      const m = document.querySelector('.timing-pairs-matrix');
+      return {
+        top: [...m.rows[0].querySelectorAll('th[scope=col]')].map((th) => th.textContent),
+        left: [...m.querySelectorAll('th[scope=row]')].map((th) => th.textContent),
+        blocked: m.querySelectorAll('td.blocked').length,
+        ticked: [...m.querySelectorAll('input')].map((box) => box.checked),
+      };
+    })()`);
+    assert.deepEqual(await matrix(), { top: ['P1', 'P2'], left: ['P1', 'P2'], blocked: 2, ticked: [false, false] });
+    // Either half ticks the pair, which both halves show and the diagram keeps.
+    await h.evaluate(`document.querySelector('.timing-pairs-matrix input').click()`);
+    await h.until(`Array.isArray(window.__circuit().labels.find((l) => l.timing)?.timing.gaps)`);
+    assert.deepEqual((await matrix()).ticked, [true, true]);
+    assert.deepEqual(await h.evaluate(`window.__circuit().labels.find((l) => l.timing).timing.gaps`), [['P1', 'P2']]);
+    await h.evaluate(`document.querySelectorAll('.timing-pairs-matrix input')[1].click()`);
+    await h.until(`window.__circuit().labels.find((l) => l.timing)?.timing.gaps === false`);
+    await h.evaluate(`${h.module('beats-ui.js')}.then((m) => m.toggleTimingDialog())`);
+    await h.until(`!document.querySelector('.timing-dialog .timing-pairs-matrix')`);
+  });
 
   test('an arrow from a clicked edge to another, a mark at the cursor, a span with its text; slot edits carry them', async () => {
     await h.open('clocked');

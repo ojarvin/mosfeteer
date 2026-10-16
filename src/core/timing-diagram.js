@@ -12,8 +12,9 @@
  * shows a little of its last slot before the start and of its first after
  * the end, where its transitions are.
  *
- * Non-overlap is kept between pairs of phases: by default every two that
- * are never high in the same slot. Where one of a pair falls and the other
+ * Non-overlap is kept between the pairs of phases asked for: none in a new
+ * diagram; 'auto' picks every two that are never high in the same slot (and
+ * a diagram saved before the setting was its own keeps that). Where one of a pair falls and the other
  * rises, a one-cell gap opens in every row; in it the pair's fall comes early
  * and its rise late, so the two are never high at once. Other phases change
  * at the start of the gap.
@@ -281,7 +282,8 @@ export function timingPhaseNamed(phases, name) {
 }
 
 /** The diagram already drawn: its annotations' ids, each phase's own wave
- *  and edge shift, its slot width and non-overlap setting, its arrows,
+ *  and edge shift, its slot width and non-overlap setting ('auto', 'none',
+ *  or pairs of phase keys), its arrows,
  *  marks and spans (and which of them wait for an edge that has gone:
  *  `missing`, [{ kind, index }]), and where it stands ({ x, y }:
  *  its waves' left edge and first row's top). Null when there is none. */
@@ -314,7 +316,7 @@ export function existingTimingDiagram(circuit) {
   const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${owner[label.timing.part] || label.timing.part}:${label.timing.item}`));
   const missing = Object.entries({ arrow: arrows, mark: marks, span: spans })
     .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
-  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
+  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -447,7 +449,8 @@ export function removeTimingDiagram(circuit) {
  * by phase name (see timingPhaseNamed); `fromBeats` takes the waves not given
  * from the beats rather than the diagram already drawn; `slot` is a slot's
  * width in cells; `gaps` is 'auto', 'none', or pairs of phase names kept from
- * overlapping (both kept from the diagram drawn before when not given);
+ * overlapping (both kept from the diagram drawn before when not given; a new
+ * diagram has none);
  * `shifts` gives rows' edge shifts ({ fall, rise } cells) by phase name, the
  * rest keeping theirs. A complement following its phase takes the phase's
  * shifts the other way round -- the phase falling early, it rises early --
@@ -490,7 +493,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     return normalizeEdgeShift({ fall: base.rise + mine.fall, rise: base.fall + mine.rise });
   });
   const slotCells = Math.max(1, Math.round(Number(slot) || before?.slot || DEFAULT_SLOT_CELLS));
-  const setting = gaps === null || gaps === undefined ? before?.gaps ?? 'auto'
+  const setting = gaps === null || gaps === undefined ? before?.gaps ?? 'none'
     : gaps === false ? 'none'
       : Array.isArray(gaps) ? gaps.map(([a, b]) => [named(a).key, named(b).key]) : gaps;
   const { columns, levels } = timingColumns(rows.map((row) => row.bits), {

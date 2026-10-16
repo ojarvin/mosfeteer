@@ -528,7 +528,7 @@ export function commandHelp() {
     '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',
     '                                   retakes them from the beats. Waves repeat past both ends; --slot N is a slot\'s',
     '                                   width in cells. --gaps sets which phases never overlap (a one-cell gap where one',
-    '                                   falls as the other rises): auto (any two never high together), none, or pairs.',
+    '                                   falls as the other rises): none (a new diagram\'s), auto (any two never high together), or pairs.',
     '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier);',
     '                                   --order φ2,φ1 sets the rows\' order; a drawn diagram stays where it stands,',
     '                                   --place puts it again where the drawing has room for it.',

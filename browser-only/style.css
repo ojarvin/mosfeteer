@@ -8098,3 +8098,44 @@ body.chrome-away [data-editor-edge="right"] {
   color: var(--text-dim);
 }
 
+
+/* Non-overlap pairs: a square of checkboxes, the rows' names along the top
+   and the left, the diagonal blocked. */
+.timing-pairs-matrix {
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: var(--text-sm);
+}
+
+.timing-pairs-matrix th {
+  color: var(--text-dim);
+  font-weight: normal;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.timing-pairs-matrix th[scope="row"] {
+  text-align: right;
+}
+
+.timing-pairs-matrix td {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  text-align: center;
+  border: 1px solid var(--border);
+}
+
+.timing-pairs-matrix td.blocked {
+  background: repeating-linear-gradient(135deg, var(--border) 0 1px, transparent 1px 6px);
+}
+
+.timing-pairs-matrix input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.timing-pairs-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}

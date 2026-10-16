@@ -150,7 +150,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await h.key('K', { shiftKey: true });
     await h.until(`!!document.querySelector('.timing-dialog:not([hidden])')`);
     const text = await h.evaluate(`document.querySelector('.timing-dialog').innerText`);
-    for (const words of ['Read beats', 'Make beats', 'Move under drawing', 'Gaps', 'Slots', 'Cursor row', 'Signals']) assert.ok(text.includes(words), words);
+    for (const words of ['Read beats', 'Make beats', 'Move under drawing', 'Non-overlap', 'Slots', 'Cursor row', 'Signals']) assert.ok(text.includes(words), words);
     for (const old of ['From beats', 'Re-place', 'Never overlap', 'Repeat all']) assert.ok(!text.includes(old), old);
     assert.ok(await h.evaluate(`!!document.querySelector('.timing-dialog .segmented[aria-label="Falling edges"]')`));
     assert.ok(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-chip[aria-pressed]')`));
