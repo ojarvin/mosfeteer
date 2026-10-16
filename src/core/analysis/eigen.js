@@ -262,10 +262,18 @@ export function pencilRoots(A0, A1) {
     const lambdas = eigenvalues(M);
     if (!lambdas) return null;
     const largest = Math.max(0, ...lambdas.map((l) => Math.hypot(l.re, l.im)));
+    // λ = 1/(σ - s): a root at infinity is λ = 0, which round-off leaves as
+    // dust -- about ε for one such root, √ε (1e-8) for a pair, which then
+    // read as a root at 10^16 or a pair at 10^8. Measured against the largest
+    // λ alone, a pencil whose roots are all at infinity (a constant
+    // numerator) kept its dust. Against 1/σ too, the pencil's own scale, a
+    // root more than 10^7 times past the circuit's frequencies is taken for
+    // the infinite one it is.
+    const reference = Math.max(largest, 1 / Math.abs(sigma));
     const roots = [];
     for (const { re, im } of lambdas) {
       const size = Math.hypot(re, im);
-      if (size <= largest * 1e-11 || size === 0) continue;
+      if (size <= reference * 1e-7 || size === 0) continue;
       // s = σ - 1/λ
       const d = re * re + im * im;
       const root = { re: sigma - re / d, im: im / d };

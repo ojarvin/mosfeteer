@@ -38,6 +38,19 @@ test('eigenvalues and the roots of det(A0 + s A1)', () => {
   near(single[0].re, -0.5);
 });
 
+test('a root far past the circuit\'s own frequencies is round-off, not a root', () => {
+  // det(I + s A1) = 1 - eps s^2: exactly a constant but for the eps a numeric
+  // solve leaves behind (a gain whose s-coefficient cancels to 1e-18, say).
+  // Its "roots" at ±1/sqrt(eps) would stretch a Bode plot's axis to 10^18.
+  assert.deepEqual(pencilRoots([[1, 0], [0, 1]], [[0, 1], [1e-25, 0]]), []);
+  // A pair at infinity: round-off of 1e-16 reads as roots at ±10^8.
+  assert.deepEqual(pencilRoots([[1, 0], [0, 1]], [[0, 1], [1e-16, 0]]), []);
+  // A far root that is really there stays: ±1000 at a pencil scaled near 1.
+  const far = pencilRoots([[1, 0], [0, 1]], [[0, 1], [1e-6, 0]]).map((root) => Math.abs(root.re)).sort((a, b) => a - b);
+  assert.equal(far.length, 2);
+  far.forEach((root) => assert.ok(Math.abs(root - 1000) < 1e-6, root));
+});
+
 const SLOW_WITH_CAPACITANCES = new Set(['explicit-bulk-moving-source', 'source-degeneration']);
 
 test('the numeric model agrees with the exact solve over the whole corpus', () => {
