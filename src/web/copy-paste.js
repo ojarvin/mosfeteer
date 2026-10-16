@@ -15,6 +15,7 @@ import { selectedStyleSource, pasteStyle } from './style-controls.js';
 import { beginNetLabelPaste } from './annotation-tools.js';
 import { editor } from './editor-state.js';
 import { applyJson, commit, keyToWire, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabel, selectedLabels, setLabelSelection, setSelection, setSymmetry, snapshot, spliceIfOnWire, syncSelectedWire, syncSymmetryOperation, transformMixedSelection, validateSelectedWires } from './main.js';
+import { joinBranchEnds, junctionPoints } from '../core/wiring.js';
 import { captureNetGeometry, captureRouteGeometry, translateNetGeometry } from './net-geometry.js';
 
 export function copySelectionSource() {
@@ -701,8 +702,16 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       }
       const pastedWireKeys = [];
       for (const fragment of editor.clipboard.fragments || []) {
-      const paths = fragment.paths.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })));
-      const net = editor.circuit.createWireNet({ name: fragment.name, allowDiagonal: fragment.allowDiagonal, drawOrder: fragment.drawOrder, branches: paths, route: paths[0], junctions: fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })) });
+      // A piece of a larger net: where a branch left out of the copy met it
+      // is a plain corner now. Its two wires join into one there, and only
+      // the junctions it still makes stay; else a drag of that corner would
+      // leave a stub behind.
+      const pins = addedComps.flatMap((ref) => editor.circuit.components.get(ref)?.worldTerminals() || []);
+      const moved = fragment.paths.map((path) => path.map((p) => ({ x: p.x + dx, y: p.y + dy })));
+      const real = new Set(junctionPoints(moved, pins, fragment.allowDiagonal).map((p) => `${p.x},${p.y}`));
+      const paths = joinBranchEnds(moved, [...pins, ...[...real].map((key) => { const [x, y] = key.split(',').map(Number); return { x, y }; })], fragment.allowDiagonal);
+      const junctions = fragment.junctions.map((p) => ({ x: p.x + dx, y: p.y + dy })).filter((p) => real.has(`${p.x},${p.y}`));
+      const net = editor.circuit.createWireNet({ name: fragment.name, allowDiagonal: fragment.allowDiagonal, drawOrder: fragment.drawOrder, branches: paths, route: paths[0], junctions });
         addedNets.push(net.id);
         for (let branch = 0; branch < paths.length; branch++) {
           for (let segment = 1; segment < paths[branch].length; segment++) {
@@ -723,6 +732,10 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
       if (connect) {
         // A lone part pasted onto a wire is spliced into it.
         if (addedComps.length === 1) spliceIfOnWire(editor.circuit.components.get(addedComps[0]));
+        // A wire copied without the rest of its net pastes bare: its ends
+        // land on the pasted pins, which join it there. Left apart, it only
+        // looked connected, and a drag pulled it off them.
+        editor.circuit.reconnectCoincidentNets(addedNets);
         editor.circuit.connectCoincident(addedComps);
         editor.circuit.teeTerminalsOntoWires(addedComps);
         editor.circuit.teeWireEndsOntoWires(addedNets);

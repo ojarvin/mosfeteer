@@ -123,6 +123,30 @@ describe('copy and paste', { skip: browserSkip() }, () => {
     assert.deepEqual(block, { size: { w: 320, h: 240 }, terminals: 24, wired: true });
   });
 
+  test('copied with part of a net, the wire pastes joined to the pins it ends on', async () => {
+    // R1, R2, and R3 share a net; only R1, R2, and the wire between them are copied.
+    const circuit = new Circuit();
+    for (const line of ['add resistor R1 --at 0 0', 'add resistor R2 --at 800 400', 'add resistor R3 --at 800 -400', 'connect R1.b R2.a R3.a']) runCommand(circuit, line);
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    const id = await ed(`c.netOfTerminal({ comp: 'R1', term: 'b' }).id`);
+    await h.evaluate(`Promise.all([${h.module('main.js')}, ${h.module('editor-state.js')}]).then(([m, s]) => { m.setSelection(['R1', 'R2']); s.editor.selectedWires = new Set(['${id}:0:1', '${id}:1:1', '${id}:1:2']); m.render(); })`);
+    const text = await copy();
+    await h.evaluate(`${h.module('editor-state.js')}.then((m) => { m.editor.cursor = { x: 1600, y: 200 }; })`);
+    await paste(text);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.components.values()].filter((p) => p.type === 'resistor').length === 5)`);
+    const pasted = await ed(`(() => {
+      const fresh = [...c.components.values()].filter((p) => p.type === 'resistor' && !['R1', 'R2', 'R3'].includes(p.refdes)).map((p) => p.refdes).sort();
+      const nets = fresh.map((ref) => c.netOfTerminal({ comp: ref, term: ref === fresh[0] ? 'b' : 'a' })?.id || null);
+      return { fresh, nets };
+    })()`);
+    assert.equal(pasted.fresh.length, 2);
+    assert.ok(pasted.nets[0], 'the first pasted part is on the wire');
+    assert.equal(pasted.nets[0], pasted.nets[1], 'both pasted parts are on the one pasted wire');
+    // Where R3's branch met it is a plain corner in the copy: one wire, no junction.
+    const wire = await ed(`(() => { const n = c.netOfTerminal({ comp: ${JSON.stringify(pasted.fresh[0])}, term: 'b' }); return { branches: n.paths().length, junctions: n.junctions.length }; })()`);
+    assert.deepEqual(wire, { branches: 1, junctions: 0 });
+  });
+
   test('a paste that fails part way leaves the drawing as it was', async () => {
     const before = await ed('JSON.stringify(c.toJSON())');
     const undoable = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.history.length)`);

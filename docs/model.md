@@ -230,8 +230,14 @@ The model is topological; geometry is a route, not connectivity.
   other net's wire tees into it the same way (`Circuit#teeWireEndsOntoWires`).
   A lone part placed, moved, copied, or pasted with both series pins free on
   one straight managed segment is spliced into it in series first
-  (`Circuit#spliceIntoSegment`). `route` is a compatibility alias; new code uses `paths()` and
-  `wireSegments()`.
+  (`Circuit#spliceIntoSegment`). A pasted pin on no net that lands on a
+  pasted wire's end joins that wire there (`Circuit#reconnectCoincidentNets`):
+  a wire copied without the rest of its net pastes joined to the copied parts,
+  as one wire where only two of its pieces meet. A net cut in two, by a
+  deleted segment or a splice, is two signals: its name stays with the piece
+  whose net label, port, or rail marker gives it, and the others are unnamed
+  (`Circuit#_keepSplitNameAtSource`). `route` is a compatibility alias; new
+  code uses `paths()` and `wireSegments()`.
 - `smartRoute` is grid-based and keeps committed wire at least one cell from
   component bodies, except for the documented shared MOS gate-bus exception.
   Terminal escape directions are preferred. Cross-net collinear overlap is a
