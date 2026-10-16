@@ -3,7 +3,7 @@ import { ceilGrid, floorGrid, GRID } from './grid.js';
 import { autoRoute } from './router.js';
 import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeWidth, styleAttrs, themeInkSvg } from './style.js';
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
-import { arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
+import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
 import { sizeReplacedNameLabels } from './mos-size.js';
 import { SOURCE_WAVEFORMS } from './components/current.js';
@@ -656,8 +656,8 @@ function arrowheadsSvg(heads, color, opacity = '') {
   return heads.map((head) => `<polygon points="${pt(head.tip.x, head.tip.y)} ${pt(head.left.x, head.left.y)} ${pt(head.right.x, head.right.y)}" fill="${escapeSvg(resolveColor(color || '#111'))}" stroke="none"${opacity}/>`).join('');
 }
 
-function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '') {
-  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback });
+function styledPolylineSvg(points, style, base, fallback = 'none', opacity = '', head = {}) {
+  const geometry = polylineArrowheads(points, style?.arrowhead, { fallback, ...head });
   if (geometry.shaftPoints.length < 2) return '';
   const attrs = styleAttrs(style, base);
   return `<path d="${polylineD(geometry.shaftPoints)}" fill="none"${opacity} ${attrs}/>${arrowheadsSvg(geometry.heads, style?.color, opacity)}`;
@@ -680,7 +680,8 @@ function shapeAnnotationSvg(label, opacity = '') {
   if (label.kind === 'arrow' && label.curve) return curvedArrowSvg(label.points, label.style, opacity);
   if (label.kind === 'line' || label.kind === 'arrow') {
     const points = label.points?.length ? label.points : [a, b];
-    return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity);
+    // A timing diagram's lines take its arrows' heads: one size in one figure.
+    return styledPolylineSvg(points, label.style, 'annotation', defaultArrowhead(label.kind), opacity, label.timing ? TIMING_ARROWHEAD : {});
   }
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);

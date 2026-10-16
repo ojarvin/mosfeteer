@@ -458,3 +458,18 @@ test('a beat drawn with its bands shades them under the waves; the svg command d
   const firstWave = svg.indexOf('data-label-id');
   assert.ok(svg.indexOf('class="timing-beat"') < firstWave, 'under the waves');
 });
+
+test('a timing diagram draws one arrowhead size: its spans\' heads are its arrows\'', async () => {
+  const { svgString } = await import('../src/core/render.js');
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK,Q', 'timing CLK=0101 Q=0011', 'timing --arrow CLK:2>Q:3', 'timing --span "CLK:2>CLK:4=T"');
+  // Each head's length, tip to the middle of its base, and its base's width.
+  const heads = [...svgString(circuit).matchAll(/<polygon points="([^"]+)"/g)].map(([, points]) => {
+    const n = points.trim().split(/[\s,]+/).map(Number);
+    const [tip, left, right] = [n.slice(0, 2), n.slice(2, 4), n.slice(4, 6)];
+    const base = [(left[0] + right[0]) / 2, (left[1] + right[1]) / 2];
+    return [Math.round(Math.hypot(tip[0] - base[0], tip[1] - base[1])), Math.round(Math.hypot(left[0] - right[0], left[1] - right[1]))];
+  });
+  assert.equal(heads.length, 3, 'the arrow\'s, and the span\'s two');
+  assert.deepEqual([...new Set(heads.map(String))], ['26,26']);
+});

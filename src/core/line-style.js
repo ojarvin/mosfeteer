@@ -142,6 +142,10 @@ export function polylineArrowheads(points = [], value = 'none', options = {}) {
   return { shaftPoints, heads };
 }
 
+/** The one arrowhead a timing diagram draws, on its curved arrows and its
+ *  spans' lines alike: smaller than a drawn line's, as its strokes are thin. */
+export const TIMING_ARROWHEAD = Object.freeze({ length: 26, halfWidth: 13 });
+
 /**
  * A curved arrow from `start` to `end`, as a timing diagram draws one from
  * the edge that causes a transition to the transition: it always leaves
@@ -152,7 +156,7 @@ export function polylineArrowheads(points = [], value = 'none', options = {}) {
  * points, its shaft (the cubic, ending where the head begins), and the
  * head; null when the two points meet.
  */
-export function curvedArrowGeometry(start, end, { unit = 40, length = 26, halfWidth = 13 } = {}) {
+export function curvedArrowGeometry(start, end, { unit = 40, length = TIMING_ARROWHEAD.length, halfWidth = TIMING_ARROWHEAD.halfWidth } = {}) {
   if (start.x === end.x && start.y === end.y) return null;
   // The shaft ends a head's length short of the point, level with it.
   const base = { x: end.x - length, y: end.y };

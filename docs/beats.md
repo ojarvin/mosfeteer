@@ -168,7 +168,8 @@ line at each, reaching below the waves to an arrow between them (pointing in
 from outside when it is under three cells), its text under the arrow (just
 after the right arrow's tail when narrow); the arrows run two cells below the
 waves; spans that overlap take lanes of their own, while spans that only
-meet at an edge share one. In the editor
+meet at an edge share one. Arrows and spans draw one arrowhead size, the arrows'
+(`TIMING_ARROWHEAD`, `src/core/line-style.js`). In the editor
 the cursor's edge is the one at the left of its slot, or click the bar
 between two slots: `a` begins an arrow and `a` at another edge ends it, `s`
 the same for a span, `m` marks (or unmarks); Esc cancels. The list under the
