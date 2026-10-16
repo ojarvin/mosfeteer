@@ -47,7 +47,7 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
     assert.equal(await heading(), 'Give the switches their phases');
     for (const line of ['value S1 $\\varphi_1$', 'value S3 $\\varphi_1$', 'value S2 $\\varphi_2$', 'value S4 $\\varphi_2$']) await run(line);
     await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Draw the clock'`);
-    await run('timing 1=10 2=01');
+    await run('timing 1=10 2=01 --gaps 1:2');
     await run('timing --span "1:2>2:2=$t_{nov}$"');
     await run('beat phases');
     await h.until(`document.querySelector('#tutorial-step h3')?.textContent === 'Step through the clock'`);

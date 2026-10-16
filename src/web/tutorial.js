@@ -10,8 +10,8 @@
 
 import { Circuit, INTERFACE_PIN_TYPES } from '../core/model.js';
 import { runCommand } from '../core/commands.js';
-import { switchGroupKey, switchPhase } from '../core/beats.js';
-import { existingTimingDiagram, timingStates } from '../core/timing-diagram.js';
+import { samePhase, switchGroupKey, switchPhase } from '../core/beats.js';
+import { existingTimingDiagram, timingPairs, timingRowSources, timingStates } from '../core/timing-diagram.js';
 
 const NMOS = new Set(['nmos', 'nmosb']);
 const PMOS = new Set(['pmos', 'pmosb']);
@@ -197,6 +197,14 @@ function scPhases(circuit) {
   return a && b && c && d && a === b && c === d && a !== c ? { sample: a, transfer: c } : null;
 }
 
+/** Whether the drawn timing diagram keeps phases `a` and `b` (keys) apart
+ *  with a gap. */
+function keptApart(circuit, a, b) {
+  const rows = timingRowSources(circuit);
+  const [x, y] = [a, b].map((key) => rows.findIndex((row) => samePhase(row.key, key)));
+  return timingPairs(rows, existingTimingDiagram(circuit).gaps).some((pair) => pair.includes(x) && pair.includes(y));
+}
+
 const SC_STEPS = Object.freeze([
   {
     id: 'phases',
@@ -207,12 +215,13 @@ const SC_STEPS = Object.freeze([
   {
     id: 'clock',
     title: 'Draw the clock',
-    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. The two never overlap, so a gap opens between them by itself.',
+    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. Then under **Non-overlap** tick φ1 against φ2: a one-cell gap opens between them, as a non-overlapping clock has.',
     done: (circuit) => {
       const phases = scPhases(circuit);
       const states = phases && timingStates(circuit);
       return !!states && states.some((state) => state.closed.has(phases.sample)) && states.some((state) => state.closed.has(phases.transfer))
-        && !states.some((state) => state.closed.has(phases.sample) && state.closed.has(phases.transfer));
+        && !states.some((state) => state.closed.has(phases.sample) && state.closed.has(phases.transfer))
+        && keptApart(circuit, phases.sample, phases.transfer);
     },
   },
   {

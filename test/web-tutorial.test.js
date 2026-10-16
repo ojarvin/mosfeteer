@@ -88,6 +88,8 @@ test('the switched-cap tutorial: phases, the clock, its span, beats, a beat step
   run(circuit, 'timing 1=11 2=01');
   assert.ok(!doneOf('switched-cap', circuit).includes('clock'));
   run(circuit, 'timing 1=10 2=01');
+  assert.ok(!doneOf('switched-cap', circuit).includes('clock'), 'not yet kept apart');
+  run(circuit, 'timing --gaps 1:2');
   assert.ok(doneOf('switched-cap', circuit).includes('clock'));
   run(circuit, 'timing --span "1:2>2:2=$t_{nov}$"');
   assert.ok(doneOf('switched-cap', circuit).includes('span'));
