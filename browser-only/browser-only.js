@@ -3217,6 +3217,7 @@ __exports.numericSmallSignal = numericSmallSignal;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 let MOS_TYPES, firstDefined; __bind(() => { ({ MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js")); });
 let feedbackParts, returnRatio; __bind(() => { ({ feedbackParts, returnRatio } = __require("src/core/analysis/loop-gain.js")); });
+let poleTimeConstants; __bind(() => { ({ poleTimeConstants } = __require("src/core/analysis/time-constants.js")); });
 let applyApproximations; __bind(() => { ({ applyApproximations } = __require("src/core/analysis/approximation.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
@@ -3231,7 +3232,8 @@ let approximateTopology, buildTopologyIdentities, carriesSum; __bind(() => { ({ 
 let compactRational; __bind(() => { ({ compactRational } = __require("src/core/analysis/compact.js")); });
 let buildNoiseReport, noiseProvenancePrimitives, noiseRequest; __bind(() => { ({ buildNoiseReport, noiseProvenancePrimitives, noiseRequest } = __require("src/core/analysis/noise.js")); });
 let infinity, integer, rational, rationalFunction, substituteRational; __bind(() => { ({ infinity, integer, rational, rationalFunction, substituteRational } = __require("src/core/analysis/rational.js")); });
-let equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation; __bind(() => { ({ equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js")); });
+let equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderEquation, renderExpression, renderQuantityEquation, renderRootEquation; __bind(() => { ({ equivalenceTable, provenParallel, provenProduct, provenQuotient, provenSum, renderEquation, renderExpression, renderQuantityEquation, renderRootEquation } = __require("src/core/analysis/present.js")); });
+
 
 
 
@@ -3671,6 +3673,66 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, element, mainOps, m
 }
 
 const LOOP_GAIN_OPERATIONS = 400000;
+
+/**
+ * The poles' coefficients as time constants (time-constants.js): each
+ * capacitor's tau = C R, b1 their sum, and with few enough capacitors b2
+ * from the pairs; the dominant pole near -1/b1, the next near -b1/b2. In
+ * the model without Miller splitting (it would hide the bridging C_gd that
+ * sets a pole) or series/parallel merging (which folds capacitors into
+ * other branches), with a budget of its own: rows to read, or why not.
+ */
+function analyzeTimeConstants(circuit, pipelineOptions, options, rawOptions = {}) {
+  const ops = createRationalOps({ variable: 's', maxOperations: rawOptions.timeConstantOperations || TIME_CONSTANT_OPERATIONS });
+  const tooLarge = { ok: false, error: 'the time constants are too large to solve exactly; simplify the model (r_o -> infinity on bias devices, fewer capacitances)' };
+  try {
+    const s = ops.s();
+    const model = buildExactAnalysisPipeline(circuit, {
+      ...pipelineOptions, ops, s, millerApproximation: false, networkReduction: false, solve: false,
+      valueOf: (value, primitive) => symbolicValue(value, primitive, rawOptions, ops),
+    });
+    if (!model.ok) return { ok: false, error: model.error };
+    const result = poleTimeConstants(model, ops, s);
+    if (ops.budget.exceeded) return tooLarge;
+    if (!result.ok) return result;
+    const tidy = (value) => {
+      const cleanupOps = createRationalOps({ variable: 's', maxOperations: 12000 });
+      const compact = compactRational(value, cleanupOps);
+      return canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, options).expression;
+    };
+    const name = (cap) => renderExpression(tidy(cap.capacitance), options);
+    const tau = (cap) => `\\tau_{${name(cap)}}`;
+    // A part with several capacitors (a transistor's C_gs and C_gd) names which.
+    const which = (cap) => {
+      const role = String(cap.id).split('.').pop();
+      return role === 'capacitor' || role === cap.id ? cap.component : `${cap.component} C_${role.replace(/^c/, '')}`;
+    };
+    const rows = result.capacitors.map((cap) => ({ title: `Time constant of ${which(cap)}`, equation: renderEquation(tau(cap), tidy(ops.mul(cap.capacitance, cap.resistance)), options) }));
+    if (result.dropped.length) rows.push({ title: 'Across a source', equation: `\\tau_{${result.dropped.map(name).join('}} = \\tau_{')}} = 0` });
+    rows.push({ title: 'Sum of the time constants', equation: `b_{1} = ${result.capacitors.map(tau).join(' + ')}` });
+    rows.push({ title: 'Dominant pole', equation: 'p_{0} \\approx -\\frac{1}{b_{1}}' });
+    // Pairs that short each other (capacitors in parallel) add nothing to b2.
+    const pairs = (result.pairs || []).filter((pair) => !ops.isZero(pair.resistance));
+    if (result.pairs && pairs.length) {
+      const [first, second] = [(pair) => result.capacitors[pair.i], (pair) => result.capacitors[pair.j]];
+      const shortedTau = (pair) => `\\tau_{${name(second(pair))}}^{(${name(first(pair))})}`;
+      for (const pair of pairs) {
+        rows.push({
+          title: `Time constant of ${which(second(pair))} with ${which(first(pair))} shorted`,
+          equation: renderEquation(shortedTau(pair), tidy(ops.mul(second(pair).capacitance, pair.resistance)), options),
+        });
+      }
+      rows.push({ title: 'Sum over the pairs', equation: `b_{2} = ${pairs.map((pair) => `${tau(first(pair))} \\, ${shortedTau(pair)}`).join(' + ')}` });
+      rows.push({ title: 'Second pole', equation: 'p_{1} \\approx -\\frac{b_{1}}{b_{2}} \\quad (|p_{1}| \\gg |p_{0}|)' });
+    }
+    if (ops.budget.exceeded) return tooLarge;
+    return { ok: true, rows, ...(result.pairsOmitted ? { pairsOmitted: true } : {}) };
+  } catch (error) {
+    return /budget/i.test(error.message) ? tooLarge : { ok: false, error: error.message };
+  }
+}
+
+const TIME_CONSTANT_OPERATIONS = 400000;
 
 function loopGainReport(circuit, pipeline, pipelineOptions, element, ops, options, approximationOptions) {
   // The model without Miller splitting (it removes the feedback being
@@ -4278,6 +4340,9 @@ function analyzeSmallSignalV2(circuit, options = {}) {
   const loop = options.loopGain?.element
     ? analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain.element, ops, withEquivalences(responseOptions(analysisOptions)), approximationOptions, options)
     : null;
+  const timeConstants = options.timeConstants
+    ? analyzeTimeConstants(circuit, pipelineOptions, responseOptions(analysisOptions), options)
+    : null;
   const assumptions = unique([
     ...millerAssumptions,
     ...(noise?.assumptions || []),
@@ -4324,6 +4389,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     transferFunctions,
     ...(noise ? { noise } : {}),
     ...(loop ? { loop } : {}),
+    ...(timeConstants ? { timeConstants } : {}),
     exact,
     approximate: approximations,
     dc: {
@@ -11380,6 +11446,7 @@ const EQUATION_GROUPS = Object.freeze([
   ['transfers', 'Transfer functions'],
   ['loop', 'Loop gain'],
   ['roots', 'Poles and zeros'],
+  ['timeConstants', 'Time constants'],
   ['noise', 'Noise'],
   ['definitions', 'Where'],
 ]);
@@ -11435,6 +11502,15 @@ function equationEntries(reports, report, presentation = {}) {
     }
   } else if (loop) {
     add('Loop gain', { ok: true, equation: `\\text{${String(loop.error).replace(/[{}\\]/g, '')}}` }, 'loop');
+  }
+  // The poles' coefficients as time constants (time-constants.js), or why
+  // they could not be had.
+  const constants = report.timeConstants;
+  if (constants?.ok) {
+    for (const row of constants.rows) add(row.title, { ok: true, equation: row.equation }, 'timeConstants');
+    if (constants.pairsOmitted) add('Sum over the pairs', { ok: true, equation: '\\text{left out: one solve per pair, so only up to six capacitors}' }, 'timeConstants');
+  } else if (constants) {
+    add('Time constants', { ok: true, equation: `\\text{${String(constants.error).replace(/[{}\\]/g, '')}}` }, 'timeConstants');
   }
   for (const { title, result } of noiseEntries(report, presentation)) {
     if (result.table) entries.push({ title, group: 'noise', result });
@@ -16257,6 +16333,111 @@ function texName(name) {
 }
 
 
+};
+
+__modules["src/core/analysis/time-constants.js"] = function (__require, __exports) {
+__exports.poleTimeConstants = poleTimeConstants;
+let buildMNA; __bind(() => { ({ buildMNA } = __require("src/core/analysis/mna.js")); });
+let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
+let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
+/**
+ * A circuit's natural-frequency polynomial as time constants (Middlebrook's
+ * extra element theorem, n times over; Vorpérian's fast analytical
+ * techniques):
+ *
+ *   D(s) = 1 + b1 s + b2 s^2 + ...
+ *   b1 = sum_i tau_i,            tau_i = C_i R_i      (every other C open)
+ *   b2 = sum_{i<j} tau_i tau_j^i, tau_j^i = C_j R_j^i (C_i shorted, the rest open)
+ *
+ * R_i is the resistance C_i sees with the input at zero, found as a
+ * driving-point solve with a unit test current in C_i's place. Each term
+ * belongs to one capacitor, so the sum says which sets the pole: the
+ * dominant pole is near -1/b1, and a second one well apart near -b1/b2.
+ * Exact in the model it is given: D is the denominator of every response
+ * of the circuit before any cancellation, normalized to D(0) = 1.
+ *
+ * Only capacitors may carry s: an inductor, a one-pole opamp, or a Miller
+ * shunt is refused rather than left out of the sum.
+ */
+
+
+
+
+
+/** Pairs past this many capacitors are not solved: b2 needs one solve per pair. */
+const MAX_PAIR_CAPACITORS = 6;
+
+/**
+ * `pipeline` a built exact pipeline (unsolved is fine), `s` the frequency
+ * symbol it was built with. Returns `{ ok, capacitors: [{ id, component,
+ * capacitance, resistance }], dropped (those with a zero time constant),
+ * b1, pairs: [{ i, j, resistance }] | null, b2, pairsOmitted }` or
+ * `{ ok: false, error }`. `pairsOmitted`: too many capacitors for b2.
+ */
+function poleTimeConstants(pipeline, ops, s, { pairs: wantPairs = true } = {}) {
+  const primitives = pipeline.selectedMna || [];
+  const reactive = primitives.find((p) => p.kind === 'inductor' || p.kind === 'admittance' || p.kind === 'impedance'
+    || (p.kind === 'opamp' && p.metadata?.opampModel === 'gbw'));
+  if (reactive) return { ok: false, error: `${reactive.metadata?.component || reactive.id} carries s of its own: time constants are for capacitors alone` };
+  const grounded = (node) => node === undefined || node === null || node === AC_GROUND || pipeline.context.acGroundIds.has(node);
+  // A capacitor from AC ground to AC ground does nothing.
+  const capacitors = primitives.filter((p) => p.kind === 'capacitor' && !(grounded(p.terminals.a) && grounded(p.terminals.b)));
+  if (!capacitors.length) return { ok: false, error: 'no capacitor: the response has no poles' };
+  const others = primitives.filter((p) => p.kind !== 'capacitor');
+  const input = { ...pipeline.excitations.input, value: ops.zero };
+  const resistance = (index, shorted = []) => {
+    const cap = capacitors[index];
+    const shorts = shorted.map((k) => ({ kind: 'voltage-source', id: `@tc-short-${k}`, terminals: capacitors[k].terminals, value: ops.zero }));
+    // Into C's a terminal, out of its b.
+    const test = { kind: 'current-source', id: '@tc-test', terminals: { a: cap.terminals.b, b: cap.terminals.a }, value: ops.one };
+    let solution;
+    try {
+      const system = buildMNA([...others, input, ...shorts, test], { ops, ground: AC_GROUND, grounds: [...pipeline.context.acGroundIds] });
+      solution = solveMNA(system, { ops });
+    } catch {
+      return null;
+    }
+    if (!solution.ok) return null;
+    const voltage = (node) => {
+      if (grounded(node)) return ops.zero;
+      const at = solution.variables.indexOf(`V(${node})`);
+      return at < 0 ? ops.zero : solution.columns[0][at];
+    };
+    return ops.sub(voltage(cap.terminals.a), voltage(cap.terminals.b));
+  };
+  const named = capacitors.map((cap, index) => ({
+    id: cap.id,
+    component: cap.metadata?.component || cap.id,
+    capacitance: ops.div(cap.value, s),
+    resistance: resistance(index),
+  }));
+  const open = named.find((cap) => !cap.resistance);
+  if (open) return { ok: false, error: `${open.component} sees no resistance with the other capacitors open: a pole at the origin, or a node it alone holds` };
+  // A capacitor across a source (a gate driven straight from the input)
+  // sees no resistance: its time constant is zero, and it adds nothing to
+  // any coefficient. Shorting it again would only short the source.
+  const live = named.map((cap, index) => ({ cap, index })).filter(({ cap }) => !ops.isZero(cap.resistance));
+  if (!live.length) return { ok: false, error: 'every capacitor sits across a source: the response has no poles' };
+  const tau = (cap, r = cap.resistance) => ops.mul(cap.capacitance, r);
+  const capacitorsLeft = live.map(({ cap }) => cap);
+  const dropped = named.filter((cap) => !capacitorsLeft.includes(cap));
+  const b1 = capacitorsLeft.reduce((sum, cap) => ops.add(sum, tau(cap)), ops.zero);
+  const result = { ok: true, capacitors: capacitorsLeft, dropped, b1, pairs: null, b2: null };
+  if (!wantPairs || live.length < 2) return result;
+  if (live.length > MAX_PAIR_CAPACITORS) return { ...result, pairsOmitted: true };
+  const pairs = [];
+  for (let i = 0; i < live.length; i += 1) {
+    for (let j = i + 1; j < live.length; j += 1) {
+      const r = resistance(live[j].index, [live[i].index]);
+      if (!r) return result;
+      pairs.push({ i, j, resistance: r });
+    }
+  }
+  const b2 = pairs.reduce((sum, { i, j, resistance: r }) => ops.add(sum, ops.mul(tau(capacitorsLeft[i]), tau(capacitorsLeft[j], r))), ops.zero);
+  return { ...result, pairs, b2 };
+}
+
+__exports.MAX_PAIR_CAPACITORS = MAX_PAIR_CAPACITORS;
 };
 
 __modules["src/core/analysis/topological-solve.js"] = function (__require, __exports) {
@@ -39418,6 +39599,9 @@ const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Equation approximations: they change only the displayed expression.
   highIntrinsicGain: true,
   dominantPole: false,
+  // The poles' coefficients as capacitor time constants: one more solve per
+  // capacitor (and per pair, for b2), so off until asked for.
+  timeConstants: false,
   // Show large or recurring sums as named symbols with a "where" block.
   nameSubexpressions: true,
   // Which transfer functions to derive, in report order; zero or more.
@@ -39743,7 +39927,7 @@ let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js"));
 let analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
 let installHintFolding; __bind(() => { ({ installHintFolding } = __require("src/web/hints.js")); });
-let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
+let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
@@ -39919,6 +40103,7 @@ function analysisFormOptions() {
     highIntrinsicGain: !!analysisApproxGmRo?.checked,
     neglectChannelLengthModulation: !!analysisApproxRo?.checked,
     dominantPole: !!analysisApproxDominantPole?.checked,
+    timeConstants: !!analysisTimeConstants?.checked,
     nameSubexpressions: !!analysisNameSubexpressions?.checked,
     transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
@@ -40013,6 +40198,7 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisParasitics) analysisParasitics.checked = options.parasitics;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
+    if (analysisTimeConstants) analysisTimeConstants.checked = options.timeConstants;
     if (analysisNameSubexpressions) analysisNameSubexpressions.checked = options.nameSubexpressions;
     setAnalysisTransferInputs(options.transferFunctions);
     setNoiseInputs(options);
@@ -40043,6 +40229,7 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
+  if (analysisTimeConstants) analysisTimeConstants.checked = state.options.timeConstants;
   if (analysisNameSubexpressions) analysisNameSubexpressions.checked = state.options.nameSubexpressions;
   setAnalysisTransferInputs(state.options.transferFunctions);
   setNoiseInputs(state.options);
@@ -40889,6 +41076,7 @@ function installOptionsSummary() {
       ...(on('analysis-parasitics') ? ['C_gs, C_gd'] : []),
       ...(!on('analysis-approx-gmro') ? ['finite g_m r_o'] : []),
       ...(on('analysis-approx-dominant-pole') ? ['dominant pole'] : []),
+      ...(on('analysis-time-constants') ? ['time constants'] : []),
       ...(on('analysis-noise-thermal') || on('analysis-noise-flicker') ? ['noise'] : []),
       ...(document.getElementById('analysis-device-regions')?.value.trim() ? ['triode devices'] : []),
     ];
@@ -53150,6 +53338,7 @@ const analysisApproxMiller = document.getElementById('analysis-approx-miller');
 const analysisParasitics = document.getElementById('analysis-parasitics');
 const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
 const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
+const analysisTimeConstants = document.getElementById('analysis-time-constants');
 const analysisResult = document.getElementById('analysis-result');
 const analysisEquation = document.getElementById('analysis-equation');
 const analysisDetails = document.getElementById('analysis-details');
@@ -53256,6 +53445,7 @@ __exports.analysisApproxMiller = analysisApproxMiller;
 __exports.analysisParasitics = analysisParasitics;
 __exports.analysisApproxGmRo = analysisApproxGmRo;
 __exports.analysisApproxDominantPole = analysisApproxDominantPole;
+__exports.analysisTimeConstants = analysisTimeConstants;
 __exports.analysisResult = analysisResult;
 __exports.analysisEquation = analysisEquation;
 __exports.analysisDetails = analysisDetails;

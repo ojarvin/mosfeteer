@@ -241,6 +241,30 @@ Rows that add no information are omitted. The Equations tab groups the rows
 into collapsible sections (`EQUATION_GROUPS` in `report-adapter.js`): ports,
 impedances, transfer functions, poles and zeros, noise, and definitions.
 
+## Time constants
+
+**List the poles' time constants** (with Loop gain; `timeConstants: true`)
+writes the natural-frequency polynomial D(s) = 1 + b_1 s + b_2 s^2 + ...
+capacitor by capacitor (`time-constants.js`; Middlebrook's extra element
+theorem, Vorpérian's fast analytical techniques). Each capacitor's
+\tau_{C} = C R, with R the resistance it sees with the input at zero and
+every other capacitor open; b_1 is their sum, so the term that dominates it
+names the capacitor that sets the dominant pole, p_0 \approx -1/b_1. With
+two to six capacitors the pairs give b_2 = \sum \tau_i \tau_j^{(i)}, the
+second time constant taken with the first capacitor shorted, and
+p_1 \approx -b_1/b_2 when the two poles are well apart. For a common-source
+stage driven through R_S, C_gd's time constant is the textbook
+C_gd (R_S + R_O + g_m R_S R_O). The sums are exact: D is the denominator
+of every response before any cancellation, normalized to D(0) = 1.
+
+They are solved in the model without Miller splitting (which would hide the
+bridging C_gd behind its two shunts) or series/parallel merging (which folds
+capacitors into other branches), with an operation budget of their own, and
+never fail the rest of the report. They refuse an inductor, a one-pole
+opamp, or a capacitor with no resistance to discharge through (a coupling
+capacitor alone holding a gate): each would leave the sum wrong rather
+than short. The resistances are not yet written with parallel bars.
+
 ## Named sub-expressions
 
 With **Name large or repeated sub-expressions** (on by default;

@@ -411,6 +411,8 @@
               <p class="field-hint">A current input drives the input node; a current output flows into the shorted output node, as in <span class="math-inline">Z<sub>out</sub></span>. Input and output impedances are always derived.</p>
               <label class="analysis-loop-row">Loop gain at <select id="analysis-loop-element" name="loopElement" aria-label="Break the loop at"><option value="">no loop gain</option></select></label>
               <p class="field-hint">The return ratio at an opamp (its output driven, its input difference read: <span class="math-inline">T = Aβ</span>) or a transistor's <span class="math-inline">g<sub>m</sub></span>, the input shorted.</p>
+              <label><input id="analysis-time-constants" name="timeConstants" type="checkbox" /> List the poles' time constants, one per capacitor (<span class="math-inline">p<sub>0</sub> ≈ −1/Σ C<sub>i</sub>R<sub>i</sub></span>)</label>
+              <p class="field-hint">Each capacitor's time constant <span class="math-inline">C R</span>, R what it sees with the others open: their sum sets the dominant pole, and with up to six capacitors the pairs give the next.</p>
             </fieldset>
             <fieldset class="analysis-approximations">
               <legend>Model simplifications</legend>

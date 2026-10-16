@@ -60,6 +60,7 @@ export const analysisApproxMiller = document.getElementById('analysis-approx-mil
 export const analysisParasitics = document.getElementById('analysis-parasitics');
 export const analysisApproxGmRo = document.getElementById('analysis-approx-gmro');
 export const analysisApproxDominantPole = document.getElementById('analysis-approx-dominant-pole');
+export const analysisTimeConstants = document.getElementById('analysis-time-constants');
 export const analysisResult = document.getElementById('analysis-result');
 export const analysisEquation = document.getElementById('analysis-equation');
 export const analysisDetails = document.getElementById('analysis-details');

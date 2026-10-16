@@ -6,10 +6,19 @@ import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { start, sleep, browserSkip } from './harness.js';
 import { amplifier, millerBuffer } from './fixtures.js';
+import { Circuit } from '../../src/core/model.js';
+import { runCommand } from '../../src/core/commands.js';
+
+/** The amplifier with a capacitor for its load. */
+function loadedAmplifier() {
+  const circuit = Circuit.fromJSON(amplifier());
+  for (const line of ['add capacitor CL --at 400 120 --rot 90', 'connect CL.a M1.d', 'connect CL.b GND.gnd']) runCommand(circuit, line);
+  return circuit.toJSON();
+}
 
 describe('small-signal analysis', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const value = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).value`);
@@ -291,5 +300,22 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const undone = (await bode()).values;
     assert.deepEqual(undone.multipliers, {});
     assert.equal(undone.intrinsicGain, 30);
+  });
+  test('the poles\' time constants list on request, under their own heading, and the choice is saved', async () => {
+    await h.open('loaded');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    await select('analysis-input', 'VIN');
+    await select('analysis-target', 'VOUT');
+    assert.equal(await checked('analysis-time-constants'), false, 'off by default');
+    await h.evaluate(`(() => { const box = document.getElementById('analysis-time-constants'); box.checked = true; box.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await derive();
+    await h.until(`[...document.querySelectorAll('#analysis-equation summary')].some((s) => /Time constants/.test(s.textContent))`);
+    assert.match(await h.evaluate(`document.getElementById('analysis-equation').textContent`), /Sum of the time constants/i);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows?.analysis?.options?.timeConstants)`), true, 'kept with the design');
+    await h.open('amp');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    assert.equal(await checked('analysis-time-constants'), false, 'another design keeps its own form');
   });
 });

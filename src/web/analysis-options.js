@@ -9,6 +9,9 @@ export const ANALYSIS_OPTION_DEFAULTS = Object.freeze({
   // Equation approximations: they change only the displayed expression.
   highIntrinsicGain: true,
   dominantPole: false,
+  // The poles' coefficients as capacitor time constants: one more solve per
+  // capacitor (and per pair, for b2), so off until asked for.
+  timeConstants: false,
   // Show large or recurring sums as named symbols with a "where" block.
   nameSubexpressions: true,
   // Which transfer functions to derive, in report order; zero or more.

@@ -636,6 +636,7 @@ export const EQUATION_GROUPS = Object.freeze([
   ['transfers', 'Transfer functions'],
   ['loop', 'Loop gain'],
   ['roots', 'Poles and zeros'],
+  ['timeConstants', 'Time constants'],
   ['noise', 'Noise'],
   ['definitions', 'Where'],
 ]);
@@ -691,6 +692,15 @@ function equationEntries(reports, report, presentation = {}) {
     }
   } else if (loop) {
     add('Loop gain', { ok: true, equation: `\\text{${String(loop.error).replace(/[{}\\]/g, '')}}` }, 'loop');
+  }
+  // The poles' coefficients as time constants (time-constants.js), or why
+  // they could not be had.
+  const constants = report.timeConstants;
+  if (constants?.ok) {
+    for (const row of constants.rows) add(row.title, { ok: true, equation: row.equation }, 'timeConstants');
+    if (constants.pairsOmitted) add('Sum over the pairs', { ok: true, equation: '\\text{left out: one solve per pair, so only up to six capacitors}' }, 'timeConstants');
+  } else if (constants) {
+    add('Time constants', { ok: true, equation: `\\text{${String(constants.error).replace(/[{}\\]/g, '')}}` }, 'timeConstants');
   }
   for (const { title, result } of noiseEntries(report, presentation)) {
     if (result.table) entries.push({ title, group: 'noise', result });

@@ -18,7 +18,7 @@ import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
-import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
+import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
@@ -167,6 +167,7 @@ function analysisFormOptions() {
     highIntrinsicGain: !!analysisApproxGmRo?.checked,
     neglectChannelLengthModulation: !!analysisApproxRo?.checked,
     dominantPole: !!analysisApproxDominantPole?.checked,
+    timeConstants: !!analysisTimeConstants?.checked,
     nameSubexpressions: !!analysisNameSubexpressions?.checked,
     transferFunctions: analysisTransferInputs.filter((input) => input.checked).map((input) => input.dataset.transferFunction),
     deviceRegions: analysisDeviceRegions?.value || '',
@@ -261,6 +262,7 @@ function restoreAnalysisForm(defaults = {}) {
     if (analysisParasitics) analysisParasitics.checked = options.parasitics;
     if (analysisApproxGmRo) analysisApproxGmRo.checked = options.highIntrinsicGain;
     if (analysisApproxDominantPole) analysisApproxDominantPole.checked = options.dominantPole;
+    if (analysisTimeConstants) analysisTimeConstants.checked = options.timeConstants;
     if (analysisNameSubexpressions) analysisNameSubexpressions.checked = options.nameSubexpressions;
     setAnalysisTransferInputs(options.transferFunctions);
     setNoiseInputs(options);
@@ -291,6 +293,7 @@ function restoreAnalysisForm(defaults = {}) {
   if (analysisParasitics) analysisParasitics.checked = state.options.parasitics;
   if (analysisApproxGmRo) analysisApproxGmRo.checked = state.options.highIntrinsicGain;
   if (analysisApproxDominantPole) analysisApproxDominantPole.checked = state.options.dominantPole;
+  if (analysisTimeConstants) analysisTimeConstants.checked = state.options.timeConstants;
   if (analysisNameSubexpressions) analysisNameSubexpressions.checked = state.options.nameSubexpressions;
   setAnalysisTransferInputs(state.options.transferFunctions);
   setNoiseInputs(state.options);
@@ -1137,6 +1140,7 @@ function installOptionsSummary() {
       ...(on('analysis-parasitics') ? ['C_gs, C_gd'] : []),
       ...(!on('analysis-approx-gmro') ? ['finite g_m r_o'] : []),
       ...(on('analysis-approx-dominant-pole') ? ['dominant pole'] : []),
+      ...(on('analysis-time-constants') ? ['time constants'] : []),
       ...(on('analysis-noise-thermal') || on('analysis-noise-flicker') ? ['noise'] : []),
       ...(document.getElementById('analysis-device-regions')?.value.trim() ? ['triode devices'] : []),
     ];

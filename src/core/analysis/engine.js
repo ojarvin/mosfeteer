@@ -1,5 +1,6 @@
 import { MOS_TYPES, firstDefined } from './shared.js';
 import { feedbackParts, returnRatio } from './loop-gain.js';
+import { poleTimeConstants } from './time-constants.js';
 import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
@@ -26,6 +27,8 @@ import {
   provenProduct,
   provenQuotient,
   provenSum,
+  renderEquation,
+  renderExpression,
   renderQuantityEquation,
   renderRootEquation,
 } from './present.js';
@@ -451,6 +454,66 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, element, mainOps, m
 }
 
 const LOOP_GAIN_OPERATIONS = 400000;
+
+/**
+ * The poles' coefficients as time constants (time-constants.js): each
+ * capacitor's tau = C R, b1 their sum, and with few enough capacitors b2
+ * from the pairs; the dominant pole near -1/b1, the next near -b1/b2. In
+ * the model without Miller splitting (it would hide the bridging C_gd that
+ * sets a pole) or series/parallel merging (which folds capacitors into
+ * other branches), with a budget of its own: rows to read, or why not.
+ */
+function analyzeTimeConstants(circuit, pipelineOptions, options, rawOptions = {}) {
+  const ops = createRationalOps({ variable: 's', maxOperations: rawOptions.timeConstantOperations || TIME_CONSTANT_OPERATIONS });
+  const tooLarge = { ok: false, error: 'the time constants are too large to solve exactly; simplify the model (r_o -> infinity on bias devices, fewer capacitances)' };
+  try {
+    const s = ops.s();
+    const model = buildExactAnalysisPipeline(circuit, {
+      ...pipelineOptions, ops, s, millerApproximation: false, networkReduction: false, solve: false,
+      valueOf: (value, primitive) => symbolicValue(value, primitive, rawOptions, ops),
+    });
+    if (!model.ok) return { ok: false, error: model.error };
+    const result = poleTimeConstants(model, ops, s);
+    if (ops.budget.exceeded) return tooLarge;
+    if (!result.ok) return result;
+    const tidy = (value) => {
+      const cleanupOps = createRationalOps({ variable: 's', maxOperations: 12000 });
+      const compact = compactRational(value, cleanupOps);
+      return canonicalResponseValue(cleanupOps.budget.exceeded ? value : compact, options).expression;
+    };
+    const name = (cap) => renderExpression(tidy(cap.capacitance), options);
+    const tau = (cap) => `\\tau_{${name(cap)}}`;
+    // A part with several capacitors (a transistor's C_gs and C_gd) names which.
+    const which = (cap) => {
+      const role = String(cap.id).split('.').pop();
+      return role === 'capacitor' || role === cap.id ? cap.component : `${cap.component} C_${role.replace(/^c/, '')}`;
+    };
+    const rows = result.capacitors.map((cap) => ({ title: `Time constant of ${which(cap)}`, equation: renderEquation(tau(cap), tidy(ops.mul(cap.capacitance, cap.resistance)), options) }));
+    if (result.dropped.length) rows.push({ title: 'Across a source', equation: `\\tau_{${result.dropped.map(name).join('}} = \\tau_{')}} = 0` });
+    rows.push({ title: 'Sum of the time constants', equation: `b_{1} = ${result.capacitors.map(tau).join(' + ')}` });
+    rows.push({ title: 'Dominant pole', equation: 'p_{0} \\approx -\\frac{1}{b_{1}}' });
+    // Pairs that short each other (capacitors in parallel) add nothing to b2.
+    const pairs = (result.pairs || []).filter((pair) => !ops.isZero(pair.resistance));
+    if (result.pairs && pairs.length) {
+      const [first, second] = [(pair) => result.capacitors[pair.i], (pair) => result.capacitors[pair.j]];
+      const shortedTau = (pair) => `\\tau_{${name(second(pair))}}^{(${name(first(pair))})}`;
+      for (const pair of pairs) {
+        rows.push({
+          title: `Time constant of ${which(second(pair))} with ${which(first(pair))} shorted`,
+          equation: renderEquation(shortedTau(pair), tidy(ops.mul(second(pair).capacitance, pair.resistance)), options),
+        });
+      }
+      rows.push({ title: 'Sum over the pairs', equation: `b_{2} = ${pairs.map((pair) => `${tau(first(pair))} \\, ${shortedTau(pair)}`).join(' + ')}` });
+      rows.push({ title: 'Second pole', equation: 'p_{1} \\approx -\\frac{b_{1}}{b_{2}} \\quad (|p_{1}| \\gg |p_{0}|)' });
+    }
+    if (ops.budget.exceeded) return tooLarge;
+    return { ok: true, rows, ...(result.pairsOmitted ? { pairsOmitted: true } : {}) };
+  } catch (error) {
+    return /budget/i.test(error.message) ? tooLarge : { ok: false, error: error.message };
+  }
+}
+
+const TIME_CONSTANT_OPERATIONS = 400000;
 
 function loopGainReport(circuit, pipeline, pipelineOptions, element, ops, options, approximationOptions) {
   // The model without Miller splitting (it removes the feedback being
@@ -1058,6 +1121,9 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   const loop = options.loopGain?.element
     ? analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain.element, ops, withEquivalences(responseOptions(analysisOptions)), approximationOptions, options)
     : null;
+  const timeConstants = options.timeConstants
+    ? analyzeTimeConstants(circuit, pipelineOptions, responseOptions(analysisOptions), options)
+    : null;
   const assumptions = unique([
     ...millerAssumptions,
     ...(noise?.assumptions || []),
@@ -1104,6 +1170,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     transferFunctions,
     ...(noise ? { noise } : {}),
     ...(loop ? { loop } : {}),
+    ...(timeConstants ? { timeConstants } : {}),
     exact,
     approximate: approximations,
     dc: {
