@@ -69,7 +69,7 @@ one sheet. Search it for parts, nets, text, or `#tags`. Pick a design and
 the ones it links to are drawn joined to it. Open one with a double-click.
 
 <p align="center">
-  <img src="docs/images/atlas.webp" alt="The Atlas: a workspace's designs on one dark sheet. The folded-cascode OTA is picked and lifted; lines run to it from the op-amps of three designs that use it.">
+  <img src="docs/images/atlas.webp" alt="The Atlas: a workspace's designs on one dark sheet. The folded-cascode OTA is picked and lifted; lines run to it from the op-amps of the four designs that use it, and the rest are dimmed.">
 </p>
 
 ## Analysis
