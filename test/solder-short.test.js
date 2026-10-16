@@ -72,13 +72,13 @@ test('a gate bus drawn straight through MOS gates puts no dot on the gates it pa
   assert.deepEqual(dots, [[1080, 400]]);
 });
 
-test('a MOS bulk tied straight to its own source puts no dot where the tie meets the source lead', () => {
+test('a MOS bulk wired straight to its own source pin puts no dot on the pin', () => {
   const tied = (extra = []) => {
     const c = new Circuit();
     for (const line of ['add nmosb M1 --at 0 0', 'add ground G1 --at 0 240', 'connect M1.s G1.gnd', 'connect M1.b M1.s', ...extra]) runCommand(c, line);
     const net = c.netOfTerminal({ comp: 'M1', term: 's' });
-    // As drawn by hand: out of the bulk a cell, down past the source, into its lead.
-    net.branches = [[{ x: 0, y: 80 }, { x: 0, y: 240 }], [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 120 }, { x: 0, y: 120 }],
+    // As drawn by hand: out of the bulk a cell, down and onto the source pin.
+    net.branches = [[{ x: 0, y: 80 }, { x: 0, y: 240 }], [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 80 }, { x: 0, y: 80 }],
       ...(extra.length ? [[{ x: 40, y: 40 }, { x: 160, y: 40 }]] : [])];
     net.route = net.branches[0];
     net.junctions = [];
@@ -87,5 +87,5 @@ test('a MOS bulk tied straight to its own source puts no dot where the tie meets
   };
   assert.deepEqual(tied(), []);
   // Something else on the tie: it is a net of its own making, dots and all.
-  assert.deepEqual(tied(['add resistor R1 --at 240 40', 'connect R1.a M1.s']).sort(), [[0, 120], [40, 40]]);
+  assert.deepEqual(tied(['add resistor R1 --at 240 40', 'connect R1.a M1.s']).sort(), [[0, 80], [40, 40]]);
 });

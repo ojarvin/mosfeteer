@@ -421,7 +421,7 @@ corresponding net branch.
   its actual open-space T/cross junction; an ordinary bend or crossing gets no
   dot, and never add a `solder` component by hand. Two tees are drawn
   without one, as part of the symbols: a MOS gate bus run straight through
-  the gates, and a bulk wired straight to its own transistor's source.
+  the gates, and a bulk wired straight onto its own transistor's source pin.
 - **Treat coincident physical nets as distinct.** Equal net names do not connect
   separate nets. A positive-length collinear overlap between different physical
   nets is an electrical violation, not a junction, and must never be repaired

@@ -5682,11 +5682,10 @@ export class Circuit {
     return out;
   }
 
-  /** Where a bulk MOS's bulk, wired to nothing but its own source, meets
-   *  the source's lead: following the wire from the bulk pin and from the
-   *  source pin, each to the first junction (`stops`, point keys) or
-   *  terminal, both arrive at the same point -- or the bulk's wire ends on
-   *  the source pin itself. */
+  /** The source pins a bulk MOS's own bulk is wired straight to: followed
+   *  from the bulk pin, its wire meets no junction (`stops`, point keys) or
+   *  other pin before the source pin. A tee where the tie meets the
+   *  source's wire away from the pin is a real junction and keeps its dot. */
   _bulkSourceTies(net, paths, stops) {
     const key = (p) => `${p.x},${p.y}`;
     const pins = new Set(net.terminals.map((t) => this.components.get(t.comp)?.terminalWorld(t.term)).filter(Boolean).map(key));
@@ -5728,7 +5727,7 @@ export class Circuit {
       const source = c.terminalWorld('s');
       const tie = follow(c.terminalWorld('b'));
       if (!tie) continue;
-      if (key(tie) === key(source) || key(tie) === key(follow(source) || {})) out.push(tie);
+      if (key(tie) === key(source)) out.push(tie);
     }
     return out;
   }
@@ -6701,8 +6700,8 @@ export class Circuit {
         if (junctions.get(key)?.size === 0) junctions.delete(key);
       }
     }
-    // A MOS bulk tied straight to its own source is part of the symbol, as a
-    // body arrow is: where the tie meets the source's lead, no dot.
+    // A MOS bulk tied straight to its own source pin is part of the symbol,
+    // as a body arrow is: no dot on that pin.
     for (const net of this.nets.values()) {
       const paths = net.branches?.length ? net.branches : net.route?.length >= 2 ? [net.route] : [];
       const stops = new Set([...junctions].filter(([, ids]) => ids.has(net.id)).map(([key]) => key));
