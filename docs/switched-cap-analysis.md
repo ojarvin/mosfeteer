@@ -123,8 +123,8 @@ first, then every net, by name or, unnamed, by id; one of each is found when
 the drawing has only one -- and the state to read at. **Phases** lists the
 clock. **Derive** (or Enter) gives the equation, with its poles and zeros at
 the capacitances' numbers, and adds it to the Plots window's graph (`Shift+W`)
-as each Derive adds its gain to the Bode graph: magnitude or phase over
-f/f_s, a legend naming each trace by its ratio (V_OUT/V_IN, as the
+as each Derive adds its gain to the Bode graph: magnitude over phase on one
+f/f_s axis, a legend naming each trace by its ratio (V_OUT/V_IN, as the
 signal-flow graph's) to show or take off, **Clear graph**, and
 **Annotate graph** to put it on the drawing (`placeResponsePlot`).
 **Values** are rows (`src/web/value-row.js`, shared with the small-signal

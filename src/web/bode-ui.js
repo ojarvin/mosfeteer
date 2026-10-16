@@ -25,7 +25,7 @@ import { renderExpression } from '../core/analysis/present.js';
 import { negate } from '../core/analysis/rational.js';
 import { cornerNames } from '../core/bode-figure.js';
 import { bodeSpecs, responseSpec } from '../core/plot-spec.js';
-import { createPlotView } from './plot-view.js';
+import { createPlotView, linkPlots } from './plot-view.js';
 import { valueRow as sharedValueRow } from './value-row.js';
 import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
@@ -54,7 +54,6 @@ const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance
  */
 let traces = [];
 let latest = null;
-let view = 'magnitude';
 let withPhase = false;
 
 /** The values the plots are drawn at (Circuit#analysisValues.bode). */
@@ -230,11 +229,25 @@ const shownTraces = () => traces.filter((trace) => trace.on);
 // ----- the Plots window ------------------------------------------------------------------
 
 let plotsEl = null;
-let graph = null;
-
-function viewButton(value, text, title) {
-  return el('button', { type: 'button', text, title, 'aria-pressed': String(view === value), onclick: () => { view = value; renderPlots(); } });
+// Magnitude over phase, one frequency axis: the two plots pan and zoom
+// along x together, and only the lower one numbers it.
+let graphs = null;
+function stackedGraphs() {
+  if (!graphs) {
+    graphs = {
+      magnitude: createPlotView({ height: 200, aspect: 0.42, xAxis: false, className: 'bode-magnitude' }),
+      phase: createPlotView({ height: 140, aspect: 0.3, className: 'bode-phase' }),
+    };
+    linkPlots(graphs.magnitude, graphs.phase);
+  }
+  return graphs;
 }
+
+/** A trace's label as a plot axis writes it: markup, not TeX (a plot axis
+ *  sets sub- and superscripts only). */
+const axisName = (tex) => String(tex)
+  .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1/$2')
+  .replace(/\\beta/g, 'β');
 
 /** The sketches of the shown traces, at the current values. */
 function shownSketches() {
@@ -246,7 +259,7 @@ const POINTS_PER_DECADE = 40;
 /** The graph as a response plot (signal-flow.js `responsePlot`'s shape):
  *  what the Plots window and an annotation draw. Every trace over the range
  *  they span together, each from its own exact response. */
-function responsePlotOf(sketches, quantity = view) {
+function responsePlotOf(sketches, quantity = 'magnitude') {
   if (!sketches.length) return null;
   const low = Math.min(...sketches.map(({ sketch }) => sketch.range.low));
   const high = Math.max(low + 1, ...sketches.map(({ sketch }) => sketch.range.high));
@@ -280,14 +293,14 @@ function responsePlotOf(sketches, quantity = view) {
 
 /** One trace shown: its textbook sketch, asymptote and corners marked;
  *  several: their curves together. */
-function graphSpec(sketches) {
+function graphSpec(sketches, quantity) {
   if (sketches.length === 1) {
     const [{ trace, sketch, corners }] = sketches;
-    const spec = bodeSpecs(sketch, { corners, quantity: trace.label, ...(trace.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })[view];
-    return { ...spec, key: `bode:${view}:${trace.id}`, series: spec.series.map((series) => (series.role === 'curve' ? { ...series, color: trace.color } : series)) };
+    const spec = bodeSpecs(sketch, { corners, quantity: axisName(trace.label), ...(trace.key === 'loop' ? { unityText: 'ω_{c}' } : {}) })[quantity];
+    return { ...spec, key: `bode:${quantity}:${trace.id}`, series: spec.series.map((series) => (series.role === 'curve' ? { ...series, color: trace.color } : series)) };
   }
-  const spec = responseSpec(responsePlotOf(sketches));
-  return { ...spec, key: `bode:${view}:traces`, x: { ...spec.x, label: 'ω (g/C)' } };
+  const spec = responseSpec(responsePlotOf(sketches, quantity));
+  return { ...spec, key: `bode:${quantity}:traces`, x: { ...spec.x, label: 'ω (g/C)' }, series: spec.series.map((series) => (series.label ? { ...series, label: axisName(series.label) } : series)) };
 }
 
 /** A slider is being moved: the corner lists keep their height till it is let go. */
@@ -301,21 +314,16 @@ function renderPlots() {
   const list = plotsEl.querySelector('.bode-corners');
   empty.hidden = traces.length > 0;
   head.hidden = !traces.length && !latest;
-  head.replaceChildren(
-    el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Plot' }, [
-      viewButton('magnitude', 'Magnitude', 'The magnitudes, in dB'),
-      viewButton('phase', 'Phase', 'The phases, in degrees'),
-    ]),
-    addButtons(),
-  );
+  head.replaceChildren(addButtons());
   if (sliding) list.style.minHeight = `${Math.max(parseFloat(list.style.minHeight) || 0, list.offsetHeight)}px`;
   list.replaceChildren();
   const sketches = shownSketches();
-  // The plot stays in place while it redraws (a zoomed view stays too).
-  if (!graph) graph = createPlotView({ height: 260, aspect: 0.6 });
+  // The plots stay in place while they redraw (a zoomed view stays too).
+  const { magnitude, phase } = stackedGraphs();
   if (sketches.length) {
-    if (graph.el.parentNode !== host) host.replaceChildren(graph.el);
-    graph.set(graphSpec(sketches));
+    if (magnitude.el.parentNode !== host) host.replaceChildren(magnitude.el, phase.el);
+    magnitude.set(graphSpec(sketches, 'magnitude'));
+    phase.set(graphSpec(sketches, 'phase'));
   } else {
     host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
   }
@@ -650,9 +658,10 @@ export function installBodeUi() {
 /** For tests and the console: what the graph holds. */
 export function bodeSnapshot() {
   return {
-    view,
     traces: traces.map((trace) => ({ id: trace.id, key: trace.key, label: trace.label, color: trace.color, on: trace.on })),
     values: { ...ratios, multipliers: { ...ratios.multipliers } },
     plotsShown: plotsShown(),
+    // The magnitude's and the phase's x view: one axis, so always the same.
+    xRanges: graphs ? [graphs.magnitude.xRange(), graphs.phase.xRange()] : null,
   };
 }

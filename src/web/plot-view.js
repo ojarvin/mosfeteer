@@ -57,10 +57,13 @@ const plain = (tex) => String(tex || '').replace(/\\text\{([^{}]*)\}/g, '$1').re
  * A plot. `height` is its height in pixels (`fill: true` takes its box's
  * height instead); `wheel` is 'modifier' (Ctrl/pinch zooms, the plain
  * wheel scrolls the page) or 'always'. `onView(view)` hears each change of
- * view (u coordinates), to link plots. Returns `{ el, set(spec), fit(),
+ * view (u coordinates), to link plots. `xAxis: false` leaves out the x
+ * axis's numbers and name: the top plot of a stack whose bottom one shows
+ * them for both (linkPlots). Returns `{ el, set(spec), fit(),
  * setXView(range), dispose() }`.
  */
-export function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '' } = {}) {
+export function createPlotView({ height = 230, fill = false, aspect = null, maxHeight = 520, wheel = 'modifier', onView = null, className = '', xAxis = true } = {}) {
+  const margin = xAxis ? MARGIN : { ...MARGIN, bottom: 6 };
   const el = document.createElement('div');
   el.className = `plot-view${className ? ` ${className}` : ''}`;
   if (!fill) el.style.height = `${height}px`;
@@ -103,7 +106,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
   let viewListener = onView;
 
   const scaleX = () => spec?.x.scale || 'linear';
-  const pane = () => ({ x: MARGIN.left, y: MARGIN.top, w: Math.max(10, size.w - MARGIN.left - MARGIN.right), h: Math.max(10, size.h - MARGIN.top - MARGIN.bottom) });
+  const pane = () => ({ x: margin.left, y: margin.top, w: Math.max(10, size.w - margin.left - margin.right), h: Math.max(10, size.h - margin.top - margin.bottom) });
   const uPoints = (series) => series.points.map(([x, y]) => [toU(scaleX(), x), y]).filter(([u]) => Number.isFinite(u));
 
   /** The view that shows all the data. */
@@ -179,7 +182,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     for (const tick of xTicks) {
       const at = X(tick.u);
       grid.append(svg('line', { x1: at, y1: p.y, x2: at, y2: p.y + p.h, class: tick.major ? 'role-grid' : 'role-grid minor' }));
-      if (tick.major || xTicks.length <= 12) grid.append(markupText(tick.text, { x: at, y: p.y + p.h + 15, 'text-anchor': 'middle', class: 'role-number' }));
+      if (xAxis && (tick.major || xTicks.length <= 12)) grid.append(markupText(tick.text, { x: at, y: p.y + p.h + 15, 'text-anchor': 'middle', class: 'role-number' }));
     }
     for (const tick of yTicks) {
       const at = Y(tick.u);
@@ -231,7 +234,7 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
     }
     root.append(markupText(spec.y.label, { x: p.x + 5, y: p.y + 11, class: 'role-label' }));
     (spec.notes || []).forEach((note, i) => root.append(markupText(note.text, { x: p.x + 5, y: p.y + 24 + 13 * i, class: `role-${note.role || 'label'}` })));
-    root.append(markupText(spec.x.label, { x: p.x + p.w - 4, y: p.y + p.h - 5, 'text-anchor': 'end', class: 'role-label' }));
+    if (xAxis) root.append(markupText(spec.x.label, { x: p.x + p.w - 4, y: p.y + p.h - 5, 'text-anchor': 'end', class: 'role-label' }));
 
     if (box) {
       const x0 = box.axes === 'y' ? p.x : Math.min(box.from.x, box.to.x);

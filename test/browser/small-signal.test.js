@@ -233,11 +233,21 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const [first, second] = (await bode()).traces;
     assert.notEqual(first.color, second.color);
     assert.equal(await h.evaluate(`document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-row').length`), 2);
-    // Phase, then back.
-    assert.equal(await plotsButton('Phase'), true);
-    assert.equal((await bode()).view, 'phase');
-    await h.until(`/°/.test(document.querySelector('.plots-window .bode-plots-graph').textContent)`);
-    await plotsButton('Magnitude');
+    // Magnitude over phase, one frequency axis: only the phase numbers it,
+    // and zooming the magnitude zooms the phase with it.
+    const stack = () => h.evaluate(`[...document.querySelectorAll('.plots-window .bode-plots-graph .plot-view')].map((p) => ({ cls: p.className, text: p.textContent }))`);
+    const [magnitude, phase] = await stack();
+    assert.match(magnitude.cls, /bode-magnitude/);
+    assert.match(magnitude.text, /\(dB\)/);
+    assert.doesNotMatch(magnitude.text, /ω/);
+    assert.match(phase.cls, /bode-phase/);
+    assert.match(phase.text, /°/);
+    assert.match(phase.text, /ω/);
+    assert.doesNotMatch(magnitude.text + phase.text, /\\frac/, 'axis names are not raw TeX');
+    const before = (await bode()).xRanges;
+    assert.deepEqual(before[0], before[1]);
+    await h.evaluate(`(() => { const p = document.querySelector('.plots-window .bode-magnitude'); const r = p.getBoundingClientRect(); p.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, ctrlKey: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, bubbles: true, cancelable: true })); })()`);
+    await h.until(`${h.module('bode-ui.js')}.then((m) => { const [a, b] = m.bodeSnapshot().xRanges; return a[0] !== ${before[0][0]} && a[0] === b[0] && a[1] === b[1]; })`);
     // Another quantity of the last Derive: a switch, on and off and on again.
     const pressed = (text) => h.evaluate(`[...document.querySelectorAll('.plots-window .bode-add button')].find((b) => b.textContent.trim() === ${JSON.stringify(text)}).getAttribute('aria-pressed')`);
     assert.equal(await pressed('Voltage gain'), 'true');

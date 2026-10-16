@@ -20,7 +20,7 @@ import { plainTexText, texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { switchState } from '../core/beats.js';
 import { canonicalNetName } from '../core/model.js';
-import { createPlotView } from './plot-view.js';
+import { createPlotView, linkPlots } from './plot-view.js';
 import { installPlotsWindow, offerPlots, showPlots } from './plots-window.js';
 import { placeResponsePlot, registerAnalysisMode } from './signal-flow-ui.js';
 import { valueRow } from './value-row.js';
@@ -37,11 +37,11 @@ let section = null;
 let annotateButton = null; // in the window's footer, shown with a result
 let latest = null; // { revision, result }
 // The graph's traces, as the Bode graph keeps them: each Derive's result,
-// { id, label, color, value, on }; and its view, magnitude or phase.
+// { id, label, color, value, on }.
 let traces = [];
-let view = 'magnitude';
 let plotsEl = null;
-let graph = null;
+// Magnitude over phase on one frequency axis, as the Bode graph's.
+let graphs = null;
 let saveFrame = 0;
 
 /** A drawing the mode suits: switches and capacitors, and nothing an SC
@@ -376,35 +376,39 @@ function runCalculator() {
 const shownTraces = () => traces.filter((trace) => trace.on);
 
 /** The graph's plot: the shown traces at the numbers, magnitude or phase. */
-function graphPlot() {
+function graphPlot(quantity = 'magnitude') {
   const shown = shownTraces();
   if (!shown.length) return null;
-  return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity: view });
+  return responsePlot(shown.map((trace) => ({ ...trace, value: numbered(trace.value), variable: 'z' })), 'z', { quantity });
 }
 
-function viewButton(key, text, title) {
-  return el('button', { type: 'button', text, title, 'aria-pressed': String(view === key), onclick: () => { view = key; renderPlots(); } });
+function stackedGraphs() {
+  if (!graphs) {
+    graphs = {
+      magnitude: createPlotView({ height: 200, aspect: 0.42, xAxis: false, className: 'bode-magnitude' }),
+      phase: createPlotView({ height: 140, aspect: 0.3, className: 'bode-phase' }),
+    };
+    linkPlots(graphs.magnitude, graphs.phase);
+  }
+  return graphs;
 }
 
-/** The Plots window's view of this mode: as the Bode graph -- its view,
- *  the graph, a legend to show or take off each trace, then Clear and
+/** The Plots window's view of this mode: as the Bode graph -- magnitude
+ *  over phase, a legend to show or take off each trace, then Clear and
  *  Annotate graph. */
 function renderPlots() {
   if (!plotsEl) return;
   const head = plotsEl.querySelector('.sc-plots-head');
   const host = plotsEl.querySelector('.sc-graph');
   plotsEl.querySelector('.sc-plots-empty').hidden = traces.length > 0;
-  head.hidden = !traces.length;
-  head.replaceChildren(el('div', { class: 'segmented signal-flow-view', role: 'group', 'aria-label': 'Plot' }, [
-    viewButton('magnitude', 'Magnitude', 'The magnitudes, in dB'),
-    viewButton('phase', 'Phase', 'The phases, in degrees'),
-  ]));
+  head.hidden = true;
   const plot = graphPlot();
-  // The plot stays in place while it redraws (a zoomed view stays too).
-  if (!graph) graph = createPlotView({ height: 260, aspect: 0.6 });
+  // The plots stay in place while they redraw (a zoomed view stays too).
+  const { magnitude, phase } = stackedGraphs();
   if (plot) {
-    if (graph.el.parentNode !== host) host.replaceChildren(graph.el);
-    graph.set(responseSpec(plot));
+    if (magnitude.el.parentNode !== host) host.replaceChildren(magnitude.el, phase.el);
+    magnitude.set(responseSpec(plot));
+    phase.set(responseSpec(graphPlot('phase')));
   } else {
     host.replaceChildren(el('p', { class: 'field-hint', text: traces.length ? 'Check a trace below to plot it.' : '' }));
   }

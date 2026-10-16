@@ -341,7 +341,9 @@ itself. **Voltage gain**, **Output impedance**, **Input impedance**, and
 **Loop gain** above the graph are switches for the last Derive's
 quantities: pressed while one is on the graph, pressed again to take it
 off. Each trace can be hidden or removed;
-**Magnitude** and **Phase** switch the view; one trace shown is drawn as a
+the magnitude is drawn over the phase, the two on one frequency axis
+(they pan and zoom along it together, and only the phase numbers it); one
+trace shown is drawn as a
 textbook sketch, its asymptote and corners marked, several as their curves
 together over the range they span. **Annotate graph** puts the graph on the
 drawing as a signal-flow graph is (`plot.kind: 'response'`, its traces
