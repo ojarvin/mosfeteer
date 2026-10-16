@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bodeSpecs, locusSpec, responseSpec, stepSpec, swingSpec, waveSpec } from '../src/core/plot-spec.js';
+import { axisName, bodeSpecs, locusSpec, responseSpec, stepSpec, swingSpec, waveSpec } from '../src/core/plot-spec.js';
 
 test('a response becomes a log-frequency plot with its band, markers, and a start trace', () => {
   const spec = responseSpec({
@@ -31,4 +31,11 @@ test('steps, swings, loci, Bode sketches, and waveforms all become specs', () =>
   assert.deepEqual(bode.phase.vlines.map((v) => v.label), ['', '']);
   const wave = waveSpec([{ label: 'V', color: '#111', values: [0, 1, NaN, 2] }], { start: 100 });
   assert.deepEqual(wave.series[0].points, [[100, 0], [101, 1], [102, null], [103, 2]]);
+});
+
+test('a trace\'s TeX label reads as axis markup, subscripts and all', () => {
+  assert.equal(axisName('\\frac{V_{OUT}}{V_{INP}}'), 'V_{OUT}/V_{INP}');
+  assert.equal(axisName('\\frac{VOUT}{VIN}'), 'VOUT/VIN');
+  assert.equal(axisName('Z_{out}(V_{OUT})'), 'Z_{out}(V_{OUT})');
+  assert.equal(axisName('\\beta_{U1}'), 'β_{U1}');
 });

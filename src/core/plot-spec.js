@@ -19,6 +19,16 @@ const pow10 = (x) => (Number.isInteger(x) ? Number(`1e${x}`) : 10 ** x);
 
 const finitePoints = (points) => points.filter(([x, y]) => Number.isFinite(x) && x > -Infinity && y !== undefined);
 
+/** A trace's TeX label as a plot axis writes it: markup, not TeX (an axis
+ *  sets sub- and superscripts only). \frac{V_{OUT}}{V_{IN}} reads
+ *  V_{OUT}/V_{IN}; \beta reads β. */
+export function axisName(tex) {
+  const group = '((?:[^{}]|\\{[^{}]*\\})*)';
+  return String(tex)
+    .replace(new RegExp(`\\\\frac\\{${group}\\}\\{${group}\\}`, 'g'), '$1/$2')
+    .replace(/\\beta/g, 'β');
+}
+
 /** A frequency response (signal-flow.js `responsePlot`). */
 export function responseSpec(plot) {
   const phase = plot.quantity === 'phase';

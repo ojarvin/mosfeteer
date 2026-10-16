@@ -31870,6 +31870,7 @@ __exports.fromU = fromU;
 };
 
 __modules["src/core/plot-spec.js"] = function (__require, __exports) {
+__exports.axisName = axisName;
 __exports.responseSpec = responseSpec;
 __exports.stepSpec = stepSpec;
 __exports.swingSpec = swingSpec;
@@ -31897,6 +31898,16 @@ let plainTex, swingLimit; __bind(() => { ({ plainTex, swingLimit } = __require("
 const pow10 = (x) => (Number.isInteger(x) ? Number(`1e${x}`) : 10 ** x);
 
 const finitePoints = (points) => points.filter(([x, y]) => Number.isFinite(x) && x > -Infinity && y !== undefined);
+
+/** A trace's TeX label as a plot axis writes it: markup, not TeX (an axis
+ *  sets sub- and superscripts only). \frac{V_{OUT}}{V_{IN}} reads
+ *  V_{OUT}/V_{IN}; \beta reads β. */
+function axisName(tex) {
+  const group = '((?:[^{}]|\\{[^{}]*\\})*)';
+  return String(tex)
+    .replace(new RegExp(`\\\\frac\\{${group}\\}\\{${group}\\}`, 'g'), '$1/$2')
+    .replace(/\\beta/g, 'β');
+}
 
 /** A frequency response (signal-flow.js `responsePlot`). */
 function responseSpec(plot) {
@@ -47302,7 +47313,7 @@ let TRACE_COLORS; __bind(() => { ({ TRACE_COLORS } = __require("src/core/analysi
 let renderExpression; __bind(() => { ({ renderExpression } = __require("src/core/analysis/present.js")); });
 let negate; __bind(() => { ({ negate } = __require("src/core/analysis/rational.js")); });
 let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figure.js")); });
-let bodeSpecs, responseSpec; __bind(() => { ({ bodeSpecs, responseSpec } = __require("src/core/plot-spec.js")); });
+let axisName, bodeSpecs, responseSpec; __bind(() => { ({ axisName, bodeSpecs, responseSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let sharedValueRow; __bind(() => { ({ valueRow: sharedValueRow } = __require("src/web/value-row.js")); });
 let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
@@ -47557,11 +47568,6 @@ function stackedGraphs() {
   return graphs;
 }
 
-/** A trace's label as a plot axis writes it: markup, not TeX (a plot axis
- *  sets sub- and superscripts only). */
-const axisName = (tex) => String(tex)
-  .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1/$2')
-  .replace(/\\beta/g, 'β');
 
 /** The sketches of the shown traces, at the current values. */
 function shownSketches() {

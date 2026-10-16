@@ -24,7 +24,7 @@ import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
 import { renderExpression } from '../core/analysis/present.js';
 import { negate } from '../core/analysis/rational.js';
 import { cornerNames } from '../core/bode-figure.js';
-import { bodeSpecs, responseSpec } from '../core/plot-spec.js';
+import { axisName, bodeSpecs, responseSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { valueRow as sharedValueRow } from './value-row.js';
 import { normalizePlot } from '../core/model.js';
@@ -243,11 +243,6 @@ function stackedGraphs() {
   return graphs;
 }
 
-/** A trace's label as a plot axis writes it: markup, not TeX (a plot axis
- *  sets sub- and superscripts only). */
-const axisName = (tex) => String(tex)
-  .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '$1/$2')
-  .replace(/\\beta/g, 'β');
 
 /** The sketches of the shown traces, at the current values. */
 function shownSketches() {
