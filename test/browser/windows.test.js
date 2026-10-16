@@ -145,6 +145,17 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await closeAll();
   });
 
+  test('Escape in the beats window closes it, as in the other windows', async () => {
+    await h.open('beats');
+    await h.key('B', { shiftKey: true });
+    await h.until(`!document.getElementById('beat-strip').hidden`);
+    // A beat chip clicked: the focus is in the window.
+    await h.evaluate(`document.querySelector('#beat-strip .beat-chip:not(.beat-chip-all)').focus()`);
+    await h.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    await h.until(`document.getElementById('beat-strip').hidden`);
+    assert.equal(await h.evaluate(`document.activeElement?.id`), 'canvas');
+  });
+
   test('the timing editor says each way to and from the beats once, in plain words', async () => {
     await h.open('beats');
     await h.key('K', { shiftKey: true });

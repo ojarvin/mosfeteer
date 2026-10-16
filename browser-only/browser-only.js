@@ -46987,9 +46987,20 @@ function installBeatsUi() {
   document.getElementById('btn-present')?.addEventListener('click', () => openPresenter());
   document.getElementById('btn-phase-beats')?.addEventListener('click', addPhaseBeats);
   document.getElementById('btn-timing-diagram')?.addEventListener('click', toggleTimingDialog);
-  document.getElementById('beat-strip-close')?.addEventListener('click', () => {
+  const closeBeatStrip = () => {
     editor.beatStripOpen = false;
     setActiveBeat(null);
+  };
+  document.getElementById('beat-strip-close')?.addEventListener('click', closeBeatStrip);
+  // Escape in the window closes it, as in the other windows -- once it has
+  // let go of beats picked there, and not while a beat's name is typed.
+  beatStripEl?.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || ev.defaultPrevented || ['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
+    if (editor.selectedBeatIds.size > 1) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeBeatStrip();
+    canvasEl.focus({ preventScroll: true });
   });
   document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
   document.getElementById('btn-window-beats')?.addEventListener('click', toggleBeatStrip);
