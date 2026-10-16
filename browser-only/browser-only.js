@@ -30946,6 +30946,7 @@ const point = (value) => isObject(value) && finite(value.x) && finite(value.y);
 const path = (value) => Array.isArray(value) && value.every(point);
 const optional = (value, check) => value === undefined || value === null || check(value);
 const text = (value) => typeof value === 'string';
+const blockTerminal = (value) => isObject(value) && text(value.name) && ['top', 'right', 'bottom', 'left'].includes(value.side) && finite(value.offset);
 const endpoint = (value) => isObject(value) && text(value.comp) && text(value.term);
 
 function componentProblem(comp) {
@@ -30956,6 +30957,8 @@ function componentProblem(comp) {
   if (!optional(comp.negativeInputs, (inputs) => Array.isArray(inputs) && inputs.every(text))) return `part ${comp.origRef} has bad inputs`;
   if (!optional(comp.style, isObject)) return `part ${comp.origRef} has a bad style`;
   if (!optional(comp.size, isObject)) return `part ${comp.origRef} has a bad size`;
+  if (!optional(comp.blockSize, (size) => isObject(size) && finite(size.w) && finite(size.h))) return `block ${comp.origRef} has a bad size`;
+  if (!optional(comp.blockTerminals, (terminals) => Array.isArray(terminals) && terminals.every(blockTerminal))) return `block ${comp.origRef} has bad terminals`;
   return null;
 }
 
@@ -50196,6 +50199,9 @@ function copySelection({ quiet = false } = {}) {
       joinBar: !!c.joinBar,
       ...(c.link ? { link: c.link } : {}),
       ...(c.size ? { size: { ...c.size } } : {}),
+      // A block's own size and perimeter terminals: without them it pastes
+      // at the default size, and its wires end on terminals it lacks.
+      ...(c.type === 'block' ? { blockSize: { ...c.blockSize }, blockTerminals: c.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(c.waveform ? { waveform: c.waveform } : {}),
       style: { ...(c.style || {}) },
       // The value: a resistance, a switch's phase.
@@ -50647,6 +50653,8 @@ function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           joinBar: c.joinBar,
           link: c.link,
           size: c.size,
+          blockSize: c.blockSize,
+          blockTerminals: c.blockTerminals,
           waveform: c.waveform,
           style: c.style,
           value: c.value,

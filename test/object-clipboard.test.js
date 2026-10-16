@@ -42,6 +42,8 @@ test('damaged or foreign-version copied objects are refused before any paste', (
   const cases = [
     (data) => { data.comps[0].type = 'flux_capacitor'; },
     (data) => { data.comps[1].x = 'left'; },
+    (data) => { data.comps[0].blockTerminals = [{ name: 'T1', side: 'inside', offset: 40 }]; },
+    (data) => { data.comps[0].blockSize = { w: 'wide', h: 160 }; },
     (data) => { data.labels[1].end = null; },
     (data) => { data.nets[0].terminals = [{ comp: 'M1' }]; },
     (data) => { data.nets[0].route = [{ x: 0 }]; },

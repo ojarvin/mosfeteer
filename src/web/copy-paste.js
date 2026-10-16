@@ -198,6 +198,9 @@ export function copySelection({ quiet = false } = {}) {
       joinBar: !!c.joinBar,
       ...(c.link ? { link: c.link } : {}),
       ...(c.size ? { size: { ...c.size } } : {}),
+      // A block's own size and perimeter terminals: without them it pastes
+      // at the default size, and its wires end on terminals it lacks.
+      ...(c.type === 'block' ? { blockSize: { ...c.blockSize }, blockTerminals: c.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(c.waveform ? { waveform: c.waveform } : {}),
       style: { ...(c.style || {}) },
       // The value: a resistance, a switch's phase.
@@ -649,6 +652,8 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           joinBar: c.joinBar,
           link: c.link,
           size: c.size,
+          blockSize: c.blockSize,
+          blockTerminals: c.blockTerminals,
           waveform: c.waveform,
           style: c.style,
           value: c.value,

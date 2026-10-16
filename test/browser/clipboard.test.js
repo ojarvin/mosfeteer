@@ -106,6 +106,23 @@ describe('copy and paste', { skip: browserSkip() }, () => {
     assert.deepEqual(await ed('[...c.nets.values()].map((n) => n.allowDiagonal)'), [true, true, true, true]);
   });
 
+  test('a resized block pastes at its size, with the terminals its wires end on', async () => {
+    const circuit = new Circuit();
+    runCommand(circuit, 'add block B1 --at 0 0');
+    circuit.resizeBlock('B1', { x: -80, y: -80, w: 320, h: 240 });
+    // T13 is a slot only the larger block has.
+    for (const line of ['add resistor R1 --at 200 360 --rot 90', 'connect B1.T13 R1.a']) runCommand(circuit, line);
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.selectAll(); m.render(); })`);
+    const text = await copy();
+    // Pasted into another design.
+    await h.evaluate(`window.__load(${JSON.stringify(new Circuit().toJSON())})`);
+    await paste(text);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.size === 2)`);
+    const block = await ed(`(() => { const b = [...c.components.values()].find((x) => x.type === 'block'); return { size: b.blockSize, terminals: b.blockTerminals.length, wired: [...c.nets.values()].some((n) => n.terminals.some((t) => t.comp === b.refdes && t.term === 'T13')) }; })()`);
+    assert.deepEqual(block, { size: { w: 320, h: 240 }, terminals: 24, wired: true });
+  });
+
   test('a paste that fails part way leaves the drawing as it was', async () => {
     const before = await ed('JSON.stringify(c.toJSON())');
     const undoable = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.history.length)`);

@@ -43,6 +43,7 @@ const point = (value) => isObject(value) && finite(value.x) && finite(value.y);
 const path = (value) => Array.isArray(value) && value.every(point);
 const optional = (value, check) => value === undefined || value === null || check(value);
 const text = (value) => typeof value === 'string';
+const blockTerminal = (value) => isObject(value) && text(value.name) && ['top', 'right', 'bottom', 'left'].includes(value.side) && finite(value.offset);
 const endpoint = (value) => isObject(value) && text(value.comp) && text(value.term);
 
 function componentProblem(comp) {
@@ -53,6 +54,8 @@ function componentProblem(comp) {
   if (!optional(comp.negativeInputs, (inputs) => Array.isArray(inputs) && inputs.every(text))) return `part ${comp.origRef} has bad inputs`;
   if (!optional(comp.style, isObject)) return `part ${comp.origRef} has a bad style`;
   if (!optional(comp.size, isObject)) return `part ${comp.origRef} has a bad size`;
+  if (!optional(comp.blockSize, (size) => isObject(size) && finite(size.w) && finite(size.h))) return `block ${comp.origRef} has a bad size`;
+  if (!optional(comp.blockTerminals, (terminals) => Array.isArray(terminals) && terminals.every(blockTerminal))) return `block ${comp.origRef} has bad terminals`;
   return null;
 }
 
