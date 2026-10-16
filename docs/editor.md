@@ -44,6 +44,12 @@ menu, or their keys. Docked (the button, or a drag to the pane's right
 edge), a window becomes a section of the side panel that its title bar
 folds and its top edge resizes; dragging the title bar out floats it
 again. No window covers the tool rail itself (the paper below it is free).
+Escape on the drawing lets go of one thing a press: a tool's draft or a
+pending key, then the selection, and with nothing left the window at the
+front (the one last opened or pressed; `closeFrontWindow` in
+`floating-window.js`), so pressing it again and again closes every window,
+the beats that open themselves with Alt+→ included. Inside a window,
+Escape is the window's own first (a field being typed, a pick).
 
 View toggles are handled before mode-specific keys, except printable insert
 query text before a ghost exists. Any tool can be picked straight from another

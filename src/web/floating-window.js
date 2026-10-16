@@ -73,6 +73,22 @@ function iconSvg(paths) {
 // A window into the panel's column, or out of it.
 const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M14.5 4.5v15"/><path d="M15 8h4M15 11h4" stroke-width="1.2"/>';
 
+// The windows, the one last brought to the front last: Escape on the
+// drawing closes them from the front back (closeFrontWindow).
+const stack = [];
+
+/** Close the window at the front -- the one last opened or pressed that is
+ *  still showing -- as its × does. Returns whether there was one. */
+export function closeFrontWindow() {
+  const showing = (el) => el.isConnected && !el.hidden && !!el.offsetParent;
+  const open = [...stack].reverse().find(showing)
+    || [...document.querySelectorAll('.floating-window')].reverse().find(showing);
+  const close = open?.querySelector('.floating-window-close');
+  if (!close) return false;
+  close.click();
+  return true;
+}
+
 /**
  * Make `el` a floating window. `onClose` runs for its ×; `place` gives its
  * default position; `resizable` keeps the size the user drags its corner to.
@@ -226,6 +242,9 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
 
   // The window last opened or pressed comes to the front of the others.
   const raise = () => {
+    const at = stack.indexOf(el);
+    if (at >= 0) stack.splice(at, 1);
+    stack.push(el);
     if (el.classList.contains('front')) return;
     for (const other of document.querySelectorAll('.floating-window.front')) other.classList.remove('front');
     el.classList.add('front');
@@ -418,6 +437,10 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
   return {
     place: () => { raise(); apply(); arrive(); },
     docked,
-    dispose: () => observers.forEach((observer) => observer.disconnect()),
+    dispose: () => {
+      observers.forEach((observer) => observer.disconnect());
+      const at = stack.indexOf(el);
+      if (at >= 0) stack.splice(at, 1);
+    },
   };
 }

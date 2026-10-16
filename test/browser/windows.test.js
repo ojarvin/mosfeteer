@@ -156,6 +156,30 @@ describe('floating windows', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.activeElement?.id`), 'canvas');
   });
 
+  test('Escape on the drawing lets go of the selection first, then closes the windows one by one, the front one first', async () => {
+    await h.open('beats');
+    await closeAll();
+    const open = () => h.evaluate(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden && w.offsetParent).map((w) => w.id || w.className.split(' ')[1])`);
+    // Stepping through the beats opens their window by itself.
+    await h.key('ArrowRight', { altKey: true });
+    await h.until(`!document.getElementById('beat-strip').hidden`);
+    await h.key('n'); // and the notes, in front of it
+    await h.until(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden && w.offsetParent).length === 2`);
+    const ref = await h.evaluate(`window.__circuit().comps.find((c) => c.type !== 'solder').refdes`);
+    await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection([${JSON.stringify(ref)}]); m.render(); })`);
+    const windows = await open();
+    assert.ok(windows.some((w) => /notes/.test(w)) && windows.includes('beat-strip'), JSON.stringify(windows));
+    await h.key('Escape');
+    assert.equal(await h.evaluate(`${h.module('main.js')}.then((m) => m.selectedComps().length)`), 0, 'the selection goes first');
+    assert.deepEqual(await open(), windows, 'and only it');
+    await h.key('Escape');
+    await h.until(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden && w.offsetParent).length === 1`);
+    assert.equal(await h.evaluate(`document.getElementById('beat-strip').hidden`), false, 'the notes, at the front, close first');
+    await h.key('Escape');
+    await h.until(`document.getElementById('beat-strip').hidden`);
+    assert.equal(await h.evaluate(`document.activeElement?.id`), 'canvas');
+  });
+
   test('the timing editor says each way to and from the beats once, in plain words', async () => {
     await h.open('beats');
     await h.key('K', { shiftKey: true });

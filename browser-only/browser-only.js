@@ -54454,6 +54454,7 @@ function installFindReplace() {
 
 __modules["src/web/floating-window.js"] = function (__require, __exports) {
 __exports.floatingWindowPosition = floatingWindowPosition;
+__exports.closeFrontWindow = closeFrontWindow;
 __exports.floatingWindow = floatingWindow;
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 /**
@@ -54530,6 +54531,22 @@ function iconSvg(paths) {
 
 // A window into the panel's column, or out of it.
 const DOCK_ICON = '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M14.5 4.5v15"/><path d="M15 8h4M15 11h4" stroke-width="1.2"/>';
+
+// The windows, the one last brought to the front last: Escape on the
+// drawing closes them from the front back (closeFrontWindow).
+const stack = [];
+
+/** Close the window at the front -- the one last opened or pressed that is
+ *  still showing -- as its × does. Returns whether there was one. */
+function closeFrontWindow() {
+  const showing = (el) => el.isConnected && !el.hidden && !!el.offsetParent;
+  const open = [...stack].reverse().find(showing)
+    || [...document.querySelectorAll('.floating-window')].reverse().find(showing);
+  const close = open?.querySelector('.floating-window-close');
+  if (!close) return false;
+  close.click();
+  return true;
+}
 
 /**
  * Make `el` a floating window. `onClose` runs for its ×; `place` gives its
@@ -54684,6 +54701,9 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
 
   // The window last opened or pressed comes to the front of the others.
   const raise = () => {
+    const at = stack.indexOf(el);
+    if (at >= 0) stack.splice(at, 1);
+    stack.push(el);
     if (el.classList.contains('front')) return;
     for (const other of document.querySelectorAll('.floating-window.front')) other.classList.remove('front');
     el.classList.add('front');
@@ -54876,7 +54896,11 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
   return {
     place: () => { raise(); apply(); arrive(); },
     docked,
-    dispose: () => observers.forEach((observer) => observer.disconnect()),
+    dispose: () => {
+      observers.forEach((observer) => observer.disconnect());
+      const at = stack.indexOf(el);
+      if (at >= 0) stack.splice(at, 1);
+    },
   };
 }
 
@@ -59373,6 +59397,7 @@ let busBits, busWidth, netNamesConnect; __bind(() => { ({ busBits, busWidth, net
 let circuitPageGuideFrame, normalizePageGuide, pageGuideCaption; __bind(() => { ({ circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } = __require("src/core/page-guide.js")); });
 let drawnBusCounts, editorOverlay, svgString; __bind(() => { ({ drawnBusCounts, editorOverlay, svgString } = __require("src/core/render.js")); });
 let timingBeatBands; __bind(() => { ({ timingBeatBands } = __require("src/core/timing-diagram.js")); });
+let closeFrontWindow; __bind(() => { ({ closeFrontWindow } = __require("src/web/floating-window.js")); });
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
@@ -59441,6 +59466,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -66370,6 +66396,15 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   if (key === 'Escape') {
+    // One Escape at a time: a tool or a pending key, then the selection, and
+    // with nothing left to let go of, the window at the front -- so pressing
+    // it again and again closes them all, the beats that open themselves too.
+    const engaged = pendingKey || moveMode || copyMode || deleteMode || movePending || copyPending || labelMode
+      || annotationStart || annotationPoints.length || multi.size || selLabels.size || selectedNets.size || selectedWires.size;
+    if (!engaged && closeFrontWindow()) {
+      canvasEl.focus({ preventScroll: true });
+      return;
+    }
     pendingKey = null;
     moveMode = null;
     copyMode = false;
