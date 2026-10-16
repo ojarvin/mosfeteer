@@ -23,7 +23,7 @@ function twoPhases() {
 
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -68,6 +68,22 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.until(`window.__circuit().labels.find((l) => l.timing)?.timing.gaps === false`);
     await h.evaluate(`${h.module('beats-ui.js')}.then((m) => m.toggleTimingDialog())`);
     await h.until(`!document.querySelector('.timing-dialog .timing-pairs-matrix')`);
+  });
+
+  test('an arrow\'s plain text stands still when the design is saved and opened again', async () => {
+    await h.open('noted');
+    await h.evaluate(`window.__run('timing --arrow "CLK:2>Q:3=propagation delay"')`);
+    const note = `window.__circuit().labels.find((l) => l.timing?.part === 'arrow-note')`;
+    // Measured, then saved.
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.timing?.part === 'arrow-note' && l.textMeasured()))`);
+    const placed = await h.evaluate(`${note}.anchor`);
+    for (let round = 0; round < 2; round += 1) {
+      await h.evaluate(`${h.module('document-session.js')}.then((m) => m.saveCircuit())`);
+      await h.open('phased');
+      await h.open('noted');
+      await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.timing?.part === 'arrow-note' && l.textMeasured()))`);
+      assert.deepEqual(await h.evaluate(`${note}.anchor`), placed, `reopened ${round + 1}`);
+    }
   });
 
   test('an arrow from a clicked edge to another, a mark at the cursor, a span with its text; slot edits carry them', async () => {

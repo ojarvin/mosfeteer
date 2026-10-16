@@ -1216,11 +1216,14 @@ export class LabelInstance {
     // character-width estimate remains the fallback for headless/CLI use,
     // while the web renderer can replace it with actual SVG/MathML bounds.
     this._renderedTextBounds = null;
-    // Persist the grid-sized math footprint, rather than browser glyph
-    // metrics, so loading does not temporarily move aligned text while the
-    // live renderer prepares its fresh measurement.
+    // Persist the grid-sized measured footprint (`mathBox`, named for the
+    // math labels it began with), rather than browser glyph metrics, so
+    // loading does not temporarily move aligned text while the live renderer
+    // prepares its fresh measurement. Plain text keeps one too where its
+    // place hangs on its width (keepsMeasuredBox): measured again against
+    // the estimate instead, it would step a cell on every reopen.
     const mathBox = opts.mathBox;
-    this._mathBox = this.math && mathBox
+    this._mathBox = mathBox
       && [mathBox.w, mathBox.h].every((size) => Number.isFinite(size) && size >= 2 * GRID && size % (2 * GRID) === 0)
       ? { w: mathBox.w, h: mathBox.h } : null;
     this._text = opts.text !== undefined
@@ -1374,7 +1377,7 @@ export class LabelInstance {
 
   /** Even number of grid cells >= 2 needed to hold the text horizontally. */
   colWidth() {
-    if (this.math && !this._renderedTextBounds && this._mathBox) return this._mathBox.w / GRID;
+    if (!this._renderedTextBounds && this._mathBox) return this._mathBox.w / GRID;
     // Screen-to-world transforms may return 320.00001 for a 320-unit box.
     // Avoid adding two whole cells for sub-pixel measurement noise.
     const tolerance = this._renderedTextBounds ? 0.001 : 0;
@@ -1399,11 +1402,19 @@ export class LabelInstance {
 
   /** Even number of grid cells >= 2 needed to hold the text vertically. */
   rowHeight() {
-    if (this.math && !this._renderedTextBounds && this._mathBox) return this._mathBox.h / GRID;
+    if (!this._renderedTextBounds && this._mathBox) return this._mathBox.h / GRID;
     const tolerance = this._renderedTextBounds ? 0.001 : 0;
     let n = Math.ceil((this.textHeight() - tolerance) / GRID);
     if (this.math && !this._renderedTextBounds) n += 2;
     return Math.max(2, Math.ceil(n / 2) * 2);
+  }
+
+  /** Whether the measured box is saved with the label: every math label,
+   *  and plain text the editor keeps an edge of when it is measured (a free
+   *  annotation aligned left or right, or captioning an arrow or box). */
+  keepsMeasuredBox() {
+    if (this.math) return true;
+    return this.kind === 'label' && !this.owner && !this.netId && (!!this.parent || this.textAlign() !== 'center');
   }
 
   /** Whether a browser has measured the text (setRenderedTextBounds): a
@@ -1816,7 +1827,7 @@ export class LabelInstance {
       kind: this.kind,
       text: this.netId ? this.text : this._text,
       ...(this.math ? { math: true } : {}),
-      ...(this.math && (this._renderedTextBounds || this._mathBox)
+      ...(this.keepsMeasuredBox() && (this._renderedTextBounds || this._mathBox)
         ? { mathBox: { w: this.colWidth() * GRID, h: this.rowHeight() * GRID } } : {}),
       align: this.align,
       owner: this.owner,

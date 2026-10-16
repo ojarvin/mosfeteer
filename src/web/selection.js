@@ -20,9 +20,10 @@ export function copyableLabelPayload(label) {
     end: label.kind === 'label' ? null : { ...label.end },
     points: label.kind === 'line' ? label.points.map((point) => ({ ...point })) : null,
     style: { ...(label.style || {}) },
-    // An equation stays an equation, with its measured box until it renders.
+    // An equation stays an equation; it and aligned text keep their measured
+    // box until they render.
     math: !!label.math,
-    mathBox: (label.math && typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
+    mathBox: (typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
     ...(label.plot ? { plot: label.plot } : {}),
     ...(label.image ? { image: label.image } : {}),
     ...(label.curve ? { curve: true } : {}),

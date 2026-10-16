@@ -1009,6 +1009,22 @@ test('an italic letter before an upright one gets its TeX italic correction', ()
   assert.doesNotMatch(texToMathML('$R_{1}$'), /mspace/);
 });
 
+test('aligned plain text saves its measured box, so a reopen measures it against that and not the estimate', () => {
+  const c = new Circuit();
+  const left = c.addLabel({ text: 'propagation delay', x: 400, y: 0, align: 'left' });
+  const centred = c.addLabel({ text: 'propagation delay', x: 400, y: 200 });
+  const estimate = left.bbox().w;
+  for (const label of [left, centred]) label.setRenderedTextBounds(estimate + 60, 40);
+  const saved = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
+  const [again, other] = [saved.labels.get(left.id), saved.labels.get(centred.id)];
+  assert.equal(again.textMeasured(), false);
+  assert.equal(again.bbox().w, left.bbox().w, 'the measured width, before anything measures it again');
+  assert.ok(again.bbox().w > estimate);
+  // A centred label keeps its centre whatever its width: nothing to save.
+  assert.equal(c.toJSON().labels.find((l) => l.id === centred.id).mathBox, undefined);
+  assert.equal(other.bbox().w, estimate);
+});
+
 test('an aligned math label keeps its inset whether or not a browser measured it', () => {
   // As a file has it: the box sized when the label was last measured and
   // saved, narrower than the TeX estimate of its content.
