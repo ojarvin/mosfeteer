@@ -81,9 +81,9 @@ describe('copy and paste', { skip: browserSkip() }, () => {
     await h.evaluate(`[...document.querySelectorAll('dialog[open] button')].find((b) => b.textContent.trim() === 'Cancel').click()`);
     await h.until(`!document.querySelector('dialog[open]')`);
     assert.equal(await ed(`c.netOfTerminal({ comp: 'R4', term: 'b' }).name`), 'MID');
-    // Shift+L afterwards places the names typed, not the pasted one.
+    // l afterwards places the names typed, not the pasted one.
     await h.key('Escape');
-    await h.key('L', { shiftKey: true });
+    await h.key('l');
     await h.until(`!!document.querySelector('.label-prompt input')`);
     await h.evaluate(`(() => { const input = document.querySelector('.label-prompt input'); input.value = 'NEW'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
     await h.until(`!document.querySelector('.label-prompt')`);

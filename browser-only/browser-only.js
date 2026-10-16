@@ -41457,7 +41457,7 @@ function askAnnotationText() {
   });
 }
 
-/** Shift+L: the names first -- several, separated by spaces or commas, a bus
+/** l: the names first -- several, separated by spaces or commas, a bus
  *  range spelled out bit by bit (`DOUT[3:0]`) -- then each click on a wire
  *  places the next. Esc leaves the tool; Enter on an empty field names each
  *  wire after it is clicked, as before. */
@@ -41656,7 +41656,7 @@ function removeAllNetHighlights() {
 }
 
 // The name a pasted net label carries while the net label tool places it.
-// Cleared whenever a tool is picked, so plain Shift+L never inherits it.
+// Cleared whenever a tool is picked, so a plain l never inherits it.
 // The names the net label tool carries: { names, index, once, repeat }. A
 // pasted label repeats its one name until Esc; typed names are placed one
 // after another, the tool ending with the last.
@@ -49024,12 +49024,12 @@ const EDITOR_COMMANDS = [
   { name: 'paste', canvas: true, help: 'paste the copied objects at the cursor (p)' },
   { name: 'delete', aliases: ['erase', 'cut'], canvas: true, help: 'delete the selection (dd)' },
   { name: 'select-all', aliases: ['all'], canvas: true, help: 'select everything (Ctrl/Cmd+A)' },
-  { name: 'net-label', aliases: ['name-net', 'label-wire'], canvas: true, help: 'place net labels on wires (Shift+L)' },
+  { name: 'net-label', aliases: ['name-net', 'label-wire'], canvas: true, help: 'place net labels on wires (l)' },
   { name: 'free-text', aliases: ['annotation-tool', 'comment'], canvas: true, help: 'place a free annotation (Shift+N)' },
   { name: 'equation', aliases: ['latex', 'math', 'formula'], canvas: true, help: 'place a LaTeX equation (e)' },
   { name: 'arrow', canvas: true, help: 'draw an annotation arrow (a)' },
   { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box, or box the selection (b)' },
-  { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (l)' },
+  { name: 'line', aliases: ['polyline'], canvas: true, help: 'draw an annotation line (Shift+L)' },
   { name: 'link-bubble', aliases: ['peek', 'show-link'], canvas: true, help: 'show or hide the selected part\'s linked design beside the drawing (o)' },
   { name: 'link-bubbles-all', aliases: ['peek-all', 'show-all-links'], canvas: true, help: 'show or hide every linked part\'s design beside the drawing (Shift+O)' },
   { name: 'enter-link', aliases: ['dive', 'descend', 'open-link'], canvas: true, help: 'open the selected part\'s linked design, with a way back up (Alt+↓)' },
@@ -59459,7 +59459,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  * Mosfeteer — keyboard-driven schematic editor.
  *
  * Modes:
- *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+R mirror,
+ *   NORMAL   arrows move (selected comp or cursor), l net label, Shift+L line annotation, r rotate, Shift+R mirror,
  *            Shift+Up/Down layer, dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
  *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
@@ -66113,7 +66113,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   if (key === 'l') {
-    activateShapeAnnotation('line');
+    activateNetLabel();
     return;
   }
 
@@ -66131,7 +66131,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'L') {
-    activateNetLabel();
+    activateShapeAnnotation('line');
     return;
   }
 
@@ -66541,8 +66541,8 @@ function toolSwitchForKey(key, shiftKey = false) {
     9: activateHighlight,
     a: () => activateShapeAnnotation('arrow'),
     b: () => activateShapeAnnotation('box'),
-    l: () => activateShapeAnnotation('line'),
-    L: activateNetLabel,
+    l: activateNetLabel,
+    L: () => activateShapeAnnotation('line'),
     e: activateEquation,
   };
   return tools[key] || null;
@@ -75095,7 +75095,7 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
   }
   if (selection.nets) {
     add('Shift+T', 'tidy');
-    add('Shift+L', 'net label');
+    add('l', 'net label');
     add('dd', 'delete');
     return hints;
   }
@@ -77638,12 +77638,12 @@ const EDITOR_KEYMAP = Object.freeze([
     ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
-    ['Shift+L', 'type net label names (a bus DOUT[3:0] spells out its bits), then click wires to place each'],
+    ['l', 'type net label names (a bus DOUT[3:0] spells out its bits), then click wires to place each'],
     ['Shift+N', 'type free text, then click to place it once'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
     ['b', 'place one two-point box, then return to selection; with a selection, box it (in the box tool, click objects to pick them, Enter boxes them)'],
-    ['l', 'persistent multi-point line annotation placement'],
+    ['Shift+L', 'persistent multi-point line annotation placement'],
   ]],
   ['edit', [
     ['Ctrl/Cmd+Z / u', 'undo; insert search keeps u as text'],
@@ -77765,7 +77765,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],
   ['labels', [
-    ['Shift+L', 'type the names, then click a wire for each; Esc exits'],
+    ['l', 'type the names, then click a wire for each; Esc exits'],
     ['Shift+N', 'type the text, then click to place it; returns to selection'],
     ['t / = / F2', 'edit the selected (or pointed-at) label or part name'],
     ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
@@ -78024,7 +78024,7 @@ const TUTORIAL_STEPS = Object.freeze([
   {
     id: 'label',
     title: 'Name a net',
-    text: 'Press **Shift+L** and click a wire to place a net label, then type a name, for example **X** for the mirror node.',
+    text: 'Press **l** and click a wire to place a net label, then type a name, for example **X** for the mirror node.',
     done: (circuit) => [...circuit.labels.values()].some((label) => label.netId),
   },
   {

@@ -34,9 +34,9 @@ describe('naming nets', { skip: browserSkip() }, () => {
     await h.evaluate(`[...document.querySelectorAll('dialog[open] button')].find((b) => /Cancel|Keep separate/.test(b.textContent)).click()`);
     await h.until(`!document.querySelector('dialog[open]')`);
   };
-  /** Shift+L with `name` typed, then a click on the R1–R2 wire. */
+  /** l with `name` typed, then a click on the R1–R2 wire. */
   const labelFirstNet = async (name) => {
-    await h.key('L', { shiftKey: true });
+    await h.key('l');
     await h.until(`!!document.querySelector('.label-prompt input')`);
     await h.evaluate(`(() => { const input = document.querySelector('.label-prompt input'); input.value = ${JSON.stringify(name)}; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
     await h.until(`!document.querySelector('.label-prompt')`);
@@ -45,6 +45,18 @@ describe('naming nets', { skip: browserSkip() }, () => {
     await h.mouse('mousePressed', p.x, p.y);
     await h.mouse('mouseReleased', p.x, p.y);
   };
+
+  test('l picks the net label tool and Shift+L the line, as Virtuoso has them', async () => {
+    const tool = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.labelMode)`);
+    await h.key('L', { shiftKey: true });
+    assert.equal(await tool(), 'line');
+    await h.key('Escape');
+    await h.key('l');
+    await h.until(`!!document.querySelector('.label-prompt input')`);
+    assert.equal(await tool(), 'net');
+    await h.evaluate(`document.querySelector('.label-prompt input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    await h.key('Escape');
+  });
 
   test("the net label tool asks before giving an unnamed net another net's name, and names the part it shorts", async () => {
     await h.evaluate(`window.__load(${JSON.stringify(series())})`);

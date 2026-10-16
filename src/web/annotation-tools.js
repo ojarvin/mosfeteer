@@ -155,7 +155,7 @@ export function askAnnotationText() {
   });
 }
 
-/** Shift+L: the names first -- several, separated by spaces or commas, a bus
+/** l: the names first -- several, separated by spaces or commas, a bus
  *  range spelled out bit by bit (`DOUT[3:0]`) -- then each click on a wire
  *  places the next. Esc leaves the tool; Enter on an empty field names each
  *  wire after it is clicked, as before. */
@@ -354,7 +354,7 @@ export function removeAllNetHighlights() {
 }
 
 // The name a pasted net label carries while the net label tool places it.
-// Cleared whenever a tool is picked, so plain Shift+L never inherits it.
+// Cleared whenever a tool is picked, so a plain l never inherits it.
 // The names the net label tool carries: { names, index, once, repeat }. A
 // pasted label repeats its one name until Esc; typed names are placed one
 // after another, the tool ending with the last.

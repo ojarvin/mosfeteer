@@ -34,7 +34,8 @@ test('keyboard help is generated from current bindings without Vim movement keys
   assert.match(help, /-- draw --\n/);
   assert.match(help, /-- file and console --\n/);
   assert.doesNotMatch(help, /\\n/);
-  assert.match(help, /l\s+.*line annotation/);
+  assert.match(help, /Shift\+L\s+.*line annotation/);
+  assert.match(help, /\nl\s+type net label names/);
   assert.match(help, /e\s+.*LaTeX equation label/);
   assert.doesNotMatch(help, /h j k|h j k l|hjkl/i);
 });

@@ -192,12 +192,12 @@ const EDITOR_KEYMAP = Object.freeze([
     ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
-    ['Shift+L', 'type net label names (a bus DOUT[3:0] spells out its bits), then click wires to place each'],
+    ['l', 'type net label names (a bus DOUT[3:0] spells out its bits), then click wires to place each'],
     ['Shift+N', 'type free text, then click to place it once'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
     ['b', 'place one two-point box, then return to selection; with a selection, box it (in the box tool, click objects to pick them, Enter boxes them)'],
-    ['l', 'persistent multi-point line annotation placement'],
+    ['Shift+L', 'persistent multi-point line annotation placement'],
   ]],
   ['edit', [
     ['Ctrl/Cmd+Z / u', 'undo; insert search keeps u as text'],
@@ -319,7 +319,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Esc', 'drop the ghost or exit insert mode'],
   ]],
   ['labels', [
-    ['Shift+L', 'type the names, then click a wire for each; Esc exits'],
+    ['l', 'type the names, then click a wire for each; Esc exits'],
     ['Shift+N', 'type the text, then click to place it; returns to selection'],
     ['t / = / F2', 'edit the selected (or pointed-at) label or part name'],
     ['Shift+Left / Shift+Right', 'align left / right (centre default)'],

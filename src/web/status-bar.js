@@ -134,7 +134,7 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
   }
   if (selection.nets) {
     add('Shift+T', 'tidy');
-    add('Shift+L', 'net label');
+    add('l', 'net label');
     add('dd', 'delete');
     return hints;
   }

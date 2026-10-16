@@ -2,7 +2,7 @@
  * Mosfeteer — keyboard-driven schematic editor.
  *
  * Modes:
- *   NORMAL   arrows move (selected comp or cursor), l line annotation, r rotate, Shift+R mirror,
+ *   NORMAL   arrows move (selected comp or cursor), l net label, Shift+L line annotation, r rotate, Shift+R mirror,
  *            Shift+Up/Down layer, dd delete, y/p copy-paste, Ctrl+Shift+V paste style, Ctrl+I/B
  *            toggle italic/bold on selected labels, w single managed wire mode, Tab cycle, Enter select-at-cursor,
  *   INSERT   type to fuzzy-search a component/label, Enter picks a ghost, arrows move cursor, Esc back.
@@ -6664,7 +6664,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   if (key === 'l') {
-    activateShapeAnnotation('line');
+    activateNetLabel();
     return;
   }
 
@@ -6682,7 +6682,7 @@ function onNormalKey(key, shiftKey = false) {
   }
 
   if (key === 'L') {
-    activateNetLabel();
+    activateShapeAnnotation('line');
     return;
   }
 
@@ -7092,8 +7092,8 @@ function toolSwitchForKey(key, shiftKey = false) {
     9: activateHighlight,
     a: () => activateShapeAnnotation('arrow'),
     b: () => activateShapeAnnotation('box'),
-    l: () => activateShapeAnnotation('line'),
-    L: activateNetLabel,
+    l: activateNetLabel,
+    L: () => activateShapeAnnotation('line'),
     e: activateEquation,
   };
   return tools[key] || null;

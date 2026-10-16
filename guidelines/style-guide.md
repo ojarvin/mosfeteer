@@ -515,7 +515,7 @@ pin list) reads best left-aligned in the monospace face (`style.mono`).
 Use the canonical `addNetLabel`, `renameNet`, and `renameNetLabel` APIs for
 electrical labels and net names. Net-label text follows the physical net name;
 removing one label occurrence does not remove or rename its net. In the editor,
-`Shift+L` asks for the names first -- several, separated by spaces or commas,
+`l` asks for the names first -- several, separated by spaces or commas,
 a bus range spelled out bit by bit (`DOUT[3:0]` places `DOUT[3]` ...
 `DOUT[0]`) -- and each click on an unambiguous physical wire places the next,
 handing back to selection after the last (Enter on an empty field names each
@@ -528,7 +528,7 @@ JPEG, WebP, GIF, or BMP on the clipboard; never SVG, which could carry script)
 becomes a box annotation drawing it whole: kept in the document as a PNG,
 JPEG, or WebP data URL (scaled to at most 1600 px, 4 MB), resized from its
 handles keeping its proportions, and exported with the drawing; linked-design
-bubbles leave it out. `l` draws a non-electrical multi-point line annotation with
+bubbles leave it out. `Shift+L` draws a non-electrical multi-point line annotation with
 rounded caps; its snapped vertices and segments remain editable. Line and
 arrow drafts share the wire tool's keys: Enter ends at the cursor, Backspace
 removes the last point, Shift locks the current leg orthogonal (as it locks a
