@@ -71,3 +71,21 @@ test('a gate bus drawn straight through MOS gates puts no dot on the gates it pa
   // M1 and M2 are passed straight through; M3's gate is a real tee.
   assert.deepEqual(dots, [[1080, 400]]);
 });
+
+test('a MOS bulk tied straight to its own source puts no dot where the tie meets the source lead', () => {
+  const tied = (extra = []) => {
+    const c = new Circuit();
+    for (const line of ['add nmosb M1 --at 0 0', 'add ground G1 --at 0 240', 'connect M1.s G1.gnd', 'connect M1.b M1.s', ...extra]) runCommand(c, line);
+    const net = c.netOfTerminal({ comp: 'M1', term: 's' });
+    // As drawn by hand: out of the bulk a cell, down past the source, into its lead.
+    net.branches = [[{ x: 0, y: 80 }, { x: 0, y: 240 }], [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 120 }, { x: 0, y: 120 }],
+      ...(extra.length ? [[{ x: 40, y: 40 }, { x: 160, y: 40 }]] : [])];
+    net.route = net.branches[0];
+    net.junctions = [];
+    c.syncJunctionSolders();
+    return [...c.components.values()].filter((part) => part.type === 'solder').map((part) => [part.transform.x, part.transform.y]);
+  };
+  assert.deepEqual(tied(), []);
+  // Something else on the tie: it is a net of its own making, dots and all.
+  assert.deepEqual(tied(['add resistor R1 --at 240 40', 'connect R1.a M1.s']).sort(), [[0, 120], [40, 40]]);
+});

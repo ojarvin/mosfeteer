@@ -5682,6 +5682,57 @@ export class Circuit {
     return out;
   }
 
+  /** Where a bulk MOS's bulk, wired to nothing but its own source, meets
+   *  the source's lead: following the wire from the bulk pin and from the
+   *  source pin, each to the first junction (`stops`, point keys) or
+   *  terminal, both arrive at the same point -- or the bulk's wire ends on
+   *  the source pin itself. */
+  _bulkSourceTies(net, paths, stops) {
+    const key = (p) => `${p.x},${p.y}`;
+    const pins = new Set(net.terminals.map((t) => this.components.get(t.comp)?.terminalWorld(t.term)).filter(Boolean).map(key));
+    // The wire as a graph of points, split wherever a pin or junction sits.
+    const marks = [...pins, ...stops].map((k) => { const [x, y] = k.split(',').map(Number); return { x, y }; });
+    const next = new Map();
+    const link = (a, b) => {
+      if (!next.has(key(a))) next.set(key(a), new Map());
+      next.get(key(a)).set(key(b), b);
+    };
+    for (const path of paths) {
+      for (let i = 1; i < path.length; i += 1) {
+        const [a, b] = [path[i - 1], path[i]];
+        const along = [a, ...marks.filter((m) => pointOnPath(m, [a, b]) && key(m) !== key(a) && key(m) !== key(b)), b]
+          .sort((m, n) => Math.hypot(m.x - a.x, m.y - a.y) - Math.hypot(n.x - a.x, n.y - a.y));
+        for (let j = 1; j < along.length; j += 1) {
+          if (key(along[j - 1]) === key(along[j])) continue;
+          link(along[j - 1], along[j]);
+          link(along[j], along[j - 1]);
+        }
+      }
+    }
+    // From a pin along its one wire to the first point where anything else is.
+    const follow = (start) => {
+      let [previous, at] = [null, start];
+      for (let guard = 0; guard < 10000; guard += 1) {
+        const onward = [...(next.get(key(at))?.values() || [])].filter((p) => !previous || key(p) !== key(previous));
+        if (at !== start && (stops.has(key(at)) || pins.has(key(at)) || onward.length !== 1)) return at;
+        if (onward.length !== 1) return null;
+        [previous, at] = [at, onward[0]];
+      }
+      return null;
+    };
+    const out = [];
+    for (const c of this.components.values()) {
+      if (!/^[np]mosb$/.test(c.type)) continue;
+      const has = (term) => net.terminals.some((t) => t.comp === c.refdes && t.term === term);
+      if (!has('b') || !has('s')) continue;
+      const source = c.terminalWorld('s');
+      const tie = follow(c.terminalWorld('b'));
+      if (!tie) continue;
+      if (key(tie) === key(source) || key(tie) === key(follow(source) || {})) out.push(tie);
+    }
+    return out;
+  }
+
   _netJunctions(net, paths) {
     const terminals = net.terminals.map((t) => this.getComponent(t.comp)?.terminalWorld(t.term)).filter(Boolean);
     return junctionPoints(paths, terminals, net.allowDiagonal);
@@ -6648,6 +6699,17 @@ export class Circuit {
         const key = `${p.x},${p.y}`;
         junctions.get(key)?.delete(net.id);
         if (junctions.get(key)?.size === 0) junctions.delete(key);
+      }
+    }
+    // A MOS bulk tied straight to its own source is part of the symbol, as a
+    // body arrow is: where the tie meets the source's lead, no dot.
+    for (const net of this.nets.values()) {
+      const paths = net.branches?.length ? net.branches : net.route?.length >= 2 ? [net.route] : [];
+      const stops = new Set([...junctions].filter(([, ids]) => ids.has(net.id)).map(([key]) => key));
+      for (const p of this._bulkSourceTies(net, paths, stops)) {
+        const key = `${p.x},${p.y}`;
+        if (junctions.get(key)?.size !== 1) continue;
+        junctions.delete(key);
       }
     }
     const added = [];
