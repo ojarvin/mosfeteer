@@ -117,7 +117,7 @@ The menu item opens an editor beside the drawing: a grid with a row of slots
 per phase, started from the diagram already drawn, else from the beats (one
 slot per beat, high where the phase's switches are closed; **Read the beats**
 refills it). Click a slot to flip it, or move a cursor with the arrows and
-type `1` or `0`; the empty cell after the last slot adds one. `+` repeats
+type `1` or `0` (or an analog value, below); the empty cell after the last slot adds one. `+` repeats
 the slot at the cursor in every row -- a state held one slot longer -- `*` (**Repeat period**) copies
 every wave once after itself, a second period to edit, and Delete removes
 a slot. The slot width is in cells, and **Gaps** lists
@@ -131,6 +131,26 @@ its phase takes the phase's shifts the other way round: the phase falling
 early, it rises early. Every change redraws the diagram in place, and an
 editing session is one undo entry. A complement follows its phase inverted until one of its own
 slots is changed; any other phase with no wave is low.
+
+A signal row may be **analog** (a supply ramp, a sampled input): a value
+from -1 to 1 at the start of each slot, joined straight to the next or
+(**Hold**, `--hold`) held through its slot; the first value is held before
+the start and the last after the end, and analog rows do not repeat. A
+row with no value below zero runs from 0 at the bottom to 1 at the top;
+one reaching below is drawn about a dashed zero line through its middle.
+In the editor `.` or `-` begins a value (`.35`, `-.5`), digits go on, and
+Enter, Tab, Space or an arrow sets it; F2 begins from the slot's own value.
+A value between the levels makes a signal analog, and **Analog** turns it
+back (each value rounding to the nearer level); `timing VDD=0,.35,.7,1`
+does the same from the command line. Switch phases stay digital. The row is
+drawn as one box annotation on the grid with its curve inside
+(`timing.analog`), so the curve's points need not be on the grid. Every
+slot start of an analog row is a point arrows, marks and spans take, as a
+digital row's edges do (an arrow at the row's middle height); a mark on a
+point between 0 and ±1 is a threshold, a dashed line at its level from the
+row's start beside the mark's own. Any row may be taller: **Taller** and
+**Shorter** (`--height ROW=4`) step it two cells at a time, its name staying
+centred.
 
 Rows need not be switch phases: **Signals** in the editor (or `timing
 --add CLK,EN`) adds rows of the diagram's own -- a clock, an enable, every

@@ -262,7 +262,11 @@ timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--g
                                ~PHASE names the complement; --fall/--rise move a phase's falling/rising
                                edges N cells (negative earlier), e.g. a bottom plate opening early;
                                --add CLK,EN adds rows of the diagram's own, not tied to switches (no
-                               switches needed), --rm removes them; they are drawn but make no beats
+                               switches needed), --rm removes them; they are drawn but make no beats;
+                               a signal's WAVE with commas is analog, values -1..1 at slot starts
+                               (VDD=0,.35,.7,1), joined straight or --hold VDD held (--linear rejoins);
+                               --height ROW=4 makes a row taller (even cells); a --mark on an analog
+                               point between 0 and full is a threshold, dashed at its level
 box ID... [--text TEXT]        a dashed box one cell around parts, nets, and labels (a functional block)
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list

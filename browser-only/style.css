@@ -8294,3 +8294,23 @@ html.dark[data-accent] {
 .toolbar-menu .settings-accent .swatch[aria-checked="true"] {
   box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--text);
 }
+
+/* An analog slot (beats-ui.js timing editor): its value as a fill from the
+   bottom, or from the middle down below zero, and as a number. */
+.timing-grid.has-analog .timing-cell {
+  width: 30px;
+}
+
+.timing-cell.analog {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(to top, var(--accent-tint) calc(var(--v, 0) * 100%), transparent 0);
+}
+
+.timing-cell.analog.negative {
+  background: linear-gradient(to bottom, transparent 50%, var(--accent-tint) 50%, var(--accent-tint) calc(50% + var(--v, 0) * 50%), transparent 0);
+}
+
+.timing-cell.new.analog {
+  background: none;
+}

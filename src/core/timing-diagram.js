@@ -19,6 +19,16 @@
  * and its rise late, so the two are never high at once. Other phases change
  * at the start of the gap.
  *
+ * A signal row may instead be analog: a value from -1 to 1 at the start of
+ * each slot (`values`), joined by straight lines or held through the slot
+ * (`hold`), from 0 at the bottom to 1 at the top -- or, with any value below
+ * 0, about a dashed zero line through the middle. It is drawn as one box
+ * annotation with its curve inside (`timing.analog`), so the curve's points
+ * need not be on the grid while the box is. Its points take arrows, marks
+ * and spans as a digital row's edges do; a mark on a point between the
+ * extremes is a threshold, a dashed line at its level from the row's start.
+ * Any row may be taller than two cells (`height`, even cells).
+ *
  * A row's wave is, first to last: the one given for it; the one it had in
  * the diagram already; for a complement (a barred phase), its phase drawn
  * inverted, gaps included; one slot per beat, high where the phase's
@@ -32,7 +42,10 @@ import { complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, swi
 import { plainTexText } from './render.js';
 
 const WAVE_HEIGHT = 2 * GRID;
-const ROW_PITCH = 3 * GRID;
+/** Between one row and the next. */
+const ROW_GAP = GRID;
+/** The tallest row, in cells. */
+export const MAX_ROW_CELLS = 16;
 // The diagram keeps three cells from what is drawn, so it reads as its own
 // figure rather than part of the circuit.
 const CLEARANCE = 3 * GRID;
@@ -49,6 +62,33 @@ export function parseTimingBits(text) {
   const bad = bits.match(/[^01]/);
   if (bad) throw new Error(`a timing wave is made of 1 (high) and 0 (low), one per slot, not "${bad[0]}"`);
   return bits;
+}
+
+/** A row's height as given or saved: even cells from 2, in drawing units. */
+export function rowHeight(cells) {
+  const n = Math.round(Number(cells));
+  return Number.isFinite(n) && n >= 2 ? Math.min(MAX_ROW_CELLS, n - (n % 2)) * GRID : WAVE_HEIGHT;
+}
+
+/** An analog value as typed: a number from -1 to 1 (`.5`, `-0.25`). */
+export function parseTimingValue(text) {
+  const source = String(text ?? '').trim();
+  const value = Number(/^[+-]?\./.test(source) ? source.replace('.', '0.') : source);
+  if (source === '' || !Number.isFinite(value)) throw new Error(`an analog value is a number from -1 to 1, not "${source}"`);
+  if (value < -1 || value > 1) throw new Error(`an analog value is from -1 to 1 (the row's full height), not ${value}`);
+  return Math.round(value * 1e4) / 1e4;
+}
+
+/** A row's wave as given: digital bits (`0101`), or analog values -- a list,
+ *  or text with commas or a value that is not 0 or 1 (`0,.5,1`, `.3`).
+ *  Returns { bits } or { values }. */
+export function parseTimingWave(wave) {
+  if (Array.isArray(wave)) return { values: wave.map(parseTimingValue) };
+  const text = String(wave ?? '').trim();
+  if (/[,.\-]/.test(text)) {
+    return { values: text.split(/[\s,]+/).filter(Boolean).map(parseTimingValue) };
+  }
+  return { bits: parseTimingBits(text) };
 }
 
 /** A level the other way up. */
@@ -152,19 +192,72 @@ export const MAX_EDGE_SHIFT = 8;
  * switch opening a cell before its top plate's. An edge stays inside the
  * columns on either side of it and after the edge before it.
  */
-export function timingRowGeometry(levels, columns, x, top, shift = {}) {
-  return traceRow(levels, columns, x, top, shift).points;
+export function timingRowGeometry(levels, columns, x, top, shift = {}, height = WAVE_HEIGHT) {
+  return traceRow(levels, columns, x, top, shift, height).points;
 }
 
 /** The edges one row draws (as timingRowGeometry): [{ at, x, rise }], `at`
  *  the slot boundary each belongs to (see timingColumns). An edge cancelled
  *  by its neighbour shifted onto it is not drawn. */
-export function timingRowEdges(levels, columns, x, top, shift = {}) {
-  return traceRow(levels, columns, x, top, shift).edges;
+export function timingRowEdges(levels, columns, x, top, shift = {}, height = WAVE_HEIGHT) {
+  return traceRow(levels, columns, x, top, shift, height).edges;
 }
 
-function traceRow(levels, columns, x, top, shift) {
-  const y = (level) => (level === '1' ? top : top + WAVE_HEIGHT);
+/** Where each slot starts, from the waves' left edge: [x of slot 0, ...,
+ *  x where the lead-out begins]. Gap columns come before the slot they open. */
+function slotStarts(columns) {
+  const starts = [];
+  let x = 0;
+  for (const column of columns) {
+    if (column.kind !== 'gap' && column.at >= 0) starts[column.at] = x;
+    x += column.w;
+  }
+  return starts;
+}
+
+/**
+ * An analog row's curve, from the waves' top-left corner: its `values` at
+ * the start of each slot, joined straight or (`hold`) held through the
+ * slot; the first held before it, the last after. Points are { x, v }, v
+ * the value (-1..1). Also each slot boundary's point (`points`, by slot
+ * index, through the start of the lead-out), where arrows, marks and spans
+ * attach, and the whole width.
+ */
+export function analogRowGeometry(values, columns, { hold = false } = {}) {
+  const starts = slotStarts(columns);
+  const end = columns.reduce((sum, column) => sum + column.w, 0);
+  const count = starts.length - 1;
+  const valueAt = (slot) => (values.length ? values[Math.min(slot, values.length - 1)] : 0);
+  const curve = [{ x: 0, v: valueAt(0) }];
+  for (let slot = 0; slot <= count; slot += 1) {
+    const x = starts[slot];
+    if (hold && slot > 0) curve.push({ x, v: valueAt(slot - 1) });
+    curve.push({ x, v: valueAt(slot) });
+  }
+  curve.push({ x: end, v: valueAt(count) });
+  // Straight runs are one segment.
+  const trace = curve.filter((point, i) => i === 0 || point.x !== curve[i - 1].x || point.v !== curve[i - 1].v);
+  for (let i = trace.length - 2; i > 0; i -= 1) {
+    const [a, b, c] = [trace[i - 1], trace[i], trace[i + 1]];
+    if ((a.v === b.v && b.v === c.v) || (a.x === b.x && b.x === c.x)) trace.splice(i, 1);
+  }
+  const points = starts.map((x, slot) => ({ at: slot, x, v: valueAt(slot) }));
+  return { trace, points, width: end };
+}
+
+/** Whether an analog row reaches below zero: drawn about a middle zero line. */
+export const bipolar = (values) => values.some((value) => value < 0);
+
+/** Each row's top and height, from the first row's top. */
+function rowLayout(rows) {
+  const heights = rows.map((row) => rowHeight(row.height));
+  const tops = [];
+  heights.reduce((top, height, index) => { tops[index] = top; return top + height + ROW_GAP; }, 0);
+  return { tops, heights, bottom: rows.length ? tops.at(-1) + heights.at(-1) : 0 };
+}
+
+function traceRow(levels, columns, x, top, shift, height = WAVE_HEIGHT) {
+  const y = (level) => (level === '1' ? top : top + height);
   const starts = [];
   columns.reduce((at, column) => { starts.push(at); return at + column.w; }, x);
   const end = x + columns.reduce((sum, column) => sum + column.w, 0);
@@ -307,7 +400,7 @@ export function timingBeatBands(circuit, index) {
   const last = Math.max(...runs.flatMap((run) => run.slots));
   const slotOf = (column) => (column.kind === 'gap' ? null : Math.min(last, column.at < 0 ? count - 1 : column.at >= count ? 0 : column.at));
   const top = before.y - GRID / 2;
-  const h = (rows.length - 1) * ROW_PITCH + WAVE_HEIGHT + GRID;
+  const h = rowLayout(rows).bottom + GRID;
   const bands = [];
   let x = before.x;
   let open = false;
@@ -359,18 +452,26 @@ export function existingTimingDiagram(circuit) {
   if (!parts.length) return null;
   const bits = new Map();
   const shifts = new Map();
+  // Analog rows' values (and whether they hold), and rows drawn taller.
+  const values = new Map();
+  const holds = new Set();
+  const heights = new Map();
   for (const label of parts) {
+    if (label.timing.part || label.kind !== 'label') continue;
     if (typeof label.timing.bits === 'string') bits.set(label.timing.phase, label.timing.bits);
     if (label.timing.shift) shifts.set(label.timing.phase, normalizeEdgeShift(label.timing.shift));
+    if (Array.isArray(label.timing.values)) values.set(label.timing.phase, label.timing.values);
+    if (label.timing.hold) holds.add(label.timing.phase);
+    if (label.timing.height) heights.set(label.timing.phase, label.timing.height);
   }
   // Its arrows, marks and spans (`timing.part`) are neither waves nor names.
-  const waves = parts.filter((label) => label.kind === 'line' && !label.timing.part);
+  const waves = parts.filter((label) => (label.kind === 'line' || label.kind === 'box') && !label.timing.part);
   const names = parts.filter((label) => label.kind === 'label' && !label.timing.part);
   // Where it stands, from its names: they keep one place beside the waves,
   // while a wave's own extent moves with its edges (one shifted early at
   // the start reaches left) and its levels (a top row low throughout).
   const x = names.length ? Math.max(...names.map((label) => label.bbox().x + label.bbox().w)) + LABEL_GAP : Math.min(...waves.map((label) => label.bbox().x));
-  const y = names.length ? Math.min(...names.map((label) => label.anchorWorld().y - WAVE_HEIGHT / 2)) : Math.min(...waves.map((label) => label.bbox().y));
+  const y = names.length ? Math.min(...names.map((label) => label.anchorWorld().y - rowHeight(label.timing.height) / 2)) : Math.min(...waves.map((label) => label.bbox().y));
   const first = parts.find((label) => label.timing.slot) || parts[0];
   // The rows' order, top to bottom, as the names stand.
   const sorted = [...names].sort((a, b) => a.anchorWorld().y - b.anchorWorld().y);
@@ -383,7 +484,7 @@ export function existingTimingDiagram(circuit) {
   const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${owner[label.timing.part] || label.timing.part}:${label.timing.item}`));
   const missing = Object.entries({ arrow: arrows, mark: marks, span: spans })
     .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
-  return { ids: parts.map((label) => label.id), bits, shifts, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
+  return { ids: parts.map((label) => label.id), bits, shifts, values, holds, heights, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -400,17 +501,20 @@ function arranged(phases, order) {
 export function timingPairs(rows, setting = 'auto') {
   if (setting === 'none' || setting === false) return [];
   if (Array.isArray(setting)) {
-    const index = (key) => rows.findIndex((row) => samePhase(row.key, key));
+    // An analog row has no edges to keep apart.
+    const index = (key) => rows.findIndex((row) => samePhase(row.key, key) && !row.values);
     return setting.map(([a, b]) => [index(a), index(b)]).filter(([a, b]) => a >= 0 && b >= 0 && a !== b).map(([a, b]) => [Math.min(a, b), Math.max(a, b)]);
   }
   // A complement follows its phase; a signal of the diagram's own is kept
   // apart only when asked.
-  const skip = new Set(rows.flatMap((row, index) => (row.complementOf !== undefined || row.signal ? [index] : [])));
+  const skip = new Set(rows.flatMap((row, index) => (row.complementOf !== undefined || row.signal || row.values ? [index] : [])));
   return defaultTimingPairs(rows.map((row) => row.bits), skip);
 }
 
 /** Every row's wave as the diagram would draw it now (see the header):
- *  [{ key, source, bits, from, complementOf, signal }], `from` one of
+ *  [{ key, source, bits, values, hold, height, from, complementOf, signal }]
+ *  (an analog row's `values`, its `bits` all low, one per value, so it
+ *  counts its slots as the others do), `from` one of
  *  'typed', 'diagram', 'complement' (drawn as row `complementOf` inverted),
  *  'beats', or 'low' (bits empty); `signal` marks the diagram's own signals.
  *  `phases` defaults to timingPhases. */
@@ -418,9 +522,15 @@ export function timingRowSources(circuit, { fromBeats = false, typed = new Map()
   const drawnBefore = existingTimingDiagram(circuit);
   const phases = arranged(given || timingPhases(circuit), order || drawnBefore?.order);
   const before = fromBeats ? null : drawnBefore;
+  const analog = (values) => ({ bits: '0'.repeat(values.length), values });
   return phases.map(({ key, source, signal }) => {
-    const own = signal ? { signal: true } : {};
-    if (typed.has(key)) return { key, source, bits: typed.get(key), from: 'typed', ...own };
+    const height = drawnBefore?.heights.get(key);
+    const own = { ...(signal ? { signal: true } : {}), ...(height ? { height } : {}) };
+    if (typed.has(key)) {
+      const wave = typed.get(key);
+      return { key, source, ...(wave.values ? analog(wave.values) : { bits: wave.bits ?? wave }), ...(wave.values && (wave.hold ?? drawnBefore?.holds.has(key)) ? { hold: true } : {}), from: 'typed', ...own };
+    }
+    if (before?.values.has(key)) return { key, source, ...analog(before.values.get(key)), ...(before.holds.has(key) ? { hold: true } : {}), from: 'diagram', ...own };
     if (before?.bits.has(key)) return { key, source, bits: before.bits.get(key), from: 'diagram', ...own };
     const base = isComplementPhase(key) ? phases.findIndex((other) => samePhase(other.key, complementKey(key))) : -1;
     if (base >= 0) return { key, source, bits: '', from: 'complement', complementOf: base, ...own };
@@ -458,9 +568,9 @@ function timingNotes({ arrows = [], marks = [], spans = [] }) {
  * that. Returns the pieces, the guides ({ kind, index, x, bottom }), the items whose
  * edges are not drawn ({ kind, index }), and the height they all reach.
  */
-function notesLayout(notes, edgeOf, rowCount) {
-  const mid = (edge) => ({ x: edge.x, y: edge.row * ROW_PITCH + WAVE_HEIGHT / 2 });
-  const wavesBottom = (rowCount - 1) * ROW_PITCH + WAVE_HEIGHT;
+function notesLayout(notes, edgeOf, rows) {
+  const mid = (edge) => ({ x: edge.x, y: rows.tops[edge.row] + rows.heights[edge.row] / 2 });
+  const wavesBottom = rows.bottom;
   const missing = [];
   const guides = [];
   const guide = (kind, index, x, bottom) => guides.push({ kind, index, x, bottom });
@@ -470,10 +580,16 @@ function notesLayout(notes, edgeOf, rowCount) {
     if (!a || !b || (a.x === b.x && a.row === b.row)) missing.push({ kind: 'arrow', index });
     else arrows.push({ index, from: mid(a), to: mid(b) });
   });
+  // A mark on an analog point between its extremes is a threshold too: a
+  // dashed line at its level, from the row's start (drawn by its box).
+  const thresholds = [];
   notes.marks.forEach((item, index) => {
     const edge = edgeOf(item);
     if (!edge) missing.push({ kind: 'mark', index });
-    else guide('mark', index, edge.x, wavesBottom + GRID);
+    else {
+      guide('mark', index, edge.x, wavesBottom + GRID);
+      if (edge.v !== undefined && Math.abs(edge.v) !== 1 && edge.v !== 0) thresholds.push({ row: edge.row, x: edge.x, v: edge.v });
+    }
   });
   const placed = [];
   notes.spans.forEach((item, index) => {
@@ -499,7 +615,7 @@ function notesLayout(notes, edgeOf, rowCount) {
     return { ...span, y };
   });
   const height = lanes.length ? wavesBottom + (lanes.length - 1) * 3 * GRID + 4 * GRID : wavesBottom;
-  return { arrows, guides, spans, missing, height };
+  return { arrows, guides, spans, missing, height, thresholds };
 }
 
 /** Take the drawn diagram away; returns whether there was one. */
@@ -524,7 +640,7 @@ export function removeTimingDiagram(circuit) {
  * plus its own. Returns the rows: [{ phase, bits, from, shift, label, line,
  * lines }].
  */
-export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, need = [] } = {}) {
+export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, need = [], heights: givenHeights = {}, hold: givenHold = {} } = {}) {
   const current = timingPhases(circuit);
   for (const name of add) {
     if (!String(name).trim()) throw new Error('a signal needs a name');
@@ -547,8 +663,26 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     return phase;
   };
   const typed = new Map();
-  for (const [name, text] of Object.entries(given)) typed.set(named(name).key, parseTimingBits(text));
+  for (const [name, text] of Object.entries(given)) {
+    const phase = named(name);
+    const wave = parseTimingWave(text);
+    if (wave.values && !phase.signal) throw new Error(`${plainTexText(phase.source)} is a switch phase: its row is digital (1 and 0); an analog row is a signal of the diagram's own (timing --add)`);
+    typed.set(phase.key, wave);
+  }
+  // Holding analog values through their slots, or joining them straight.
+  for (const [name, on] of Object.entries(givenHold)) {
+    const phase = named(name);
+    const current = typed.get(phase.key) || (existingTimingDiagram(circuit)?.values.has(phase.key) ? { values: existingTimingDiagram(circuit).values.get(phase.key) } : null);
+    if (!current?.values) throw new Error(`${plainTexText(phase.source)} is not analog: only an analog row holds its values`);
+    typed.set(phase.key, { ...current, hold: !!on });
+  }
   const rows = timingRowSources(circuit, { fromBeats, typed, phases, order: order ? order.map((name) => named(name).key) : null });
+  for (const [name, cells] of Object.entries(givenHeights)) {
+    const key = named(name).key;
+    const n = Number(cells);
+    if (!Number.isInteger(n) || n < 2 || n % 2 || n > MAX_ROW_CELLS) throw new Error(`a row is 2, 4, 6 ... ${MAX_ROW_CELLS} cells tall, not ${cells}`);
+    for (const row of rows) if (samePhase(row.key, key)) { if (n === 2) delete row.height; else row.height = n; }
+  }
   const before = existingTimingDiagram(circuit);
   const ownShift = new Map();
   for (const [name, shift] of Object.entries(givenShifts)) ownShift.set(named(name).key, normalizeEdgeShift(shift));
@@ -568,14 +702,21 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   });
   // The edges each row draws, from the waves' top-left corner; the arrows,
   // marks and spans placed on them.
-  const edges = rows.map((row, r) => timingRowEdges(levels[r], columns, 0, 0, drawnShift[r]));
+  const geometry = rowLayout(rows);
+  const analog = rows.map((row) => (row.values ? analogRowGeometry(row.values, columns, { hold: row.hold }) : null));
+  const edges = rows.map((row, r) => (analog[r] ? [] : timingRowEdges(levels[r], columns, 0, 0, drawnShift[r], geometry.heights[r])));
+  // An analog row's every slot start is a point to attach to.
   const edgeOf = (ref) => {
     const r = rows.findIndex((row) => samePhase(row.key, ref.row));
+    if (r >= 0 && analog[r]) {
+      const point = analog[r].points[ref.at];
+      return point ? { x: point.x, row: r, v: point.v } : null;
+    }
     const edge = r < 0 ? null : edges[r].find((candidate) => candidate.at === ref.at);
     return edge ? { x: edge.x, row: r } : null;
   };
   const notes = timingNotes({ arrows: arrows ?? before?.arrows ?? [], marks: marks ?? before?.marks ?? [], spans: spans ?? before?.spans ?? [] });
-  const layout = notesLayout(notes, edgeOf, rows.length);
+  const layout = notesLayout(notes, edgeOf, geometry);
   // What was just asked for must be drawn; one kept from before whose edge
   // has gone waits for it.
   const describe = (ref) => {
@@ -603,16 +744,17 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     ...(notes.marks.length ? { marks: notes.marks } : {}),
     ...(notes.spans.length ? { spans: notes.spans } : {}),
   };
-  const labels = rows.map(({ key, source, bits, from, signal }, row) => circuit.addLabel({
+  const labels = rows.map(({ key, source, bits, values, hold, height, from, signal }, row) => circuit.addLabel({
     text: source,
     math: isTexSource(source),
     align: 'right',
     // Placed below, once the diagram's spot is known.
     x: 0,
-    y: row * ROW_PITCH,
+    y: geometry.tops[row],
     timing: {
       phase: key,
-      ...(from === 'complement' || from === 'low' ? {} : { bits }),
+      ...(values ? { values, ...(hold ? { hold: true } : {}) } : from === 'complement' || from === 'low' ? {} : { bits }),
+      ...(height ? { height } : {}),
       ...(own(key).fall || own(key).rise ? { shift: own(key) } : {}),
       ...(signal ? { signal: true } : {}),
       ...settings,
@@ -633,13 +775,26 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     waveX = snap(drawn.x + drawn.w / 2 - waves / 2);
     top = timingSpot(circuit, { x: waveX - LABEL_GAP - column, w: column + LABEL_GAP + waves, h: height }, drawn);
   }
-  labels.forEach((label, row) => label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, top + row * ROW_PITCH + WAVE_HEIGHT / 2));
+  labels.forEach((label, row) => label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, top + geometry.tops[row] + geometry.heights[row] / 2));
   drawNotes(circuit, notes, layout, { x: waveX, y: top }, settings);
   return labels.map((label, row) => {
-    const { key, bits, from, signal } = rows[row];
-    const points = timingRowGeometry(levels[row], columns, waveX, top + row * ROW_PITCH, drawnShift[row]);
-    const line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
-    return { phase: key, bits, from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
+    const { key, bits, values, hold, from, signal } = rows[row];
+    const rowTop = top + geometry.tops[row];
+    let line;
+    if (analog[row]) {
+      // The curve in a box of its own: the box on the grid, the curve not.
+      const box = analog[row];
+      const thresholds = layout.thresholds.filter((mark) => mark.row === row).map(({ x, v }) => [x, v]);
+      line = circuit.addAnnotation('box', {
+        x: waveX, y: rowTop, end: { x: waveX + box.width, y: rowTop + geometry.heights[row] },
+        style: { lineStyle: 'solid' },
+        timing: { phase: key, analog: { trace: box.trace.map(({ x, v }) => [x, v]), ...(bipolar(values) ? { bipolar: true } : {}), ...(thresholds.length ? { thresholds } : {}) }, ...settings },
+      }).id;
+    } else {
+      const points = timingRowGeometry(levels[row], columns, waveX, rowTop, drawnShift[row], geometry.heights[row]);
+      line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
+    }
+    return { phase: key, bits, ...(values ? { values, ...(hold ? { hold: true } : {}) } : {}), from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
   });
 }
 

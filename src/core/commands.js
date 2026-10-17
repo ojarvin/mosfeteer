@@ -83,6 +83,9 @@ const FLAG_ARITY = {
   text: 1,
   order: 1,
   slot: 1,
+  height: 1,
+  hold: 1,
+  linear: 1,
   beats: 0,
   gaps: 1,
   'no-gaps': 0,
@@ -540,6 +543,11 @@ export function commandHelp() {
     '                                   --fall / --rise move a phase\'s falling / rising edges N cells (negative earlier);',
     '                                   --order φ2,φ1 sets the rows\' order; a drawn diagram stays where it stands,',
     '                                   --place puts it again where the drawing has room for it.',
+    '                                   An analog signal (a supply ramp): WAVE as values from -1 to 1, one per slot start, with',
+    '                                   commas (VDD=0,.5,1,1): joined straight, or held through each slot with --hold VDD (--linear',
+    '                                   joins them again); below zero, the row is drawn about a dashed zero line. --height ROW=4,...',
+    '                                   sets rows\' heights (2, 4, 6 ... cells). Its points take arrows, marks and spans as edges do;',
+    '                                   a mark on a point between 0 and full is a threshold, dashed at its level.',
     '                                   On the edges (ROW:N, the row\'s edge at the start of slot N; N = slots+1 is the one',
     '                                   after the last): --arrow CLK:2>Q:2,... draws a curved arrow from an edge to the',
     '                                   transition it causes ("CLK:2>Q:2=TEXT;..." labels it); --mark ROW:N,... a dashed line through every row; --span',
@@ -1142,9 +1150,17 @@ function dispatch(circuit, cmd, pos, flags, io) {
       need.push(...added.map((item) => ({ kind: flag, item })));
       if (added.length || cleared(kind)) notes[kind] = [...(cleared(kind) ? [] : current?.[kind] || []), ...added];
     }
-    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need });
+    // --height ROW=N,...: rows' heights in cells; --hold / --linear ROW,...: analog rows' shape.
+    const heights = {};
+    for (const item of flags.height ? String(flags.height[0]).split(',').filter(Boolean) : []) {
+      const at = item.lastIndexOf('=');
+      if (at <= 0) throw new Error(`--height takes ROW=N (cells), not "${item}"`);
+      heights[item.slice(0, at)] = item.slice(at + 1);
+    }
+    const hold = Object.fromEntries([...list('hold').map((name) => [name, true]), ...list('linear').map((name) => [name, false])]);
+    const rows = addTimingDiagram(circuit, { bits, fromBeats: !!flags.beats, slot, gaps, shifts, order, place: !!flags.place, add: signalsAdded, remove: signalsRemoved, ...notes, need, heights, hold });
     if (!rows.length) return result('removed the timing diagram: it had no rows left', [], true);
-    const wave = (row) => (row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
+    const wave = (row) => (row.values ? `${row.values.join(',')}${row.hold ? ' (held)' : ''}` : row.from === 'complement' ? '(inverted)' : row.bits || '(low)');
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     const drawn = existingTimingDiagram(circuit);
     const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;

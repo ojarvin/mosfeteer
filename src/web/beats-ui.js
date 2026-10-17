@@ -5,7 +5,7 @@
  */
 
 import { element } from './dom.js';
-import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, addTimingDiagram, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingBeatBands, timingPhases, timingRowSources } from '../core/timing-diagram.js';
+import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, addTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingBeatBands, timingPhases, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
@@ -558,6 +558,8 @@ function openTimingDialog() {
     // its other end.
     notes: { arrows: [], marks: [], spans: [] },
     pending: null,
+    // A number being typed into the cursor's slot (.35, -0.5), or null.
+    entry: null,
     // The model revision the editor's rows were read at or last wrote.
     seen: null,
   };
@@ -576,7 +578,11 @@ function openTimingDialog() {
       baseKey: row.complementOf !== undefined ? found[row.complementOf].key : undefined,
       follows: row.from === 'complement',
       signal: !!row.signal,
-      wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
+      // An analog row's values, as text (0.35); a digital row's 1s and 0s.
+      analog: !!row.values,
+      hold: !!row.hold,
+      height: row.height || 2,
+      wave: row.values ? row.values.map(String) : row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
       shift: drawn?.shifts.get(row.key) || { fall: 0, rise: 0 },
     })));
     state.slot = drawn?.slot || DEFAULT_SLOT_CELLS;
@@ -611,13 +617,19 @@ function openTimingDialog() {
     const n = length();
     return [shown(row, (at + n - 1) % n), shown(row, at % n)];
   };
-  const hasEdge = (r, at) => { const [a, b] = levelAround(rows[r], at); return a !== b; };
+  // An analog row's every slot start is a point arrows, marks and spans take.
+  const hasEdge = (r, at) => {
+    if (rows[r].analog) return at >= 0 && at <= length();
+    const [a, b] = levelAround(rows[r], at);
+    return a !== b;
+  };
   const sameRef = (a, b) => samePhase(a.row, b.row) && a.at === b.at;
   const usesEdge = (ref) => state.notes.marks.some((mark) => sameRef(mark, ref))
     || [...state.notes.arrows, ...state.notes.spans].some((item) => sameRef(item.from, ref) || sameRef(item.to, ref));
   const edgeName = (ref) => {
     const r = rows.findIndex((row) => samePhase(row.key, ref.row));
     if (r < 0) return `${plainMarkup(ref.row)} ${ref.at + 1}`;
+    if (rows[r].analog) return `${plainMarkup(rows[r].source)} ${at(rows[r], ref.at)} @${ref.at + 1}`;
     const [a, b] = levelAround(rows[r], ref.at);
     return `${plainMarkup(rows[r].source)} ${a === b ? '·' : b === '1' ? '↑' : '↓'}${ref.at + 1}`;
   };
@@ -628,7 +640,13 @@ function openTimingDialog() {
 
   const redraw = () => {
     const bits = {};
-    for (const row of rows) if (!row.follows) bits[row.key] = row.wave.join('');
+    const hold = {};
+    const heights = {};
+    for (const row of rows) {
+      if (!row.follows) bits[row.key] = row.analog ? row.wave.map(Number) : row.wave.join('');
+      if (row.analog) hold[row.key] = row.hold;
+      heights[row.key] = row.height || 2;
+    }
     const shifts = Object.fromEntries(rows.map((row) => [row.key, row.shift]));
     const order = rows.map((row) => row.key);
     const place = state.place;
@@ -639,7 +657,7 @@ function openTimingDialog() {
     const remove = drawnRows.filter((phase) => phase.signal && !rows.some((row) => samePhase(row.key, phase.key))).map((phase) => phase.source);
     const start = snapshot();
     try {
-      if (rows.length) addTimingDiagram(editor.circuit, { bits, slot: state.slot, gaps: state.gaps, shifts, order, place, fromBeats: true, add, remove, ...state.notes });
+      if (rows.length) addTimingDiagram(editor.circuit, { bits, hold, heights, slot: state.slot, gaps: state.gaps, shifts, order, place, fromBeats: true, add, remove, ...state.notes });
       else removeTimingDiagram(editor.circuit);
     } catch (err) {
       status.textContent = err.message;
@@ -680,7 +698,8 @@ function openTimingDialog() {
   // a row cannot overlap itself.
   const renderPairs = () => {
     pairsBox.replaceChildren();
-    const own = rows.filter((row) => row.baseKey === undefined);
+    // An analog row has no edges to keep apart.
+    const own = rows.filter((row) => row.baseKey === undefined && !row.analog);
     const active = activePairs();
     const head = element('div', { class: 'timing-dialog-options' });
     const body = element('div', { class: 'timing-pairs-body' }, [head]);
@@ -717,6 +736,8 @@ function openTimingDialog() {
 
   const renderGrid = () => {
     grid.replaceChildren();
+    // Analog values need wider slots; every row's, so the columns line up.
+    grid.classList.toggle('has-analog', rows.some((row) => row.analog));
     const n = length();
     state.cursor.slot = Math.min(state.cursor.slot, n);
     rows.forEach((row, r) => {
@@ -725,18 +746,33 @@ function openTimingDialog() {
       const cells = element('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
       for (let slot = 0; slot < n; slot += 1) {
         const level = shown(row, slot);
-        const cell = element('span', { class: `timing-cell level-${level}${state.cursor.row === r && state.cursor.slot === slot ? ' cursor' : ''}`, role: 'gridcell' });
+        const here = state.cursor.row === r && state.cursor.slot === slot;
+        // An analog slot shows its value as a fill from the bottom (or,
+        // below zero, down from the middle) and as a number.
+        const cell = row.analog
+          ? element('span', {
+            class: `timing-cell analog${Number(level) < 0 ? ' negative' : ''}${here ? ' cursor' : ''}`, role: 'gridcell', title: level,
+            style: `--v: ${Math.abs(Number(level))}`,
+            text: here && state.entry !== null ? `${state.entry}▏` : String(level).replace(/^(-?)0\./, '$1.'),
+          })
+          : element('span', { class: `timing-cell level-${level}${here ? ' cursor' : ''}`, role: 'gridcell' });
         cell.addEventListener('mousedown', (event) => {
           event.preventDefault();
           state.cursor = { row: r, slot };
           grid.focus();
-          setCell(level === '1' ? '0' : '1');
+          // A click flips a digital slot; an analog one it picks.
+          if (row.analog) renderGrid();
+          else setCell(level === '1' ? '0' : '1');
         });
         edgeHandle(cell, r, slot);
         cells.append(cell);
       }
       // After the last slot, an empty cell to type a new one into.
-      const add = element('span', { class: `timing-cell new${state.cursor.row === r && state.cursor.slot === n ? ' cursor' : ''}`, title: 'Type 1 or 0 here to add a slot' });
+      const typingHere = state.cursor.row === r && state.cursor.slot === n;
+      const add = element('span', {
+        class: `timing-cell new${row.analog ? ' analog' : ''}${typingHere ? ' cursor' : ''}`, title: 'Add a slot',
+        ...(typingHere && state.entry !== null ? { text: `${state.entry}▏` } : {}),
+      });
       add.addEventListener('mousedown', (event) => {
         event.preventDefault();
         state.cursor = { row: r, slot: n };
@@ -759,6 +795,14 @@ function openTimingDialog() {
       : state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
     grid.append(count);
     removeRow.disabled = !rows[state.cursor.row]?.signal;
+    const cursorRow = rows[state.cursor.row];
+    analogButton.disabled = !cursorRow?.signal;
+    analogButton.setAttribute('aria-pressed', String(!!cursorRow?.analog));
+    holdButton.disabled = !cursorRow?.analog;
+    holdButton.setAttribute('aria-pressed', String(!!cursorRow?.hold));
+    tallerButton.disabled = !cursorRow || (cursorRow.height || 2) >= MAX_ROW_CELLS;
+    shorterButton.disabled = !cursorRow || (cursorRow.height || 2) <= 2;
+    for (const button of edgeButtons) button.disabled = !cursorRow || !!cursorRow.analog;
   };
 
   // An edge between two slots, where the row changes level: a click puts
@@ -897,6 +941,15 @@ function openTimingDialog() {
   const setCell = (level, { advance = false } = {}) => {
     const row = rows[state.cursor.row];
     if (!row) return;
+    // A value between the levels makes a signal analog; a switch phase
+    // stays 1 or 0, as its switches are.
+    if (!['0', '1'].includes(level) && !row.analog) {
+      if (!row.signal) {
+        status.textContent = `${plainMarkup(row.source)} is a switch phase: its slots are 1 or 0 (an analog row is a signal you add)`;
+        return;
+      }
+      row.analog = true;
+    }
     detach(row);
     settle();
     // The empty cell after the last slot adds a slot: every other row holds
@@ -955,6 +1008,7 @@ function openTimingDialog() {
   // Move the cursor row's falling or rising edges a cell earlier (-1) or later.
   const shiftEdge = (edge, by) => {
     const row = rows[state.cursor.row];
+    if (!row || row.analog) return;
     row.shift = { ...row.shift, [edge]: Math.max(-MAX_EDGE_SHIFT, Math.min(MAX_EDGE_SHIFT, row.shift[edge] + by)) };
     change();
   };
@@ -986,7 +1040,49 @@ function openTimingDialog() {
     state.cursor.slot = Math.min(slot, length() - 1);
     change();
   };
+  // A number typed into a slot: `.` or `-` begins it (F2 with the slot's
+  // own value), digits go on, and the next key sets it -- Enter, Tab or
+  // Space and moving on, an arrow and going that way; Esc drops it.
+  const commitEntry = ({ advance }) => {
+    const text = state.entry;
+    state.entry = null;
+    let value;
+    try {
+      value = parseTimingValue(text);
+    } catch (err) {
+      status.textContent = err.message;
+      renderGrid();
+      return;
+    }
+    setCell(String(value), { advance });
+  };
+  const onEntryKey = (event) => {
+    const key = event.key;
+    if (/^[0-9]$/.test(key) || (key === '.' && !state.entry.includes('.')) || (key === '-' && state.entry === '')) state.entry += key;
+    else if (key === 'Backspace') state.entry = state.entry.slice(0, -1);
+    else if (key === 'Escape') state.entry = null;
+    else if (['Enter', 'Tab', ' '].includes(key)) commitEntry({ advance: true });
+    else if (key.startsWith('Arrow') || key === 'Home' || key === 'End') {
+      commitEntry({ advance: false });
+      return false;
+    } else return true;
+    event.preventDefault();
+    event.stopPropagation();
+    renderGrid();
+    return true;
+  };
   grid.addEventListener('keydown', (event) => {
+    // A number being typed takes its keys; one it does not take (an arrow)
+    // sets it and goes on to do what it does.
+    if (state.entry !== null && onEntryKey(event)) return;
+    if ((event.key === '.' || event.key === '-' || event.key === 'F2') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const current = rows[state.cursor.row];
+      if (!current) return;
+      event.preventDefault();
+      state.entry = event.key === 'F2' ? (current.analog && state.cursor.slot < length() ? at(current, state.cursor.slot) : '') : event.key;
+      renderGrid();
+      return;
+    }
     const { row, slot } = state.cursor;
     const move = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] }[event.key];
     if (move && event.altKey && move[0]) {
@@ -999,7 +1095,7 @@ function openTimingDialog() {
       renderGrid();
     } else if (['0', '1', 'h', 'H', 'l', 'L'].includes(event.key)) {
       setCell({ h: '1', H: '1', l: '0', L: '0' }[event.key] || event.key, { advance: true });
-    } else if (event.key === ' ') {
+    } else if (event.key === ' ' && !rows[row]?.analog) {
       setCell(shown(rows[row], Math.min(slot, length() - 1)) === '1' ? '0' : '1');
     } else if (['[', ']', '{', '}'].includes(event.key)) {
       shiftEdge(event.key === '[' || event.key === ']' ? 'fall' : 'rise', event.key === '[' || event.key === '{' ? -1 : 1);
@@ -1009,7 +1105,7 @@ function openTimingDialog() {
       repeatSequence();
     } else if (['a', 'm', 's'].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
       noteAt({ a: 'arrow', m: 'mark', s: 'span' }[event.key]);
-    } else if (event.key === 'Delete' || event.key === 'Backspace' || event.key === '-') {
+    } else if (event.key === 'Delete' || event.key === 'Backspace') {
       removeSlot();
     } else return;
     event.preventDefault();
@@ -1061,6 +1157,42 @@ function openTimingDialog() {
     element('div', { class: 'timing-dialog-options' }, children),
   ]);
   const removeRow = button('Remove row', 'Remove the cursor row', removeSignal, { icon: 'trash' });
+  // The cursor row's kind and size: analog (a signal's values from -1 to 1),
+  // held through each slot rather than joined straight, and its height.
+  const toggleAnalog = () => {
+    const row = rows[state.cursor.row];
+    if (!row?.signal) return;
+    settle();
+    row.analog = !row.analog;
+    // Back to digital: each value rounds to the nearer level.
+    if (!row.analog) {
+      row.wave = row.wave.map((value) => (Number(value) >= 0.5 ? '1' : '0'));
+      row.hold = false;
+    }
+    change();
+  };
+  const analogButton = button('Analog', 'Analog values (.N, F2)', toggleAnalog);
+  const holdButton = button('Hold', 'Hold each value through its slot', () => {
+    const row = rows[state.cursor.row];
+    if (!row?.analog) return;
+    row.hold = !row.hold;
+    change();
+  });
+  const resize = (by) => {
+    const row = rows[state.cursor.row];
+    if (!row) return;
+    row.height = Math.max(2, Math.min(MAX_ROW_CELLS, (row.height || 2) + by));
+    change();
+  };
+  const tallerButton = button('Taller', 'Taller row', () => resize(2));
+  const shorterButton = button('Shorter', 'Shorter row', () => resize(-2));
+  // Edge shifts move a digital row's edges; an analog row has none.
+  const edgeButtons = [];
+  const edgeButton = (...args) => {
+    const node = button(...args);
+    edgeButtons.push(node);
+    return node;
+  };
   const close = () => {
     const focused = dialog.contains(document.activeElement);
     timingEditor?.window.dispose();
@@ -1081,7 +1213,7 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
       ]),
       section('Slots', [
         segmented('Slots', [
@@ -1093,19 +1225,21 @@ function openTimingDialog() {
       ]),
       section('Cursor row', [
         segmented('Falling edges', [
-          button('Fall earlier', 'Falling edges a cell earlier ([)', () => shiftEdge('fall', -1), { icon: 'chevron-left' }),
+          edgeButton('Fall earlier', 'Falling edges a cell earlier ([)', () => shiftEdge('fall', -1), { icon: 'chevron-left' }),
           element('span', { class: 'segmented-label', 'aria-hidden': 'true' }, [buttonIcon('edge-fall')]),
-          button('Fall later', 'Falling edges a cell later (])', () => shiftEdge('fall', 1), { icon: 'chevron-right' }),
+          edgeButton('Fall later', 'Falling edges a cell later (])', () => shiftEdge('fall', 1), { icon: 'chevron-right' }),
         ]),
         segmented('Rising edges', [
-          button('Rise earlier', 'Rising edges a cell earlier ({)', () => shiftEdge('rise', -1), { icon: 'chevron-left' }),
+          edgeButton('Rise earlier', 'Rising edges a cell earlier ({)', () => shiftEdge('rise', -1), { icon: 'chevron-left' }),
           element('span', { class: 'segmented-label', 'aria-hidden': 'true' }, [buttonIcon('edge-rise')]),
-          button('Rise later', 'Rising edges a cell later (})', () => shiftEdge('rise', 1), { icon: 'chevron-right' }),
+          edgeButton('Rise later', 'Rising edges a cell later (})', () => shiftEdge('rise', 1), { icon: 'chevron-right' }),
         ]),
         segmented('Row order', [
           button('Move up', 'Move the row up (Alt+↑)', () => moveRow(-1), { icon: 'chevron-up' }),
           button('Move down', 'Move the row down (Alt+↓)', () => moveRow(1), { icon: 'chevron-down' }),
         ]),
+        segmented('Row height', [tallerButton, shorterButton]),
+        segmented('Analog', [analogButton, holdButton]),
       ]),
       section('Signals', [element('div', { class: 'timing-signal-field' }, [signalInput, addButton]), removeRow], 'timing-signal-controls'),
       pairsBox,

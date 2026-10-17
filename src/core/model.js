@@ -945,9 +945,28 @@ function normalizeTiming(timing) {
   const spans = list(timing.spans, withText);
   // A drawn arrow, mark or span (or a span's or an arrow's text) says which it is.
   const part = ['arrow', 'mark', 'span', 'note', 'arrow-note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
+  // An analog row: its values (-1..1) at the slots' starts, whether they
+  // hold through the slot; any row's height in cells (even, from 2).
+  const level = (value) => (Number.isFinite(Number(value)) ? Math.max(-1, Math.min(1, Math.round(Number(value) * 1e4) / 1e4)) : null);
+  const values = Array.isArray(timing.values) ? timing.values.slice(0, 512).map(level).filter((value) => value !== null) : null;
+  const height = Math.round(Number(timing.height));
+  // The drawn analog curve (timing-diagram.js): [x, value] points from the
+  // box's left edge, and the threshold marks' points.
+  const pointList = (list) => (Array.isArray(list) ? list.slice(0, 2048)
+    .filter((point) => Array.isArray(point) && point.length === 2 && Number.isFinite(Number(point[0])) && level(point[1]) !== null)
+    .map(([x, v]) => [Number(x), level(v)]) : []);
+  const analog = timing.analog && typeof timing.analog === 'object' ? {
+    trace: pointList(timing.analog.trace),
+    ...(timing.analog.bipolar === true ? { bipolar: true } : {}),
+    ...(pointList(timing.analog.thresholds).length ? { thresholds: pointList(timing.analog.thresholds) } : {}),
+  } : null;
   return {
     phase: timing.phase.slice(0, 200),
     ...(bits ? { bits } : {}),
+    ...(values ? { values } : {}),
+    ...(values && timing.hold === true ? { hold: true } : {}),
+    ...(Number.isInteger(height) && height > 2 && height % 2 === 0 && height <= 16 ? { height } : {}),
+    ...(analog?.trace.length ? { analog } : {}),
     slot,
     ...(gaps !== undefined ? { gaps } : {}),
     ...(shift && (shift.fall || shift.rise) ? { shift } : {}),
@@ -1714,8 +1733,9 @@ export class LabelInstance {
    * side (a graph's legend) move together, one shift for the group, so they
    * keep their spacing instead of each following its own reference. */
   resizeBox(rect) {
-    // A parts table is the size of what it lists.
-    if (this.kind !== 'box' || this.table) return false;
+    // A parts table is the size of what it lists; an analog wave the size
+    // of its row.
+    if (this.kind !== 'box' || this.table || this.timing?.analog) return false;
     const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
     if (next.x1 <= next.x0 || next.y1 <= next.y0) return false;
     const prev = {

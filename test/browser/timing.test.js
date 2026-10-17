@@ -30,7 +30,7 @@ function beaten() {
 
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -183,6 +183,42 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await undoKey();
     await h.until(`window.__circuit().labels.find((l) => l.timing?.phase === 'CLK' && l.timing.bits)?.timing.bits === '0101'`);
     assert.equal(await bits('Q'), '0011');
+    await h.key('K', { shiftKey: true });
+  });
+
+  test('typing .N makes a signal analog; F2 edits a value, Hold and Taller change the row, m marks a threshold', async () => {
+    await h.open('ramped');
+    if (!(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`))) await h.key('K', { shiftKey: true });
+    await h.until(`document.querySelectorAll('.timing-grid-line')[1]?.querySelectorAll('.timing-cell:not(.new)').length === 4`);
+    const name = (phase, field) => h.evaluate(`window.__circuit().labels.find((l) => l.kind === 'label' && l.timing?.phase === ${JSON.stringify(phase)} && !l.timing.part)?.timing.${field}`);
+    const analogBox = () => h.evaluate(`window.__circuit().labels.find((l) => l.kind === 'box' && l.timing?.phase === 'Q')`);
+    // Q's slots: 0 .5 then F2 on the third to 0.75; an arrow sets each.
+    await gridKey('ArrowDown');
+    await gridKey('ArrowRight');
+    for (const key of ['.', '5', 'Enter']) await gridKey(key);
+    await h.until(`window.__circuit().labels.some((l) => l.kind === 'box' && l.timing?.phase === 'Q' && l.timing.analog)`);
+    assert.deepEqual(await name('Q', 'values'), [0, 0.5, 1, 1], 'the row analog, its 1s and 0s values');
+    for (const key of ['F2', 'Backspace', '.', '7', '5', 'ArrowLeft']) await gridKey(key);
+    await h.until(`window.__circuit().labels.find((l) => l.kind === 'label' && l.timing?.phase === 'Q' && !l.timing.part)?.timing.values?.[2] === 0.75`);
+    assert.deepEqual(await name('Q', 'values'), [0, 0.5, 0.75, 1]);
+    // Hold, then two cells taller.
+    await h.evaluate(`[...document.querySelectorAll('.timing-dialog button')].find((b) => b.textContent === 'Hold').click()`);
+    await h.until(`window.__circuit().labels.find((l) => l.kind === 'label' && l.timing?.phase === 'Q' && !l.timing.part)?.timing.hold === true`);
+    await h.evaluate(`[...document.querySelectorAll('.timing-dialog button')].find((b) => b.textContent === 'Taller').click()`);
+    await h.until(`window.__circuit().labels.find((l) => l.kind === 'label' && l.timing?.phase === 'Q' && !l.timing.part)?.timing.height === 4`);
+    const wave = await analogBox();
+    assert.equal(wave.end.y - wave.anchor.y, 160);
+    // m on the 0.5 point (the arrow that set 0.75 went back to it): a threshold.
+    await gridKey('m');
+    await h.until(`window.__circuit().labels.find((l) => l.kind === 'box' && l.timing?.phase === 'Q')?.timing.analog.thresholds?.[0]?.[1] === 0.5`);
+    // A switch-free signal's edge buttons do nothing on it: they are off.
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('.timing-dialog button')].find((b) => b.getAttribute('aria-label') === 'Fall earlier').disabled`), true);
+    // The editor's session is one undo step: Q is digital again, and the
+    // editor shows it so.
+    await h.evaluate(`document.querySelector('.timing-grid').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))`);
+    await h.until(`!window.__circuit().labels.some((l) => l.kind === 'box' && l.timing?.phase === 'Q')`);
+    assert.equal(await name('Q', 'bits'), '0011');
+    await h.until(`!document.querySelector('.timing-cell.analog')`);
     await h.key('K', { shiftKey: true });
   });
 });

@@ -686,6 +686,7 @@ function shapeAnnotationSvg(label, opacity = '') {
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
   if (label.kind === 'box' && label.table) return partsTableSvg(label, opacity);
+  if (label.kind === 'box' && label.timing?.analog) return analogWaveSvg(label, opacity);
   if (label.kind === 'box' && label.image) {
     // A pasted picture, whole and undistorted in its box.
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
@@ -782,6 +783,27 @@ function partsTableSvg(label, opacity = '') {
     return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" ${face} fill="${color}">${runsSvg(item.runs)}</text>`;
   }).join('');
   return `<g class="parts-table" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
+}
+
+/**
+ * A timing diagram's analog row (timing-diagram.js): its curve in its box,
+ * 0 at the bottom and 1 at the top -- or, for a row reaching below zero,
+ * about a dashed zero line through the middle -- and each threshold mark's
+ * dashed line at its level, from the row's start to its point. No border.
+ */
+function analogWaveSvg(label, opacity = '') {
+  const { trace, bipolar, thresholds = [] } = label.timing.analog;
+  const x0 = Math.min(label.anchor.x, label.end.x);
+  const top = Math.min(label.anchor.y, label.end.y);
+  const h = Math.abs(label.end.y - label.anchor.y);
+  const y = (v) => (bipolar ? top + h / 2 - (v * h) / 2 : top + h - v * h);
+  const d = (points) => points.map(([x, v], i) => `${i ? 'L' : 'M'} ${fmt(x0 + x)} ${fmt(y(v))}`).join(' ');
+  const dashed = styleAttrs({ ...label.style, lineStyle: 'dashed', width: 'thin' }, 'annotation');
+  const parts = [];
+  if (bipolar) parts.push(`<path d="M ${fmt(x0)} ${fmt(top + h / 2)} H ${fmt(x0 + (trace.at(-1)?.[0] ?? 0))}" fill="none" ${dashed}/>`);
+  for (const [x, v] of thresholds) parts.push(`<path d="M ${fmt(x0)} ${fmt(y(v))} H ${fmt(x0 + x)}" fill="none" ${dashed}/>`);
+  parts.push(`<path d="${d(trace)}" fill="none" stroke-linejoin="round" ${styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation')}/>`);
+  return `<g class="timing-analog"${opacity}>${parts.join('')}</g>`;
 }
 
 /** The waveform a voltage source shows inside its circle, if any. */
