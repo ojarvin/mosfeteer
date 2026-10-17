@@ -279,6 +279,9 @@ three files at a time on GitHub's small runner.
   `--accent-tint`; a highlighted menu item is a solid accent row; a dialog
   or window ends in a row of plain-word actions (`.dialog-actions`, no
   icons), the default one filled (`.primary-action` or `.confirm-action`).
+- **Tooltips say what a control is**, then its key: `Notes (n)`,
+  `Save (Ctrl/Cmd+S)`. Add only live information (`Saved · <path>`, a
+  value's numbers); how to use it belongs in Learn and the docs.
 - **Don't fight `eval`.** It is the single source of truth for "is this
   drawing OK?". Add a new violation category there, don't paper over it in
   the renderer.

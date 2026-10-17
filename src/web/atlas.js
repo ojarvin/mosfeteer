@@ -28,6 +28,7 @@ import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
 import {
   addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument,
+  deleteDocuments,
 } from './document-session.js';
 import { fittedView } from './canvas-view.js';
 import { closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus } from './toolbar-ui.js';
@@ -43,6 +44,7 @@ import { slideChrome } from './chrome-slide.js';
 import { formatModifiedTime, revisionTime } from './modified-time.js';
 import { reducedMotion } from './motion.js';
 import { showHelp } from './help.js';
+import { appendContextItem, openMenuAt } from './context-menu.js';
 
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
@@ -131,7 +133,7 @@ export function atlasSnapshot() {
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);
       return {
-        id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h,
+        id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h, screen: worldToScreen(tile),
         current: !!entry?.current, selected: state.selected === tile.id || !!state.picked?.has(tile.id),
         lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim,
         float: { dx: liftOf(tile.id).dx || 0, dy: liftOf(tile.id).dy || 0 },
@@ -592,7 +594,7 @@ function syncBackButton() {
   const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
   if (backEl.textContent !== label) {
     backEl.textContent = label;
-    backEl.title = `Back to ${name}, the design open in the editor (Shift+Backspace, or Enter with nothing picked)`;
+    backEl.title = `Back to ${name} (Shift+Backspace)`;
   }
 }
 
@@ -1323,6 +1325,12 @@ function syncList() {
     ]);
     // A click shows the design on the desk, picked; a double-click (off its
     // name and tags) opens it.
+    row.addEventListener('contextmenu', (ev) => {
+      if (ev.target.closest('input')) return;
+      ev.preventDefault();
+      if (!pickedIds().includes(entry.id)) pickListRow(row);
+      openDesignMenu(tileById(entry.id), ev.clientX, ev.clientY);
+    });
     row.addEventListener('click', (ev) => {
       if (ev.target.closest('input')) return;
       if (ev.shiftKey) pickListRange(row);
@@ -1550,6 +1558,9 @@ function onListKey(ev) {
   } else if (ev.key === 'F2' && entry) {
     take();
     startRename(row.querySelector('.atlas-list-name-cell'), entry);
+  } else if (ev.key === 'Delete' && entry) {
+    take();
+    void deletePicked();
   } else if (ev.key === '#' && entry) {
     take();
     const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
@@ -1747,23 +1758,18 @@ async function copyPickedAsImage() {
 
 // ----- tags ---------------------------------------------------------------------
 
-/** `#` on a picked design: its tags in a field at its caption. Enter saves
- *  them -- into the editor for the open design, straight into the file for
- *  any other -- and Escape or clicking away leaves them as they were. */
-function openTagEditor(tile) {
-  const entry = state.entries.get(tile.id);
-  if (!entry || state.tagEditor) return;
+/** A field at a design's caption (its tags, its new name): Enter commits
+ *  what is typed, Escape or clicking away leaves things as they were. */
+function openCaptionField(tile, { value, placeholder, label, commit }) {
+  if (state.tagEditor) return;
   const rect = worldToScreen(tile);
   const pane = paneSize();
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'atlas-tags glass';
-  // Several designs picked: tags typed here are added to each of them.
-  const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
-  const adding = many.length > 1;
-  input.value = adding ? '' : tagsText(entry.index?.tags);
-  input.placeholder = adding ? `tags to add to ${many.length} designs · Enter adds` : 'tags, separated by spaces · Enter saves';
-  input.setAttribute('aria-label', adding ? `Tags to add to ${many.length} designs` : `Tags of ${entry.name}`);
+  input.value = value;
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', label);
   input.spellcheck = false;
   input.autocomplete = 'off';
   input.style.left = `${Math.max(8, Math.min(rect.x, pane.w - 280))}px`;
@@ -1787,13 +1793,85 @@ function openTagEditor(tile) {
       ev.preventDefault();
       const text = input.value;
       close();
-      void (adding ? addTags(many, text) : saveTags(entry, text));
+      void commit(text);
     } else if (ev.key === 'Escape') {
       ev.preventDefault();
       close();
     }
   });
   input.addEventListener('blur', close);
+}
+
+/** `#` on a picked design: its tags in a field at its caption. Enter saves
+ *  them -- into the editor for the open design, straight into the file for
+ *  any other. Several designs picked: tags typed are added to each. */
+function openTagEditor(tile) {
+  const entry = state.entries.get(tile.id);
+  if (!entry) return;
+  const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+  const adding = many.length > 1;
+  openCaptionField(tile, {
+    value: adding ? '' : tagsText(entry.index?.tags),
+    placeholder: adding ? `tags to add to ${many.length} designs · Enter adds` : 'tags, separated by spaces · Enter saves',
+    label: adding ? `Tags to add to ${many.length} designs` : `Tags of ${entry.name}`,
+    commit: (text) => (adding ? addTags(many, text) : saveTags(entry, text)),
+  });
+}
+
+/** F2 on a picked design: its name in a field at its caption. */
+function openRenameField(tile) {
+  const entry = state.entries.get(tile.id);
+  if (!entry) return;
+  openCaptionField(tile, {
+    value: entry.name,
+    placeholder: 'new name · Enter renames',
+    label: `New name for ${entry.name}`,
+    commit: async (text) => {
+      const name = text.trim();
+      if (!name || name === entry.name) return;
+      const saved = await renameDesign(entry.path, name, entry.dir ? { dir: entry.dir } : {});
+      if (state && saved) await reloadDesk({ quiet: true, pick: saved.path });
+    },
+  });
+}
+
+/** Delete the picked designs, after the editor's confirmation. */
+async function deletePicked() {
+  const entries = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+  if (!entries.length || state.source !== 'workspace') return;
+  if (!(await deleteDocuments(entries.map((entry) => entry.path)))) return;
+  state.picked = null;
+  state.selected = null;
+  if (state) await reloadDesk({ quiet: true });
+}
+
+/** A design's menu, as the editor's right-click menu: for one design Edit,
+ *  Rename, Tags, Delete; for several picked ones only Tags and Delete. A
+ *  design right-clicked outside the pick becomes the pick. */
+function openDesignMenu(tile, clientX, clientY) {
+  if (!state || state.source !== 'workspace' || !tile) return;
+  if (!pickedIds().includes(tile.id)) {
+    state.picked = null;
+    state.selected = tile.id;
+    requestDraw();
+  }
+  const entries = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+  if (!entries.length) return;
+  const one = entries.length === 1;
+  const menu = openMenuAt(clientX, clientY, one ? entries[0].name : `${entries.length} designs`);
+  if (!menu) return;
+  // A field opened from the menu waits for the menu to close (it takes focus back).
+  const later = (run) => () => setTimeout(run, 0);
+  const group = el('div', { class: 'context-menu-group' });
+  if (one) {
+    appendContextItem(group, 'Edit', later(() => void openTile(tile)), { shortcut: 'Enter' });
+    appendContextItem(group, 'Rename…', later(() => openRenameField(tile)), { shortcut: 'F2' });
+  }
+  appendContextItem(group, one ? 'Tags…' : 'Add tags…', later(() => openTagEditor(tile)), { shortcut: '#' });
+  const danger = el('div', { class: 'context-menu-group context-menu-end' });
+  appendContextItem(danger, one ? 'Delete…' : `Delete ${entries.length} designs…`, later(() => void deletePicked()), { shortcut: 'Del', danger: true });
+  menu.append(group, danger);
+  menu.querySelector('button:not(:disabled)')?.focus();
 }
 
 /** Give a design new tags. Another design's file is rewritten with only its
@@ -3201,6 +3279,8 @@ export function onAtlasKey(ev) {
     const step = ev.shiftKey ? -1 : 1;
     focusTile(tiles[(index + step + tiles.length) % tiles.length]);
   } else if (key === '#' && selected && state.source === 'workspace') openTagEditor(selected);
+  else if (key === 'F2' && selected && state.source === 'workspace' && !state.picked?.size) openRenameField(selected);
+  else if (key === 'Delete' && selected && state.source === 'workspace') void deletePicked();
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
   else if (key === 'T' && state.source === 'workspace') repackDesk();
@@ -3317,6 +3397,9 @@ function onPointerUp(ev) {
     state.drag = null;
     const { from, to } = drag.zoomBox;
     if (!to) {
+      // A right click (no box dragged) on a design: its menu.
+      const hit = tileUnder(clientToWorld(ev.clientX, ev.clientY));
+      if (hit) openDesignMenu(hit, ev.clientX, ev.clientY);
       requestDraw();
       return;
     }

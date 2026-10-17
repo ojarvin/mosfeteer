@@ -373,7 +373,7 @@ export function renderBeatStrip() {
     button.className = 'beat-chip';
     button.dataset.beatIndex = String(i);
     button.setAttribute('aria-pressed', String(i === index));
-    button.title = `${beatLabel(i)} — click to show, drag to move, Ctrl/Shift-click to pick several, double-click to rename, right-click for more`;
+    button.title = beatLabel(i);
     const number = document.createElement('span');
     number.className = 'beat-chip-number';
     number.textContent = String(i + 1);
@@ -684,8 +684,8 @@ function openTimingDialog() {
     const active = activePairs();
     const head = element('div', { class: 'timing-dialog-options' });
     const body = element('div', { class: 'timing-pairs-body' }, [head]);
-    pairsBox.append(element('span', { class: 'timing-pairs-title', text: 'Non-overlap', title: 'A pair that is ticked gets a one-cell gap where one falls as the other rises, as non-overlapping clocks have' }), body);
-    const auto = element('button', { type: 'button', class: 'timing-chip', text: 'Auto', 'aria-pressed': String(state.gaps === 'auto'), title: 'Keep apart every two phases that are never high in the same slot' });
+    pairsBox.append(element('span', { class: 'timing-pairs-title', text: 'Non-overlap', title: 'Non-overlap pairs' }), body);
+    const auto = element('button', { type: 'button', class: 'timing-chip', text: 'Auto', 'aria-pressed': String(state.gaps === 'auto'), title: 'Auto non-overlap' });
     auto.addEventListener('click', () => { state.gaps = state.gaps === 'auto' ? activePairs() : 'auto'; renderPairs(); redraw(); });
     head.append(auto);
     if (own.length < 2) {
@@ -721,7 +721,7 @@ function openTimingDialog() {
     state.cursor.slot = Math.min(state.cursor.slot, n);
     rows.forEach((row, r) => {
       const name = nameText(element('span', { class: 'timing-grid-name' }), row.source);
-      if (row.follows) name.title = `${plainMarkup(baseOf(row).source)} inverted; edit it to give it a wave of its own`;
+      if (row.follows) name.title = `${plainMarkup(baseOf(row).source)} inverted`;
       const cells = element('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
       for (let slot = 0; slot < n; slot += 1) {
         const level = shown(row, slot);
@@ -877,7 +877,7 @@ function openTimingDialog() {
       ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
       : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
     notesBox.append(
-      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows from an edge to the transition it causes, dashed marks, and spans with their text below the diagram' }),
+      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows, marks, and spans' }),
       element('div', { class: 'timing-dialog-options' }, [
         element('div', { class: 'segmented', role: 'group', 'aria-label': 'On the edges' }, [
           noteButton('Arrow', 'An arrow from the edge at the cursor to the edge it causes: then pick that one (a)', 'arrow'),
@@ -1026,7 +1026,7 @@ function openTimingDialog() {
   };
   // A segmented group of icon buttons, as the style panel's.
   const segmented = (label, buttons) => element('div', { class: 'segmented', role: 'group', 'aria-label': label }, buttons);
-  const fromBeats = button('Read beats', 'Set the waves from the beats: one slot per beat, high where the phase\'s switches are closed', () => {
+  const fromBeats = button('Read beats', 'Read the waves from the beats', () => {
     rows.forEach((row) => {
       // A signal of the diagram's own has no switches to read.
       if (row.signal) return;
@@ -1037,16 +1037,16 @@ function openTimingDialog() {
   if (!editor.circuit.beats.length) fromBeats.disabled = true;
   // The diagram stays where it stands; Re-place puts it where the drawing
   // has room again (after the drawing grew into it, say).
-  const replace = button('Move under drawing', 'Put the diagram back under the drawing, as high as the drawing leaves room (it otherwise stays where you dragged it)', () => {
+  const replace = button('Move under drawing', 'Move under the drawing', () => {
     state.place = true;
     redraw();
   });
   // The timing is where the beats come from: one beat per state.
-  const makeBeats = button('Make beats', 'Write the timing into the beats: one beat per state of this diagram, its high phases\' switches closed', () => {
+  const makeBeats = button('Make beats', 'Make beats from the timing', () => {
     addPhaseBeats();
   }, { icon: null, className: 'confirm-action' });
   const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
-  const addButton = button('Add signal', 'Add a row of your own, not tied to any switch (Enter in the field)', () => {
+  const addButton = button('Add signal', 'Add a signal', () => {
     if (addSignal(signalInput.value)) signalInput.value = '';
   }, { icon: 'add' });
   signalInput.addEventListener('keydown', (event) => {
@@ -1060,7 +1060,7 @@ function openTimingDialog() {
     element('span', { class: 'timing-pairs-title', text: title }),
     element('div', { class: 'timing-dialog-options' }, children),
   ]);
-  const removeRow = button('Remove row', 'Remove the cursor row: a signal added here (a switch phase\'s row comes from its switches)', removeSignal, { icon: 'trash' });
+  const removeRow = button('Remove row', 'Remove the cursor row', removeSignal, { icon: 'trash' });
   const close = () => {
     const focused = dialog.contains(document.activeElement);
     timingEditor?.window.dispose();
@@ -1085,8 +1085,8 @@ function openTimingDialog() {
       ]),
       section('Slots', [
         segmented('Slots', [
-          button('Add a slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot, { icon: 'add' }),
-          button('Remove the slot', 'Remove the slot at the cursor (Delete)', removeSlot, { icon: 'minus' }),
+          button('Add a slot', 'Add a slot (+)', repeatSlot, { icon: 'add' }),
+          button('Remove the slot', 'Remove the slot (Delete)', removeSlot, { icon: 'minus' }),
           button('Repeat the sequence', 'Repeat the sequence (*)', repeatSequence, { icon: 'repeat' }),
         ]),
         element('label', { class: 'timing-width', title: 'Slot width in grid cells' }, [slotInput, element('span', { text: 'cells each' })]),

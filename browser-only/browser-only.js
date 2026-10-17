@@ -43076,7 +43076,7 @@ let ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAt
 let INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache; __bind(() => { ({ INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } = __require("src/web/atlas-cache.js")); });
 let easeOutCubic, wheelIntent, lerpView; __bind(() => { ({ easeOutCubic, wheelIntent, lerpView } = __require("src/web/gestures.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument; __bind(() => { ({ addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument } = __require("src/web/document-session.js")); });
+let addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument, deleteDocuments; __bind(() => { ({ addDocumentFiles, allowFolderAccess, renameDesign, chooseWorkspaceFolder, hasUnsavedChanges, onDocumentListChange, openDocumentDialog, persistence, openDocumentPath, requestDocumentAction, saveCircuit, startNewDocument, deleteDocuments } = __require("src/web/document-session.js")); });
 let fittedView; __bind(() => { ({ fittedView } = __require("src/web/canvas-view.js")); });
 let closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus; __bind(() => { ({ closeToolbarMenu, scheduleToolbarFit, toggleTheme, toolbarMenus } = __require("src/web/toolbar-ui.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
@@ -43091,6 +43091,7 @@ let slideChrome; __bind(() => { ({ slideChrome } = __require("src/web/chrome-sli
 let formatModifiedTime, revisionTime; __bind(() => { ({ formatModifiedTime, revisionTime } = __require("src/web/modified-time.js")); });
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
+let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -43103,6 +43104,7 @@ let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
  * leaving fly a design between the editor, at the screen, and its place on
  * the desk behind it (drawFlight).
  */
+
 
 
 
@@ -43222,7 +43224,7 @@ function atlasSnapshot() {
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);
       return {
-        id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h,
+        id: tile.id, name: entry?.name, x: tile.x, y: tile.y, w: tile.w, h: tile.h, screen: worldToScreen(tile),
         current: !!entry?.current, selected: state.selected === tile.id || !!state.picked?.has(tile.id),
         lift: liftOf(tile.id).lift, dim: liftOf(tile.id).dim,
         float: { dx: liftOf(tile.id).dx || 0, dy: liftOf(tile.id).dy || 0 },
@@ -43683,7 +43685,7 @@ function syncBackButton() {
   const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
   if (backEl.textContent !== label) {
     backEl.textContent = label;
-    backEl.title = `Back to ${name}, the design open in the editor (Shift+Backspace, or Enter with nothing picked)`;
+    backEl.title = `Back to ${name} (Shift+Backspace)`;
   }
 }
 
@@ -44414,6 +44416,12 @@ function syncList() {
     ]);
     // A click shows the design on the desk, picked; a double-click (off its
     // name and tags) opens it.
+    row.addEventListener('contextmenu', (ev) => {
+      if (ev.target.closest('input')) return;
+      ev.preventDefault();
+      if (!pickedIds().includes(entry.id)) pickListRow(row);
+      openDesignMenu(tileById(entry.id), ev.clientX, ev.clientY);
+    });
     row.addEventListener('click', (ev) => {
       if (ev.target.closest('input')) return;
       if (ev.shiftKey) pickListRange(row);
@@ -44641,6 +44649,9 @@ function onListKey(ev) {
   } else if (ev.key === 'F2' && entry) {
     take();
     startRename(row.querySelector('.atlas-list-name-cell'), entry);
+  } else if (ev.key === 'Delete' && entry) {
+    take();
+    void deletePicked();
   } else if (ev.key === '#' && entry) {
     take();
     const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
@@ -44838,23 +44849,18 @@ async function copyPickedAsImage() {
 
 // ----- tags ---------------------------------------------------------------------
 
-/** `#` on a picked design: its tags in a field at its caption. Enter saves
- *  them -- into the editor for the open design, straight into the file for
- *  any other -- and Escape or clicking away leaves them as they were. */
-function openTagEditor(tile) {
-  const entry = state.entries.get(tile.id);
-  if (!entry || state.tagEditor) return;
+/** A field at a design's caption (its tags, its new name): Enter commits
+ *  what is typed, Escape or clicking away leaves things as they were. */
+function openCaptionField(tile, { value, placeholder, label, commit }) {
+  if (state.tagEditor) return;
   const rect = worldToScreen(tile);
   const pane = paneSize();
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'atlas-tags glass';
-  // Several designs picked: tags typed here are added to each of them.
-  const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
-  const adding = many.length > 1;
-  input.value = adding ? '' : tagsText(entry.index?.tags);
-  input.placeholder = adding ? `tags to add to ${many.length} designs · Enter adds` : 'tags, separated by spaces · Enter saves';
-  input.setAttribute('aria-label', adding ? `Tags to add to ${many.length} designs` : `Tags of ${entry.name}`);
+  input.value = value;
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', label);
   input.spellcheck = false;
   input.autocomplete = 'off';
   input.style.left = `${Math.max(8, Math.min(rect.x, pane.w - 280))}px`;
@@ -44878,13 +44884,85 @@ function openTagEditor(tile) {
       ev.preventDefault();
       const text = input.value;
       close();
-      void (adding ? addTags(many, text) : saveTags(entry, text));
+      void commit(text);
     } else if (ev.key === 'Escape') {
       ev.preventDefault();
       close();
     }
   });
   input.addEventListener('blur', close);
+}
+
+/** `#` on a picked design: its tags in a field at its caption. Enter saves
+ *  them -- into the editor for the open design, straight into the file for
+ *  any other. Several designs picked: tags typed are added to each. */
+function openTagEditor(tile) {
+  const entry = state.entries.get(tile.id);
+  if (!entry) return;
+  const many = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+  const adding = many.length > 1;
+  openCaptionField(tile, {
+    value: adding ? '' : tagsText(entry.index?.tags),
+    placeholder: adding ? `tags to add to ${many.length} designs · Enter adds` : 'tags, separated by spaces · Enter saves',
+    label: adding ? `Tags to add to ${many.length} designs` : `Tags of ${entry.name}`,
+    commit: (text) => (adding ? addTags(many, text) : saveTags(entry, text)),
+  });
+}
+
+/** F2 on a picked design: its name in a field at its caption. */
+function openRenameField(tile) {
+  const entry = state.entries.get(tile.id);
+  if (!entry) return;
+  openCaptionField(tile, {
+    value: entry.name,
+    placeholder: 'new name · Enter renames',
+    label: `New name for ${entry.name}`,
+    commit: async (text) => {
+      const name = text.trim();
+      if (!name || name === entry.name) return;
+      const saved = await renameDesign(entry.path, name, entry.dir ? { dir: entry.dir } : {});
+      if (state && saved) await reloadDesk({ quiet: true, pick: saved.path });
+    },
+  });
+}
+
+/** Delete the picked designs, after the editor's confirmation. */
+async function deletePicked() {
+  const entries = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+  if (!entries.length || state.source !== 'workspace') return;
+  if (!(await deleteDocuments(entries.map((entry) => entry.path)))) return;
+  state.picked = null;
+  state.selected = null;
+  if (state) await reloadDesk({ quiet: true });
+}
+
+/** A design's menu, as the editor's right-click menu: for one design Edit,
+ *  Rename, Tags, Delete; for several picked ones only Tags and Delete. A
+ *  design right-clicked outside the pick becomes the pick. */
+function openDesignMenu(tile, clientX, clientY) {
+  if (!state || state.source !== 'workspace' || !tile) return;
+  if (!pickedIds().includes(tile.id)) {
+    state.picked = null;
+    state.selected = tile.id;
+    requestDraw();
+  }
+  const entries = pickedIds().map((id) => state.entries.get(id)).filter(Boolean);
+  if (!entries.length) return;
+  const one = entries.length === 1;
+  const menu = openMenuAt(clientX, clientY, one ? entries[0].name : `${entries.length} designs`);
+  if (!menu) return;
+  // A field opened from the menu waits for the menu to close (it takes focus back).
+  const later = (run) => () => setTimeout(run, 0);
+  const group = el('div', { class: 'context-menu-group' });
+  if (one) {
+    appendContextItem(group, 'Edit', later(() => void openTile(tile)), { shortcut: 'Enter' });
+    appendContextItem(group, 'Rename…', later(() => openRenameField(tile)), { shortcut: 'F2' });
+  }
+  appendContextItem(group, one ? 'Tags…' : 'Add tags…', later(() => openTagEditor(tile)), { shortcut: '#' });
+  const danger = el('div', { class: 'context-menu-group context-menu-end' });
+  appendContextItem(danger, one ? 'Delete…' : `Delete ${entries.length} designs…`, later(() => void deletePicked()), { shortcut: 'Del', danger: true });
+  menu.append(group, danger);
+  menu.querySelector('button:not(:disabled)')?.focus();
 }
 
 /** Give a design new tags. Another design's file is rewritten with only its
@@ -46292,6 +46370,8 @@ function onAtlasKey(ev) {
     const step = ev.shiftKey ? -1 : 1;
     focusTile(tiles[(index + step + tiles.length) % tiles.length]);
   } else if (key === '#' && selected && state.source === 'workspace') openTagEditor(selected);
+  else if (key === 'F2' && selected && state.source === 'workspace' && !state.picked?.size) openRenameField(selected);
+  else if (key === 'Delete' && selected && state.source === 'workspace') void deletePicked();
   else if ((key === 'z' || key === ' ') && selected) focusTile(selected, { zoom: true });
   else if (key === 'f' || key === 'F') void animateView(clampView(fitAllView()));
   else if (key === 'T' && state.source === 'workspace') repackDesk();
@@ -46408,6 +46488,9 @@ function onPointerUp(ev) {
     state.drag = null;
     const { from, to } = drag.zoomBox;
     if (!to) {
+      // A right click (no box dragged) on a design: its menu.
+      const hit = tileUnder(clientToWorld(ev.clientX, ev.clientY));
+      if (hit) openDesignMenu(hit, ev.clientX, ev.clientY);
       requestDraw();
       return;
     }
@@ -46942,7 +47025,7 @@ function renderBeatStrip() {
     button.className = 'beat-chip';
     button.dataset.beatIndex = String(i);
     button.setAttribute('aria-pressed', String(i === index));
-    button.title = `${beatLabel(i)} — click to show, drag to move, Ctrl/Shift-click to pick several, double-click to rename, right-click for more`;
+    button.title = beatLabel(i);
     const number = document.createElement('span');
     number.className = 'beat-chip-number';
     number.textContent = String(i + 1);
@@ -47253,8 +47336,8 @@ function openTimingDialog() {
     const active = activePairs();
     const head = element('div', { class: 'timing-dialog-options' });
     const body = element('div', { class: 'timing-pairs-body' }, [head]);
-    pairsBox.append(element('span', { class: 'timing-pairs-title', text: 'Non-overlap', title: 'A pair that is ticked gets a one-cell gap where one falls as the other rises, as non-overlapping clocks have' }), body);
-    const auto = element('button', { type: 'button', class: 'timing-chip', text: 'Auto', 'aria-pressed': String(state.gaps === 'auto'), title: 'Keep apart every two phases that are never high in the same slot' });
+    pairsBox.append(element('span', { class: 'timing-pairs-title', text: 'Non-overlap', title: 'Non-overlap pairs' }), body);
+    const auto = element('button', { type: 'button', class: 'timing-chip', text: 'Auto', 'aria-pressed': String(state.gaps === 'auto'), title: 'Auto non-overlap' });
     auto.addEventListener('click', () => { state.gaps = state.gaps === 'auto' ? activePairs() : 'auto'; renderPairs(); redraw(); });
     head.append(auto);
     if (own.length < 2) {
@@ -47290,7 +47373,7 @@ function openTimingDialog() {
     state.cursor.slot = Math.min(state.cursor.slot, n);
     rows.forEach((row, r) => {
       const name = nameText(element('span', { class: 'timing-grid-name' }), row.source);
-      if (row.follows) name.title = `${plainMarkup(baseOf(row).source)} inverted; edit it to give it a wave of its own`;
+      if (row.follows) name.title = `${plainMarkup(baseOf(row).source)} inverted`;
       const cells = element('span', { class: `timing-grid-row${row.follows ? ' follows' : ''}` });
       for (let slot = 0; slot < n; slot += 1) {
         const level = shown(row, slot);
@@ -47446,7 +47529,7 @@ function openTimingDialog() {
       ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
       : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
     notesBox.append(
-      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows from an edge to the transition it causes, dashed marks, and spans with their text below the diagram' }),
+      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows, marks, and spans' }),
       element('div', { class: 'timing-dialog-options' }, [
         element('div', { class: 'segmented', role: 'group', 'aria-label': 'On the edges' }, [
           noteButton('Arrow', 'An arrow from the edge at the cursor to the edge it causes: then pick that one (a)', 'arrow'),
@@ -47595,7 +47678,7 @@ function openTimingDialog() {
   };
   // A segmented group of icon buttons, as the style panel's.
   const segmented = (label, buttons) => element('div', { class: 'segmented', role: 'group', 'aria-label': label }, buttons);
-  const fromBeats = button('Read beats', 'Set the waves from the beats: one slot per beat, high where the phase\'s switches are closed', () => {
+  const fromBeats = button('Read beats', 'Read the waves from the beats', () => {
     rows.forEach((row) => {
       // A signal of the diagram's own has no switches to read.
       if (row.signal) return;
@@ -47606,16 +47689,16 @@ function openTimingDialog() {
   if (!editor.circuit.beats.length) fromBeats.disabled = true;
   // The diagram stays where it stands; Re-place puts it where the drawing
   // has room again (after the drawing grew into it, say).
-  const replace = button('Move under drawing', 'Put the diagram back under the drawing, as high as the drawing leaves room (it otherwise stays where you dragged it)', () => {
+  const replace = button('Move under drawing', 'Move under the drawing', () => {
     state.place = true;
     redraw();
   });
   // The timing is where the beats come from: one beat per state.
-  const makeBeats = button('Make beats', 'Write the timing into the beats: one beat per state of this diagram, its high phases\' switches closed', () => {
+  const makeBeats = button('Make beats', 'Make beats from the timing', () => {
     addPhaseBeats();
   }, { icon: null, className: 'confirm-action' });
   const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
-  const addButton = button('Add signal', 'Add a row of your own, not tied to any switch (Enter in the field)', () => {
+  const addButton = button('Add signal', 'Add a signal', () => {
     if (addSignal(signalInput.value)) signalInput.value = '';
   }, { icon: 'add' });
   signalInput.addEventListener('keydown', (event) => {
@@ -47629,7 +47712,7 @@ function openTimingDialog() {
     element('span', { class: 'timing-pairs-title', text: title }),
     element('div', { class: 'timing-dialog-options' }, children),
   ]);
-  const removeRow = button('Remove row', 'Remove the cursor row: a signal added here (a switch phase\'s row comes from its switches)', removeSignal, { icon: 'trash' });
+  const removeRow = button('Remove row', 'Remove the cursor row', removeSignal, { icon: 'trash' });
   const close = () => {
     const focused = dialog.contains(document.activeElement);
     timingEditor?.window.dispose();
@@ -47654,8 +47737,8 @@ function openTimingDialog() {
       ]),
       section('Slots', [
         segmented('Slots', [
-          button('Add a slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot, { icon: 'add' }),
-          button('Remove the slot', 'Remove the slot at the cursor (Delete)', removeSlot, { icon: 'minus' }),
+          button('Add a slot', 'Add a slot (+)', repeatSlot, { icon: 'add' }),
+          button('Remove the slot', 'Remove the slot (Delete)', removeSlot, { icon: 'minus' }),
           button('Repeat the sequence', 'Repeat the sequence (*)', repeatSequence, { icon: 'repeat' }),
         ]),
         element('label', { class: 'timing-width', title: 'Slot width in grid cells' }, [slotInput, element('span', { text: 'cells each' })]),
@@ -48269,8 +48352,8 @@ function renderLegend() {
   actions.hidden = !traces.length;
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !shownTraces().length, onclick: annotateGraph }),
-    el('button', { type: 'button', class: 'bode-place', text: selectedSketch() ? 'Update sketch' : 'Place sketch', title: 'A textbook sketch of the one trace shown on the drawing: no numbers, the corners named. With a sketch selected, this updates it.', disabled: !one, onclick: () => placeSketch(selectedSketch()) }),
+    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: annotateGraph }),
+    el('button', { type: 'button', class: 'bode-place', text: selectedSketch() ? 'Update sketch' : 'Place sketch', title: 'Annotate a Bode sketch', disabled: !one, onclick: () => placeSketch(selectedSketch()) }),
     el('label', { class: 'bode-phase-toggle' }, [
       Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Sketch with its phase' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
       ' with phase',
@@ -48439,7 +48522,7 @@ function renderValues({ force = false } = {}) {
   rows.replaceChildren(
     valueRow({
       name: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', value: ratios.intrinsicGain, min: 0, max: 4 * PER_DECADE,
-      title: 'Every r_o (and resistor) starts at this many units of 1/g',
+      title: 'r_o in units of 1/g',
       onValue: (value) => { ratios.intrinsicGain = value; changed(); },
     }),
     ...(parasitic ? [valueRow({
@@ -48692,7 +48775,7 @@ function onKey(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the calculator', title: 'Close (Shift+E)', text: '×' });
-  const clear = el('button', { type: 'button', class: 'calculator-clear', title: 'Clear the results and forget ans and every name (or type clear)', text: 'Clear', onclick: clearCalculator });
+  const clear = el('button', { type: 'button', class: 'calculator-clear', title: 'Clear', text: 'Clear', onclick: clearCalculator });
   const list = el('ol', { class: 'calculator-list', 'aria-live': 'polite' });
   const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2. clear starts afresh.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
@@ -52183,7 +52266,7 @@ function renderCheckSummary() {
     all.type = 'button';
     all.className = 'check-fix-all';
     all.textContent = `Fix ${fixable === 1 ? 'the safe issue' : `${fixable} safe issues`}`;
-    all.title = 'Reroute wires, snap parts to the grid, and move crowded labels; the rest need a decision';
+    all.title = 'Fix the safe issues';
     all.addEventListener('click', () => {
       const fixed = commit(() => fixAllIssues(editor.circuit, evaluate));
       logLine(fixed ? `fixed ${fixed} issue${fixed === 1 ? '' : 's'}` : 'nothing could be fixed safely');
@@ -52337,6 +52420,7 @@ __exports.chooseWorkspaceFolder = chooseWorkspaceFolder;
 __exports.addDocumentFiles = addDocumentFiles;
 __exports.renderSaveState = renderSaveState;
 __exports.renameDesign = renameDesign;
+__exports.deleteDocuments = deleteDocuments;
 __exports.syncActiveCircuit = syncActiveCircuit;
 __exports.startNewDocument = startNewDocument;
 __exports.startSessionHeartbeat = startSessionHeartbeat;
@@ -52409,10 +52493,6 @@ function renderDeleteWording() {
       ? 'Take the current document off the document list; its file stays on disk'
       : 'Permanently delete the current document file';
   }
-  const deleteTitle = document.getElementById('delete-dialog-title');
-  if (deleteTitle) deleteTitle.textContent = forget ? 'Remove document from the list?' : 'Delete document file?';
-  const confirmDelete = document.getElementById('confirm-delete');
-  if (confirmDelete) setButtonText(confirmDelete, forget ? 'Remove from list' : 'Delete file');
 }
 
 function configureBrowserOnlyUi() {
@@ -52423,7 +52503,7 @@ function configureBrowserOnlyUi() {
   const workspaceButton = document.getElementById('btn-workspace');
   if (workspaceButton) {
     setButtonText(workspaceButton, 'Open folder…');
-    workspaceButton.title = 'Open a folder of documents as the workspace: the document list and the Atlas show its designs';
+    workspaceButton.title = 'Workspace folder';
   }
   const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
   if (pdf) {
@@ -53094,6 +53174,13 @@ function newDocumentDestination() {
   return typeof window.showSaveFilePicker === 'function' ? 'to a file you choose' : 'as a browser download';
 }
 
+/** The name a save would copy the open design to: the name field's, when
+ *  it differs from the design's own (not while renaming), else null. */
+function savesAsCopy() {
+  const typed = circuitNameEl.value.trim();
+  return editor.currentDocumentPath && !renaming && typed && typed !== editor.currentCircuitName ? typed : null;
+}
+
 function renderSaveState() {
   const dirty = hasUnsavedChanges({ cached: true });
   // Fitting measures the toolbar at each compaction stage (a forced layout
@@ -53111,16 +53198,16 @@ function renderSaveState() {
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   const renameButton = document.getElementById('btn-rename-document');
   if (renameButton) renameButton.disabled = !canRenameDocument() || editor.saveInFlight > 0;
-  circuitNameEl.title = editor.currentDocumentPath
-    ? `${editor.currentDocumentPath}\nChange the name and save to create a copy next to it; More → Rename document… renames the file.`
-    : `Name used when saving this document ${newDocumentDestination()}`;
+  circuitNameEl.title = editor.currentDocumentPath ? `Design name · ${editor.currentDocumentPath}` : 'Design name';
   renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
-    saveButton.disabled = !dirty || editor.saveInFlight > 0;
-    saveButton.title = dirty
-      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
-      : editor.currentDocumentPath ? `All changes saved to ${editor.currentDocumentPath}` : 'Nothing to save yet';
+    // A new name typed for a saved design: Save (as Ctrl+S) makes a copy under it.
+    const copyName = savesAsCopy();
+    saveButton.disabled = !(dirty || copyName) || editor.saveInFlight > 0;
+    saveButton.title = copyName ? `Save as a copy named “${copyName}” (Ctrl/Cmd+S)`
+      : dirty ? `Save (Ctrl/Cmd+S) · unsaved changes${editor.currentDocumentPath ? ` to ${editor.currentDocumentPath}` : ''}`
+        : editor.currentDocumentPath ? `Saved · ${editor.currentDocumentPath}` : 'Save (Ctrl/Cmd+S)';
   }
 }
 
@@ -53293,82 +53380,101 @@ async function relinkWorkspace(from, to, renamedPath) {
   }
 }
 
-async function deleteSavedCircuit() {
-  const path = editor.currentDocumentPath;
-  if (!path || editor.deleteInFlight) return;
+/** The open design's file is gone: the editor starts a blank one. */
+async function clearDeletedCurrent() {
+  editor.history = [];
+  editor.future = [];
+  cancelPreviewTransaction();
+  dropTutorial();
+  editor.circuit = new Circuit();
+  clearLatestAnalysisResult();
+  markModelChanged(false);
+  resetCheckState();
+  editor.wire = null;
+  editor.terminalSnap = false;
+  clearSymmetry();
+  editor.drag = null;
+  editor.moveMode = null;
+  editor.copyMode = false;
+  editor.deleteMode = false;
+  editor.alignTool = null;
+  editor.movePending = false;
+  editor.copyPending = false;
+  editor.pendingPlace = null;
+  clearSymmetry();
+  editor.labelMode = null;
+  editor.annotationPoints = [];
+  setSelection([]);
+  editor.selectedNets.clear();
+  editor.cursor = { x: 0, y: 0 };
+  editor.view = viewFromCenter(0, 0);
+  editor.currentCircuitName = '';
+  editor.currentDocumentPath = null;
+  editor.currentDocumentDir = null;
+  editor.activeSyncSuspended = true;
+  circuitNameEl.value = '';
+  circuitSelectEl.value = '';
+  editor.lastSavedSnapshot = snapshot();
+  lastSeenActive = null;
+  lastFailedActive = null;
+  editor.lastSeenRevision = null;
+  editor.lastCircuitTag = null;
+  editor.restoredDraftPath = null;
+  editor.remoteConflictLogged = false;
+  windowSession.clearDraft();
+  render();
+}
+
+let pendingDelete = null; // { paths, resolve }: what the delete dialog asks about
+
+/** Delete designs (by path) after the delete dialog confirms: their files
+ *  go (or, browser-only without a folder, they leave the list), and the
+ *  open one among them leaves the editor blank. Resolves true when any
+ *  went, false when cancelled. */
+function deleteDocuments(paths) {
+  const list = [...new Set(paths)].filter(Boolean);
+  if (!list.length || !deleteDialog || editor.deleteInFlight || pendingDelete) return Promise.resolve(false);
+  const forget = persistence.browserOnly && list.some((path) => !persistence.deletesFile(path));
+  const what = list.length === 1 ? displayPath(list[0]) : `${list.length} designs: ${list.map(documentNameForPath).join(', ')}`;
+  const unsaved = list.includes(editor.currentDocumentPath) && hasUnsavedChanges()
+    ? ' and discards the open design\'s unsaved changes' : '';
+  deleteDialogMessage.textContent = forget
+    ? `This takes ${what} off the document list${unsaved}. The files stay on disk.`
+    : `This permanently deletes ${what}${unsaved}. This cannot be undone.`;
+  const title = document.getElementById('delete-dialog-title');
+  if (title) title.textContent = forget ? 'Remove from the list?' : list.length === 1 ? 'Delete document file?' : `Delete ${list.length} document files?`;
+  const confirm = document.getElementById('confirm-delete');
+  if (confirm) setButtonText(confirm, forget ? 'Remove from list' : list.length === 1 ? 'Delete file' : 'Delete files');
+  deleteDialog.showModal();
+  return new Promise((resolve) => { pendingDelete = { paths: list, resolve, forget }; });
+}
+
+async function runDelete(paths, forget) {
   editor.deleteInFlight = true;
   renderSaveState();
+  const done = [];
   try {
-    const removesFile = !persistence.browserOnly || persistence.deletesFile(path);
-    await withFileAccess(() => persistence.delete(path));
-    const name = editor.currentCircuitName;
-
-    editor.history = [];
-    editor.future = [];
-    cancelPreviewTransaction();
-    dropTutorial();
-    editor.circuit = new Circuit();
-    clearLatestAnalysisResult();
-    markModelChanged(false);
-    resetCheckState();
-    editor.wire = null;
-    editor.terminalSnap = false;
-    clearSymmetry();
-    editor.drag = null;
-    editor.moveMode = null;
-    editor.copyMode = false;
-    editor.deleteMode = false;
-    editor.alignTool = null;
-    editor.movePending = false;
-    editor.copyPending = false;
-    editor.pendingPlace = null;
-    clearSymmetry();
-    editor.labelMode = null;
-    editor.annotationPoints = [];
-    setSelection([]);
-    editor.selectedNets.clear();
-    editor.cursor = { x: 0, y: 0 };
-    editor.view = viewFromCenter(0, 0);
-    editor.currentCircuitName = '';
-    editor.currentDocumentPath = null;
-    editor.currentDocumentDir = null;
-    editor.activeSyncSuspended = true;
-    circuitNameEl.value = '';
-    circuitSelectEl.value = '';
-    editor.lastSavedSnapshot = snapshot();
-    lastSeenActive = null;
-    lastFailedActive = null;
-    editor.lastSeenRevision = null;
-    editor.lastCircuitTag = null;
-    editor.restoredDraftPath = null;
-    editor.remoteConflictLogged = false;
-    windowSession.clearDraft();
-    render();
+    for (const path of paths) {
+      try {
+        await withFileAccess(() => persistence.delete(path));
+        done.push(path);
+        if (path === editor.currentDocumentPath) await clearDeletedCurrent();
+      } catch (err) {
+        logLine(`Could not delete ${documentNameForPath(path)}: ${err.message}`, 'error');
+      }
+    }
     await refreshCircuitList();
-    logLine(removesFile
-      ? `Deleted "${name}" (${displayPath(path)}).`
-      : `Removed "${name}" from the document list; its file stays on disk.`);
-  } catch (err) {
-    logLine(`Could not delete document: ${err.message}`, 'error');
+    const names = done.map((path) => `"${documentNameForPath(path)}"`).join(', ');
+    if (done.length) logLine(forget ? `Removed ${names} from the document list; the files stay on disk.` : `Deleted ${names}.`);
   } finally {
     editor.deleteInFlight = false;
     renderSaveState();
   }
+  return done.length > 0;
 }
 
 function askDeleteCircuit() {
-  const path = editor.currentDocumentPath;
-  if (!path || !deleteDialog) return;
-  if (persistence.browserOnly && !persistence.deletesFile(path)) {
-    deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This takes ${displayPath(path)} off the document list and discards its unsaved editor changes. The file itself stays on disk.`
-      : `This takes ${displayPath(path)} off the document list. The file itself stays on disk.`;
-  } else {
-    deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
-      : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
-  }
-  deleteDialog.showModal();
+  if (editor.currentDocumentPath) void deleteDocuments([editor.currentDocumentPath]);
 }
 
 let lastSeenActive = null;
@@ -53641,8 +53747,11 @@ function installDocumentSession() {
   configureBrowserOnlyUi();
 
   if (deleteDialog) {
-    deleteDialog.addEventListener('close', () => {
-      if (deleteDialog.returnValue === 'confirm') deleteSavedCircuit();
+    deleteDialog.addEventListener('close', async () => {
+      const pending = pendingDelete;
+      pendingDelete = null;
+      if (!pending) return;
+      pending.resolve(deleteDialog.returnValue === 'confirm' ? await runDelete(pending.paths, pending.forget) : false);
     });
   }
 
@@ -53686,8 +53795,8 @@ function installDocumentSession() {
 
   document.getElementById('btn-rename-document')?.addEventListener('click', beginDocumentRename);
   circuitNameEl.addEventListener('keydown', (ev) => {
-    // Naming a design never saved: Enter saves it.
-    if (!renaming && ev.key === 'Enter' && !editor.currentDocumentPath && circuitNameEl.value.trim()) {
+    // Naming a design never saved, or a saved one anew: Enter saves it (a copy).
+    if (!renaming && ev.key === 'Enter' && circuitNameEl.value.trim() && (!editor.currentDocumentPath || savesAsCopy())) {
       ev.preventDefault();
       ev.stopPropagation();
       circuitNameEl.classList.remove('needs-name');
@@ -57607,8 +57716,8 @@ function row(entry) {
   ]);
   const actions = el('div', { class: 'history-actions' }, [
     el('button', { type: 'button', text: 'View', title: 'Show it in a reference window', onclick: () => view(entry) }),
-    el('button', { type: 'button', text: 'Restore', title: 'Put the drawing back as it was (one undo step; Save keeps it)', onclick: () => restore(entry) }),
-    el('button', { type: 'button', class: 'history-more', text: '⋯', 'aria-label': 'More', title: 'Pin, start a new design from it, or remove it', onclick: (ev) => openMenu(entry, ev) }),
+    el('button', { type: 'button', text: 'Restore', title: 'Restore', onclick: () => restore(entry) }),
+    el('button', { type: 'button', class: 'history-more', text: '⋯', 'aria-label': 'More', title: 'More', onclick: (ev) => openMenu(entry, ev) }),
     el('button', { type: 'button', class: 'history-remove', text: '×', 'aria-label': entry.pinned ? 'Remove checkpoint' : 'Remove save point', title: entry.pinned ? 'Remove this checkpoint' : 'Remove this save point', onclick: () => void remove(entry) }),
   ]);
   const item = el('li', { class: `history-entry${entry.pinned ? ' pinned' : ''}` }, [
@@ -57662,8 +57771,8 @@ function renderHistoryWindow() {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the history', title: 'Close', text: '×' });
-  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint', title: 'Pin the drawing as it is now as a named checkpoint (saving it first)', text: 'Checkpoint…' });
-  const clear = el('button', { type: 'button', class: 'history-clear', title: 'Remove every save point; the checkpoints stay', text: 'Remove save points', hidden: true });
+  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint', title: 'Pin as a checkpoint', text: 'Checkpoint…' });
+  const clear = el('button', { type: 'button', class: 'history-clear', title: 'Remove save points', text: 'Remove save points', hidden: true });
   const top = el('div', { class: 'history-top' });
   const message = el('p', { class: 'field-hint history-message' });
   const list = el('ul', { class: 'history-list' });
@@ -62457,8 +62566,8 @@ function syncDocumentSurface() {
   const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
   if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
-  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (Shift+L)') {
-    netLabelButton.title = 'Place a label on a physical wire (Shift+L)';
+  if (netLabelButton && netLabelButton.title !== 'Net label (l)') {
+    netLabelButton.title = 'Net label (l)';
     netLabelButton.setAttribute('aria-label', 'Place a label on a physical wire');
   }
 }
@@ -68734,7 +68843,7 @@ function startEditing() {
   win.view.hidden = true;
   win.empty.hidden = true;
   win.edit.textContent = 'Done';
-  win.edit.title = 'Show the notes rendered (Esc or Ctrl/Cmd+Enter)';
+  win.edit.title = 'Done (Esc)';
   win.source.value = notes();
   win.source.focus();
 }
@@ -68746,7 +68855,7 @@ function stopEditing({ focusCanvas = false } = {}) {
   win.el.classList.remove('editing');
   win.source.hidden = true;
   win.edit.textContent = 'Edit';
-  win.edit.title = 'Edit the notes as Markdown (double-click them)';
+  win.edit.title = 'Edit';
   shownKey = null;
   renderView();
   if (focusCanvas) canvasEl.focus({ preventScroll: true });
@@ -68843,7 +68952,7 @@ function onViewClick(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (n)', text: '×' });
-  const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit the notes as Markdown (double-click them)', text: 'Edit' });
+  const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit', text: 'Edit' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Notes about this design: why it is drawn so, what to check. Markdown with $math$; @M1 or @V_{out} mentions a part or net, [[amp]] links another design. Double-click to write.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: '# Bias\nM1 sets the tail current: see @M1, [[bias-gen]], $I_D = \\frac{1}{2}\\mu C_{ox} V_{ov}^2$' });
@@ -69382,7 +69491,7 @@ function coefficientTable(circuit, current) {
       ]);
     if (!linked) mode.value = free.has(name) ? 'free' : 'fixed';
     const bound = (key, label) => {
-      const input = el('input', { type: 'text', class: 'signal-flow-optimize-bound', placeholder: key, 'aria-label': `${name}: ${label}`, title: `${label} (blank: none; a coefficient keeps its sign unless its range crosses zero)`, value: entry[key] ?? '', disabled: linked || !free.has(name) });
+      const input = el('input', { type: 'text', class: 'signal-flow-optimize-bound', placeholder: key, 'aria-label': `${name}: ${label}`, title: label, value: entry[key] ?? '', disabled: linked || !free.has(name) });
       input.addEventListener('change', () => {
         const text = input.value.trim();
         const number = Number(text);
@@ -69468,7 +69577,7 @@ function swingBlock(circuit, current, sources) {
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
-  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}`, 'aria-label': 'Sine frequency, f/fs', title: 'Test tone, f/fs', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
   const children = [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -69510,7 +69619,7 @@ function swingBlock(circuit, current, sources) {
         const peak = peaks && Number.isFinite(peaks[signal.key]) ? peaks[signal.key].toFixed(1) : '';
         const text = level && swing.measure !== 'peak' ? `${level} (${peak})` : peak;
         return el('div', { class: 'signal-flow-optimize-limit' }, [math(signal.name), input, el('span', { class: 'signal-flow-optimize-word', text: 'dBFS' }),
-          el('label', { class: 'signal-flow-optimize-aim', title: 'Aim at it: a goal as well as a limit -- the net brought up to its limit, each dB under it counted against the result, so no swing is scaled down for nothing (an integrator\'s swing set by its supply, its noise by its size). Off: only kept under it.' }, [aim, el('span', { text: 'aim' })]),
+          el('label', { class: 'signal-flow-optimize-aim', title: 'Aim at the limit' }, [aim, el('span', { text: 'aim' })]),
           el('span', { class: 'signal-flow-optimize-number', text, title: text ? `At the best numbers found, verified at length: ${level && swing.measure !== 'peak' ? `its ${MEASURE_TEXT[swing.measure]} (its highest peak in brackets)` : 'its highest peak'}, dBFS` : '' })]);
       })));
     }
@@ -69558,7 +69667,7 @@ function runBlock(current) {
   prune.checked = current.prune !== false;
   prune.addEventListener('change', () => { current.prune = prune.checked; changed(); });
   return el('div', { class: 'signal-flow-optimize-group' }, [
-    el('label', { class: 'signal-flow-spectrum-toggle', title: 'After the search, a coefficient under 5% of the largest into its block is tried at zero (smallest first, verified at length): it stays zero, one part fewer, if every limit still holds and the goals lose at most 0.5 dB. Apply then fixes it at zero.' }, [prune, el('span', { text: 'Zero coefficients that barely matter' })]),
+    el('label', { class: 'signal-flow-spectrum-toggle', title: 'Try small coefficients at zero' }, [prune, el('span', { text: 'Zero coefficients that barely matter' })]),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Budget' }), budget, el('label', { text: 'candidates' }),
       el('button', { type: 'button', class: 'signal-flow-optimize-run', text: 'Run', onclick: () => (running ? running.stop() : run()) }),
@@ -69639,7 +69748,7 @@ function resultBlock(sources) {
     ...(found.fractions ? fractionsTable(found) : []),
     ...scoreRows(found, sources, ['Start', found.fractions ? 'Fractions' : 'Found']),
     el('div', { class: 'signal-flow-graph-actions' }, [
-      el('button', { type: 'button', text: 'Revert', title: 'Put back the coefficients from before Apply', disabled: !reverting, onclick: revert }),
+      el('button', { type: 'button', text: 'Revert', title: 'Revert', disabled: !reverting, onclick: revert }),
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Put the fractions into the coefficients, exactly' : 'Put the numbers found into the coefficients (rounded to 4 digits)', onclick: apply }),
     ]),
   );
@@ -69738,7 +69847,7 @@ async function driveSearch(search, pool) {
 
 /** Whether a coefficient's n reads exactly (=) or as the largest (≤). */
 function nControls(entry, { placeholder, label, onChange }) {
-  const kind = el('select', { class: 'signal-flow-optimize-nkind', 'aria-label': `${label}: n up to, or n exactly`, title: '≤: n up to this, the most accurate taken; =: exactly this n' }, [
+  const kind = el('select', { class: 'signal-flow-optimize-nkind', 'aria-label': `${label}: n up to, or n exactly`, title: 'Order n' }, [
     el('option', { value: 'max', text: '≤' }), el('option', { value: 'fixed', text: '=' }),
   ]);
   kind.value = entry.fixed ? 'fixed' : 'max';
@@ -70170,7 +70279,7 @@ function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'run-window-title', class: 'floating-window-title', text: title }),
-      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close (the run goes on; Stop stops it)', text: '×' }),
+      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close', text: '×' }),
     ]),
     el('div', { class: 'run-window-body' }, [plot, legend, bar, status]),
     el('div', { class: 'dialog-actions run-window-actions' }, [stop]),
@@ -71225,13 +71334,13 @@ function createPlotView({ height = 230, fill = false, aspect = null, maxHeight =
   fitButton.type = 'button';
   fitButton.className = 'plot-view-fit';
   fitButton.textContent = 'Fit';
-  fitButton.title = 'Show it all again (double-click the plot)';
+  fitButton.title = 'Fit (double-click)';
   fitButton.hidden = true;
   const readout = document.createElement('div');
   readout.className = 'plot-view-readout';
   readout.hidden = true;
   el.append(root, fitButton, readout);
-  el.title = 'Drag to pan; right-drag zooms to a box (a flat stroke only along x, a tall one only along y); right-click steps back; double-click fits; Ctrl+wheel zooms';
+  el.title = 'Plot';
   const clipId = `plot-clip-${++clipCount}`;
 
   let spec = null;
@@ -74439,7 +74548,7 @@ function renderSwing() {
     };
   }), (key, on) => { if (on) swingShown.add(key); else swingShown.delete(key); renderSwing(); }));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate swing', title: 'Put this plot on the drawing, its nets named beside it', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate swing', title: 'Annotate the plot', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
   ]));
 }
 
@@ -74887,7 +74996,7 @@ function renderGraph() {
   host.append(legend);
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderCoefficients(); renderGraph(); renderResults(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !plot, onclick: annotateGraph }),
+    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: annotateGraph }),
   ]));
 }
 
@@ -75153,7 +75262,7 @@ function appendSqnr(block, entry, ntf) {
   const edges = bandEdges(band).map((f) => Number(f.toPrecision(3)));
   block.append(el('div', { class: 'analysis-equation-row' }, [
     el('div', { class: 'analysis-equation-label', text: 'Peak SQNR in band' }),
-    el('div', { class: 'signal-flow-roots', text: `${Number.isFinite(sqnr) ? sqnr.toFixed(1) : '∞'} dB`, title: `A full-scale sine (amplitude ${levels - 1}, ${levels} levels) against white quantization noise (variance 1/3, levels 2 apart) through this NTF, in f/fs ${edges.length === 2 ? `${edges[0]} to ${edges[1]}` : `0 to ${edges[0]}`}; a linear-model prediction` }),
+    el('div', { class: 'signal-flow-roots', text: `${Number.isFinite(sqnr) ? sqnr.toFixed(1) : '∞'} dB`, title: `Full-scale sine, ${levels} levels, f/fs ${edges.length === 2 ? `${edges[0]} to ${edges[1]}` : `0 to ${edges[0]}`} (linear model)` }),
   ]));
 }
 
@@ -75234,7 +75343,7 @@ function installSignalFlowUi() {
   if (!scroll) return;
   modeBar = el('div', { class: 'segmented analysis-mode', role: 'group', 'aria-label': 'Analysis mode' }, [
     el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis of a transistor circuit', onclick: () => setMode('circuit', { user: true }) }),
-    el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Transfer functions of a block diagram: H(s)/H(z) blocks, sums, and multipliers', onclick: () => setMode('signal-flow', { user: true }) }),
+    el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Signal-flow analysis', onclick: () => setMode('signal-flow', { user: true }) }),
   ]);
   const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
@@ -75304,9 +75413,9 @@ function installSignalFlowUi() {
   ]);
   actions = [
     // Beside Derive, at hand whatever the window shows: redraw the drawing's plots.
-    el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Redraw every plot on the drawing at the coefficients\' numbers now, in place (one undo step)', onclick: () => updatePlots() }),
-    el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Write the equations under the drawing', onclick: annotate }),
-    el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive every input\'s transfer function to the output (Enter)', onclick: derive }),
+    el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Update plots', onclick: () => updatePlots() }),
+    el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Annotate the equations', onclick: annotate }),
+    el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];
   for (const button of actions) if (button.dataset.icon && !button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
   document.getElementById('analysis-submit')?.before(...actions);
@@ -76176,7 +76285,7 @@ function setStatusMessage(text, cls) {
   const lines = String(text).split('\n');
   statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
   statusMessageEl.dataset.kind = cls || 'info';
-  statusMessageEl.title = `${text}\nClick to open the log and command line (:)`;
+  statusMessageEl.title = text;
   // Restart the fade: a fresh message is bright, then settles to dim.
   statusMessageEl.classList.remove('fresh');
   void statusMessageEl.offsetWidth;
@@ -77381,7 +77490,7 @@ function renderPlots() {
   actions.hidden = !traces.length;
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces()); } }),
+    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces()); } }),
   );
 }
 
@@ -77666,12 +77775,12 @@ function timeSection() {
   const plot = createPlotView({ fill: true, wheel: 'always', className: 'time-plot' });
   const input = el('select', { class: 'time-input', 'aria-label': 'Source the sine drives', onchange: (ev) => save({ input: ev.target.value }) });
   const amplitude = el('input', { type: 'text', class: 'time-field', 'aria-label': 'Sine amplitude, dBFS', placeholder: '-6', title: 'The sine\'s amplitude in dB of full scale', onchange: (ev) => save({ amplitude: ev.target.value.trim() }) });
-  const frequency = el('input', { type: 'text', class: 'time-field', 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band', onchange: (ev) => save({ frequency: ev.target.value.trim() }) });
+  const frequency = el('input', { type: 'text', class: 'time-field', 'aria-label': 'Sine frequency, f/fs', title: 'Test tone, f/fs', onchange: (ev) => save({ frequency: ev.target.value.trim() }) });
   const samples = el('select', { class: 'time-samples', 'aria-label': 'Samples to run', onchange: (ev) => save({ samples: Number(ev.target.value) }) },
     [256, 1024, 4096, 16384].map((n) => el('option', { value: String(n), text: `${n}` })));
   const status = el('p', { class: 'field-hint time-status', 'aria-live': 'polite' });
   const nets = el('div', { class: 'time-nets' });
-  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing, over the time in view, their nets named beside them (Update plots redraws it)', disabled: true, onclick: () => annotate() });
+  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Annotate the waveforms', disabled: true, onclick: () => annotate() });
   const node = el('div', { class: 'signal-flow-time', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
       el('label', { text: 'Sine into' }), input,
@@ -78298,7 +78407,7 @@ function syncRailFlyout(state) {
     railFlyoutProxyEl.dataset.icon = source.dataset.icon;
     icon.innerHTML = ICON_PATHS[source.dataset.icon] || '';
   }
-  if (source) railFlyoutProxyEl.title = `${source.title} · hover or right-click for all annotation tools`;
+  if (source) railFlyoutProxyEl.title = source.title;
 }
 
 /** Hover, right-click, or a long press on a rail slot opens its flyout strip
@@ -78499,7 +78608,7 @@ function syncWireButtonRouteMode(flash = false) {
   const icon = button.querySelector('.button-icon');
   if (icon) icon.innerHTML = ICON_PATHS[editor.routeMode === 'diagonal' ? 'wire-diagonal' : 'wire'];
   button.dataset.routeShape = editor.routeMode;
-  button.title = `Draw an electrical wire (w) · hold Alt to snap to the nearest terminal · ${editor.routeMode} shape · F3 to toggle; hover or right-click for both shapes`;
+  button.title = `Wire (w) · ${editor.routeMode}`;
   if (flash) flashToolButton(button);
 }
 

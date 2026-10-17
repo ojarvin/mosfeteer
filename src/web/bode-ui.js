@@ -370,8 +370,8 @@ function renderLegend() {
   actions.hidden = !traces.length;
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !shownTraces().length, onclick: annotateGraph }),
-    el('button', { type: 'button', class: 'bode-place', text: selectedSketch() ? 'Update sketch' : 'Place sketch', title: 'A textbook sketch of the one trace shown on the drawing: no numbers, the corners named. With a sketch selected, this updates it.', disabled: !one, onclick: () => placeSketch(selectedSketch()) }),
+    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: annotateGraph }),
+    el('button', { type: 'button', class: 'bode-place', text: selectedSketch() ? 'Update sketch' : 'Place sketch', title: 'Annotate a Bode sketch', disabled: !one, onclick: () => placeSketch(selectedSketch()) }),
     el('label', { class: 'bode-phase-toggle' }, [
       Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Sketch with its phase' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
       ' with phase',
@@ -540,7 +540,7 @@ function renderValues({ force = false } = {}) {
   rows.replaceChildren(
     valueRow({
       name: 'Intrinsic gain g_m r_o', tex: 'g_{m} r_{o}', value: ratios.intrinsicGain, min: 0, max: 4 * PER_DECADE,
-      title: 'Every r_o (and resistor) starts at this many units of 1/g',
+      title: 'r_o in units of 1/g',
       onValue: (value) => { ratios.intrinsicGain = value; changed(); },
     }),
     ...(parasitic ? [valueRow({

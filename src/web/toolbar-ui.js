@@ -157,7 +157,7 @@ function syncRailFlyout(state) {
     railFlyoutProxyEl.dataset.icon = source.dataset.icon;
     icon.innerHTML = ICON_PATHS[source.dataset.icon] || '';
   }
-  if (source) railFlyoutProxyEl.title = `${source.title} · hover or right-click for all annotation tools`;
+  if (source) railFlyoutProxyEl.title = source.title;
 }
 
 /** Hover, right-click, or a long press on a rail slot opens its flyout strip
@@ -358,7 +358,7 @@ function syncWireButtonRouteMode(flash = false) {
   const icon = button.querySelector('.button-icon');
   if (icon) icon.innerHTML = ICON_PATHS[editor.routeMode === 'diagonal' ? 'wire-diagonal' : 'wire'];
   button.dataset.routeShape = editor.routeMode;
-  button.title = `Draw an electrical wire (w) · hold Alt to snap to the nearest terminal · ${editor.routeMode} shape · F3 to toggle; hover or right-click for both shapes`;
+  button.title = `Wire (w) · ${editor.routeMode}`;
   if (flash) flashToolButton(button);
 }
 

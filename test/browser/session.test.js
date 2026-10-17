@@ -3,7 +3,7 @@
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { start, sleep, browserSkip } from './harness.js';
 import { amplifier, withBeats } from './fixtures.js';
@@ -241,5 +241,17 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     await h.until(`document.getElementById('export-dialog').open`);
     assert.deepEqual(await box(), { checked: false, disabled: false });
     await h.evaluate(`document.getElementById('export-dialog').close()`);
+  });
+
+  test('a new name typed for a saved design turns Save on, and Save makes a copy under it', async () => {
+    await h.open('amp');
+    const save = () => h.evaluate(`(() => { const b = document.getElementById('btn-save'); return { disabled: b.disabled, title: b.title }; })()`);
+    assert.equal((await save()).disabled, true, 'nothing to save');
+    await h.evaluate(`(() => { const field = document.getElementById('circuit-name'); field.value = 'amp-copy'; field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    assert.deepEqual(await save(), { disabled: false, title: 'Save as a copy named “amp-copy” (Ctrl/Cmd+S)' });
+    await h.click('#btn-save');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'amp-copy')`);
+    assert.ok(existsSync(join(h.workspace, 'amp-copy.json')) && existsSync(join(h.workspace, 'amp.json')), 'a copy beside the original');
+    await h.until(`document.getElementById('btn-save').disabled`);
   });
 });

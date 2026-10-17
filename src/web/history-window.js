@@ -228,8 +228,8 @@ function row(entry) {
   ]);
   const actions = el('div', { class: 'history-actions' }, [
     el('button', { type: 'button', text: 'View', title: 'Show it in a reference window', onclick: () => view(entry) }),
-    el('button', { type: 'button', text: 'Restore', title: 'Put the drawing back as it was (one undo step; Save keeps it)', onclick: () => restore(entry) }),
-    el('button', { type: 'button', class: 'history-more', text: '⋯', 'aria-label': 'More', title: 'Pin, start a new design from it, or remove it', onclick: (ev) => openMenu(entry, ev) }),
+    el('button', { type: 'button', text: 'Restore', title: 'Restore', onclick: () => restore(entry) }),
+    el('button', { type: 'button', class: 'history-more', text: '⋯', 'aria-label': 'More', title: 'More', onclick: (ev) => openMenu(entry, ev) }),
     el('button', { type: 'button', class: 'history-remove', text: '×', 'aria-label': entry.pinned ? 'Remove checkpoint' : 'Remove save point', title: entry.pinned ? 'Remove this checkpoint' : 'Remove this save point', onclick: () => void remove(entry) }),
   ]);
   const item = el('li', { class: `history-entry${entry.pinned ? ' pinned' : ''}` }, [
@@ -283,8 +283,8 @@ export function renderHistoryWindow() {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the history', title: 'Close', text: '×' });
-  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint', title: 'Pin the drawing as it is now as a named checkpoint (saving it first)', text: 'Checkpoint…' });
-  const clear = el('button', { type: 'button', class: 'history-clear', title: 'Remove every save point; the checkpoints stay', text: 'Remove save points', hidden: true });
+  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint', title: 'Pin as a checkpoint', text: 'Checkpoint…' });
+  const clear = el('button', { type: 'button', class: 'history-clear', title: 'Remove save points', text: 'Remove save points', hidden: true });
   const top = el('div', { class: 'history-top' });
   const message = el('p', { class: 'field-hint history-message' });
   const list = el('ul', { class: 'history-list' });

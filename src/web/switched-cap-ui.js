@@ -427,7 +427,7 @@ function renderPlots() {
   actions.hidden = !traces.length;
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces()); } }),
+    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces()); } }),
   );
 }
 

@@ -97,7 +97,7 @@ function startEditing() {
   win.view.hidden = true;
   win.empty.hidden = true;
   win.edit.textContent = 'Done';
-  win.edit.title = 'Show the notes rendered (Esc or Ctrl/Cmd+Enter)';
+  win.edit.title = 'Done (Esc)';
   win.source.value = notes();
   win.source.focus();
 }
@@ -109,7 +109,7 @@ function stopEditing({ focusCanvas = false } = {}) {
   win.el.classList.remove('editing');
   win.source.hidden = true;
   win.edit.textContent = 'Edit';
-  win.edit.title = 'Edit the notes as Markdown (double-click them)';
+  win.edit.title = 'Edit';
   shownKey = null;
   renderView();
   if (focusCanvas) canvasEl.focus({ preventScroll: true });
@@ -206,7 +206,7 @@ function onViewClick(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (n)', text: '×' });
-  const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit the notes as Markdown (double-click them)', text: 'Edit' });
+  const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit', text: 'Edit' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Notes about this design: why it is drawn so, what to check. Markdown with $math$; @M1 or @V_{out} mentions a part or net, [[amp]] links another design. Double-click to write.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: '# Bias\nM1 sets the tail current: see @M1, [[bias-gen]], $I_D = \\frac{1}{2}\\mu C_{ox} V_{ov}^2$' });

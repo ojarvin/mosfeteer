@@ -38,7 +38,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
     el('header', { class: 'floating-window-header' }, [
       el('h2', { id: 'run-window-title', class: 'floating-window-title', text: title }),
-      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close (the run goes on; Stop stops it)', text: '×' }),
+      el('button', { type: 'button', class: 'floating-window-close', 'aria-label': `Close the ${title.toLowerCase()} window`, title: 'Close', text: '×' }),
     ]),
     el('div', { class: 'run-window-body' }, [plot, legend, bar, status]),
     el('div', { class: 'dialog-actions run-window-actions' }, [stop]),

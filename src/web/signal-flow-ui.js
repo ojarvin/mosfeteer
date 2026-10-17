@@ -687,7 +687,7 @@ function renderSwing() {
     };
   }), (key, on) => { if (on) swingShown.add(key); else swingShown.delete(key); renderSwing(); }));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate swing', title: 'Put this plot on the drawing, its nets named beside it', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate swing', title: 'Annotate the plot', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
   ]));
 }
 
@@ -1135,7 +1135,7 @@ function renderGraph() {
   host.append(legend);
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderCoefficients(); renderGraph(); renderResults(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Put this graph on the drawing, its traces named beside it', disabled: !plot, onclick: annotateGraph }),
+    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: annotateGraph }),
   ]));
 }
 
@@ -1401,7 +1401,7 @@ function appendSqnr(block, entry, ntf) {
   const edges = bandEdges(band).map((f) => Number(f.toPrecision(3)));
   block.append(el('div', { class: 'analysis-equation-row' }, [
     el('div', { class: 'analysis-equation-label', text: 'Peak SQNR in band' }),
-    el('div', { class: 'signal-flow-roots', text: `${Number.isFinite(sqnr) ? sqnr.toFixed(1) : '∞'} dB`, title: `A full-scale sine (amplitude ${levels - 1}, ${levels} levels) against white quantization noise (variance 1/3, levels 2 apart) through this NTF, in f/fs ${edges.length === 2 ? `${edges[0]} to ${edges[1]}` : `0 to ${edges[0]}`}; a linear-model prediction` }),
+    el('div', { class: 'signal-flow-roots', text: `${Number.isFinite(sqnr) ? sqnr.toFixed(1) : '∞'} dB`, title: `Full-scale sine, ${levels} levels, f/fs ${edges.length === 2 ? `${edges[0]} to ${edges[1]}` : `0 to ${edges[0]}`} (linear model)` }),
   ]));
 }
 
@@ -1482,7 +1482,7 @@ export function installSignalFlowUi() {
   if (!scroll) return;
   modeBar = el('div', { class: 'segmented analysis-mode', role: 'group', 'aria-label': 'Analysis mode' }, [
     el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis of a transistor circuit', onclick: () => setMode('circuit', { user: true }) }),
-    el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Transfer functions of a block diagram: H(s)/H(z) blocks, sums, and multipliers', onclick: () => setMode('signal-flow', { user: true }) }),
+    el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Signal-flow analysis', onclick: () => setMode('signal-flow', { user: true }) }),
   ]);
   const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
@@ -1552,9 +1552,9 @@ export function installSignalFlowUi() {
   ]);
   actions = [
     // Beside Derive, at hand whatever the window shows: redraw the drawing's plots.
-    el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Redraw every plot on the drawing at the coefficients\' numbers now, in place (one undo step)', onclick: () => updatePlots() }),
-    el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Write the equations under the drawing', onclick: annotate }),
-    el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive every input\'s transfer function to the output (Enter)', onclick: derive }),
+    el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Update plots', onclick: () => updatePlots() }),
+    el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Annotate the equations', onclick: annotate }),
+    el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];
   for (const button of actions) if (button.dataset.icon && !button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));
   document.getElementById('analysis-submit')?.before(...actions);

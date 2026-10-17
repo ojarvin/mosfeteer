@@ -53,12 +53,12 @@ export function timeSection() {
   const plot = createPlotView({ fill: true, wheel: 'always', className: 'time-plot' });
   const input = el('select', { class: 'time-input', 'aria-label': 'Source the sine drives', onchange: (ev) => save({ input: ev.target.value }) });
   const amplitude = el('input', { type: 'text', class: 'time-field', 'aria-label': 'Sine amplitude, dBFS', placeholder: '-6', title: 'The sine\'s amplitude in dB of full scale', onchange: (ev) => save({ amplitude: ev.target.value.trim() }) });
-  const frequency = el('input', { type: 'text', class: 'time-field', 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band', onchange: (ev) => save({ frequency: ev.target.value.trim() }) });
+  const frequency = el('input', { type: 'text', class: 'time-field', 'aria-label': 'Sine frequency, f/fs', title: 'Test tone, f/fs', onchange: (ev) => save({ frequency: ev.target.value.trim() }) });
   const samples = el('select', { class: 'time-samples', 'aria-label': 'Samples to run', onchange: (ev) => save({ samples: Number(ev.target.value) }) },
     [256, 1024, 4096, 16384].map((n) => el('option', { value: String(n), text: `${n}` })));
   const status = el('p', { class: 'field-hint time-status', 'aria-live': 'polite' });
   const nets = el('div', { class: 'time-nets' });
-  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing, over the time in view, their nets named beside them (Update plots redraws it)', disabled: true, onclick: () => annotate() });
+  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Annotate the waveforms', disabled: true, onclick: () => annotate() });
   const node = el('div', { class: 'signal-flow-time', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
       el('label', { text: 'Sine into' }), input,

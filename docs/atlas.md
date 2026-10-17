@@ -130,6 +130,14 @@ several can be. **Unsaved changes**: the editor's design, saved from here.
 each time the menu opens; it is hidden on an empty desk and in the Symbols
 view.
 
+A right click on a design (on the desk or in the list) opens its menu, the
+editor's own (`openMenuAt`): **Edit** opens it, **Rename…** (F2) and
+**Tags…** (`#`) open a field at its caption, and **Delete…** (Delete) asks
+in the editor's delete dialog first (`deleteDocuments`; the open design
+among them leaves the editor blank). A design right-clicked outside the
+pick becomes the pick; with several picked the menu offers only adding
+tags and deleting, for all of them.
+
 **List** shows every design on the desk in one table, to keep a
 workspace's names and tags in order: its name (the open one marked), when
 it was last saved, its tags, and a check for each of beats, a timing

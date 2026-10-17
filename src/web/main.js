@@ -2354,8 +2354,8 @@ function syncDocumentSurface() {
   const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
   if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
-  if (netLabelButton && netLabelButton.title !== 'Place a label on a physical wire (Shift+L)') {
-    netLabelButton.title = 'Place a label on a physical wire (Shift+L)';
+  if (netLabelButton && netLabelButton.title !== 'Net label (l)') {
+    netLabelButton.title = 'Net label (l)';
     netLabelButton.setAttribute('aria-label', 'Place a label on a physical wire');
   }
 }

@@ -47,10 +47,6 @@ function renderDeleteWording() {
       ? 'Take the current document off the document list; its file stays on disk'
       : 'Permanently delete the current document file';
   }
-  const deleteTitle = document.getElementById('delete-dialog-title');
-  if (deleteTitle) deleteTitle.textContent = forget ? 'Remove document from the list?' : 'Delete document file?';
-  const confirmDelete = document.getElementById('confirm-delete');
-  if (confirmDelete) setButtonText(confirmDelete, forget ? 'Remove from list' : 'Delete file');
 }
 
 function configureBrowserOnlyUi() {
@@ -61,7 +57,7 @@ function configureBrowserOnlyUi() {
   const workspaceButton = document.getElementById('btn-workspace');
   if (workspaceButton) {
     setButtonText(workspaceButton, 'Open folder…');
-    workspaceButton.title = 'Open a folder of documents as the workspace: the document list and the Atlas show its designs';
+    workspaceButton.title = 'Workspace folder';
   }
   const pdf = exportForm?.querySelector('input[name="format"][value="pdf"]');
   if (pdf) {
@@ -732,6 +728,13 @@ function newDocumentDestination() {
   return typeof window.showSaveFilePicker === 'function' ? 'to a file you choose' : 'as a browser download';
 }
 
+/** The name a save would copy the open design to: the name field's, when
+ *  it differs from the design's own (not while renaming), else null. */
+function savesAsCopy() {
+  const typed = circuitNameEl.value.trim();
+  return editor.currentDocumentPath && !renaming && typed && typed !== editor.currentCircuitName ? typed : null;
+}
+
 export function renderSaveState() {
   const dirty = hasUnsavedChanges({ cached: true });
   // Fitting measures the toolbar at each compaction stage (a forced layout
@@ -749,16 +752,16 @@ export function renderSaveState() {
   if (revealDocumentBtn) revealDocumentBtn.disabled = persistence.browserOnly || !editor.currentDocumentPath;
   const renameButton = document.getElementById('btn-rename-document');
   if (renameButton) renameButton.disabled = !canRenameDocument() || editor.saveInFlight > 0;
-  circuitNameEl.title = editor.currentDocumentPath
-    ? `${editor.currentDocumentPath}\nChange the name and save to create a copy next to it; More → Rename document… renames the file.`
-    : `Name used when saving this document ${newDocumentDestination()}`;
+  circuitNameEl.title = editor.currentDocumentPath ? `Design name · ${editor.currentDocumentPath}` : 'Design name';
   renderDeleteWording();
   const saveButton = document.getElementById('btn-save');
   if (saveButton) {
-    saveButton.disabled = !dirty || editor.saveInFlight > 0;
-    saveButton.title = dirty
-      ? 'Save unsaved changes, including designs with issues (Ctrl/Cmd+S or Shift+X)'
-      : editor.currentDocumentPath ? `All changes saved to ${editor.currentDocumentPath}` : 'Nothing to save yet';
+    // A new name typed for a saved design: Save (as Ctrl+S) makes a copy under it.
+    const copyName = savesAsCopy();
+    saveButton.disabled = !(dirty || copyName) || editor.saveInFlight > 0;
+    saveButton.title = copyName ? `Save as a copy named “${copyName}” (Ctrl/Cmd+S)`
+      : dirty ? `Save (Ctrl/Cmd+S) · unsaved changes${editor.currentDocumentPath ? ` to ${editor.currentDocumentPath}` : ''}`
+        : editor.currentDocumentPath ? `Saved · ${editor.currentDocumentPath}` : 'Save (Ctrl/Cmd+S)';
   }
 }
 
@@ -931,82 +934,101 @@ async function relinkWorkspace(from, to, renamedPath) {
   }
 }
 
-async function deleteSavedCircuit() {
-  const path = editor.currentDocumentPath;
-  if (!path || editor.deleteInFlight) return;
+/** The open design's file is gone: the editor starts a blank one. */
+async function clearDeletedCurrent() {
+  editor.history = [];
+  editor.future = [];
+  cancelPreviewTransaction();
+  dropTutorial();
+  editor.circuit = new Circuit();
+  clearLatestAnalysisResult();
+  markModelChanged(false);
+  resetCheckState();
+  editor.wire = null;
+  editor.terminalSnap = false;
+  clearSymmetry();
+  editor.drag = null;
+  editor.moveMode = null;
+  editor.copyMode = false;
+  editor.deleteMode = false;
+  editor.alignTool = null;
+  editor.movePending = false;
+  editor.copyPending = false;
+  editor.pendingPlace = null;
+  clearSymmetry();
+  editor.labelMode = null;
+  editor.annotationPoints = [];
+  setSelection([]);
+  editor.selectedNets.clear();
+  editor.cursor = { x: 0, y: 0 };
+  editor.view = viewFromCenter(0, 0);
+  editor.currentCircuitName = '';
+  editor.currentDocumentPath = null;
+  editor.currentDocumentDir = null;
+  editor.activeSyncSuspended = true;
+  circuitNameEl.value = '';
+  circuitSelectEl.value = '';
+  editor.lastSavedSnapshot = snapshot();
+  lastSeenActive = null;
+  lastFailedActive = null;
+  editor.lastSeenRevision = null;
+  editor.lastCircuitTag = null;
+  editor.restoredDraftPath = null;
+  editor.remoteConflictLogged = false;
+  windowSession.clearDraft();
+  render();
+}
+
+let pendingDelete = null; // { paths, resolve }: what the delete dialog asks about
+
+/** Delete designs (by path) after the delete dialog confirms: their files
+ *  go (or, browser-only without a folder, they leave the list), and the
+ *  open one among them leaves the editor blank. Resolves true when any
+ *  went, false when cancelled. */
+export function deleteDocuments(paths) {
+  const list = [...new Set(paths)].filter(Boolean);
+  if (!list.length || !deleteDialog || editor.deleteInFlight || pendingDelete) return Promise.resolve(false);
+  const forget = persistence.browserOnly && list.some((path) => !persistence.deletesFile(path));
+  const what = list.length === 1 ? displayPath(list[0]) : `${list.length} designs: ${list.map(documentNameForPath).join(', ')}`;
+  const unsaved = list.includes(editor.currentDocumentPath) && hasUnsavedChanges()
+    ? ' and discards the open design\'s unsaved changes' : '';
+  deleteDialogMessage.textContent = forget
+    ? `This takes ${what} off the document list${unsaved}. The files stay on disk.`
+    : `This permanently deletes ${what}${unsaved}. This cannot be undone.`;
+  const title = document.getElementById('delete-dialog-title');
+  if (title) title.textContent = forget ? 'Remove from the list?' : list.length === 1 ? 'Delete document file?' : `Delete ${list.length} document files?`;
+  const confirm = document.getElementById('confirm-delete');
+  if (confirm) setButtonText(confirm, forget ? 'Remove from list' : list.length === 1 ? 'Delete file' : 'Delete files');
+  deleteDialog.showModal();
+  return new Promise((resolve) => { pendingDelete = { paths: list, resolve, forget }; });
+}
+
+async function runDelete(paths, forget) {
   editor.deleteInFlight = true;
   renderSaveState();
+  const done = [];
   try {
-    const removesFile = !persistence.browserOnly || persistence.deletesFile(path);
-    await withFileAccess(() => persistence.delete(path));
-    const name = editor.currentCircuitName;
-
-    editor.history = [];
-    editor.future = [];
-    cancelPreviewTransaction();
-    dropTutorial();
-    editor.circuit = new Circuit();
-    clearLatestAnalysisResult();
-    markModelChanged(false);
-    resetCheckState();
-    editor.wire = null;
-    editor.terminalSnap = false;
-    clearSymmetry();
-    editor.drag = null;
-    editor.moveMode = null;
-    editor.copyMode = false;
-    editor.deleteMode = false;
-    editor.alignTool = null;
-    editor.movePending = false;
-    editor.copyPending = false;
-    editor.pendingPlace = null;
-    clearSymmetry();
-    editor.labelMode = null;
-    editor.annotationPoints = [];
-    setSelection([]);
-    editor.selectedNets.clear();
-    editor.cursor = { x: 0, y: 0 };
-    editor.view = viewFromCenter(0, 0);
-    editor.currentCircuitName = '';
-    editor.currentDocumentPath = null;
-    editor.currentDocumentDir = null;
-    editor.activeSyncSuspended = true;
-    circuitNameEl.value = '';
-    circuitSelectEl.value = '';
-    editor.lastSavedSnapshot = snapshot();
-    lastSeenActive = null;
-    lastFailedActive = null;
-    editor.lastSeenRevision = null;
-    editor.lastCircuitTag = null;
-    editor.restoredDraftPath = null;
-    editor.remoteConflictLogged = false;
-    windowSession.clearDraft();
-    render();
+    for (const path of paths) {
+      try {
+        await withFileAccess(() => persistence.delete(path));
+        done.push(path);
+        if (path === editor.currentDocumentPath) await clearDeletedCurrent();
+      } catch (err) {
+        logLine(`Could not delete ${documentNameForPath(path)}: ${err.message}`, 'error');
+      }
+    }
     await refreshCircuitList();
-    logLine(removesFile
-      ? `Deleted "${name}" (${displayPath(path)}).`
-      : `Removed "${name}" from the document list; its file stays on disk.`);
-  } catch (err) {
-    logLine(`Could not delete document: ${err.message}`, 'error');
+    const names = done.map((path) => `"${documentNameForPath(path)}"`).join(', ');
+    if (done.length) logLine(forget ? `Removed ${names} from the document list; the files stay on disk.` : `Deleted ${names}.`);
   } finally {
     editor.deleteInFlight = false;
     renderSaveState();
   }
+  return done.length > 0;
 }
 
 function askDeleteCircuit() {
-  const path = editor.currentDocumentPath;
-  if (!path || !deleteDialog) return;
-  if (persistence.browserOnly && !persistence.deletesFile(path)) {
-    deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This takes ${displayPath(path)} off the document list and discards its unsaved editor changes. The file itself stays on disk.`
-      : `This takes ${displayPath(path)} off the document list. The file itself stays on disk.`;
-  } else {
-    deleteDialogMessage.textContent = hasUnsavedChanges()
-      ? `This permanently deletes ${displayPath(path)} and discards its unsaved editor changes. This cannot be undone.`
-      : `This permanently deletes ${displayPath(path)}. This cannot be undone.`;
-  }
-  deleteDialog.showModal();
+  if (editor.currentDocumentPath) void deleteDocuments([editor.currentDocumentPath]);
 }
 
 let lastSeenActive = null;
@@ -1279,8 +1301,11 @@ export function installDocumentSession() {
   configureBrowserOnlyUi();
 
   if (deleteDialog) {
-    deleteDialog.addEventListener('close', () => {
-      if (deleteDialog.returnValue === 'confirm') deleteSavedCircuit();
+    deleteDialog.addEventListener('close', async () => {
+      const pending = pendingDelete;
+      pendingDelete = null;
+      if (!pending) return;
+      pending.resolve(deleteDialog.returnValue === 'confirm' ? await runDelete(pending.paths, pending.forget) : false);
     });
   }
 
@@ -1324,8 +1349,8 @@ export function installDocumentSession() {
 
   document.getElementById('btn-rename-document')?.addEventListener('click', beginDocumentRename);
   circuitNameEl.addEventListener('keydown', (ev) => {
-    // Naming a design never saved: Enter saves it.
-    if (!renaming && ev.key === 'Enter' && !editor.currentDocumentPath && circuitNameEl.value.trim()) {
+    // Naming a design never saved, or a saved one anew: Enter saves it (a copy).
+    if (!renaming && ev.key === 'Enter' && circuitNameEl.value.trim() && (!editor.currentDocumentPath || savesAsCopy())) {
       ev.preventDefault();
       ev.stopPropagation();
       circuitNameEl.classList.remove('needs-name');

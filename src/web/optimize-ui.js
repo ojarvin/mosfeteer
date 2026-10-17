@@ -129,7 +129,7 @@ function coefficientTable(circuit, current) {
       ]);
     if (!linked) mode.value = free.has(name) ? 'free' : 'fixed';
     const bound = (key, label) => {
-      const input = el('input', { type: 'text', class: 'signal-flow-optimize-bound', placeholder: key, 'aria-label': `${name}: ${label}`, title: `${label} (blank: none; a coefficient keeps its sign unless its range crosses zero)`, value: entry[key] ?? '', disabled: linked || !free.has(name) });
+      const input = el('input', { type: 'text', class: 'signal-flow-optimize-bound', placeholder: key, 'aria-label': `${name}: ${label}`, title: label, value: entry[key] ?? '', disabled: linked || !free.has(name) });
       input.addEventListener('change', () => {
         const text = input.value.trim();
         const number = Number(text);
@@ -215,7 +215,7 @@ function swingBlock(circuit, current, sources) {
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
-  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}`, 'aria-label': 'Sine frequency, f/fs', title: 'f/fs (1/64, 0.01); blank: the middle of the signal band set above the plots', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-optimize-field', placeholder: `${Number(swingTestFrequency({ frequency: '' }, api.band()).toPrecision(3))}`, 'aria-label': 'Sine frequency, f/fs', title: 'Test tone, f/fs', value: swing.frequency, onchange: (ev) => { swing.frequency = ev.target.value.trim(); changed(); } });
   const children = [
     el('div', { class: 'signal-flow-optimize-heading', text: 'Swing test' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -257,7 +257,7 @@ function swingBlock(circuit, current, sources) {
         const peak = peaks && Number.isFinite(peaks[signal.key]) ? peaks[signal.key].toFixed(1) : '';
         const text = level && swing.measure !== 'peak' ? `${level} (${peak})` : peak;
         return el('div', { class: 'signal-flow-optimize-limit' }, [math(signal.name), input, el('span', { class: 'signal-flow-optimize-word', text: 'dBFS' }),
-          el('label', { class: 'signal-flow-optimize-aim', title: 'Aim at it: a goal as well as a limit -- the net brought up to its limit, each dB under it counted against the result, so no swing is scaled down for nothing (an integrator\'s swing set by its supply, its noise by its size). Off: only kept under it.' }, [aim, el('span', { text: 'aim' })]),
+          el('label', { class: 'signal-flow-optimize-aim', title: 'Aim at the limit' }, [aim, el('span', { text: 'aim' })]),
           el('span', { class: 'signal-flow-optimize-number', text, title: text ? `At the best numbers found, verified at length: ${level && swing.measure !== 'peak' ? `its ${MEASURE_TEXT[swing.measure]} (its highest peak in brackets)` : 'its highest peak'}, dBFS` : '' })]);
       })));
     }
@@ -305,7 +305,7 @@ function runBlock(current) {
   prune.checked = current.prune !== false;
   prune.addEventListener('change', () => { current.prune = prune.checked; changed(); });
   return el('div', { class: 'signal-flow-optimize-group' }, [
-    el('label', { class: 'signal-flow-spectrum-toggle', title: 'After the search, a coefficient under 5% of the largest into its block is tried at zero (smallest first, verified at length): it stays zero, one part fewer, if every limit still holds and the goals lose at most 0.5 dB. Apply then fixes it at zero.' }, [prune, el('span', { text: 'Zero coefficients that barely matter' })]),
+    el('label', { class: 'signal-flow-spectrum-toggle', title: 'Try small coefficients at zero' }, [prune, el('span', { text: 'Zero coefficients that barely matter' })]),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Budget' }), budget, el('label', { text: 'candidates' }),
       el('button', { type: 'button', class: 'signal-flow-optimize-run', text: 'Run', onclick: () => (running ? running.stop() : run()) }),
@@ -386,7 +386,7 @@ function resultBlock(sources) {
     ...(found.fractions ? fractionsTable(found) : []),
     ...scoreRows(found, sources, ['Start', found.fractions ? 'Fractions' : 'Found']),
     el('div', { class: 'signal-flow-graph-actions' }, [
-      el('button', { type: 'button', text: 'Revert', title: 'Put back the coefficients from before Apply', disabled: !reverting, onclick: revert }),
+      el('button', { type: 'button', text: 'Revert', title: 'Revert', disabled: !reverting, onclick: revert }),
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Put the fractions into the coefficients, exactly' : 'Put the numbers found into the coefficients (rounded to 4 digits)', onclick: apply }),
     ]),
   );
@@ -485,7 +485,7 @@ async function driveSearch(search, pool) {
 
 /** Whether a coefficient's n reads exactly (=) or as the largest (≤). */
 function nControls(entry, { placeholder, label, onChange }) {
-  const kind = el('select', { class: 'signal-flow-optimize-nkind', 'aria-label': `${label}: n up to, or n exactly`, title: '≤: n up to this, the most accurate taken; =: exactly this n' }, [
+  const kind = el('select', { class: 'signal-flow-optimize-nkind', 'aria-label': `${label}: n up to, or n exactly`, title: 'Order n' }, [
     el('option', { value: 'max', text: '≤' }), el('option', { value: 'fixed', text: '=' }),
   ]);
   kind.value = entry.fixed ? 'fixed' : 'max';

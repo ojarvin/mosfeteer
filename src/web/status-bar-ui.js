@@ -22,7 +22,7 @@ function setStatusMessage(text, cls) {
   const lines = String(text).split('\n');
   statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
   statusMessageEl.dataset.kind = cls || 'info';
-  statusMessageEl.title = `${text}\nClick to open the log and command line (:)`;
+  statusMessageEl.title = text;
   // Restart the fade: a fresh message is bright, then settles to dim.
   statusMessageEl.classList.remove('fresh');
   void statusMessageEl.offsetWidth;

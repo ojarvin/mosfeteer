@@ -251,7 +251,7 @@ export function renderCheckSummary() {
     all.type = 'button';
     all.className = 'check-fix-all';
     all.textContent = `Fix ${fixable === 1 ? 'the safe issue' : `${fixable} safe issues`}`;
-    all.title = 'Reroute wires, snap parts to the grid, and move crowded labels; the rest need a decision';
+    all.title = 'Fix the safe issues';
     all.addEventListener('click', () => {
       const fixed = commit(() => fixAllIssues(editor.circuit, evaluate));
       logLine(fixed ? `fixed ${fixed} issue${fixed === 1 ? '' : 's'}` : 'nothing could be fixed safely');

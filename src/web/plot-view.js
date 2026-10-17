@@ -84,13 +84,13 @@ export function createPlotView({ height = 230, fill = false, aspect = null, maxH
   fitButton.type = 'button';
   fitButton.className = 'plot-view-fit';
   fitButton.textContent = 'Fit';
-  fitButton.title = 'Show it all again (double-click the plot)';
+  fitButton.title = 'Fit (double-click)';
   fitButton.hidden = true;
   const readout = document.createElement('div');
   readout.className = 'plot-view-readout';
   readout.hidden = true;
   el.append(root, fitButton, readout);
-  el.title = 'Drag to pan; right-drag zooms to a box (a flat stroke only along x, a tall one only along y); right-click steps back; double-click fits; Ctrl+wheel zooms';
+  el.title = 'Plot';
   const clipId = `plot-clip-${++clipCount}`;
 
   let spec = null;
