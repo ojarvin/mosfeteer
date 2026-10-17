@@ -1,7 +1,7 @@
 {
   "name": "mosfeteer",
   "version": "0.7.1",
-  "description": "Programmatic/agent-assisted circuit schematic generator. Connectivity-based model rendered to SVG.",
+  "description": "A schematic editor for analog circuits: draw clean schematics, and keep the notes and analysis with them.",
   "type": "module",
   "scripts": {
     "start": "node launch.mjs",
