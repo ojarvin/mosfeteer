@@ -351,6 +351,9 @@ function appendSizingMenu(menu, target) {
     appendContextItem(submenu, 'In place of the name', () => {
       commit(() => editor.circuit.setComponentSize(refdes, size, { replacesName: !size.replacesName }));
     }, { disabled: !size, active: !!size?.replacesName });
+    appendContextItem(submenu, 'Hide the label', () => {
+      commit(() => editor.circuit.setComponentSize(refdes, size, { hidden: !size.hidden }));
+    }, { disabled: !size, active: !!size?.hidden });
     appendContextItem(submenu, 'Remove W/L', () => commit(() => editor.circuit.setComponentSize(refdes, null)), { disabled: !size });
   });
 }

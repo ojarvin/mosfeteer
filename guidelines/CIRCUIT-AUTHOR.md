@@ -201,7 +201,7 @@ size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide]
                                a comma list sizes several parts at once
 partstable [refdes ...] [--at X Y]
                                a table of the sizes (W, L, m) and values (passives,
-                               sources) on the drawing, under it by default; it is
+                               sources) on the drawing, right of it by default; it is
                                drawn from the parts, so it stays up to date; no names
                                lists every sized or valued part
 renumber [--order ALONG-THEN] [refdes ...]  renumber automatically named parts (M1, R2) along each row or column, then row by row: ALONG/THEN are right|left|up|down, crosswise (default right-down, reading order; up-right numbers each column bottom up, columns left to right); nearly level parts share a row; listed parts trade only their own numbers (also More → Renumber parts…)

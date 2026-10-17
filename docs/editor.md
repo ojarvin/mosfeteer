@@ -80,7 +80,7 @@ larger block goes from its top-left cell. These keys stay the grid's: the
 canvas copies and pastes no parts while it has focus. Each edit or paste is
 one undo step; a cell that cannot take its text is skipped and counted. A
 size made in the window draws no label (`hidden`): the parts table is where
-it is read; the Label column's list (Hidden, Below the name, Instead of the
+it is read; the Label cell's menu (Hidden, Below the name, Instead of the
 name) changes the cell's row, or every row of the range when the range
 holds it. A W or L typed without the other is held in the window (marked)
 until both make a size; nothing else is kept there, so the grid redraws

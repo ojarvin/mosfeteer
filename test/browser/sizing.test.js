@@ -111,19 +111,24 @@ describe('sizing window', { skip: browserSkip() }, () => {
     assert.equal(await editor(`editor.circuit.components.get('C1').value`), '1p');
   });
 
-  test('the Label list shows the size labels of every row in the range', async () => {
+  test('the Label menu shows the size labels of every row in the range', async () => {
     assert.equal(await editor(`editor.circuit.sizeLabelOf('M1')`), null);
+    const closeMenu = () => h.evaluate(`${h.module('context-menu.js')}.then((m) => m.closeComponentContextMenu())`);
     await pickCell('M1', 'label');
+    await closeMenu();
     await pickCell('M2', 'label', 8);
-    await h.evaluate(`(() => {
-      const select = document.querySelector(${JSON.stringify(`${cell('M1', 'label')} select`)});
-      select.value = 'below';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    })()`);
+    // A click in the range opens the editor's menu for all of it.
+    await pickCell('M1', 'label');
+    await h.until(`!document.getElementById('component-context-menu').hidden`);
+    assert.match(await h.evaluate(`document.querySelector('#component-context-menu .context-menu-heading').textContent`), /2 parts/);
+    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent.startsWith('Below the name')).click()`);
     await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.sizeLabelOf('M1') && !!m.editor.circuit.sizeLabelOf('M2'))`);
     assert.equal(await editor(`editor.circuit.sizeLabelOf('M3')`), null, 'outside the range');
-    assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(`${cell('M2', 'label')} select`)}).value`), 'below');
-    // Typed, too: the list's words, or their first letter.
+    await h.until(`document.querySelector(${JSON.stringify(cell('M2', 'label'))}).textContent.startsWith('Below the name')`);
+    // Typed, too: the menu's words, or their first letter.
+    await pickCell('M1', 'w');
+    await pickCell('M2', 'label', 8);
+    await closeMenu();
     await type('h');
     await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.sizeLabelOf('M1') && !m.editor.circuit.sizeLabelOf('M2'))`);
   });
@@ -158,21 +163,21 @@ describe('sizing window', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('R1').value === '10k')`);
   });
 
-  test('Annotate puts a parts table under the drawing that follows the sizes', async () => {
+  test('Annotate puts a parts table right of the drawing that follows the sizes', async () => {
     await pickCell('M1', 'w');
     await h.click('.sizing-window .primary-action');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.table))`);
     const svg = () => h.evaluate(`document.querySelector('#canvas g.parts-table')?.textContent || ''`);
-    await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('10 µm')`);
-    assert.match(await svg(), /^WLmM110 µm1 µm2M210 µm/);
+    await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('10\u2009µm')`);
+    assert.match(await svg(), /^WLmM110\u2009µm1\u2009µm2M210\u2009µm/);
     await h.evaluate(`window.__run('size M1 7u/180n')`);
-    await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('7 µm')`);
-    // Below everything else drawn.
-    const below = await editor(`(() => {
-      const table = [...editor.circuit.labels.values()].find((l) => l.table);
+    await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('7\u2009µm')`);
+    // Right of everything else drawn, level with its top.
+    const placed = await editor(`(() => {
+      const table = [...editor.circuit.labels.values()].find((l) => l.table).bbox();
       const parts = editor.circuit.inkBounds(0, { labels: (l) => !l.table });
-      return table.bbox().y >= parts.y + parts.h;
+      return table.x >= parts.x + parts.w && table.y <= parts.y;
     })()`);
-    assert.equal(below, true);
+    assert.equal(placed, true);
   });
 });

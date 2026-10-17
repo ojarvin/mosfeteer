@@ -124,7 +124,11 @@ or value. It is a view, never a copy: it is drawn from the parts each time
 values, and renames (`renameComponent` rewrites `parts`), and a deleted
 part's row goes. Its box is the size of its layout (`syncTableBox`, whole
 cells from its top-left corner), never resized by hand; anywhere on it
-picks it.
+picks it. Names and headers are in the labels' bold italic, numbers and
+units in the math font (`400 nm`, a thin space between); each column is as
+wide as its widest text, estimated from measured glyph widths, so the gaps
+between columns read equal. A new table goes right of the drawing, level
+with its top.
 
 Switches (`switch_open`, `switch_closed`) are the other role-labelled parts:
 a switch's owned label names its phase (the controlling signal, stored as its

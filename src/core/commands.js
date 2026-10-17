@@ -466,7 +466,7 @@ export function commandHelp() {
     '                                   replace puts the label in place of the name label, beside under it, hide draws none (a parts table shows it);',
     '                                   size <refdes> off removes the size; no size prints it; a comma list sets several parts at once',
     '  partstable [refdes ...] [--at X Y] - put a parts table on the drawing: W, L, m of the transistors, values of passives and sources,',
-    '                                   drawn from the parts (it follows their sizes); no names lists every sized or valued part; under the drawing by default',
+    '                                   drawn from the parts (it follows their sizes); no names lists every sized or valued part; right of the drawing by default',
     '  rename <refdes> <new>          - rename a component',
     '  renumber [--order ALONG-THEN] [refdes ...] - renumber automatically named parts (M1, R2): along each row/column, then row by row; ALONG and THEN are right|left|up|down, crosswise (default right-down, reading order; up-right: each column bottom up, columns left to right); listed parts trade only their own numbers',
     '  rm <refdes>                    - remove a component',

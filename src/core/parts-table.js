@@ -70,10 +70,13 @@ export function partsTableParts(circuit, table) {
 
 const PREFIX_TEXT = { f: 'f', p: 'p', n: 'n', u: 'µ', m: 'm' };
 
+/** Between a number and its unit, as TeX's \\, sets it. */
+const THIN_SPACE = '\u2009';
+
 /** A stored length (`2u`, `400n`) as a table shows it: 2 µm, 400 nm. */
 export function lengthText(length) {
   const match = String(length || '').match(/^(.*?)([fpnum])$/);
-  return match ? `${match[1]} ${PREFIX_TEXT[match[2]]}m` : String(length || '');
+  return match ? `${match[1]}${THIN_SPACE}${PREFIX_TEXT[match[2]]}m` : String(length || '');
 }
 
 /** The cells of one part as text: name (label markup), and W, L, m or
@@ -94,15 +97,31 @@ function nameMarkup(text) {
   return source.length >= 2 && source.startsWith('$') && source.endsWith('$') ? source.slice(1, -1) : source;
 }
 
-// Width estimates (no DOM here): a generous average glyph, so a column is
-// never narrower than its text. Numbers are drawn from their column's right
-// edge and names from its left, so an estimate a little wide only widens
-// the gap between columns.
-const GLYPH = { name: 0.66, cell: 0.58, head: 0.58 };
+// Text widths without a DOM, in em, measured in Chromium: names and
+// headers in the labels' bold italic sans-serif, cells in Latin Modern
+// (the math font). Every column is as wide as its widest text, so the gaps
+// between columns are equal where the text is.
+const FACES = {
+  sans: { digit: 0.556, narrow: 0.278, lower: 0.58, wide: 0.889, upper: 0.722, M: 0.833, W: 0.944, space: 0.278, thin: 0.2 },
+  math: { digit: 0.5, narrow: 0.278, lower: 0.52, wide: 0.833, upper: 0.74, M: 0.917, W: 1.028, space: 0.333, thin: 0.2 },
+};
 const SCRIPT = 0.62;
 
+function glyphWidth(ch, face) {
+  if (/[0-9]/.test(ch)) return face.digit;
+  if (/[.,:;'|!iljtf()\[\]-]/.test(ch)) return face.narrow;
+  if (ch === THIN_SPACE) return face.thin;
+  if (ch === ' ') return face.space;
+  if (/[mw]/.test(ch)) return face.wide;
+  if (ch === 'M') return face.M;
+  if (ch === 'W') return face.W;
+  if (/[A-Z]/.test(ch)) return face.upper;
+  return face.lower;
+}
+
 function textWidth(runs, fontSize, kind) {
-  return runs.reduce((sum, run) => sum + [...run.text].length * fontSize * GLYPH[kind] * (run.sub || run.super ? SCRIPT : 1), 0);
+  const face = kind === 'cell' ? FACES.math : FACES.sans;
+  return runs.reduce((sum, run) => sum + [...run.text].reduce((w, ch) => w + glyphWidth(ch, face), 0) * fontSize * (run.sub || run.super ? SCRIPT : 1), 0);
 }
 
 /** One table row: two cells. */
@@ -134,7 +153,7 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     items.push({ type: 'text', x: 0, y: baseline(0), runs, anchor: 'start', role: 'head' });
     return { w: ceilGrid(textWidth(runs, fontSize, 'head')), h: ROW_PITCH, items };
   }
-  const nameWidth = ceilGrid(Math.max(...rows.map((r) => textWidth(r.name, fontSize, 'name'))));
+  const nameWidth = Math.max(...rows.map((r) => textWidth(r.name, fontSize, 'name')));
   const sized = rows.filter((row) => row.kind === 'size');
   const valued = rows.filter((row) => row.kind === 'value');
   const blocks = [];
@@ -147,7 +166,7 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
   let tableWidth = nameWidth;
   for (const block of blocks) {
     // Each column is as wide as its widest cell or header.
-    const widths = block.columns.map(([head, key]) => ceilGrid(Math.max(
+    const widths = block.columns.map(([head, key]) => (Math.max(
       textWidth([{ text: head }], fontSize, 'head'),
       ...block.rows.map((r) => textWidth([{ text: r.cells[key] }], fontSize, 'cell')),
     )));
@@ -178,8 +197,8 @@ const CLEARANCE = 3 * GRID;
 
 /**
  * Put a parts table on the drawing: `parts` (names; null or empty for every
- * sized or valued part) at `at` ({ x, y }, its top-left corner), or under
- * the drawing at its left edge. Every listed name must be a part the table
+ * sized or valued part) at `at` ({ x, y }, its top-left corner), or right
+ * of the drawing, level with its top. Every listed name must be a part the table
  * shows; a bad one changes nothing. Returns the table's box annotation.
  */
 export function addPartsTable(circuit, { parts = null, at = null } = {}) {
@@ -190,11 +209,12 @@ export function addPartsTable(circuit, { parts = null, at = null } = {}) {
   }) : null;
   let corner = at;
   if (!corner) {
+    // Right of the drawing, level with its top.
     const drawn = circuit.inkBounds(0);
-    corner = drawn ? { x: drawn.x, y: drawn.y + drawn.h + CLEARANCE } : { x: 0, y: 0 };
+    corner = drawn.w || drawn.h ? { x: ceilGrid(drawn.x + drawn.w) + CLEARANCE, y: drawn.y } : { x: 0, y: 0 };
   }
-  const x = Math.floor(corner.x / GRID) * GRID;
-  const y = ceilGrid(corner.y);
+  const x = ceilGrid(corner.x);
+  const y = Math.floor(corner.y / GRID) * GRID;
   const box = circuit.addAnnotation('box', { x, y, end: { x: x + GRID, y: y + GRID }, table: { parts: list }, style: { lineStyle: 'solid' } });
   box.syncTableBox();
   return box;

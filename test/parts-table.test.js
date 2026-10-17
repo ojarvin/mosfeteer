@@ -24,10 +24,10 @@ test('the table lists transistors first, then passives and sources, each by name
   assert.deepEqual(tableParts(parts()).map((c) => c.refdes), ['M1', 'M2', 'M3', 'M10', 'C1', 'R1']);
 });
 
-test('lengths read with their unit: 2u is 2 µm, 400n is 400 nm', () => {
-  assert.equal(lengthText('2u'), '2 µm');
-  assert.equal(lengthText('400n'), '400 nm');
-  assert.equal(lengthText('0.18u'), '0.18 µm');
+test('lengths read with their unit, a thin space between: 2u is 2 µm, 400n is 400 nm', () => {
+  assert.equal(lengthText('2u'), '2\u2009µm');
+  assert.equal(lengthText('400n'), '400\u2009nm');
+  assert.equal(lengthText('0.18u'), '0.18\u2009µm');
 });
 
 test('size takes a comma list in one command, and checks every part before changing any', () => {
@@ -59,7 +59,7 @@ test('size ... hide keeps the size but draws no label; beside draws it again', (
   assert.throws(() => runCommand(circuit, 'size M2 hide'), /M2 has no size to place/);
 });
 
-test('partstable puts a table under the drawing, sized to what it lists', () => {
+test('partstable puts a table right of the drawing, sized to what it lists', () => {
   const circuit = parts();
   runCommand(circuit, 'size M1,M2 2u/400n x4');
   runCommand(circuit, 'size M3 10u/1u');
@@ -70,10 +70,11 @@ test('partstable puts a table under the drawing, sized to what it lists', () => 
   const table = tableOf(circuit);
   const drawn = circuit.inkBounds(0, { labels: (label) => !label.table });
   const box = table.bbox();
-  assert.ok(box.y >= drawn.y + drawn.h, 'below the drawing');
+  assert.ok(box.x >= drawn.x + drawn.w + 2 * GRID, 'right of the drawing, clear of it');
+  assert.ok(box.y <= drawn.y && box.y > drawn.y - GRID, 'level with its top');
   for (const side of [box.x, box.y, box.w, box.h]) assert.ok(Number.isInteger(side / GRID), 'on the grid');
   const layout = partsTableLayout(circuit, table.table);
-  assert.deepEqual(texts(layout), ['W', 'L', 'm', 'M1', '2 µm', '400 nm', '4', 'M2', '2 µm', '400 nm', '4', 'M3', '10 µm', '1 µm', '1', 'Value', 'R1', '10k']);
+  assert.deepEqual(texts(layout), ['W', 'L', 'm', 'M1', '2\u2009µm', '400\u2009nm', '4', 'M2', '2\u2009µm', '400\u2009nm', '4', 'M3', '10\u2009µm', '1\u2009µm', '1', 'Value', 'R1', '10k']);
   // Names keep their markup: M_{1} draws M with a subscript 1.
   assert.deepEqual(layout.items.find((item) => item.role === 'name').runs, [{ text: 'M' }, { text: '1', sub: true }]);
   assert.match(svgString(circuit), /class="parts-table"/);

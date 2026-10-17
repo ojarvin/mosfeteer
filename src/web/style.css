@@ -8178,6 +8178,7 @@ body.chrome-away [data-editor-edge="right"] {
 
 .sizing-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
@@ -8220,18 +8221,19 @@ body.chrome-away [data-editor-edge="right"] {
   cursor: cell;
 }
 
-.sizing-cell.sizing-label { padding: 0 2px; text-align: left; }
+.sizing-cell.sizing-label { text-align: left; }
 
-.sizing-select {
-  width: 100%;
-  border-color: transparent;
-  background-color: transparent;
-  color: var(--text-dim);
-  font-size: var(--text-xs);
-}
+.sizing-col-name { width: 22%; }
+.sizing-col-w, .sizing-col-l { width: 13%; }
+.sizing-col-m { width: 8%; }
+.sizing-col-label { width: 26%; }
+.sizing-col-value { width: 18%; }
 
-.sizing-select:hover,
-.sizing-select:focus { border-color: var(--border); color: var(--text); }
+.sizing-cell { overflow: hidden; text-overflow: ellipsis; }
+.sizing-cell.sizing-label:not(.sizing-none) { cursor: pointer; }
+.sizing-choice { color: var(--text-dim); }
+.sizing-chevron { float: right; color: var(--text-dim); font-size: var(--text-xs); }
+.sizing-cell.sizing-label:hover .sizing-choice { color: var(--text); }
 .sizing-cell.sizing-none { background: color-mix(in srgb, var(--bg-elevated) 70%, transparent); cursor: default; }
 .sizing-cell.sizing-draft { color: var(--warn); font-style: italic; }
 .sizing-cell.in-range { background: var(--accent-tint); }
@@ -8241,7 +8243,8 @@ body.chrome-away [data-editor-edge="right"] {
 
 .sizing-input {
   width: 100%;
-  min-width: 6em;
+  min-width: 0;
+  box-sizing: border-box;
   border: 0;
   border-radius: 0;
   box-shadow: inset 0 0 0 2px var(--accent);

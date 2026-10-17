@@ -760,9 +760,9 @@ function plotAnnotationSvg(label, opacity = '') {
 }
 
 /**
- * A parts table (parts-table.js): names as the drawing writes them, in the
- * labels' bold italic, sizes and values upright, each block under an
- * italic header and a rule. No border: a table reads by its columns.
+ * A parts table (parts-table.js): names and headers in the labels' bold
+ * italic, sizes and values in the math font, upright, each block under its
+ * header and a rule. No border: a table reads by its columns.
  */
 function partsTableSvg(label, opacity = '') {
   const layout = label.syncTableBox();
@@ -774,8 +774,12 @@ function partsTableSvg(label, opacity = '') {
     : escapeSvg(run.text))).join('');
   const parts = layout.items.map((item) => {
     if (item.type === 'rule') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y)}" x2="${fmt(item.x2)}" y2="${fmt(item.y)}" stroke="${color}" stroke-width="2" stroke-linecap="butt"/>`;
-    const face = item.role === 'name' ? ' font-weight="bold" font-style="italic"' : item.role === 'head' ? ' font-style="italic"' : ' style="font-variant-numeric:tabular-nums"';
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="sans-serif" font-size="${fmt(fontSize)}"${face} fill="${color}" stroke="none">${runsSvg(item.runs)}</text>`;
+    // Names and headers as the labels are; numbers and units as math is, with
+    // math labels' outline to give the light face their weight.
+    const face = item.role === 'cell'
+      ? `font-family="${escapeSvg(MATH_FONT_FAMILY)}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}"`
+      : 'font-family="sans-serif" font-weight="bold" font-style="italic" stroke="none"';
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-size="${fmt(fontSize)}" ${face} fill="${color}">${runsSvg(item.runs)}</text>`;
   }).join('');
   return `<g class="parts-table" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
 }

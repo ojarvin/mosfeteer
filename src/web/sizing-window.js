@@ -28,6 +28,7 @@ import { editor } from './editor-state.js';
 import { floatingWindow } from './floating-window.js';
 import { logLine } from './status-bar-ui.js';
 import { commit, redo, render, setLabelSelection, setSelection, undo } from './main.js';
+import { appendContextItem, openMenuAt } from './context-menu.js';
 import { element as el } from './dom.js';
 
 const LABEL_MODES = { hidden: 'Hidden', below: 'Below the name', name: 'Instead of the name' };
@@ -212,7 +213,9 @@ function buildRows() {
         ...(draft ? { title: 'Needs both W and L' } : {}),
         text: takes && column.key !== 'label' ? column.text(c) : '',
       });
-      if (column.key === 'label' && c.size) td.append(labelSelect(c));
+      if (column.key === 'label' && c.size) {
+        td.append(el('span', { class: 'sizing-choice', text: column.text(c) }), el('span', { class: 'sizing-chevron', 'aria-hidden': 'true', text: '▾' }));
+      }
       return td;
     }),
   ])));
@@ -220,19 +223,26 @@ function buildRows() {
   win.empty.textContent = win.filter.value.trim() ? 'No part matches the filter.' : 'No transistors, passives, or sources.';
 }
 
-/** A size label's placement, chosen from a list. Chosen in a row of the
- *  range, it goes to every sized part of the range. */
-function labelSelect(c) {
-  const select = el('select', { class: 'sizing-select', 'aria-label': `${c.refdes} size label`, tabindex: '-1' },
-    Object.entries(LABEL_MODES).map(([mode, text]) => el('option', { value: mode, text })));
-  select.value = labelMode(c.size);
-  select.addEventListener('change', () => {
-    const cell = { refdes: c.refdes, key: 'label' };
-    const parts = inRange(cell) ? rangeParts().filter((part) => part.size) : [c];
-    applyEdits(parts.map((part) => ({ part, column: COLUMNS[columnIndex('label')], text: select.value })), 'Set');
-    win.grid.focus();
-  });
-  return select;
+/** A size label's placement, chosen from the editor's menu under its
+ *  cell. Chosen in a cell of the range, it goes to every sized part of it. */
+function openLabelMenu(cell) {
+  const part = rows[rowIndex(cell.refdes)];
+  const td = win.body.querySelector(`tr[data-refdes="${CSS.escape(cell.refdes)}"] td[data-key="label"]`);
+  if (!part?.size || !td) return;
+  const parts = inRange(cell) ? rangeParts().filter((c) => c.size) : [part];
+  const box = td.getBoundingClientRect();
+  const menu = openMenuAt(box.left, box.bottom + 2, parts.length > 1 ? `Size label of ${parts.length} parts` : 'Size label');
+  if (!menu) return;
+  const group = el('div', { class: 'context-menu-group' });
+  const modes = new Set(parts.map((c) => labelMode(c.size)));
+  for (const [mode, text] of Object.entries(LABEL_MODES)) {
+    appendContextItem(group, text, () => {
+      applyEdits(parts.map((c) => ({ part: c, column: COLUMNS[columnIndex('label')], text: mode })), 'Set');
+      win.grid.focus();
+    }, { active: modes.size === 1 && modes.has(mode), mixed: modes.size > 1 && modes.has(mode) });
+  }
+  menu.append(group);
+  menu.querySelector('button:not(:disabled)')?.focus();
 }
 
 /** Mark the range, the focus, and the parts selected on the canvas. */
@@ -406,7 +416,7 @@ function onInputKey(ev) {
 // ----- the keyboard and the clipboard ----------------------------------------------------
 
 function onGridKey(ev) {
-  if (editing || ev.target.closest?.('.sizing-select')) return;
+  if (editing) return;
   // Ctrl/Cmd+C, X, V: the browser's copy, cut, and paste events on the
   // grid do them; the canvas must not copy or paste its parts as well.
   if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ['c', 'x', 'v'].includes(ev.key.toLowerCase())) {
@@ -449,7 +459,8 @@ function gridKey(ev) {
     return true;
   }
   if (ev.key === 'Enter' || ev.key === 'F2') {
-    startEditing();
+    if (focus?.key === 'label') openLabelMenu(focus);
+    else startEditing();
     return true;
   }
   if (ev.key === 'Delete' || ev.key === 'Backspace') {
@@ -546,17 +557,6 @@ function onPaste(ev) {
 
 function onMouseDown(ev) {
   if (ev.button !== 0 || ev.target.closest('.sizing-input')) return;
-  if (ev.target.closest('.sizing-select')) {
-    // Shift extends the range as on any cell; a plain press opens the list,
-    // picking its cell first unless the range holds it.
-    const cell = cellOf(ev.target);
-    if (ev.shiftKey) {
-      ev.preventDefault();
-      win.grid.focus();
-      pick(cell, true);
-    } else if (!inRange(cell)) pick(cell);
-    return;
-  }
   const name = ev.target.closest('th.sizing-name');
   if (name) {
     // A name picks its whole row.
@@ -571,6 +571,11 @@ function onMouseDown(ev) {
   if (!cell) return;
   ev.preventDefault();
   if (editing) finishEditing({ keep: true });
+  // A size label's cell in the range keeps the range: its menu is for all.
+  if (cell.key === 'label' && !ev.shiftKey && inRange(cell)) {
+    win.grid.focus();
+    return;
+  }
   win.grid.focus();
   pick(cell, ev.shiftKey);
   dragging = true;
@@ -585,7 +590,7 @@ function onMouseOver(ev) {
 // ----- the window --------------------------------------------------------------------
 
 /** "Annotate": a parts table of the range's parts (of every sized or
- *  valued part, with one row or none picked) under the drawing. */
+ *  valued part, with one row or none picked) right of the drawing. */
 function annotate() {
   const parts = rangeParts();
   const listed = parts.length > 1 ? parts.map((c) => c.refdes) : null;
@@ -593,7 +598,7 @@ function annotate() {
   if (!box) return;
   setLabelSelection([box.id]);
   render();
-  logLine('Parts table added under the drawing.');
+  logLine('Parts table added right of the drawing.');
 }
 
 function build() {
@@ -601,7 +606,9 @@ function build() {
   const filter = el('input', { type: 'search', class: 'sizing-filter', placeholder: 'Filter parts', 'aria-label': 'Filter parts', spellcheck: 'false' });
   const head = el('tr', {}, [el('th', { scope: 'col', text: 'Name' }), ...COLUMNS.map((column) => el('th', { scope: 'col', class: `sizing-${column.key}`, title: column.title, text: column.head }))]);
   const body = el('tbody');
-  const table = el('table', { class: 'sizing-table' }, [el('thead', {}, [head]), body]);
+  // Fixed columns: a cell opened for typing never reflows the grid.
+  const cols = el('colgroup', {}, [el('col', { class: 'sizing-col-name' }), ...COLUMNS.map((column) => el('col', { class: `sizing-col-${column.key}` }))]);
+  const table = el('table', { class: 'sizing-table' }, [cols, el('thead', {}, [head]), body]);
   const grid = el('div', { class: 'sizing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Sizes and values' }, [table]);
   const empty = el('p', { class: 'field-hint sizing-empty', hidden: true });
   const status = el('p', { class: 'field-hint sizing-status', role: 'status' });
@@ -625,7 +632,19 @@ function build() {
   grid.addEventListener('paste', onPaste);
   grid.addEventListener('mousedown', onMouseDown);
   grid.addEventListener('mouseover', onMouseOver);
-  grid.addEventListener('dblclick', (ev) => { if (cellOf(ev.target)) startEditing(); });
+  grid.addEventListener('dblclick', (ev) => { if (cellOf(ev.target) && cellOf(ev.target).key !== 'label') startEditing(); });
+  // A click on a size label's cell opens its menu (a drag ends elsewhere).
+  grid.addEventListener('click', (ev) => {
+    const cell = cellOf(ev.target);
+    if (cell?.key === 'label' && !ev.shiftKey) openLabelMenu(cell);
+  });
+  grid.addEventListener('contextmenu', (ev) => {
+    const cell = cellOf(ev.target);
+    if (cell?.key !== 'label') return;
+    ev.preventDefault();
+    if (!inRange(cell)) pick(cell);
+    openLabelMenu(cell);
+  });
   window.addEventListener('mouseup', () => { dragging = false; });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true });
