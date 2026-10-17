@@ -39886,6 +39886,7 @@ function addBoxAround(circuit, selection, { text = '' } = {}) {
 };
 
 __modules["src/web/accent.js"] = function (__require, __exports) {
+__exports.onAccentChange = onAccentChange;
 __exports.mixHex = mixHex;
 __exports.accentShades = accentShades;
 __exports.currentAccent = currentAccent;
@@ -39908,6 +39909,12 @@ let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style
 
 
 const KEY = 'mosfeteer.accent';
+const listeners = [];
+
+/** Hear every change of accent (what draws with it on a canvas redraws). */
+function onAccentChange(listener) {
+  listeners.push(listener);
+}
 
 /** The choices, the default first (null: the stylesheet's own teal). */
 const ACCENT_CHOICES = [null, ...Object.keys(COLOR_PALETTE).filter((token) => token !== 'gray')];
@@ -39960,6 +39967,7 @@ function applyAccent(token) {
     else localStorage.removeItem(KEY);
   } catch { /* per-session only */ }
   syncAccentMenu();
+  for (const listener of listeners) listener(token);
 }
 
 function syncAccentMenu() {
@@ -43190,6 +43198,7 @@ let formatModifiedTime, revisionTime; __bind(() => { ({ formatModifiedTime, revi
 let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion.js")); });
 let showHelp; __bind(() => { ({ showHelp } = __require("src/web/help.js")); });
 let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
+let onAccentChange; __bind(() => { ({ onAccentChange } = __require("src/web/accent.js")); });
 /**
  * The Atlas view: every design in the workspace laid out at its real
  * size on one zoomable desk. It is a viewing mode, not a file picker -- no
@@ -43202,6 +43211,7 @@ let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenu
  * leaving fly a design between the editor, at the screen, and its place on
  * the desk behind it (drawFlight).
  */
+
 
 
 
@@ -43319,6 +43329,7 @@ function atlasSnapshot() {
     view: { ...state.view },
     flight: state.flight ? { id: state.flight.id, depth: state.flight.depth } : null,
     beams: state.beams || [],
+    accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);
       return {
@@ -43592,6 +43603,11 @@ function theme() {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
 }
 
+/** What the desk's colors are read for: the theme and the accent. */
+function colorsKey() {
+  return `${theme()}|${document.documentElement.dataset.accent || ''}`;
+}
+
 function bitmapKey(entry, level) {
   return `${entry.id}\n${entry.revision ?? 'live'}\n${theme()}\n${level}`;
 }
@@ -43798,9 +43814,9 @@ function draw() {
   }
   const ctx = deskEl.getContext('2d');
   // A theme change repaints everything: the palette, and the live SVGs.
-  if (state.colorsTheme !== theme()) {
+  if (state.colorsKey !== colorsKey()) {
     state.colors = colors();
-    state.colorsTheme = theme();
+    state.colorsKey = colorsKey();
     overlayEl.replaceChildren();
     state.overlays.clear();
   }
@@ -45823,7 +45839,7 @@ function deskState(generation, source, startup = false) {
   return {
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
-    selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
+    selected: null, hover: null, drag: null, animation: null, colors: null, colorsKey: null, source,
     arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
     arrived: new Map(), flight: null, ripple: null, opening: false,
   };
@@ -46641,6 +46657,8 @@ function onDoubleClick(ev) {
 }
 
 function installAtlas() {
+  // A new accent shows on the desk at once (the pick's rim, the link beams).
+  onAccentChange(() => { if (state) requestDraw(); });
   if (!rootEl) return;
   // The check runs afresh each time its menu opens (before the menu does:
   // a capture listener on the button itself goes first).

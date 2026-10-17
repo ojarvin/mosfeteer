@@ -45,6 +45,7 @@ import { formatModifiedTime, revisionTime } from './modified-time.js';
 import { reducedMotion } from './motion.js';
 import { showHelp } from './help.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
+import { onAccentChange } from './accent.js';
 
 const rootEl = document.getElementById('atlas');
 const deskEl = document.getElementById('atlas-desk');
@@ -130,6 +131,7 @@ export function atlasSnapshot() {
     view: { ...state.view },
     flight: state.flight ? { id: state.flight.id, depth: state.flight.depth } : null,
     beams: state.beams || [],
+    accent: state.colors?.accent || null,
     tiles: state.tiles.map((tile) => {
       const entry = state.entries.get(tile.id);
       return {
@@ -403,6 +405,11 @@ function theme() {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
 }
 
+/** What the desk's colors are read for: the theme and the accent. */
+function colorsKey() {
+  return `${theme()}|${document.documentElement.dataset.accent || ''}`;
+}
+
 function bitmapKey(entry, level) {
   return `${entry.id}\n${entry.revision ?? 'live'}\n${theme()}\n${level}`;
 }
@@ -609,9 +616,9 @@ function draw() {
   }
   const ctx = deskEl.getContext('2d');
   // A theme change repaints everything: the palette, and the live SVGs.
-  if (state.colorsTheme !== theme()) {
+  if (state.colorsKey !== colorsKey()) {
     state.colors = colors();
-    state.colorsTheme = theme();
+    state.colorsKey = colorsKey();
     overlayEl.replaceChildren();
     state.overlays.clear();
   }
@@ -2634,7 +2641,7 @@ function deskState(generation, source, startup = false) {
   return {
     generation, view: { x: 0, y: 0, w: 1, h: 1 }, entries: new Map(), tiles: [], bounds: { x: 0, y: 0, w: 0, h: 0 },
     bitmaps: new Map(), failed: new Set(), wanted: [], overlays: new Map(), baking: startup,
-    selected: null, hover: null, drag: null, animation: null, colors: null, colorsTheme: null, source,
+    selected: null, hover: null, drag: null, animation: null, colors: null, colorsKey: null, source,
     arranged: null, arrangeTimer: null, motion: null, layouts: new Map(),
     arrived: new Map(), flight: null, ripple: null, opening: false,
   };
@@ -3452,6 +3459,8 @@ function onDoubleClick(ev) {
 }
 
 export function installAtlas() {
+  // A new accent shows on the desk at once (the pick's rim, the link beams).
+  onAccentChange(() => { if (state) requestDraw(); });
   if (!rootEl) return;
   // The check runs afresh each time its menu opens (before the menu does:
   // a capture listener on the button itself goes first).

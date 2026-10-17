@@ -80,4 +80,14 @@ describe('Atlas design menu', { skip: browserSkip() }, () => {
     assert.ok(!existsSync(join(h.workspace, 'second.json')) && !existsSync(join(h.workspace, 'third.json')));
     assert.ok(existsSync(join(h.workspace, 'amp.json')), 'the open design stays');
   });
+
+  test('a new accent color shows on the desk at once, not only when it opens again', async () => {
+    await openDesk();
+    const before = (await snapshot()).accent;
+    await h.evaluate(`document.querySelector('#settings-accent [data-accent="orange"]').click()`);
+    await h.until(`${h.module('atlas.js')}.then((m) => { const a = m.atlasSnapshot()?.accent; return !!a && a !== ${JSON.stringify(before)}; })`);
+    assert.equal((await snapshot()).accent, await h.evaluate(`getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()`));
+    await h.evaluate(`document.querySelector('#settings-accent [data-accent=""]').click()`);
+    await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot()?.accent === ${JSON.stringify(before)})`);
+  });
 });

@@ -14,6 +14,12 @@
 import { COLOR_PALETTE } from '../core/style.js';
 
 const KEY = 'mosfeteer.accent';
+const listeners = [];
+
+/** Hear every change of accent (what draws with it on a canvas redraws). */
+export function onAccentChange(listener) {
+  listeners.push(listener);
+}
 
 /** The choices, the default first (null: the stylesheet's own teal). */
 export const ACCENT_CHOICES = [null, ...Object.keys(COLOR_PALETTE).filter((token) => token !== 'gray')];
@@ -66,6 +72,7 @@ export function applyAccent(token) {
     else localStorage.removeItem(KEY);
   } catch { /* per-session only */ }
   syncAccentMenu();
+  for (const listener of listeners) listener(token);
 }
 
 function syncAccentMenu() {
