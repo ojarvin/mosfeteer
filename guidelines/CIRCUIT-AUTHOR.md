@@ -192,6 +192,10 @@ move <refdes> <X> <Y>          move, snapped to the 40-grid
 rotate <refdes> [deg=90]       rotate by multiples of 90
 mirror <refdes> <x|y>          flip along an axis
 value <refdes> <V>             set value text
+value <refdes> [V] --label beside|replace|hide
+                               a passive's or source's value label, the value with its
+                               unit in math (1.5n reads 1.5 nF): beside below the name,
+                               replace in its place, hide (the default) draws nothing
 rename <refdes> <new>          rename a component (updates its instance label)
 size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide]
                                a transistor's size and its label, W/L = M·W/L, as math

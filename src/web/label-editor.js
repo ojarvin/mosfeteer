@@ -9,6 +9,7 @@ import { supplyBars } from '../core/supply-bars.js';
 import { switchState } from '../core/beats.js';
 import { setSharedLabel, sharedLabelPeers } from '../core/shared-labels.js';
 import { MOS_SIZE_ROLE, formatMosSize, parseMosSize } from '../core/mos-size.js';
+import { PART_VALUE_ROLE } from '../core/part-value.js';
 import { TRANSFER_FUNCTION_TYPES, isCoefficientBlock, isSignalBlock, parseDither, parseGain, parseLevels, readTransferFunction } from '../core/transfer-function.js';
 import { setPartValue } from '../core/part-moves.js';
 import { labelFontSize } from '../core/style.js';
@@ -258,6 +259,9 @@ export function inlineEditLabel(label, options = {}) {
   // A size label shows TeX made from the size; it is edited as the size.
   const sizeOwner = label.role === MOS_SIZE_ROLE ? editor.circuit.components.get(label.owner) : null;
   if (sizeOwner) input.value = options.sizeDraft ? '' : formatMosSize(sizeOwner.size);
+  // A value label shows TeX made from the value; it is edited as the value.
+  const valueOwner = label.role === PART_VALUE_ROLE ? editor.circuit.components.get(label.owner) : null;
+  if (valueOwner) input.value = valueOwner.value;
   // Measure the live editor text in the same face as the rendered label. The
   // The box grows from the actual text anchor while keeping alignment stable.
   const measure = document.createElement('span');
@@ -355,7 +359,10 @@ export function inlineEditLabel(label, options = {}) {
     editor.inlineInput = null;
     measure.remove();
     input.remove();
-    if (sizeOwner) {
+    if (valueOwner) {
+      // An emptied value hides the label with it (setValue's sync).
+      if (applyText && v !== valueOwner.value) commit(() => setPartValue(editor.circuit, valueOwner.refdes, v));
+    } else if (sizeOwner) {
       const refdes = sizeOwner.refdes;
       if (options.sizeDraft) {
         if (applyText && v) {
@@ -459,7 +466,7 @@ export function inlineEditLabel(label, options = {}) {
   // Ctrl+, / Ctrl+. are handled here, live (side-panel.js installMarkupShortcuts).
   input.dataset.markupKeys = 'own';
   const toggleMarkup = (mark) => {
-    if (sizeOwner) return;
+    if (sizeOwner || valueOwner) return;
     const res = applyMarkup(input.value, input.selectionStart, input.selectionEnd, mark);
     if (!res) return;
     input.value = res.text;

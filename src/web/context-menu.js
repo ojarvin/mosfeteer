@@ -14,6 +14,8 @@ import { SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNA
 import { editor } from './editor-state.js';
 import { editComponentSize, inlineEditLabel } from './label-editor.js';
 import { MOS_SIZE_ROLE, MOS_SIZE_TYPES } from '../core/mos-size.js';
+import { PART_VALUE_ROLE, VALUE_TYPES } from '../core/part-value.js';
+import { editInSizing } from './sizing-window.js';
 import { WAVEFORM_TYPES } from '../core/components/current.js';
 import { joinSelectedLines, selectedLines } from './annotation-tools.js';
 import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hierarchy.js';
@@ -339,22 +341,58 @@ function appendWaveformMenu(menu, target) {
   });
 }
 
-/** A transistor's W/L label: add or edit it, put it in place of the name,
- *  or take it away. Offered on the part and on its size label. */
+/** Where a size or value label stands, for every part it applies to: the
+ *  right-clicked part, or all of the selection's parts of its kind. */
+function appendLabelPlacement(submenu, parts, read, write, disabled) {
+  const modes = new Set(parts.map(read));
+  for (const [mode, text] of [['hidden', 'Hidden'], ['below', 'Below the name'], ['name', 'Instead of the name']]) {
+    appendContextItem(submenu, text, () => commit(() => parts.forEach((part) => write(part, mode))), {
+      disabled,
+      active: !disabled && modes.size === 1 && modes.has(mode),
+      mixed: !disabled && modes.size > 1 && modes.has(mode),
+    });
+  }
+}
+
+/** The right-clicked part with the selection's other parts of its kind. */
+function partsLike(component, kind) {
+  const selected = selectedComps();
+  const others = selected.some((c) => c.refdes === component.refdes) ? selected.filter(kind) : [];
+  return others.length ? others : [component];
+}
+
+/** A transistor's W/L label: add or edit it, choose where it stands, or
+ *  take it away. Offered on the part and on its size label. */
 function appendSizingMenu(menu, target) {
   const component = target.kind === 'component' ? target.value
     : target.value?.role === MOS_SIZE_ROLE ? editor.circuit.components.get(target.value.owner) : null;
   if (!component || !MOS_SIZE_TYPES.has(component.type)) return;
   const { refdes, size } = component;
+  const parts = partsLike(component, (c) => MOS_SIZE_TYPES.has(c.type) && c.size);
   appendContextSubmenu(menu, 'Sizing', (submenu) => {
     appendContextItem(submenu, size ? 'Edit W/L…' : 'Add W/L…', () => setTimeout(() => editComponentSize(editor.circuit.components.get(refdes)), 0));
-    appendContextItem(submenu, 'In place of the name', () => {
-      commit(() => editor.circuit.setComponentSize(refdes, size, { replacesName: !size.replacesName }));
-    }, { disabled: !size, active: !!size?.replacesName });
-    appendContextItem(submenu, 'Hide the label', () => {
-      commit(() => editor.circuit.setComponentSize(refdes, size, { hidden: !size.hidden }));
-    }, { disabled: !size, active: !!size?.hidden });
+    appendLabelPlacement(submenu, parts.filter((c) => c.size),
+      (c) => (c.size.hidden ? 'hidden' : c.size.replacesName ? 'name' : 'below'),
+      (c, mode) => editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: mode === 'name', hidden: mode === 'hidden' }),
+      !size);
     appendContextItem(submenu, 'Remove W/L', () => commit(() => editor.circuit.setComponentSize(refdes, null)), { disabled: !size });
+  });
+}
+
+/** A passive's or source's value: edit it (in the sizing window), and
+ *  whether and where its label shows it. */
+function appendValueMenu(menu, target) {
+  const component = target.kind === 'component' ? target.value
+    : target.value?.role === PART_VALUE_ROLE ? editor.circuit.components.get(target.value.owner) : null;
+  if (!component || !VALUE_TYPES.has(component.type)) return;
+  const valued = (c) => VALUE_TYPES.has(c.type) && !!String(c.value ?? '').trim();
+  const parts = partsLike(component, valued);
+  appendContextSubmenu(menu, 'Value', (submenu) => {
+    appendContextItem(submenu, valued(component) ? 'Edit value…' : 'Add value…', () => setTimeout(() => editInSizing(component.refdes, 'value'), 0));
+    appendLabelPlacement(submenu, parts.filter(valued),
+      (c) => (c.valueLabel === 'replace' ? 'name' : c.valueLabel === 'beside' ? 'below' : 'hidden'),
+      (c, mode) => editor.circuit.setValueLabel(c.refdes, mode === 'name' ? 'replace' : mode === 'below' ? 'beside' : null),
+      !valued(component));
   });
 }
 
@@ -580,6 +618,7 @@ export function openComponentContextMenu(target, x, y) {
   appendSignalFlowPolarityMenu(menu, target);
   appendSwitchPhaseMenu(menu, target);
   appendSizingMenu(menu, target);
+  appendValueMenu(menu, target);
   appendWaveformMenu(menu, target);
   appendContextSmallSignalMenu(menu, target);
   // No Close item: Escape or a click elsewhere closes the menu, as menus do.

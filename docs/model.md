@@ -117,6 +117,14 @@ picked (`sizeReplacedNameLabels`, alongside joined supply bars' hidden labels).
 With `hidden` the size draws no label at all (the name label shows), for a
 design whose sizes are shown in a parts table instead.
 
+A passive's or source's value (`src/core/part-value.js`) draws nothing
+unless its part asks (`ComponentInstance#valueLabel`): `beside` puts an
+owned `part-value` math label with the value and its unit (`8 pF`, the
+number as typed) a step past the name, away from the part; `replace` puts
+it in the name's place and hides the name (`replacedNameLabels`, as a size
+label's `replacesName` does). The label is a projection of the value;
+deleting it hides it and keeps the value.
+
 A parts table (`src/core/parts-table.js`) is a box annotation carrying
 `table: { parts }`: the names it lists, or null for every part with a size
 or value. It is a view, never a copy: it is drawn from the parts each time
@@ -126,9 +134,9 @@ part's row goes. Its box is the size of its layout (`syncTableBox`, whole
 cells from its top-left corner), never resized by hand; anywhere on it
 picks it. Names and headers are in the labels' bold italic, numbers and
 units in the math font (`400 nm`, a thin space between); a passive's or
-source's value takes its unit (`valueText`: Ω, F, H, A, V), its prefix
-chosen to keep the number whole (`1.5n` reads 1500 pF), and a value that is
-not a number reads as typed; each column is as
+source's value takes its unit (`valueText`: Ω, F, H, A, V; the number as
+typed, `1.5n` reads 1.5 nF), and a value that is not a number reads as
+typed; each column is as
 wide as its widest text, estimated from measured glyph widths, so the gaps
 between columns read equal. A new table goes right of the drawing, level
 with its top.

@@ -42,8 +42,13 @@ function parseLabelMode(text) {
   throw new Error('a size label is below (the name), name (in its place), or hidden');
 }
 
-function labelMode(size) {
-  return size.hidden ? 'hidden' : size.replacesName ? 'name' : 'below';
+/** Whether a part has a size or value a label could show. */
+const labelled = (c) => (sized(c) ? !!c.size : valued(c) && !!String(c.value ?? '').trim());
+
+/** Where a part's size or value label stands: hidden, below, or name. */
+function labelMode(c) {
+  if (sized(c)) return c.size.hidden ? 'hidden' : c.size.replacesName ? 'name' : 'below';
+  return c.valueLabel === 'replace' ? 'name' : c.valueLabel === 'beside' ? 'below' : 'hidden';
 }
 
 // ----- columns --------------------------------------------------------------------
@@ -82,11 +87,11 @@ const COLUMNS = [
     set: (c, text) => setLength(c, 'm', text),
   },
   {
-    key: 'label', head: 'Label', title: 'Size label on the drawing', takes: sized,
-    text: (c) => (c.size ? LABEL_MODES[labelMode(c.size)] : ''),
+    key: 'label', head: 'Label', title: 'Label on the drawing', takes: (c) => sized(c) || valued(c),
+    text: (c) => (labelled(c) ? LABEL_MODES[labelMode(c)] : ''),
     check: parseLabelMode,
     set: (c, text) => setLabelMode(c, parseLabelMode(text)),
-    clear: (c) => c.size && setLabelMode(c, 'hidden'),
+    clear: (c) => labelled(c) && setLabelMode(c, 'hidden'),
   },
   {
     key: 'value', head: 'Value', title: 'Value (10k, 1p)', takes: valued,
@@ -97,8 +102,9 @@ const COLUMNS = [
 ];
 
 function setLabelMode(c, mode) {
-  if (!c.size) throw new Error('needs W and L first');
-  editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: mode === 'name', hidden: mode === 'hidden' });
+  if (!labelled(c)) throw new Error(sized(c) ? 'needs W and L first' : 'needs a value first');
+  if (sized(c)) editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: mode === 'name', hidden: mode === 'hidden' });
+  else editor.circuit.setValueLabel(c.refdes, mode === 'name' ? 'replace' : mode === 'below' ? 'beside' : null);
 }
 
 /** Set one of W, L, m: a whole size typed into W or L sets all three; a
@@ -213,7 +219,7 @@ function buildRows() {
         ...(draft ? { title: 'Needs both W and L' } : {}),
         text: takes && column.key !== 'label' ? column.text(c) : '',
       });
-      if (column.key === 'label' && c.size) {
+      if (column.key === 'label' && labelled(c)) {
         td.append(el('span', { class: 'sizing-choice', text: column.text(c) }), el('span', { class: 'sizing-chevron', 'aria-hidden': 'true', text: '▾' }));
       }
       return td;
@@ -228,13 +234,13 @@ function buildRows() {
 function openLabelMenu(cell) {
   const part = rows[rowIndex(cell.refdes)];
   const td = win.body.querySelector(`tr[data-refdes="${CSS.escape(cell.refdes)}"] td[data-key="label"]`);
-  if (!part?.size || !td) return;
-  const parts = inRange(cell) ? rangeParts().filter((c) => c.size) : [part];
+  if (!part || !labelled(part) || !td) return;
+  const parts = inRange(cell) ? rangeParts().filter(labelled) : [part];
   const box = td.getBoundingClientRect();
-  const menu = openMenuAt(box.left, box.bottom + 2, parts.length > 1 ? `Size label of ${parts.length} parts` : 'Size label');
+  const menu = openMenuAt(box.left, box.bottom + 2, parts.length > 1 ? `Label of ${parts.length} parts` : 'Label');
   if (!menu) return;
   const group = el('div', { class: 'context-menu-group' });
-  const modes = new Set(parts.map((c) => labelMode(c.size)));
+  const modes = new Set(parts.map(labelMode));
   for (const [mode, text] of Object.entries(LABEL_MODES)) {
     appendContextItem(group, text, () => {
       applyEdits(parts.map((c) => ({ part: c, column: COLUMNS[columnIndex('label')], text: mode })), 'Set');
@@ -340,7 +346,7 @@ function startEditing(initial = null) {
   const part = focus && rows[rowIndex(focus.refdes)];
   const column = focus && COLUMNS[columnIndex(focus.key)];
   if (!td || !part || !column?.takes(part)) {
-    if (part && column?.key === 'label') say(`${part.refdes} needs W and L first.`, 'error');
+    if (part && column?.key === 'label') say(`${part.refdes} needs ${sized(part) ? 'W and L' : 'a value'} first.`, 'error');
     return;
   }
   const original = column.text(part);
@@ -681,6 +687,20 @@ function hide() {
   win.el.hidden = true;
   syncButton();
   canvasEl.focus({ preventScroll: true });
+}
+
+/** Open the window on one part's cell, ready to type into it. */
+export function editInSizing(refdes, key) {
+  if (!sizingShown()) show();
+  if (rowIndex(refdes) < 0 && win.filter.value) {
+    win.filter.value = '';
+    redraw();
+  }
+  if (rowIndex(refdes) < 0) return;
+  anchor = null;
+  pick({ refdes, key });
+  win.grid.focus();
+  startEditing();
 }
 
 /** Shift+Z: the sizing window, open or closed. */

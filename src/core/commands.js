@@ -9,7 +9,8 @@ import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, sma
 import { crossNetOverlaps } from './wiring.js';
 import { plainTexText, svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
-import { MOS_SIZE_TYPES, formatMosSize, parseMosSize, sizeReplacedNameLabels } from './mos-size.js';
+import { MOS_SIZE_TYPES, formatMosSize, parseMosSize } from './mos-size.js';
+import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
@@ -55,6 +56,7 @@ const FLAG_ARITY = {
   const: 1,
   rot: 1,
   value: 1,
+  label: 1,
   name: 1,
   reference: 1,
   'device-region': 1,
@@ -274,7 +276,7 @@ export function evaluate(circuit) {
   // are not drawn, so they cannot overlap anything.
   // A size label standing in for a name hides it the same way.
   const barHidden = hiddenSupplyBarLabels(circuit);
-  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
+  for (const id of replacedNameLabels(circuit)) barHidden.add(id);
   const labels = [...circuit.labels.values()].filter((label) => !['arrow', 'box', 'line'].includes(label.kind) && !barHidden.has(label.id));
   const labelComponentOverlaps = [];
   const labelOverlaps = [];
@@ -457,6 +459,8 @@ export function commandHelp() {
     '  move <refdes> <X> <Y>          - move (snapped to 40-grid)',
     '  rotate <refdes> [deg=90]       - rotate by multiples of 90',
     '  mirror <refdes> <x|y>          - flip along an axis',
+    '  value <refdes> [V] [--label beside|replace|hide] - a passive\'s or source\'s value (10k, 1.5n), drawn with its unit only when --label shows it:',
+    '                                   beside below the name (C_1 = 1.5 nF), replace in its place, hide (the default) not at all;',
     '  value <refdes> <V>             - set value/label text; a transfer function (tf_s, tf_z) takes tf([num], [den]), [num], [den],',
     '                                   or a gain (k): in s highest power first, in z ascending powers of z^-1 (tf([1 -1], [1]) is 1 - z^-1;',
     '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
@@ -814,8 +818,16 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const c = circuit.getComponent(pos[0]);
     // A transfer function's definition may span words: tf([1], [1 2 1]).
     const v = isTransferFunction(c) ? pos.slice(1).join(' ') : pos[1];
-    setPartValue(circuit, c.refdes, v);
-    return result(`${c.refdes} value = "${v}"`, { refdes: c.refdes, value: v }, true);
+    const mode = flags.label?.[0];
+    if (mode !== undefined) {
+      if (!VALUE_TYPES.has(c.type)) throw new Error(`${c.refdes} is a ${c.type}; only passives and sources show a value label`);
+      if (!['beside', 'replace', 'hide'].includes(mode)) throw new Error('--label is beside (below the name), replace (in its place), or hide');
+    }
+    if (v !== undefined) setPartValue(circuit, c.refdes, v);
+    else if (mode === undefined) throw new Error('usage: value <refdes> <V> [--label beside|replace|hide]');
+    if (mode !== undefined) circuit.setValueLabel(c.refdes, mode);
+    const shown = c.valueLabel ? ` (label ${c.valueLabel})` : '';
+    return result(`${c.refdes} value = "${c.value}"${shown}`, { refdes: c.refdes, value: c.value, valueLabel: c.valueLabel }, true);
   }
   if (cmd === 'link' || cmd === 'unlink') {
     if (!pos[0]) throw new Error('usage: link <refdes> <design> ; unlink <refdes>');

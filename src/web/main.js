@@ -19,7 +19,7 @@ import { getSymbol, seriesTerminalNames } from '../core/components/index.js';
 import { pinJoinPoints } from './gestures.js';
 import { runCommand, evaluate } from '../core/commands.js';
 import { hiddenSupplyBarLabels, supplyBars } from '../core/supply-bars.js';
-import { sizeReplacedNameLabels } from '../core/mos-size.js';
+import { replacedNameLabels } from '../core/part-value.js';
 import { addTerminalStubs, stubLabelPlacement } from '../core/stubs.js';
 import { PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation } from '../core/pin-rails.js';
 import { tidySelection } from '../core/tidy.js';
@@ -1221,7 +1221,7 @@ export function pickLabel(w) {
 function labelsAt(w) {
   const p = paneSize();
   const hidden = hiddenSupplyBarLabels(circuit);
-  for (const id of sizeReplacedNameLabels(circuit)) hidden.add(id);
+  for (const id of replacedNameLabels(circuit)) hidden.add(id);
   return labelsUnderPoint(labels(), w, { tolerance: 4 / (p ? view.w / p.w : 1), hidden });
 }
 

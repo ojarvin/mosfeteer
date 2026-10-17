@@ -445,11 +445,12 @@ test('math labels render the compact \u226b relation', () => {
   assert.equal((svg.match(/<mo>≫<\/mo>/g) || []).length, 1);
 });
 
-test('svgString draws value text when present', () => {
+test('a passive\'s value draws no text on its symbol; only its value label shows it', () => {
   const c = new Circuit();
   c.addComponent('resistor', { x: 480, y: 0, value: '1k' });
-  const svg = svgString(c);
-  assert.ok(svg.includes('>1k<'));
+  assert.ok(!svgString(c).includes('>1k<'));
+  c.setValueLabel('R1', 'beside');
+  assert.match(svgString(c), /Math label \$\\mathrm\{1\\,kΩ\}\$/);
 });
 
 test('svgString renders ADC and DAC body labels in label font', () => {

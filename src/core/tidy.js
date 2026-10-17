@@ -11,14 +11,14 @@ import { GRID, snap } from './grid.js';
 import { applyTransform, rectsOverlap } from './geometry.js';
 import { segThroughInterior } from './router.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
-import { sizeReplacedNameLabels } from './mos-size.js';
+import { replacedNameLabels } from './part-value.js';
 
 const SHAPES = new Set(['arrow', 'box', 'line']);
 
 /** Labels whose text can collide: not shapes, not hidden bar or name labels. */
 function textLabels(circuit) {
   const hidden = hiddenSupplyBarLabels(circuit);
-  for (const id of sizeReplacedNameLabels(circuit)) hidden.add(id);
+  for (const id of replacedNameLabels(circuit)) hidden.add(id);
   return [...circuit.labels.values()].filter((label) => !SHAPES.has(label.kind) && !hidden.has(label.id));
 }
 

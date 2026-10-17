@@ -5,7 +5,7 @@ import { escapeSvg, fontAttrs, labelFontSize, resolveColor, strokeAttrs, strokeW
 import { INTERFACE_PIN_TYPES, LABEL_ALIGN_INSET, LABEL_FONT_SIZE, LabelInstance, MATH_LABEL_PAD, isReferenceMarker, parseLabelRuns, referenceMarkerInfo, stripMathDelimiters } from './model.js';
 import { TIMING_ARROWHEAD, arrowheadEnds, curvedArrowGeometry, defaultArrowhead, polylineArrowheads } from './line-style.js';
 import { hiddenSupplyBarLabels, supplyBars } from './supply-bars.js';
-import { sizeReplacedNameLabels } from './mos-size.js';
+import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
 import { SOURCE_WAVEFORMS } from './components/current.js';
 import { closedSwitchHighlight, drawnNetPaths, switchState } from './beats.js';
 import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } from './bus.js';
@@ -1237,8 +1237,9 @@ export function svgString(circuit, opts = {}) {
       );
     }
     const hasOwnedMarkerLabel = isReferenceMarker(c) && labelOwners.has(c.refdes);
-    // A switch's value is its phase, which its owned label already shows.
-    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel && !switchState(c)) {
+    // A switch's value is its phase, which its owned label already shows; a
+    // passive's or source's shows only as its value label (part-value.js).
+    if (def.textPos && c.value !== undefined && c.value !== '' && !hasOwnedMarkerLabel && !switchState(c) && !VALUE_TYPES.has(c.type)) {
       const p = applyTransform(c.transform, def.textPos.x, def.textPos.y);
       const valueText = def.textPos.font
         ? symbolTextSvg({ ...def.textPos, text: c.value }, c.transform, c.style?.color || '#333')
@@ -1258,7 +1259,7 @@ export function svgString(circuit, opts = {}) {
   const barHidden = beat
     ? new Set(bars.flatMap((bar) => bar.refs.map((ref) => circuit.labelOf(ref)).filter(Boolean).slice(1).map((label) => label.id)))
     : hiddenSupplyBarLabels(circuit);
-  for (const id of sizeReplacedNameLabels(circuit)) barHidden.add(id);
+  for (const id of replacedNameLabels(circuit)) barHidden.add(id);
   for (const label of labels
     .filter((candidate) => !['box', 'arrow', 'line'].includes(candidate.kind) && !candidate.parent && !barHidden.has(candidate.id))
     .sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)))) {

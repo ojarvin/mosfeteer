@@ -30,19 +30,16 @@ test('lengths read with their unit, a thin space between: 2u is 2 µm, 400n is 4
   assert.equal(lengthText('0.18u'), '0.18\u2009µm');
 });
 
-test('values read with their unit, the number whole where a prefix makes it so', () => {
+test('values read with their unit, the number as typed', () => {
   const read = (value, type) => valueText(value, type).replace(/\u2009/g, ' ');
   assert.equal(read('8p', 'capacitor'), '8 pF');
-  assert.equal(read('1.5n', 'capacitor'), '1500 pF');
-  assert.equal(read('0.5p', 'capacitor'), '500 fF');
-  assert.equal(read('1e-12', 'capacitor'), '1 pF');
+  assert.equal(read('1.5n', 'capacitor'), '1.5 nF');
   assert.equal(read('10 pF', 'capacitor'), '10 pF', 'a unit typed is kept, not doubled');
   assert.equal(read('1M', 'resistor'), '1 MΩ', 'M is mega, as in the calculator');
   assert.equal(read('1meg', 'resistor'), '1 MΩ');
-  assert.equal(read('4.7k', 'resistor'), '4700 Ω');
-  assert.equal(read('3.3', 'resistor'), '3.3 Ω', 'never below the bare unit for one or more');
+  assert.equal(read('4.7k', 'resistor'), '4.7 kΩ');
+  assert.equal(read('3.3', 'resistor'), '3.3 Ω');
   assert.equal(read('10u', 'inductor'), '10 µH');
-  assert.equal(read('1.23456n', 'capacitor'), '1.23456 nF', 'no whole number near: from 1 to 999');
   assert.equal(read('R_L', 'resistor'), 'R_L', 'a name, as typed');
 });
 

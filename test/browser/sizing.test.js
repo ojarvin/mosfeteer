@@ -180,4 +180,34 @@ describe('sizing window', { skip: browserSkip() }, () => {
     })()`);
     assert.equal(placed, true);
   });
+
+  test('a passive\'s menu shows its value below the name or in its place; Edit value… types it in the sizing window', async () => {
+    const rightClick = async (refdes) => {
+      const p = await h.evaluate(`${h.module('editor-state.js')}.then(async (m) => { const c = m.editor.circuit.components.get(${JSON.stringify(refdes)}).transform; return (await ${h.module('canvas-view.js')}).worldToClient(c.x, c.y); })`);
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
+      await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+      await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    };
+    const choose = (submenu, item) => h.evaluate(`(() => {
+      [...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith(${JSON.stringify(submenu)})).click();
+      [...document.querySelectorAll('.context-submenu[aria-label=${JSON.stringify(submenu)}] button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(item)})).click();
+    })()`);
+    await h.evaluate(`window.__run('value R1 10k')`);
+    await h.key('Z', { shiftKey: true });
+    await h.until(`!!document.querySelector('.sizing-window[hidden]')`);
+    assert.equal(await editor(`editor.circuit.valueLabelOf('R1')`), null, 'hidden by default');
+    await rightClick('R1');
+    await choose('Value', 'Below the name');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.valueLabelOf('R1')?.text === '$\\\\mathrm{10\\\\,kΩ}$')`);
+    await rightClick('R1');
+    await choose('Value', 'Instead of the name');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('R1').valueLabel === 'replace')`);
+    await rightClick('R1');
+    await choose('Value', 'Edit value');
+    await h.until(`document.activeElement?.classList.contains('sizing-input')`);
+    assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(cell('R1', 'label'))}).textContent.replace('▾', '')`), 'Instead of the name', 'the window shows it too');
+    await h.evaluate(`(() => { const input = document.querySelector('.sizing-input'); input.value = '22k'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.valueLabelOf('R1')?.text === '$\\\\mathrm{22\\\\,kΩ}$')`);
+  });
 });

@@ -16,6 +16,7 @@ import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArro
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { normalizePartsTable, partsTableLayout } from './parts-table.js';
+import { PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } from './part-value.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -1551,7 +1552,7 @@ export class LabelInstance {
     const b = component.bboxWorld();
     // A size label sits under the name label, below the part's height, and
     // still grows away from the part.
-    if (this.role !== MOS_SIZE_ROLE && !(a.y > b.y && a.y < b.y + b.h)) return null;
+    if (this.role !== MOS_SIZE_ROLE && this.role !== PART_VALUE_ROLE && !(a.y > b.y && a.y < b.y + b.h)) return null;
     if (a.x < b.x) return 'left';
     if (a.x > b.x + b.w) return 'right';
     return null;
@@ -1933,6 +1934,9 @@ export class ComponentInstance {
     // A transistor's optional W/L and multiplier (mos-size.js), drawn as an
     // owned math label.
     this.size = MOS_SIZE_TYPES.has(type) ? normalizeMosSize(opts.size) : null;
+    // Whether a passive's or source's value draws a label (part-value.js):
+    // 'beside' (below the name), 'replace' (in its place), or null (none).
+    this.valueLabel = VALUE_TYPES.has(type) && VALUE_LABEL_MODES.has(opts.valueLabel) ? opts.valueLabel : null;
     // A voltage source's drawn waveform (sine, pulse, noise), or none.
     this.waveform = WAVEFORM_TYPES.has(type) && Object.hasOwn(SOURCE_WAVEFORMS, opts.waveform) ? opts.waveform : null;
     // Schematic blocks are the one resizable symbol. Keep their geometry and
@@ -2149,6 +2153,7 @@ export class ComponentInstance {
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
       ...(this.size ? { size: { ...this.size } } : {}),
+      ...(this.valueLabel ? { valueLabel: this.valueLabel } : {}),
       ...(this.waveform ? { waveform: this.waveform } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -2570,6 +2575,7 @@ export class Circuit {
     if (!this._loading || !opts.noLabel) {
       this._syncSignalInputLabels(inst);
       this._syncSizeLabel(inst);
+      this._syncValueLabel(inst);
       this._syncTransferFunctionLabel(inst);
     }
     // Touching pins connect: a newly placed component whose terminal lands on
@@ -2673,6 +2679,7 @@ export class Circuit {
         }
       }
       this._syncSizeLabel(component);
+      this._syncValueLabel(component);
       return component;
     }
     if (this.components.has(next)) throw new Error(`component name "${next}" is already in use`);
@@ -2724,6 +2731,7 @@ export class Circuit {
     }
     this._ensureComponentInstanceLabel(component);
     this._syncSizeLabel(component);
+    this._syncValueLabel(component);
     // The notes' mentions follow the part.
     this.notes = renameMentions(this.notes, current, next);
     for (const label of this.labels.values()) {
@@ -2906,6 +2914,70 @@ export class Circuit {
   sizeLabelOf(refdes) {
     for (const label of this.labels.values()) if (label.owner === refdes && label.role === MOS_SIZE_ROLE) return label;
     return null;
+  }
+
+  /** Show a passive's or source's value on the drawing: 'beside' (below
+   *  its name), 'replace' (in the name's place), or null (not at all). */
+  setValueLabel(refdes, mode) {
+    const component = this.getComponent(refdes);
+    if (!VALUE_TYPES.has(component.type)) throw new Error(`${component.refdes} is a ${component.type}; only passives and sources show a value label`);
+    const next = mode === 'hidden' || mode === 'hide' || !mode ? null : mode;
+    if (next !== null && !VALUE_LABEL_MODES.has(next)) throw new Error('a value label is beside (below the name), replace (in its place), or hide');
+    if (component.valueLabel !== next) {
+      for (const label of [...this.labels.values()]) {
+        if (label.owner === component.refdes && label.role === PART_VALUE_ROLE) this.labels.delete(label.id);
+      }
+    }
+    component.valueLabel = next;
+    this._syncValueLabel(component);
+    return component;
+  }
+
+  /** A part's value label, or null. */
+  valueLabelOf(refdes) {
+    for (const label of this.labels.values()) if (label.owner === refdes && label.role === PART_VALUE_ROLE) return label;
+    return null;
+  }
+
+  /** Keep a value label an idempotent projection of the value: one label
+   *  while the part shows its value and has one, its TeX from the value. A new one stands in the name's place, or a step past
+   *  the name, away from the part. */
+  _syncValueLabel(component) {
+    if (!component || !VALUE_TYPES.has(component.type)) return null;
+    const shown = !!component.valueLabel && !!String(component.value ?? '').trim();
+    let label = null;
+    for (const candidate of [...this.labels.values()]) {
+      if (candidate.owner !== component.refdes || candidate.role !== PART_VALUE_ROLE) continue;
+      if (label || !shown) this.labels.delete(candidate.id);
+      else label = candidate;
+    }
+    if (!shown) return null;
+    const name = this.labelOf(component.refdes);
+    const text = valueLabelTex(component);
+    if (!label) {
+      label = this.addLabel({
+        text,
+        math: true,
+        owner: component.refdes,
+        role: PART_VALUE_ROLE,
+        offset: { ...(name?.offset || component.def.labelOffset || { x: 0, y: 0 }) },
+        align: 'parent',
+        style: { color: component.style.color },
+      });
+      if (component.valueLabel === 'beside' && name) {
+        const at = name.anchorWorld();
+        const centre = component.transform;
+        // Above a name that is above the part, else below the name.
+        const up = at.y < centre.y && Math.abs(at.y - centre.y) >= Math.abs(at.x - centre.x);
+        label.moveTo(at.x, at.y + (up ? -2 : 2) * GRID);
+      }
+    } else if (label._text !== text) {
+      label._text = text;
+      label._mathBox = null;
+      label.clearRenderedTextBounds();
+    }
+    this.invalidateRoutingCache();
+    return label;
   }
 
   _defaultSizeOffset(component) {
@@ -3268,6 +3340,7 @@ export class Circuit {
     }
     c.value = String(value);
     if (isReferenceMarker(c) && this.labelOf(refdes)) this._syncReferenceMarkerLabel(refdes, c.value);
+    this._syncValueLabel(c);
     return c;
   }
 
@@ -4044,6 +4117,8 @@ export class Circuit {
       }
       // The size label is the size: deleting it unsizes the part.
       if (removedLabel.role === MOS_SIZE_ROLE && signalComponent) signalComponent.size = null;
+      // A value label only shows the value: deleting it hides it.
+      if (removedLabel.role === PART_VALUE_ROLE && signalComponent) signalComponent.valueLabel = null;
     }
     return removed;
   }
@@ -6873,6 +6948,7 @@ export class Circuit {
         joinBar: c.joinBar,
         link: c.link,
         size: c.size,
+        valueLabel: c.valueLabel,
         waveform: c.waveform,
         style: c.style,
         analysis: c.analysis,
@@ -6965,6 +7041,7 @@ export class Circuit {
     for (const component of circuit.components.values()) {
       circuit._syncSignalInputLabels(component);
       circuit._syncSizeLabel(component);
+      circuit._syncValueLabel(component);
       circuit._syncTransferFunctionLabel(component);
     }
     // A switch's value is its phase, shown as its label.
