@@ -149,10 +149,10 @@ test('net names no label shows are found and renamed through the net', () => {
   circuit.addComponent('resistor', { refdes: 'R3', x: 80, y: 400 });
   circuit.addComponent('resistor', { refdes: 'R4', x: 480, y: 400 });
   const hidden = namedNet(circuit, 'R1.b', 'R2.a', 'V_{mid}');
-  const labelled = namedNet(circuit, 'R3.b', 'R4.a', 'V_{top}', { x: 280, y: 400 });
+  const labeled = namedNet(circuit, 'R3.b', 'R4.a', 'V_{top}', { x: 280, y: 400 });
   const found = findInLabels(circuit, 'V');
   assert.deepEqual(found.map((entry) => [entry.key, entry.role, entry.text]).sort(), [
-    [`label:${circuit.netLabels(labelled)[0].id}`, 'net', 'V_{top}'],
+    [`label:${circuit.netLabels(labeled)[0].id}`, 'net', 'V_{top}'],
     [`net:${hidden.id}`, 'net', 'V_{mid}'],
   ]);
   assert.deepEqual(findInLabels(circuit, 'Vmid', { replacement: 'V_{half}' }).map((entry) => entry.next), ['V_{half}']);

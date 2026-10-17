@@ -120,7 +120,7 @@ function divide(poly, factor) {
 /**
  * Cancel the roots numerator and denominator share in floating point: a
  * DAC's 1/s against its (1 - e^{-sT}) leaves a pole and a zero at z = 1
- * that round-off keeps from cancelling exactly.
+ * that round-off keeps from canceling exactly.
  */
 function cancelCommonRoots(num, den) {
   let n = trim(num);
@@ -139,7 +139,7 @@ function cancelCommonRoots(num, den) {
     // integrator chain's z = 1), before as a complex pair.
     const near = Math.abs(root.im) <= 1e-3 * Math.max(1, Math.hypot(root.re, root.im));
     if (near) {
-      // The exact-division check keeps a rounding from cancelling a root
+      // The exact-division check keeps a rounding from canceling a root
       // the numerator does not have.
       const candidates = [1e3, 1e4, 1e6].map((k) => Math.round(root.re * k) / k);
       if ([...new Set([...candidates, root.re])].some((r) => tryFactor([-r, 1]))) continue;

@@ -99,7 +99,7 @@ function joiner() {
 }
 
 /**
- * Analyse a drawn SC circuit. `options`: `input`, `output` (as the
+ * Analyze a drawn SC circuit. `options`: `input`, `output` (as the
  * small-signal analysis takes them; one of each is found when the drawing
  * has only one), `readout` (the state whose end the output is read at: its
  * index, or its name; the last by default). Returns `{ ok, variable: 'z',
@@ -141,7 +141,7 @@ export function analyzeSwitchedCap(circuit, options = {}) {
       // A (A1 for U1). A gain-bandwidth needs settling in time, which
       // charge from phase to phase does not see.
       const { model, parameter } = opampModel(component);
-      if (model === 'gbw') return failure('opamp-model', `${component.refdes} is modelled by its gain-bandwidth, which needs settling in time within a phase: this analysis takes an ideal or a finite-gain op-amp (its small-signal parameters).`);
+      if (model === 'gbw') return failure('opamp-model', `${component.refdes} is modeled by its gain-bandwidth, which needs settling in time within a phase: this analysis takes an ideal or a finite-gain op-amp (its small-signal parameters).`);
       opamps.push({ refdes: component.refdes, type, ...nodes, gain: model === 'finite-gain' ? parameter : null });
     } else if (!PORTS.has(type) && !isReferenceMarker(component)) {
       return failure('unsupported-part', `${component.refdes} (${type}): the switched-capacitor analysis takes capacitors, switches, op-amps, and ports.`);
@@ -361,7 +361,7 @@ export function analyzeSwitchedCap(circuit, options = {}) {
 }
 
 const BOLTZMANN = 1.380649e-23;
-// Points over half the unit circle the mean of a coloured noise is taken at.
+// Points over half the unit circle the mean of a colored noise is taken at.
 const NOISE_POINTS = 1024;
 
 /**
@@ -464,7 +464,7 @@ function capacitance(component) {
 }
 
 /** `value` with each factor common to its numerator and denominator that
- *  depends on a capacitance cancelled; back as a function of z. */
+ *  depends on a capacitance canceled; back as a function of z. */
 function cancelCapacitanceFactors(value, capacitors, gains = []) {
   if (value?.kind !== 'rational') return value;
   const names = new Set(gains);
@@ -472,9 +472,9 @@ function cancelCapacitanceFactors(value, capacitors, gains = []) {
   let current = value;
   for (const name of names) {
     const inName = rationalFunction(current.numerator, current.denominator, { variable: name });
-    const cancelled = cancelCommonPolynomialFactor(inName, { variable: name, maxWork: 200_000 });
-    if (cancelled === inName || cancelled?.kind !== 'rational') continue;
-    current = rationalFunction(cancelled.numerator, cancelled.denominator, { variable: VARIABLE });
+    const canceled = cancelCommonPolynomialFactor(inName, { variable: name, maxWork: 200_000 });
+    if (canceled === inName || canceled?.kind !== 'rational') continue;
+    current = rationalFunction(canceled.numerator, canceled.denominator, { variable: VARIABLE });
   }
   return current;
 }

@@ -872,7 +872,7 @@ export function sampledEquation(entry, values) {
  * folds into `1 / (1 - loop)`, then the node is substituted into every
  * equation that reads it. The next node to go is always the cheapest
  * (fewest inputs times readers), and each new coefficient has its common
- * factors cancelled, so the expressions stay as small as the diagram allows
+ * factors canceled, so the expressions stay as small as the diagram allows
  * -- where a generic elimination order makes a large symbolic diagram's
  * algebra explode. Returns `{ ok, columns }`, a transfer function per column
  * of B, or `{ ok: false, code, error }`.
@@ -1173,7 +1173,7 @@ function evaluate(dense, re, im) {
 export function responseCurve(value, variable, { pointsPerDecade = 40, sAxis = 'omega', at: extra = [] } = {}) {
   if (!value) return null;
   // `at`: frequencies on the curve's own axis to land on exactly (a band's
-  // edges and centre), where a grid would step past a peak or a notch.
+  // edges and center), where a grid would step past a peak or a notch.
   if (value.kind === 'mixed') return withPointsAt(mixedCurve(value, { pointsPerDecade }), extra, (f) => mixedAt(value, f));
   if (variable === 's' && hasDelays(value)) {
     const normalized = sAxis === 'normalized';
@@ -1467,8 +1467,8 @@ function mixedCurve(value, { pointsPerDecade }) {
 
 /** Trace colors: distinct hues that read on light and dark paper alike. */
 // Plot traces take the drawing's highlight palette (style.js), in an order
-// that keeps neighbours apart, so a trace and the net it follows can share
-// a colour; grey marks what is behind or before them.
+// that keeps neighbors apart, so a trace and the net it follows can share
+// a color; gray marks what is behind or before them.
 export const TRACE_COLORS = Object.freeze(['cobalt', 'red', 'emerald', 'orange', 'purple', 'teal', 'pink', 'brown'].map((token) => COLOR_PALETTE[token]));
 export const MUTED_TRACE_COLOR = COLOR_PALETTE.gray;
 
@@ -1519,7 +1519,7 @@ export function outputChoices(circuit) {
     .map(({ tier, ...choice }) => choice);
 }
 
-/** A band's edges and its centre, f/fs: where a response is sampled exactly. */
+/** A band's edges and its center, f/fs: where a response is sampled exactly. */
 function bandFrequencies(band) {
   const f0 = Number(band?.f0) || 0;
   return [...bandEdges(band), ...(f0 > 0 && bandEdges(band).length ? [f0] : [])];
@@ -1587,7 +1587,7 @@ export function bandSqnr(ntf, levels, band) {
 export function responsePlot(traces, variable, { sAxis = 'omega', band = null, quantity = 'magnitude', background = [], dbfs = null, detail = null } = {}) {
   const withVariable = traces.map((trace) => ({ ...trace, variable: trace.variable || variable }));
   const axis = plotAxis(withVariable, sAxis);
-  // Each curve lands exactly on the band's edges and centre, and is sampled
+  // Each curve lands exactly on the band's edges and center, and is sampled
   // densely across the band (on its own axis): a bandpass's in-band ripple
   // shows however narrow the band is.
   const detailed = detail && detail[0] > 0 && detail[1] > detail[0] ? logGrid(detail[0], detail[1], 240) : [];

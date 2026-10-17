@@ -130,7 +130,7 @@ test('any wire nothing drives is a source, named as written; results keep their 
   assert.equal(report.entries[0].equation, '\\frac{OUT}{net3} = 1 - z');
 });
 
-test('responses share one graph: a coloured trace each, kept as a plot annotation', async () => {
+test('responses share one graph: a colored trace each, kept as a plot annotation', async () => {
   const { responsePlot, TRACE_COLORS } = await import('../src/core/analysis/signal-flow.js');
   const { normalizePlot } = await import('../src/core/model.js');
   const { svgString } = await import('../src/core/render.js');
@@ -144,7 +144,7 @@ test('responses share one graph: a coloured trace each, kept as a plot annotatio
   assert.equal(kept.traces.length, 2);
   assert.deepEqual(kept.traces.map((trace) => trace.color), TRACE_COLORS.slice(0, 2));
   assert.equal(normalizePlot({ ...plot, traces: [] }), null);
-  // On the drawing, each trace draws in its colour.
+  // On the drawing, each trace draws in its color.
   const circuit = new Circuit();
   circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 720, y: 440 }, plot });
   const svg = svgString(circuit);
@@ -276,7 +276,7 @@ test('resizing a graph keeps its legend together beside it', () => {
   box.resizeBox({ x: 0, y: 0, w: 1000, h: 800 });
   // One shift for the whole legend: it follows the right edge, its spacing kept.
   assert.deepEqual(legend.map((label) => label.anchor), [40, 160, 280, 400, 520].map((y) => ({ x: 1160, y })));
-  // A caption above the box still follows its centre.
+  // A caption above the box still follows its center.
   assert.deepEqual(caption.anchor, { x: 520, y: -40 });
 });
 
@@ -659,7 +659,7 @@ test('the band: a line at bw for a baseband signal, two at f0 +- bw/2, saved wit
   const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(loaded.labels.get(box.id).plot.band, [0.01]);
   assert.deepEqual(loaded.analysisValues.band, { f0: 0.25, bw: 0.02 });
-  // The curves land exactly on the band's edges and centre: a notch there
+  // The curves land exactly on the band's edges and center: a notch there
   // reads its true depth, not the grid's nearest step.
   const resonator = blockTransferFunction(new Circuit().addComponent('tf_z', { value: 'tf([1 0 1], [1])' })); // 1 + z^-2: a zero at f/fs = 1/4
   const notched = bandedPlot([{ label: 'N', color: '#3b74e0', value: resonator, variable: 'z' }], 'z', { band: { f0: 0.25, bw: 0.02 } });

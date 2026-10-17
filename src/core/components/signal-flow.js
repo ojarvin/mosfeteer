@@ -141,7 +141,7 @@ export const tf_zdelay = transferFunctionBlock('tf_zdelay', 'z', 'Delay z^{-1}',
 /**
  * A gain: the block-diagram triangle, pointing the way the signal goes, its
  * tip on the output pin and its centroid on the origin, so a coefficient
- * centred on the part sits in the middle of the triangle at any rotation.
+ * centered on the part sits in the middle of the triangle at any rotation.
  * A short coefficient (`k`, `b_1`, `0.5`) is drawn inside it, a longer one
  * (`-c_1`, `2*g_m`) beside it (Circuit#_syncTransferFunctionLabel). Its shape
  * already shows the direction, so its input wire takes no automatic arrowhead.

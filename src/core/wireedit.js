@@ -15,7 +15,7 @@ import { GRID, snap } from './grid.js';
  *  - By default the run may slide as far as an adjacent run; reaching it
  *    collapses the shared corner, and the now-invisible collinear vertex is
  *    removed.
- *  - By default the run never slides past a neighbour (no inverted folds);
+ *  - By default the run never slides past a neighbor (no inverted folds);
  *    reversible previews may opt out until their final geometry is validated.
  *  - A run touching a terminal endpoint keeps that pin fixed and EXTENDS the
  *    wire with an added connector segment so the pin stays connected.
@@ -41,7 +41,7 @@ export function wireRunAt(pts, seg, breaks = null) {
 }
 
 /** Drop consecutive duplicates and any middle point collinear with its
- * neighbours, in place. Endpoints (terminal pins) are always preserved.
+ * neighbors, in place. Endpoints (terminal pins) are always preserved.
  * Returns the new length.
  */
 export function collapseCollinear(pts) {
@@ -72,7 +72,7 @@ export function findRunLine(pts, orient, line) {
 
 /** Move one junction in a managed branch set and rebuild each incident branch
  * endpoint with a local orthogonal elbow when the old and new locations are not
- * collinear with its neighbour. The caller owns the net object; this pure
+ * collinear with its neighbor. The caller owns the net object; this pure
  * helper mutates `paths` and returns the replacement junction list. */
 export function moveJunctionEndpoint(paths, junctions, oldPoint, newPoint, endpointInfo = null) {
   if (oldPoint.x === newPoint.x && oldPoint.y === newPoint.y) return junctions;
@@ -183,7 +183,7 @@ export function moveWireRun(pts, orient, line, target, endpointMeta = null) {
   if (t === val) return val;
 
   if (!loEnd && !hiEnd) {
-    // Interior run: slide freely (possibly up to a neighbour to collapse).
+    // Interior run: slide freely (possibly up to a neighbor to collapse).
     const preserveDiagonals = endpointMeta?.preserveDiagonalNeighbors === true;
     const diagonalStart = preserveDiagonals && pts[lo - 1] && pts[lo] &&
       pts[lo - 1].x !== pts[lo].x && pts[lo - 1].y !== pts[lo].y

@@ -51,7 +51,7 @@ function restorePlace(circuit, label, place) {
 
 /** Where a label may go, nearest first: along its own wire (both sides) for
  *  a net label; around its part's own label slot for a part's label, so it
- *  never wanders off to label a neighbour; around where it is otherwise. */
+ *  never wanders off to label a neighbor; around where it is otherwise. */
 function labelCandidates(circuit, label, reach) {
   const owner = label.owner && circuit.components.get(label.owner);
   const slot = owner?.def?.labelOffset;

@@ -110,7 +110,7 @@ test('sheet rows keep symbol families together', () => {
   assert.equal(rows[rowOf('and3_gate')].title, null, 'only a category\'s first row is captioned');
 });
 
-test('impedance is a centered box between the resistor pins, labelled Z_{1}', () => {
+test('impedance is a centered box between the resistor pins, labeled Z_{1}', () => {
   const def = getSymbol('impedance');
   assert.equal(def.refPrefix, 'Z');
   assert.deepEqual(def.labelOffset, getSymbol('resistor').labelOffset);
@@ -241,7 +241,7 @@ test('tri-state logic gates add a bottom enable pin without changing their body'
   }
 });
 
-test('mux2 uses a tapered two-square body with labelled inputs and select', () => {
+test('mux2 uses a tapered two-square body with labeled inputs and select', () => {
   const def = getSymbol('mux2');
   assert.deepEqual(def.terminals.map(({ name, x, y }) => ({ name, x, y })), [
     { name: 'a', x: -80, y: -40 },

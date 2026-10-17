@@ -36,14 +36,14 @@ function autoNumber(component) {
   return match ? Number(match[1]) : null;
 }
 
-// Parts whose centres differ by less than this across the rows stand in one
+// Parts whose centers differ by less than this across the rows stand in one
 // row (or column): a resistor and a transistor beside it are not exactly level.
 const SAME_LINE = 2 * GRID;
 
 /**
  * The renames that number `refs` (default: every automatically named part)
  * in `order` (RENUMBER_ORDERS key), as [{ from, to }] for the parts whose
- * name changes. A part's place is its body's centre. Parts are gathered
+ * name changes. A part's place is its body's center. Parts are gathered
  * into rows (or columns) across `then`, nearly level ones together; the
  * rows are taken in `then` order and each is numbered along `along`. All
  * parts of a prefix are numbered 1, 2, ...; a chosen subset reuses the

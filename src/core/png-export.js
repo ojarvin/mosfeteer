@@ -3,7 +3,7 @@ import { LABEL_FONT_SIZE } from './model.js';
 // PNG exports are sized by print resolution, not by screen pixels. The label
 // text is taken to land at a nominal point size (the page guide's, else
 // DEFAULT_EXPORT_TEXT_PT), which fixes the image's physical size; the chosen
-// DPI then sets its pixels. The PNG records that DPI, so apps that honour it
+// DPI then sets its pixels. The PNG records that DPI, so apps that honor it
 // place the image at that size and its text at that point size.
 
 const PNG_DPI_CHOICES = Object.freeze([150, 300, 600]);
@@ -58,7 +58,7 @@ export function withPngDensity(bytes, dpi) {
   chunk.set([0x70, 0x48, 0x59, 0x73], 4); // 'pHYs'
   out.setUint32(8, perMetre);
   out.setUint32(12, perMetre);
-  chunk[16] = 1; // unit: metre
+  chunk[16] = 1; // unit: meter
   out.setUint32(17, crc32(chunk.subarray(4, 17)));
   parts.splice(1, 0, chunk);
   const result = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));

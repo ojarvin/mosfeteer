@@ -42,10 +42,10 @@ export function pageGuideTextSize(guide, width) {
 }
 
 /** The horizontal frame for a figure whose natural export extends x0..x1:
- *  centred on it and exactly the guide's width. When the drawing is wider it
+ *  centered on it and exactly the guide's width. When the drawing is wider it
  *  cannot be padded to fit; the frame keeps the natural extent and `fits` is
  *  false, with the text size the figure would get instead, the guide's own
- *  width centred on the drawing as `target`, and how many grid cells to trim
+ *  width centered on the drawing as `target`, and how many grid cells to trim
  *  from each side to fit (`trimCells`). */
 export function pageGuideFrame(guide, x0, x1) {
   const width = pageGuideWidth(guide);
@@ -70,7 +70,7 @@ export function pageGuideCaption(guide) {
 }
 
 /** The frame an export of `circuit` would get, with the same bounds and
- *  padding the drawing export uses; an empty drawing centres it on the origin. */
+ *  padding the drawing export uses; an empty drawing centers it on the origin. */
 export function circuitPageGuideFrame(circuit, guide, padding = GRID) {
   // The same visible extent the export frames (render.js svgString).
   const b = circuit.inkBounds(0);

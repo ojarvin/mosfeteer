@@ -168,7 +168,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.name === 'top').lift > 0.99)`);
     await sleep(600);
     const tiles = Object.fromEntries((await snapshot()).tiles.map((t) => [t.name, t]));
-    // Each card as drawn: grown about the drawing's centre, then floated, its caption below.
+    // Each card as drawn: grown about the drawing's center, then floated, its caption below.
     const card = (t) => {
       const grow = 1 + 0.12 * t.lift;
       return { x: t.x + (t.w * (1 - grow)) / 2 + t.float.dx, y: t.y + (t.h * (1 - grow)) / 2 + t.float.dy, w: t.w * grow, h: t.h * grow + 80 };

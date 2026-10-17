@@ -39,7 +39,7 @@ is to repair geometry.
 
 ## Automatic routing
 
-`smartRoute` searches a four-neighbour grid. Component bboxes are inflated by
+`smartRoute` searches a four-neighbor grid. Component bboxes are inflated by
 one grid cell, so body clearance is a hard constraint rather than a scoring
 preference. Endpoint escape cells are temporarily permitted and the first and
 last edges must follow terminal directions when directions are available.

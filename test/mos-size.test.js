@@ -14,7 +14,7 @@ test('parseMosSize reads W/L with prefixes, units, and a multiplier', () => {
   assert.deepEqual(parseMosSize('4*2µ/400nm'), { w: '2u', l: '400n', m: 4 });
   assert.deepEqual(parseMosSize('2μ/400n m=2'), { w: '2u', l: '400n', m: 2 });
   assert.deepEqual(parseMosSize('W=10u L=1u M=3'), { w: '10u', l: '1u', m: 3 });
-  // A bare number is in micrometres, as sizes are written on schematics.
+  // A bare number is in micrometers, as sizes are written on schematics.
   assert.deepEqual(parseMosSize('2/0.18'), { w: '2u', l: '0.18u', m: 1 });
   for (const bad of ['', '2u', '2u/400n/1', '2q/400n', '0/1u', '2u/400n x0', '2u/400n x1.5']) {
     assert.throws(() => parseMosSize(bad), undefined, bad);

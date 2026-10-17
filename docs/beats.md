@@ -30,7 +30,7 @@ drawing fixes every beat. Code: `src/core/beats.js`; tests:
    part. A net label that no beat mentions follows the parts on its net.
    Wire that joins only dimmed parts is dimmed too, and a junction dot dims
    only when no shown wire runs through it. Dimmed parts are drawn in a
-   solid grey (`--svg-dim` in the editor and presenter), so where faint
+   solid gray (`--svg-dim` in the editor and presenter), so where faint
    strokes meet they do not double up.
 5. **Switches and highlights are per beat** on top of the drawing's own
    positions and highlights, with the same carry-forward rule.
@@ -47,7 +47,7 @@ one (`s`, or `switch φ_{1} closed`) flips them all, in the drawing and in
 beats. Beats store positions per phase, so a switch added to a phase later
 follows its beats without edits. A switch joining a phase takes the phase's
 position; a switch starting a new phase brings its old phase's beats, so a
-phase can be renamed one switch at a time. Labelling a switch with its own
+phase can be renamed one switch at a time. Labeling a switch with its own
 name (`S_{3}`) takes it out of any phase.
 
 A switch's right-click menu has **Phase**, to put the selected switches on an
@@ -97,7 +97,7 @@ step shades nothing.
 
 **Timing diagram** (More menu or `Shift+K`, which also closes it; `timing`) draws one row per phase under the
 drawing, in the phases' order with each complement right after its phase:
-its wave, two cells tall with vertical edges, the waves centred on the
+its wave, two cells tall with vertical edges, the waves centered on the
 drawing's width, and the phase's name as a free label, right-aligned in a
 column just left of them.
 A wave is a row of slots, each high or low; a short wave holds its last
@@ -150,7 +150,7 @@ digital row's edges do (an arrow at the row's middle height); a mark on a
 point between 0 and ±1 is a threshold, a dashed line at its level from the
 row's start beside the mark's own. Any row may be taller: **Taller** and
 **Shorter** (`--height ROW=4`) step it two cells at a time, its name staying
-centred.
+centered.
 
 Rows need not be switch phases: **Signals** in the editor (or `timing
 --add CLK,EN`) adds rows of the diagram's own -- a clock, an enable, every
@@ -167,7 +167,7 @@ named keep their waves, `--beats` retakes them from the beats,
 `--gaps auto|none|φ1:φ2,...` sets the pairs kept apart, and
 `--fall φ1'=-1` / `--rise PHASE=N` shift edges by cells.
 
-A new diagram is placed with its waves centred on the drawing's width, as
+A new diagram is placed with its waves centered on the drawing's width, as
 high as the drawing leaves room for it -- floating up into an empty part of
 the drawing -- else below everything. After that it stays where it stands:
 drag it anywhere, and redraws keep it there. It does not move out of the way

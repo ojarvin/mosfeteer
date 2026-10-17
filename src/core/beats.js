@@ -705,7 +705,7 @@ export function renameBeatObject(circuit, from, to) {
 }
 
 /** A switch starting a new phase brings its old phase's per-beat positions,
- * so relabelling a phase one switch at a time keeps its beats. `move` drops
+ * so relabeling a phase one switch at a time keeps its beats. `move` drops
  * them from the old phase, once no switch is left on it. */
 export function carryBeatSwitchKey(circuit, from, to, { move = false } = {}) {
   for (const beat of circuit.beats || []) {

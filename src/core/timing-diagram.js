@@ -197,8 +197,8 @@ export function timingRowGeometry(levels, columns, x, top, shift = {}, height = 
 }
 
 /** The edges one row draws (as timingRowGeometry): [{ at, x, rise }], `at`
- *  the slot boundary each belongs to (see timingColumns). An edge cancelled
- *  by its neighbour shifted onto it is not drawn. */
+ *  the slot boundary each belongs to (see timingColumns). An edge canceled
+ *  by its neighbor shifted onto it is not drawn. */
 export function timingRowEdges(levels, columns, x, top, shift = {}, height = WAVE_HEIGHT) {
   return traceRow(levels, columns, x, top, shift, height).edges;
 }
@@ -628,7 +628,7 @@ export function removeTimingDiagram(circuit) {
 
 /**
  * Draw the diagram, replacing one already drawn, else under everything
- * drawn so far; either way with its waves centred on the drawing's width. `bits` gives waves
+ * drawn so far; either way with its waves centered on the drawing's width. `bits` gives waves
  * by phase name (see timingPhaseNamed); `fromBeats` takes the waves not given
  * from the beats rather than the diagram already drawn; `slot` is a slot's
  * width in cells; `gaps` is 'auto', 'none', or pairs of phase names kept from
@@ -761,7 +761,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     },
   }));
   // A diagram stays where it stands (dragged there, or placed before); a new
-  // one -- or one asked to (`place`) -- has its waves centred on the
+  // one -- or one asked to (`place`) -- has its waves centered on the
   // drawing's width, as high as the drawing leaves room for it, else below.
   const waves = columns.reduce((sum, c) => sum + c.w, 0);
   const column = Math.max(...labels.map((label) => label.bbox().w));
@@ -828,7 +828,7 @@ function drawNotes(circuit, notes, layout, origin, settings) {
     const ref = notes.spans[index].from;
     // A narrow span is pointed at from outside, an arrow at each end, its
     // text right after the right one's tail -- only its own margin between
-    // (centred under so little, it would snap off the middle).
+    // (centered under so little, it would snap off the middle).
     const narrow = x1 - x0 < 3 * GRID;
     if (!narrow) shape('line', [at({ x: x0, y }), at({ x: x1, y })], 'span', ref, index, { arrowhead: 'both' });
     else {
@@ -838,7 +838,7 @@ function drawNotes(circuit, notes, layout, origin, settings) {
     if (!text) continue;
     const label = circuit.addLabel({ text, math: isTexSource(text), align: narrow ? 'left' : 'center', ...at({ x: (x0 + x1) / 2, y: y + GRID }), timing: timing('note', ref, index) });
     // Its box's left edge on the tail; a box an odd number of cells wide
-    // cannot centre on the grid there, so it starts half a cell on.
+    // cannot center on the grid there, so it starts half a cell on.
     if (narrow) label.moveTo(ceilGrid(origin.x + x1 + 2 * GRID + label.bbox().w / 2), origin.y + y);
   }
 }

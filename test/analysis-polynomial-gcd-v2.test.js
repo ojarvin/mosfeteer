@@ -28,9 +28,9 @@ test('cancels a shared symbolic frequency-dependent factor hidden in expanded su
   assert.equal(valueAt(expanded), valueAt(rationalFunction(numerator, denominator)));
   assert.equal(analyzeResponse(expanded).denominatorDegree, 2);
 
-  const cancelled = cancelCommonPolynomialFactor(expanded);
-  assert.equal(valueAt(cancelled), valueAt(expanded));
-  const response = analyzeResponse(cancelled);
+  const canceled = cancelCommonPolynomialFactor(expanded);
+  assert.equal(valueAt(canceled), valueAt(expanded));
+  const response = analyzeResponse(canceled);
   assert.equal(response.numeratorDegree, 0);
   assert.equal(response.denominatorDegree, 1);
   assert.equal(response.poles.length, 1);
@@ -43,8 +43,8 @@ test('returns the same value when numerator and denominator are coprime', () => 
 
 test('ignores factors that do not depend on the frequency variable', () => {
   const value = rationalFunction(multiply(add(R, L), s), multiply(add(R, L), add(s, g)));
-  const cancelled = cancelCommonPolynomialFactor(value);
-  assert.equal(valueAt(cancelled), valueAt(value));
+  const canceled = cancelCommonPolynomialFactor(value);
+  assert.equal(valueAt(canceled), valueAt(value));
 });
 
 test('factors free of the frequency are set aside, so a large product still cancels', () => {
@@ -58,9 +58,9 @@ test('factors free of the frequency are set aside, so a large product still canc
   // As the solver leaves it: products, not expanded.
   const value = { kind: 'rational', variable: 's', numerator: multiply(big, shared, g), denominator: multiply(wide, shared, other) };
   assert.equal(value.denominator.kind, 'multiply');
-  const cancelled = cancelCommonPolynomialFactor(value);
-  assert.notEqual(cancelled, value);
-  const response = analyzeResponse(cancelled);
+  const canceled = cancelCommonPolynomialFactor(value);
+  assert.notEqual(canceled, value);
+  const response = analyzeResponse(canceled);
   assert.deepEqual([response.numeratorDegree, response.denominatorDegree], [0, 1]);
 });
 
@@ -74,8 +74,8 @@ test('a high-degree common factor comes out the same by remainders down to its d
     multiply(shared, add(multiply(s, L), R)),
     multiply(shared, add(multiply(power(s, 2), L, C), multiply(s, g), integer(1))),
   );
-  const cancelled = cancelCommonPolynomialFactor(value);
-  const response = analyzeResponse(cancelled);
+  const canceled = cancelCommonPolynomialFactor(value);
+  const response = analyzeResponse(canceled);
   assert.deepEqual([response.numeratorDegree, response.denominatorDegree], [1, 2]);
-  assert.equal(valueAt(cancelled), valueAt(value));
+  assert.equal(valueAt(canceled), valueAt(value));
 });

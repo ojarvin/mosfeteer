@@ -36,7 +36,7 @@ test('the drawn model carries one branch per solved primitive', () => {
   assert.ok(types.filter((type) => type === 'resistor').length >= 2);
   assert.ok(types.includes('input') && types.includes('output') && types.includes('ground'));
 
-  // Every drawn branch is labelled with the symbol the equations use, and a
+  // Every drawn branch is labeled with the symbol the equations use, and a
   // controlled source names the nodes it reads.
   const labels = [...model.circuit.labels.values()].map((label) => label.text);
   for (const text of ['r_{o1}', 'R_{D}', 'g_{m1}(VIN - 0)']) {

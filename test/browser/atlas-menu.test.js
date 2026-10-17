@@ -20,16 +20,16 @@ describe('Atlas design menu', { skip: browserSkip() }, () => {
     await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length > 0; })`, 10000);
   };
   const tile = async (name) => (await snapshot()).tiles.find((t) => t.name === name);
-  const centre = (t) => ({ x: t.screen.x + t.screen.w / 2, y: t.screen.y + t.screen.h / 2 });
+  const center = (t) => ({ x: t.screen.x + t.screen.w / 2, y: t.screen.y + t.screen.h / 2 });
   const rightClick = async (name) => {
-    const p = centre(await tile(name));
+    const p = center(await tile(name));
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
     await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
     await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
   };
   const ctrlClick = async (name) => {
-    const p = centre(await tile(name));
+    const p = center(await tile(name));
     await h.mouse('mousePressed', p.x, p.y, { modifiers: 2 });
     await h.mouse('mouseReleased', p.x, p.y, { modifiers: 2 });
   };

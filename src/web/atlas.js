@@ -22,7 +22,7 @@ import { GRID } from '../core/grid.js';
 import { applyExportDarkTheme, withEmbeddedMathFont } from './drawing-export.js';
 import { relatednessOf } from '../core/design-related.js';
 import { linkArrow, linkCurve, linkDepths, linkGraph } from '../core/design-links.js';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, floatClear, layoutAtlas, layoutAtlasShaped, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing } from './atlas-layout.js';
 import { INDEX_CACHE, bakeTiles, cacheGet, cachePut, renderingKey, trimCache } from './atlas-cache.js';
 import { easeOutCubic, wheelIntent, lerpView } from './gestures.js';
 import { editor } from './editor-state.js';
@@ -644,7 +644,7 @@ function draw() {
     return rectsIntersect(screen, { ...tile, h: tile.h + ATLAS_CAPTION }) || ((dx || dy) && rectsIntersect(screen, { ...tile, x: tile.x + dx, y: tile.y + dy, h: tile.h + ATLAS_CAPTION }));
   });
   const wanted = [];
-  const centre = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
+  const center = { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
   const placed = visible.map(({ tile, alpha }) => {
     const rect = worldToScreen(tile);
     return { tile, alpha, rect, detail: tileDetail(Math.max(rect.w, rect.h) * dpr) };
@@ -697,7 +697,7 @@ function draw() {
       ctx.globalAlpha *= arriving;
       ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
     }
-    const distance = Math.hypot(tile.x + tile.w / 2 - centre.x, tile.y + tile.h / 2 - centre.y);
+    const distance = Math.hypot(tile.x + tile.w / 2 - center.x, tile.y + tile.h / 2 - center.y);
     // Mid-animation only small images are fetched: decoding a large one
     // would drop frames, and the view does not rest here anyway.
     for (const need of level === 'large' && !moving ? ['small', 'large'] : ['small']) {
@@ -798,7 +798,7 @@ function floatTargets(depths) {
   return offsets;
 }
 
-/** A design's screen rect as lifted: grown about its centre, and floated clear. */
+/** A design's screen rect as lifted: grown about its center, and floated clear. */
 function lifted(rect, id) {
   const { lift, dx = 0, dy = 0 } = liftOf(id);
   const grow = 1 + LIFT_GROW * lift;
@@ -887,8 +887,8 @@ function drawCard(ctx, tile, rect, lift, palette) {
 function tileReveal(tile) {
   if (!state.revealAt) return 1;
   if (!state.revealOrder || state.revealOrder.at !== state.revealAt) {
-    const centre = state.revealFrom || { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
-    const ranked = [...state.tiles].sort((a, b) => Math.hypot(a.x + a.w / 2 - centre.x, a.y + a.h / 2 - centre.y) - Math.hypot(b.x + b.w / 2 - centre.x, b.y + b.h / 2 - centre.y));
+    const center = state.revealFrom || { x: state.view.x + state.view.w / 2, y: state.view.y + state.view.h / 2 };
+    const ranked = [...state.tiles].sort((a, b) => Math.hypot(a.x + a.w / 2 - center.x, a.y + a.h / 2 - center.y) - Math.hypot(b.x + b.w / 2 - center.x, b.y + b.h / 2 - center.y));
     state.revealOrder = { at: state.revealAt, delay: new Map(ranked.map((t, i) => [t.id, Math.min(i * REVEAL_STEP_MS, REVEAL_SPREAD_MS)])) };
   }
   const t = (performance.now() - state.revealAt - (state.revealOrder.delay.get(tile.id) ?? 0)) / REVEAL_MS;
@@ -977,7 +977,7 @@ function drawLinks(ctx, palette, shown) {
     const dy = a.tile.y - (source?.box?.y ?? a.tile.y);
     const flat = worldToScreen(a.tile);
     // Each part that links, on screen where the lift has carried it: its
-    // centre and its box.
+    // center and its box.
     const starts = parts.length
       ? parts.map((item) => {
         const box = item.boxes[0];
@@ -1002,7 +1002,7 @@ function drawLinks(ctx, palette, shown) {
   ctx.restore();
 }
 
-/** A colour as CSS with `alpha` (a hex colour; anything else as it is). */
+/** A color as CSS with `alpha` (a hex color; anything else as it is). */
 function withAlpha(color, alpha) {
   const hex = String(color).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
   if (!hex) return color;
@@ -1071,7 +1071,7 @@ function drawBeam(ctx, start, frame, palette) {
   ctx.save();
   if (dark) ctx.globalCompositeOperation = 'lighter';
   // The spotlight: a soft pool of light over the part that links, its
-  // centre as faint as its edge is gone, so the symbol reads through it.
+  // center as faint as its edge is gone, so the symbol reads through it.
   if (box) {
     const cx = box.x + box.w / 2;
     const cy = box.y + box.h / 2;
@@ -1976,7 +1976,7 @@ function focusSearch() {
 }
 
 /** The editor's grid: one-unit lines every cell, fading out as the cells
- *  shrink to a few pixels instead of turning into a grey wash. */
+ *  shrink to a few pixels instead of turning into a gray wash. */
 function drawGrid(ctx, palette, w, h, { x, y } = state.view, k = scale()) {
   if (!editor.showGrid) return;
   const spacing = GRID * k;
@@ -2036,7 +2036,7 @@ function drawCaption(ctx, tile, entry, rect, palette) {
   const hovered = state.hover === tile.id;
   // The pick lifts the design on a card (drawCard); the hover is a faint
   // frame in the gap around a design lying flat, measured in drawing units,
-  // so it scales with the zoom and never reaches a neighbour.
+  // so it scales with the zoom and never reaches a neighbor.
   const k = scale();
   const inset = ATLAS_GAP * 0.35 * k;
   // The caption may run on into the gap after its tile; its size follows
@@ -2133,7 +2133,7 @@ function syncVectorOverlays(list, moving = false) {
         requestDraw();
       });
     }
-    // Lifted as its image is: grown about its centre; dimmed with the rest.
+    // Lifted as its image is: grown about its center; dimmed with the rest.
     const { lift, dim, dx = 0, dy = 0 } = liftOf(tile.id);
     const grow = 1 + LIFT_GROW * lift;
     const k = scale();
@@ -2326,7 +2326,7 @@ function zoomAbout(factor, clientX, clientY) {
   setView({ x: anchor.x - (anchor.x - view.x) * f, y: anchor.y - (anchor.y - view.y) * f, w: next.w, h: next.h });
 }
 
-function centreOf() {
+function centerOf() {
   const box = rootEl.getBoundingClientRect();
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
@@ -2370,7 +2370,7 @@ let lastDesk = null;
 
 const smoothstep = (t) => { const x = Math.max(0, Math.min(1, t)); return x * x * (3 - 2 * x); };
 
-/** A screen rect grown about its centre by `lift` (as a picked card is) and
+/** A screen rect grown about its center by `lift` (as a picked card is) and
  *  moved by `dx`, `dy` drawing units. */
 function liftedBy(rect, lift, dx = 0, dy = 0) {
   const grow = 1 + LIFT_GROW * lift;
@@ -2938,7 +2938,7 @@ async function openDesk(generation, source, animate, startup) {
     await prepareStartupImages(generation, target);
     if (!state || state.generation !== generation) return;
     state.baking = false;
-    // Start farther out around the same centre, then approach the fitted desk.
+    // Start farther out around the same center, then approach the fitted desk.
     const factor = 1.8;
     state.view = clampView({
       x: target.x - target.w * (factor - 1) / 2,
@@ -3278,7 +3278,7 @@ export function onAtlasKey(ev) {
   else if (arrows[key]) {
     // While a search is on, the arrows and Tab move among what it found.
     const tiles = navigableTiles();
-    const next = selected && tiles.includes(selected) ? neighbourTile(tiles, selected, arrows[key]) : tiles[0];
+    const next = selected && tiles.includes(selected) ? neighborTile(tiles, selected, arrows[key]) : tiles[0];
     if (next) focusTile(next);
   } else if (key === 'Tab' && navigableTiles().length) {
     const tiles = navigableTiles();
@@ -3293,8 +3293,8 @@ export function onAtlasKey(ev) {
   else if (key === 'T' && state.source === 'workspace') repackDesk();
   else if (key === 'L' && state.source === 'workspace') toggleList();
   else if (key === 'l' && state.source === 'workspace') toggleLinks();
-  else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centreOf().x, centreOf().y);
-  else if (key === '-' || key === '_') zoomAbout(1.5, centreOf().x, centreOf().y);
+  else if (key === '+' || key === '=') zoomAbout(1 / 1.5, centerOf().x, centerOf().y);
+  else if (key === '-' || key === '_') zoomAbout(1.5, centerOf().x, centerOf().y);
   else if (key === 'D' || (key === 'd' && ev.shiftKey)) toggleTheme();
   else return;
   ev.preventDefault();

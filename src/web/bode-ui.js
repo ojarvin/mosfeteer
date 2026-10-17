@@ -396,8 +396,8 @@ function appendCorners(list, { trace, sketch, corners }, named) {
     if (Math.abs(corner.root.im) > 0) item.append(` (complex pair, Q = ${formatNumber(corner.w / (2 * Math.abs(corner.root.re)))})`);
     list.append(item);
   }
-  if (sketch.cancelled) {
-    list.append(el('li', { class: 'bode-cancelled', text: `${sketch.cancelled} pole–zero pair${sketch.cancelled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out` }));
+  if (sketch.canceled) {
+    list.append(el('li', { class: 'bode-canceled', text: `${sketch.canceled} pole–zero pair${sketch.canceled === 1 ? '' : 's'} of the exact solution cancel exactly and are left out` }));
   }
   if (trace.key === 'loop' && !trace.report.reports?.loop?.infinite) {
     const item = el('li');
@@ -412,7 +412,7 @@ function appendCorners(list, { trace, sketch, corners }, named) {
     }
     list.append(item);
     // Too large for every symbol, the loop was solved at these values' numbers.
-    if (trace.report.reports?.loop?.numeric) list.append(el('li', { class: 'bode-cancelled', text: 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
+    if (trace.report.reports?.loop?.numeric) list.append(el('li', { class: 'bode-canceled', text: 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
   }
   if (sketch.unityGain && trace.key === 'transfer') {
     list.append(el('li', {}, [mathElement(`\\omega_{u} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase there } ${Math.round(sketch.unityGain.phase)}\\text{°}`)]));

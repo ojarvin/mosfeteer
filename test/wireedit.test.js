@@ -27,12 +27,12 @@ test('wireRunAt stops aligned runs at a topology break', () => {
   assert.deepEqual(wireRunAt(pts, 2, breaks), { lo: 1, hi: 2, orient: 'h', val: 0 });
 });
 
-test('dragging an interior run into line with a neighbouring run collapses the corner', () => {
+test('dragging an interior run into line with a neighboring run collapses the corner', () => {
   const pts = [
     { x: 0, y: 0 }, { x: 0, y: 40 }, { x: 200, y: 40 },
     { x: 200, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 0 },
   ];
-  // drag the y=40 horizontal run down to y=80 (the neighbouring run) -> collapse
+  // drag the y=40 horizontal run down to y=80 (the neighboring run) -> collapse
   moveWireRun(pts, 'h', 40, 80);
   // the x=200 jog vanishes and the two horizontal runs merge into one
   assert.deepEqual(pts, [{ x: 0, y: 0 }, { x: 0, y: 80 }, { x: 400, y: 80 }, { x: 400, y: 0 }]);
@@ -144,7 +144,7 @@ test('moving the standard bridge upward rebuilds incident elbows at the target j
   assert.ok(!paths.flat().some((p) => p.x === 640 && p.y === 280), 'old right junction removed');
 });
 
-test('a run cannot slide past a neighbour (no inverted fold)', () => {
+test('a run cannot slide past a neighbor (no inverted fold)', () => {
   const pts = [
     { x: 0, y: 0 }, { x: 0, y: 80 }, { x: 200, y: 80 }, { x: 200, y: 0 },
   ];
@@ -156,7 +156,7 @@ test('a run cannot slide past a neighbour (no inverted fold)', () => {
   ortho(pts);
 });
 
-test('a preview run may pass a neighbour so a later legal drop is reachable', () => {
+test('a preview run may pass a neighbor so a later legal drop is reachable', () => {
   const pts = [
     { x: 0, y: 400 }, { x: 0, y: 0 },
     { x: 400, y: 0 }, { x: 400, y: 200 },

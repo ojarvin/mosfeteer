@@ -136,7 +136,7 @@ test('pin, unpin, remove, and checkpoint edit the entries in place', () => {
   const removed = removeHistoryEntry(disk.history, base, middle.id);
   const left = historyEntries(removed, base);
   assert.deepEqual(left.map((entry) => entry.id), [newest.id, oldest.id]);
-  assert.equal(left[1].text, oldest.text, 'the neighbours are stored against each other');
+  assert.equal(left[1].text, oldest.text, 'the neighbors are stored against each other');
   const pinned = pinHistoryEntry(disk.history, base, oldest.id, { name: ' first ' });
   assert.equal(historyEntries(pinned, base)[2].name, 'first');
   const unpinned = unpinHistoryEntry(pinned, base, oldest.id);

@@ -89,7 +89,7 @@ function textbookSymbol(raw) {
 }
 
 /**
- * A controlled source is labelled with its own transconductance times the
+ * A controlled source is labeled with its own transconductance times the
  * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
  * is text, never a second pair of wires across the drawing. The pair names the
  * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
@@ -224,7 +224,7 @@ function orderNodes(elements, report, options) {
     }
   }
   const circuit = options.circuit;
-  const centre = new Map();
+  const center = new Map();
   if (circuit) {
     for (const node of seen) {
       const net = circuit.nets.get(node);
@@ -232,7 +232,7 @@ function orderNodes(elements, report, options) {
         try { return circuit.getComponent(terminal.comp).terminalWorld(terminal.term).x; }
         catch { return null; }
       }).filter((value) => value !== null);
-      if (points.length) centre.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
+      if (points.length) center.set(node, points.reduce((sum, value) => sum + value, 0) / points.length);
     }
   }
   const inputNode = portNode(report, 'input');
@@ -242,8 +242,8 @@ function orderNodes(elements, report, options) {
     const ranked = rank(left) - rank(right);
     if (Number.isFinite(ranked) && ranked !== 0) return ranked;
     if (!Number.isFinite(ranked)) return ranked < 0 ? -1 : 1;
-    const a = centre.get(left);
-    const b = centre.get(right);
+    const a = center.get(left);
+    const b = center.get(right);
     if (a !== undefined && b !== undefined && a !== b) return a - b;
     return seen.indexOf(left) - seen.indexOf(right);
   });
@@ -318,7 +318,7 @@ export function smallSignalSchematic(report, options = {}) {
   // not push every other column apart.
   const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
   const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
-  // A shunt wears its label on its left, so its neighbour must clear it.
+  // A shunt wears its label on its left, so its neighbor must clear it.
   const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
   const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
 
@@ -369,10 +369,10 @@ export function smallSignalSchematic(report, options = {}) {
   // Shunt branches: node bus -> element -> ground rail.
   for (const node of nodes) {
     const list = shunts.get(node);
-    const centreX = columns.get(node);
+    const centerX = columns.get(node);
     const pitch = pitches.get(node);
     list.forEach((element, index) => {
-      const shuntX = snapTo(centreX + (index - (list.length - 1) / 2) * pitch);
+      const shuntX = snapTo(centerX + (index - (list.length - 1) / 2) * pitch);
       const vertical = SOURCE_KINDS.has(element.kind);
       // A source symbol is already vertical; a passive is turned upright. The
       // current of a controlled source flows from `a` into `b`, so a source

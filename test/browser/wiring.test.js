@@ -30,7 +30,7 @@ describe('wiring', { skip: browserSkip() }, () => {
   const preview = () => h.evaluate(`(() => { const d = document.querySelector('#canvas path.wire-draft')?.getAttribute('d'); return d ? d.trim().split(/\\s*[ML]\\s*/).filter(Boolean).map((pair) => { const [x, y] = pair.split(/[ ,]+/).map(Number); return { x, y }; }) : null; })()`);
   const netOf = (ref) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const [comp, term] = ${JSON.stringify(ref)}.split('.'); const n = m.editor.circuit.netOfTerminal({ comp, term }); return n ? { id: n.id, paths: n.paths(), terminals: n.terminals.map((t) => t.comp + '.' + t.term).sort() } : null; })`);
 
-  test('a wire to a pin commits the route its preview showed, its bend centred between the pins', async () => {
+  test('a wire to a pin commits the route its preview showed, its bend centered between the pins', async () => {
     await h.key('w');
     await clickAt(80, 0); // R1.b
     await move(720, 400); // R2.a

@@ -165,7 +165,7 @@ export function copySelection({ quiet = false } = {}) {
     name: net.name, allowDiagonal: net.allowDiagonal,
     drawOrder: net.drawOrder, paths, junctions, netLabels: netLabels.map(netLabelPayload),
   }));
-  // Grid-snapped anchor = bbox centre of the selection, so paste re-centres it
+  // Grid-snapped anchor = bbox center of the selection, so paste re-centers it
   // at the cursor without drifting off the grid.
   let x0 = Infinity;
   let y0 = Infinity;
@@ -492,7 +492,7 @@ function samePixels(a, b) {
 
 /** `png` as lossless WebP when that is smaller and draws the same pixels,
  *  else `png` itself. Screenshots mostly shrink by a quarter; flat ones with
- *  few colours can grow, and a browser that encodes WebP lossily (or not at
+ *  few colors can grow, and a browser that encodes WebP lossily (or not at
  *  all) fails the pixel check. */
 async function smallerLossless(png, image) {
   try {
@@ -616,7 +616,7 @@ function pastedNetName(copied, refMap) {
   return canonicalNetName(editor.circuit.labelOf(refdes)?._text || refdes);
 }
 
-/** Paste the clipboard at the cursor (re-centred on the selection anchor). */
+/** Paste the clipboard at the cursor (re-centered on the selection anchor). */
 export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
   if (!editor.clipboard) {
     logLine('nothing copied');

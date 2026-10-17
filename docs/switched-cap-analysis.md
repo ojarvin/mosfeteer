@@ -31,7 +31,7 @@ Within a state, closed switches join nodes into one. Every joined node is:
   -- is what those plates held at the end of the state before (a period
   earlier across the period's start, one z^-1).
 
-An op-amp is modelled as its small-signal parameters say (`opampModel`,
+An op-amp is modeled as its small-signal parameters say (`opampModel`,
 [`symbolic-analysis.md`](symbolic-analysis.md)). Ideal, an `opamp`'s inputs
 are at one voltage and draw no current; with **finite gain** its output is
 A times their difference (A1 for U1: v_ip - v_im - v_o/A = 0), so a virtual
@@ -104,7 +104,7 @@ Each contributor is a row: the switches it samples through, its capacitors,
 its phase, and its input-referred noise over kT in the same symbols as H(z)
 (1/C_S for each phase of the integrator, 2/C_S in all; the same with a finite
 gain, which moves noise and signal alike). The op-amps' own noise is not
-modelled. A result past reading in symbols (unmatched differential halves,
+modeled. A result past reading in symbols (unmatched differential halves,
 each capacitance its own symbol) is refused within a second, and the
 calculator still gives its numbers.
 

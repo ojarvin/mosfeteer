@@ -68,7 +68,7 @@ attributes > Diode bias > Off, `analysis.resistance: 'infinite'`), a
 reverse-biased clamp say, it is open. It carries no noise generator yet.
 
 A part with no small-signal model (a BJT, a switch, a logic gate) that
-touches a node of the analysed circuit is refused, naming it, rather than
+touches a node of the analyzed circuit is refused, naming it, rather than
 left out as an open circuit; one on circuitry the ports never reach changes
 nothing.
 
@@ -307,10 +307,10 @@ v²_n,out = Σ |H_k|² S_k        v²_n,in = Σ |H_k / A_v|² S_k
 Capacitors, inductors, and ideal and controlled sources are noiseless. Both
 MOS generators flow in the drain, so one column serves thermal and flicker
 noise. `H_k` and `A_v` share the system determinant, so the input-referred
-ratio has the circuit's poles cancelled.
+ratio has the circuit's poles canceled.
 
 Each row is the DC limit of every transfer, so the result is the density
-below the first pole. Rows are power spectral densities in V²/Hz, labelled
+below the first pole. Rows are power spectral densities in V²/Hz, labeled
 `S_{v,in,th}`, `S_{v,in,1/f}`, `S_{v,out,th}`, and `S_{v,out,1/f}`. A row shows
 the `4kT` or `1/f` prefix times one term per generator, e.g.
 `4kT(γ/g_{m1} + 1/(g_{m1}^2 R_D))`. A factor every term shares moves in front

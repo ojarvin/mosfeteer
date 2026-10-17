@@ -201,7 +201,7 @@ export function cornerNames(poles, zeros) {
 /**
  * Lay out a plot of several magnitude responses (a `kind: 'response'` plot,
  * signal-flow analysis): dB against log frequency, a curve per trace in the
- * trace's colour (`item.color`), numbered axes, and the frequency unit --
+ * trace's color (`item.color`), numbered axes, and the frequency unit --
  * f/f_{s} for sampled systems, relative ω otherwise. Curve items carry
  * `trace`, their index. The traces' names go beside the figure, not in it.
  */
@@ -245,7 +245,7 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
-  // Marked frequencies (a loop's crossover), labelled at the top.
+  // Marked frequencies (a loop's crossover), labeled at the top.
   for (const marker of plot.markers || []) {
     if (!(marker.f > 0) || Math.log10(marker.f) <= low || Math.log10(marker.f) >= high) continue;
     items.push({ type: 'line', x1: x(marker.f), y1: pane.y, x2: x(marker.f), y2: pane.y + pane.h, role: 'marker' });
@@ -475,7 +475,7 @@ export function swingLimit(traces) {
 /**
  * A root-locus plot: the complex plane, equal scales, the unit circle (z)
  * or the j omega axis (s) as the stability boundary, the swept poles as
- * dots from light (the sweep's start) to full colour (its end), the
+ * dots from light (the sweep's start) to full color (its end), the
  * current value's poles as crosses. `plot`: locus.js's `locusPlot`.
  */
 export function locusFigure(plot, { width = 480, height = 260, fontSize = 11 } = {}) {

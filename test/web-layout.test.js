@@ -107,7 +107,7 @@ test('two placed columns predict the third from either side', () => {
   assert.deepEqual(back.points.map((point) => point.id), ['__ghost__', 'M1', 'M2']);
 });
 
-test('a part to the side is centred between two stacked components', () => {
+test('a part to the side is centered between two stacked components', () => {
   // Ten cells apart in a column; the port sits well off to the right, which is
   // where an output branch puts it.
   const stack = [item('M1', 0, 0, 120, 160, 'nmos'), item('M2', 0, 400, 120, 160, 'nmos')];
@@ -129,7 +129,7 @@ test('a part to the side is centred between two stacked components', () => {
   assert.equal(describeGuides([above]), 'even vertical spacing 5 cells (M1, M2) 1 cell up');
 });
 
-test('an odd gap has no grid centre and the guide says so', () => {
+test('an odd gap has no grid center and the guide says so', () => {
   const stack = [item('M1', 0, 0, 120, 160, 'nmos'), item('M2', 0, 360, 120, 160, 'nmos')];
   const guide = placementGuides(stack, item('__ghost__', 480, 200, 80, 80, 'port'))
     .find((candidate) => candidate.kind === 'spacing');
@@ -137,7 +137,7 @@ test('an odd gap has no grid centre and the guide says so', () => {
   assert.equal(guide.exact, false);
   assert.equal(guide.target, 180);
   assert.equal(guide.cells, 4.5);
-  assert.equal(describeGuides([guide]), 'no grid centre between M1, M2: an odd gap halves to 4.5 cells');
+  assert.equal(describeGuides([guide]), 'no grid center between M1, M2: an odd gap halves to 4.5 cells');
   // A reachable relationship is always preferred over reporting that one.
   const even = placementGuides([item('M1', 0, 0), item('M2', 0, 400)], item('__ghost__', 480, 200));
   assert.equal(even.find((candidate) => candidate.kind === 'spacing').offGrid, false);
@@ -145,7 +145,7 @@ test('an odd gap has no grid centre and the guide says so', () => {
 
 test('the guide names the branch being worked next to, not its mirror', () => {
   // A 5T OTA's two branches: an NMOS/PMOS pair each side of the output column.
-  // Both offer the same vertical centre, so the nearer one has to win outright.
+  // Both offer the same vertical center, so the nearer one has to win outright.
   const stage = [
     item('M1', -480, -400, 120, 160, 'pmos'), item('M2', -480, 400, 120, 160, 'nmos'),
     item('M3', 480, -400, 120, 160, 'pmos'), item('M4', 480, 400, 120, 160, 'nmos'),
@@ -167,11 +167,11 @@ test('an unrelated part standing in a row does not hide the row', () => {
   assert.deepEqual(guide.points.map((point) => point.id), ['A', 'B', '__ghost__']);
 });
 
-test('spacing is recognised centred between two peers and ahead of a run', () => {
+test('spacing is recognized centered between two peers and ahead of a run', () => {
   const outer = [item('A', 0, 0), item('C', 640, 0)];
-  const centred = placementGuides(outer, item('__ghost__', 320, 0)).find((guide) => guide.kind === 'spacing');
-  assert.equal(centred.cells, 8);
-  assert.deepEqual(centred.points.map((point) => point.id), ['A', '__ghost__', 'C']);
+  const centered = placementGuides(outer, item('__ghost__', 320, 0)).find((guide) => guide.kind === 'spacing');
+  assert.equal(centered.cells, 8);
+  assert.deepEqual(centered.points.map((point) => point.id), ['A', '__ghost__', 'C']);
   // A run continued backwards is the same relationship seen from the other end.
   const before = placementGuides([item('B', 320, 0), item('C', 640, 0)], item('__ghost__', 0, 0))
     .find((guide) => guide.kind === 'spacing');
@@ -230,8 +230,8 @@ test('alignment reaches far, where the eye cannot judge it, without a long ruler
   assert.deepEqual(near.points.map((point) => point.id), ['R1', '__ghost__']);
 });
 
-test('a long pitch is not continued, though it can still be centred', () => {
-  // Twenty cells is a pair to centre between, not a pitch to repeat.
+test('a long pitch is not continued, though it can still be centered', () => {
+  // Twenty cells is a pair to center between, not a pitch to repeat.
   const pair = [item('A', 0, 0), item('B', 800, 0)];
   assert.equal(placementGuides(pair, item('__ghost__', 1600, 0)).some((guide) => guide.kind === 'spacing'), false);
   const middle = placementGuides(pair, item('__ghost__', 400, 0)).find((guide) => guide.kind === 'spacing');
@@ -242,12 +242,12 @@ test('a long pitch is not continued, though it can still be centred', () => {
 });
 
 test('an interval under three cells is not dimensioned', () => {
-  // Centring between parts four cells apart would mark two-cell gaps.
+  // Centering between parts four cells apart would mark two-cell gaps.
   assert.equal(placementGuides([item('A', 0, 0), item('B', 160, 0)], item('__ghost__', 80, 480))
     .some((guide) => guide.kind === 'spacing'), false);
   assert.equal(placementGuides([item('A', 0, 0), item('B', 240, 0)], item('__ghost__', 480, 0))
     .find((guide) => guide.kind === 'spacing' && !guide.direct).cells, 6);
-  // A two-cell direct distance is dropped; three cells is still labelled.
+  // A two-cell direct distance is dropped; three cells is still labeled.
   const direct = (y) => placementGuides([item('A', 0, 0)], item('__ghost__', 0, y))
     .find((guide) => guide.kind === 'spacing');
   assert.equal(direct(80), undefined);
@@ -265,7 +265,7 @@ test('a crowded array offers no slot another device already fills', () => {
     .find((candidate) => candidate.kind === 'spacing' && candidate.axis === 'x').target, 1280);
 });
 
-test('an odd gap is reported only beside the centre being attempted', () => {
+test('an odd gap is reported only beside the center being attempted', () => {
   const stack = [item('M1', 0, 0, 120, 160, 'nmos'), item('M2', 0, 360, 120, 160, 'nmos')];
   assert.equal(placementGuides(stack, item('__ghost__', 480, 160, 80, 80, 'port'))
     .find((guide) => guide.kind === 'spacing').offGrid, true);
@@ -284,7 +284,7 @@ test('a suggestion fades with distance and the strongest guide is drawn last', (
   assert.deepEqual(guides.map((guide) => guide.weight), [...guides.map((guide) => guide.weight)].sort((a, b) => a - b));
 });
 
-test('an alignment guide reaches only the immediate neighbours', () => {
+test('an alignment guide reaches only the immediate neighbors', () => {
   const row = [item('A', -640, 0), item('B', -320, 0), item('C', 320, 0)];
   const align = placementGuides(row, item('__ghost__', 0, 0)).find((guide) => guide.kind === 'align');
   assert.deepEqual(align.points.map((point) => point.id), ['B', '__ghost__', 'C']);
@@ -385,7 +385,7 @@ test('a guide is drawn as a measurement: equal intervals read alike, in blue, th
   };
   const exact = draw(640);
   assert.equal(exact.guide.exact, true);
-  assert.equal((exact.overlay.match(/>8 cells</g) || []).length, 2, 'both intervals labelled the same');
+  assert.equal((exact.overlay.match(/>8 cells</g) || []).length, 2, 'both intervals labeled the same');
   assert.match(exact.overlay, /#0ea5e9/);
   assert.doesNotMatch(exact.overlay, /#14b8a6/);
   // Not there yet: a hollow point and a line across where to land.
@@ -403,7 +403,7 @@ test('placement guides omit drawn-space references while keeping anchor spacing'
   assert.ok(guides.some((guide) => guide.kind === 'spacing'));
 });
 
-test('align to: a rectangle offers four edges, four corners, four edge midpoints, and its centre', () => {
+test('align to: a rectangle offers four edges, four corners, four edge midpoints, and its center', () => {
   const features = alignFeatures({ x: 0, y: 0, w: 160, h: 80 });
   assert.deepEqual(features.filter((f) => f.kind === 'edge').map((f) => [f.name, f.axis, f.value]),
     [['left', 'x', 0], ['right', 'x', 160], ['top', 'y', 0], ['bottom', 'y', 80]]);
@@ -439,10 +439,10 @@ test('align to: the set moves on the axes its source picks, in whole cells', () 
   const pick = (features, kind, name) => features.find((f) => f.kind === kind && f.name === name);
   assert.deepEqual(alignToDelta(pick(set, 'edge', 'left'), pick(target, 'edge', 'right')), { dx: 520, dy: 0, exact: true });
   assert.deepEqual(alignToDelta(pick(set, 'edge', 'bottom'), pick(target, 'edge', 'top')), { dx: 0, dy: 240, exact: true });
-  // The middle of a top edge centres horizontally and never moves vertically.
+  // The middle of a top edge centers horizontally and never moves vertically.
   assert.deepEqual(alignToDelta(pick(set, 'point', 'top'), pick(target, 'point', 'top')), { dx: 360, dy: 0, exact: true });
   assert.deepEqual(alignToDelta(pick(set, 'point', 'top-left'), pick(target, 'point', 'bottom-right')), { dx: 520, dy: 440, exact: true });
-  // A centre between grid points rounds to one and says so.
+  // A center between grid points rounds to one and says so.
   const odd = alignFeatures({ x: 0, y: 0, w: 120, h: 40 });
   assert.deepEqual(alignToDelta(pick(set, 'point', 'left'), pick(odd, 'point', 'center')), { dx: 0, dy: -40, exact: false });
 });

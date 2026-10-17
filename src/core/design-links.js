@@ -62,7 +62,7 @@ export function linkDepths(graph, focus, depth = 3) {
   return { depths, chain };
 }
 
-/** Where the line from `r`'s centre toward `toward` leaves the rectangle. */
+/** Where the line from `r`'s center toward `toward` leaves the rectangle. */
 function exitPoint(r, toward) {
   const cx = r.x + r.w / 2;
   const cy = r.y + r.h / 2;
@@ -74,18 +74,18 @@ function exitPoint(r, toward) {
 }
 
 /**
- * An arrow from one tile to another along the line joining their centres,
+ * An arrow from one tile to another along the line joining their centers,
  * starting and ending `gap` outside their edges -- less when the tiles sit
- * close, so neighbours still get a short arrow. Null when they overlap.
+ * close, so neighbors still get a short arrow. Null when they overlap.
  */
 export function linkArrow(from, to, gap = 0) {
-  const fromCentre = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
-  const toCentre = { x: to.x + to.w / 2, y: to.y + to.h / 2 };
-  const a = exitPoint(from, toCentre);
-  const b = exitPoint(to, fromCentre);
+  const fromCenter = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
+  const toCenter = { x: to.x + to.w / 2, y: to.y + to.h / 2 };
+  const a = exitPoint(from, toCenter);
+  const b = exitPoint(to, fromCenter);
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   // The tiles overlap when the exits cross over.
-  const along = (b.x - a.x) * (toCentre.x - fromCentre.x) + (b.y - a.y) * (toCentre.y - fromCentre.y);
+  const along = (b.x - a.x) * (toCenter.x - fromCenter.x) + (b.y - a.y) * (toCenter.y - fromCenter.y);
   if (along <= 0 || !length) return null;
   const ux = (b.x - a.x) / length;
   const uy = (b.y - a.y) / length;

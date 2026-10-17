@@ -9,7 +9,7 @@
  * any wire nothing drives -- to input, zero, or a constant. Derive shows each
  * input's transfer function to the output and its poles and zeros. The plots
  * are in a window of their own (plots-window.js), a view per tab: numeric
- * results go onto one graph of magnitude, phase, or step responses, a colour
+ * results go onto one graph of magnitude, phase, or step responses, a color
  * per trace, kept across derives so responses can be compared; then the root
  * locus, the swing, the loop gain (offered only for a diagram with feedback),
  * and the nets in time (time-plot.js). Annotate graph puts a graph on the
@@ -662,7 +662,7 @@ function renderSwing() {
   host.replaceChildren();
   if (!swing || swing.points.length < 2) return;
   const traces = swingTraces();
-  // Each shown net keeps a colour no other shown net has.
+  // Each shown net keeps a color no other shown net has.
   const used = new Set();
   for (const trace of traces.filter((t) => swingShown.has(t.key))) {
     let color = swingColors.get(trace.key);
@@ -1021,7 +1021,7 @@ function bandControls() {
     return input;
   };
   const row = el('div', { class: 'signal-flow-band' }, [
-    el('label', { text: 'Signal band: f0' }), field('f0', 'Band centre, f/fs', 'The band\'s centre as f/fs; 0 for a baseband signal'),
+    el('label', { text: 'Signal band: f0' }), field('f0', 'Band center, f/fs', 'The band\'s center as f/fs; 0 for a baseband signal'),
     el('label', { text: 'bw' }), field('bw', 'Bandwidth, f/fs', 'The bandwidth as f/fs (1/128, 0.004); empty for no band lines'),
   ]);
   return row;
@@ -1140,7 +1140,7 @@ function renderGraph() {
 }
 
 /** The graph on the drawing: a plot annotation, each trace's equation a
- *  math label in its colour beside it (children of the box, moving with it). */
+ *  math label in its color beside it (children of the box, moving with it). */
 function annotateGraph() {
   const shown = shownTraces();
   const plot = graphPlot(shown);
@@ -1165,7 +1165,7 @@ export function placeResponsePlot(plot, shown) {
  * A plot on the drawing. Annotating again replaces the data of the plot of
  * that kind already there -- the selected one (or the one whose legend is
  * selected), else the only one -- keeping its place, size, and style: its
- * plot and its legend (the traces named in their colours, the coefficients'
+ * plot and its legend (the traces named in their colors, the coefficients'
  * numbers under them) are swapped, the legend staying where it was. With
  * none to update, a new plot goes under the drawing at its left edge.
  */
@@ -1305,7 +1305,7 @@ function plotUpdate(plot) {
     return data?.magnitude ? { plot: data.annotated, shown: data.shown, used: currentSymbols() } : null;
   }
   if (plot.kind === 'response' || plot.kind === 'step') {
-    // Each trace by its name, keeping its colour.
+    // Each trace by its name, keeping its color.
     const stored = plot.traces.filter((trace) => !trace.background);
     const matched = stored.map((trace) => {
       const current = traces.find((t) => t.label === trace.label);

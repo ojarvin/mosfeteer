@@ -30,7 +30,7 @@ test('every unconnected terminal gets a two-cell stub along its outward directio
   assert.deepEqual(evaluate(circuit).issues, []);
 });
 
-test('a vertical stub label sits on its part\'s side: the gate side of a MOSFET, away from a centred part\'s label', () => {
+test('a vertical stub label sits on its part\'s side: the gate side of a MOSFET, away from a centered part\'s label', () => {
   const circuit = new Circuit();
   run(circuit, 'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0 --mirrorX', 'add resistor R1 --at 800 0 --rot 90');
   addTerminalStubs(circuit, ['M1', 'M2', 'R1']);

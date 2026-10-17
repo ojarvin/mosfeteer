@@ -184,7 +184,7 @@ mirror flag to override that default.
 
 | type | terminals | bbox (local units) |
 |------|-----------|--------------------|
-| resistor / capacitor / inductor / impedance / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40; impedance is an 80×40 box labelled `Z_1` |
+| resistor / capacitor / inductor / impedance / switch_open / switch_closed | `a` (left) `b` (right) | x:-80..80, y:-40..40; impedance is an 80×40 box labeled `Z_1` |
 | diode | `a` (left) `b` (right) | x:-80..80, y:-40..40 |
 | nmos / pmos | `g` (left) `d` (top) `s` (bottom) | bbox `{-120,-80,120,160}`; drain and source leads end at their terminals and share the wire-cap overlap |
 | nmosb / pmosb | `g` (left) `d` (top) `s` (bottom) `b` (channel center) | bbox `{-120,-80,120,160}`; bulk pin points right with a visible internal path ending at the terminal and sharing the wire-cap overlap |

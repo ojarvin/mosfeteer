@@ -130,7 +130,7 @@ export function diffLines(a, b) {
   const ops = (start ? [['=', start]] : []).concat(
     editScript(middleA, middleB) || [['-', middleA.length], ['+', middleB]],
   );
-  // Merge neighbours of one kind; the trailing keep is implied.
+  // Merge neighbors of one kind; the trailing keep is implied.
   const patch = [];
   for (const [kind, value] of ops) {
     if (kind === '+' && !value.length) continue;

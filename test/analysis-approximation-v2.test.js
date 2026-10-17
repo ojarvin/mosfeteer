@@ -87,8 +87,8 @@ test('high-gain attribution stays limited to devices that affect the result', ()
   assert.deepEqual(result.assumptions, ['g_m r_o >> 1 (M2)']);
 });
 
-test('dominant-pole reduction truncates the denominator after cancelling a common factor', () => {
-  // (s + 1) / ((s + 1)(s + 2)) is first order; truncating the uncancelled
+test('dominant-pole reduction truncates the denominator after canceling a common factor', () => {
+  // (s + 1) / ((s + 1)(s + 2)) is first order; truncating the uncanceled
   // second-order denominator would invent a pole.
   const exact = rationalFunction(add(s, integer(1)), add(power(s, 2), multiply(integer(3), s), integer(2)));
   assert.equal(text(applyApproximations(exact, { dominantPole: true })), '1 / s + 2');

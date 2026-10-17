@@ -71,9 +71,9 @@ turned back.
 The desk stays put between visits: this browser remembers where each design
 of a workspace sat, and a design keeps its spot while it still fits there. A
 design that grew or shrank yields to the others (it keeps its corner, else its
-centre, else moves to the nearest free spot), and a new design is placed near
+center, else moves to the nearest free spot), and a new design is placed near
 its kin. `Shift+T` forgets the places and packs the desk afresh in
-neighbourhoods of related designs.
+neighborhoods of related designs.
 
 With nothing picked every design lies flat at its true size, for
 comparison. A picked design lifts off the desk: it eases up onto a card
@@ -87,7 +87,7 @@ on their cards they would overlap the picked one (or each other), so each
 lifted card floats out of the way, the shortest way clear (`floatClear`),
 a level at a time down the hierarchy, and is picked where it floats. Letting go lays them flat
 again (`drawCard`, each design easing on its own, stacked by where it is
-heading so neighbours trade places smoothly).
+heading so neighbors trade places smoothly).
 
 A picked design shows its links (`src/core/design-links.js`) as beams of
 light (`drawBeam`): a translucent curved band from each part that links,
@@ -171,7 +171,7 @@ Opening a design flies it up to exactly where the editor will fit it,
 timed by how far it travels. The file is read during the flight and let in
 when it lands, so loading never costs the flight a frame; then the desk
 fades into the editor. If the editor's fit differs (a page guide), the
-design glides the last stretch at the glass; if the open is cancelled, it
+design glides the last stretch at the glass; if the open is canceled, it
 sinks back to the desk. With reduced motion nothing flies: the Atlas and the editor
 cross-fade, and the desk is laid out unseen before it fades in.
 
@@ -262,7 +262,7 @@ the same sheet for scripted visual checks.
 - **Layout** (`src/web/atlas-layout.js`): the designs packed into one
   loose ball shaped like the window's room for designs (between the top
   bar and the hint bar; its width over height, kept between 1:3 and 3:1),
-  largest in the middle, each next in the free spot nearest the centre.
+  largest in the middle, each next in the free spot nearest the center.
   Kinship can pull a fresh packing taller or wider than that: when it
   misses by more than a little, a few nearby shapes are tried and the one
   that shows largest when fitted is kept: up to three tries, fewer for
@@ -272,7 +272,7 @@ the same sheet for scripted visual checks.
   shape; opened in a window of another shape (more than 1.25 times
   narrower or wider), the desk is packed again to fill it, each design as
   near its remembered spot stretched to the new shape as it fits, so
-  neighbours stay neighbours (`reshapedPlaces`). `Shift+T` packs afresh. Real size means one drawing unit is one world
+  neighbors stay neighbors (`reshapedPlaces`). `Shift+T` packs afresh. Real size means one drawing unit is one world
   unit, and every design is shifted by whole grid cells, so its grid lines
   continue the desk's and entering or leaving the editor does not move a
   line.

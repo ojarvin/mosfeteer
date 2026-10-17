@@ -11,7 +11,7 @@
  *   v_{n,out}^2 = sum_k |H_k|^2 S_k,   v_{n,in}^2 = sum_k |H_k / A_v|^2 S_k
  *
  * `H_k` and `A_v` share the system determinant, so the input-referred ratio
- * has the circuit's poles cancelled -- which is why it reads like a textbook.
+ * has the circuit's poles canceled -- which is why it reads like a textbook.
  * Thermal and flicker noise of one MOS device are both drain currents, so one
  * column serves both; only the weight `S_k` differs. The densities are written
  * as a common prefix (`4kT` or `1/f`) times a sum of one term per generator,

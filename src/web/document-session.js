@@ -984,7 +984,7 @@ let pendingDelete = null; // { paths, resolve }: what the delete dialog asks abo
 /** Delete designs (by path) after the delete dialog confirms: their files
  *  go (or, browser-only without a folder, they leave the list), and the
  *  open one among them leaves the editor blank. Resolves true when any
- *  went, false when cancelled. */
+ *  went, false when canceled. */
 export function deleteDocuments(paths) {
   const list = [...new Set(paths)].filter(Boolean);
   if (!list.length || !deleteDialog || editor.deleteInFlight || pendingDelete) return Promise.resolve(false);
@@ -1315,7 +1315,7 @@ export function installDocumentSession() {
       pendingDocumentAction = null;
       if (switchDialog.returnValue === 'discard' && action) action.run();
       else if (switchDialog.returnValue === 'save' && action) {
-        // Saved first; a save that fails or is cancelled keeps the design open.
+        // Saved first; a save that fails or is canceled keeps the design open.
         void saveCircuit().then((saved) => {
           if (saved) action.run();
           else {

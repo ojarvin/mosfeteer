@@ -4,13 +4,13 @@ import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../src/web/style.css', import.meta.url), 'utf8');
 
-test('colours live in the theme tokens: no raw colour outside a custom property', () => {
+test('colors live in the theme tokens: no raw color outside a custom property', () => {
   const raw = css.split('\n')
     .map((line, i) => ({ line: line.trim(), at: i + 1 }))
     .filter(({ line }) => !line.startsWith('--') && !line.startsWith('/*') && !line.startsWith('*'))
-    // An attribute selector naming an SVG's fill is not a colour used.
+    // An attribute selector naming an SVG's fill is not a color used.
     .map(({ line, at }) => ({ line: line.replace(/\[fill="#[0-9a-f]+"\]/gi, ''), at }))
-    // Darkening a token by mixing in black is the theme's own colour.
+    // Darkening a token by mixing in black is the theme's own color.
     .filter(({ line }) => /#[0-9a-f]{3,8}\b|rgba?\(/i.test(line.replace(/, #000\)/g, ')')));
   assert.deepEqual(raw, []);
 });

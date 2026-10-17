@@ -32,7 +32,7 @@ let api = null; // { flow(), resolved(), placePlot(), symbols(), visible() } fro
 let parts = null; // the section's elements
 let timer = 0;
 let last = null; // the last run shown: { sim, result, samples, amplitude, series }
-const colors = new Map(); // net key -> its colour while shown
+const colors = new Map(); // net key -> its color while shown
 
 const state = () => editor.circuit.windows.scope || { nets: [] };
 

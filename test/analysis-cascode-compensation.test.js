@@ -53,7 +53,7 @@ test('a cascode-compensated two-stage amplifier solves and keeps its DC behavior
   // the second stage's two output resistances and nothing else.
   assert.match(rows, /Z_\{out\}\(0\) = r_\{o3\} \\parallel r_\{o6\}/);
   // The DC gain is a finite product of the two stages. A reduction that
-  // cancelled the s^0 coefficient reported Z_out(0) = 0, no A_v(0) row at
+  // canceled the s^0 coefficient reported Z_out(0) = 0, no A_v(0) row at
   // all, and a pole at the origin this amplifier does not have.
   const dcGain = report.equations.find((row) => row.startsWith('A_v(0) ='));
   assert.ok(dcGain, 'the report must carry a DC gain row');

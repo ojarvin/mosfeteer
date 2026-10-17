@@ -1,5 +1,5 @@
 /**
- * How related two designs are, for laying out neighbourhoods on the Atlas
+ * How related two designs are, for laying out neighborhoods on the Atlas
  * desk: a number from 0 (nothing in common) to 1. Several weak hints add up:
  *
  *   tags        a shared tag says so outright

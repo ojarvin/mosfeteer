@@ -1,5 +1,5 @@
 /**
- * The nets a plot shows, picked: a checkbox per net with its colour and its
+ * The nets a plot shows, picked: a checkbox per net with its color and its
  * name as math, in columns that wrap. Every row stays in view (the window
  * scrolls, the list never on its own). The swing and the time-domain plots
  * use it.

@@ -107,7 +107,7 @@ function betterQuickAdd(a, b) {
   return false;
 }
 
-/** Ring radius that leaves `gap` pixels between neighbouring round tiles of
+/** Ring radius that leaves `gap` pixels between neighboring round tiles of
  * diameter `tile` when `count` of them sit at equal angles. */
 export function radialRingRadius(count, tile, gap) {
   if (count < 2) return 0;

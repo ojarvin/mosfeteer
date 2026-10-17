@@ -32,7 +32,7 @@ export function returnRatio(pipeline, element, ops) {
   const opamp = primitives.find((p) => p.kind === 'opamp' && p.metadata?.component === element);
   const gm = primitives.find((p) => p.kind === 'vccs' && p.id === `${element}.gm`);
   const target = opamp || gm;
-  if (!target) return { ok: false, code: 'not-in-loop', error: `${element} is not in the analysed circuit: pick an opamp or a transistor on the signal path` };
+  if (!target) return { ok: false, code: 'not-in-loop', error: `${element} is not in the analyzed circuit: pick an opamp or a transistor on the signal path` };
   // The element's output from a unit test source; the input's source at zero.
   const test = opamp
     ? { kind: 'voltage-source', id: '@loop-test', terminals: target.terminals, value: ops.one }
@@ -90,7 +90,7 @@ export function feedbackParts(pipeline, element, ops) {
   const opamp = primitives.find((p) => p.kind === 'opamp' && p.metadata?.component === element);
   const gm = primitives.find((p) => p.kind === 'vccs' && p.id === `${element}.gm`);
   const target = opamp || gm;
-  if (!target) return { ok: false, error: `${element} is not in the analysed circuit` };
+  if (!target) return { ok: false, error: `${element} is not in the analyzed circuit` };
   if (opamp && ops.isZero(opamp.value)) return { ok: false, error: 'an ideal opamp\'s loop gain is infinite: A_v is its ideal gain' };
   const input = { ...pipeline.excitations.input, value: ops.one };
   const others = primitives.filter((p) => p !== target);

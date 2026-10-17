@@ -668,7 +668,7 @@ test('OR-family gates share the tuned body geometry', () => {
   }
   assert.match(xor, /M 72\.55 0 C 55\.5 18\.5 6\.5 70 -70\.09 70/, 'outer curve reaches the rear with a horizontal tangent');
   assert.equal((xor.match(/\bC\b/g) || []).length, 4, 'the body has one smooth bezier per side');
-  assert.match(xor, /C -61\.5 58 -40\.75 35 -40\.75 0/, 'inner curve follows the extra rear curve without opening at the centre');
+  assert.match(xor, /C -61\.5 58 -40\.75 35 -40\.75 0/, 'inner curve follows the extra rear curve without opening at the center');
   const orPaths = getSymbol('or2_gate').graphics.filter((graphic) => graphic.kind === 'path');
   const xorPaths = getSymbol('xor2_gate').graphics.filter((graphic) => graphic.kind === 'path');
   assert.equal(orPaths.filter((graphic) => graphic.d.endsWith('Z')).length, 1);
@@ -1021,16 +1021,16 @@ test('an italic letter before an upright one gets its TeX italic correction', ()
 test('aligned plain text saves its measured box, so a reopen measures it against that and not the estimate', () => {
   const c = new Circuit();
   const left = c.addLabel({ text: 'propagation delay', x: 400, y: 0, align: 'left' });
-  const centred = c.addLabel({ text: 'propagation delay', x: 400, y: 200 });
+  const centered = c.addLabel({ text: 'propagation delay', x: 400, y: 200 });
   const estimate = left.bbox().w;
-  for (const label of [left, centred]) label.setRenderedTextBounds(estimate + 60, 40);
+  for (const label of [left, centered]) label.setRenderedTextBounds(estimate + 60, 40);
   const saved = Circuit.fromJSON(JSON.parse(JSON.stringify(c.toJSON())));
-  const [again, other] = [saved.labels.get(left.id), saved.labels.get(centred.id)];
+  const [again, other] = [saved.labels.get(left.id), saved.labels.get(centered.id)];
   assert.equal(again.textMeasured(), false);
   assert.equal(again.bbox().w, left.bbox().w, 'the measured width, before anything measures it again');
   assert.ok(again.bbox().w > estimate);
-  // A centred label keeps its centre whatever its width: nothing to save.
-  assert.equal(c.toJSON().labels.find((l) => l.id === centred.id).mathBox, undefined);
+  // A centered label keeps its center whatever its width: nothing to save.
+  assert.equal(c.toJSON().labels.find((l) => l.id === centered.id).mathBox, undefined);
   assert.equal(other.bbox().w, estimate);
 });
 

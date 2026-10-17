@@ -209,7 +209,7 @@ test('physical nets sharing a name solve as one node', () => {
 });
 
 test('a rail\'s spellings are one node when the rail is the input', () => {
-  // The supply marker names its net V_{DD}; a net labelled VDD elsewhere is
+  // The supply marker names its net V_{DD}; a net labeled VDD elsewhere is
   // the same rail. Driven as the input (supply rejection), both halves must
   // move: R1 and R3 both feed OUT from the supply.
   const circuit = new Circuit();
@@ -271,7 +271,7 @@ test('a diode is its small-signal resistance r_d; marked off, it is open', () =>
   assert.equal(off.dcGain.equation, 'A_v(0) = 0');
 });
 
-test('a part with no small-signal model on the analysed circuit is refused, elsewhere ignored', () => {
+test('a part with no small-signal model on the analyzed circuit is refused, elsewhere ignored', () => {
   const circuit = divider();
   circuit.addComponent('npn', { refdes: 'Q1', x: 1200, y: 1200 });
   // Unconnected, Q1 changes nothing.

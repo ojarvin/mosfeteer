@@ -25,7 +25,7 @@ test('a bubble sits on a ring outside the drawing, its connector running diagona
 test('a connector keeps off the wires and parts it could run along', () => {
   const part = { x: 760, y: 360, w: 80, h: 80 };
   // Wires fanning out from the part along both axes and both diagonals'
-  // neighbours: the chosen connector runs along none of them.
+  // neighbors: the chosen connector runs along none of them.
   const segments = [
     [{ x: 840, y: 400 }, { x: 1600, y: 400 }], [{ x: 0, y: 400 }, { x: 760, y: 400 }],
     [{ x: 800, y: 0 }, { x: 800, y: 360 }], [{ x: 800, y: 440 }, { x: 800, y: 800 }],

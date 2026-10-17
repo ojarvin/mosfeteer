@@ -593,7 +593,7 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
   // act here rather than on the solved expression. Ignoring channel-length
   // modulation (r_o -> infinity) is an open circuit; ignoring the body effect
   // (g_mb = 0) is a source that carries no current. Leaving them out saves the
-  // solver a symbol and a branch per device instead of cancelling them
+  // solver a symbol and a branch per device instead of canceling them
   // afterwards, and the netlist and the drawn model then show the circuit that
   // was actually solved.
   const omittedOutputResistances = [];
@@ -643,13 +643,13 @@ export function buildExactAnalysisPipeline(circuit, options = {}) {
   // be an open circuit there by omission: refuse rather than guess. One on
   // circuitry the ports never reach (logic, a separate block) changes nothing.
   const solvedNodes = new Set(coupled.nodeOrder);
-  const unmodelled = (converted.diagnostics || []).filter((item) => item.code === 'unsupported-component'
+  const unmodeled = (converted.diagnostics || []).filter((item) => item.code === 'unsupported-component'
     && (item.nodes || []).some((node) => node !== AC_GROUND && solvedNodes.has(node)));
-  if (unmodelled.length) {
-    const parts = unmodelled.map((item) => item.component || item.type).join(', ');
-    return failure('unsupported', `${parts} ${unmodelled.length === 1 ? 'has' : 'have'} no small-signal model but ${unmodelled.length === 1 ? 'is' : 'are'} part of the circuit analysed`, {
+  if (unmodeled.length) {
+    const parts = unmodeled.map((item) => item.component || item.type).join(', ');
+    return failure('unsupported', `${parts} ${unmodeled.length === 1 ? 'has' : 'have'} no small-signal model but ${unmodeled.length === 1 ? 'is' : 'are'} part of the circuit analyzed`, {
       context, conversion: converted, primitives: exactPrimitives, mnaPrimitives, coupled,
-      diagnostics: unmodelled.map((item) => ({ ...item, severity: 'error' })),
+      diagnostics: unmodeled.map((item) => ({ ...item, severity: 'error' })),
     });
   }
 

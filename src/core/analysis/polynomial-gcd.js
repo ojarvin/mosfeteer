@@ -383,7 +383,7 @@ function targetedGcd(context, n, d, k) {
 }
 
 /**
- * Return `value` with any common factor that depends on `variable` cancelled,
+ * Return `value` with any common factor that depends on `variable` canceled,
  * or `value` itself when there is none or a work limit is reached.
  * `maxWork` raises the work limit for a caller that can afford it (the
  * engine's one pass over each exact response).

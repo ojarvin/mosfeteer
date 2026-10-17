@@ -146,7 +146,7 @@ export function shortNetsAtPlacedSolder(comp) {
           editor.circuit.syncJunctionSolders();
         }
         markModelChanged();
-        logLine('solder cancelled: no net name chosen');
+        logLine('solder canceled: no net name chosen');
       },
     });
     return true;
@@ -198,7 +198,7 @@ function askForNewNetNameWarning(startSnapshot) {
     cancel() {
       if (editor.history.length === historyLength) editor.history.pop();
       applyJson(startSnapshot);
-      logLine('connection cancelled: no net name chosen');
+      logLine('connection canceled: no net name chosen');
     },
   });
   return true;
@@ -235,7 +235,7 @@ function askForNewReferenceShort(startSnapshot) {
     cancel() {
       if (editor.history.length === historyLength) editor.history.pop();
       applyJson(startSnapshot);
-      logLine(`connection cancelled: ${conflict.name} stays off the ${conflict.railName} rail`);
+      logLine(`connection canceled: ${conflict.name} stays off the ${conflict.railName} rail`);
     },
   });
   return true;

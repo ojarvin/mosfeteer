@@ -2,7 +2,7 @@
  * The window a coefficient search runs in (optimize-ui.js: the optimizer
  * and the rounding): one small floating window over the drawing, so it is
  * plain that this is the run. It shows the specs' transfer functions at the
- * numbers the run started from (grey) and at its best so far (in colour),
+ * numbers the run started from (gray) and at its best so far (in color),
  * redrawn as each new best is found, with the progress bar, the status
  * line, and Stop -- which turns to Close when the run is over. Closing the
  * window leaves the run going; its progress then shows in the analysis
@@ -33,7 +33,7 @@ export function openRunWindow({ title, plotAt, onStop, onClose = () => {} }) {
   // The plot takes whatever room the window has: resize it for a larger one.
   const plotView = createPlotView({ height: 220, fill: true });
   const plot = el('div', { class: 'run-window-plot' }, [plotView.el]);
-  const legend = el('p', { class: 'field-hint run-window-legend', text: 'Grey: where it started. Colour: the best so far.' });
+  const legend = el('p', { class: 'field-hint run-window-legend', text: 'Gray: where it started. Color: the best so far.' });
   const stop = el('button', { type: 'button', class: 'run-window-stop', text: 'Stop', onclick: () => (finished ? dispose() : onStop()) });
   const dialog = el('section', { class: 'floating-window run-window', 'aria-labelledby': 'run-window-title' }, [
     el('header', { class: 'floating-window-header' }, [

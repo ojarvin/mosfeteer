@@ -363,7 +363,7 @@ let renderFrame = null;
 let panelStateKey = '';
 let modelRevision = 0;
 // Drag previews run against a disposable document clone. Keeping the
-// committed instance here means a cancelled/no-op gesture never persists a
+// committed instance here means a canceled/no-op gesture never persists a
 // half-edited model or pollutes undo history.
 let previewTransaction = null; // { baseCircuit, startSnapshot }
 let previewRevision = 0;
@@ -571,7 +571,7 @@ export function cancelPreviewTransaction() {
   circuit = tx.baseCircuit;
   // Preview diagnostics are computed against the clone. Recompute them for
   // the restored document even when the committed document was previously
-  // clean, otherwise a cancelled drag could leave stale overlap warnings.
+  // clean, otherwise a canceled drag could leave stale overlap warnings.
   wiresDirty = true;
   previewTransaction = null;
   previewRevision += 1;
@@ -630,7 +630,7 @@ installCopyPaste();
 
 let toolbarFitKey = '';
 
-/** Replace the circuit with a snapshot. Undo, redo, and a cancelled edit
+/** Replace the circuit with a snapshot. Undo, redo, and a canceled edit
  *  keep the windows' state (window-state.js) and the save history as they
  *  are; `document: true` is another document (or another version of it)
  *  shown, its own windows' and history with it. */
@@ -1135,7 +1135,7 @@ function finishDiagonalSegmentDrag() {
   const collision = newCrossNetOverlap(drag.startSnapshot, new Set([drag.netId]));
   if (collision) {
     cancelPreviewTransaction();
-    logLine(`wire drag cancelled: the wire would overlap net ${collision}`, 'error');
+    logLine(`wire drag canceled: the wire would overlap net ${collision}`, 'error');
   } else if (snapshot() !== drag.startSnapshot) {
     recordHistoryEntry(drag.startSnapshot, true, 'none');
     commitPreviewTransaction();
@@ -1218,7 +1218,7 @@ export function pickLabel(w) {
 
 /** Every text label whose box holds a point. A label whose visible text is
  * under the pointer comes first: an aligned label's box reaches past its text,
- * over a neighbour's text, and the text is what the user aims at. */
+ * over a neighbor's text, and the text is what the user aims at. */
 function labelsAt(w) {
   const p = paneSize();
   const hidden = hiddenSupplyBarLabels(circuit);
@@ -1395,14 +1395,14 @@ export function applyLayoutPlan(plan) {
   } catch (err) {
     circuit = original;
     layoutPreviewRects = [];
-    logLine(`alignment cancelled: ${err.message}`, 'error');
+    logLine(`alignment canceled: ${err.message}`, 'error');
     render();
     return false;
   }
 }
 
 /** Ctrl/Cmd+Shift+arrow: align the selected set's edges. Once the set is
- * already aligned that way, the same key centres it on that axis instead. */
+ * already aligned that way, the same key centers it on that axis instead. */
 function alignSelectionByKey({ align, repeat }) {
   if (layoutSelection().count < 2) {
     hintLine('select two or more objects to align them');
@@ -1545,7 +1545,7 @@ function rebaseMoveGhost() {
 }
 
 /** Whether the one selected part has wires of its own: a net with drawn
- *  wire and no other part's pin, such as a labelled stub. Those turn with the
+ *  wire and no other part's pin, such as a labeled stub. Those turn with the
  *  part, rigidly, instead of rerouting back to where their free ends were. */
 function carriesOwnWires() {
   const comps = selectedComps();
@@ -1911,7 +1911,7 @@ export function deleteSelection() {
   return true;
 }
 
-/** A tap of Space: a labelled wire stub on every unconnected terminal of the
+/** A tap of Space: a labeled wire stub on every unconnected terminal of the
  * selected parts, skipping any that would short (core/stubs.js). */
 export function stubSelection() {
   if (mode !== 'normal' || drag || hasWireDraft() || labelMode || moveMode || copyMode || deleteMode) return;
@@ -2140,7 +2140,7 @@ function copyGhostSymmetryPin() {
   return { ...cursor };
 }
 
-/** Point the mirror at whichever way the cursor has travelled since Alt went
+/** Point the mirror at whichever way the cursor has traveled since Alt went
  *  down. Called from the render path, so it follows the cursor however it
  *  moved -- pointer, arrow keys, or a view change.
  *
@@ -2155,7 +2155,7 @@ export function syncSymmetryOperation() {
   if (symmetry.waitingForMotion) return;
   // A copy can be armed from an arbitrary point in a multi-device selection.
   // Choose the axis from the post-Alt drag direction, not from that click's
-  // offset to the selection centre or first component.
+  // offset to the selection center or first component.
   const directionPin = symmetry.armedCursor || symmetry.pin;
   symmetry.operation = symmetryOperation(directionPin, cursor, symmetry.operation);
   // A copy ghost is already committed, so the first move off the axis says
@@ -3160,7 +3160,7 @@ function newWireBodyViolation(beforeSnapshot, touchedNetIds) {
   return bodyIssues(circuit).find((issue) => !before.has(issueKey(issue)))?.message || null;
 }
 
-/** Abort an in-progress mouse drag. A cancelled wire run is restored to its
+/** Abort an in-progress mouse drag. A canceled wire run is restored to its
  *  pre-drag polyline so nothing is left half-edited. */
 function cancelDrag() {
   if (drag?.mode === 'radialpending' || drag?.mode === 'radial') {
@@ -3229,7 +3229,7 @@ function cancelDrag() {
     circuit.syncJunctionSolders();
     markModelChanged();
   }
-  // A cancelled shape gesture abandons the whole two-point draft. The tool
+  // A canceled shape gesture abandons the whole two-point draft. The tool
   // remains armed, so the next click starts a fresh annotation.
   if (drag?.mode === 'annotationplace') annotationStart = null;
   if (drag?.mode === 'annotationlineplace') annotationPoints = [];
@@ -3774,7 +3774,7 @@ function noteWireToolStart() {
 
 /** Begin a wire from a non-terminal point: empty space starts a free-floating
  *  draft; a point on an existing wire records that net as the origin (the
- *  junction + solder are materialized on commit so a cancelled wire leaves no
+ *  junction + solder are materialized on commit so a canceled wire leaves no
  *  orphan dot). */
 /** Wire mode with a wire starting at `w` (a pin, a wire, or a point). */
 export function startWireFromPoint(w) {
@@ -4869,7 +4869,7 @@ function canvasMouseDown(ev) {
 export function beginObjectMove(refs, labelIds, startWorld, startClient, options = {}) {
   const startSnapshot = snapshot();
   // Moves and Ctrl/Cmd-drag copies preview in an isolated document from the
-  // first pointer down, so a cancelled drag leaves nothing behind and a drop
+  // first pointer down, so a canceled drag leaves nothing behind and a drop
   // is one undo entry.
   beginPreviewTransaction(startSnapshot);
   const componentRefs = [...new Set(refs)].filter((refdes) => circuit.components.has(refdes));
@@ -6038,7 +6038,7 @@ function finishCanvasMouseUp(ev) {
         circuit = Circuit.fromJSON(JSON.parse(drag.startSnapshot));
         markModelChanged();
       }
-      logLine(`wire drag cancelled: ${err.message}`, 'error');
+      logLine(`wire drag canceled: ${err.message}`, 'error');
       drag = null;
       render();
       return;
@@ -6416,7 +6416,7 @@ function onWireKey(key) {
     selectedWire = null;
     selectedWires.clear();
     selectedNets.clear();
-    hintLine('wiring cancelled');
+    hintLine('wiring canceled');
   } else if (key === 'Backspace') {
     if (wire?.points?.length) {
       wire.points.pop();

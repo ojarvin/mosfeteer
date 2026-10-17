@@ -158,7 +158,7 @@ export function editComponentSize(component) {
 }
 
 /** A joined supply bar has one label, shown over its first supply and
- *  centred on the bar; its name goes to every supply on the bar. */
+ *  centered on the bar; its name goes to every supply on the bar. */
 function openSupplyBarLabelEditor(refs) {
   const lead = editor.circuit.components.get(refs[0]);
   const existing = editor.circuit.labelOf(lead.refdes);
@@ -168,14 +168,14 @@ function openSupplyBarLabelEditor(refs) {
   }
   const bar = supplyBars(editor.circuit).find((candidate) => candidate.refs[0] === lead.refdes);
   const info = referenceMarkerInfo('supply');
-  const centre = bar ? bar.rect.x + bar.rect.w / 2 : lead.transform.x;
+  const center = bar ? bar.rect.x + bar.rect.w / 2 : lead.transform.x;
   const before = snapshot();
   const label = editor.circuit.addLabel({
     text: '',
     owner: lead.refdes,
-    // Local offsets rotate with the supply; a bar is only ever centred for an
+    // Local offsets rotate with the supply; a bar is only ever centered for an
     // upright one, which is also the only way a row of them reads as a bar.
-    offset: lead.transform.rotation ? info.labelOffset : { x: snap(centre - lead.transform.x), y: info.labelOffset.y },
+    offset: lead.transform.rotation ? info.labelOffset : { x: snap(center - lead.transform.x), y: info.labelOffset.y },
     align: 'center',
     style: { color: lead.style.color },
   });
@@ -270,8 +270,8 @@ export function inlineEditLabel(label, options = {}) {
   measure.classList.toggle('mono', !!label.style?.mono);
   document.body.appendChild(measure);
   // The editor covers the text, not the label's grid box: the label's own
-  // font at the current zoom, one line tall per line, centred where the text
-  // is drawn, and growing from the text's aligned edge (or its centre) just
+  // font at the current zoom, one line tall per line, centered where the text
+  // is drawn, and growing from the text's aligned edge (or its center) just
   // as the drawn text does. Laid out again on every repaint, so it follows
   // zooming and panning like the drawing.
   const resize = () => {
@@ -300,8 +300,8 @@ export function inlineEditLabel(label, options = {}) {
     const height = Math.min(r.height - 2 * margin, Math.max(lines, input.scrollHeight + 2));
     input.style.height = `${height}px`;
     input.style.overflowY = input.scrollHeight > height + 1 ? 'auto' : 'hidden';
-    const centre = r.top + (b.y + b.h / 2 - editor.view.y) * scale;
-    input.style.top = `${Math.min(Math.max(centre - height / 2, r.top + margin), r.bottom - margin - height)}px`;
+    const center = r.top + (b.y + b.h / 2 - editor.view.y) * scale;
+    input.style.top = `${Math.min(Math.max(center - height / 2, r.top + margin), r.bottom - margin - height)}px`;
   };
   input.relayout = resize;
   resize();
@@ -383,7 +383,7 @@ export function inlineEditLabel(label, options = {}) {
           renameLabelThroughModel(label, v);
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
-          logLine(`net label edit cancelled: ${err.message}`, 'error');
+          logLine(`net label edit canceled: ${err.message}`, 'error');
           restoreProvisionalLabel(label, initialName);
         }
       } else {
@@ -399,7 +399,7 @@ export function inlineEditLabel(label, options = {}) {
           namePeers(v);
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
-          logLine(`reference marker label edit cancelled: ${err.message}`, 'error');
+          logLine(`reference marker label edit canceled: ${err.message}`, 'error');
           editor.circuit.removeLabel(label.id);
         }
       } else {
@@ -412,7 +412,7 @@ export function inlineEditLabel(label, options = {}) {
           if (v !== label.text) renameLabelThroughModel(label, v);
           recordHistoryEntry(initialSnapshot || snapshot());
         } catch (err) {
-          logLine(`component label edit cancelled: ${err.message}`, 'error');
+          logLine(`component label edit canceled: ${err.message}`, 'error');
           editor.circuit.removeLabel(label.id);
         }
       } else if (editor.circuit.labels.has(label.id)) {

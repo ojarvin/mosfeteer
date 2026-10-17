@@ -221,7 +221,7 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
     }).join('');
   // An empty line draws nothing, and SVG drops the offset of a tspan with
   // no text: its height goes to the next line instead, so a blank line
-  // keeps its place and the block stays centred where textPos put it.
+  // keeps its place and the block stays centered where textPos put it.
   let drawn = 0; // the line the text position is on: y is line 0's baseline
   const body = lineRuns.length === 1
     ? renderRuns(lineRuns[0])
@@ -238,7 +238,7 @@ function labelTextEl(x, y, runs, anchor, kind, color = '#111', width = 'normal',
  *  tables and pin lists. */
 const MONO_FONT_FAMILY = "'DejaVu Sans Mono','Menlo','Consolas','Liberation Mono',monospace";
 
-/** The solid greys a beat draws with: what it dims, and (in the editor) what
+/** The solid grays a beat draws with: what it dims, and (in the editor) what
  * it hides -- ink at about 30% and 12% over white paper. The editor and the
  * presenter use the theme's --svg-dim / --svg-faded instead. */
 export const BEAT_DIM_INK = '#b8b8b8';
@@ -268,7 +268,7 @@ function mathMlDelimiter(value, stretchy = true) {
 const MATH_SIGNS = { '-': '\u2212', '+': '+' };
 
 // TeX adds a math-italic letter's italic correction after it, so its lean
-// clears an upright neighbour: the P of `C_{P0}` does not overhang the 0.
+// clears an upright neighbor: the P of `C_{P0}` does not overhang the 0.
 // MathML renderers leave it out between atoms, so it is added here, in em,
 // from Computer Modern's math italic (cmmi10); letters that barely lean
 // have none.
@@ -724,7 +724,7 @@ function plotAnnotationSvg(label, opacity = '') {
   const plot = label.plot;
   const response = ['response', 'swing', 'step', 'wave', 'locus'].includes(plot.kind);
   const fontSize = Math.max(18, Math.min(38, h / (response ? 10 : plot.phase ? 11 : 8)));
-  // A response plot (signal-flow analysis) draws each trace in its colour;
+  // A response plot (signal-flow analysis) draws each trace in its color;
   // its traces' names are math labels beside it, children of the box.
   // An overloaded run (null) runs off the top.
   const figure = plot.kind === 'locus'
@@ -909,7 +909,7 @@ export function svgString(circuit, opts = {}) {
   const DIMMED = ' opacity="0.3"';
   const FADED = ' opacity="0.12"';
   // A beat draws what it dims -- and, in the editor, what it hides -- in a
-  // solid grey between ink and paper. Opacity would paint every place two
+  // solid gray between ink and paper. Opacity would paint every place two
   // faint strokes overlap (a lead under a wire, a dot on a joint) twice.
   const DIM_INK = o.themeInk ? `var(--svg-dim, ${BEAT_DIM_INK})` : BEAT_DIM_INK;
   const FADE_INK = o.themeInk ? `var(--svg-faded, ${BEAT_FADE_INK})` : BEAT_FADE_INK;
@@ -1587,7 +1587,7 @@ export function editorOverlay(circuit, opts = {}) {
       // One dimension line clear of every anchor and of the moving symbol. A
       // guide still being offered is drawn dashed, and its own point stands on
       // the target rather than on the object, so the two intervals stay the
-      // ones being labelled. Direct one-peer distances use the opposite lane
+      // ones being labeled. Direct one-peer distances use the opposite lane
       // from target/even-spacing rulers, keeping both useful readings legible.
       // Everything that only connects an anchor back to that line (leaders,
       // the halfway reference) stays a quiet solid hairline, so dashing reads

@@ -78,7 +78,7 @@ test('without a timing diagram, the beats give the phases', () => {
   assert.equal(result.tex, '\\frac{\\frac{C_{S}}{C_{F}} z^{-1}}{1 - z^{-1}}');
 });
 
-test('what it cannot analyse it refuses, saying why', () => {
+test('what it cannot analyze it refuses, saying why', () => {
   // No clock at all.
   const unclocked = analyzeSwitchedCap(integrator({ timing: false }));
   assert.equal(unclocked.code, 'no-phases');

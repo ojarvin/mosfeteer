@@ -21,7 +21,7 @@ test('the guide width puts label text at the body size across a full column', ()
   assert.equal(normalizePageGuide(''), null);
 });
 
-test('the frame centres the drawing, or says when the drawing is too wide', () => {
+test('the frame centers the drawing, or says when the drawing is too wide', () => {
   const frame = pageGuideFrame(single, 0, 400);
   assert.equal(frame.fits, true);
   assert.ok(Math.abs(frame.x + frame.width / 2 - 200) < 1e-9);
@@ -31,11 +31,11 @@ test('the frame centres the drawing, or says when the drawing is too wide', () =
   assert.ok(Math.abs(wide.textPt - pageGuideTextSize(single, 2000)) < 1e-9);
   assert.ok(wide.textPt < 8);
   assert.ok(Math.abs(wide.target.width - pageGuideWidth(single)) < 1e-9);
-  assert.ok(Math.abs(wide.target.x + wide.target.width / 2 - 1000) < 1e-9, 'centred on the drawing');
+  assert.ok(Math.abs(wide.target.x + wide.target.width / 2 - 1000) < 1e-9, 'centered on the drawing');
   assert.ok(Math.abs(wide.trimCells - (2000 - pageGuideWidth(single)) / 80) < 1e-9);
 });
 
-test('an export with a page guide is exactly the guide width, centred on the drawing', () => {
+test('an export with a page guide is exactly the guide width, centered on the drawing', () => {
   const circuit = new Circuit();
   runCommand(circuit, 'add resistor R1 --at 0 0');
   const plain = svgString(circuit, DRAWING_EXPORT_OPTIONS);
@@ -45,7 +45,7 @@ test('an export with a page guide is exactly the guide width, centred on the dra
   const [gx, , gw, gh] = box(guided);
   assert.ok(Math.abs(gw - pageGuideWidth(single)) < 0.01);
   assert.equal(gh, ph, 'only the width changes');
-  assert.ok(Math.abs((gx + gw / 2) - (px + pw / 2)) < 0.01, 'the drawing stays centred');
+  assert.ok(Math.abs((gx + gw / 2) - (px + pw / 2)) < 0.01, 'the drawing stays centered');
   assert.match(guided, new RegExp(`width="${Number.isInteger(gw) ? gw : gw.toFixed(2)}"`));
   // The editor guide marks the same frame the export uses.
   const frame = circuitPageGuideFrame(circuit, single, DRAWING_EXPORT_OPTIONS.padding);
@@ -79,13 +79,13 @@ test('the A4 guide sets base label text at 8 pt across a 16 cm text width', () =
   assert.match(pageGuideCaption(double), /width=\\textwidth/);
 });
 
-test('a copied selection image is padded to the guide, centred on the selection', () => {
+test('a copied selection image is padded to the guide, centered on the selection', () => {
   const circuit = new Circuit();
   runCommand(circuit, 'add resistor R1 --at 0 0');
   runCommand(circuit, 'add resistor R2 --at 2000 0');
   const svg = selectionDrawing(circuit, { refs: ['R2'] }, { pageGuide: single });
   const [x, , w] = svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
   assert.ok(Math.abs(w - pageGuideWidth(single)) < 0.01);
-  assert.ok(Math.abs(x + w / 2 - 2000) < 0.01, 'centred on R2, not on the drawing');
+  assert.ok(Math.abs(x + w / 2 - 2000) < 0.01, 'centered on R2, not on the drawing');
   assert.doesNotMatch(svg, /data-ref="R1"/);
 });

@@ -136,7 +136,7 @@ function bestDenominator(numbers, maxDenominator, powersOfTwo) {
  * `snap(own)` giving `{ own (the free ones snapped, the rest as they were),
  * fractions: { name: { m, n } }, groups: [{ into, names, n }] }`. A number
  * that is not zero never snaps to zero (that is another diagram), nor
- * across it, and stays within its range where a neighbouring m allows.
+ * across it, and stays within its range where a neighboring m allows.
  */
 export function fractionSnapper(parameters, { denominator = 32, fixed = false, denominators = {}, exact = {}, powersOfTwo = false, groups: rawGroups = null } = {}) {
   const byName = new Map(parameters.free.map((p) => [p.name, p]));

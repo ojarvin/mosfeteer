@@ -125,7 +125,7 @@ describe('gestures', { skip: browserSkip() }, () => {
     }
     await h.key('Enter');
     await h.until(`${h.module('editor-state.js')}.then((m) => { const names = m.editor.pendingNetNameChoice?.names || []; return names.includes('A') && names.includes('B'); })`, 5000);
-    // Cancelled, the short is undone: the two nets stay apart.
+    // Canceled, the short is undone: the two nets stay apart.
     await h.key('Escape');
     await sleep(200);
     // (A port alone on its net carries the net's name: VIN is A now, VOUT B.)

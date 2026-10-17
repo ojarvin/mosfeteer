@@ -455,9 +455,9 @@ test('smartRoute returns deterministic routes from the heap open set', () => {
   ]);
 });
 
-test('cancelled Steiner search still returns a connected fallback', () => {
+test('canceled Steiner search still returns a connected fallback', () => {
   const terminals = [{ x: 0, y: 0 }, { x: 160, y: 80 }, { x: 320, y: 0 }];
-  const paths = steinerBranches(terminals, { ...EMPTY_ENV, cancelled: () => true });
+  const paths = steinerBranches(terminals, { ...EMPTY_ENV, canceled: () => true });
   assert.ok(paths.length > 0);
   const endpoints = new Set(paths.flatMap(path => [path[0], path.at(-1)].map(p => `${p.x},${p.y}`)));
   for (const point of terminals) assert.ok(endpoints.has(`${point.x},${point.y}`));
@@ -469,7 +469,7 @@ test('Steiner cancellation is checked during bounded exact work', () => {
     { x: 120, y: 240 }, { x: 360, y: 240 },
   ];
   let checks = 0;
-  const paths = steinerBranches(terminals, { ...EMPTY_ENV, cancelled: () => ++checks > 12 });
+  const paths = steinerBranches(terminals, { ...EMPTY_ENV, canceled: () => ++checks > 12 });
   assert.ok(checks > 12, 'cancellation callback was observed inside the search');
   const endpoints = new Set(paths.flatMap(path => [path[0], path.at(-1)].map(p => `${p.x},${p.y}`)));
   for (const point of terminals) assert.ok(endpoints.has(`${point.x},${point.y}`));
@@ -622,7 +622,7 @@ test('smartRoute does not route the first segment up INTO the component from a d
 test('smartRoute approaches a pin on a body boundary with a straight segment, not a detour', () => {
   // A free point directly above M2.d (a drain pin on the body top-right corner)
   // must connect with a straight vertical segment. The clearance check must
-  // recognize the touch at the pin, not force a detour through the neighbour.
+  // recognize the touch at the pin, not force a detour through the neighbor.
   const rects = [{ x: 400, y: -80, w: 120, h: 160 }];
   const pins = new Map([
     ['400,0', { x: -1, y: 0 }],

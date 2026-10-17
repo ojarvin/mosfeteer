@@ -106,7 +106,7 @@ test('naming a bar names every supply on it, and the bar shows one label', () =>
   assert.equal(circuit.labelOf('V1'), null, 'a rejected name changes nothing');
 });
 
-test('joining a mixed selection joins each rail with its own neighbours', () => {
+test('joining a mixed selection joins each rail with its own neighbors', () => {
   const circuit = new Circuit();
   run(circuit,
     'add supply A1 --at 0 0', 'add supply A2 --at 240 0', 'add supply B1 --at 480 0', 'add supply B2 --at 720 0',

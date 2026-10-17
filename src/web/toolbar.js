@@ -228,9 +228,9 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Box over vertices', 'a box catching only some vertices of lines or arrows picks them, on any number of lines; Shift+box or Shift/Ctrl-click a vertex adds more; drag one to move them together, Delete removes them, Escape lets go'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
-    ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to centre that axis'],
+    ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to center that axis'],
     ['Shift+A', 'align to: click an edge or point of the selection, then a matching one of another object; the set moves as one'],
-    ['Space', 'wire stubs: a labelled stub (net1, net2, ...) on every unconnected terminal of the selected parts; any that would short are skipped'],
+    ['Space', 'wire stubs: a labeled stub (net1, net2, ...) on every unconnected terminal of the selected parts; any that would short are skipped'],
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
     ['t / = / F2', 'edit the text of the selection (a label, a part\'s name, a net\'s label) or of what the cursor points at; with several switches or rails selected, the phase or rail name goes to all'],
@@ -296,7 +296,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
     ['/ / Ctrl/Cmd+F', 'find parts, nets, and any label text (in the Atlas: search every design); Esc clears, then returns to the canvas'],
-    ['Ctrl/Cmd+H', 'replace text in every matching label: net names (labelled or not), part names, switch phases, annotations; M1 finds M_{1}; Aa matches case, .* takes a regular expression ($1 in the replacement); Enter replaces all; Esc clears both fields and returns to the canvas'],
+    ['Ctrl/Cmd+H', 'replace text in every matching label: net names (labeled or not), part names, switch phases, annotations; M1 finds M_{1}; Aa matches case, .* takes a regular expression ($1 in the replacement); Enter replaces all; Esc clears both fields and returns to the canvas'],
     [':', 'find and run anything: type words to search every action, toggle, and menu item, Up/Down pick, Enter runs; or type a command (:connect R1.a R2.a); Up/Down on an empty line recall history'],
     [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
@@ -323,7 +323,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['l', 'type the names, then click a wire for each; Esc exits'],
     ['Shift+N', 'type the text, then click to place it; returns to selection'],
     ['t / = / F2', 'edit the selected (or pointed-at) label or part name'],
-    ['Shift+Left / Shift+Right', 'align left / right (centre default)'],
+    ['Shift+Left / Shift+Right', 'align left / right (center default)'],
     ['dd / Delete', 'delete the selected label'],
     ['double-click', 'edit the label text inline'],
     ['Tab / Shift+Tab', 'commit label edit, then select next / previous label'],
@@ -344,7 +344,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['double-click paper', 'open the insert menu at that point'],
     ['middle', 'drag to pan'],
     ['right-hold paper', 'part palette: flick toward a part to drop it there; rest on a sector for its variants'],
-    ['right-hold a pin', 'connect it: ground, supply, VCM, a port, a labelled stub, or a wire'],
+    ['right-hold a pin', 'connect it: ground, supply, VCM, a port, a labeled stub, or a wire'],
     ['right-hold a part', 'swap it for a related type'],
     ['right-hold a wire', 'its net: name, label, highlight color, tidy, delete the run'],
     ['right tap / drag', 'tap for the context menu; a drag zooms to the box, from paper or a part'],
@@ -396,7 +396,7 @@ const LAYOUT_ALIGN_KEYS = {
 
 /** Ctrl/Cmd+Shift+arrow aligns the selected set's edges, like the Align
  * buttons. Like Shift+Left/Right for text, repeating the key on an already
- * aligned set centres that axis (`repeat`). Idle normal editor only. */
+ * aligned set centers that axis (`repeat`). Idle normal editor only. */
 export function layoutAlignKey({
   key, shiftKey = false, ctrlKey = false, metaKey = false, altKey = false,
   mode = 'normal', wire = false, drag = false,

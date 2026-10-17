@@ -55,7 +55,7 @@ test('explicit whole-net selection draws its wire and net labels, not its termin
   assert.deepEqual(parts.fragments[0].netLabels, [netLabel]);
 });
 
-test('a labelled stub on a MOS gate copies only the stub and its net label', () => {
+test('a labeled stub on a MOS gate copies only the stub and its net label', () => {
   const circuit = new Circuit();
   circuit.addComponent('nmos', { refdes: 'M1', x: 400, y: 400 });
   const [stub] = addTerminalStubs(circuit, ['M1']).stubs.filter((entry) => entry.ref === 'M1.g');

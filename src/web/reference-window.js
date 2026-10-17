@@ -147,7 +147,7 @@ function viewportSize(win) {
   return { w: win.viewport.clientWidth, h: win.viewport.clientHeight };
 }
 
-/** The whole design in the window, centred. */
+/** The whole design in the window, centered. */
 function fit(win) {
   const box = win.picture?.box;
   const { w, h } = viewportSize(win);
@@ -262,7 +262,7 @@ function installViewport(win) {
   });
   // Double-click fits the whole design again.
   viewport.addEventListener('dblclick', () => fit(win));
-  // A resized window keeps a fitted design fitted, else its centre.
+  // A resized window keeps a fitted design fitted, else its center.
   if (typeof ResizeObserver === 'function') {
     let last = null;
     new ResizeObserver(() => {

@@ -52,9 +52,9 @@ test('quick-add lands the chosen terminal on the drop point, body continuing the
   const hang = (type, direction) => {
     const { placement: p } = landed(type, direction);
     const b = def(type).bbox;
-    const centre = applyTransform({ x: 0, y: 0, rotation: p.rotation, mirrorX: p.mirrorX, mirrorY: p.mirrorY }, b.x + b.w / 2, b.y + b.h / 2);
+    const center = applyTransform({ x: 0, y: 0, rotation: p.rotation, mirrorX: p.mirrorX, mirrorY: p.mirrorY }, b.x + b.w / 2, b.y + b.h / 2);
     assert.deepEqual({ x: p.x, y: p.y }, point);
-    return { x: Math.sign(Math.round(centre.x)), y: Math.sign(Math.round(centre.y)), rotation: p.rotation };
+    return { x: Math.sign(Math.round(center.x)), y: Math.sign(Math.round(center.y)), rotation: p.rotation };
   };
   assert.deepEqual(hang('ground', { x: 0, y: 1 }), { x: 0, y: 1, rotation: 0 });
   assert.deepEqual(hang('supply', { x: 0, y: -1 }), { x: 0, y: -1, rotation: 0 });
@@ -64,7 +64,7 @@ test('quick-add lands the chosen terminal on the drop point, body continuing the
       assert.deepEqual({ x: got.x, y: got.y }, direction, `${type} toward ${direction.x}`);
     }
   }
-  // PMOS honours its default mirror while scoring.
+  // PMOS honors its default mirror while scoring.
   ({ world } = landed('pmos', { x: 0, y: -1 }));
   assert.deepEqual(world, point);
 });

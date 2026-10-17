@@ -311,7 +311,7 @@ describe('editor chrome', { skip: browserSkip() }, () => {
       const swatch = swatches.find((s) => s.value === token);
       assert.ok(swatch, `swatch for ${token}`);
       assert.equal(swatch.color, value, token);
-      assert.equal(swatch.label, token === 'gray' ? 'Grey' : token[0].toUpperCase() + token.slice(1));
+      assert.equal(swatch.label, token === 'gray' ? 'Gray' : token[0].toUpperCase() + token.slice(1));
     }
   });
 

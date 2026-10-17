@@ -133,7 +133,7 @@ function rootValue(numerator, denominator, variable) {
   return rationalFunction(numerator, denominator, { variable });
 }
 
-/** A root location expression from its cancelled fraction. */
+/** A root location expression from its canceled fraction. */
 function rootExpression(numerator, denominator, variable) {
   const value = rootValue(numerator, denominator, variable);
   return isOneExpression(value.denominator) ? value.numerator : quotient(value.numerator, value.denominator);
@@ -163,7 +163,7 @@ function rootRecords(coefficients, role, variable) {
     const b = coefficientAt(coefficients, 1);
     const c = coefficientAt(coefficients, 0);
     const discriminant = add(multiply(b, b), negate(multiply(integer(4), a, c)));
-    // Monic form s^2 + B s + C, B = b/a and C = c/a, both cancelled, so
+    // Monic form s^2 + B s + C, B = b/a and C = c/a, both canceled, so
     // s = (-B_n +- sqrt(B_n^2 - 4 C B_d^2)) / (2 B_d).
     const monicLinear = rootValue(b, a, variable);
     const monicConstant = rootValue(c, a, variable);

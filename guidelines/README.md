@@ -1,6 +1,7 @@
 # Mosfeteer — agent guidelines
 
-Programmatic, agent-friendly schematic editor. Two distinct agent roles work
+Mosfeteer is a schematic editor for analog circuits; it can also be driven
+by commands, which is how agents work on it. Two distinct agent roles work
 here. Read only the doc that matches your role.
 
 ## Pick your role

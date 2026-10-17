@@ -204,7 +204,7 @@ function mosOrientation(type) {
  * draws those either -- so they are opt-in per device, or globally from the
  * analysis form, rather than symbols the user has to wire up by hand. A
  * capacitor drawn in the schematic remains the user's own component and is
- * modelled separately.
+ * modeled separately.
  */
 function includesParasitics(component, context) {
   const own = component.analysis?.parasitics;

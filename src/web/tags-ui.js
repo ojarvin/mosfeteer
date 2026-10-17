@@ -55,7 +55,7 @@ export function renderTagsField() {
 
 export function installTagsField() {
   if (!fieldEl) return;
-  let cancelled = false;
+  let canceled = false;
   fieldEl.addEventListener('keydown', (ev) => {
     ev.stopPropagation();
     if (ev.key === 'Enter') {
@@ -64,7 +64,7 @@ export function installTagsField() {
       canvasEl.focus({ preventScroll: true });
     } else if (ev.key === 'Escape') {
       ev.preventDefault();
-      cancelled = true;
+      canceled = true;
       fieldEl.value = tagsText(editor.circuit.tags);
       setOpen(false);
       canvasEl.focus({ preventScroll: true });
@@ -75,8 +75,8 @@ export function installTagsField() {
     if (!popEl?.hidden && !popEl.contains(ev.target) && !buttonEl.contains(ev.target)) setOpen(false);
   }, true);
   fieldEl.addEventListener('blur', () => {
-    if (!cancelled) setDocumentTags(fieldEl.value);
-    cancelled = false;
+    if (!canceled) setDocumentTags(fieldEl.value);
+    canceled = false;
     fieldEl.value = tagsText(editor.circuit.tags);
     render();
   });

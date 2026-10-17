@@ -147,7 +147,7 @@ test('mode toolbar reveal scrolls only the hidden distance and clamps at the rai
   assert.equal(minimalRevealScroll(0, 100, 320, 340, 30, 200), 200, 'the rail does not scroll beyond its end');
 });
 
-test('Ctrl/Cmd+Shift+arrows align the selection; a repeat centres that axis', () => {
+test('Ctrl/Cmd+Shift+arrows align the selection; a repeat centers that axis', () => {
   assert.deepEqual(layoutAlignKey({ key: 'ArrowLeft', shiftKey: true, ctrlKey: true }), { align: 'left', repeat: 'center-x' });
   assert.deepEqual(layoutAlignKey({ key: 'ArrowRight', shiftKey: true, metaKey: true }), { align: 'right', repeat: 'center-x' });
   assert.deepEqual(layoutAlignKey({ key: 'ArrowUp', shiftKey: true, ctrlKey: true }), { align: 'top', repeat: 'center-y' });

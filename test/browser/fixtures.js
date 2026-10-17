@@ -42,7 +42,7 @@ export function amplifier() {
 }
 
 /** The amplifier on a wide sheet: a note far off makes it a large design,
- *  so on its card it reaches across the gap to a neighbour's. */
+ *  so on its card it reaches across the gap to a neighbor's. */
 export function wideAmplifier() {
   return build([
     'add nmos M1 --at 0 0', 'add resistor RD --at 0 -320 --rot 90', 'add supply VDD --at 0 -560', 'add ground GND --at 0 240',

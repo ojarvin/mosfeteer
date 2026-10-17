@@ -482,7 +482,7 @@ test('several ports on one net keep their own identities', () => {
   c.connect('VOUT.p', 'R1.b');
   const net = c.connect('VIN.p', 'VOUT.p');
 
-  // The net keeps one name; neither port is relabelled with the other's.
+  // The net keeps one name; neither port is relabeled with the other's.
   assert.equal(c.labelOf('VIN').text, 'VIN');
   assert.equal(c.labelOf('VOUT').text, 'VOUT');
   assert.equal(net.terminals.filter(({ comp }) => comp === 'VIN' || comp === 'VOUT').length, 2);
@@ -2739,7 +2739,7 @@ test('wiring the same two terminals repeatedly keeps exactly one wire', () => {
   assert.equal(n.terminals.length, 2, 'both terminals stay in the net');
   assert.equal(n.branches.length, 1, 'no parallel wires accumulate');
   assert.deepEqual(n.branches[0], [{ x: 160, y: 0 }, { x: 400, y: 0 }], 'cheapest path survives');
-  assert.deepEqual(n.junctions, [], 'terminal points are not mislabelled as junctions');
+  assert.deepEqual(n.junctions, [], 'terminal points are not mislabeled as junctions');
   const dots = [...c.components.values()].filter((x) => x.type === 'solder');
   assert.equal(dots.length, 0, 'no spurious solder dots');
 });
@@ -3383,7 +3383,7 @@ test('a net label may sit anywhere its box touches its wire, even by one corner'
   label.moveTo(160 + w / 2, 0);
   assert.deepEqual(label.anchorWorld(), { x: 160 + w / 2, y: 0 });
   assert.throws(() => label.moveTo(400, 0), /must touch its net's wire/);
-  // Drawn out past the end, it sits beyond the end, centred on it and aligned toward it.
+  // Drawn out past the end, it sits beyond the end, centered on it and aligned toward it.
   const beyond = c.netLabelDragPlacement(label, { x: 400, y: 0 });
   assert.deepEqual(beyond, { anchor: { x: 160, y: 0 }, side: 'right' });
   label.netSide = beyond.side;
@@ -3468,7 +3468,7 @@ test('rails are named V_{SS}, V_{DD}, V_{CM}, and the plain spellings are the sa
   c.addComponent('ground', { refdes: 'G1', x: 320, y: 0 });
   const rail = c.connect('R1.a', 'G1.gnd');
   assert.equal(rail.name, 'V_{SS}');
-  // A net labelled with the plain spelling joins the rail.
+  // A net labeled with the plain spelling joins the rail.
   const typed = c.connect('R2.a', 'R2.b');
   c.renameNet(typed, 'VSS');
   assert.equal(c.netGroupKey(typed), c.netGroupKey(rail));

@@ -5,7 +5,7 @@
  * small cell sits beside a large system at their true proportions and a zoom
  * level means what it does in the editor. The designs are packed into one
  * loose ball -- the largest in the middle, each next one in the free spot
- * nearest the centre -- so the desk reads as one crowded sheet rather than a
+ * nearest the center -- so the desk reads as one crowded sheet rather than a
  * grid of cards. Slots are whole grid cells, so every design's own grid lines
  * continue the desk's. The same designs always pack the same way, and a desk
  * packed before keeps its designs where they were (`previous`).
@@ -13,7 +13,7 @@
 
 import { GRID } from '../core/grid.js';
 
-/** Space between neighbouring designs, and below each for its caption. */
+/** Space between neighboring designs, and below each for its caption. */
 export const ATLAS_GAP = 2 * GRID;
 export const ATLAS_CAPTION = 2 * GRID;
 
@@ -22,8 +22,8 @@ const snap = (value) => Math.round(value / GRID) * GRID;
 /**
  * Remembered places (Map id -> { x, y, w, h }) stretched to `aspect` when
  * the desk they make is clearly another shape than the window (more than
- * 1.25 times off): each design's centre is scaled about the desk's centre,
- * wider and shorter or narrower and taller, so neighbours stay neighbours
+ * 1.25 times off): each design's center is scaled about the desk's center,
+ * wider and shorter or narrower and taller, so neighbors stay neighbors
  * and the desk fills the window. layoutAtlas keeps those that still fit
  * and packs the rest beside their new spots. Places already of the
  * window's shape come back as they are. Stretched places are only where
@@ -64,11 +64,11 @@ export function reshapedPlaces(previous, aspect) {
  * `previous` (id -> { x, y, w, h }, a slot from an earlier packing) keeps
  * the desk steady: a design stays where it was while its slot there is still
  * free. A design that changed size yields to those that did not: it keeps its
- * top-left, else its centre, else moves to the free spot nearest its old one.
+ * top-left, else its center, else moves to the free spot nearest its old one.
  * Only new designs and those are placed again.
  *
  * `related(a, b)` (0..1, core/design-related.js; by default a shared tag)
- * groups designs into neighbourhoods: related designs are placed one after
+ * groups designs into neighborhoods: related designs are placed one after
  * another, each drawn toward those already down in proportion.
  *
  * Returns { tiles: [{ id, x, y, w, h }] (the designs' rectangles, captions
@@ -78,11 +78,11 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
   if (!items.length) return { tiles: [], slots: new Map(), bounds: { x: 0, y: 0, w: 0, h: 0 } };
   const tagsOf = new Map(items.map((item) => [item.id, new Set(item.tags || [])]));
   const affinity = related || ((a, b) => ([...tagsOf.get(a)].some((tag) => tagsOf.get(b).has(tag)) ? 1 : 0));
-  const order = neighbourhoodOrder(items, affinity);
+  const order = neighborhoodOrder(items, affinity);
   const stretch = Math.sqrt(aspect);
   const placed = []; // slots: design plus caption band
   const distance2 = (x, y, w, h, to) => ((x + w / 2 - to.x) / stretch) ** 2 + ((y + h / 2 - to.y) * stretch) ** 2;
-  const centre = (slot) => ({ x: slot.x + slot.w / 2, y: slot.y + slot.h / 2 });
+  const center = (slot) => ({ x: slot.x + slot.w / 2, y: slot.y + slot.h / 2 });
   const free = (x, y, w, h) => placed.every((p) =>
     x >= p.x + p.w + gap || p.x >= x + w + gap || y >= p.y + p.h + gap || p.y >= y + h + gap);
   const slotOf = (item) => ({ w: item.w, h: item.h + caption });
@@ -93,7 +93,7 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
   };
 
   // Designs still fitting where they were stay put, those of the same size
-  // first; a resized one tries its old corner, then its old centre.
+  // first; a resized one tries its old corner, then its old center.
   const pending = [];
   const resized = [];
   for (const item of order) {
@@ -127,9 +127,9 @@ export function layoutAtlas(items, { aspect = 1.6, gap = ATLAS_GAP, caption = AT
     // Near its old spot (or the middle), and nearer still to the designs it
     // is related to, the closer the kin the harder the pull.
     const cost = (x, y) => distance2(x, y, w, h, target)
-      + (pull ? 4 * strongest * mates.reduce((sum, [slot, a]) => sum + a * distance2(x, y, w, h, centre(slot)), 0) / pull : 0);
+      + (pull ? 4 * strongest * mates.reduce((sum, [slot, a]) => sum + a * distance2(x, y, w, h, center(slot)), 0) / pull : 0);
     // Spots touching a placed slot on one side, lined up with an edge of a
-    // slot nearby (or centred on the one it touches).
+    // slot nearby (or centered on the one it touches).
     const candidates = [];
     for (const p of placed) {
       const near = placed.filter((q) => q.x < p.x + p.w + 2 * gap + w && p.x < q.x + q.w + 2 * gap + w &&
@@ -200,11 +200,11 @@ function settle(placed, gap) {
 const RELATED = 0.3;
 
 /**
- * Designs in packing order: neighbourhoods (designs joined by relatedness of
- * at least RELATED), the largest neighbourhood first; inside one, the largest
+ * Designs in packing order: neighborhoods (designs joined by relatedness of
+ * at least RELATED), the largest neighborhood first; inside one, the largest
  * design first, then whichever is most related to those already placed.
  */
-function neighbourhoodOrder(items, affinity) {
+function neighborhoodOrder(items, affinity) {
   const bySize = [...items].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const parent = new Map(bySize.map((item) => [item.id, item.id]));
   const find = (id) => { while (parent.get(id) !== id) id = parent.get(id); return id; };
@@ -267,10 +267,10 @@ export function rectsIntersect(a, b) {
  * Returns id -> { dx, dy } for each card that floats.
  */
 export function floatClear(cards, gap) {
-  const centre = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+  const center = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
   const placed = cards.filter((card) => card.fixed);
-  const anchors = placed.map(centre);
-  const reach = (card) => Math.min(...anchors.map((a) => Math.hypot(centre(card).x - a.x, centre(card).y - a.y)));
+  const anchors = placed.map(center);
+  const reach = (card) => Math.min(...anchors.map((a) => Math.hypot(center(card).x - a.x, center(card).y - a.y)));
   const floating = cards.filter((card) => !card.fixed).sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0) || reach(a) - reach(b) || String(a.id).localeCompare(String(b.id)));
   const offsets = new Map();
   for (const card of floating) {
@@ -280,8 +280,8 @@ export function floatClear(cards, gap) {
       const r = { x: card.x + dx, y: card.y + dy, w: card.w, h: card.h };
       const hit = placed.find((o) => rectsIntersect({ x: r.x - gap, y: r.y - gap, w: r.w + 2 * gap, h: r.h + 2 * gap }, o));
       if (!hit) break;
-      const c = centre(r);
-      const o = centre(hit);
+      const c = center(r);
+      const o = center(hit);
       // Each way out of the card hit, and the shortest that keeps going the way it went.
       const ways = [
         { dx: hit.x + hit.w + gap - r.x, dy: 0 }, { dx: hit.x - gap - (r.x + r.w), dy: 0 },
@@ -307,16 +307,16 @@ export function tileAt(tiles, point, caption = ATLAS_CAPTION) {
 
 /**
  * The next tile from `from` in an arrow direction ({ x, y } unit vector):
- * the nearest one ahead, favouring tiles straight in line over diagonal ones.
+ * the nearest one ahead, favoring tiles straight in line over diagonal ones.
  */
-export function neighbourTile(tiles, from, direction) {
-  const centre = (tile) => ({ x: tile.x + tile.w / 2, y: tile.y + tile.h });
-  const start = centre(from);
+export function neighborTile(tiles, from, direction) {
+  const center = (tile) => ({ x: tile.x + tile.w / 2, y: tile.y + tile.h });
+  const start = center(from);
   let best = null;
   let bestScore = Infinity;
   for (const tile of tiles) {
     if (tile === from) continue;
-    const c = centre(tile);
+    const c = center(tile);
     const along = (c.x - start.x) * direction.x + (c.y - start.y) * direction.y;
     if (along <= 0) continue;
     const across = Math.abs((c.x - start.x) * direction.y - (c.y - start.y) * direction.x);
@@ -402,7 +402,7 @@ export function throughDepth(desk, screen, depth, ratio) {
  * The view, moved as little as it takes to show `rect` whole with `margin`
  * (a share of the view) to spare, at the same zoom. A rect already in full
  * view leaves it as it is, so picking a design near the edge of a fitted
- * desk does not pan; one larger than the view is centred on that axis.
+ * desk does not pan; one larger than the view is centered on that axis.
  */
 export function viewShowing(view, rect, margin = 0.05) {
   const axis = (start, size, lo, len) => {

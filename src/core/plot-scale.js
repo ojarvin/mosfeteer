@@ -120,7 +120,7 @@ export function zoomAxes(dx, dy, { flat = 14, ratio = 3, least = 5 } = {}) {
 /** A view zoomed by `factor` (below 1 zooms in) about the u point `at`, on
  *  the axes named in `axes` ('x', 'y', or 'both'). */
 export function zoomAbout(view, at, factor, axes = 'both') {
-  const scaled = (range, centre) => [centre + (range[0] - centre) * factor, centre + (range[1] - centre) * factor];
+  const scaled = (range, center) => [center + (range[0] - center) * factor, center + (range[1] - center) * factor];
   return {
     x: axes === 'y' ? view.x : scaled(view.x, at.x),
     y: axes === 'x' ? view.y : scaled(view.y, at.y),

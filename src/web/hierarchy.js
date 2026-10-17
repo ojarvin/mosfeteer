@@ -46,7 +46,7 @@ const bubbles = new Map();
 let bubblesDocument; // the document the bubbles belong to (undefined: none yet)
 let layoutCache = { key: '', layout: [] };
 const angles = new Map(); // refdes -> the angle its bubble last took
-const spots = new Map(); // refdes -> { dx, dy }: a dragged bubble's corner from its part's centre
+const spots = new Map(); // refdes -> { dx, dy }: a dragged bubble's corner from its part's center
 let layerEl = null;
 const nodes = new Map(); // design name -> its drawn bubble
 const pictures = new Map(); // path -> { revision, box, href }: drawn once per revision

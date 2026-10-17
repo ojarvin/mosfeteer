@@ -22,7 +22,7 @@
  *   small-signal noise table takes out its 4kT.
  *
  * Op-amps are taken as ideal for the sampling (their inputs held still);
- * their own noise is not modelled. The result is the noise table's rows:
+ * their own noise is not modeled. The result is the noise table's rows:
  * one per contributor, named by its phase and the switches it samples
  * through, and their total.
  */

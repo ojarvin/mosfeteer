@@ -69,7 +69,7 @@ test('a row below zero is drawn about a middle zero line; --hold holds, --linear
   assert.throws(() => runCommand(circuit, 'timing --add CLK --hold CLK'), /not analog/);
 });
 
-test('--height makes a row taller in even cells, the rows below moving down, its name centred', () => {
+test('--height makes a row taller in even cells, the rows below moving down, its name centered', () => {
   const circuit = circuitWith(['timing --add CLK,VDD', 'timing CLK=01 VDD=0,1']);
   const before = name(circuit, 'CLK').anchorWorld().y;
   runCommand(circuit, 'timing --height VDD=4');

@@ -73,12 +73,12 @@ function stubShorts(circuit, component, terminalName, points) {
 /**
  * The side of a vertical stub its label goes on: toward the part's body (a
  * MOSFET's drain and source labels sit on its gate side), or, for a stub on
- * the part's centre line, away from the part's own label; right otherwise.
+ * the part's center line, away from the part's own label; right otherwise.
  */
 function verticalStubSide(circuit, component, x) {
   const box = component.bboxWorld();
-  const centre = box.x + box.w / 2;
-  if (centre !== x) return centre < x ? 'left' : 'right';
+  const center = box.x + box.w / 2;
+  if (center !== x) return center < x ? 'left' : 'right';
   const own = circuit.labelOf(component.refdes)?.anchorWorld();
   return own && own.x > x ? 'left' : 'right';
 }

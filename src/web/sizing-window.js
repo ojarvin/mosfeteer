@@ -43,7 +43,7 @@ function parseLabelMode(text) {
 }
 
 /** Whether a part has a size or value a label could show. */
-const labelled = (c) => (sized(c) ? !!c.size : valued(c) && !!String(c.value ?? '').trim());
+const labeled = (c) => (sized(c) ? !!c.size : valued(c) && !!String(c.value ?? '').trim());
 
 /** Where a part's size or value label stands: hidden, below, or name. */
 function labelMode(c) {
@@ -88,10 +88,10 @@ const COLUMNS = [
   },
   {
     key: 'label', head: 'Label', title: 'Label on the drawing', takes: (c) => sized(c) || valued(c),
-    text: (c) => (labelled(c) ? LABEL_MODES[labelMode(c)] : ''),
+    text: (c) => (labeled(c) ? LABEL_MODES[labelMode(c)] : ''),
     check: parseLabelMode,
     set: (c, text) => setLabelMode(c, parseLabelMode(text)),
-    clear: (c) => labelled(c) && setLabelMode(c, 'hidden'),
+    clear: (c) => labeled(c) && setLabelMode(c, 'hidden'),
   },
   {
     key: 'value', head: 'Value', title: 'Value (10k, 1p)', takes: valued,
@@ -102,7 +102,7 @@ const COLUMNS = [
 ];
 
 function setLabelMode(c, mode) {
-  if (!labelled(c)) throw new Error(sized(c) ? 'needs W and L first' : 'needs a value first');
+  if (!labeled(c)) throw new Error(sized(c) ? 'needs W and L first' : 'needs a value first');
   if (sized(c)) editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: mode === 'name', hidden: mode === 'hidden' });
   else editor.circuit.setValueLabel(c.refdes, mode === 'name' ? 'replace' : mode === 'below' ? 'beside' : null);
 }
@@ -219,7 +219,7 @@ function buildRows() {
         ...(draft ? { title: 'Needs both W and L' } : {}),
         text: takes && column.key !== 'label' ? column.text(c) : '',
       });
-      if (column.key === 'label' && labelled(c)) {
+      if (column.key === 'label' && labeled(c)) {
         td.append(el('span', { class: 'sizing-choice', text: column.text(c) }), el('span', { class: 'sizing-chevron', 'aria-hidden': 'true', text: '▾' }));
       }
       return td;
@@ -234,8 +234,8 @@ function buildRows() {
 function openLabelMenu(cell) {
   const part = rows[rowIndex(cell.refdes)];
   const td = win.body.querySelector(`tr[data-refdes="${CSS.escape(cell.refdes)}"] td[data-key="label"]`);
-  if (!part || !labelled(part) || !td) return;
-  const parts = inRange(cell) ? rangeParts().filter(labelled) : [part];
+  if (!part || !labeled(part) || !td) return;
+  const parts = inRange(cell) ? rangeParts().filter(labeled) : [part];
   const box = td.getBoundingClientRect();
   const menu = openMenuAt(box.left, box.bottom + 2, parts.length > 1 ? `Label of ${parts.length} parts` : 'Label');
   if (!menu) return;

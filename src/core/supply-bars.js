@@ -72,7 +72,7 @@ function gapBlocked(circuit, gap) {
   return false;
 }
 
-/** The bar pieces to draw between joined neighbours:
+/** The bar pieces to draw between joined neighbors:
  *  [{ from, to, rect }] with world rectangles. */
 export function supplyBarJoins(circuit) {
   const joins = [];
@@ -96,7 +96,7 @@ export function supplyBarJoins(circuit) {
   return joins;
 }
 
-/** Joined neighbours merged into continuous bars, each spanning its end
+/** Joined neighbors merged into continuous bars, each spanning its end
  *  supplies' slabs: [{ refs, rect }]. Drawing one shape over the slabs, rather
  *  than filling only the gaps, leaves no anti-aliased seam where a gap meets a
  *  slab edge. */
@@ -119,7 +119,7 @@ export function supplyBars(circuit) {
 
 /** Owned labels that a joined bar keeps out of sight. Every supply on a bar
  *  carries the rail name in its own label, so electrical naming never depends
- *  on the drawing; the bar shows one of them (its first labelled supply's)
+ *  on the drawing; the bar shows one of them (its first labeled supply's)
  *  and hides the rest. Splitting the bar shows them all again. */
 export function hiddenSupplyBarLabels(circuit) {
   const hidden = new Set();

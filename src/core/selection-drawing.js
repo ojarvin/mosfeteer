@@ -106,7 +106,7 @@ export function selectionDrawing(document, selection = {}, options = {}) {
     x: bounds.x - padding, y: bounds.y - padding,
     w: Math.max(1, bounds.w + padding * 2), h: Math.max(1, bounds.h + padding * 2),
   };
-  // A page guide pads the picture to the guide's width, centred on what was
+  // A page guide pads the picture to the guide's width, centered on what was
   // drawn, wherever that sat on the canvas (as the export dialog's file does).
   const guide = normalizePageGuide(options.pageGuide);
   if (guide) {

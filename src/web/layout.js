@@ -109,8 +109,8 @@ export function distributionPlan(items, axis, measure = 'gaps', grid = GRID) {
 
 // Align to: the selected set moves as one rigid piece so that a feature of its
 // outline lands on a matching feature of another object. Edges align along
-// their own axis only. An edge's midpoint centres along that edge (the middle
-// of the top edge moves only in x), and a corner or the centre moves in both.
+// their own axis only. An edge's midpoint centers along that edge (the middle
+// of the top edge moves only in x), and a corner or the center moves in both.
 
 const EDGES = [
   ['left', 'x', (r) => r.x, (r) => [{ x: r.x, y: r.y }, { x: r.x, y: r.y + r.h }]],
@@ -198,9 +198,9 @@ const MIN_WEIGHT = 0.4; // emphasis of a suggestion at the edge of its reach
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /** Every position at which the moving object would be evenly spaced against
- *  one pair of peers: continuing their run in either direction, or centred
+ *  one pair of peers: continuing their run in either direction, or centered
  *  between them. Pairs are enumerated rather than walked in from the nearest
- *  neighbour, so an unrelated part standing between two of a row does not hide
+ *  neighbor, so an unrelated part standing between two of a row does not hide
  *  the row, and the order the three were drawn in never matters. */
 function spacingCandidates(peers, moving, axis, grid) {
   const other = axis === 'x' ? 'y' : 'x';
@@ -218,7 +218,7 @@ function spacingCandidates(peers, moving, axis, grid) {
       if (pair <= 0 || pair > MAX_SPACING_CELLS * grid) continue;
       // The two are one run only if they stand near each other off the axis,
       // and the moving object only belongs to it if it stands near the run --
-      // loosely, since a port centred between two devices sits well to a side.
+      // loosely, since a port centered between two devices sits well to a side.
       const local = LOCAL_CELLS * grid;
       if (Math.abs(a.anchor[other] - b.anchor[other]) > local) continue;
       // The branch being placed can be a full pitch away from its defining
@@ -228,7 +228,7 @@ function spacingCandidates(peers, moving, axis, grid) {
       if (Math.abs(moving.anchor[other] - (a.anchor[other] + b.anchor[other]) / 2) > local) continue;
       const alike = [a, b].every((peer) => peer.type === moving.type && peer.rotation === moving.rotation);
       // How far the run stands off to the side of the object. Two branches of
-      // a symmetric stage offer the same centre from both sides; the guide has
+      // a symmetric stage offer the same center from both sides; the guide has
       // to name the one being worked next to, not its mirror image.
       const aside = Math.max(...[a, b].map((peer) => Math.abs(peer.anchor[other] - moving.anchor[other])));
       // Continuing a run needs the pitch itself to be a plausible spacing, and
@@ -252,10 +252,10 @@ function spacingCandidates(peers, moving, axis, grid) {
  *  reach: no target further away than half the interval it would create, so
  *  crossing the midpoint hands over to the next position along.
  *
- *  A target off the grid is reported rather than hidden. Only a centre can be
+ *  A target off the grid is reported rather than hidden. Only a center can be
  *  one -- continuing a run from two grid-aligned peers always lands on the
  *  grid -- and it means the pair's own gap is an odd number of cells, so there
- *  is no centre to place anything on. Saying so where it is being attempted is
+ *  is no center to place anything on. Saying so where it is being attempted is
  *  what steers a layout toward even gaps; the guide states the half-cell
  *  intervals it would take, and the remedy (move the pair one cell apart or
  *  together) follows from that. */
@@ -270,7 +270,7 @@ function spacingGuide(peers, moving, axis, grid) {
   };
   const within = spacingCandidates(peers, moving, axis, grid).filter(({ target, span }) =>
     span >= MIN_INTERVAL_CELLS * grid && Math.abs(target - m) <= reach(span)
-    // An odd gap is only worth reporting where a centre is being attempted.
+    // An odd gap is only worth reporting where a center is being attempted.
     && (nearGrid(target - m, grid) || Math.abs(target - m) < grid)
     && (target === m || !occupied(target)));
   // Keep the closest defining couple stable first. Ranking target distance
@@ -348,7 +348,7 @@ function spacingGuide(peers, moving, axis, grid) {
       };
     }
   }
-  // A suggestion fades with its distance, so in a crowded neighbourhood the
+  // A suggestion fades with its distance, so in a crowded neighborhood the
   // relationship about to be reached reads first and far offers stay quiet.
   const awayCells = Math.abs(best.target - m) / grid;
   const reachCells = reach(best.span) / grid;
@@ -370,7 +370,7 @@ function spacingGuide(peers, moving, axis, grid) {
 
 /** The nearest peer on each side that the moving object currently shares a row
  *  (`axis:'y'`) or column (`axis:'x'`) with, as one line through their anchors.
- *  Only the immediate neighbours, and only within `reach` cells: alignment
+ *  Only the immediate neighbors, and only within `reach` cells: alignment
  *  reaches much further than spacing, because a distant row is exactly the one
  *  that cannot be judged by eye, but a part on the far side of the drawing
  *  shares the row by coincidence. */
@@ -440,7 +440,7 @@ export function placementGuides(items, moving, grid = GRID) {
     // relationship is otherwise equal.
     const spacing = spacingGuide(others, moving, axis, grid);
     if (spacing) guides.push(spacing);
-    // Nearby neighbours first, like parts before any part; only then the
+    // Nearby neighbors first, like parts before any part; only then the
     // longer reach, so a distant peer never displaces a local one.
     const align = alignGuide(alike, moving, axis, grid, MAX_SPACING_CELLS)
       || alignGuide(others, moving, axis, grid, MAX_SPACING_CELLS)
@@ -476,7 +476,7 @@ export function describeGuides(guides = []) {
     if (guide.kind === 'align') return `${guide.axis === 'y' ? 'row' : 'column'} with ${peers(guide)}`;
     const spacing = `even ${guide.axis === 'x' ? 'horizontal' : 'vertical'} spacing ${guide.cells} cells (${peers(guide)})`;
     if (guide.direct) return `${guide.axis === 'x' ? 'horizontal' : 'vertical'} spacing ${guide.cells} cells (${peers(guide)})`;
-    if (guide.offGrid) return `no grid centre between ${peers(guide)}: an odd gap halves to ${guide.cells} cells`;
+    if (guide.offGrid) return `no grid center between ${peers(guide)}: an odd gap halves to ${guide.cells} cells`;
     return guide.exact ? spacing : `${spacing} ${direction(guide)}`;
   }).join(' · ');
 }

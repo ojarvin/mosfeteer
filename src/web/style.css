@@ -4798,7 +4798,7 @@ button.off {
 }
 
 /* One animated progress value (--radial-t, 0 -> 1) drives each item: it
-   sweeps a quarter turn around the hub while travelling out from the centre
+   sweeps a quarter turn around the hub while traveling out from the center
    and eases onto the ring. The final rotate() cancels the sweep, so labels
    stay upright the whole way. Registered so the value interpolates. */
 @property --radial-t {
@@ -6137,7 +6137,7 @@ details.analysis-options > * + * {
   margin-left: -1.2em;
 }
 
-.bode-plots-view .bode-cancelled {
+.bode-plots-view .bode-canceled {
   color: var(--text-dim);
   font-size: var(--text-sm);
 }
@@ -6701,7 +6701,7 @@ details.analysis-options > * + * {
 
 /* Toolbars step aside for a camera move (chrome-slide.js): away, each slides
    off toward its own edge. The editor's go with body.chrome-away, the
-   Atlas's with .atlas.chrome-away. `translate` stacks on the centring
+   Atlas's with .atlas.chrome-away. `translate` stacks on the centering
    transforms some of them already have. */
 [data-editor-edge],
 [data-atlas-edge] {
@@ -7082,7 +7082,7 @@ body.chrome-away [data-editor-edge="right"] {
 }
 
 /* A holder with nothing in it yet (no result, no issues) takes no room:
-   in the column's gap it would double the space between its neighbours. */
+   in the column's gap it would double the space between its neighbors. */
 .signal-flow-section > div:empty {
   display: none;
 }

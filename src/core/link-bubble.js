@@ -19,10 +19,10 @@ const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap &
 /**
  * Lay out bubbles: `requests` [{ id, part: rect, size: { w, h }, offset? }]
  * (the child drawing's size; `offset` pins the frame's top-left corner at
- * that displacement from the part's centre, where the user dragged it).
+ * that displacement from the part's center, where the user dragged it).
  * Several parts linked to one design share a bubble: `parts` [rect, ...] in
  * place of `part`, each with its own connector; `offset` is then from the
- * first one's centre. Returns [{ id, angle, frame, image, connectors:
+ * first one's center. Returns [{ id, angle, frame, image, connectors:
  * [[from, to], ...], connector }]: `frame` is the box around the child with
  * room for its caption, `image` where the child is drawn, `connector` the
  * first part's.
@@ -44,7 +44,7 @@ export function layoutBubbles(drawing, requests, {
   const placed = [];
   const connectors = [];
   const out = [];
-  const centre = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
+  const center = { x: drawing.x + drawing.w / 2, y: drawing.y + drawing.h / 2 };
   const partsOf = (request) => request.parts || [request.part];
   // Pinned bubbles go first, where they were put; the rest keep clear of them.
   const sorted = [...requests].sort((a, b) => (!!b.offset - !!a.offset) || (partsOf(a)[0].y - partsOf(b)[0].y) || (partsOf(a)[0].x - partsOf(b)[0].x));
@@ -57,13 +57,13 @@ export function layoutBubbles(drawing, requests, {
     // Each part's connector to a frame: from where it leaves the part to the
     // nearest point of the frame.
     const reach = (frame) => parts.map((part) => {
-      const pc = centreOf(part);
+      const pc = centerOf(part);
       const to = { x: clamp(pc.x, frame.x, frame.x + w), y: clamp(pc.y, frame.y, frame.y + h) };
       return [exitPoint(part, pc, to), to];
     });
     let best = null;
     if (offset) {
-      const pc = centreOf(parts[0]);
+      const pc = centerOf(parts[0]);
       const frame = { x: snap(pc.x + offset.dx), y: snap(pc.y + offset.dy), w, h };
       best = { angle: previous?.get(id) ?? 0, frame, lines: reach(frame) };
     }
@@ -76,7 +76,7 @@ export function layoutBubbles(drawing, requests, {
       let t = Math.min(tx, ty);
       let frame = null;
       for (let push = 0; push < 60; push++, t += GRID) {
-        const candidate = { x: snap(centre.x + u.x * t - w / 2), y: snap(centre.y + u.y * t - h / 2), w, h };
+        const candidate = { x: snap(center.x + u.x * t - w / 2), y: snap(center.y + u.y * t - h / 2), w, h };
         if (!overlaps(candidate, drawing, gap - GRID) && !placed.some((other) => overlaps(candidate, other, GRID))) {
           frame = candidate;
           break;
@@ -104,10 +104,10 @@ const STAY_BONUS = 6;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const sameRect = (a, b) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
-const centreOf = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+const centerOf = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 const contains = (outer, inner) => inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
 
-/** Where the line from the part's centre toward `to` leaves the part. */
+/** Where the line from the part's center toward `to` leaves the part. */
 function exitPoint(part, pc, to) {
   const dx = to.x - pc.x;
   const dy = to.y - pc.y;

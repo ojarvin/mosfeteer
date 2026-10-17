@@ -200,7 +200,7 @@ function normalizeBusCount(value) {
 /** Persistent net highlight colors, in cycling order. Palette tokens, so a
  * highlight follows the palette like any other colored object. The order
  * alternates warm and cool hues, each far round the color wheel from the one
- * before, so neighbouring nets highlighted in turn are easy to tell apart. */
+ * before, so neighboring nets highlighted in turn are easy to tell apart. */
 export const NET_HIGHLIGHT_COLORS = Object.freeze([
   'red', 'teal', 'yellow', 'indigo', 'orange', 'green', 'magenta', 'blue',
   'lime', 'purple', 'brown', 'emerald', 'pink', 'cyan', 'crimson', 'cobalt',
@@ -1121,7 +1121,7 @@ function analysisValuesJSON(values) {
   } };
 }
 
-/** A plot of several magnitude responses (signal-flow analysis): coloured
+/** A plot of several magnitude responses (signal-flow analysis): colored
  *  traces of dB against log frequency, each named by its TeX equation. */
 function normalizeResponsePlot(plot) {
   const low = Number(plot.range?.low);
@@ -1176,7 +1176,7 @@ function normalizeLocusPlot(plot) {
   };
 }
 
-/** A step-response plot (signal-flow analysis): coloured traces of output
+/** A step-response plot (signal-flow analysis): colored traces of output
  *  against time (samples, or the coefficients' time), sampled ones as stairs. */
 function normalizeStepPlot(plot) {
   const low = Number(plot.range?.low);
@@ -1193,7 +1193,7 @@ function normalizeStepPlot(plot) {
   return { kind: plot.kind === 'wave' ? 'wave' : 'step', unit: plot.unit === 'n' ? 'n' : 't', range: { low, high }, traces };
 }
 
-/** A swing plot (signal-flow simulation): coloured traces of each net's
+/** A swing plot (signal-flow simulation): colored traces of each net's
  *  peak (dBFS) against the input amplitude (dBFS); an overloaded run is null. */
 function normalizeSwingPlot(plot) {
   const low = Number(plot.range?.low);
@@ -2000,7 +2000,7 @@ export class ComponentInstance {
     };
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
-    // A supply may draw its bar joined to aligned same-rail neighbours
+    // A supply may draw its bar joined to aligned same-rail neighbors
     // (see supply-bars.js). Visual only: it never adds connectivity.
     this.joinBar = this.type === 'supply' && opts.joinBar === true;
   }
@@ -2839,7 +2839,7 @@ export class Circuit {
     }
   }
 
-  /** Join (or stop joining) a supply's bar to its aligned same-rail neighbours. */
+  /** Join (or stop joining) a supply's bar to its aligned same-rail neighbors. */
   setSupplyBarJoin(refdes, join = true) {
     const component = this.getComponent(refdes);
     if (component.type !== 'supply') throw new Error(`component ${component.refdes} is not a supply; only supply bars join`);
@@ -2986,9 +2986,9 @@ export class Circuit {
       });
       if (component.valueLabel === 'beside' && name) {
         const at = name.anchorWorld();
-        const centre = component.transform;
+        const center = component.transform;
         // Above a name that is above the part, else below the name.
-        const up = at.y < centre.y && Math.abs(at.y - centre.y) >= Math.abs(at.x - centre.x);
+        const up = at.y < center.y && Math.abs(at.y - center.y) >= Math.abs(at.x - center.x);
         label.moveTo(at.x, at.y + (up ? -2 : 2) * GRID);
       }
     } else if (label._text !== text) {
@@ -3024,7 +3024,7 @@ export class Circuit {
     const dither = component.type === 'dither';
     const ditherTex = () => { const { shape, amplitude } = parseDither(component.value); return `\\text{${shape}} \\pm ${Number(amplitude.toPrecision(6))}\\,\\text{FS}`; };
     const text = `$${quantizer ? `N = ${component.value}` : dither ? ditherTex() : gain ? gainDisplay(component.value) : transferFunctionDisplay(component.value, variable)}$`;
-    // A gain's short coefficient sits inside its triangle (centred on its
+    // A gain's short coefficient sits inside its triangle (centered on its
     // centroid, the part's origin); a longer one beside it, by one rule in
     // world terms: above a triangle the signal crosses horizontally, to the
     // right of one it runs up or down through. Re-placed on every transform.
@@ -3618,7 +3618,7 @@ export class Circuit {
     // name makes that marker local.  Persist the same child label used by the
     // inline reference editor so analysis and the net list agree about the
     // new rail scope. A batch rename (`markerLabels: false`) renames the rail
-    // itself instead: its markers stay unlabelled.
+    // itself instead: its markers stay unlabeled.
     if (canonical && markerLabels) {
       for (const terminal of net.terminals) {
         const component = this.components.get(terminal.comp);
@@ -3990,7 +3990,7 @@ export class Circuit {
    * keeps its side and goes where it is put while its box still touches the
    * wire (a corner at a wire end is enough); pulled out past a wire end, it
    * sits beyond that end on the far side -- beside a horizontal wire's end,
-   * vertically centred on it and aligned toward it; otherwise it lands on the
+   * vertically centered on it and aligned toward it; otherwise it lands on the
    * nearest point of the wire, on the side the point is on.
    */
   netLabelDragPlacement(label, point) {
@@ -4202,7 +4202,7 @@ export class Circuit {
   // ----- connectivity -------------------------------------------------
 
   /** Outward pin direction honoring the terminal's explicit `dir` (via the
-   *  transform), falling back to the bbox-centre heuristic — matches the editor. */
+   *  transform), falling back to the bbox-center heuristic — matches the editor. */
   _pinDir(c, t, wx, wy) {
     if (t.dir) {
       const d = applyDir(c.transform, t.dir.x, t.dir.y);

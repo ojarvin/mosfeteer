@@ -75,12 +75,12 @@ multiplies a signal: elsewhere superposition removes it, as for zero.
 The solve reduces the graph the way it is done by hand
 (`eliminateSignals`): each signal is a weighted sum of others, so the
 cheapest node (fewest inputs times readers) is removed next, a self-loop
-folding into `1/(1 - L)`, with common factors cancelled as the coefficients
+folding into `1/(1 - L)`, with common factors canceled as the coefficients
 grow. A fourth-order modulator with a dozen symbolic coefficients solves in a
 fraction of a second this way, where a generic matrix elimination runs out
 of its work limit.
 
-Results are exact rational functions with the common factors cancelled
+Results are exact rational functions with the common factors canceled
 (`polynomial-gcd.js`), shown in `s` as descending powers with a monic
 denominator, and in `z` over the denominator's highest power: the
 denominator runs `1, z^-1, z^-2 ...` and the numerator keeps the powers it
@@ -166,8 +166,8 @@ view (`plot.kind: 'wave'`, laid out as a step plot), the nets named beside
 them; Update plots runs the diagram again for it, its nets by name and its
 time span kept.
 
-Responses go onto one **graph** of magnitudes, a colour per trace
-named by its ratio (`OUT/IN`) in that colour, its dB axis fitted to the
+Responses go onto one **graph** of magnitudes, a color per trace
+named by its ratio (`OUT/IN`) in that color, its dB axis fitted to the
 curves in whole 20 dB steps. With an s result on it, the frequency axis
 is a choice: **ω** in the coefficients' own units, or **f/fs**, which reads
 s in units of 1/Ts (a continuous-time loop filter normalized to its sample
@@ -179,7 +179,7 @@ outputs can be compared; each can be hidden or removed, and each result's
 **On the graph** switch takes its response off the graph or puts it back. **Annotate graph**
 puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
-traces' names as math labels in their colours beside it, children of its
+traces' names as math labels in their colors beside it, children of its
 box, lined up once the browser has measured them (main.js
 `alignLabelColumn`), and the coefficients' numbers under them one a line; **Annotate equations** writes the equations under the drawing.
 
@@ -219,7 +219,7 @@ pulse response, read just before each `t = nT`, so a pulse edge landing on
 a sample counts from the next one (an NRZ DAC with no excess delay gives
 its natural `z^-1`), as `C e^{A delta} (I - e^{AT} z^-1)^-1 B` in
 controllable form -- repeated poles (integrators) need no special case, and
-the pole and zero a DAC's `1/s` leaves at `z = 1` are cancelled. The
+the pole and zero a DAC's `1/s` leaves at `z = 1` are canceled. The
 sampled side is then solved in z.
 
 So a sampled loop's results are numbers, worked out again as the sliders
@@ -471,7 +471,7 @@ meets every limit. Run scores the candidates in worker threads
 (`src/web/optimize-worker.js`; in this thread when the page is opened from a
 file). A run opens its own small
 window (`optimize-window.js`): the specs' transfer functions at the numbers
-it started from (grey) and at its best so far (in colour, redrawn with
+it started from (gray) and at its best so far (in color, redrawn with
 each new best), the progress bar, and Stop, which turns to Close when it
 is done; closing the window leaves the run going, its progress back in
 the analysis window. The best numbers come back beside the

@@ -11,7 +11,7 @@ function snapP(p) {
 
 /**
  * Collapse a polyline: drop consecutive duplicates and any point that is
- * collinear with its neighbours (so output is the minimal list of corners).
+ * collinear with its neighbors (so output is the minimal list of corners).
  */
 function compressElbow(pts) {
   const out = [];
@@ -160,7 +160,7 @@ class MinHeap {
 /** Multi-source Dijkstra over the grid graph. `initDist[v]` seeds each source
  *  (single source = terminal escape; many sources = one per split vertex of the
  *  Steiner DP). Returns final distances and a predecessor pointer per vertex. */
-function gridDijkstra(initDist, adj, V, cancelled = () => false) {
+function gridDijkstra(initDist, adj, V, canceled = () => false) {
   const dist = new Float64Array(V);
   const par = new Int32Array(V).fill(-1);
   const heap = new MinHeap();
@@ -170,7 +170,7 @@ function gridDijkstra(initDist, adj, V, cancelled = () => false) {
   }
   let work = 0;
   while (heap.size) {
-    if ((work++ & 255) === 0 && cancelled()) return null;
+    if ((work++ & 255) === 0 && canceled()) return null;
     const [d, v] = heap.pop();
     if (d > dist[v]) continue;
     for (const e of adj[v]) {
@@ -285,7 +285,7 @@ function edgeWeight(a, b, env) {
 /** Build the coarse-grid graph over cell rows y0..y1 × cols x0..x1 (inclusive).
  *  Terminals are grid points; the graph's vertices are every grid cell in the
  *  rectangle, edges are the legal one-cell steps. */
-function buildGridGraph(x0, y0, x1, y1, terminals, env, cancelled = () => false) {
+function buildGridGraph(x0, y0, x1, y1, terminals, env, canceled = () => false) {
   const W = x1 - x0 + 1;
   const H = y1 - y0 + 1;
   const V = W * H;
@@ -304,7 +304,7 @@ function buildGridGraph(x0, y0, x1, y1, terminals, env, cancelled = () => false)
   let work = 0;
   for (let cy = y0; cy <= y1; cy++) {
     for (let cx = x0; cx <= x1; cx++) {
-      if ((work++ & 255) === 0 && cancelled()) return null;
+      if ((work++ & 255) === 0 && canceled()) return null;
       if (cx < x1) tryEdge(cx, cy, cx + 1, cy);
       if (cy < y1) tryEdge(cx, cy, cx, cy + 1);
     }
@@ -318,13 +318,13 @@ function buildGridGraph(x0, y0, x1, y1, terminals, env, cancelled = () => false)
   };
 }
 
-function graphConnected(adj, V, terminalIds, cancelled = () => false) {
+function graphConnected(adj, V, terminalIds, canceled = () => false) {
   const seen = new Array(V).fill(false);
   const stack = [terminalIds[0]];
   seen[terminalIds[0]] = true;
   let work = 0;
   while (stack.length) {
-    if ((work++ & 255) === 0 && cancelled()) return false;
+    if ((work++ & 255) === 0 && canceled()) return false;
     const v = stack.pop();
     for (const e of adj[v]) {
       if (!seen[e.to]) {
@@ -349,17 +349,17 @@ function segKey(a, b) {
  *  masks seed with a plain Dijkstra; larger masks split into two subsets at a
  *  shared vertex, then relax with a multi-source Dijkstra. Parent/split records
  *  are kept so the optimal tree can be reconstructed edge by edge. */
-function steinerDP(graph, terminals, cancelled = () => false) {
+function steinerDP(graph, terminals, canceled = () => false) {
   const { V, adj, terminalIds } = graph;
   const m = terminals.length;
   const FULL = (1 << m) - 1;
   const g = new Array(1 << m);
   const par = new Array(1 << m);
   for (let i = 0; i < m; i++) {
-    if (cancelled()) return null;
+    if (canceled()) return null;
     const init = new Float64Array(V).fill(Infinity);
     init[terminalIds[i]] = 0;
-    const r = gridDijkstra(init, adj, V, cancelled);
+    const r = gridDijkstra(init, adj, V, canceled);
     if (!r) return null;
     g[1 << i] = r.dist;
     par[1 << i] = r.par;
@@ -378,7 +378,7 @@ function steinerDP(graph, terminals, cancelled = () => false) {
       const gA = g[sub];
       const gB = g[mask ^ sub];
       for (let v = 0; v < V; v++) {
-        if ((work++ & 255) === 0 && cancelled()) return null;
+        if ((work++ & 255) === 0 && canceled()) return null;
         const s = gA[v] + gB[v];
         if (s < h[v]) {
           h[v] = s;
@@ -386,7 +386,7 @@ function steinerDP(graph, terminals, cancelled = () => false) {
         }
       }
     }
-    const r = gridDijkstra(h, adj, V, cancelled);
+    const r = gridDijkstra(h, adj, V, canceled);
     if (!r) return null;
     g[mask] = r.dist;
     par[mask] = r.par;
@@ -396,7 +396,7 @@ function steinerDP(graph, terminals, cancelled = () => false) {
   let bestCost = Infinity;
   const gFull = g[FULL];
   for (let v = 0; v < V; v++) {
-    if ((work++ & 255) === 0 && cancelled()) return null;
+    if ((work++ & 255) === 0 && canceled()) return null;
     if (gFull[v] < bestCost) {
       bestCost = gFull[v];
       bestRoot = v;
@@ -530,11 +530,11 @@ export function steinerBranches(terminals, env = { rects: [], pins: new Map(), w
     const path = smartRoute(unique[0], unique[1], env);
     return path && path.length >= 2 ? [path] : [];
   }
-  const cancelled = () => env?.signal?.aborted || env?.cancelled?.() === true;
+  const canceled = () => env?.signal?.aborted || env?.canceled?.() === true;
   const tree = steinerTree(unique, env);
   if (!tree) {
     // Cancellation skips the pairwise fallback and keeps a connected chain.
-    if (cancelled()) {
+    if (canceled()) {
       const paths = [];
       for (let i = 1; i < k; i++) {
         const path = smartRoute(unique[i - 1], unique[i], env);
@@ -566,7 +566,7 @@ const MAX_EXACT_WORK = 120e6;
 const MAX_EXACT_STATE_CELLS = 2_000_000;
 
 function steinerTree(terminals, env) {
-  const cancelled = () => env?.signal?.aborted || env?.cancelled?.() === true;
+  const canceled = () => env?.signal?.aborted || env?.canceled?.() === true;
   const k = terminals.length;
   let minX = Infinity;
   let minY = Infinity;
@@ -580,7 +580,7 @@ function steinerTree(terminals, env) {
   }
   let margin = 10;
   for (let iter = 0; iter < 6; iter++) {
-    if (cancelled()) return null;
+    if (canceled()) return null;
     const x0 = minX - margin;
     const y0 = minY - margin;
     const x1 = maxX + margin;
@@ -594,14 +594,14 @@ function steinerTree(terminals, env) {
     // its padded grid merely to discover that exact DP is over budget.
     if (k > 10 || V > MAX_EXACT_VERTICES || splitCost + relaxCost > MAX_EXACT_WORK ||
         Math.pow(2, k) * V > MAX_EXACT_STATE_CELLS) return null;
-    const graph = buildGridGraph(x0, y0, x1, y1, terminals, env, cancelled);
+    const graph = buildGridGraph(x0, y0, x1, y1, terminals, env, canceled);
     if (!graph) return null;
-    if (graphConnected(graph.adj, graph.V, graph.terminalIds, cancelled)) {
-      if (cancelled()) return null;
-      const segs = steinerDP(graph, terminals, cancelled);
+    if (graphConnected(graph.adj, graph.V, graph.terminalIds, canceled)) {
+      if (canceled()) return null;
+      const segs = steinerDP(graph, terminals, canceled);
       return segs ? { segs, graph } : null;
     }
-    if (cancelled()) return null;
+    if (canceled()) return null;
     margin = Math.min(margin * 2, 40);
   }
   return null;

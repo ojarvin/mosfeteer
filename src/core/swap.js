@@ -90,7 +90,7 @@ export function swapCandidates(type) {
     const complete = map.size === fromDef.terminals.length && map.size === toDef.terminals.length;
     // Across categories only a whole multi-pin footprint carries over: a
     // resistor can become a switch, but a port never becomes a rail. Signal-
-    // flow parts are analysed as blocks, not drawn: they swap only among
+    // flow parts are analyzed as blocks, not drawn: they swap only among
     // themselves (a transfer function never becomes a drawn filter).
     if (!sameCategory && !(complete && map.size > 1)) continue;
     if (!sameCategory && (category === 'Signal flow' || categoryOf(candidate) === 'Signal flow')) continue;

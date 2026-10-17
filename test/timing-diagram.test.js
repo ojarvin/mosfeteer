@@ -72,11 +72,11 @@ test('the diagram sits under the drawing, one named row per phase, complements a
     assert.ok(parts.every((p) => r.y >= p.y + p.h + 120 || p.y >= r.y + r.h + 120 || r.x >= p.x + p.w + 120 || p.x >= r.x + r.w + 120), 'clear of the parts');
   }
   void drawn;
-  // The waves are centred on the drawing's width.
+  // The waves are centered on the drawing's width.
   const drawing = (() => { const copy = Circuit.fromJSON(circuit.toJSON()); for (const l of [...copy.labels.values()]) if (l.timing) copy.removeLabel(l.id); return copy.inkBounds(); })();
   const left = Math.min(...wavesOf(circuit).map((l) => l.bbox().x));
   const right = Math.max(...wavesOf(circuit).map((l) => l.bbox().x + l.bbox().w));
-  assert.ok(Math.abs((left + right) / 2 - (drawing.x + drawing.w / 2)) <= 20, `centred (${left}..${right} under ${drawing.x}+${drawing.w})`);
+  assert.ok(Math.abs((left + right) / 2 - (drawing.x + drawing.w / 2)) <= 20, `centered (${left}..${right} under ${drawing.x}+${drawing.w})`);
   assert.throws(() => runCommand(circuit, 'timing φ9=01'), /no row "φ9"/);
   assert.throws(() => runCommand(circuit, 'timing 01'), /not PHASE=WAVE/);
   assert.match(runCommand(circuit, 'help').text, /timing \[ROW=WAVE \.\.\.\] \[--add NAME,\.\.\.\]/);

@@ -200,7 +200,7 @@ const buffer = defineSymbol({
 });
 
 // Tri-state gates reuse the ordinary inverter/buffer body and horizontal pins.
-// The enable pin drops from the lower edge at the body's vertical centre.
+// The enable pin drops from the lower edge at the body's vertical center.
 function triStateGate(base, type, description) {
   return defineSymbol({
     ...base,

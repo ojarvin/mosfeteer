@@ -25,7 +25,7 @@ test('a wire through a body is rerouted clear of it', () => {
   assert.equal(circuit.netOfTerminal({ comp: 'R1', term: 'b' }), circuit.netOfTerminal({ comp: 'R2', term: 'a' }));
 });
 
-test('a part\'s label on a neighbour goes back beside its own part', () => {
+test('a part\'s label on a neighbor goes back beside its own part', () => {
   const circuit = new Circuit();
   run(circuit, 'add nmos M1 --at 0 0', 'add nmos M2 --at 240 0');
   circuit.labelOf('M1').moveTo(200, 0);

@@ -318,7 +318,7 @@ const SDM_STEPS = Object.freeze([
   {
     id: 'annotate',
     title: 'Put the graph on the drawing',
-    text: 'Back on **Magnitude**, press **Annotate graph**: the responses go under the drawing, named in their colours.',
+    text: 'Back on **Magnitude**, press **Annotate graph**: the responses go under the drawing, named in their colors.',
     done: (circuit) => [...circuit.labels.values()].some((label) => label.plot?.kind === 'response'),
   },
 ]);
@@ -347,18 +347,18 @@ export const TUTORIALS = Object.freeze([
     blurb: 'An integrator drawn for you: give its switches phases, draw the clock in the timing editor, step through it as beats, and find its H(z). Assumes the basics.',
     start: scIntegratorDrawing,
     steps: SC_STEPS,
-    done: 'You clocked and analysed an SC integrator!',
+    done: 'You clocked and analyzed an SC integrator!',
     finish: 'Tick **Noise** in the analysis window for its kT/C noise, or press **Shift+F5** to present the beats.',
   },
   {
     id: 'sdm',
-    title: 'Analyse a delta-sigma modulator',
+    title: 'Analyze a delta-sigma modulator',
     card: 'First-order ΣΔ',
     name: 'tutorial-sdm',
     blurb: 'A first-order modulator\'s blocks placed for you: close its loop, derive the STF and NTF, move a coefficient, watch it in time, and put the graph on the drawing. Assumes the basics.',
     start: sdmDrawing,
     steps: SDM_STEPS,
-    done: 'You analysed a ΣΔ modulator!',
+    done: 'You analyzed a ΣΔ modulator!',
     finish: 'Try the **Swing** and **Loop** tabs, or add a second integrator for a second-order loop.',
   },
 ]);

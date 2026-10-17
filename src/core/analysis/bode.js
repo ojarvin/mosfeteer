@@ -209,7 +209,7 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots
   // function itself. Leave such pairs out of the corners and the asymptote;
   // the curve, evaluated from the coefficients, is the same either way.
   // Eigenvalues meet only to about a part in 10^6.
-  const { zeros, poles, cancelled } = roots
+  const { zeros, poles, canceled } = roots
     ? cancelCommonRoots(roots.zeros, roots.poles, 1e-6)
     : cancelCommonRoots(polynomialRoots(num), polynomialRoots(den));
   const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0 && Number.isFinite(w));
@@ -249,7 +249,7 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots
     points,
     zeros,
     poles,
-    cancelled,
+    canceled,
     asymptote: magnitudeAsymptote(num, den, zeros, poles, low, high),
     unityGain: unityCrossing(points),
   };
@@ -260,18 +260,18 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots
 export function cancelCommonRoots(zeros, poles, tolerance = 1e-7) {
   const leftPoles = [...poles];
   const leftZeros = [];
-  let cancelled = 0;
+  let canceled = 0;
   for (const zero of zeros) {
     const size = Math.max(cabs(zero), Number.MIN_VALUE);
     const index = leftPoles.findIndex((pole) => cabs(csub(pole, zero)) <= tolerance * Math.max(size, cabs(pole)));
     if (index >= 0) {
       leftPoles.splice(index, 1);
-      cancelled += 1;
+      canceled += 1;
     } else {
       leftZeros.push(zero);
     }
   }
-  return { zeros: leftZeros, poles: leftPoles, cancelled };
+  return { zeros: leftZeros, poles: leftPoles, canceled };
 }
 
 /** The textbook straight-line magnitude: the low-frequency behavior k ω^m,

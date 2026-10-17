@@ -667,13 +667,13 @@ function renameFromPanel(listEl, selector, start) {
   start(ref);
 }
 
-/** Join a supply's bar with its aligned same-rail neighbours. A selection of
+/** Join a supply's bar with its aligned same-rail neighbors. A selection of
  *  several supplies is the scope; a single supply joins its whole row, since a
  *  bar needs two ends. The join is visual only (see core/supply-bars.js). */
 function appendSupplyBarItem(group, comp) {
   const selectedSupplies = [...editor.multi].filter((ref) => editor.circuit.components.get(ref)?.type === 'supply');
   const scope = selectedSupplies.length > 1 ? selectedSupplies : supplyBarRow(editor.circuit, comp.refdes);
-  // Joining pairs each supply only with same-named neighbours, so a selection
+  // Joining pairs each supply only with same-named neighbors, so a selection
   // spanning VDD and VDD2 rows joins each rail's own bars. It splits only
   // when everything in scope is already joined.
   const joined = scope.length > 0 && scope.every((ref) => editor.circuit.components.get(ref)?.joinBar);

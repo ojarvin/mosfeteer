@@ -91,7 +91,7 @@ to include that inset. A net label may sit wherever its box touches its own wire
 an edge, or by one corner at a wire end -- without the wire running through
 its text (`netLabelBoxTouches`, `Circuit#netLabelFits`); its anchor need not
 lie on the wire. Dragged out past a wire end it sits beyond that end on the
-far side, centred on the endpoint and aligned toward it
+far side, centered on the endpoint and aligned toward it
 (`Circuit#netLabelDragPlacement`).
 
 Interface ports are components and therefore also require unique identities.
@@ -141,7 +141,7 @@ wide as its widest text, estimated from measured glyph widths, so the gaps
 between columns read equal. A new table goes right of the drawing, level
 with its top.
 
-Switches (`switch_open`, `switch_closed`) are the other role-labelled parts:
+Switches (`switch_open`, `switch_closed`) are the other role-labeled parts:
 a switch's owned label names its phase (the controlling signal, stored as its
 value; `$...$` is TeX drawn as math, compared by `phaseKey`), not its
 identity, so several switches may share it. Switches on one
@@ -215,7 +215,7 @@ hover glows) in that color without changing their own styles.
   other text and with a part's individual strokes (`inkTouches`), and labels
   steer the router by their text; placement still uses the grid boxes.
 - An active page guide (`src/core/page-guide.js`, an app preference) pads a
-  drawing export to its exact width, centred, so the figure at full column
+  drawing export to its exact width, centered, so the figure at full column
   width gets the guide's text size. The editor draws the same frame.
 - Labels support `_{...}` and `^{...}`. Math uses the vendored Latin Modern
   Math face in `src/web/fonts/`; exports embed it when the drawing contains

@@ -13,7 +13,7 @@ export const MOS_SIZE_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 /** Below the name label, beside the part's conduction column. */
 export const MOS_SIZE_OFFSET = Object.freeze({ x: 40, y: 120 });
 
-// SI prefixes of a length in metres; a bare number is in micrometres, as
+// SI prefixes of a length in meters; a bare number is in micrometers, as
 // sizes are written on schematics (`2/0.18`).
 const PREFIXES = { f: 'f', p: 'p', n: 'n', u: 'u', 'µ': 'u', 'μ': 'u', m: 'm', '': 'u' };
 const PREFIX_TEX = { f: 'f', p: 'p', n: 'n', u: 'μ', m: 'm' };

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighbourTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries } from '../src/web/atlas-layout.js';
+import { ATLAS_CAPTION, ATLAS_GAP, DESK_KEY, LARGE_PX, SMALL_PX, carryDeskPlace, floatClear, layoutAtlas, neighborTile, rectsIntersect, reshapedPlaces, throughDepth, tileAt, tileDetail, viewFitting, viewFittingIn, viewShowing, layoutAtlasShaped, extraShapeTries } from '../src/web/atlas-layout.js';
 import { GRID } from '../src/core/grid.js';
 
 const items = [
@@ -52,7 +52,7 @@ test('a narrow window packs the ball tall, a wide one wide', () => {
   assert.ok(wide.w > 1.3 * wide.h, `wide: ${wide.w} x ${wide.h}`);
 });
 
-test('a desk remembered at another shape fills the window, its neighbours kept', () => {
+test('a desk remembered at another shape fills the window, its neighbors kept', () => {
   const wide = layoutAtlas(many, { aspect: 2 });
   const places = reshapedPlaces(wide.slots, 0.6);
   assert.equal(places.reshaped, true);
@@ -62,9 +62,9 @@ test('a desk remembered at another shape fills the window, its neighbours kept',
   // is kept than a fresh pack at the new shape keeps.
   const ids = many.map((item) => item.id);
   const kept = (before, after) => {
-    const centre = (slots) => ids.map((id) => slots.get(id)).map((slot) => [slot.x + slot.w / 2, slot.y + slot.h / 2]);
-    const a = centre(before);
-    const b = centre(after);
+    const center = (slots) => ids.map((id) => slots.get(id)).map((slot) => [slot.x + slot.w / 2, slot.y + slot.h / 2]);
+    const a = center(before);
+    const b = center(after);
     let same = 0;
     let pairs = 0;
     for (let i = 0; i < a.length; i++) {
@@ -105,10 +105,10 @@ test('picking and arrow navigation find the right tile', () => {
   assert.equal(tileAt(tiles, { x: 10, y: 10 }), a);
   assert.equal(tileAt(tiles, { x: 10, y: 400 + ATLAS_CAPTION / 2 }), a, 'the caption belongs to its tile');
   assert.equal(tileAt(tiles, { x: -500, y: -500 }), null);
-  assert.equal(neighbourTile(tiles, a, { x: 1, y: 0 }), b);
-  assert.equal(neighbourTile(tiles, a, { x: -1, y: 0 }), null);
-  assert.equal(neighbourTile(tiles, a, { x: 0, y: 1 }), c, 'straight in line beats diagonal');
-  assert.equal(neighbourTile(tiles, c, { x: 1, y: 0 }), d);
+  assert.equal(neighborTile(tiles, a, { x: 1, y: 0 }), b);
+  assert.equal(neighborTile(tiles, a, { x: -1, y: 0 }), null);
+  assert.equal(neighborTile(tiles, a, { x: 0, y: 1 }), c, 'straight in line beats diagonal');
+  assert.equal(neighborTile(tiles, c, { x: 1, y: 0 }), d);
 });
 
 test('a fitted view contains the rectangle at the pane aspect', () => {
@@ -127,7 +127,7 @@ test('keeping a pick in sight moves the view only as far as it must', () => {
   assert.deepEqual(viewShowing(view, { x: 900, y: 560, w: 200, h: 100 }), { x: 150, y: 90, w: 1000, h: 600 });
   // Off to the left: the same, the other way; the other axis stays.
   assert.deepEqual(viewShowing(view, { x: -300, y: 100, w: 200, h: 100 }), { x: -350, y: 0, w: 1000, h: 600 });
-  // Larger than the view: centred on that axis.
+  // Larger than the view: centered on that axis.
   assert.deepEqual(viewShowing(view, { x: 2000, y: 100, w: 1500, h: 100 }), { x: 2250, y: 0, w: 1000, h: 600 });
 });
 
@@ -142,9 +142,9 @@ test('a desk packed before keeps its designs where they were', () => {
     const was = first.slots.get(tile.id);
     return was.x !== layout.slots.get(tile.id).x || was.y !== layout.slots.get(tile.id).y;
   }).length;
-  // The grown design moves, and its neighbours close the gap it left; the
+  // The grown design moves, and its neighbors close the gap it left; the
   // rest stay put.
-  assert.ok(moved(kept) <= 3, `only the grown design and the gap's neighbours move (${moved(kept)})`);
+  assert.ok(moved(kept) <= 3, `only the grown design and the gap's neighbors move (${moved(kept)})`);
   assert.ok(moved(kept) < moved(fresh));
   // Unchanged, the desk does not move at all.
   assert.equal(moved(layoutAtlas(items, { previous: first.slots })), 0);
@@ -161,15 +161,15 @@ test('a desk packed before keeps its designs where they were', () => {
 test('designs that share a tag pack near each other', () => {
   const items = Array.from({ length: 10 }, (_, i) => ({ id: `d${i}`, w: 6 * GRID, h: 4 * GRID, tags: i % 2 ? ['adc'] : ['pll'] }));
   const { tiles } = layoutAtlas(items);
-  const centre = (tile) => ({ x: tile.x + tile.w / 2, y: tile.y + tile.h / 2 });
+  const center = (tile) => ({ x: tile.x + tile.w / 2, y: tile.y + tile.h / 2 });
   const spread = (tag) => {
-    const group = tiles.filter((tile) => items.find((item) => item.id === tile.id).tags[0] === tag).map(centre);
+    const group = tiles.filter((tile) => items.find((item) => item.id === tile.id).tags[0] === tag).map(center);
     const mean = { x: group.reduce((sum, p) => sum + p.x, 0) / group.length, y: group.reduce((sum, p) => sum + p.y, 0) / group.length };
     return { mean, radius: Math.max(...group.map((p) => Math.hypot(p.x - mean.x, p.y - mean.y))) };
   };
   const adc = spread('adc');
   const pll = spread('pll');
-  // The two groups sit apart: their centres further apart than either is wide.
+  // The two groups sit apart: their centers further apart than either is wide.
   assert.ok(Math.hypot(adc.mean.x - pll.mean.x, adc.mean.y - pll.mean.y) > Math.min(adc.radius, pll.radius) / 2);
 });
 
@@ -188,7 +188,7 @@ test('a renamed design keeps its remembered place on the desk', () => {
 test('the desk closes the gap a design leaves', () => {
   const items = Array.from({ length: 9 }, (_, i) => ({ id: `d${i}`, w: 6 * GRID, h: 4 * GRID }));
   const first = layoutAtlas(items);
-  // The middle design goes (deleted, or renamed away): a neighbour slides
+  // The middle design goes (deleted, or renamed away): a neighbor slides
   // into its spot, so the hole moves out to the edge of the desk.
   const middle = first.tiles.find((tile) => tile.x <= 0 && tile.x + tile.w >= 0 && tile.y <= 0 && tile.y + tile.h >= 0);
   const after = layoutAtlas(items.filter((item) => item.id !== middle.id), { previous: first.slots });
@@ -269,10 +269,10 @@ test('fitting keeps clear of the top bar and the hint bar', () => {
   const view = viewFittingIn(rect, 1200, 1300, { top: 80, bottom: 60 }, 0.05);
   const k = view.w / 1200; // units per pixel
   assert.ok(Math.abs(view.h / view.w - 1300 / 1200) < 1e-12, 'the whole pane, its shape');
-  // The rect lands between the bars, centred there, with the margin.
+  // The rect lands between the bars, centered there, with the margin.
   const topPx = (rect.y - view.y) / k;
   const bottomPx = (rect.y + rect.h - view.y) / k;
-  assert.ok(Math.abs((topPx - 80) - (1300 - 60 - bottomPx)) < 1e-6, `centred: ${topPx} ${bottomPx}`);
+  assert.ok(Math.abs((topPx - 80) - (1300 - 60 - bottomPx)) < 1e-6, `centered: ${topPx} ${bottomPx}`);
   assert.ok(topPx >= 80 && bottomPx <= 1300 - 60);
   assert.ok(Math.abs((bottomPx - topPx) - (1300 - 140) * 0.9) < 1e-6, 'the margin a share of the free area');
   // Without bars it is viewFitting's.
@@ -280,7 +280,7 @@ test('fitting keeps clear of the top bar and the hint bar', () => {
 });
 
 test('a fresh packing holds the shape it is shown in, kinship notwithstanding', () => {
-  // Relatedness that pulls a neighbourhood into a column: unshaped, the
+  // Relatedness that pulls a neighborhood into a column: unshaped, the
   // desk comes out far wider than the square it is shown in.
   let seed = 19;
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;

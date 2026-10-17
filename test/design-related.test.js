@@ -30,8 +30,8 @@ test('the desk packs designs of one family next to each other', () => {
   const names = ['ota-folded', 'bandgap-core', 'ota-telescopic', 'bandgap-trim', 'ota-5t', 'bandgap-startup'];
   const items = names.map((name) => ({ id: name, name, w: 8 * GRID, h: 6 * GRID }));
   const { tiles } = layoutAtlas(items, { related: relatednessOf(items) });
-  const centre = (id) => { const t = tiles.find((tile) => tile.id === id); return { x: t.x + t.w / 2, y: t.y + t.h / 2 }; };
-  const d = (a, b) => Math.hypot(centre(a).x - centre(b).x, centre(a).y - centre(b).y);
+  const center = (id) => { const t = tiles.find((tile) => tile.id === id); return { x: t.x + t.w / 2, y: t.y + t.h / 2 }; };
+  const d = (a, b) => Math.hypot(center(a).x - center(b).x, center(a).y - center(b).y);
   const within = (family) => { const f = names.filter((n) => n.startsWith(family)); return Math.max(...f.flatMap((a) => f.map((b) => d(a, b)))); };
   const across = Math.min(...names.filter((n) => n.startsWith('ota')).flatMap((a) => names.filter((n) => n.startsWith('bandgap')).map((b) => d(a, b))));
   // Each family's own spread is no wider than two tiles; kin sit together.

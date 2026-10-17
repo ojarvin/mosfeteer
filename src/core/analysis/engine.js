@@ -101,7 +101,7 @@ function symbolicValue(value, primitive, options, ops) {
   return ops.symbol(String(resolved));
 }
 
-function normaliseOptions(options, circuit, symbolic, ops) {
+function normalizeOptions(options, circuit, symbolic, ops) {
   const assumptions = options.assumptions && typeof options.assumptions === 'object'
     ? options.assumptions
     : {};
@@ -392,12 +392,12 @@ function approximatedRoot(root, approximationOptions) {
  *  rest of the analysis from carrying the factor. */
 const EXACT_CANCELLATION_WORK = 8_000_000;
 
-/** Poles, zeros, and degrees from the response with common factors cancelled. */
-function withCancelledRoots(response, value, options, approximationOptions) {
-  const cancelled = value?.kind === 'rational'
+/** Poles, zeros, and degrees from the response with common factors canceled. */
+function withCanceledRoots(response, value, options, approximationOptions) {
+  const canceled = value?.kind === 'rational'
     ? cancelCommonPolynomialFactor(value, { variable: options.variable || 's' })
     : value;
-  const reduced = cancelled === value ? response : analyzeResponse(cancelled, options);
+  const reduced = canceled === value ? response : analyzeResponse(canceled, options);
   return {
     ...response,
     numeratorDegree: reduced.numeratorDegree,
@@ -585,7 +585,7 @@ function asymptoticGain(loopPipeline, element, ops, options, approximationOption
 }
 
 function displayResponse(name, exact, approximation, options, approximationOptions = null) {
-  const selected = withCancelledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
+  const selected = withCanceledRoots(canonicalResponseValue(approximation.selected, options), approximation.selected, options, approximationOptions);
   const exactResponse = canonicalResponseValue(exact, options);
   const argument = selected.hasFrequency ? 's' : null;
   const ac = selected.hasFrequency
@@ -899,7 +899,7 @@ function floatValue(value, primitive, values) {
 export function numericSmallSignal(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   const { ops } = makeEngineOps({});
-  const normalized = normaliseOptions(options, circuit, true, ops);
+  const normalized = normalizeOptions(options, circuit, true, ops);
   const regions = modelRegions(options);
   const base = {
     ...normalized,
@@ -969,7 +969,7 @@ export function numericSmallSignal(circuit, options = {}) {
 export function analyzeSmallSignalV2(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   const { ops, symbolic } = makeEngineOps(options);
-  const normalized = normaliseOptions(options, circuit, symbolic, ops);
+  const normalized = normalizeOptions(options, circuit, symbolic, ops);
   const analysisOptions = { ...normalized, ...(ops.budget ? { budget: ops.budget } : {}) };
   const regions = modelRegions(options);
   const pipelineOptions = {

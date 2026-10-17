@@ -49,7 +49,7 @@ export function applyExportDarkTheme(svg) {
     .replace(/#eee\b/gi, '#2b2b30')
     .replace(/#fff\b/gi, '#161618')
     .replace(/#111\b/gi, '#e8e8ec')
-    // A beat's dimmed grey, re-mixed over the dark paper.
+    // A beat's dimmed gray, re-mixed over the dark paper.
     .replace(/#b8b8b8\b/gi, '#55555a');
 }
 

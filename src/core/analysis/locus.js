@@ -49,7 +49,7 @@ export function rootLocus(evaluate, { from, to, current, steps = 120, ks = locus
   return { variable, steps: out, current: currentPoles ? { k: current, poles: currentPoles } : null, crossings };
 }
 
-/** The locus as a plot annotation keeps it: points coloured by their k. */
+/** The locus as a plot annotation keeps it: points colored by their k. */
 export function locusPlot(locus, { parameter, label, color = COLOR_PALETTE.cobalt } = {}) {
   if (!locus) return null;
   const n = locus.steps.length;

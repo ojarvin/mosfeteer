@@ -203,7 +203,7 @@ test('a beat drawing leaves hidden objects out, or fades them for the editor', (
   assert.ok(omitted.includes('data-ref="R1"'));
   assert.ok(!omitted.includes('data-net-id="N1"'), 'a partial net is drawn as plain ink');
   const faded = svgString(circuit, { beat: { view, fade: true } });
-  // Solid greys, not opacity: overlapping faint strokes would double up.
+  // Solid grays, not opacity: overlapping faint strokes would double up.
   assert.ok(faded.includes(`class="wire-ink" d="M 200 163`) && faded.includes(`stroke="${BEAT_FADE_INK}"`));
   assert.ok(!faded.includes('opacity="0.12"'));
   assert.ok(faded.includes('data-net-id="N1"'), 'the editor keeps the net to click');
@@ -226,7 +226,7 @@ test('a dimmed part stays on the page, faint, with the wire that joins it', () =
   assert.deepEqual(first.wires.get('N1').dimmed.map(({ a, b }) => [a, b]), [[{ x: 200, y: 160 }, { x: 200, y: 0 }]]);
   assert.equal(first.wires.get('N1').shown.length, 2);
   const dimmed = svgString(circuit, { beat: { view: first } });
-  // The dimmed wire and leads share one grey ink path, so joints paint once.
+  // The dimmed wire and leads share one gray ink path, so joints paint once.
   assert.equal((dimmed.match(new RegExp(`class="wire-ink"[^>]*stroke="${BEAT_DIM_INK}"`, 'g')) || []).length, 1);
   assert.deepEqual(visibleBeats(circuit, 'R3'), [0, 1]);
   // Hidden before a leading dim needs saying: it is not implied.
@@ -237,7 +237,7 @@ test('a dimmed part stays on the page, faint, with the wire that joins it', () =
   assert.throws(() => setPresenceFrom(later, 0, ['R3'], 'blink'), /shown, dimmed, or hidden/);
 });
 
-test('an open-ended labelled stub keeps its tip beyond the label', () => {
+test('an open-ended labeled stub keeps its tip beyond the label', () => {
   const circuit = new Circuit();
   run(circuit, 'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0', 'connect M1.g M2.g');
   const net = circuit.netOfTerminal({ comp: 'M1', term: 'g' });

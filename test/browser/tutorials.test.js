@@ -23,7 +23,7 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
 
   test('Learn lists every tutorial with a Start button', async () => {
     assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#help-tutorials .help-tutorial h3')].map((e) => e.textContent)`),
-      ['Draw a five-transistor OTA', 'Clock a switched-capacitor integrator', 'Analyse a delta-sigma modulator']);
+      ['Draw a five-transistor OTA', 'Clock a switched-capacitor integrator', 'Analyze a delta-sigma modulator']);
     assert.equal(await h.evaluate(`document.querySelector('#help-tutorials [data-tutorial="ota"]').id`), 'btn-tutorial');
   });
 

@@ -139,7 +139,7 @@ test('loop gain as a return ratio: an opamp\'s T = A beta, a transistor\'s at it
   const adapted = adaptCombinedReport(loopOf(inverting('gbw'), 'U1'));
   assert.ok(adapted.equationEntries.some((entry) => entry.group === 'loop' && /T\(s\)/.test(entry.result.equation)));
   assert.ok(adapted.reports.loop.exact.numeratorCoefficients);
-  // A part off the analysed circuit says so.
+  // A part off the analyzed circuit says so.
   assert.equal(loopOf(inverting(), 'R1').loop.ok, false);
 });
 

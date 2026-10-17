@@ -677,7 +677,7 @@ function localPool(circuit, problem) {
  */
 /**
  * The run window's plot: each spec's transfer function at the numbers the
- * run started from (grey) and at its best so far (in colour). The diagram
+ * run started from (gray) and at its best so far (in color). The diagram
  * is solved once a run (`solved`); each set of numbers only evaluates it.
  */
 function runPlotter() {

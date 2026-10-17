@@ -5,13 +5,13 @@
  *   paper  a part palette: flick to pick a part, then click to put it down
  *          (hold a sector for its variants: NMOS → bulk NMOS, NPN; rails →
  *          ground, supply, VCM; ...)
- *   pin    connect it: ground, supply, VCM, a port, a labelled stub, a wire
+ *   pin    connect it: ground, supply, VCM, a port, a labeled stub, a wire
  *   part   swap it for a related type (as q)
  *   wire   its net: name it, label it here, tidy it, delete the run, or pick
  *          its highlight color off a color wheel
  *
  * Sector 0 is up and indices run clockwise, so a practiced flick needs no
- * reading; release in the centre cancels. Pointing only lights a sector:
+ * reading; release in the center cancels. Pointing only lights a sector:
  * the drawing changes once, on release, so sweeping the ring costs nothing.
  * The ring geometry is in gestures.js.
  */
@@ -116,7 +116,7 @@ const PIN_RING = [
   { label: 'Stub + label', icon: 'stub', enabled: (radial) => !radial.connected,
     run: (radial) => {
       const out = edit(() => addTerminalStubs(editor.circuit, [radial.refdes], { terms: [`${radial.refdes}.${radial.term}`] }));
-      if (out?.stubs.length) logLine(`${out.stubs[0].ref}: stub labelled ${out.stubs[0].name}`);
+      if (out?.stubs.length) logLine(`${out.stubs[0].ref}: stub labeled ${out.stubs[0].name}`);
       else if (out) logLine(`${radial.refdes}.${radial.term}: a stub there would short`, 'error');
     } },
   { ...pinPort('output', 'Port'), children: [pinPort('input', 'In'), pinPort('output', 'Out'), pinPort('inputoutput', 'In/out'), pinPort('port', 'Port')] },
@@ -288,7 +288,7 @@ function sectorAt(radial, dx, dy) {
 }
 
 /** Follow the pointer: light its sector, and after a rest open
- *  its variants (or, back in the centre of variants, the ring before). */
+ *  its variants (or, back in the center of variants, the ring before). */
 export function highlightRadial(dx, dy) {
   const radial = editor.drag;
   const menu = editor.radialMenuEl;
