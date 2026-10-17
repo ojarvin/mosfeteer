@@ -184,10 +184,20 @@ describe('sizing window', { skip: browserSkip() }, () => {
   test('a passive\'s menu shows its value below the name or in its place; Edit value… types it in the sizing window', async () => {
     const rightClick = async (refdes) => {
       const p = await h.evaluate(`${h.module('editor-state.js')}.then(async (m) => { const c = m.editor.circuit.components.get(${JSON.stringify(refdes)}).transform; return (await ${h.module('canvas-view.js')}).worldToClient(c.x, c.y); })`);
-      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-      await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-      await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
-      await h.until(`!document.querySelector('.component-context-menu').hidden`);
+      // A right press held past the hold time (a busy machine late with the
+      // release) opens the quick-action ring instead: take it back, again.
+      for (let attempt = 0; ; attempt++) {
+        await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+        await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
+        await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+        try {
+          await h.until(`!document.querySelector('.component-context-menu').hidden`, attempt < 2 ? 2000 : 10000);
+          return;
+        } catch (error) {
+          if (attempt >= 2) throw error;
+          await h.key('Escape');
+        }
+      }
     };
     const choose = (submenu, item) => h.evaluate(`(() => {
       [...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith(${JSON.stringify(submenu)})).click();
