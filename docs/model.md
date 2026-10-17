@@ -125,7 +125,10 @@ values, and renames (`renameComponent` rewrites `parts`), and a deleted
 part's row goes. Its box is the size of its layout (`syncTableBox`, whole
 cells from its top-left corner), never resized by hand; anywhere on it
 picks it. Names and headers are in the labels' bold italic, numbers and
-units in the math font (`400 nm`, a thin space between); each column is as
+units in the math font (`400 nm`, a thin space between); a passive's or
+source's value takes its unit (`valueText`: Ω, F, H, A, V), its prefix
+chosen to keep the number whole (`1.5n` reads 1500 pF), and a value that is
+not a number reads as typed; each column is as
 wide as its widest text, estimated from measured glyph widths, so the gaps
 between columns read equal. A new table goes right of the drawing, level
 with its top.

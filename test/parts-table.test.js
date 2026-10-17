@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { GRID } from '../src/core/grid.js';
 import { svgString } from '../src/core/render.js';
-import { lengthText, partsTableLayout, partsTableParts, tableParts } from '../src/core/parts-table.js';
+import { lengthText, valueText, partsTableLayout, partsTableParts, tableParts } from '../src/core/parts-table.js';
 
 function circuitWith(lines) {
   const circuit = new Circuit();
@@ -28,6 +28,22 @@ test('lengths read with their unit, a thin space between: 2u is 2 µm, 400n is 4
   assert.equal(lengthText('2u'), '2\u2009µm');
   assert.equal(lengthText('400n'), '400\u2009nm');
   assert.equal(lengthText('0.18u'), '0.18\u2009µm');
+});
+
+test('values read with their unit, the number whole where a prefix makes it so', () => {
+  const read = (value, type) => valueText(value, type).replace(/\u2009/g, ' ');
+  assert.equal(read('8p', 'capacitor'), '8 pF');
+  assert.equal(read('1.5n', 'capacitor'), '1500 pF');
+  assert.equal(read('0.5p', 'capacitor'), '500 fF');
+  assert.equal(read('1e-12', 'capacitor'), '1 pF');
+  assert.equal(read('10 pF', 'capacitor'), '10 pF', 'a unit typed is kept, not doubled');
+  assert.equal(read('1M', 'resistor'), '1 MΩ', 'M is mega, as in the calculator');
+  assert.equal(read('1meg', 'resistor'), '1 MΩ');
+  assert.equal(read('4.7k', 'resistor'), '4700 Ω');
+  assert.equal(read('3.3', 'resistor'), '3.3 Ω', 'never below the bare unit for one or more');
+  assert.equal(read('10u', 'inductor'), '10 µH');
+  assert.equal(read('1.23456n', 'capacitor'), '1.23456 nF', 'no whole number near: from 1 to 999');
+  assert.equal(read('R_L', 'resistor'), 'R_L', 'a name, as typed');
 });
 
 test('size takes a comma list in one command, and checks every part before changing any', () => {
@@ -74,7 +90,7 @@ test('partstable puts a table right of the drawing, sized to what it lists', () 
   assert.ok(box.y <= drawn.y && box.y > drawn.y - GRID, 'level with its top');
   for (const side of [box.x, box.y, box.w, box.h]) assert.ok(Number.isInteger(side / GRID), 'on the grid');
   const layout = partsTableLayout(circuit, table.table);
-  assert.deepEqual(texts(layout), ['W', 'L', 'm', 'M1', '2\u2009µm', '400\u2009nm', '4', 'M2', '2\u2009µm', '400\u2009nm', '4', 'M3', '10\u2009µm', '1\u2009µm', '1', 'Value', 'R1', '10k']);
+  assert.deepEqual(texts(layout), ['W', 'L', 'm', 'M1', '2\u2009µm', '400\u2009nm', '4', 'M2', '2\u2009µm', '400\u2009nm', '4', 'M3', '10\u2009µm', '1\u2009µm', '1', 'Value', 'R1', '10\u2009kΩ']);
   // Names keep their markup: M_{1} draws M with a subscript 1.
   assert.deepEqual(layout.items.find((item) => item.role === 'name').runs, [{ text: 'M' }, { text: '1', sub: true }]);
   assert.match(svgString(circuit), /class="parts-table"/);

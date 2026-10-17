@@ -79,6 +79,52 @@ export function lengthText(length) {
   return match ? `${match[1]}${THIN_SPACE}${PREFIX_TEXT[match[2]]}m` : String(length || '');
 }
 
+/** The unit each valued part's value is in. */
+const UNITS = {
+  resistor: 'Ω', variable_resistor: 'Ω', impedance: 'Ω',
+  capacitor: 'F', variable_capacitor: 'F',
+  inductor: 'H', variable_inductor: 'H',
+  current_source: 'A', voltage_source: 'V',
+};
+
+// SI prefixes as values are typed (as the calculator reads them: M and meg
+// are mega, m milli, u micro).
+const SI = { a: -18, f: -15, p: -12, n: -9, u: -6, 'µ': -6, 'μ': -6, m: -3, '': 0, k: 3, K: 3, meg: 6, Meg: 6, MEG: 6, M: 6, G: 9, T: 12 };
+const PREFIX_OF = { '-18': 'a', '-15': 'f', '-12': 'p', '-9': 'n', '-6': 'µ', '-3': 'm', 0: '', 3: 'k', 6: 'M', 9: 'G', 12: 'T' };
+const VALUE = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)\s*(meg|Meg|MEG|[afpnuµμmkKMGT]?)\s*(?:Ω|ohms?|F|H|A|V)?$/i;
+
+/** A value as the table shows it: a number with its unit, 8p as 8 pF and
+ *  1M as 1 MΩ, the prefix chosen to keep the number whole where it can
+ *  (1.5n as 1500 pF, 0.5p as 500 fF), else from 1 to 999. Anything that
+ *  is not a number (R_L, g_m) is shown as typed. */
+export function valueText(value, type) {
+  const text = String(value ?? '').trim();
+  const unit = UNITS[type];
+  const match = unit && text.match(VALUE);
+  if (!match) return text;
+  const suffix = match[2];
+  const exponent = SI[suffix] ?? SI[suffix.toLowerCase()];
+  if (exponent === undefined) return text;
+  const number = Number(match[1]) * 10 ** exponent;
+  if (!Number.isFinite(number)) return text;
+  if (number === 0) return `0${THIN_SPACE}${unit}`;
+  const clean = (x) => Number(x.toPrecision(12));
+  // From 1 to 999 in the largest prefix; down a prefix or two while that
+  // makes a whole number below 10000 -- never below the bare unit for a
+  // value of one or more (3.3 Ω, not 3300 mΩ).
+  let step = Math.max(-18, Math.min(12, Math.floor(Math.log10(Math.abs(number)) / 3) * 3));
+  let mantissa = clean(number / 10 ** step);
+  const lowest = Math.abs(number) >= 1 ? 0 : -18;
+  for (let down = step - 3; down >= Math.max(lowest, step - 6) && !Number.isInteger(mantissa); down -= 3) {
+    const candidate = clean(number / 10 ** down);
+    if (Number.isInteger(candidate) && Math.abs(candidate) < 10000) {
+      step = down;
+      mantissa = candidate;
+    }
+  }
+  return `${mantissa}${THIN_SPACE}${PREFIX_OF[step]}${unit}`;
+}
+
 /** The cells of one part as text: name (label markup), and W, L, m or
  *  value; a missing one is a dash. */
 export function partCells(circuit, component) {
@@ -87,7 +133,7 @@ export function partCells(circuit, component) {
     const size = component.size;
     return { name, w: size ? lengthText(size.w) : '–', l: size ? lengthText(size.l) : '–', m: size ? String(size.m) : '' };
   }
-  const value = String(component.value ?? '').trim();
+  const value = valueText(component.value, component.type);
   return { name, value: value || '–' };
 }
 
@@ -115,7 +161,7 @@ function glyphWidth(ch, face) {
   if (/[mw]/.test(ch)) return face.wide;
   if (ch === 'M') return face.M;
   if (ch === 'W') return face.W;
-  if (/[A-Z]/.test(ch)) return face.upper;
+  if (/[A-ZΩ]/.test(ch)) return face.upper;
   return face.lower;
 }
 
@@ -123,6 +169,9 @@ function textWidth(runs, fontSize, kind) {
   const face = kind === 'cell' ? FACES.math : FACES.sans;
   return runs.reduce((sum, run) => sum + [...run.text].reduce((w, ch) => w + glyphWidth(ch, face), 0) * fontSize * (run.sub || run.super ? SCRIPT : 1), 0);
 }
+
+/** A cell's text, a value named in label markup (R_{L}) with its subscript. */
+const cellRuns = (text) => parseLabelRuns(nameMarkup(text || ''));
 
 /** One table row: two cells. */
 export const ROW_PITCH = 2 * GRID;
@@ -133,7 +182,7 @@ const BLOCK_GAP = GRID;
 /**
  * Where everything in a table goes, from its top-left corner: a block for
  * the transistors (name, W, L, and m when any is not 1) and one for the
- * values, each under its own header and rule. Names line up on the left,
+ * values (with their units: valueText), each under its own header and rule. Names line up on the left,
  * numbers on the right. The width and height are whole cells.
  *
  * Returns { w, h, items: [{ type: 'text', x, y, runs, anchor, role } |
@@ -168,7 +217,7 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     // Each column is as wide as its widest cell or header.
     const widths = block.columns.map(([head, key]) => (Math.max(
       textWidth([{ text: head }], fontSize, 'head'),
-      ...block.rows.map((r) => textWidth([{ text: r.cells[key] }], fontSize, 'cell')),
+      ...block.rows.map((r) => textWidth(cellRuns(r.cells[key]), fontSize, 'cell')),
     )));
     const rights = [];
     let x = nameWidth;
@@ -182,7 +231,7 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
     for (const r of block.rows) {
       items.push({ type: 'text', x: 0, y: baseline(row), runs: r.name, anchor: 'start', role: 'name' });
       block.columns.forEach(([, key], index) => {
-        if (r.cells[key]) items.push({ type: 'text', x: rights[index], y: baseline(row), runs: [{ text: r.cells[key] }], anchor: 'end', role: 'cell' });
+        if (r.cells[key]) items.push({ type: 'text', x: rights[index], y: baseline(row), runs: cellRuns(r.cells[key]), anchor: 'end', role: 'cell' });
       });
       row += 1;
     }
