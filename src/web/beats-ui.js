@@ -15,7 +15,7 @@ import { fitView } from './canvas-view.js';
 import { closeComponentContextMenu, appendContextItem, openMenuAt } from './context-menu.js';
 import { editor } from './editor-state.js';
 import { appendMarkupText } from './side-panel.js';
-import { commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } from './main.js';
+import { commit, markModelChanged, recordHistoryEntry, redo, render, selectedComps, selectedLabels, snapshot, undo } from './main.js';
 import { noteTip } from './onboarding.js';
 import { chooseAction } from './file-dialog.js';
 import { PLACE, floatingWindow } from './floating-window.js';
@@ -519,6 +519,11 @@ function syncTimingToggle() {
 // The beats float over the drawing, at the bottom until moved.
 let beatWindow = null;
 
+/** The editor follows the drawing: an undo or a script under it. */
+export function syncTimingEditor() {
+  timingEditor?.follow();
+}
+
 /** Shift+K and the menu item open the editor, or close it when it is open,
  * as the other panels' keys do. */
 export function toggleTimingDialog() {
@@ -541,30 +546,48 @@ function openTimingDialog() {
   }
   // With no switch phases it opens empty: signals are added by name.
   const before = existingTimingDiagram(editor.circuit);
-  // The rows' own waves; a complement with none follows its phase inverted.
-  // An older diagram's don't-care slots read as low.
-  const rows = sources.map((row) => ({
-    key: row.key,
-    source: row.source,
-    // The row a complement follows, by its phase (rows can be reordered).
-    baseKey: row.complementOf !== undefined ? sources[row.complementOf].key : undefined,
-    follows: row.from === 'complement',
-    signal: !!row.signal,
-    wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
-    shift: before?.shifts.get(row.key) || { fall: 0, rise: 0 },
-  }));
+  const rows = [];
   const state = {
     cursor: { row: 0, slot: 0 },
-    slot: before?.slot || DEFAULT_SLOT_CELLS,
-    gaps: before?.gaps ?? 'none',
+    slot: DEFAULT_SLOT_CELLS,
+    gaps: 'none',
     session: null,
     place: false,
     // Arrows, marks and spans on the edges (edge: { row: phase key, at:
     // slot boundary }), and an arrow or span begun at an edge, waiting for
     // its other end.
-    notes: { arrows: [...(before?.arrows || [])], marks: [...(before?.marks || [])], spans: (before?.spans || []).map((span) => ({ ...span })) },
+    notes: { arrows: [], marks: [], spans: [] },
     pending: null,
+    // The model revision the editor's rows were read at or last wrote.
+    seen: null,
   };
+  // The rows and settings as the drawing has them: when the editor opens,
+  // and again whenever the drawing changed under it (an undo, a redo, a
+  // script), so its next edit starts from what is drawn, not from what the
+  // editor held before.
+  const readDrawing = (found = timingRowSources(editor.circuit)) => {
+    const drawn = existingTimingDiagram(editor.circuit);
+    // The rows' own waves; a complement with none follows its phase inverted.
+    // An older diagram's don't-care slots read as low.
+    rows.splice(0, rows.length, ...found.map((row) => ({
+      key: row.key,
+      source: row.source,
+      // The row a complement follows, by its phase (rows can be reordered).
+      baseKey: row.complementOf !== undefined ? found[row.complementOf].key : undefined,
+      follows: row.from === 'complement',
+      signal: !!row.signal,
+      wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
+      shift: drawn?.shifts.get(row.key) || { fall: 0, rise: 0 },
+    })));
+    state.slot = drawn?.slot || DEFAULT_SLOT_CELLS;
+    state.gaps = drawn?.gaps ?? 'none';
+    state.notes = { arrows: [...(drawn?.arrows || [])], marks: [...(drawn?.marks || [])], spans: (drawn?.spans || []).map((span) => ({ ...span })) };
+    state.pending = null;
+    state.session = null;
+    state.cursor.row = Math.max(0, Math.min(state.cursor.row, rows.length - 1));
+    state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
+  };
+  readDrawing(sources);
   const length = () => Math.max(1, ...rows.map((row) => row.wave.length));
   const at = (row, slot) => (row.wave.length ? row.wave[Math.min(slot, row.wave.length - 1)] : '0');
   const baseOf = (row) => rows.find((other) => other.key === row.baseKey);
@@ -631,6 +654,7 @@ function openTimingDialog() {
     markModelChanged();
     if (!state.session) noteTip('timing-drawn');
     state.session = { revision: editor.modelRevision };
+    state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
     if (first && !before) fitView({ animate: true });
     render();
   };
@@ -1057,13 +1081,13 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole period. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
       ]),
       section('Slots', [
         segmented('Slots', [
           button('Add a slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot, { icon: 'add' }),
           button('Remove the slot', 'Remove the slot at the cursor (Delete)', removeSlot, { icon: 'minus' }),
-          button('Repeat the period', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence, { icon: 'repeat' }),
+          button('Repeat the sequence', 'Repeat the sequence (*)', repeatSequence, { icon: 'repeat' }),
         ]),
         element('label', { class: 'timing-width', title: 'Slot width in grid cells' }, [slotInput, element('span', { text: 'cells each' })]),
       ]),
@@ -1097,6 +1121,14 @@ function openTimingDialog() {
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
+    // Undo and redo work here as on the drawing (a field keeps its own).
+    const mod = (event.ctrlKey || event.metaKey) && !event.altKey;
+    if (mod && event.target.tagName !== 'INPUT' && ['z', 'y'].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      if (event.key.toLowerCase() === 'y' || event.shiftKey) redo();
+      else undo();
+      return;
+    }
     // Shift+K closes it again, except while typing a number.
     if (event.key === 'Escape' && cancelPending()) {
       event.preventDefault();
@@ -1109,7 +1141,22 @@ function openTimingDialog() {
   renderPairs();
   renderNotes();
   canvasEl.closest('.canvas-pane').append(dialog);
-  timingEditor = { dialog, grid, close, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
+  /** The drawing changed, not by this editor: read it again. */
+  const follow = () => {
+    if (state.seen?.circuit === editor.circuit && state.seen.revision === editor.modelRevision) return;
+    try {
+      readDrawing();
+    } catch (err) {
+      status.textContent = err.message;
+      state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
+      return;
+    }
+    slotInput.value = String(state.slot);
+    renderGrid();
+    renderPairs();
+    renderNotes();
+  };
+  timingEditor = { dialog, grid, close, follow, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
   timingEditor.window.place();
   syncTimingToggle();
   grid.focus();

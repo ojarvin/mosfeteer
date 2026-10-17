@@ -46544,6 +46544,7 @@ __exports.selectedBeatIndices = selectedBeatIndices;
 __exports.toggleSelectionInBeat = toggleSelectionInBeat;
 __exports.flipSelectedSwitches = flipSelectedSwitches;
 __exports.renderBeatStrip = renderBeatStrip;
+__exports.syncTimingEditor = syncTimingEditor;
 __exports.toggleTimingDialog = toggleTimingDialog;
 __exports.appendBeatContextItems = appendBeatContextItems;
 __exports.openPresenter = openPresenter;
@@ -46560,7 +46561,7 @@ let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js"));
 let closeComponentContextMenu, appendContextItem, openMenuAt; __bind(() => { ({ closeComponentContextMenu, appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let appendMarkupText; __bind(() => { ({ appendMarkupText } = __require("src/web/side-panel.js")); });
-let commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, render, selectedComps, selectedLabels, snapshot } = __require("src/web/main.js")); });
+let commit, markModelChanged, recordHistoryEntry, redo, render, selectedComps, selectedLabels, snapshot, undo; __bind(() => { ({ commit, markModelChanged, recordHistoryEntry, redo, render, selectedComps, selectedLabels, snapshot, undo } = __require("src/web/main.js")); });
 let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); });
 let chooseAction; __bind(() => { ({ chooseAction } = __require("src/web/file-dialog.js")); });
 let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
@@ -47087,6 +47088,11 @@ function syncTimingToggle() {
 // The beats float over the drawing, at the bottom until moved.
 let beatWindow = null;
 
+/** The editor follows the drawing: an undo or a script under it. */
+function syncTimingEditor() {
+  timingEditor?.follow();
+}
+
 /** Shift+K and the menu item open the editor, or close it when it is open,
  * as the other panels' keys do. */
 function toggleTimingDialog() {
@@ -47109,30 +47115,48 @@ function openTimingDialog() {
   }
   // With no switch phases it opens empty: signals are added by name.
   const before = existingTimingDiagram(editor.circuit);
-  // The rows' own waves; a complement with none follows its phase inverted.
-  // An older diagram's don't-care slots read as low.
-  const rows = sources.map((row) => ({
-    key: row.key,
-    source: row.source,
-    // The row a complement follows, by its phase (rows can be reordered).
-    baseKey: row.complementOf !== undefined ? sources[row.complementOf].key : undefined,
-    follows: row.from === 'complement',
-    signal: !!row.signal,
-    wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
-    shift: before?.shifts.get(row.key) || { fall: 0, rise: 0 },
-  }));
+  const rows = [];
   const state = {
     cursor: { row: 0, slot: 0 },
-    slot: before?.slot || DEFAULT_SLOT_CELLS,
-    gaps: before?.gaps ?? 'none',
+    slot: DEFAULT_SLOT_CELLS,
+    gaps: 'none',
     session: null,
     place: false,
     // Arrows, marks and spans on the edges (edge: { row: phase key, at:
     // slot boundary }), and an arrow or span begun at an edge, waiting for
     // its other end.
-    notes: { arrows: [...(before?.arrows || [])], marks: [...(before?.marks || [])], spans: (before?.spans || []).map((span) => ({ ...span })) },
+    notes: { arrows: [], marks: [], spans: [] },
     pending: null,
+    // The model revision the editor's rows were read at or last wrote.
+    seen: null,
   };
+  // The rows and settings as the drawing has them: when the editor opens,
+  // and again whenever the drawing changed under it (an undo, a redo, a
+  // script), so its next edit starts from what is drawn, not from what the
+  // editor held before.
+  const readDrawing = (found = timingRowSources(editor.circuit)) => {
+    const drawn = existingTimingDiagram(editor.circuit);
+    // The rows' own waves; a complement with none follows its phase inverted.
+    // An older diagram's don't-care slots read as low.
+    rows.splice(0, rows.length, ...found.map((row) => ({
+      key: row.key,
+      source: row.source,
+      // The row a complement follows, by its phase (rows can be reordered).
+      baseKey: row.complementOf !== undefined ? found[row.complementOf].key : undefined,
+      follows: row.from === 'complement',
+      signal: !!row.signal,
+      wave: row.from === 'complement' ? [] : [...row.bits].map((level) => (level === '1' ? '1' : '0')),
+      shift: drawn?.shifts.get(row.key) || { fall: 0, rise: 0 },
+    })));
+    state.slot = drawn?.slot || DEFAULT_SLOT_CELLS;
+    state.gaps = drawn?.gaps ?? 'none';
+    state.notes = { arrows: [...(drawn?.arrows || [])], marks: [...(drawn?.marks || [])], spans: (drawn?.spans || []).map((span) => ({ ...span })) };
+    state.pending = null;
+    state.session = null;
+    state.cursor.row = Math.max(0, Math.min(state.cursor.row, rows.length - 1));
+    state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
+  };
+  readDrawing(sources);
   const length = () => Math.max(1, ...rows.map((row) => row.wave.length));
   const at = (row, slot) => (row.wave.length ? row.wave[Math.min(slot, row.wave.length - 1)] : '0');
   const baseOf = (row) => rows.find((other) => other.key === row.baseKey);
@@ -47199,6 +47223,7 @@ function openTimingDialog() {
     markModelChanged();
     if (!state.session) noteTip('timing-drawn');
     state.session = { revision: editor.modelRevision };
+    state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
     if (first && !before) fitView({ animate: true });
     render();
   };
@@ -47625,13 +47650,13 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole period. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
       ]),
       section('Slots', [
         segmented('Slots', [
           button('Add a slot', 'Repeat the slot at the cursor in every row (+)', repeatSlot, { icon: 'add' }),
           button('Remove the slot', 'Remove the slot at the cursor (Delete)', removeSlot, { icon: 'minus' }),
-          button('Repeat the period', 'Copy every wave once after itself: a second period to edit (*)', repeatSequence, { icon: 'repeat' }),
+          button('Repeat the sequence', 'Repeat the sequence (*)', repeatSequence, { icon: 'repeat' }),
         ]),
         element('label', { class: 'timing-width', title: 'Slot width in grid cells' }, [slotInput, element('span', { text: 'cells each' })]),
       ]),
@@ -47665,6 +47690,14 @@ function openTimingDialog() {
   ]);
   dialog.addEventListener('keydown', (event) => {
     event.stopPropagation();
+    // Undo and redo work here as on the drawing (a field keeps its own).
+    const mod = (event.ctrlKey || event.metaKey) && !event.altKey;
+    if (mod && event.target.tagName !== 'INPUT' && ['z', 'y'].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      if (event.key.toLowerCase() === 'y' || event.shiftKey) redo();
+      else undo();
+      return;
+    }
     // Shift+K closes it again, except while typing a number.
     if (event.key === 'Escape' && cancelPending()) {
       event.preventDefault();
@@ -47677,7 +47710,22 @@ function openTimingDialog() {
   renderPairs();
   renderNotes();
   canvasEl.closest('.canvas-pane').append(dialog);
-  timingEditor = { dialog, grid, close, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
+  /** The drawing changed, not by this editor: read it again. */
+  const follow = () => {
+    if (state.seen?.circuit === editor.circuit && state.seen.revision === editor.modelRevision) return;
+    try {
+      readDrawing();
+    } catch (err) {
+      status.textContent = err.message;
+      state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
+      return;
+    }
+    slotInput.value = String(state.slot);
+    renderGrid();
+    renderPairs();
+    renderNotes();
+  };
+  timingEditor = { dialog, grid, close, follow, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
   timingEditor.window.place();
   syncTimingToggle();
   grid.focus();
@@ -60033,7 +60081,7 @@ let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, 
 let installModelFigure; __bind(() => { ({ installModelFigure } = __require("src/web/model-figure.js")); });
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
-let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi } = __require("src/web/beats-ui.js")); });
+let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } = __require("src/web/beats-ui.js")); });
 let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
@@ -62519,6 +62567,7 @@ function render() {
   renderCheckSummary();
   syncAnalysisDock();
   renderBeatStrip();
+  syncTimingEditor();
   renderStatus();
   renderSaveState();
   updateInsertMenu();

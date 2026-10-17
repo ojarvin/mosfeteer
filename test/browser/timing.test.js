@@ -30,7 +30,7 @@ function beaten() {
 
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ(), beaten: beaten() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -161,5 +161,28 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.evaluate(`document.querySelector('.timing-grid').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
     assert.equal(await h.evaluate(`!!document.querySelector('.timing-edge.pending')`), false);
     assert.equal(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`), true);
+  });
+
+  test('an undo under the open editor is what its next edit starts from, and that edit undoes too', async () => {
+    await h.open('repeated');
+    // Left open by the test before, it follows the design opened.
+    if (!(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`))) await h.key('K', { shiftKey: true });
+    await h.until(`document.querySelectorAll('.timing-grid-line')[0]?.querySelectorAll('.timing-cell:not(.new)').length === 4`);
+    const bits = (phase) => h.evaluate(`window.__circuit().labels.find((l) => l.timing?.phase === ${JSON.stringify(phase)} && l.timing.bits)?.timing.bits`);
+    const undoKey = () => h.evaluate(`document.querySelector('.timing-grid').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))`);
+    await gridKey('*');
+    await h.until(`window.__circuit().labels.find((l) => l.timing?.phase === 'CLK' && l.timing.bits)?.timing.bits === '01010101'`);
+    await undoKey();
+    await h.until(`window.__circuit().labels.find((l) => l.timing?.phase === 'CLK' && l.timing.bits)?.timing.bits === '0101'`);
+    await h.until(`document.querySelectorAll('.timing-grid-line')[0].querySelectorAll('.timing-cell:not(.new)').length === 4`);
+    // A slot added after the last: the four undone ones stay undone.
+    await gridKey('End');
+    await gridKey('1');
+    await h.until(`window.__circuit().labels.find((l) => l.timing?.phase === 'CLK' && l.timing.bits)?.timing.bits === '01011'`);
+    assert.equal(await bits('Q'), '00111');
+    await undoKey();
+    await h.until(`window.__circuit().labels.find((l) => l.timing?.phase === 'CLK' && l.timing.bits)?.timing.bits === '0101'`);
+    assert.equal(await bits('Q'), '0011');
+    await h.key('K', { shiftKey: true });
   });
 });
