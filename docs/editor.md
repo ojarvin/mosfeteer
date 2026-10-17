@@ -68,6 +68,11 @@ modules split out of it reach that state through the `editor` accessor
 loads. A module's `installX()` runs its load-time wiring where `main.js` calls
 it, so the call's position keeps the original load order.
 
+Settings → Display → Accent color picks the interface's accent (selection,
+the active tool, focus) from the drawing's palette, or the default teal
+(`src/web/accent.js`): a browser preference like the theme, shaded for
+each theme, never part of a design or its exports.
+
 The sizing window (`Shift+Z`, `src/web/sizing-window.js`) is a grid of
 every transistor's W, L, m and size-label placement and every passive's or
 source's value (`tableParts`, `src/core/parts-table.js`), filled like a

@@ -32,7 +32,7 @@ import { closeFrontWindow } from './floating-window.js';
 import { themeInkSvg } from '../core/style.js';
 import { loadDocument } from '../core/document.js';
 import { snap, GRID } from '../core/grid.js';
-import { applyTransform, distanceToSegment } from '../core/geometry.js';
+import { applyTransform, distanceToSegment, fmt } from '../core/geometry.js';
 import { TRANSFER_FUNCTION_TYPES } from '../core/transfer-function.js';
 import { smartRoute } from '../core/router.js';
 import { moveJunctionEndpoint, wireRunAt, moveWireRun } from '../core/wireedit.js';
@@ -85,6 +85,7 @@ import { installRenumberUi } from './renumber-ui.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
 import { historyDocumentShown, installHistory, renderHistoryWindow } from './history-window.js';
+import { installAccent } from './accent.js';
 import { installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } from './sizing-window.js';
 import { togglePlots } from './plots-window.js';
 import { paddedLineBounds } from './label-measure.js';
@@ -2892,6 +2893,17 @@ export function renderCanvas(modelKey) {
     snapLayerEl.setAttribute('pointer-events', 'none');
     canvasSvgEl.appendChild(snapLayerEl);
     snapPulseKey = '';
+    // The marquee and zoom box follow the pointer on their own, drawn from
+    // the pointer event itself (drawRubber), not from the next frame's
+    // overlay, which also works out what the box would select.
+    rubberEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rubberEl.setAttribute('class', 'rubber-box');
+    rubberEl.setAttribute('pointer-events', 'none');
+    rubberEl.setAttribute('opacity', '0.12');
+    rubberEl.setAttribute('stroke-width', '1.4');
+    rubberEl.setAttribute('stroke-dasharray', '5 4');
+    canvasSvgEl.appendChild(rubberEl);
+    rubberKey = '';
     mountLinkBubbles(canvasSvgEl, overlayEl);
   }
   // Design-check focus is drawn separately (error color); only real selection is blue.
@@ -3025,7 +3037,6 @@ export function renderCanvas(modelKey) {
           : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
         : undefined,
     warnOverlaps: netWarnings,
-    rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview: wire ? currentWirePreview() : null,
     wireMode: !!wire,
     wireSource: wire?.source ? { ...wire.source } : undefined,
@@ -3035,6 +3046,7 @@ export function renderCanvas(modelKey) {
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
   overlayEl.innerHTML = themeInkSvg(withGestureOverlay(overlay, ghost));
+  drawRubber();
   syncLinkBubbles();
   syncSnapPulse();
   flushPendingCommitFeedback();
@@ -3062,6 +3074,29 @@ let hoverAnnotationId = null; // arrow/line whose vertex handles show in Select 
 
 // ----- snap pulse ------------------------------------------------------------------
 let snapLayerEl = null;
+let rubberEl = null;
+let rubberKey = '';
+
+/** Draw the marquee or zoom box where the drag has it now, or hide it. */
+function drawRubber() {
+  if (!rubberEl) return;
+  const r = drag?.rubber;
+  const key = r ? `${r.x0},${r.y0},${r.x1},${r.y1},${r.color || ''}` : '';
+  if (key === rubberKey) return;
+  rubberKey = key;
+  if (!r) {
+    rubberEl.setAttribute('display', 'none');
+    return;
+  }
+  const color = r.color === 'neutral' ? 'var(--svg-faint, #7a7d85)' : 'var(--accent, #0e7c7b)';
+  rubberEl.removeAttribute('display');
+  rubberEl.setAttribute('x', fmt(Math.min(r.x0, r.x1)));
+  rubberEl.setAttribute('y', fmt(Math.min(r.y0, r.y1)));
+  rubberEl.setAttribute('width', fmt(Math.abs(r.x1 - r.x0)));
+  rubberEl.setAttribute('height', fmt(Math.abs(r.y1 - r.y0)));
+  rubberEl.setAttribute('fill', color);
+  rubberEl.setAttribute('stroke', color);
+}
 
 let snapPulseKey = '';
 
@@ -5534,6 +5569,8 @@ export function canvasMouseMove(ev) {
     const r = worldRect(drag.startWorld, w);
     drag.rubber = { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, color: drag.mode === 'zoom' ? 'neutral' : undefined };
     if (!movedOut) drag.rubber = null;
+    // The box at once; what it would select with the next frame.
+    drawRubber();
     scheduleInteractionRender();
     return;
   }
@@ -6266,6 +6303,7 @@ installHierarchy();
 installReferenceWindows();
 installCalculator();
 installNotes();
+installAccent();
 onDocumentShown(notesDocumentShown);
 installSizing();
 onDocumentShown(sizingDocumentShown);

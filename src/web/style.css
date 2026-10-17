@@ -8255,3 +8255,42 @@ body.chrome-away [data-editor-edge="right"] {
 .sizing-status:empty { display: none; }
 .sizing-status[data-kind="error"] { color: var(--danger); }
 .sizing-hint { font-size: var(--text-xs); }
+
+/* The accent chosen under Settings → Display (accent.js): its shade for
+   the theme in use, over the stylesheet's own teal. */
+html[data-accent] {
+  --accent: var(--accent-light);
+  --accent-dim: var(--accent-light-dim);
+}
+
+html.dark[data-accent] {
+  --accent: var(--accent-dark);
+  --accent-dim: var(--accent-dark-dim);
+}
+
+.settings-accent {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 10px 6px;
+}
+
+/* Swatches, not menu rows: the menu's own button look undone. */
+.toolbar-menu .settings-accent .swatch,
+.toolbar-menu .settings-accent .swatch:hover:not(:disabled),
+.toolbar-menu .settings-accent .swatch:focus-visible {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  color: inherit;
+  background: var(--swatch);
+  border-radius: 50%;
+}
+
+.toolbar-menu .settings-accent .swatch::after { content: none; }
+
+.toolbar-menu .settings-accent .swatch[aria-checked="true"] {
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px var(--text);
+}

@@ -231,9 +231,13 @@ describe('editor chrome', { skip: browserSkip() }, () => {
   test('Settings holds the page guides, scrolling, and tips; More and Learn keep the rest', async () => {
     await h.click('#btn-settings');
     await h.until(`!document.getElementById('settings-menu').hidden`);
-    const settings = await h.evaluate(`[...document.querySelectorAll('#settings-menu button')].map((b) => b.id || 'guide:' + (b.dataset.pageGuide ?? ''))`);
+    const settings = await h.evaluate(`[...document.querySelectorAll('#settings-menu button')].map((b) => b.id || (b.dataset.accent !== undefined ? 'accent:' + b.dataset.accent : 'guide:' + (b.dataset.pageGuide ?? '')))`);
     const guides = settings.filter((id) => id.startsWith('guide:'));
     assert.deepEqual(guides, ['guide:', 'guide:ieee-1col', 'guide:ieee-2col', 'guide:a4']);
+    // The accent colors: the default first, then the palette.
+    const accents = settings.filter((id) => id.startsWith('accent:'));
+    assert.equal(accents[0], 'accent:');
+    assert.ok(accents.includes('accent:blue') && accents.length > 10, accents.join());
     for (const id of ['btn-scroll-scheme', 'btn-tips']) assert.ok(settings.includes(id), id);
     assert.equal(await h.evaluate(`document.getElementById('btn-tips').getAttribute('role')`), 'menuitemcheckbox');
     assert.deepEqual(await h.evaluate(`(() => { const card = document.getElementById('tip-card'); return [card.getAttribute('role'), card.hidden]; })()`), ['status', true]);

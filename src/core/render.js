@@ -1291,7 +1291,7 @@ export function svgString(circuit, opts = {}) {
  * halos around each selected component's bbox. opts.nets [net]: highlight
  * (select) net routes. opts.netMarkers [refdes]: reference markers and ports on
  * those nets, glowing like their wires. opts.netSolder [{x,y}]: solder halos
- * on those nets. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
+ * on those nets. (The marquee and zoom box are the editor's own: drawRubber.)
  * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
  * selection bounds, with small edge ticks and a center marker.
  * opts.wireMode: show all component terminals, colored by net membership.
@@ -1773,16 +1773,6 @@ export function editorOverlay(circuit, opts = {}) {
         }
       }
     }
-  }
-
-  if (opts.rubber) {
-    const r = opts.rubber;
-    const x = Math.min(r.x0, r.x1);
-    const y = Math.min(r.y0, r.y1);
-    const w = Math.abs(r.x1 - r.x0);
-    const h = Math.abs(r.y1 - r.y0);
-    const color = r.color === 'neutral' ? NEUTRAL : SELECT;
-    parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
   }
 
   // The draft wire follows the cursor until it is committed.

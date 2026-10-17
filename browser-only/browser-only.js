@@ -34001,7 +34001,7 @@ function svgString(circuit, opts = {}) {
  * halos around each selected component's bbox. opts.nets [net]: highlight
  * (select) net routes. opts.netMarkers [refdes]: reference markers and ports on
  * those nets, glowing like their wires. opts.netSolder [{x,y}]: solder halos
- * on those nets. opts.rubber {x0,y0,x1,y1,color}: marquee/zoom box.
+ * on those nets. (The marquee and zoom box are the editor's own: drawRubber.)
  * opts.centerGuides {x,y,w,h}: sky-blue dashed centerlines for the combined
  * selection bounds, with small edge ticks and a center marker.
  * opts.wireMode: show all component terminals, colored by net membership.
@@ -34483,16 +34483,6 @@ function editorOverlay(circuit, opts = {}) {
         }
       }
     }
-  }
-
-  if (opts.rubber) {
-    const r = opts.rubber;
-    const x = Math.min(r.x0, r.x1);
-    const y = Math.min(r.y0, r.y1);
-    const w = Math.abs(r.x1 - r.x0);
-    const h = Math.abs(r.y1 - r.y0);
-    const color = r.color === 'neutral' ? NEUTRAL : SELECT;
-    parts.push(`<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(h)}" fill="${color}" opacity="0.12" stroke="${color}" stroke-width="1.4" stroke-dasharray="5 4"/>`);
   }
 
   // The draft wire follows the cursor until it is committed.
@@ -39893,6 +39883,114 @@ function addBoxAround(circuit, selection, { text = '' } = {}) {
   return circuit.addAnnotation('box', { x: rect.x, y: rect.y, end: { x: rect.x + rect.w, y: rect.y + rect.h }, text });
 }
 
+};
+
+__modules["src/web/accent.js"] = function (__require, __exports) {
+__exports.mixHex = mixHex;
+__exports.accentShades = accentShades;
+__exports.currentAccent = currentAccent;
+__exports.applyAccent = applyAccent;
+__exports.installAccent = installAccent;
+let COLOR_PALETTE; __bind(() => { ({ COLOR_PALETTE } = __require("src/core/style.js")); });
+/**
+ * The accent color of the editor's own interface (selection, the active
+ * tool, focus, a toggle that is on): the default teal, or one of the
+ * drawing's palette colors (core/style.js), chosen under Settings → Display.
+ * A UI preference, kept in this browser like the theme; the drawing and
+ * its exports never change with it.
+ *
+ * A swatch is shaded for each theme: darker in the light one, so accent
+ * text keeps its contrast on white, and the swatch itself in the dark one;
+ * each with its faint tint (`--accent-dim`). The values are literal colors,
+ * so code that reads `--accent` (the Atlas's canvas) gets one it can draw.
+ */
+
+
+
+const KEY = 'mosfeteer.accent';
+
+/** The choices, the default first (null: the stylesheet's own teal). */
+const ACCENT_CHOICES = [null, ...Object.keys(COLOR_PALETTE).filter((token) => token !== 'gray')];
+
+function channels(hex) {
+  const value = hex.replace('#', '');
+  return [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16));
+}
+
+/** `a` mixed toward `b` by `t` (0..1), as #rrggbb. */
+function mixHex(a, b, t) {
+  const [x, y] = [channels(a), channels(b)];
+  return `#${x.map((c, i) => Math.round(c + (y[i] - c) * t).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** A swatch's accent and tint in each theme. */
+function accentShades(swatch) {
+  return {
+    light: mixHex(swatch, '#000000', 0.3),
+    lightDim: mixHex(swatch, '#ffffff', 0.8),
+    dark: mixHex(swatch, '#000000', 0.12),
+    darkDim: mixHex(swatch, '#111111', 0.72),
+  };
+}
+
+function currentAccent() {
+  try {
+    const token = localStorage.getItem(KEY);
+    return token && COLOR_PALETTE[token] ? token : null;
+  } catch { return null; }
+}
+
+/** Use `token` (a palette color, or null for the default) as the accent. */
+function applyAccent(token) {
+  const root = document.documentElement;
+  const swatch = token && COLOR_PALETTE[token];
+  if (!swatch) {
+    delete root.dataset.accent;
+    for (const name of ['light', 'light-dim', 'dark', 'dark-dim']) root.style.removeProperty(`--accent-${name}`);
+  } else {
+    const shades = accentShades(swatch);
+    root.style.setProperty('--accent-light', shades.light);
+    root.style.setProperty('--accent-light-dim', shades.lightDim);
+    root.style.setProperty('--accent-dark', shades.dark);
+    root.style.setProperty('--accent-dark-dim', shades.darkDim);
+    root.dataset.accent = token;
+  }
+  try {
+    if (swatch) localStorage.setItem(KEY, token);
+    else localStorage.removeItem(KEY);
+  } catch { /* per-session only */ }
+  syncAccentMenu();
+}
+
+function syncAccentMenu() {
+  const current = document.documentElement.dataset.accent || '';
+  for (const button of document.querySelectorAll('#settings-accent [data-accent]')) {
+    button.setAttribute('aria-checked', String(button.dataset.accent === current));
+  }
+}
+
+/** The swatches under Settings → Display, and the accent kept from last time. */
+function installAccent() {
+  const row = document.getElementById('settings-accent');
+  if (row) {
+    for (const token of ACCENT_CHOICES) {
+      const name = token ? token[0].toUpperCase() + token.slice(1) : 'Default';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `swatch${token ? '' : ' swatch-default'}`;
+      button.setAttribute('role', 'menuitemradio');
+      button.dataset.accent = token || '';
+      button.setAttribute('aria-label', name);
+      button.title = name;
+      button.style.setProperty('--swatch', token ? COLOR_PALETTE[token] : 'var(--accent-default, #0e7c7b)');
+      button.addEventListener('click', () => applyAccent(token));
+      row.append(button);
+    }
+  }
+  applyAccent(currentAccent());
+}
+
+__exports.ACCENT_CHOICES = ACCENT_CHOICES;
 };
 
 __modules["src/web/align-tool.js"] = function (__require, __exports) {
@@ -60163,7 +60261,7 @@ let closeFrontWindow; __bind(() => { ({ closeFrontWindow } = __require("src/web/
 let themeInkSvg; __bind(() => { ({ themeInkSvg } = __require("src/core/style.js")); });
 let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
 let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js")); });
-let applyTransform, distanceToSegment; __bind(() => { ({ applyTransform, distanceToSegment } = __require("src/core/geometry.js")); });
+let applyTransform, distanceToSegment, fmt; __bind(() => { ({ applyTransform, distanceToSegment, fmt } = __require("src/core/geometry.js")); });
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
 let moveJunctionEndpoint, wireRunAt, moveWireRun; __bind(() => { ({ moveJunctionEndpoint, wireRunAt, moveWireRun } = __require("src/core/wireedit.js")); });
@@ -60208,6 +60306,7 @@ let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/we
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let installNotes, notesDocumentShown, renderNotesWindow, toggleNotes; __bind(() => { ({ installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } = __require("src/web/notes-window.js")); });
 let historyDocumentShown, installHistory, renderHistoryWindow; __bind(() => { ({ historyDocumentShown, installHistory, renderHistoryWindow } = __require("src/web/history-window.js")); });
+let installAccent; __bind(() => { ({ installAccent } = __require("src/web/accent.js")); });
 let installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing; __bind(() => { ({ installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } = __require("src/web/sizing-window.js")); });
 let togglePlots; __bind(() => { ({ togglePlots } = __require("src/web/plots-window.js")); });
 let paddedLineBounds; __bind(() => { ({ paddedLineBounds } = __require("src/web/label-measure.js")); });
@@ -60229,6 +60328,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -63104,6 +63204,17 @@ function renderCanvas(modelKey) {
     snapLayerEl.setAttribute('pointer-events', 'none');
     canvasSvgEl.appendChild(snapLayerEl);
     snapPulseKey = '';
+    // The marquee and zoom box follow the pointer on their own, drawn from
+    // the pointer event itself (drawRubber), not from the next frame's
+    // overlay, which also works out what the box would select.
+    rubberEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rubberEl.setAttribute('class', 'rubber-box');
+    rubberEl.setAttribute('pointer-events', 'none');
+    rubberEl.setAttribute('opacity', '0.12');
+    rubberEl.setAttribute('stroke-width', '1.4');
+    rubberEl.setAttribute('stroke-dasharray', '5 4');
+    canvasSvgEl.appendChild(rubberEl);
+    rubberKey = '';
     mountLinkBubbles(canvasSvgEl, overlayEl);
   }
   // Design-check focus is drawn separately (error color); only real selection is blue.
@@ -63237,7 +63348,6 @@ function renderCanvas(modelKey) {
           : { kind: labelMode, a: annotationStart || drag?.startWorld, b: drag?.previewEnd || cursor }
         : undefined,
     warnOverlaps: netWarnings,
-    rubber: drag && drag.rubber ? drag.rubber : undefined,
     wirePreview: wire ? currentWirePreview() : null,
     wireMode: !!wire,
     wireSource: wire?.source ? { ...wire.source } : undefined,
@@ -63247,6 +63357,7 @@ function renderCanvas(modelKey) {
   });
   // Ghosts and previews use the same theme-aware ink as the committed drawing.
   overlayEl.innerHTML = themeInkSvg(withGestureOverlay(overlay, ghost));
+  drawRubber();
   syncLinkBubbles();
   syncSnapPulse();
   flushPendingCommitFeedback();
@@ -63274,6 +63385,29 @@ let hoverAnnotationId = null; // arrow/line whose vertex handles show in Select 
 
 // ----- snap pulse ------------------------------------------------------------------
 let snapLayerEl = null;
+let rubberEl = null;
+let rubberKey = '';
+
+/** Draw the marquee or zoom box where the drag has it now, or hide it. */
+function drawRubber() {
+  if (!rubberEl) return;
+  const r = drag?.rubber;
+  const key = r ? `${r.x0},${r.y0},${r.x1},${r.y1},${r.color || ''}` : '';
+  if (key === rubberKey) return;
+  rubberKey = key;
+  if (!r) {
+    rubberEl.setAttribute('display', 'none');
+    return;
+  }
+  const color = r.color === 'neutral' ? 'var(--svg-faint, #7a7d85)' : 'var(--accent, #0e7c7b)';
+  rubberEl.removeAttribute('display');
+  rubberEl.setAttribute('x', fmt(Math.min(r.x0, r.x1)));
+  rubberEl.setAttribute('y', fmt(Math.min(r.y0, r.y1)));
+  rubberEl.setAttribute('width', fmt(Math.abs(r.x1 - r.x0)));
+  rubberEl.setAttribute('height', fmt(Math.abs(r.y1 - r.y0)));
+  rubberEl.setAttribute('fill', color);
+  rubberEl.setAttribute('stroke', color);
+}
 
 let snapPulseKey = '';
 
@@ -65746,6 +65880,8 @@ function canvasMouseMove(ev) {
     const r = worldRect(drag.startWorld, w);
     drag.rubber = { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1, color: drag.mode === 'zoom' ? 'neutral' : undefined };
     if (!movedOut) drag.rubber = null;
+    // The box at once; what it would select with the next frame.
+    drawRubber();
     scheduleInteractionRender();
     return;
   }
@@ -66478,6 +66614,7 @@ installHierarchy();
 installReferenceWindows();
 installCalculator();
 installNotes();
+installAccent();
 onDocumentShown(notesDocumentShown);
 installSizing();
 onDocumentShown(sizingDocumentShown);
@@ -78723,7 +78860,7 @@ function applyTheme(dark) {
       continue;
     }
     button.setAttribute('aria-pressed', String(dark));
-    button.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
+    button.title = 'Dark theme (Shift+D)';
     const icon = button.querySelector('.button-icon');
     if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
   }

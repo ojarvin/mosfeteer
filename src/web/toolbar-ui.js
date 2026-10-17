@@ -473,7 +473,7 @@ function applyTheme(dark) {
       continue;
     }
     button.setAttribute('aria-pressed', String(dark));
-    button.title = dark ? 'Switch to light theme (Shift+D)' : 'Switch to dark theme (Shift+D)';
+    button.title = 'Dark theme (Shift+D)';
     const icon = button.querySelector('.button-icon');
     if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
   }
