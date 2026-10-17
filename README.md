@@ -8,8 +8,8 @@
 <h1 align="center">Mosfeteer</h1>
 
 <p align="center">
-  <b>A schematic editor for analog circuits.</b><br>
-  Draw clean schematics, and keep the notes and analysis with them.
+  <b>A drawing tool for analog circuit schematics.</b><br>
+  For figures in papers, slides, and documentation.
 </p>
 
 <p align="center">
@@ -32,11 +32,11 @@
   <img src="docs/images/editor.webp" alt="A two-stage Miller OTA in the editor. Beside the schematic, its notes give the target and the compensation reasoning with math, mentioning parts such as C_M and M5, and a to-do list; below them, the Plots window shows the voltage gain's magnitude over its phase.">
 </p>
 
-Mosfeteer is a drawing tool for analog schematics: quick to draw in, and
-the result is ready for a paper or slides. Each drawing can also carry what
-you worked out about the circuit, such as notes, derived equations, plots,
-a timing diagram, and its earlier saves. A design is one `.json` file in a
-folder.
+Mosfeteer is for drawing analog schematics as figures and documentation:
+quick to draw in, and the result is ready for a paper or slides. Each
+drawing can also carry what you worked out about the circuit, such as
+notes, derived equations, plots, a timing diagram, and its earlier saves.
+A design is one `.json` file in a folder.
 
 ## A design
 

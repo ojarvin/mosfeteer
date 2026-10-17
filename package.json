@@ -1,7 +1,7 @@
 {
   "name": "mosfeteer",
   "version": "0.7.1",
-  "description": "A schematic editor for analog circuits: draw clean schematics, and keep the notes and analysis with them.",
+  "description": "A drawing tool for analog circuit schematics, for figures in papers, slides, and documentation.",
   "type": "module",
   "scripts": {
     "start": "node launch.mjs",
