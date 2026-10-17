@@ -30,13 +30,13 @@ import { logLine } from './status-bar-ui.js';
 import { commit, redo, render, setLabelSelection, setSelection, undo } from './main.js';
 import { element as el } from './dom.js';
 
-const LABEL_MODES = { below: 'below', name: 'in place of name', hidden: 'hidden' };
+const LABEL_MODES = { hidden: 'Hidden', below: 'Below the name', name: 'Instead of the name' };
 
 /** A size label's placement from what was typed: below, name, or hidden. */
 function parseLabelMode(text) {
   const word = String(text).trim().toLowerCase();
   if (/^(b|below|beside|under)/.test(word)) return 'below';
-  if (/^(r|replace|na|name|in place)/.test(word)) return 'name';
+  if (/^(r|replace|na|name|i|instead)/.test(word)) return 'name';
   if (/^(h|hid|hide|hidden|of|off|no|none|-)/.test(word)) return 'hidden';
   throw new Error('a size label is below (the name), name (in its place), or hidden');
 }
@@ -81,14 +81,11 @@ const COLUMNS = [
     set: (c, text) => setLength(c, 'm', text),
   },
   {
-    key: 'label', head: 'Label', title: 'Size label: below, name, or hidden', takes: (c) => sized(c) && !!c.size,
+    key: 'label', head: 'Label', title: 'Size label on the drawing', takes: sized,
     text: (c) => (c.size ? LABEL_MODES[labelMode(c.size)] : ''),
     check: parseLabelMode,
-    set: (c, text) => {
-      const mode = parseLabelMode(text);
-      editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: mode === 'name', hidden: mode === 'hidden' });
-    },
-    clear: (c) => editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: false, hidden: false }),
+    set: (c, text) => setLabelMode(c, parseLabelMode(text)),
+    clear: (c) => c.size && setLabelMode(c, 'hidden'),
   },
   {
     key: 'value', head: 'Value', title: 'Value (10k, 1p)', takes: valued,
@@ -98,19 +95,26 @@ const COLUMNS = [
   },
 ];
 
+function setLabelMode(c, mode) {
+  if (!c.size) throw new Error('needs W and L first');
+  editor.circuit.setComponentSize(c.refdes, c.size, { replacesName: mode === 'name', hidden: mode === 'hidden' });
+}
+
 /** Set one of W, L, m: a whole size typed into W or L sets all three; a
- *  part with no size keeps what it has until W and L are both given. */
+ *  part with no size keeps what it has until W and L are both given. A
+ *  size made here draws no label: the table is where it is read. */
 function setLength(c, key, text) {
+  const made = c.size ? {} : { hidden: true };
   if (key !== 'm' && text.includes('/')) {
     drafts.delete(c.refdes);
-    editor.circuit.setComponentSize(c.refdes, text);
+    editor.circuit.setComponentSize(c.refdes, text, made);
     return;
   }
   const value = key === 'm' ? parseMultiplier(text) : parseLength(text, key.toUpperCase());
   const next = { w: sizePart(c, 'w'), l: sizePart(c, 'l'), m: sizePart(c, 'm') || 1, [key]: value };
   if (next.w && next.l) {
     drafts.delete(c.refdes);
-    editor.circuit.setComponentSize(c.refdes, next);
+    editor.circuit.setComponentSize(c.refdes, next, made);
   } else drafts.set(c.refdes, next);
 }
 
@@ -156,6 +160,13 @@ function rangeCells() {
   return cells;
 }
 
+function inRange(cell) {
+  const r = range();
+  const i = rowIndex(cell.refdes);
+  const j = columnIndex(cell.key);
+  return !!r && i >= r.r0 && i <= r.r1 && j >= r.c0 && j <= r.c1;
+}
+
 function rangeParts() {
   const r = range();
   return r ? rows.slice(r.r0, r.r1 + 1) : [];
@@ -195,16 +206,33 @@ function buildRows() {
     ...COLUMNS.map((column) => {
       const takes = column.takes(c);
       const draft = takes && ['w', 'l', 'm'].includes(column.key) && !c.size && drafts.has(c.refdes);
-      return el('td', {
+      const td = el('td', {
         class: `sizing-cell sizing-${column.key}${takes ? '' : ' sizing-none'}${draft ? ' sizing-draft' : ''}`,
         'data-key': column.key,
         ...(draft ? { title: 'Needs both W and L' } : {}),
-        text: takes ? column.text(c) : '',
+        text: takes && column.key !== 'label' ? column.text(c) : '',
       });
+      if (column.key === 'label' && c.size) td.append(labelSelect(c));
+      return td;
     }),
   ])));
   win.empty.hidden = rows.length > 0;
   win.empty.textContent = win.filter.value.trim() ? 'No part matches the filter.' : 'No transistors, passives, or sources.';
+}
+
+/** A size label's placement, chosen from a list. Chosen in a row of the
+ *  range, it goes to every sized part of the range. */
+function labelSelect(c) {
+  const select = el('select', { class: 'sizing-select', 'aria-label': `${c.refdes} size label`, tabindex: '-1' },
+    Object.entries(LABEL_MODES).map(([mode, text]) => el('option', { value: mode, text })));
+  select.value = labelMode(c.size);
+  select.addEventListener('change', () => {
+    const cell = { refdes: c.refdes, key: 'label' };
+    const parts = inRange(cell) ? rangeParts().filter((part) => part.size) : [c];
+    applyEdits(parts.map((part) => ({ part, column: COLUMNS[columnIndex('label')], text: select.value })), 'Set');
+    win.grid.focus();
+  });
+  return select;
 }
 
 /** Mark the range, the focus, and the parts selected on the canvas. */
@@ -347,7 +375,7 @@ function finishEditing({ apply = true, keep = false } = {}) {
     // Every cell of the range in a column that takes this text.
     const edits = rangeCells().filter(({ column: other }) => {
       if (!text) return true;
-      try { other.check(text); return true; } catch { return false; }
+      return accepts(other, text);
     }).map(({ part, column: other }) => ({ part, column: other, text: text || null }));
     applyEdits(edits.length ? edits : [{ part: rows[rowIndex(focus.refdes)], column, text: text || null }], 'Set');
   }
@@ -378,7 +406,13 @@ function onInputKey(ev) {
 // ----- the keyboard and the clipboard ----------------------------------------------------
 
 function onGridKey(ev) {
-  if (editing) return;
+  if (editing || ev.target.closest?.('.sizing-select')) return;
+  // Ctrl/Cmd+C, X, V: the browser's copy, cut, and paste events on the
+  // grid do them; the canvas must not copy or paste its parts as well.
+  if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ['c', 'x', 'v'].includes(ev.key.toLowerCase())) {
+    ev.stopPropagation();
+    return;
+  }
   // What the grid does with a key, the canvas must not do too (Delete
   // would delete the parts the range selects).
   if (gridKey(ev)) {
@@ -459,29 +493,46 @@ function onCopy(ev) {
   say(`Copied ${count} cell${count === 1 ? '' : 's'}.`);
 }
 
-/** One value fills the range; a block of several goes from the range's
- *  top-left cell, a line a row, tabs between columns. */
+function accepts(column, text) {
+  try { column.check(text); return true; } catch { return false; }
+}
+
+/** Pasted text, a line a row and tabs between columns, repeated over the
+ *  range as a spreadsheet does: one cell fills it all, one row (copied from
+ *  M1, say) fills every row of it. A block larger than the range goes from
+ *  its top-left cell, down and right. */
 export function pasteText(text) {
   const r = range();
   if (!r) return 0;
-  const lines = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n').map((line) => line.split('\t').map((cell) => cell.trim()));
-  if (!lines.length) return 0;
-  let edits;
-  if (lines.length === 1 && lines[0].length === 1) {
-    edits = rangeCells().map((cell) => ({ ...cell, text: lines[0][0] || null }));
-  } else {
-    edits = [];
-    lines.forEach((line, i) => line.forEach((cellText, j) => {
-      const part = rows[r.r0 + i];
+  const block = String(text).replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n').map((line) => line.split('\t').map((cell) => cell.trim()));
+  const width = Math.max(...block.map((line) => line.length));
+  const height = Math.max(block.length, r.r1 - r.r0 + 1);
+  const across = Math.max(width, r.c1 - r.c0 + 1);
+  const edits = [];
+  for (let i = 0; i < height; i++) {
+    const part = rows[r.r0 + i];
+    if (!part) break;
+    for (let j = 0; j < across; j++) {
       const column = COLUMNS[r.c0 + j];
-      if (part && column?.takes(part)) edits.push({ part, column, text: cellText || null });
-    }));
+      const cellText = block[i % block.length][j % width];
+      if (!column?.takes(part) || cellText === undefined) continue;
+      // One value goes only where it reads, as typed text does.
+      if (block.length === 1 && width === 1 && cellText && !accepts(column, cellText)) continue;
+      edits.push({ part, column, text: cellText || null });
+    }
   }
   if (!edits.length) {
     say('Nothing here takes that.', 'error');
     return 0;
   }
   return applyEdits(edits, 'Pasted');
+}
+
+function onCut(ev) {
+  if (editing || !range()) return;
+  onCopy(ev);
+  const cells = rangeCells();
+  if (cells.length) applyEdits(cells.map((cell) => ({ ...cell, text: null })), 'Cut');
 }
 
 function onPaste(ev) {
@@ -495,6 +546,17 @@ function onPaste(ev) {
 
 function onMouseDown(ev) {
   if (ev.button !== 0 || ev.target.closest('.sizing-input')) return;
+  if (ev.target.closest('.sizing-select')) {
+    // Shift extends the range as on any cell; a plain press opens the list,
+    // picking its cell first unless the range holds it.
+    const cell = cellOf(ev.target);
+    if (ev.shiftKey) {
+      ev.preventDefault();
+      win.grid.focus();
+      pick(cell, true);
+    } else if (!inRange(cell)) pick(cell);
+    return;
+  }
   const name = ev.target.closest('th.sizing-name');
   if (name) {
     // A name picks its whole row.
@@ -559,6 +621,7 @@ function build() {
   });
   grid.addEventListener('keydown', onGridKey);
   grid.addEventListener('copy', onCopy);
+  grid.addEventListener('cut', onCut);
   grid.addEventListener('paste', onPaste);
   grid.addEventListener('mousedown', onMouseDown);
   grid.addEventListener('mouseover', onMouseOver);

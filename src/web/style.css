@@ -8220,7 +8220,18 @@ body.chrome-away [data-editor-edge="right"] {
   cursor: cell;
 }
 
-.sizing-cell.sizing-label { color: var(--text-dim); text-align: left; }
+.sizing-cell.sizing-label { padding: 0 2px; text-align: left; }
+
+.sizing-select {
+  width: 100%;
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.sizing-select:hover,
+.sizing-select:focus { border-color: var(--border); color: var(--text); }
 .sizing-cell.sizing-none { background: color-mix(in srgb, var(--bg-elevated) 70%, transparent); cursor: default; }
 .sizing-cell.sizing-draft { color: var(--warn); font-style: italic; }
 .sizing-cell.in-range { background: var(--accent-tint); }

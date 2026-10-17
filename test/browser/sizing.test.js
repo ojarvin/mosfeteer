@@ -70,7 +70,8 @@ describe('sizing window', { skip: browserSkip() }, () => {
     const depth = await undoDepth();
     await type('400n');
     await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.components.get('M3').size)`);
-    assert.deepEqual(await size('M2'), { w: '2u', l: '400n', m: 1 });
+    assert.deepEqual(await size('M2'), { w: '2u', l: '400n', m: 1, hidden: true }, 'made here: no label on the drawing');
+    assert.equal(await editor(`editor.circuit.sizeLabelOf('M2')`), null);
     assert.equal(await size('M10'), null, 'outside the range: still a draft');
     assert.equal(await undoDepth(), depth + 1, 'one undo step');
     assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(cell('M2', 'w'))}).textContent`), '2u');
@@ -82,7 +83,7 @@ describe('sizing window', { skip: browserSkip() }, () => {
     await h.until(`document.querySelector('.sizing-status').dataset.kind === 'error'`);
     assert.ok(await h.evaluate(`!!document.querySelector('.sizing-input')`), 'still editing');
     await h.evaluate(`document.querySelector('.sizing-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
-    assert.deepEqual(await size('M1'), { w: '2u', l: '400n', m: 1 });
+    assert.deepEqual(await size('M1'), { w: '2u', l: '400n', m: 1, hidden: true });
   });
 
   test('one value pasted fills the range; a column pasted fills down from its top', async () => {
@@ -95,9 +96,9 @@ describe('sizing window', { skip: browserSkip() }, () => {
     const depth = await undoDepth();
     await paste('1u\t180n\n3u\t180n\n5u\t360n\n');
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M3').size?.w === '5u')`);
-    assert.deepEqual(await size('M1'), { w: '1u', l: '180n', m: 4 });
-    assert.deepEqual(await size('M2'), { w: '3u', l: '180n', m: 4 });
-    assert.deepEqual(await size('M3'), { w: '5u', l: '360n', m: 4 });
+    assert.deepEqual(await size('M1'), { w: '1u', l: '180n', m: 4, hidden: true });
+    assert.deepEqual(await size('M2'), { w: '3u', l: '180n', m: 4, hidden: true });
+    assert.deepEqual(await size('M3'), { w: '5u', l: '360n', m: 4, hidden: true });
     assert.equal(await undoDepth(), depth + 1, 'one undo step');
     // A whole size typed in W sets all three; values go to passives.
     await pickCell('M10', 'w');
@@ -110,13 +111,43 @@ describe('sizing window', { skip: browserSkip() }, () => {
     assert.equal(await editor(`editor.circuit.components.get('C1').value`), '1p');
   });
 
-  test('the Label column hides the size labels, and the canvas shows none for them', async () => {
-    assert.ok(await editor(`!!editor.circuit.sizeLabelOf('M1')`));
+  test('the Label list shows the size labels of every row in the range', async () => {
+    assert.equal(await editor(`editor.circuit.sizeLabelOf('M1')`), null);
     await pickCell('M1', 'label');
+    await pickCell('M2', 'label', 8);
+    await h.evaluate(`(() => {
+      const select = document.querySelector(${JSON.stringify(`${cell('M1', 'label')} select`)});
+      select.value = 'below';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.sizeLabelOf('M1') && !!m.editor.circuit.sizeLabelOf('M2'))`);
+    assert.equal(await editor(`editor.circuit.sizeLabelOf('M3')`), null, 'outside the range');
+    assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(`${cell('M2', 'label')} select`)}).value`), 'below');
+    // Typed, too: the list's words, or their first letter.
+    await type('h');
+    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.sizeLabelOf('M1') && !m.editor.circuit.sizeLabelOf('M2'))`);
+  });
+
+  test('a row copied with Ctrl+C pastes into every row picked with Ctrl+V, and the canvas copies and pastes no parts', async () => {
+    const count = () => editor('editor.circuit.components.size');
+    const before = await count();
+    await pickCell('M10', 'w');
     await pickCell('M10', 'label', 8);
-    await type('hidden');
-    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.circuit.sizeLabelOf('M1') && !m.editor.circuit.sizeLabelOf('M10'))`);
-    assert.equal((await size('M2')).hidden, true);
+    // The keys stay the grid's: the browser's copy and paste events do the work.
+    await gridKey('c', { ctrlKey: true });
+    const copied = await h.evaluate(`(() => {
+      const data = new DataTransfer();
+      document.querySelector('.sizing-grid').dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+      return data.getData('text/plain');
+    })()`);
+    assert.equal(copied, '10u\t1u\t2\tHidden');
+    await pickCell('M1', 'w');
+    await pickCell('M3', 'w', 8);
+    await gridKey('v', { ctrlKey: true });
+    await paste(copied);
+    await h.until(`${h.module('editor-state.js')}.then((m) => ['M1', 'M2', 'M3'].every((r) => m.editor.circuit.components.get(r).size?.w === '10u'))`);
+    assert.deepEqual(await size('M2'), { w: '10u', l: '1u', m: 2, hidden: true });
+    assert.equal(await count(), before, 'no part pasted onto the drawing');
   });
 
   test('Ctrl+Z in the grid undoes the last edit; Delete clears the range', async () => {
@@ -133,7 +164,7 @@ describe('sizing window', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.table))`);
     const svg = () => h.evaluate(`document.querySelector('#canvas g.parts-table')?.textContent || ''`);
     await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('10 µm')`);
-    assert.match(await svg(), /1 µm.*180 nm.*3 µm/);
+    assert.match(await svg(), /^WLmM110 µm1 µm2M210 µm/);
     await h.evaluate(`window.__run('size M1 7u/180n')`);
     await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('7 µm')`);
     // Below everything else drawn.
