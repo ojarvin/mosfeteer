@@ -198,11 +198,13 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
   });
 
   test("the status bar dates a clean design by its file's time and an unsaved one by its latest edit", async () => {
-    // Dated once the editor has left it: leaving a design may write what its
-    // windows show into its file (saveWindowState), which would date it now.
-    await h.open('amp');
-    utimesSync(join(h.workspace, 'other.json'), new Date(2025, 0, 5, 9, 30), new Date(2025, 0, 5, 9, 30));
-    await h.open('other');
+    // A file no window has shown: leaving a design may write what its
+    // windows show into its file (saveWindowState), and a write left over
+    // from an earlier test landing after the dating would date it now.
+    const dated = join(h.workspace, 'dated.json');
+    writeFileSync(dated, JSON.stringify(amplifier()));
+    utimesSync(dated, new Date(2025, 0, 5, 9, 30), new Date(2025, 0, 5, 9, 30));
+    await h.open('dated');
     const chip = () => h.evaluate(`(() => { const c = document.getElementById('status-modified'); return c.hidden ? null : c.textContent; })()`);
     assert.match(await chip(), /^saved .*2025/);
     await h.evaluate(`window.__run('add resistor R9 --at 1600 1600')`);
