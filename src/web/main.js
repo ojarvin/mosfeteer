@@ -85,6 +85,7 @@ import { installRenumberUi } from './renumber-ui.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
 import { historyDocumentShown, installHistory, renderHistoryWindow } from './history-window.js';
+import { installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } from './sizing-window.js';
 import { togglePlots } from './plots-window.js';
 import { paddedLineBounds } from './label-measure.js';
 import { captureNetGeometry, captureRouteGeometry, captureRunNetGeometry, cloneWireStyles, translateNetGeometry } from './net-geometry.js';
@@ -1242,13 +1243,14 @@ export function annotationGeometryAt(world) {
     if (label.kind === 'line' && label.points.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
     if (label.kind === 'arrow' && label.points?.some((point, i) => i > 0 && near(label.points[i - 1], point))) return label;
     if (label.kind === 'box') {
+      if (label.table) label.syncTableBox();
       const a = label.anchor; const b = label.end;
       const x0 = Math.min(a.x, b.x); const x1 = Math.max(a.x, b.x);
       const y0 = Math.min(a.y, b.y); const y1 = Math.max(a.y, b.y);
       if (near({ x: x0, y: y0 }, { x: x1, y: y0 }) || near({ x: x1, y: y0 }, { x: x1, y: y1 }) ||
           near({ x: x1, y: y1 }, { x: x0, y: y1 }) || near({ x: x0, y: y1 }, { x: x0, y: y0 })) return label;
-      // A plot is a picture: anywhere on it picks it.
-      if (label.plot && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
+      // A plot or a parts table is a picture: anywhere on it picks it.
+      if ((label.plot || label.table) && world.x >= x0 && world.x <= x1 && world.y >= y0 && world.y <= y1) return label;
     }
   }
   return null;
@@ -2458,6 +2460,7 @@ export function render() {
   renderTagsField();
   renderNotesWindow();
   renderHistoryWindow();
+  renderSizingWindow();
   renderCheckSummary();
   syncAnalysisDock();
   renderBeatStrip();
@@ -2987,7 +2990,7 @@ export function renderCanvas(modelKey) {
       const component = circuit.components.get(ref);
       return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
     }),
-    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box'),
+    resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box' && !circuit.labels.get(id).table),
     hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
     selectedVertices: (() => {
       const picked = vertexSelection();
@@ -6263,6 +6266,8 @@ installReferenceWindows();
 installCalculator();
 installNotes();
 onDocumentShown(notesDocumentShown);
+installSizing();
+onDocumentShown(sizingDocumentShown);
 installHistory();
 onDocumentShown(historyDocumentShown);
 installRenumberUi();
@@ -6731,6 +6736,12 @@ function onNormalKey(key, shiftKey = false) {
   // n: the design's notes, open or closed.
   if (key === 'n') {
     toggleNotes();
+    return;
+  }
+
+  // Shift+Z: the sizing window (Z for siZes), open or closed.
+  if (key === 'Z') {
+    toggleSizing();
     return;
   }
 

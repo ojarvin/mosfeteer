@@ -74,6 +74,7 @@ export const ICON_PATHS = {
   plots: '<path d="M4 3.5v16.5h16.5"/><path d="M7 15.5c2.5-7 4.5-7 6.5-2.5s3 3 5.5-5"/>',
   history: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4l2.8 1.8"/>',
   notes: '<path d="M6.5 3.5h8l4 4v13h-12z"/><path d="M14.5 3.5v4h4"/><path d="M9 11.5h6.5M9 14.5h6.5M9 17.5h4"/>',
+  sizing: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17M9 4.5v15"/><path d="M12 13h5.5M12 16.5h5.5" stroke-width="1.2"/>',
   calculator: '<rect x="5.5" y="3.5" width="13" height="17" rx="2"/><path d="M8.5 7.5h7"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 16h.01M12 16h.01M15.5 16h.01" stroke-width="2.4" stroke-linecap="round"/>',
   renumber: '<path d="M4 4h3v6M4 10h6"/><path d="M11 11l8 8m0-5v5h-5"/>',
   stub: '<path d="M4.5 12h6"/><circle cx="4" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M11 8.5h6.5l3 3.5-3 3.5H11z" fill="currentColor" fill-opacity=".16"/>',

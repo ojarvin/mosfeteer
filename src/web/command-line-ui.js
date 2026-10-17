@@ -30,6 +30,7 @@ import { referenceWindowsShown, toggleReferenceWindows } from './reference-windo
 import { calculatorShown, toggleCalculator } from './calculator-window.js';
 import { notesShown, toggleNotes } from './notes-window.js';
 import { historyShown, toggleHistory } from './history-window.js';
+import { sizingShown, toggleSizing } from './sizing-window.js';
 import { plotsShown, togglePlots } from './plots-window.js';
 import { offerTutorial } from './onboarding.js';
 
@@ -58,6 +59,7 @@ export const ACTIONS = {
   calculator: (state) => toggleTo(state, calculatorShown(), toggleCalculator),
   notes: (state) => toggleTo(state, notesShown(), toggleNotes),
   history: (state) => toggleTo(state, historyShown(), toggleHistory),
+  sizing: (state) => toggleTo(state, sizingShown(), toggleSizing),
   plots: (state) => toggleTo(state, plotsShown(), togglePlots),
   grid: (state) => setGrid(state ?? !editor.showGrid),
   guides: (state) => setGuides(state ?? !editor.guidesVisible),

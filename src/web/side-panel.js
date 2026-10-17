@@ -474,7 +474,10 @@ export function renderDetail() {
     const rows = [['Role', role], ['Align', label.align], ['Anchor', `${a.x}, ${a.y}`]];
     if (label.owner) rows.push(['Owner', label.owner]);
     if (label.netId) rows.push(['Net', editor.circuit.nets.get(label.netId)?.name || label.netId]);
-    detailEl.appendChild(label.plot
+    if (label.table) rows.push(['Lists', label.table.parts ? label.table.parts.join(', ') : 'every sized or valued part']);
+    detailEl.appendChild(label.table
+      ? detailHeader('Parts table', 'sizes and values')
+      : label.plot
       ? detailHeader(label.plot.kind === 'response' ? 'Response graph' : label.plot.kind === 'swing' ? 'Swing graph' : label.plot.kind === 'step' ? 'Step response' : label.plot.kind === 'locus' ? 'Root locus' : 'Bode sketch', 'plot')
       : detailHeader(label.text || '(empty)', label.kind === 'label' ? '' : label.kind));
     const list = document.createElement('dl');

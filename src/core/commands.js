@@ -9,13 +9,14 @@ import { balancedCrossCoupling, gateBodyCrossingAllowed, segThroughInterior, sma
 import { crossNetOverlaps } from './wiring.js';
 import { plainTexText, svgString } from './render.js';
 import { hiddenSupplyBarLabels } from './supply-bars.js';
-import { formatMosSize, sizeReplacedNameLabels } from './mos-size.js';
+import { MOS_SIZE_TYPES, formatMosSize, parseMosSize, sizeReplacedNameLabels } from './mos-size.js';
 import { analyzeSmallSignal } from './analysis/index.js';
 import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates } from './timing-diagram.js';
 import { addTerminalStubs } from './stubs.js';
 import { addBoxAround } from './wrap-box.js';
+import { addPartsTable, partsTableParts } from './parts-table.js';
 import { RENUMBER_ORDERS, renumberParts } from './renumber.js';
 import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
@@ -461,8 +462,11 @@ export function commandHelp() {
     '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  waveform <refdes> [sine|pulse|noise|none] - draw a voltage source with a sine, a pulse, or noise in its circle (drawing only)',
-    '  size <refdes> [W/L] [xM] [replace|beside] - a transistor\'s sizing label, W/L = M·W/L (2u/400n x4; bare numbers are μm); replace puts it in place of',
-    '                                   the name label, beside under it; size <refdes> off removes it; no size prints it',
+    '  size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] - a transistor\'s size and its label, W/L = M·W/L (2u/400n x4; bare numbers are μm);',
+    '                                   replace puts the label in place of the name label, beside under it, hide draws none (a parts table shows it);',
+    '                                   size <refdes> off removes the size; no size prints it; a comma list sets several parts at once',
+    '  partstable [refdes ...] [--at X Y] - put a parts table on the drawing: W, L, m of the transistors, values of passives and sources,',
+    '                                   drawn from the parts (it follows their sizes); no names lists every sized or valued part; under the drawing by default',
     '  rename <refdes> <new>          - rename a component',
     '  renumber [--order ALONG-THEN] [refdes ...] - renumber automatically named parts (M1, R2): along each row/column, then row by row; ALONG and THEN are right|left|up|down, crosswise (default right-down, reading order; up-right: each column bottom up, columns left to right); listed parts trade only their own numbers',
     '  rm <refdes>                    - remove a component',
@@ -829,22 +833,41 @@ function dispatch(circuit, cmd, pos, flags, io) {
     return result(`${c.refdes} shows ${c.waveform || 'no waveform'}`, { refdes: c.refdes, waveform: c.waveform }, true);
   }
   if (cmd === 'size') {
-    if (!pos[0]) throw new Error('usage: size <refdes> [W/L] [xM] [replace|beside] ; size <refdes> off');
-    const c = circuit.getComponent(pos[0]);
+    if (!pos[0]) throw new Error('usage: size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] ; size <refdes> off');
+    // Every part is checked, and the size read, before any is changed.
+    const parts = pos[0].split(',').filter(Boolean).map((ref) => circuit.getComponent(ref));
     const words = pos.slice(1);
     const mode = String(words.at(-1) || '').toLowerCase();
-    const replacesName = mode === 'replace' ? true : mode === 'beside' ? false : undefined;
-    if (replacesName !== undefined) words.pop();
+    const modes = { replace: { replacesName: true, hidden: false }, beside: { replacesName: false, hidden: false }, hide: { hidden: true } };
+    const placement = modes[mode];
+    if (placement) words.pop();
     const spec = words.join(' ');
-    const describe = () => (c.size
-      ? `${c.refdes} size ${formatMosSize(c.size)}${c.size.replacesName ? ' (in place of its name)' : ''}`
+    const off = spec.toLowerCase() === 'off';
+    if (spec && !off) parseMosSize(spec);
+    for (const c of parts) {
+      if (!MOS_SIZE_TYPES.has(c.type)) throw new Error(`${c.refdes} is not a transistor; only MOS parts take a size`);
+      if (!spec && placement && !c.size) throw new Error(`${c.refdes} has no size to place; give one, e.g. size ${c.refdes} 2u/400n`);
+    }
+    const describe = (c) => (c.size
+      ? `${c.refdes} size ${formatMosSize(c.size)}${c.size.hidden ? ' (no label)' : c.size.replacesName ? ' (in place of its name)' : ''}`
       : `${c.refdes} has no size`);
-    if (!spec && replacesName === undefined) return result(describe(), { refdes: c.refdes, size: c.size });
-    if (spec.toLowerCase() === 'off') circuit.setComponentSize(c.refdes, null);
-    else if (spec) circuit.setComponentSize(c.refdes, spec, { replacesName });
-    else if (c.size) circuit.setComponentSize(c.refdes, c.size, { replacesName });
-    else throw new Error(`${c.refdes} has no size to place; give one, e.g. size ${c.refdes} 2u/400n`);
-    return result(describe(), { refdes: c.refdes, size: c.size }, true);
+    const report = () => result(parts.map(describe).join('\n'), parts.length === 1
+      ? { refdes: parts[0].refdes, size: parts[0].size }
+      : parts.map((c) => ({ refdes: c.refdes, size: c.size })), !!(spec || placement));
+    if (!spec && !placement) return report();
+    for (const c of parts) {
+      if (off) circuit.setComponentSize(c.refdes, null);
+      else circuit.setComponentSize(c.refdes, spec || c.size, placement || {});
+    }
+    return report();
+  }
+  if (cmd === 'partstable') {
+    const parts = pos.flatMap((word) => word.split(',')).filter((word) => word && word.toLowerCase() !== 'all');
+    const at = flags.at ? { x: Number(flags.at[0]), y: Number(flags.at[1]) } : null;
+    if (at && !(Number.isFinite(at.x) && Number.isFinite(at.y))) throw new Error('usage: partstable [refdes ...] [--at X Y]');
+    const box = addPartsTable(circuit, { parts, at });
+    const listed = partsTableParts(circuit, box.table).map((c) => c.refdes);
+    return result(`parts table ${box.id} at ${pp(box.anchor.x, box.anchor.y)}: ${listed.join(', ') || 'no sized parts yet'}`, { id: box.id, parts: listed }, true);
   }
   if (cmd === 'supplybar' && String(pos[0] || '').toLowerCase() === 'name') {
     if (pos.length < 3) throw new Error('usage: supplybar name <NAME|-> <refdes> [refdes...]');

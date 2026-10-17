@@ -30,7 +30,7 @@ Core keyboard vocabulary:
 | Context | Keys |
 | --- | --- |
 | normal | `i` insert, `w` wire, `m` move, `Shift+M` detached move, `c` copy, `Shift+A` align to (selection outline edge/point, then another object's), `r` rotate, `Shift+R`/`Ctrl+R` mirrors, `x` check, `u`/`Shift+U` undo/redo |
-| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis window, `Shift+V` reference windows (another design beside this one, `src/web/reference-window.js`), `Shift+E` calculator (`src/core/calculator.js`, `src/web/calculator-window.js`), `n` notes (Markdown about the design, with mentions of its parts and nets: [`docs/notes-and-history.md`](notes-and-history.md)), `Shift+W` plots (a signal-flow diagram's responses, locus, swing, loop gain, and nets in time, `src/web/plots-window.js`), `Shift+Backspace` Atlas view ([`docs/atlas.md`](atlas.md)), `?` Learn (keys, tutorials, symbols, tips; `src/web/help.js`; the tutorials -- a 5T OTA drawn from scratch, a switched-cap integrator's clock, beats and H(z), a delta-sigma modulator's signal flow -- are `src/web/tutorial.js`, each step checked from the drawing or what the windows show; `tutorial sc` / `tutorial sdm` on the command line), `:` command line (log drawer), which also searches and runs every editor action by description (`src/web/command-line.js`) |
+| view | `f` fit, `#` grid, `Shift+C` crosshair, `Shift+G` guides, `Shift+D` theme, `Shift+P` side panel, `Shift+S` analysis window, `Shift+V` reference windows (another design beside this one, `src/web/reference-window.js`), `Shift+E` calculator (`src/core/calculator.js`, `src/web/calculator-window.js`), `n` notes (Markdown about the design, with mentions of its parts and nets: [`docs/notes-and-history.md`](notes-and-history.md)), `Shift+Z` sizing (below), `Shift+W` plots (a signal-flow diagram's responses, locus, swing, loop gain, and nets in time, `src/web/plots-window.js`), `Shift+Backspace` Atlas view ([`docs/atlas.md`](atlas.md)), `?` Learn (keys, tutorials, symbols, tips; `src/web/help.js`; the tutorials -- a 5T OTA drawn from scratch, a switched-cap integrator's clock, beats and H(z), a delta-sigma modulator's signal flow -- are `src/web/tutorial.js`, each step checked from the drawing or what the windows show; `tutorial sc` / `tutorial sdm` on the command line), `:` command line (log drawer), which also searches and runs every editor action by description (`src/web/command-line.js`) |
 | editing | `dd`/Delete delete, `Ctrl/Cmd+C`/`Ctrl/Cmd+V` copy/paste, `Ctrl/Cmd+S` save, `Ctrl/Cmd+O` open, `/` or `Ctrl/Cmd+F` find (in the Atlas: search every design) / `Ctrl/Cmd+H` replace in label text (`src/core/label-search.js`), `9` net highlight tool, `8` remove all highlights, `Space` tap labelled wire stubs on the selected parts' unconnected terminals (`src/core/stubs.js`; a stub that would short is skipped), `q` swap the selected or pointed-at parts' type in place (`src/core/swap.js`), `g`/`v` over an unconnected pin wire a ground/supply to it (`src/core/pin-rails.js`), `.` repeat the last rotate, mirror, swap, rail, stubs, or tidy, `Shift+T` tidy the selection, `t`/`=`/`F2` edit the selected or pointed-at text (several selected switches or rails take one phase or rail name, `src/core/shared-labels.js`) |
 | beats | `Shift+B` beats window, `Shift+K` timing diagram editor, `+` add a beat, `Alt+→`/`Alt+←` (or PageDown/PageUp) step, `h` hide / `Shift+H` dim the selection from this beat on, `s` flip switches, `Shift+F5` present |
 | wire/insert | Enter commits, Escape cancels; `F3` toggles new-wire routing mode; `/` flips the draft corner; hold `Alt` for symmetric placement/copy or cursor snapping to the nearest terminal or free wire end while wiring; a click on a free wire end (`Circuit#openWireEnds`) finishes a draft there like a terminal; a placed, moved, or copied part's pin that will join a pin, a free wire end, or (unconnected) a wire's middle on commit is ringed first (`pinJoinPoints`) |
@@ -67,6 +67,19 @@ modules split out of it reach that state through the `editor` accessor
 (`editor-state.js`) and import `main.js` only as `./main.js`, the URL the page
 loads. A module's `installX()` runs its load-time wiring where `main.js` calls
 it, so the call's position keeps the original load order.
+
+The sizing window (`Shift+Z`, `src/web/sizing-window.js`) is a grid of
+every transistor's W, L, m and size-label placement and every passive's or
+source's value (`tableParts`, `src/core/parts-table.js`), filled like a
+spreadsheet: a range of cells (drag, Shift+click, Shift+arrows) selects its
+parts on the canvas; typed text goes to every cell of the range whose column
+accepts it, Delete clears, Ctrl/Cmd+C copies the range as tab-separated
+text, and Ctrl/Cmd+V pastes one value into the whole range or a block from
+its top-left cell. Each edit or paste is one undo step; a cell that cannot
+take its text is skipped and counted. A W or L typed without the other is
+held in the window (marked) until both make a size; nothing else is kept
+there, so the grid redraws from the design on every change. Annotate adds a
+parts table to the drawing ([`model.md`](model.md)).
 
 More → History… (`:history`) lists the design's save points and checkpoints,
 kept in its file ([`docs/notes-and-history.md`](notes-and-history.md)).

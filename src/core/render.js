@@ -685,6 +685,7 @@ function shapeAnnotationSvg(label, opacity = '') {
   }
   const attrs = styleAttrs(label.style);
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
+  if (label.kind === 'box' && label.table) return partsTableSvg(label, opacity);
   if (label.kind === 'box' && label.image) {
     // A pasted picture, whole and undistorted in its box.
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
@@ -756,6 +757,27 @@ function plotAnnotationSvg(label, opacity = '') {
   // does not run through the plot's own.
   const paper = `<rect class="plot-paper" x="0" y="0" width="${fmt(w)}" height="${fmt(h)}" fill="#fff" stroke="none"/>`;
   return `<g class="plot-annotation" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${paper}${parts}</g>`;
+}
+
+/**
+ * A parts table (parts-table.js): names as the drawing writes them, in the
+ * labels' bold italic, sizes and values upright, each block under an
+ * italic header and a rule. No border: a table reads by its columns.
+ */
+function partsTableSvg(label, opacity = '') {
+  const layout = label.syncTableBox();
+  const { x, y } = label.anchor;
+  const fontSize = labelFontSize(label.style?.width);
+  const color = escapeSvg(resolveColor(label.style?.color || '#111'));
+  const runsSvg = (runs) => runs.map((run) => (run.sub || run.super
+    ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.62)}">${escapeSvg(run.text)}</tspan>`
+    : escapeSvg(run.text))).join('');
+  const parts = layout.items.map((item) => {
+    if (item.type === 'rule') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y)}" x2="${fmt(item.x2)}" y2="${fmt(item.y)}" stroke="${color}" stroke-width="2" stroke-linecap="butt"/>`;
+    const face = item.role === 'name' ? ' font-weight="bold" font-style="italic"' : item.role === 'head' ? ' font-style="italic"' : ' style="font-variant-numeric:tabular-nums"';
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="sans-serif" font-size="${fmt(fontSize)}"${face} fill="${color}" stroke="none">${runsSvg(item.runs)}</text>`;
+  }).join('');
+  return `<g class="parts-table" transform="translate(${fmt(x)} ${fmt(y)})"${opacity}>${parts}</g>`;
 }
 
 /** The waveform a voltage source shows inside its circle, if any. */

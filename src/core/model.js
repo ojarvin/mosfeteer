@@ -15,6 +15,7 @@ import { cloneLiteralPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, 
 import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
+import { normalizePartsTable, partsTableLayout } from './parts-table.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
@@ -1267,6 +1268,9 @@ export class LabelInstance {
     this.plot = this.kind === 'box' && opts.plot ? normalizePlot(opts.plot) : null;
     // A box may carry a pasted picture drawn in its place, at its own aspect.
     this.image = this.kind === 'box' && opts.image ? normalizeImage(opts.image) : null;
+    // A box may carry a parts table (parts-table.js), drawn from the parts
+    // it lists; its box is then the table's size (syncTableBox).
+    this.table = this.kind === 'box' && opts.table ? normalizePartsTable(opts.table) : null;
     // A timing diagram's name or wave (timing-diagram.js) remembers its row.
     this.timing = normalizeTiming(opts.timing);
     const net = this.netId ? circuit.nets.get(this.netId) : null;
@@ -1479,7 +1483,20 @@ export class LabelInstance {
     return curve ? [curve.start, curve.c1, curve.c2, curve.end] : points;
   }
 
+  /** A parts table's layout, its box made to fit it: the table is drawn
+   *  from the parts, so its size follows theirs, from its top-left corner. */
+  syncTableBox() {
+    if (!this.table) return null;
+    const layout = partsTableLayout(this.circuit, this.table, { width: this.style?.width });
+    const x = Math.min(this.anchor.x, this.end.x);
+    const y = Math.min(this.anchor.y, this.end.y);
+    this.anchor = { x, y };
+    this.end = { x: x + layout.w, y: y + layout.h };
+    return layout;
+  }
+
   bbox() {
+    if (this.table) this.syncTableBox();
     if (this.kind === 'arrow') {
       const points = this.shapePoints();
       const x = Math.min(...points.map((point) => point.x));
@@ -1560,7 +1577,10 @@ export class LabelInstance {
    */
   inkRect() {
     if (this.kind === 'arrow' || this.kind === 'line') return rectFromPoints(this.shapePoints());
-    if (this.kind === 'box') return rectFromPoints([this.anchor, this.end]);
+    if (this.kind === 'box') {
+      if (this.table) this.syncTableBox();
+      return rectFromPoints([this.anchor, this.end]);
+    }
     const b = this.bbox();
     const align = this.textAlign();
     if (this.math) {
@@ -1693,7 +1713,8 @@ export class LabelInstance {
    * side (a graph's legend) move together, one shift for the group, so they
    * keep their spacing instead of each following its own reference. */
   resizeBox(rect) {
-    if (this.kind !== 'box') return false;
+    // A parts table is the size of what it lists.
+    if (this.kind !== 'box' || this.table) return false;
     const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
     if (next.x1 <= next.x0 || next.y1 <= next.y0) return false;
     const prev = {
@@ -1822,6 +1843,7 @@ export class LabelInstance {
   }
 
   toJSON() {
+    if (this.table) this.syncTableBox();
     return {
       id: this.id,
       kind: this.kind,
@@ -1847,6 +1869,7 @@ export class LabelInstance {
       textAnchor: this.kind === 'label' ? null : { ...this.textAnchor },
       ...(this.plot ? { plot: normalizePlot(this.plot) } : {}),
       ...(this.image ? { image: { ...this.image } } : {}),
+      ...(this.table ? { table: normalizePartsTable(this.table) } : {}),
       ...(this.timing ? { timing: { ...this.timing } } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
@@ -2703,6 +2726,9 @@ export class Circuit {
     this._syncSizeLabel(component);
     // The notes' mentions follow the part.
     this.notes = renameMentions(this.notes, current, next);
+    for (const label of this.labels.values()) {
+      if (label.table?.parts) label.table = { parts: label.table.parts.map((refdes) => (refdes === current ? next : refdes)) };
+    }
     return component;
   }
 
@@ -2838,9 +2864,6 @@ export class Circuit {
     return component;
   }
 
-  /** Set (or with null clear) a transistor's size: a compact string such as
-   * `2u/400n x4` or a `{ w, l, m }` object. `replacesName` (kept when
-   * omitted) makes the size label stand in for the name label. */
   /** Draw a voltage source with a waveform inside (sine, pulse, noise), or
    *  none; only a drawing, nothing the analysis reads. */
   setWaveform(refdes, waveform) {
@@ -2852,7 +2875,11 @@ export class Circuit {
     return component;
   }
 
-  setComponentSize(refdes, size, { replacesName } = {}) {
+  /** Set (or with null clear) a transistor's size: a compact string such as
+   * `2u/400n x4` or a `{ w, l, m }` object. `replacesName` makes the size
+   * label stand in for the name label; `hidden` draws no size label at all
+   * (a parts table shows the size instead). Both are kept when omitted. */
+  setComponentSize(refdes, size, { replacesName, hidden } = {}) {
     const component = this.getComponent(refdes);
     if (!MOS_SIZE_TYPES.has(component.type)) throw new Error(`${component.refdes} is not a transistor; only MOS parts take a size`);
     const previous = component.size;
@@ -2862,7 +2889,8 @@ export class Circuit {
       const parsed = typeof size === 'string' ? parseMosSize(size) : normalizeMosSize(size);
       if (!parsed) throw new Error('bad size');
       const replace = replacesName ?? !!previous?.replacesName;
-      component.size = { w: parsed.w, l: parsed.l, m: parsed.m, ...(replace ? { replacesName: true } : {}) };
+      const hide = hidden ?? !!previous?.hidden;
+      component.size = { w: parsed.w, l: parsed.l, m: parsed.m, ...(replace ? { replacesName: true } : {}), ...(hide ? { hidden: true } : {}) };
     }
     const sizeLabel = this.sizeLabelOf(component.refdes);
     // Taking the name's place puts the size label where the name is drawn,
@@ -2951,10 +2979,10 @@ export class Circuit {
     let label = null;
     for (const candidate of [...this.labels.values()]) {
       if (candidate.owner !== component.refdes || candidate.role !== MOS_SIZE_ROLE) continue;
-      if (label || !component.size) this.labels.delete(candidate.id);
+      if (label || !component.size || component.size.hidden) this.labels.delete(candidate.id);
       else label = candidate;
     }
-    if (!component.size) return null;
+    if (!component.size || component.size.hidden) return null;
     const text = mosSizeTex(component.size, sizeSubscript(this.labelOf(component.refdes)?._text, component.refdes));
     if (!label) {
       label = this.addLabel({
@@ -6923,6 +6951,7 @@ export class Circuit {
           textAnchor: l.textAnchor || null,
           plot: l.plot || null,
           image: l.image || null,
+          table: l.table || null,
           timing: l.timing || null,
           style: l.style || null,
           drawOrder: l.drawOrder,

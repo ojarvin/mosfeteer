@@ -114,6 +114,17 @@ is a projection of it, TeX with the part's name as W and L's subscript, and
 deleting the label clears the size. With `replacesName` the size label stands
 in for the name label, which stays the identity but is neither drawn nor
 picked (`sizeReplacedNameLabels`, alongside joined supply bars' hidden labels).
+With `hidden` the size draws no label at all (the name label shows), for a
+design whose sizes are shown in a parts table instead.
+
+A parts table (`src/core/parts-table.js`) is a box annotation carrying
+`table: { parts }`: the names it lists, or null for every part with a size
+or value. It is a view, never a copy: it is drawn from the parts each time
+(names as their labels write them, W, L, m, values), so it follows sizes,
+values, and renames (`renameComponent` rewrites `parts`), and a deleted
+part's row goes. Its box is the size of its layout (`syncTableBox`, whole
+cells from its top-left corner), never resized by hand; anywhere on it
+picks it.
 
 Switches (`switch_open`, `switch_closed`) are the other role-labelled parts:
 a switch's owned label names its phase (the controlling signal, stored as its

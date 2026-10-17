@@ -26,6 +26,7 @@ export function copyableLabelPayload(label) {
     mathBox: (typeof label.toJSON === 'function' && label.toJSON().mathBox) || null,
     ...(label.plot ? { plot: label.plot } : {}),
     ...(label.image ? { image: label.image } : {}),
+    ...(label.table ? { table: label.table } : {}),
     ...(label.curve ? { curve: true } : {}),
   };
 }

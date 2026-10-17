@@ -4,7 +4,8 @@
  * compactly (`2u/400n x4`) and kept on the part (`ComponentInstance#size`);
  * the label is a projection of it (`Circuit#_syncSizeLabel`). Its W and L
  * take the part's name as their subscript, so the label can stand in for the
- * name label (`replacesName`), which is then hidden.
+ * name label (`replacesName`), which is then hidden. A size may also draw
+ * no label (`hidden`), when a parts table (parts-table.js) shows it instead.
  */
 
 export const MOS_SIZE_ROLE = 'mos-size';
@@ -18,7 +19,9 @@ const PREFIXES = { f: 'f', p: 'p', n: 'n', u: 'u', 'µ': 'u', 'μ': 'u', m: 'm',
 const PREFIX_TEX = { f: 'f', p: 'p', n: 'n', u: 'μ', m: 'm' };
 const LENGTH = /^(\d+(?:\.\d*)?|\.\d+)(?:e([+-]?\d+))?\s*([fpnuµμm]?)m?$/i;
 
-function parseLength(text, what) {
+/** One length (`2u`, `400n`, `0.18um`; a bare number in μm), stored with
+ *  its prefix letter. Throws on anything else. */
+export function parseLength(text, what = 'length') {
   const match = String(text).trim().match(LENGTH);
   if (!match) throw new Error(`bad ${what} "${text}" (e.g. 2u, 400n, 0.18um)`);
   const number = match[2] ? String(Number(`${match[1]}e${match[2]}`)) : match[1].replace(/\.$/, '');
@@ -26,7 +29,8 @@ function parseLength(text, what) {
   return `${number}${PREFIXES[match[3].toLowerCase()] ?? PREFIXES[match[3]]}`;
 }
 
-function parseMultiplier(text) {
+/** A multiplier: a whole number from 1. */
+export function parseMultiplier(text) {
   const m = Number(text);
   if (!Number.isInteger(m) || m < 1) throw new Error(`bad multiplier "${text}" (a whole number from 1)`);
   return m;
@@ -64,7 +68,7 @@ export function normalizeMosSize(size) {
   if (!size || typeof size !== 'object') return null;
   try {
     const parsed = parseMosSize(`${size.w}/${size.l} x${size.m ?? 1}`);
-    return size.replacesName ? { ...parsed, replacesName: true } : parsed;
+    return { ...parsed, ...(size.replacesName ? { replacesName: true } : {}), ...(size.hidden ? { hidden: true } : {}) };
   } catch {
     return null;
   }
@@ -102,7 +106,7 @@ export function mosSizeTex(size, subscript) {
 export function sizeReplacedNameLabels(circuit) {
   const hidden = new Set();
   for (const component of circuit.components.values()) {
-    if (!component.size?.replacesName) continue;
+    if (!component.size?.replacesName || component.size.hidden) continue;
     const name = circuit.labelOf(component.refdes);
     if (name) hidden.add(name.id);
   }

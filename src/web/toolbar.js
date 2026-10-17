@@ -257,6 +257,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
     ['Shift+W', 'show or hide the plots of a signal-flow diagram: responses, step, root locus, swing, loop gain, and the nets in time; drag pans, right-drag zooms, double-click fits'],
     ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall, clear starts afresh'],
+    ['Shift+Z', 'show or hide the sizing window: W, L, m of the transistors and values of the passives; type to fill the selected cells, Ctrl+C / Ctrl+V copy and paste; Annotate puts a parts table on the drawing'],
     ['n', 'show or hide the design\'s notes: Markdown with $math$; @M1 or @V_{out} mentions a part or net (hover glows it, click selects it), [[amp]] links a design; double-click to edit (Tab / Shift+Tab indent and unindent: lists nest by indentation), Esc finishes'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
