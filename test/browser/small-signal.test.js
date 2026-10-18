@@ -24,7 +24,8 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   const value = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).value`);
   const checked = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).checked`);
   const select = (id, text) => h.evaluate(`(() => { const s = document.getElementById(${JSON.stringify(id)}); const o = [...s.options].find((o) => o.textContent.startsWith(${JSON.stringify(text)})); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-  const derive = async () => { await h.click('#analysis-submit'); await sleep(400); };
+  // Derive works as the click runs; what it draws follows in a frame or two.
+  const derive = async () => { await h.click('#analysis-submit'); await h.settle(); };
   const status = () => h.evaluate(`[...document.querySelectorAll('#log > *')].map((n) => n.textContent).slice(-3).join(' | ')`);
 
   test('Analyze opens the window with the canonical controls and their defaults', async () => {
@@ -63,7 +64,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   test('annotating writes the equations under the drawing, left-aligned, its assumptions with them', async () => {
     const before = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = m.editor.circuit.bounds(); return { bottom: b.y + b.h, labels: m.editor.circuit.labels.size }; })`);
     await h.click('#analysis-annotate');
-    await sleep(300);
+    await h.settle();
     const added = await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].slice(${before.labels}).map((l) => ({ text: l.text, align: l.align, y: l.bbox().y })))`);
     assert.ok(added.length >= 2);
     assert.ok(added.every((label) => label.align === 'left' && label.y >= before.bottom), JSON.stringify(added));
@@ -112,18 +113,16 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['M1', 'M2']); m.render(); })`);
     const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(-20, 0))`);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     const press = (text) => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)})).click()`);
     await press('Small-signal attributes');
     await press('Output resistance');
     await press('Ignore channel-length modulation');
-    await sleep(100);
+    await h.settle();
     const models = await h.evaluate(`${h.module('editor-state.js')}.then((m) => ['M1', 'M2'].map((r) => m.editor.circuit.components.get(r).analysis.channelLengthModulation))`);
     assert.deepEqual(models, ['ignore', 'ignore']);
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     await press('Small-signal attributes');
     await press('Output resistance');
@@ -140,8 +139,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(800, 600))`);
     const menu = async () => {
       await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-      await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-      await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+      await h.tap(p.x, p.y, { button: 'right' });
       await h.until(`!document.querySelector('.component-context-menu').hidden`);
     };
     const press = (text) => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)})).click()`);
@@ -150,14 +148,14 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await press('Small-signal attributes');
     await press('Diode bias');
     await press('Off (open)');
-    await sleep(100);
+    await h.settle();
     assert.equal(await resistance(), 'infinite');
     await menu();
     await press('Small-signal attributes');
     await press('Diode bias');
     assert.equal(await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.trim().startsWith('Off (open)')).getAttribute('aria-checked')`), 'true');
     await press('Forward biased');
-    await sleep(100);
+    await h.settle();
     assert.equal(await resistance(), null);
   });
 
@@ -283,7 +281,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     if (await shown('.plots-window')) await h.key('W', { shiftKey: true });
     const sliders = `[...document.querySelectorAll('#analysis-values .bode-value input[type=range]')]`;
     await h.evaluate(`${sliders}.at(-1).scrollIntoView({ block: 'center' })`);
-    await sleep(200);
+    await h.settle();
     // A slider the pointer can reach (the log covers the window's foot).
     const hit = await h.evaluate(`(() => { for (const [i, input] of ${sliders}.entries()) { const r = input.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; if (document.elementFromPoint(x, y) === input) return { i, x, y }; } return null; })()`);
     assert.ok(hit, 'a slider in reach');
@@ -296,7 +294,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.mouse('mousePressed', hit.x, hit.y);
     for (let k = 1; k <= 8; k++) {
       await h.mouse('mouseMoved', hit.x + k * 8, hit.y, { buttons: 1 });
-      await sleep(40);
+      await h.settle();
       assert.deepEqual(await where(), before, `step ${k}`);
     }
     await h.mouse('mouseReleased', hit.x + 64, hit.y);
@@ -306,7 +304,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const values = (await bode()).values;
     assert.ok(Object.keys(values.multipliers).length || values.intrinsicGain !== 30);
     await h.key('u');
-    await sleep(200);
+    await h.settle();
     const undone = (await bode()).values;
     assert.deepEqual(undone.multipliers, {});
     assert.equal(undone.intrinsicGain, 30);

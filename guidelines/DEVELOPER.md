@@ -242,11 +242,26 @@ await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.compo
 await h.stop();
 ```
 
-Test what the editor does, not its source text. Wait for the state a step
-needs with `h.until` rather than a fixed pause; a timed-out wait reports the
-open dialogs and the focused element. Headless Chromium **never fires a native
-`dblclick`**: send `h.mouse('mousePressed', x, y, { clickCount: 2 })`. Each
-file's `after` stops the browser before it checks `h.exceptions()`.
+Test what the editor does, not its source text. A test never measures the
+machine it runs on: it waits for what a step needs, never for a time.
+
+- A state: `h.until(expression)`. A timed-out wait reports the open dialogs
+  and the focused element.
+- The page caught up after an action (a render, a resize, a layout):
+  `h.settle()`, two frames and a task, however long they take.
+- The live sync's view of a change on disk: run it to its end with
+  `syncActiveCircuit()` (session.test.js's `synced()`) before asserting
+  that nothing reloaded.
+- A gesture the editor tells apart by time (a right tap from a right hold):
+  `h.tap(x, y, { button: 'right' })`, or `h.gesture(steps)` around the
+  events, which holds the page's timers until they are all handled. A hold
+  waits for its menu with `h.until`.
+
+A fixed `sleep` stays only where a longer wait is always as good: clicks
+kept apart so they are not a double-click, a file on disk polled from Node.
+Headless Chromium **never fires a native `dblclick`**: send
+`h.mouse('mousePressed', x, y, { clickCount: 2 })`. Each file's `after` stops
+the browser before it checks `h.exceptions()`.
 
 A test that watches an animation on its way must not depend on the frame
 rate: CI's headless Chromium draws on the CPU, and one frame can take as long

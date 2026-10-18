@@ -19,7 +19,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await h.open('beats');
     for (const key of ['S', 'B', 'K', 'W', 'E']) await h.key(key, { shiftKey: true });
     await h.key('N', { shiftKey: true });
-    await sleep(300);
+    await h.settle();
     const windows = await h.evaluate(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden).map((w) => {
       const header = w.querySelector('.floating-window-header');
       const buttons = [...header.querySelectorAll(':scope > button')].map((b) => b.className.split(' ')[0]);
@@ -49,14 +49,14 @@ describe('floating windows', { skip: browserSkip() }, () => {
     assert.deepEqual(titles, ['Beats (Shift+B)', 'Timing diagram (Shift+K)', 'Small-signal analysis (Shift+S)', 'Reference windows (Shift+V)', 'Calculator (Shift+E)', 'Notes (Shift+N)', 'Sizing (Shift+Z)']);
     // A narrow window folds the group; More still opens every one of them.
     await h.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 800, deviceScaleFactor: 1, mobile: false });
-    await sleep(400);
+    await h.until(`getComputedStyle(document.querySelector('.window-cluster')).display === 'none'`);
     assert.equal(await shown('.window-cluster'), false, 'folded away');
     await h.click('#btn-document-menu');
     await h.evaluate(`document.querySelector('#document-menu [data-proxy-for="btn-window-calculator"]').click()`);
     await h.until(`!!document.querySelector('.calculator-window:not([hidden])')`);
     await closeAll();
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 950, deviceScaleFactor: 1, mobile: false });
-    await sleep(300);
+    await h.settle();
   });
 
   test('a window docks into the side panel and floats out again; docked, its title bar folds it', async () => {
@@ -68,12 +68,12 @@ describe('floating windows', { skip: browserSkip() }, () => {
     const header = await h.evaluate(`(() => { const r = document.querySelector('.calculator-window .floating-window-title').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
     await h.mouse('mousePressed', header.x, header.y);
     await h.mouse('mouseReleased', header.x, header.y);
-    await sleep(100);
+    await h.settle();
     assert.equal(await h.evaluate(`document.querySelector('.calculator-window').classList.contains('folded')`), true);
     assert.equal(await shown('.calculator-window .calculator-body'), false, 'folded to its title bar');
     await h.mouse('mousePressed', header.x, header.y);
     await h.mouse('mouseReleased', header.x, header.y);
-    await sleep(100);
+    await h.settle();
     await h.click('.calculator-window .floating-window-dock');
     assert.equal(await h.evaluate(`!!document.querySelector('.calculator-window').closest('.canvas-pane')`), true, 'floating again');
     await closeAll();
@@ -89,7 +89,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
       await h.mouse('mousePressed', at.x, at.y);
       for (let k = 1; k <= 5; k++) await h.mouse('mouseMoved', at.x + dx * k / 5, at.y + dy * k / 5, { buttons: 1 });
       await h.mouse('mouseReleased', at.x + dx, at.y + dy);
-      await sleep(150);
+      await h.settle();
     };
     // Well away from the rail first.
     const start = await rect();
@@ -286,8 +286,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await h.open('top');
     const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(0, 0))`);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     const items = await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].map((b) => b.textContent.trim())`);
     for (const verb of ['Peek at child', 'Open child', 'Show child in the Atlas']) assert.equal(items.filter((i) => i.startsWith(verb)).length, 1, `${verb} in ${items}`);

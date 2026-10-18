@@ -19,13 +19,13 @@ describe('wiring', { skip: browserSkip() }, () => {
   });
 
   const at = (x, y) => h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${x}, ${y}))`);
-  const move = async (x, y, modifiers = 0) => { const p = await at(x, y); await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0, modifiers }); await sleep(40); };
+  const move = async (x, y, modifiers = 0) => { const p = await at(x, y); await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0, modifiers }); await h.settle(); };
   const clickAt = async (x, y) => {
     const p = await at(x, y);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
     await h.mouse('mousePressed', p.x, p.y);
     await h.mouse('mouseReleased', p.x, p.y);
-    await sleep(60);
+    await h.settle();
   };
   const preview = () => h.evaluate(`(() => { const d = document.querySelector('#canvas path.wire-draft')?.getAttribute('d'); return d ? d.trim().split(/\\s*[ML]\\s*/).filter(Boolean).map((pair) => { const [x, y] = pair.split(/[ ,]+/).map(Number); return { x, y }; }) : null; })()`);
   const netOf = (ref) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const [comp, term] = ${JSON.stringify(ref)}.split('.'); const n = m.editor.circuit.netOfTerminal({ comp, term }); return n ? { id: n.id, paths: n.paths(), terminals: n.terminals.map((t) => t.comp + '.' + t.term).sort() } : null; })`);
@@ -110,7 +110,7 @@ describe('wiring', { skip: browserSkip() }, () => {
       await h.mouse('mousePressed', from.x, from.y);
       for (let n = 1; n <= 6; n++) await h.mouse('mouseMoved', from.x + (to.x - from.x) * n / 6, from.y, { buttons: 1 });
       await h.mouse('mouseReleased', to.x, to.y);
-      await sleep(100);
+      await h.settle();
     };
     await drag(160);
     assert.deepEqual((await netOf('R1.b')).paths, route, 'dropped through R3: put back');
@@ -129,8 +129,7 @@ describe('wiring', { skip: browserSkip() }, () => {
     const mid = net.paths[0][1];
     const q = await at(mid.x, mid.y);
     await h.mouse('mouseMoved', q.x, q.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', q.x, q.y, { button: 'right' });
-    await h.mouse('mouseReleased', q.x, q.y, { button: 'right' });
+    await h.tap(q.x, q.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     const rename = await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.includes('Rename net'))?.textContent`);
     assert.ok(rename, 'the menu offers it');

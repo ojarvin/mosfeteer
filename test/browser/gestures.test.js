@@ -32,7 +32,7 @@ describe('gestures', { skip: browserSkip() }, () => {
     if (holdMs) await sleep(holdMs);
     for (let k = 1; k <= steps; k++) await h.mouse('mouseMoved', a.x + (b.x - a.x) * k / steps, a.y + (b.y - a.y) * k / steps, { buttons: button === 'right' ? 2 : 1, modifiers });
     await h.mouse('mouseReleased', b.x, b.y, { button, modifiers });
-    await sleep(100);
+    await h.settle();
   };
 
   test('a pin dragged into space draws a wire and offers quick-add there; a pick places and wires it as one step', async () => {
@@ -62,17 +62,18 @@ describe('gestures', { skip: browserSkip() }, () => {
   test('a right tap on a part opens its menu on release; a hold opens the radial menu; a right drag zooms to a box', async () => {
     const p = await at(0, -320);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    assert.equal(await h.evaluate(`document.querySelector('.component-context-menu').hidden`), true, 'not on the press');
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.gesture(async () => {
+      await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
+      assert.equal(await h.evaluate(`document.querySelector('.component-context-menu').hidden`), true, 'not on the press');
+      await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     await h.key('Escape');
     await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await sleep(450);
-    assert.ok(await h.evaluate(`document.querySelectorAll('.radial-item').length`) > 0, 'held: the radial menu');
+    await h.until(`document.querySelectorAll('.radial-item').length > 0`);
     await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
     await h.key('Escape');
-    await sleep(100);
+    await h.until(`!document.querySelector('.radial-item')`);
     const before = await ed('e.view.w');
     await drag({ x: -200, y: -500 }, { x: 200, y: -100 }, { button: 'right' });
     assert.ok(await ed('e.view.w') < before * 0.8, 'zoomed into the box');
@@ -83,11 +84,11 @@ describe('gestures', { skip: browserSkip() }, () => {
       const p = await at(x, y);
       await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
       await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-      await sleep(450);
+      await h.until(`document.querySelectorAll('.radial-item').length > 0`);
       const labels = await h.evaluate(`[...document.querySelectorAll('.radial-item')].map((i) => i.textContent.trim())`);
       await h.key('Escape');
       await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
-      await sleep(120);
+      await h.settle();
       await h.key('Escape');
       return labels;
     };
@@ -121,13 +122,13 @@ describe('gestures', { skip: browserSkip() }, () => {
       await h.mouse('mouseMoved', b.x, b.y, { button: 'none', buttons: 0 });
       await h.mouse('mousePressed', b.x, b.y);
       await h.mouse('mouseReleased', b.x, b.y);
-      await sleep(60);
+      await h.settle();
     }
     await h.key('Enter');
     await h.until(`${h.module('editor-state.js')}.then((m) => { const names = m.editor.pendingNetNameChoice?.names || []; return names.includes('A') && names.includes('B'); })`, 5000);
     // Canceled, the short is undone: the two nets stay apart.
     await h.key('Escape');
-    await sleep(200);
+    await h.settle();
     // (A port alone on its net carries the net's name: VIN is A now, VOUT B.)
     assert.notEqual(await ed(`c.netOfTerminal({ comp: 'A', term: 'p' }).id`), await ed(`c.netOfTerminal({ comp: 'B', term: 'p' }).id`));
     // The same short from a script keeps one name and notes the other.
@@ -146,7 +147,7 @@ describe('gestures', { skip: browserSkip() }, () => {
   });
 
   test("hovering a wire lights its net's row; hovering a part's body lights the part's row", async () => {
-    const hover = async (x, y) => { const p = await at(x, y); await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 }); await sleep(120); };
+    const hover = async (x, y) => { const p = await at(x, y); await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 }); await h.settle(); };
     await hover(200, -160);
     const nets = await h.evaluate(`[...document.querySelectorAll('#side-panel .row.hover')].map((r) => r.textContent)`);
     assert.ok(nets.some((t) => /VOUT/.test(t)), `${nets}`);
@@ -176,14 +177,14 @@ describe('gestures', { skip: browserSkip() }, () => {
     await h.key('f', { ctrlKey: true });
     await h.until(`document.activeElement?.id === 'panel-filter'`);
     await h.evaluate(`(() => { const f = document.getElementById('panel-filter'); f.value = 'VOUT'; f.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-    await sleep(150);
+    await h.settle();
     assert.ok(await h.evaluate(`document.querySelectorAll('#text-matches-list .row').length`) > 0);
     await h.evaluate(`document.getElementById('panel-filter').dispatchEvent(new KeyboardEvent('keydown', { key: 'h', ctrlKey: true, bubbles: true }))`);
     await h.until(`!document.getElementById('panel-replace').hidden`);
     await h.evaluate(`(() => { const r = document.getElementById('panel-replace-input'); r.value = 'OUTPUT'; r.dispatchEvent(new Event('input', { bubbles: true })); })()`);
     const history = await ed('e.history.length');
     await h.click('#panel-replace-all');
-    await sleep(150);
+    await h.settle();
     assert.equal(await ed(`c.components.has('OUTPUT')`), true, 'renamed through the model');
     assert.equal(await ed('e.history.length'), history + 1);
     await h.evaluate(`document.getElementById('panel-replace-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
@@ -197,13 +198,13 @@ describe('gestures', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.lastCheckReport)`);
     await h.evaluate(`document.body.classList.add('side-panel-collapsed')`);
     await h.click('#status-check');
-    await sleep(200);
+    await h.settle();
     assert.equal(await h.evaluate(`!!document.getElementById('check-summary').offsetParent`), true, 'the report, in the panel');
   });
 
   test('Ctrl+F brings a hidden panel back to find in it', async () => {
     await h.key('P', { shiftKey: true });
-    await sleep(150);
+    await h.settle();
     await h.key('f', { ctrlKey: true });
     await h.until(`document.activeElement?.id === 'panel-filter' && !!document.getElementById('panel-filter').offsetParent`);
     await h.key('Escape');

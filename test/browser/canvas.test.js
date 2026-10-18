@@ -33,7 +33,7 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
     await h.mouse('mousePressed', p.x, p.y);
     await h.mouse('mouseReleased', p.x, p.y);
-    await sleep(60);
+    await h.settle();
   };
   const releaseAlt = () => h.evaluate(`window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true }))`);
   const type = async (text) => { for (const ch of text) await h.key(ch); };
@@ -104,9 +104,9 @@ describe('canvas editing', { skip: browserSkip() }, () => {
       await h.key('Alt', { altKey: true });
       const q = await at(pin.x + 200, pin.y + 40);
       await h.mouse('mouseMoved', q.x, q.y, { button: 'none', buttons: 0, modifiers: 1 });
-      await sleep(60);
+      await h.settle();
       await h.key('Enter', { altKey: true });
-      await sleep(100);
+      await h.settle();
     } finally {
       await releaseAlt();
     }
@@ -194,28 +194,29 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     await h.click('#btn-new-document');
     await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.size === 0)`);
     await h.key('f');
-    await sleep(100);
+    await h.settle();
     const view = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.view)`);
     assert.ok(Math.min(view.w, view.h) >= 1200 && Math.min(view.w, view.h) < 1600, JSON.stringify(view));
   });
 
   test('a fitted view fits again when the window is resized', async () => {
     await h.key('f');
-    await sleep(100);
+    await h.settle();
     const inView = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const v = m.editor.view; const b = m.editor.circuit.inkBounds(); return b.x >= v.x && b.y >= v.y && b.x + b.w <= v.x + v.w && b.y + b.h <= v.y + v.h; })`);
     assert.equal(await inView(), true);
     await h.send('Emulation.setDeviceMetricsOverride', { width: 700, height: 500, deviceScaleFactor: 1, mobile: false });
-    await sleep(400);
+    await h.until(`innerWidth === 700`);
+    await h.settle();
     assert.equal(await inView(), true, 'still all in view after the resize');
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false });
-    await sleep(300);
+    await h.settle();
   });
 
   test('on a short window the rail runs across the top, and a fit keeps the drawing clear of it', async () => {
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 420, deviceScaleFactor: 1, mobile: false });
-    await sleep(300);
+    await h.settle();
     await h.key('f');
-    await sleep(200);
+    await h.settle();
     const layout = await h.evaluate(`Promise.all([${h.module('editor-state.js')}, ${h.module('canvas-view.js')}]).then(([s, v]) => {
       const rail = document.querySelector('.mode-toolbar').getBoundingClientRect();
       const b = s.editor.circuit.inkBounds();
@@ -225,7 +226,7 @@ describe('canvas editing', { skip: browserSkip() }, () => {
       return { across: rail.width > rail.height, railBottom: rail.bottom, inkTop: top.y, inkBottom: bottom.y, paneBottom: pane.bottom, inkLeft: top.x, inkRight: bottom.x, paneLeft: pane.left, paneRight: pane.right };
     })`);
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false });
-    await sleep(300);
+    await h.settle();
     assert.equal(layout.across, true, JSON.stringify(layout));
     assert.ok(layout.inkTop >= layout.railBottom - 1 && layout.inkBottom <= layout.paneBottom + 1, JSON.stringify(layout));
     assert.ok(layout.inkLeft >= layout.paneLeft - 1 && layout.inkRight <= layout.paneRight + 1, JSON.stringify(layout));

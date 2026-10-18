@@ -183,20 +183,17 @@ describe('sizing window', { skip: browserSkip() }, () => {
 
   test('a passive\'s menu shows its value below the name or in its place; Edit value… types it in the sizing window', async () => {
     const rightClick = async (refdes) => {
+      // Where the part is once the page has caught up: closing the window
+      // can move the drawing's pane.
+      await h.settle();
       const p = await h.evaluate(`${h.module('editor-state.js')}.then(async (m) => { const c = m.editor.circuit.components.get(${JSON.stringify(refdes)}).transform; return (await ${h.module('canvas-view.js')}).worldToClient(c.x, c.y); })`);
-      // A right press held past the hold time (a busy machine late with the
-      // release) opens the quick-action ring instead: take it back, again.
-      for (let attempt = 0; ; attempt++) {
-        await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-        await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-        await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
-        try {
-          await h.until(`!document.querySelector('.component-context-menu').hidden`, attempt < 2 ? 2000 : 10000);
-          return;
-        } catch (error) {
-          if (attempt >= 2) throw error;
-          await h.key('Escape');
-        }
+      await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+      await h.tap(p.x, p.y, { button: 'right' });
+      try {
+        await h.until(`!document.querySelector('.component-context-menu').hidden`);
+      } catch (error) {
+        const seen = await h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify({ under: document.elementFromPoint(${p.x}, ${p.y})?.outerHTML.slice(0, 160), drag: m.editor.drag && m.editor.drag.mode, radial: !!document.querySelector('.radial-item'), mode: m.editor.mode, at: ${JSON.stringify(p)}, now: (() => { const c = m.editor.circuit.components.get(${JSON.stringify(refdes)}).transform; return c; })() }))`);
+        throw new Error(`${error.message}\n  ${seen}`);
       }
     };
     const choose = (submenu, item) => h.evaluate(`(() => {

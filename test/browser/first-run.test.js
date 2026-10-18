@@ -42,7 +42,7 @@ describe('first visit, browser-only', { skip: browserSkip() }, () => {
     await h.key('s', { ctrlKey: true });
     await h.until(`window.__picked.length === 1`);
     assert.deepEqual(await h.evaluate('window.__picked'), ['untitled.json']);
-    await sleep(200);
+    await h.settle();
     assert.match(await status(), /^Save canceled/);
     assert.equal(await errors(), before, 'no error logged');
   });

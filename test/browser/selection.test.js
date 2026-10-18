@@ -46,7 +46,7 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     } else {
       await h.mouse('mouseReleased', p.x, p.y, { modifiers, clickCount: detail });
     }
-    await sleep(80);
+    await h.settle();
   };
   const until = (expression) => h.until(`${h.module('editor-state.js')}.then((m) => { const e = m.editor; const c = e.circuit; return ${expression}; })`);
   const selected = () => ed(`({ parts: [...e.multi].length ? [...e.multi] : (e.selected ? [e.selected] : []), labels: [...e.selLabels].map((id) => c.labels.get(id)?.text ?? id) })`);
@@ -54,6 +54,8 @@ describe('selection and editing', { skip: browserSkip() }, () => {
 
   test('a still click on a selected object picks the next one stacked under it, and a press drags the selected one', async () => {
     // Clicks apart, as a hand makes them: two quick ones are a double-click.
+    // (These waits are only ever too long, never too short: a busy machine
+    // lengthens the gap, which keeps the clicks apart all the more.)
     await press(0, 0);
     const first = await selected();
     await sleep(600);
@@ -97,7 +99,7 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     };
     check(await over(), 'opened');
     await h.evaluate(`(() => { const c = document.getElementById('canvas'); const r = c.getBoundingClientRect(); c.dispatchEvent(new WheelEvent('wheel', { deltaY: -300, ctrlKey: true, clientX: r.x + r.width / 3, clientY: r.y + r.height / 3, bubbles: true, cancelable: true })); })()`);
-    await sleep(150);
+    await h.settle();
     check(await over(), 'zoomed');
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.inlineInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))`);
   });
@@ -152,7 +154,7 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     // the prompt); Esc there drops the edit -- left open, the next blur would
     // commit it again.
     await h.until(`!document.querySelector('dialog[open]')`);
-    await sleep(150);
+    await h.settle();
     await h.evaluate(`(() => { const input = document.querySelector('#side-panel input:focus'); if (input) input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); })()`);
     await h.until(`!document.querySelector('#side-panel input:focus') && !document.querySelector('dialog[open]')`);
     assert.notEqual(await ed(`c.nets.get(${JSON.stringify(id)}).name`), 'OUT');
@@ -164,7 +166,7 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     await h.key('t');
     await h.until(`${h.module('editor-state.js')}.then((m) => !!m.editor.inlineInput)`);
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const input = m.editor.inlineInput; input.value = 'IN'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })`);
-    await sleep(150);
+    await h.settle();
     assert.equal(await ed(`c.components.has('IN2')`), true, 'IN2 keeps its name');
     assert.match(await h.evaluate(`[...document.querySelectorAll('#log > *')].slice(-3).map((n) => n.textContent).join(' | ')`), /IN|in use|already/i);
     await h.key('Escape');
@@ -303,6 +305,7 @@ describe('selection and editing', { skip: browserSkip() }, () => {
   test('a double-click on a part edits its name in place', async () => {
     const p = await at(600, 0); // R2's body, nothing over it
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    // Apart from the last test's clicks (a wait only ever too long, never too short).
     await sleep(700);
     await h.mouse('mousePressed', p.x, p.y, { clickCount: 1 });
     await h.mouse('mouseReleased', p.x, p.y, { clickCount: 1 });

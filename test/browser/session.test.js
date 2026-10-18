@@ -3,7 +3,7 @@
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { start, sleep, browserSkip } from './harness.js';
 import { amplifier, withBeats } from './fixtures.js';
@@ -18,10 +18,10 @@ function pngDpi(dataUrl) {
 }
 /** The files in `dir` starting with `prefix`, once `count` of them are written. */
 async function writtenFiles(dir, prefix, count) {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 300; i++) {
     const files = readdirSync(dir).filter((f) => f.startsWith(prefix)).sort();
     if (files.length >= count) return files;
-    await sleep(100);
+    await h.settle();
   }
   return readdirSync(dir).filter((f) => f.startsWith(prefix)).sort();
 }
@@ -29,6 +29,9 @@ const pngWidth = (dataUrl) => Buffer.from(dataUrl.split(',')[1], 'base64').readU
 
 describe('documents and sessions', { skip: browserSkip() }, () => {
   let h;
+  /** The editor's live sync, run to its end: one already under way, then a
+   *  fresh one. Whatever it does with a change on disk, it has done. */
+  const synced = () => h.evaluate(`${h.module('document-session.js')}.then(async (m) => { await m.syncActiveCircuit(); await m.syncActiveCircuit(); return true; })`);
   before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), beats: withBeats() }, width: 1400, height: 900 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
@@ -88,9 +91,10 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
 
   test('a file asked for in the address opens at startup', async () => {
     const path = `${h.workspace}/other.json`;
+    // Marked, so the wait below is for the page the address opens.
+    await h.evaluate(`window.__beforeReload = true`);
     await h.evaluate(`location.href = location.pathname + '?open=' + encodeURIComponent(${JSON.stringify(path)})`);
-    await sleep(500);
-    await h.until(`typeof window.__circuit === 'function' && !document.getElementById('startup-cover')`, 15000);
+    await h.until(`!window.__beforeReload && typeof window.__circuit === 'function' && !document.getElementById('startup-cover')`, 15000);
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentDocumentPath === ${JSON.stringify(path)})`, 10000);
     assert.equal(await h.evaluate(`location.search`), '', 'the address is cleaned');
   });
@@ -107,13 +111,13 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     // Reloads counted from here: an earlier test's own change to amp may
     // still be arriving.
     const reloads = () => h.evaluate(`[...document.querySelectorAll('#log > *')].filter((n) => /Reloaded amp/.test(n.textContent)).length`);
-    // Settled: the count unchanged over two sync polls in a row, however
-    // long a busy machine takes to deliver what is still arriving.
+    // Settled: the count unchanged over a full sync, however long a busy
+    // machine takes to deliver what is still arriving.
     let settled = await reloads();
-    for (let steady = 0; steady < 2;) {
-      await sleep(1500);
+    for (;;) {
+      await synced();
       const now = await reloads();
-      steady = now === settled ? steady + 1 : 0;
+      if (now === settled) break;
       settled = now;
     }
     const path = join(h.workspace, 'amp.json');
@@ -123,7 +127,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     const held = JSON.parse(await h.evaluate(`${h.module('main.js')}.then((m) => m.snapshot())`));
     writeFileSync(path, JSON.stringify({ ...held, windows: { scope: { nets: ['VOUT'], chosen: true } } }));
     const data = JSON.parse(readFileSync(path, 'utf8'));
-    await sleep(2500);
+    await synced();
     assert.equal(await reloads(), settled, 'no reload');
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => !!m.editor.circuit.windows?.scope)`), false, 'what is open stays');
     // A drawing changed on disk still reloads.
@@ -139,7 +143,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     // The CLI makes amp the active document; the new, unsaved one stays.
     const response = await fetch(`http://127.0.0.1:${h.port}/api/circuits/amp/cmd`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cmd: 'add resistor R8 --at 1200 0' }) });
     assert.ok(response.ok, await response.text());
-    await sleep(2500);
+    await synced();
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.currentDocumentPath)`), null);
   });
 
@@ -157,7 +161,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     for (let k = 1; k <= 5; k++) await h.mouse('mouseMoved', from.x + k * 12, from.y, { buttons: 1 });
     assert.equal(await results(), 1, 'kept during the drag');
     await h.mouse('mouseReleased', from.x + 60, from.y);
-    await sleep(100);
+    await h.settle();
     assert.equal(await results(), 1, 'and after it');
     await h.open('other');
     assert.equal(await results(), 0, 'another document has its own');
@@ -176,7 +180,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
       document.getElementById('circuit-name').value = 'fresh';
       await m.saveCircuit();
     })`);
-    await sleep(1600);
+    await synced();
     assert.match(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.currentDocumentPath)`), /fresh\.json$/, 'not replaced by amp');
   });
 
@@ -205,8 +209,13 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     writeFileSync(dated, JSON.stringify(amplifier()));
     utimesSync(dated, new Date(2025, 0, 5, 9, 30), new Date(2025, 0, 5, 9, 30));
     await h.open('dated');
-    const chip = () => h.evaluate(`(() => { const c = document.getElementById('status-modified'); return c.hidden ? null : c.textContent; })()`);
-    assert.match(await chip(), /^saved .*2025/);
+    // The chip dates it once the file's time has come back from the server.
+    try {
+      await h.until(`(() => { const c = document.getElementById('status-modified'); return !c.hidden && /^saved .*2025/.test(c.textContent); })()`);
+    } catch (error) {
+      const chip = await h.evaluate(`document.getElementById('status-modified').textContent`);
+      throw new Error(`${error.message}\n  chip: ${chip}; the file's time: ${statSync(dated).mtime.toISOString()}`);
+    }
     await h.evaluate(`window.__run('add resistor R9 --at 1600 1600')`);
     await h.until(`/^edited just now$/.test(document.getElementById('status-modified').textContent)`);
   });

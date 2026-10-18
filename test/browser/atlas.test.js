@@ -10,6 +10,20 @@ import { join } from 'node:path';
 import { Circuit } from '../../src/core/model.js';
 import { runCommand } from '../../src/core/commands.js';
 
+/** The desk at rest: its snapshot the same over two frames in a row, however
+ *  long a busy machine takes to get there. */
+async function stillDesk(h, timeout = 15000) {
+  const end = Date.now() + timeout;
+  let last = '';
+  for (;;) {
+    await h.settle();
+    const now = JSON.stringify(await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`));
+    if (now === last) return JSON.parse(now);
+    if (Date.now() > end) throw new Error('the desk never came to rest');
+    last = now;
+  }
+}
+
 describe('Atlas and linked designs', { skip: browserSkip() }, () => {
   let h;
   before(async () => {
@@ -130,7 +144,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await openDesk();
     assert.ok(await pick('top'));
     await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return s.tiles.find((t) => t.name === 'top').lift > 0.99 && s.beams.length > 0; })`);
-    await sleep(600);
+    await stillDesk(h);
     const s = await snapshot();
     const child = s.tiles.find((t) => t.name === 'child').id;
     const beams = s.beams.filter((b) => b.to === child);
@@ -166,7 +180,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await openDesk();
     assert.ok(await pick('top'));
     await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles.find((t) => t.name === 'top').lift > 0.99)`);
-    await sleep(600);
+    await stillDesk(h);
     const tiles = Object.fromEntries((await snapshot()).tiles.map((t) => [t.name, t]));
     // Each card as drawn: grown about the drawing's center, then floated, its caption below.
     const card = (t) => {
@@ -191,11 +205,11 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await openDesk();
     const before = (await snapshot()).arranged;
     await h.evaluate(`(() => { const s = document.getElementById('atlas-search'); s.focus(); s.value = '#filters'; s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-    await sleep(50);
+    await h.settle();
     const found = await snapshot();
     assert.deepEqual(found.tiles.filter((t) => found.search.includes(t.id)).map((t) => t.name).sort(), ['alpha', 'beta']);
     assert.equal(found.arranged, before, 'not packed while typing');
-    await sleep(600);
+    await h.until(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().arranged !== ${JSON.stringify(before)})`);
     const packed = await snapshot();
     assert.notEqual(packed.arranged, before, 'packed after the pause');
     // Packed together: the two found designs sit side by side.
@@ -333,7 +347,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
 
       // 2. Atlas to the editor (Back), turned back: it lands on the desk again.
       await openDesk();
-      await sleep(300);
+      await stillDesk(h);
       await atlasKey('Backspace');
       r = await run('depth > 0.4', 's && !s.busy && !s.flight');
       turnedAt = r.depths.findIndex((d) => d !== null && d > 0.4);
@@ -349,7 +363,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       await atlasKey('Enter');
       r = await run('depth > 0.4', 's && !s.busy && !s.flight');
       assert.ok(r.turned);
-      await sleep(300);
+      await h.settle();
       assert.ok(await snapshot(), 'still on the desk');
       assert.equal(await current(), 'top', 'alpha was never let in');
     } finally {
@@ -404,7 +418,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       await h.key('Backspace', { shiftKey: true });
       await atlasKey('Escape');
       await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
-      await sleep(100);
+      await h.settle();
       const landed = await snapshot();
       assert.equal(landed.flight, null);
       assert.equal(landed.tiles.some((t) => t.selected), false, 'the Esc typed on the way let go of the pick');
@@ -430,11 +444,11 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     try {
       await h.key('Backspace', { shiftKey: true });
-      await sleep(30);
+      await h.settle();
       for (const key of ['Backspace', 'Escape', 'T', 'f']) await atlasKey(key, key === 'Backspace' ? { shiftKey: true } : {});
       await h.evaluate(`document.getElementById('atlas').dispatchEvent(new WheelEvent('wheel', { deltaY: 200, bubbles: true }))`);
       await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !s || !s.busy; })`, 10000);
-      await sleep(800);
+      await stillDesk(h);
       const settled = await snapshot();
       if (settled) {
         assert.equal(settled.busy, false);
@@ -464,7 +478,9 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'child')`, 10000);
       await h.key('ArrowUp', { altKey: true });
       await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'top')`, 10000);
-      await sleep(200);
+      // Open again once the editor is back up; closed, it stays closed.
+      if (peeking) await h.until(`${h.module('hierarchy.js')}.then((m) => m.linkBubbleFrames().length === 1)`);
+      else await h.settle();
       assert.equal(await frames(), peeking ? 1 : 0, peeking ? 'the peek is open again' : 'and closed again');
     }
     assert.equal(await current(), 'top');
@@ -483,7 +499,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await h.mouse('mousePressed', p.x, p.y, { clickCount: 2 });
     await h.mouse('mouseReleased', p.x, p.y, { clickCount: 2 });
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName === 'child')`, 10000);
-    await sleep(300);
+    await h.settle();
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.mode)`), 'normal', 'no insert menu');
     await h.key('ArrowUp', { altKey: true });
   });
@@ -521,7 +537,7 @@ describe('the Atlas desk takes the window\'s shape', { skip: browserSkip() }, ()
       const wide = await shape();
       assert.ok(wide.w > wide.h, `wide ${JSON.stringify(wide)}`);
       await h.send('Emulation.setDeviceMetricsOverride', { width: 700, height: 1200, deviceScaleFactor: 1, mobile: false });
-      await sleep(300);
+      await h.settle();
       const narrow = await shape();
       assert.ok(narrow.h > narrow.w, `narrow ${JSON.stringify(narrow)}`);
     } finally {
@@ -614,7 +630,7 @@ describe('a design keeps its place on the desk whether or not it is open', { ski
     await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 3; })`, 10000);
     if (repack) {
       await h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'T', shiftKey: true, bubbles: true }))`);
-      await sleep(600);
+      await stillDesk(h);
     }
     const s = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`);
     await h.click('#atlas-mark');
@@ -628,7 +644,7 @@ describe('a design keeps its place on the desk whether or not it is open', { ski
     const before = await readFile(file, 'utf8');
     await h.open('formula');
     // Its math measured in the editor first: that is no edit.
-    await sleep(500);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.math).every((l) => l.textMeasured()))`);
     assert.equal(await h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`), false, 'measuring math is no change');
     assert.equal(await h.evaluate(`document.getElementById('dirty-dot').hidden`), true);
     const open = await tiles();
@@ -637,7 +653,7 @@ describe('a design keeps its place on the desk whether or not it is open', { ski
     const closed = await tiles();
     assert.deepEqual(closed, open);
     await h.open('formula');
-    await sleep(500);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.math).every((l) => l.textMeasured()))`);
     assert.deepEqual(await tiles(), open);
     // Shift+T packs afresh; with nothing changed, again it packs the same.
     const packed = await tiles({ repack: true });
@@ -670,7 +686,7 @@ describe('the Atlas listing', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`!document.getElementById('atlas-list-panel').hidden`), true);
     assert.deepEqual(await names(), ['alpha', 'child', 'gamma', 'timed', 'top'], 'by name');
     // It stays inside the window, and a wheel over it scrolls it, not the desk.
-    await sleep(50);
+    await h.settle();
     const fit = await h.evaluate(`(() => { const r = document.getElementById('atlas-list-panel').getBoundingClientRect(); return { left: r.left, right: r.right, width: innerWidth }; })()`);
     assert.ok(fit.left >= 0 && fit.right <= fit.width, JSON.stringify(fit));
     const view = (await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().view)`));
@@ -804,7 +820,7 @@ describe('a long Atlas listing scrolls with its keys', { skip: browserSkip() }, 
     if (!await h.evaluate(`${h.module('atlas.js')}.then((m) => !!m.atlasSnapshot())`)) await h.click('#app-mark');
     await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 30; })`, 15000);
     await h.evaluate(`document.getElementById('atlas').dispatchEvent(new KeyboardEvent('keydown', { key: 'L', shiftKey: true, bubbles: true }))`);
-    await sleep(100);
+    await h.settle();
     const key = (k) => h.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }))`);
     const shows = () => h.evaluate(`(() => {
       const panel = document.getElementById('atlas-list-panel');

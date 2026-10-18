@@ -20,8 +20,7 @@ describe('source waveforms', { skip: browserSkip() }, () => {
   const rightClick = async (x, y) => {
     const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(${x}, ${y}))`);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
   };
   const menuItems = () => h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].map((b) => b.textContent.trim())`);

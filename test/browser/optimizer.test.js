@@ -24,7 +24,7 @@ describe('optimizer', { skip: browserSkip() }, () => {
 
   test('the coefficient table heads its columns, and n per coefficient sits with the fractions', async () => {
     await h.evaluate(`[...document.querySelectorAll('.signal-flow-optimize label')].find((l) => l.textContent.startsWith('Make the free coefficients fractions')).querySelector('input').click()`);
-    await sleep(100);
+    await h.settle();
     const head = await h.evaluate(`[...document.querySelectorAll('.signal-flow-optimize .signal-flow-optimize-head > *')].map((c) => c.textContent.trim())`);
     assert.deepEqual(head, ['', '', 'Min', 'Max', 'Now', 'Found']);
     assert.ok(await h.evaluate(`[...document.querySelectorAll('.signal-flow-optimize summary')].some((s) => s.textContent.startsWith('n per coefficient'))`));

@@ -44,7 +44,7 @@ describe('reference windows', { skip: browserSkip() }, () => {
     assert.match(await h.evaluate(`document.querySelector('.reference-window .reference-title').textContent`), /design-07/);
     // Pressed, it has the keyboard: zoomed in, f fits it again.
     const picture = () => h.evaluate(`document.querySelector('.reference-window .reference-picture').style.cssText`);
-    await sleep(200);
+    await h.settle();
     const fitted = await picture();
     const at = await h.evaluate(`(() => { const r = document.querySelector('.reference-window .reference-viewport').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
     await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });

@@ -74,8 +74,7 @@ describe('the switched-cap and delta-sigma tutorials', { skip: browserSkip() }, 
     assert.equal(await heading(), 'Close the loop, negatively');
     const sum = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(-800, 0))`);
     await h.mouse('mouseMoved', sum.x, sum.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', sum.x, sum.y, { button: 'right' });
-    await h.mouse('mouseReleased', sum.x, sum.y, { button: 'right' });
+    await h.tap(sum.x, sum.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     await h.evaluate(`[...document.querySelectorAll('.component-context-menu button')].find((b) => b.textContent.startsWith('Input polarity')).click()`);
     await h.evaluate(`[...document.querySelectorAll('.context-submenu[aria-label="Input polarity"] button')].find((b) => b.textContent.trim() === 's input: positive').click()`);

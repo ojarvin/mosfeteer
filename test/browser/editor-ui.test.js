@@ -23,8 +23,7 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.open('amplifier');
     const p = await at(0, -320);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
     // The menu's last group holds Delete alone.
     const last = await h.evaluate(`[...document.querySelector('.component-context-menu').lastElementChild.querySelectorAll('button')].map((b) => b.textContent.trim())`);
@@ -78,10 +77,10 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.open('amplifier');
     assert.equal(await unsaved(), false);
     await h.evaluate(`(() => { const line = document.querySelector('.calculator-line'); line.value = '1+1'; line.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
-    await sleep(100);
+    await h.settle();
     assert.equal(await unsaved(), false, 'a calculator result is window state');
     await h.evaluate(`window.__run('add resistor R9 --at 800 800')`);
-    await sleep(100);
+    await h.settle();
     assert.equal(await unsaved(), true);
     await h.evaluate(`void ${h.module('document-session.js')}.then((m) => m.openDocumentPath(${JSON.stringify(`${h.workspace}/modulator.json`)}))`);
     await h.until(`document.getElementById('switch-dialog').open`);
@@ -97,8 +96,7 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await closeWindows();
     const p = await at(x, y);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
   };
 
@@ -138,18 +136,20 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     assert.ok(await open() > 0);
     // Hovering inside the submenu keeps it.
     await h.evaluate(`${row('Device model')}.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+    // Past the menu's 150 ms hover delay. Too short a wait on a busy machine
+    // could only let a fault through, never fail the test.
     await sleep(250);
     assert.ok(await open() > 0, 'inside it, it stays');
     await h.evaluate(`[...document.querySelector('.component-context-menu').querySelectorAll(':scope > button, :scope > .context-menu-group > button')].find((b) => !b.textContent.includes('Small-signal')).dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
-    await sleep(250);
-    assert.equal(await open(), 0, 'a row outside it closes it');
+    await h.until(`document.querySelectorAll('.component-context-menu .context-submenu.open').length === 0`);
     await h.key('Escape');
   });
 
   test("the symbol sheet's category labels keep their placed boxes when the page measures labels", async () => {
     await h.evaluate(`${h.module('../core/symbol-sheet.js')}.then((m) => window.__load(m.symbolSheet().toJSON()))`);
     await h.evaluate(`${h.module('main.js')}.then((m) => m.render())`);
-    await sleep(500);
+    // Measured in one pass: once the other labels are, a category label would be too.
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.kind === 'label' && !l.id.startsWith('category_') && !!l._renderedTextBounds))`);
     const labels = await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'label').map((l) => ({ category: l.id.startsWith('category_'), measured: !!l._renderedTextBounds })))`);
     const categories = labels.filter((l) => l.category);
     assert.ok(categories.length > 3);
@@ -179,7 +179,7 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     // A check with problems fills the panel and the chip; the log drawer stays shut.
     await h.evaluate(`${h.module('design-check-ui.js')}.then((m) => m.runCheck())`);
     assert.match(await h.evaluate(`document.getElementById('status-check').textContent`), /⚠/);
-    await sleep(300);
+    await h.settle();
     assert.equal(await h.evaluate(`document.getElementById('log-drawer').hidden`), true, 'no peek');
     // Each category is one group, its rows without the category's name.
     const groups = await h.evaluate(`[...document.querySelectorAll('#check-summary details.check-group')].map((g) => ({ name: g.querySelector('summary span').textContent, rows: [...g.querySelectorAll('.check-issue')].map((b) => b.textContent) }))`);
@@ -191,14 +191,14 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.open('edit');
     // Zoomed by hand: no longer the fitted view, which refits instead.
     await h.evaluate(`(() => { const c = document.getElementById('canvas'); const r = c.getBoundingClientRect(); c.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, ctrlKey: true, clientX: r.x + r.width / 3, clientY: r.y + r.height / 3, bubbles: true, cancelable: true })); })()`);
-    await sleep(200);
+    await h.settle();
     const view = () => h.evaluate(`${h.module('canvas-view.js')}.then((m) => { const a = m.worldToClient(0, 0); const b = m.worldToClient(400, 0); return { x: Math.round(a.x), y: Math.round(a.y), scale: Math.round((b.x - a.x) * 100) / 100 }; })`);
     const before = await view();
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
-    await sleep(300);
+    await h.settle();
     const after = await view();
     await h.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 950, deviceScaleFactor: 1, mobile: false });
-    await sleep(300);
+    await h.settle();
     assert.deepEqual(after, before);
   });
 
@@ -325,9 +325,9 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     const id = formula.id;
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.setLabelSelection([${JSON.stringify(id)}]); m.render(); })`);
     const box = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const r = m.editor.circuit.labels.get(${JSON.stringify(id)}).inkRect(); return [r.x, r.y, r.w, r.h].map((v) => Math.round(v * 10) / 10); })`);
-    await sleep(100);
+    await h.settle();
     const before = await box();
-    for (let i = 0; i < 6; i++) { await h.key('b', { ctrlKey: true }); await sleep(50); }
+    for (let i = 0; i < 6; i++) { await h.key('b', { ctrlKey: true }); await h.settle(); }
     assert.deepEqual(await box(), before);
   });
 });

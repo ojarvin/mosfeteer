@@ -24,8 +24,7 @@ describe('Atlas design menu', { skip: browserSkip() }, () => {
   const rightClick = async (name) => {
     const p = center(await tile(name));
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
-    await h.mouse('mousePressed', p.x, p.y, { button: 'right' });
-    await h.mouse('mouseReleased', p.x, p.y, { button: 'right' });
+    await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
   };
   const ctrlClick = async (name) => {
@@ -55,7 +54,7 @@ describe('Atlas design menu', { skip: browserSkip() }, () => {
     await h.until(`document.activeElement?.classList.contains('atlas-tags')`);
     await h.evaluate(`(() => { const input = document.activeElement; input.value = 'bias'; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
     const tags = () => JSON.parse(readFileSync(join(h.workspace, 'second.json'), 'utf8')).tags || [];
-    for (let i = 0; i < 100 && !tags().includes('bias'); i++) await sleep(50);
+    for (let i = 0; i < 300 && !tags().includes('bias'); i++) await sleep(50);
     assert.deepEqual(tags(), ['bias']);
     await rightClick('second');
     await choose('Delete…');

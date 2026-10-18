@@ -15,6 +15,33 @@ import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
+
+// Installed before the page's own scripts: a gate on its timers, so a test can
+// make a gesture's events one moment however slowly this machine delivers
+// them. While held (gesture()), a timer that comes due waits; on release the
+// waiting ones run, unless the gesture's own events cleared them. A right
+// press and release are then a tap, not a hold, even when the release reaches
+// the page later than the hold's 320 ms.
+const TIMER_GATE = `(() => {
+  const set = window.setTimeout.bind(window);
+  const clear = window.clearTimeout.bind(window);
+  const waiting = new Map();
+  let held = 0;
+  window.setTimeout = (fn, ms, ...args) => {
+    const run = typeof fn === 'function' ? () => fn(...args) : () => (0, eval)(fn);
+    const id = set(() => { if (held) waiting.set(id, run); else run(); }, ms);
+    return id;
+  };
+  window.clearTimeout = (id) => { waiting.delete(id); clear(id); };
+  window.__holdTimers = () => { held += 1; };
+  window.__releaseTimers = () => {
+    held = Math.max(0, held - 1);
+    if (held) return;
+    const due = [...waiting.values()];
+    waiting.clear();
+    for (const run of due) run();
+  };
+})();`;
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let found;
@@ -149,6 +176,7 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
   // Motion reduced: animations and view transitions finish at once.
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: TIMER_GATE });
   await send('Page.navigate', { url: `http://127.0.0.1:${port}/` });
   const evaluate = async (expression) => {
     const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
@@ -199,6 +227,26 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
   const mouse = (type, x, y, { button = 'left', clickCount = 1, buttons, modifiers = 0 } = {}) => send('Input.dispatchMouseEvent', {
     type, x, y, button, clickCount, modifiers, buttons: buttons ?? (type === 'mouseReleased' ? 0 : button === 'left' ? 1 : button === 'right' ? 2 : 0),
   });
+  /** Wait until the page has caught up: two frames drawn and a task run since
+   *  now, so a render, resize, or layout queued before has happened. Its
+   *  speed sets how long that takes; the test never guesses. (A message
+   *  port, not a timer, so it works while gesture() holds the timers.) */
+  const settle = () => evaluate(`new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => done(true);
+    channel.port2.postMessage(0);
+  })))`);
+  /** Run `steps` (real input events) as one moment for the page's timers:
+   *  nothing that comes due meanwhile runs until they are all handled. */
+  const gesture = async (steps) => {
+    await evaluate('window.__holdTimers()');
+    try { await steps(); } finally { await evaluate('window.__releaseTimers()'); }
+  };
+  /** A press and release at one point, never mistaken for a hold. */
+  const tap = (x, y, options = {}) => gesture(async () => {
+    await mouse('mousePressed', x, y, options);
+    await mouse('mouseReleased', x, y, options);
+  });
   const screenshot = async (path, clip) => {
     const r = await send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) });
     await writeFile(path, Buffer.from(r.data, 'base64'));
@@ -211,5 +259,5 @@ export async function start({ docs = {}, width = 1400, height = 900, folder = 'w
     await sleep(200);
     await rm(root, { recursive: true, force: true });
   };
-  return { send, evaluate, until, untilDiscarding, module, open, key, click, mouse, screenshot, exceptions, stop, logs, workspace, home, port };
+  return { send, evaluate, until, untilDiscarding, module, open, key, click, mouse, gesture, tap, settle, screenshot, exceptions, stop, logs, workspace, home, port };
 }

@@ -22,7 +22,8 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     if (!await shown('#analysis-dialog')) await h.key('S');
     await h.until(`!document.getElementById('analysis-dialog').hidden`);
   };
-  const derive = async () => { await h.click('.signal-flow-derive'); await sleep(400); };
+  // Derive works as the click runs; what it draws follows in a frame or two.
+  const derive = async () => { await h.click('.signal-flow-derive'); await h.settle(); };
 
   test('the window reads setup, results, the plots card, then coefficients and the optimizer; Update plots and Derive close its footer', async () => {
     await openAnalysis('modulator');
@@ -66,7 +67,7 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     // Unticking a net is saved with the design's windows.
     const first = picks.findIndex((p) => p.on);
     await h.evaluate(`document.querySelectorAll('.plots-window .signal-flow-time .net-pick input')[${first}].click()`);
-    await sleep(300);
+    await h.settle();
     const saved = await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows.scope)`);
     assert.equal(saved.chosen, true);
   });
@@ -163,10 +164,10 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     const before = await h.evaluate(`${field}.value`);
     // A slider dragged: many ticks, then let go.
     await h.evaluate(`(() => { const s = document.querySelector('.signal-flow-coefficient[data-name="k_1"] input[type=range]'); s.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); for (let i = 0; i < 5; i++) { s.value = String(Number(s.value) + 1); s.dispatchEvent(new Event('input', { bubbles: true })); } s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    await sleep(300);
+    await h.settle();
     assert.notEqual(await h.evaluate(`${field}.value`), before);
     await h.key('u');
-    await sleep(300);
+    await h.settle();
     assert.equal(await h.evaluate(`${field}.value`), before, 'one undo takes the whole adjustment back');
     assert.equal(await shown('.signal-flow-stale'), false, 'the equations are still current');
   });
