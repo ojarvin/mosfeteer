@@ -952,9 +952,9 @@ function openTimingDialog() {
       ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
       : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length && !state.notes.breaks.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
     notesBox.append(
-      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows, marks, spans, and breaks' }),
+      element('span', { class: 'timing-pairs-title', text: 'Annotations', title: 'Arrows, marks, spans, and breaks' }),
       element('div', { class: 'timing-dialog-options' }, [
-        element('div', { class: 'segmented', role: 'group', 'aria-label': 'On the edges' }, [
+        element('div', { class: 'segmented', role: 'group', 'aria-label': 'Annotations' }, [
           noteButton('Arrow', 'An arrow from the edge at the cursor to the edge it causes: then pick that one (a)', 'arrow'),
           noteButton('Mark', 'A dashed line through every row at the edge at the cursor; again takes it away (m)', 'mark'),
           noteButton('Span', 'A time between the edge at the cursor and another: dashed lines and an arrow below the diagram, its text under it (s)', 'span'),

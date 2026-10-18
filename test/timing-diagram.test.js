@@ -428,6 +428,72 @@ test('a narrow span is pointed at from outside; overlapping spans take lanes of 
   assert.notEqual(wide.points[0].y, narrow[0].points[0].y, 'the overlapping span in another lane');
 });
 
+test('a narrow span\'s text goes before it when the next span starts where it would be; a text keeps out of the next span\'s way', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK,D', 'timing CLK=010101 D=001100 --slot 4 --rise D=-1');
+  run(circuit, 'timing --span "D:3>CLK:3=t_{setup};CLK:4>CLK:5=t_{low};CLK:5>CLK:6=t_{high}"');
+  const parts = (part) => [...circuit.labels.values()].filter((l) => l.timing?.part === part);
+  const arrows = parts('span').filter((l) => l.style.lineStyle !== 'dashed');
+  // One lane: every arrow at one height.
+  assert.equal(new Set(arrows.map((l) => l.points[0].y)).size, 1, 'one lane');
+  const setup = parts('note').find((l) => l.text === 't_{setup}');
+  const tails = arrows.filter((l) => l.timing.item === 0).map((l) => l.points[0].x);
+  assert.equal(setup.align, 'right');
+  assert.ok(setup.bbox().x + setup.bbox().w <= Math.min(...tails), 'before the left arrow\'s tail');
+  // Alone, it goes after the right one, as before.
+  run(circuit, 'timing --clear spans', 'timing --span "D:3>CLK:3=t_{setup}"');
+  assert.equal(parts('note')[0].align, 'left');
+  // A long text after a narrow span pushes the span next to it to another lane.
+  run(circuit, 'timing --clear spans', 'timing --span "CLK:2>CLK:3=x;D:3>CLK:3=a much longer note;CLK:4>CLK:5=y"');
+  const lanes = Object.fromEntries(parts('span').filter((l) => l.style.lineStyle !== 'dashed').map((l) => [l.timing.item, l.points[0].y]));
+  const note = parts('note').find((l) => l.text === 'a much longer note');
+  const next = parts('span').filter((l) => l.timing.item === 2 && l.style.lineStyle !== 'dashed')[0];
+  const overlaps = lanes[1] === lanes[2] && note.inkRect().x < Math.max(...next.points.map((p) => p.x)) && note.inkRect().x + note.inkRect().w > Math.min(...next.points.map((p) => p.x));
+  assert.ok(!overlaps, 'no text across the next span in its lane');
+});
+
+test('a lane whose texts are all beside its arrows is two cells above the next; a text no other span\'s line crosses', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add A,B,C', 'timing A=01 B=01 C=01 --slot 4 --rise B=1,C=2');
+  run(circuit, 'timing --span "A:2>B:2=x;B:2>C:2=y"');
+  const arrowsY = (item) => [...circuit.labels.values()].find((l) => l.timing?.part === 'span' && l.timing.item === item && l.style.lineStyle !== 'dashed').points[0].y;
+  assert.equal(arrowsY(1) - arrowsY(0), 80, 'two cells: lane 0\'s text is beside its arrows');
+  // A wide span's text is under its arrow: the next lane three cells down.
+  run(circuit, 'timing --fall B=1', 'timing --clear spans', 'timing --span "A:2>A:3=wide;A:3>B:3=x"');
+  assert.equal(arrowsY(1) - arrowsY(0), 120);
+});
+
+test('a narrow span\'s text goes under it when neither side is free, so the span after it shares the lane', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add P1,P1b,P2,CLS,CLSb', 'timing P1=01100 P1b=01100 P2=10010 CLS=10010 CLSb=01101 --slot 6 --fall P2=-1,P1=-1,P1b=-2,CLSb=2 --rise CLS=2');
+  run(circuit, 'timing --span "P2:2>P1:2=t_{non-overlap};P1b:4>P1:4=t_{bottom-plate};CLS:4>CLS:5=t_{level-shift}"');
+  const labels = [...circuit.labels.values()];
+  const arrows = labels.filter((l) => l.timing?.part === 'span' && l.style.lineStyle !== 'dashed');
+  assert.equal(new Set(arrows.map((l) => l.points[0].y)).size, 1, 'one lane');
+  const note = (text) => labels.find((l) => l.timing?.part === 'note' && l.text === text);
+  assert.equal(note('t_{bottom-plate}').align, 'center');
+  assert.ok(note('t_{bottom-plate}').anchorWorld().y > arrows[0].points[0].y, 'under its arrow');
+  // No text is crossed by another span's dashed line.
+  const lines = labels.filter((l) => l.timing?.part === 'span' && l.style.lineStyle === 'dashed');
+  for (const text of labels.filter((l) => l.timing?.part === 'note')) {
+    const r = text.inkRect();
+    for (const line of lines.filter((l) => l.timing.item !== text.timing.item)) {
+      const [top, bottom] = [Math.min(...line.points.map((p) => p.y)), Math.max(...line.points.map((p) => p.y))];
+      const x = line.points[0].x;
+      assert.ok(!(x > r.x && x < r.x + r.w && bottom > r.y && top < r.y + r.h), `${text.text} crossed at ${x}`);
+    }
+  }
+});
+
+test('a span\'s text keeps the size the browser measured it at when the diagram is drawn again', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK', 'timing CLK=0101', 'timing --span "CLK:2>CLK:4=$t_{x}$"');
+  const note = () => [...circuit.labels.values()].find((l) => l.timing?.part === 'note');
+  note().setRenderedTextBounds(31, 22);
+  run(circuit, 'timing CLK=0101 --slot 5');
+  assert.deepEqual(note()._renderedTextBounds, { w: 31, h: 22 });
+});
+
 test('a new diagram keeps no pair apart; one saved before the setting keeps auto', () => {
   const circuit = new Circuit();
   run(circuit, 'add switch_open S1 --at 0 0', 'value S1 P1', 'add switch_open S2 --at 400 0', 'value S2 P2', 'timing P1=10 P2=01');

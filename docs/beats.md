@@ -175,7 +175,7 @@ of later drawing; **Move under drawing** (`timing --place`) puts it where the dr
 has room again. Rows move up and down with Alt+↑/↓ (or the **Move** buttons;
 `timing --order φ2,φ1`), and keep that order.
 
-**On the edges** draws on the diagram, each thing tied to an edge -- a row
+**Annotations** draws on the diagram, each thing tied to an edge -- a row
 and the slot boundary it changes level at -- so it follows the edge as the
 waves, gaps, shifts and slot width change, and inserted or removed slots
 carry it along. An **Arrow** runs from an edge to the transition it causes:
@@ -186,9 +186,15 @@ into, just after the edge. A **Mark** is a dashed line through every
 row, reaching a cell above and below the waves. A **Span** is a time between two edges: a dashed
 line at each, reaching below the waves to an arrow between them (pointing in
 from outside when it is under three cells), its text under the arrow (just
-after the right arrow's tail when narrow); the arrows run two cells below the
-waves; spans that overlap take lanes of their own, while spans that only
-meet at an edge share one. Arrows and spans draw one arrowhead size, the arrows'
+after the right arrow's tail when narrow -- or before the left arrow's,
+when the next span starts where it would be, or under the arrow, whichever
+shares a lane and leaves the text clear of every other span's dashed
+lines); the arrows run two cells below the waves; spans that overlap, or
+whose text would run into another, take lanes of their own, while spans
+that only meet at an edge share one. A lane is three cells below the one
+above it when that one has a text under an arrow, else two. Texts are
+placed at the width the browser measured them at in the diagram drawn
+before. Arrows and spans draw one arrowhead size, the arrows'
 (`TIMING_ARROWHEAD`, `src/core/line-style.js`). In the editor
 the cursor's edge is the one at the left of its slot, or click the bar
 between two slots: `a` begins an arrow and `a` at another edge ends it, `s`

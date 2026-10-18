@@ -42,9 +42,10 @@
  * replaces it where it stands.
  */
 
-import { GRID, ceilGrid, snap } from './grid.js';
+import { GRID, ceilGrid, floorGrid, snap } from './grid.js';
 import { complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, switchPhases, switchStateAt, switchesOf } from './beats.js';
 import { plainTexText } from './render.js';
+import { LabelInstance } from './model.js';
 
 const WAVE_HEIGHT = 2 * GRID;
 /** Between one row and the next. */
@@ -566,16 +567,17 @@ function timingNotes({ arrows = [], marks = [], spans = [], breaks = [] }) {
 
 /**
  * Where the diagram's arrows, marks and spans go, from the waves' top-left
- * corner: `edgeOf(ref)` finds a drawn edge ({ x, row }) or null. An arrow
+ * corner: `edgeOf(ref)` finds a drawn edge ({ x, row }) or null; `textAt`
+ * where a span's text goes, placed one way or another (spanText). An arrow
  * runs from the middle of one edge to the middle of the other. A mark is a
  * dashed line through every row at its edge, a cell past the waves above
  * and below; a span is a dashed line
  * at each of its two edges, reaching below the waves to an arrow between
- * them -- in a lane of its own where spans overlap -- with its text under
- * that. Returns the pieces, the guides ({ kind, index, x, bottom }), the items whose
+ * them -- in a lane of its own where spans or their texts would overlap --
+ * with its text under that, or a narrow span's beside it. Returns the pieces, the guides ({ kind, index, x, bottom }), the items whose
  * edges are not drawn ({ kind, index }), and the height they all reach.
  */
-function notesLayout(notes, edgeOf, rows) {
+function notesLayout(notes, edgeOf, rows, textAt = () => null) {
   const mid = (edge) => ({ x: edge.x, y: rows.tops[edge.row] + rows.heights[edge.row] / 2 });
   const wavesBottom = rows.bottom;
   const missing = [];
@@ -604,25 +606,91 @@ function notesLayout(notes, edgeOf, rows) {
     if (!a || !b || a.x === b.x) missing.push({ kind: 'span', index });
     else placed.push({ index, text: item.text, x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x) });
   });
-  // Lanes, top down: a span takes the first whose last span ends no later
-  // than it starts, so spans meeting at an edge read as one line, |--|--|.
+  // Lanes, top down: a span takes the first whose last span (its text too)
+  // ends no later than it starts, so spans meeting at an edge read as one
+  // line, |--|--|. A wide span's text goes under its arrow. A narrow span's
+  // goes after its right arrow -- or, when the next span starts where that
+  // text would be, before its left one, else under it, whichever lets the
+  // two share the lane -- and where no other span's dashed line crosses it.
   const lanes = [];
-  // A narrow span (under three cells) reaches further: an arrow either
-  // side, and its text after the right one.
-  const reach = (span) => (span.x1 - span.x0 < 3 * GRID ? { left: span.x0 - 2 * GRID, right: span.x1 + 5 * GRID } : { left: span.x0, right: span.x1 });
-  const spans = [...placed].sort((a, b) => reach(a).left - reach(b).left || a.x1 - b.x1).map((span) => {
-    let lane = lanes.findIndex((end) => end <= reach(span).left);
-    if (lane < 0) lane = lanes.length;
-    lanes[lane] = reach(span).right;
-    // Two cells clear of the waves, so the arrow and its text stand apart;
-    // a lane's text a cell under its arrow, the next lane a cell under that.
-    const y = wavesBottom + 2 * GRID + lane * 3 * GRID;
+  const sorted = [...placed].sort((a, b) => spanArrows(a).left - spanArrows(b).left || a.x1 - b.x1);
+  const laned = sorted.map((span, i) => {
+    const arrows = spanArrows(span);
+    let ways = ['under'];
+    if (isNarrow(span)) {
+      const after = span.text ? textAt(span, 'right') : null;
+      const crowded = !!after && sorted.slice(i + 1).some((next) => spanArrows(next).left >= arrows.right && spanArrows(next).left < after.right);
+      ways = crowded ? ['left', 'under', 'right'] : ['right', 'left', 'under'];
+    }
+    // Another span's dashed lines run down to its own lane, through any
+    // lane above: a text clear of them all is clean.
+    const lines = sorted.filter((other) => other !== span).flatMap((other) => [other.x0, other.x1]);
+    const options = ways.map((way) => {
+      const text = span.text ? textAt(span, way) : null;
+      const clean = !text || !lines.some((x) => x > text.left && x < text.right);
+      return { text, clean, left: Math.min(arrows.left, text?.left ?? Infinity), right: Math.max(arrows.right, text?.right ?? -Infinity) };
+    });
+    // The highest lane a clean placement fits, else any placement (a lane
+    // past the last is empty: everything fits there).
+    const fits = (lane, choices) => choices.find((option) => (lanes[lane] ?? -Infinity) <= option.left);
+    const clean = options.filter((option) => option.clean);
+    const choices = clean.length ? clean : options;
+    let lane = 0;
+    while (!fits(lane, choices)) lane += 1;
+    const chosen = fits(lane, choices);
+    lanes[lane] = chosen.right;
+    return { ...span, lane, place: chosen.text };
+  });
+  // Two cells clear of the waves, so the arrow and its text stand apart; a
+  // lane with a text under an arrow takes three cells (the text a cell
+  // under its arrow, the next lane a cell under that), one with its texts
+  // all beside its arrows two.
+  const under = lanes.map((_, lane) => laned.some((span) => span.lane === lane && span.place?.under));
+  const laneY = [];
+  under.forEach((below, lane) => { laneY[lane] = lane ? laneY[lane - 1] + (under[lane - 1] ? 3 : 2) * GRID : wavesBottom + 2 * GRID; });
+  const spans = laned.map((span) => {
+    const y = laneY[span.lane];
     guide('span', span.index, span.x0, y);
     guide('span', span.index, span.x1, y);
     return { ...span, y };
   });
-  const height = lanes.length ? wavesBottom + (lanes.length - 1) * 3 * GRID + 4 * GRID : wavesBottom;
+  const height = lanes.length ? laneY.at(-1) + (under.at(-1) ? 2 : 1) * GRID : wavesBottom;
   return { arrows, guides, spans, missing, height, thresholds };
+}
+
+/** A span under three cells is narrow: pointed at from outside. */
+const isNarrow = (span) => span.x1 - span.x0 < 3 * GRID;
+
+/** Where a span's arrows reach: a narrow one's from two cells outside. */
+function spanArrows(span) {
+  return isNarrow(span) ? { left: span.x0 - 2 * GRID, right: span.x1 + 2 * GRID } : { left: span.x0, right: span.x1 };
+}
+
+/**
+ * Where a span's text goes (from the waves' left edge), placed `way`:
+ * 'under' its arrow, centered; or, beside a narrow span's arrows, 'right'
+ * of its right arrow's tail or 'left' of its left one's, a quarter cell
+ * off. Returns the label's center `x`, its `align`, whether it is `under`,
+ * the browser's measure of the same text drawn before (`bounds`, so the
+ * label is the size the layout took), and where its ink reaches (`left`,
+ * `right`). `measured` maps textMetricsKey to that measure.
+ */
+function spanText(circuit, measured, span, way) {
+  const narrow = isNarrow(span);
+  const side = narrow && way !== 'under' ? way : null;
+  const align = side === 'left' ? 'right' : side === 'right' ? 'left' : 'center';
+  const label = new LabelInstance(circuit, { text: span.text, math: isTexSource(span.text), align, x: 0, y: 0 });
+  const bounds = measured.get(label.textMetricsKey()) || null;
+  if (bounds) label._renderedTextBounds = { ...bounds };
+  const box = label.bbox().w;
+  const inset = label.alignInset();
+  const w = label.textWidth();
+  // The box's center on the grid, its text as near the tail as that allows.
+  const x = side === 'right' ? ceilGrid(span.x1 + 2 * GRID + GRID / 4 - inset + box / 2)
+    : side === 'left' ? floorGrid(span.x0 - 2 * GRID - GRID / 4 + inset - box / 2)
+      : snap((span.x0 + span.x1) / 2);
+  const left = side === 'right' ? x - box / 2 + inset : side === 'left' ? x + box / 2 - inset - w : x - w / 2;
+  return { x, align, under: !side, bounds, left, right: left + w };
 }
 
 /** Take the drawn diagram away; returns whether there was one. */
@@ -723,7 +791,11 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     return edge ? { x: edge.x, row: r } : null;
   };
   const notes = timingNotes({ arrows: arrows ?? before?.arrows ?? [], marks: marks ?? before?.marks ?? [], spans: spans ?? before?.spans ?? [], breaks: breaks ?? before?.breaks ?? [] });
-  const layout = notesLayout(notes, edgeOf, geometry);
+  // A span's text placed as it will be drawn: its ink, not its box, and as
+  // the browser measured the same text in the diagram drawn before.
+  const measured = new Map([...circuit.labels.values()].filter((label) => label.timing?.part === 'note' && label.textMeasured())
+    .map((label) => [label.textMetricsKey(), label._renderedTextBounds]));
+  const layout = notesLayout(notes, edgeOf, geometry, (span, way) => spanText(circuit, measured, span, way));
   const cuts = breaksLayout(notes.breaks, columns, geometry);
   // What was just asked for must be drawn; one kept from before whose edge
   // has gone waits for it.
@@ -865,11 +937,9 @@ function drawNotes(circuit, notes, layout, origin, settings) {
   for (const { kind, index, x, bottom } of layout.guides) {
     shape('line', [at({ x, y: -GRID }), at({ x, y: bottom })], kind, kind === 'mark' ? notes.marks[index] : notes.spans[index].from, index, { lineStyle: 'dashed' });
   }
-  for (const { index, text, x0, x1, y } of layout.spans) {
+  for (const { index, text, x0, x1, y, place } of layout.spans) {
     const ref = notes.spans[index].from;
-    // A narrow span is pointed at from outside, an arrow at each end, its
-    // text right after the right one's tail -- only its own margin between
-    // (centered under so little, it would snap off the middle).
+    // A narrow span is pointed at from outside, an arrow at each end.
     const narrow = x1 - x0 < 3 * GRID;
     if (!narrow) shape('line', [at({ x: x0, y }), at({ x: x1, y })], 'span', ref, index, { arrowhead: 'both' });
     else {
@@ -877,9 +947,8 @@ function drawNotes(circuit, notes, layout, origin, settings) {
       shape('line', [at({ x: x1 + 2 * GRID, y }), at({ x: x1, y })], 'span', ref, index, { arrowhead: 'end' });
     }
     if (!text) continue;
-    const label = circuit.addLabel({ text, math: isTexSource(text), align: narrow ? 'left' : 'center', ...at({ x: (x0 + x1) / 2, y: y + GRID }), timing: timing('note', ref, index) });
-    // Its box's left edge on the tail; a box an odd number of cells wide
-    // cannot center on the grid there, so it starts half a cell on.
-    if (narrow) label.moveTo(ceilGrid(origin.x + x1 + 2 * GRID + label.bbox().w / 2), origin.y + y);
+    // Where the layout placed it (spanText), the size it took it to be.
+    const label = circuit.addLabel({ text, math: isTexSource(text), align: place.align, ...at({ x: place.x, y: place.under ? y + GRID : y }), timing: timing('note', ref, index) });
+    if (place.bounds) label._renderedTextBounds = { ...place.bounds };
   }
 }

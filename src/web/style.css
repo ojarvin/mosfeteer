@@ -6433,6 +6433,13 @@ details.analysis-options > * + * {
   margin-top: 10px;
 }
 
+/* A title level with its section's first line of controls, however many
+   lines they wrap to. */
+.timing-section > .timing-pairs-title {
+  align-self: start;
+  line-height: var(--control-h);
+}
+
 .timing-dialog .timing-dialog-options {
   display: flex;
   flex-wrap: wrap;
