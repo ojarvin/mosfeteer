@@ -31150,6 +31150,131 @@ __exports.MOS_SIZE_TYPES = MOS_SIZE_TYPES;
 __exports.MOS_SIZE_OFFSET = MOS_SIZE_OFFSET;
 };
 
+__modules["src/core/net-beams.js"] = function (__require, __exports) {
+__exports.beamLanding = beamLanding;
+__exports.markerTerminals = markerTerminals;
+__exports.netBeams = netBeams;
+__exports.beamShape = beamShape;
+let isReferenceMarker; __bind(() => { ({ isReferenceMarker } = __require("src/core/model.js")); });
+/**
+ * Net beams: while the pointer is over a net, a curved beam of light from the
+ * pointer to each other physical net its name connects it to (the virtual
+ * connections of equal names), the way Virtuoso shows them. Geometry only;
+ * the editor draws it (src/web/net-beams.js) and nothing of it is saved.
+ */
+
+
+
+/** The point of segment a–b nearest p. */
+function nearestOnSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+/** Where a beam from `from` lands on `net`: the nearest point of its wires,
+ *  or, for a net drawn without any (pin on pin), its nearest terminal. */
+function beamLanding(net, from) {
+  let best = null;
+  let bestDistance = Infinity;
+  const consider = (q) => {
+    const distance = Math.hypot(q.x - from.x, q.y - from.y);
+    if (distance < bestDistance) { best = q; bestDistance = distance; }
+  };
+  for (const path of net.paths()) {
+    if (path.length === 1) consider(path[0]);
+    for (let i = 1; i < path.length; i++) consider(nearestOnSegment(from, path[i - 1], path[i]));
+  }
+  if (!best) for (const q of net.terminalWorlds()) if (q) consider(q);
+  return best;
+}
+
+/** The terminals of the supplies, grounds, and VCMs on `net`: what a beam
+ *  reaching a net that one stands for lands on. */
+function markerTerminals(circuit, net) {
+  return net.terminals
+    .filter(({ comp }) => isReferenceMarker(circuit.components.get(comp)))
+    .map(({ comp, term }) => circuit.components.get(comp).terminalWorld(term))
+    .filter(Boolean);
+}
+
+function nearest(points, from) {
+  let best = null;
+  for (const q of points) if (!best || Math.hypot(q.x - from.x, q.y - from.y) < Math.hypot(best.x - from.x, best.y - from.y)) best = q;
+  return best;
+}
+
+/** Each beam from `from` (a world point) over the net `sourceId` to the
+ *  other nets of `ids` (its named group): `{ netId, to }`, nearest first.
+ *  A net with a supply, ground, or VCM on it is reached at that symbol's
+ *  terminal, so a beam between two of them runs terminal to terminal. */
+function netBeams(circuit, ids, sourceId, from) {
+  const beams = [];
+  for (const id of ids) {
+    if (id === sourceId) continue;
+    const net = circuit.nets.get(id);
+    const to = net ? nearest(net.terminals ? markerTerminals(circuit, net) : [], from) || beamLanding(net, from) : null;
+    if (to) beams.push({ netId: id, to });
+  }
+  return beams.sort((a, b) => Math.hypot(a.to.x - from.x, a.to.y - from.y) - Math.hypot(b.to.x - from.x, b.to.y - from.y));
+}
+
+/**
+ * A beam's outline from `from` to `to`: a band arched over the top (above
+ * both ends, whichever way it runs), `narrow` at either end and fanning out
+ * to `wide` in its middle, the same both ways. Returns `{ outline, core }`,
+ * an SVG path for the band and one for its center line, or null for a beam
+ * too short to draw.
+ */
+function beamShape(from, to, { narrow, wide, steps = 32 }) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy);
+  if (length < wide) return null;
+  // The arch rises above the higher end by a share of the beam's length. A
+  // beam nearly straight up or down leans its arch to one side, so it bulges
+  // over rather than doubling back on itself.
+  const top = Math.min(from.y, to.y) - 0.2 * length;
+  const side = dx < 0 ? -1 : 1;
+  const middle = from.x + dx / 2 + side * Math.max(0, 0.12 * length - Math.abs(dx) / 6);
+  const c1 = { x: middle - dx / 6, y: top };
+  const c2 = { x: middle + dx / 6, y: top };
+  const at = (t) => {
+    const u = 1 - t;
+    return {
+      x: u * u * u * from.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * to.x,
+      y: u * u * u * from.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * to.y,
+    };
+  };
+  const heading = (t) => {
+    const u = 1 - t;
+    return {
+      x: 3 * u * u * (c1.x - from.x) + 6 * u * t * (c2.x - c1.x) + 3 * t * t * (to.x - c2.x),
+      y: 3 * u * u * (c1.y - from.y) + 6 * u * t * (c2.y - c1.y) + 3 * t * t * (to.y - c2.y),
+    };
+  };
+  const left = [];
+  const right = [];
+  const center = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const p = at(t);
+    const d = heading(t);
+    const len = Math.hypot(d.x, d.y) || 1;
+    const half = (narrow + (wide - narrow) * Math.sin(Math.PI * t)) / 2;
+    left.push({ x: p.x - (d.y / len) * half, y: p.y + (d.x / len) * half });
+    right.push({ x: p.x + (d.y / len) * half, y: p.y - (d.x / len) * half });
+    center.push(p);
+  }
+  const f = (v) => String(Math.round(v * 10) / 10);
+  const line = (points) => points.map((p, i) => `${i ? 'L' : 'M'} ${f(p.x)} ${f(p.y)}`).join(' ');
+  return { outline: `${line([...left, ...right.reverse()])} Z`, core: line(center) };
+}
+
+};
+
 __modules["src/core/notes-markdown.js"] = function (__require, __exports) {
 __exports.renderNotes = renderNotes;
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
@@ -49972,6 +50097,7 @@ let analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButton, sc
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let applyLogDrawerEvent, hintLine, logCommand, logLine; __bind(() => { ({ applyLogDrawerEvent, hintLine, logCommand, logLine } = __require("src/web/status-bar-ui.js")); });
 let toggleTheme, setGrid, setCrosshair, setGuides; __bind(() => { ({ toggleTheme, setGrid, setCrosshair, setGuides } = __require("src/web/toolbar-ui.js")); });
+let netBeamsShown, setNetBeams; __bind(() => { ({ netBeamsShown, setNetBeams } = __require("src/web/net-beams.js")); });
 let setSidePanelVisible, sidePanelVisible; __bind(() => { ({ setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
 let toggleAnalysisDock; __bind(() => { ({ toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat; __bind(() => { ({ addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } = __require("src/web/beats-ui.js")); });
@@ -49999,6 +50125,7 @@ let offerTutorial; __bind(() => { ({ offerTutorial } = __require("src/web/onboar
  * goes to the shared document command language through runLine. The
  * vocabulary and completion rules are command-line.js.
  */
+
 
 
 
@@ -50061,6 +50188,7 @@ const ACTIONS = {
   beats: (state) => toggleTo(state, editor.beatStripOpen, toggleBeatStrip),
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
   'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
+  'net-beams': (state) => setNetBeams(state ?? !netBeamsShown()),
   trackpad: (state) => toggleTo(state, checked(scrollSchemeButton), () => scrollSchemeButton?.click()),
   'page-guide': (state) => (state
     ? document.querySelector(`[data-page-guide="${state === 'none' ? '' : state}"]`)?.click()
@@ -50342,6 +50470,7 @@ const EDITOR_COMMANDS = [
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beats window (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'reduce-motion', aliases: ['reduce-animations', 'reduced-motion'], toggle: true, help: 'reduce animations: no zooms, slides, or flashes (Settings)' },
+  { name: 'net-beams', aliases: ['beams', 'flight-lines', 'net-flight-lines'], toggle: true, help: 'beams from a hovered net to the nets its name connects (Settings)' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
   { name: 'atlas', aliases: ['atlas-view', 'collage', 'overview', 'gallery', 'all-designs'], help: 'every design in the workspace at its real size (Shift+Backspace)' },
@@ -54833,6 +54962,7 @@ const sidePanelEl = document.getElementById('side-panel');
 const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 const reduceMotionButton = document.getElementById('btn-reduce-motion');
+const netBeamsButton = document.getElementById('btn-net-beams');
 const themeBtn = document.getElementById('btn-theme');
 /** The theme toggles: Settings → Dark theme (in either top bar). */
 const themeButtons = [themeBtn].filter(Boolean);
@@ -54940,6 +55070,7 @@ __exports.sidePanelEl = sidePanelEl;
 __exports.sidePanelToggleEl = sidePanelToggleEl;
 __exports.scrollSchemeButton = scrollSchemeButton;
 __exports.reduceMotionButton = reduceMotionButton;
+__exports.netBeamsButton = netBeamsButton;
 __exports.themeBtn = themeBtn;
 __exports.themeButtons = themeButtons;
 __exports.gridBtn = gridBtn;
@@ -58560,11 +58691,13 @@ let isPinDragCandidate; __bind(() => { ({ isPinDragCandidate } = __require("src/
 let canvasEl, componentsListEl, netsListEl; __bind(() => { ({ canvasEl, componentsListEl, netsListEl } = __require("src/web/elements.js")); });
 let updateAlignHover; __bind(() => { ({ updateAlignHover } = __require("src/web/align-tool.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let syncNetBeams; __bind(() => { ({ syncNetBeams } = __require("src/web/net-beams.js")); });
 let annotationEndpointAt, annotationGeometryAt, annotationTextAt, namedGroupNets, nearestTerminal, pickAt, pickLabel, pickWire, removableVertexAt, scheduleInteractionRender; __bind(() => { ({ annotationEndpointAt, annotationGeometryAt, annotationTextAt, namedGroupNets, nearestTerminal, pickAt, pickLabel, pickWire, removableVertexAt, scheduleInteractionRender } = __require("src/web/main.js")); });
 /**
  * What the pointer is over: the part, net, pin, or annotation a hover (on the
  * canvas or a side panel row) previews, which the renderer then glows.
  */
+
 
 
 
@@ -58591,7 +58724,7 @@ function netMarkerRefs(nets) {
 
 function sameHover(a, b) {
   if (!a || !b) return a === b;
-  return a.kind === b.kind && (a.kind === 'net' ? a.ids.join(' ') === b.ids.join(' ') : a.refdes === b.refdes);
+  return a.kind === b.kind && (a.kind === 'net' ? a.ids.join(' ') === b.ids.join(' ') && a.source === b.source && a.anchor?.x === b.anchor?.x && a.anchor?.y === b.anchor?.y : a.refdes === b.refdes);
 }
 
 function setHoverTarget(next, fromPanel = false) {
@@ -58651,11 +58784,22 @@ function updateCanvasHover(w) {
     const terminal = nearestTerminal(w);
     net = terminal ? editor.circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term }) : pickWire(w)?.net || null;
   }
-  // A pin or wire previews its net; a part body previews the part's own row.
-  const body = !net && hit?.refdes && !hit.term ? editor.circuit.components.get(hit.refdes) : null;
+  // A pin or wire previews its net; so does the body of a part that stands
+  // for its net (a port, supply, ground, or VCM). Any other part body
+  // previews the part's own row.
+  let body = !net && hit?.refdes && !hit.term ? editor.circuit.components.get(hit.refdes) : null;
+  // A supply, ground, or VCM's beams leave from its terminal.
+  let anchor = null;
+  if (body && (isReferenceMarker(body) || INTERFACE_PIN_TYPES.has(body.type))) {
+    const terminal = body.worldTerminals().find((t) => editor.circuit.netOfTerminal({ comp: body.refdes, term: t.name }));
+    net = terminal ? editor.circuit.netOfTerminal({ comp: body.refdes, term: terminal.name }) : null;
+    if (net && isReferenceMarker(body)) anchor = { x: terminal.x, y: terminal.y };
+    if (net) body = null;
+  }
   setHoverTarget(net
-    ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id) }
+    ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id), source: net.id, anchor }
     : body && body.type !== 'solder' ? { kind: 'component', refdes: body.refdes } : null);
+  syncNetBeams();
 }
 
 };
@@ -60920,6 +61064,7 @@ let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startu
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
+let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
@@ -60947,6 +61092,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -61235,14 +61381,22 @@ let activePlacementGuides = [];
 let activeSymmetryCells = null;
 let cursor = { x: 0, y: 0 };
 let cursorInCanvas = false;
+// The grid, guides, and crosshair are kept between visits, as the other
+// Settings are (toolbar-ui.js setGrid and the rest write them).
+function storedViewToggle(name, fallback) {
+  try {
+    const saved = localStorage.getItem(`mosfeteer.${name}`);
+    return saved === null ? fallback : saved === '1';
+  } catch { return fallback; }
+}
 // Off by default: the placement guides now say where an object lines up, and
 // a full-window crosshair on top of them is more ink than help. `C` brings it
 // back for anyone who reads position off the rulers.
-let crosshairVisible = false;
+let crosshairVisible = storedViewToggle('crosshair', false);
 // Spacing and alignment guides. On by default; `G` and #btn-guides turn them
 // off for a drawing being laid out by hand, without touching the symmetry
 // axis, which is armed deliberately rather than offered.
-let guidesVisible = true;
+let guidesVisible = storedViewToggle('guides', true);
 // The page guide preset ({ preset, textPt }) or null; see core/page-guide.js.
 let pageGuide = (() => {
   try { return normalizePageGuide(localStorage.getItem('mosfeteer.pageGuide')); } catch { return null; }
@@ -61262,7 +61416,7 @@ let scrollScheme = (() => {
 })();
 let altHeld = false;
 let pendingKey = null; // { key, at } for dd chord
-let showGrid = true; // '#' toggles the placement grid
+let showGrid = storedViewToggle('grid', true); // '#' toggles the placement grid
 let history = []; // undo stack (JSON blobs)
 let future = []; // redo stack
 let zoom = 0.7; // px per world unit (a 40-unit cell renders as 28px)
@@ -63816,6 +63970,7 @@ function renderCanvas(modelKey) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
+    mountNetBeams(canvasSvgEl);
     // The snap pulse lives outside the per-frame overlay so its animation
     // plays once per new target instead of restarting on every repaint.
     snapLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -63979,6 +64134,7 @@ function renderCanvas(modelKey) {
   drawRubber();
   syncLinkBubbles();
   syncSnapPulse();
+  syncNetBeams();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
@@ -68322,6 +68478,7 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // The toolbar's initial sync renders, so it waits until the render state
 // above has been declared.
 installToolbarUi();
+installNetBeams();
 installModelFigure();
 
 // ----- narrow-window folding --------------------------------------------------
@@ -69088,6 +69245,101 @@ function arriving(el, ms = 700) {
   el.classList.add('arriving');
   clearTimeout(el._arrivingTimer);
   el._arrivingTimer = setTimeout(() => el.classList.remove('arriving'), ms);
+}
+
+};
+
+__modules["src/web/net-beams.js"] = function (__require, __exports) {
+__exports.netBeamsShown = netBeamsShown;
+__exports.setNetBeams = setNetBeams;
+__exports.mountNetBeams = mountNetBeams;
+__exports.syncNetBeams = syncNetBeams;
+__exports.installNetBeams = installNetBeams;
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let beamShape, netBeams; __bind(() => { ({ beamShape, netBeams } = __require("src/core/net-beams.js")); });
+let netBeamsButton; __bind(() => { ({ netBeamsButton } = __require("src/web/elements.js")); });
+let hintLine; __bind(() => { ({ hintLine } = __require("src/web/status-bar-ui.js")); });
+let worldPerPixel; __bind(() => { ({ worldPerPixel } = __require("src/web/align-tool.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+/**
+ * Net beams (Settings → Display → Net beams): while the pointer is over a
+ * net, or a port, supply, ground, or VCM on it, a beam from the cursor
+ * (snapped to the grid, as wires are drawn; a supply, ground, or VCM's own
+ * terminal) to each other net its name connects it to
+ * (src/core/net-beams.js). A browser preference, like the theme. The beams
+ * have a layer of their own, written only when they change.
+ */
+
+
+
+
+
+
+
+
+const SETTING_KEY = 'mosfeteer.netBeams';
+// A ground or supply net can have many names' worth of partners; past this
+// many the beams are a blur, and the nearest ones say enough.
+const MOST = 48;
+
+let on = (() => {
+  try { return globalThis.localStorage?.getItem(SETTING_KEY) === '1'; } catch { return false; }
+})();
+let layerEl = null;
+let layerKey = '';
+
+function netBeamsShown() {
+  return on;
+}
+
+function setNetBeams(next) {
+  on = !!next;
+  try { globalThis.localStorage?.setItem(SETTING_KEY, on ? '1' : ''); } catch { /* per-session only */ }
+  netBeamsButton?.setAttribute('aria-checked', String(on));
+  hintLine(on ? 'net beams on' : 'net beams off');
+  syncNetBeams();
+}
+
+/** A fresh layer in a newly built canvas, above the editor overlay. */
+function mountNetBeams(svgEl) {
+  layerEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  layerEl.setAttribute('class', 'net-beams');
+  layerEl.setAttribute('pointer-events', 'none');
+  svgEl.appendChild(layerEl);
+  layerKey = '';
+}
+
+function beamsSvg(from) {
+  const target = editor.hoverTarget;
+  if (!on || !from || editor.drag || editor.hoverFromPanel || target?.kind !== 'net' || target.ids.length < 2) return '';
+  const px = worldPerPixel();
+  const size = { narrow: Math.max(2 * px, 0.08 * GRID), wide: Math.max(6 * px, 0.3 * GRID) };
+  const dot = Math.max(3 * px, 0.1 * GRID);
+  const f = (v) => String(Math.round(v * 10) / 10);
+  return netBeams(editor.circuit, target.ids, target.source, from).slice(0, MOST).map(({ to }, i) => {
+    const shape = beamShape(from, to, size);
+    if (!shape) return '';
+    const ends = `gradientUnits="userSpaceOnUse" x1="${f(from.x)}" y1="${f(from.y)}" x2="${f(to.x)}" y2="${f(to.y)}"`;
+    return `<linearGradient id="net-beam-${i}" ${ends}><stop offset="0" class="net-beam-end"/><stop offset="0.5" class="net-beam-mid"/><stop offset="1" class="net-beam-end"/></linearGradient>`
+      + `<linearGradient id="net-beam-core-${i}" ${ends}><stop offset="0" class="net-beam-core-end"/><stop offset="0.5" class="net-beam-core-mid"/><stop offset="1" class="net-beam-core-end"/></linearGradient>`
+      + `<path class="net-beam" d="${shape.outline}" fill="url(#net-beam-${i})"/>`
+      + `<path class="net-beam-core" d="${shape.core}" stroke="url(#net-beam-core-${i})" vector-effect="non-scaling-stroke"/>`
+      + `<circle class="net-beam-landing" cx="${f(to.x)}" cy="${f(to.y)}" r="${f(dot)}"/>`;
+  }).join('');
+}
+
+/** Draw the beams from the cursor, or clear them. */
+function syncNetBeams() {
+  if (!layerEl) return;
+  const svg = beamsSvg(editor.hoverTarget?.anchor || editor.cursor);
+  if (svg === layerKey) return;
+  layerKey = svg;
+  layerEl.innerHTML = svg;
+}
+
+function installNetBeams() {
+  netBeamsButton?.addEventListener('click', () => setNetBeams(!on));
+  netBeamsButton?.setAttribute('aria-checked', String(on));
 }
 
 };
@@ -78981,7 +79233,7 @@ __exports.toolbarFits = toolbarFits;
  * `data-compact` list, and style.css keys its rules on the tokens:
  *
  *   export, new         those file actions become icons
- *   fold                New, Export, and the view toggles move into More
+ *   fold                New, Export, and the window toggles move into More
  *   save                Save becomes an icon
  *
  * The editor picks the first stage count at which the row fits and the
@@ -79532,12 +79784,18 @@ function toggleTheme() {
   else apply();
 }
 
-/** Turn the placement grid on/off; keeps the toolbar button and the '#'
+/** Keep a view toggle for the next visit (main.js storedViewToggle). */
+function storeViewToggle(name, on) {
+  try { localStorage.setItem(`mosfeteer.${name}`, on ? '1' : '0'); } catch { /* per-session only */ }
+}
+
+/** Turn the placement grid on/off; keeps the Settings item and the '#'
  *  keybinding in sync. */
 function setGrid(on) {
-  editor.showGrid = on;
+  editor.showGrid = !!on;
+  storeViewToggle('grid', editor.showGrid);
   if (gridBtn) {
-    gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
+    gridBtn.setAttribute('aria-checked', String(editor.showGrid));
   }
   render();
   hintLine(editor.showGrid ? 'grid shown' : 'grid hidden');
@@ -79548,9 +79806,10 @@ function setGrid(on) {
 // render when the pointer is inside.
 function setCrosshair(on, announce = true) {
   editor.crosshairVisible = !!on;
+  storeViewToggle('crosshair', editor.crosshairVisible);
 
   if (crosshairBtn) {
-    crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
+    crosshairBtn.setAttribute('aria-checked', String(editor.crosshairVisible));
   }
   render();
   if (announce) hintLine(editor.crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
@@ -79560,8 +79819,9 @@ function setCrosshair(on, announce = true) {
 // the crosshair rather than anything the document carries.
 function setGuides(on, announce = true) {
   editor.guidesVisible = !!on;
+  storeViewToggle('guides', editor.guidesVisible);
   if (guidesBtn) {
-    guidesBtn.setAttribute('aria-pressed', String(editor.guidesVisible));
+    guidesBtn.setAttribute('aria-checked', String(editor.guidesVisible));
   }
   render();
   if (announce) hintLine(editor.guidesVisible ? 'placement guides shown' : 'placement guides hidden');
@@ -79709,12 +79969,12 @@ function installToolbarUi() {
 
   if (gridBtn) {
     gridBtn.addEventListener('click', () => setGrid(!editor.showGrid));
-    gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
+    gridBtn.setAttribute('aria-checked', String(editor.showGrid));
   }
 
   if (guidesBtn) {
     guidesBtn.addEventListener('click', () => setGuides(!editor.guidesVisible));
-    guidesBtn.setAttribute('aria-pressed', String(editor.guidesVisible));
+    guidesBtn.setAttribute('aria-checked', String(editor.guidesVisible));
   }
 
   for (const item of document.querySelectorAll('[data-page-guide]')) {
@@ -79728,7 +79988,7 @@ function installToolbarUi() {
 
   if (crosshairBtn) {
     crosshairBtn.addEventListener('click', () => setCrosshair(!editor.crosshairVisible));
-    crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
+    crosshairBtn.setAttribute('aria-checked', String(editor.crosshairVisible));
   }
 
   if (modeToolbarEl) {

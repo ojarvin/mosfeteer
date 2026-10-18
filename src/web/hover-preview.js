@@ -8,6 +8,7 @@ import { isPinDragCandidate } from './gestures.js';
 import { canvasEl, componentsListEl, netsListEl } from './elements.js';
 import { updateAlignHover } from './align-tool.js';
 import { editor } from './editor-state.js';
+import { syncNetBeams } from './net-beams.js';
 import { annotationEndpointAt, annotationGeometryAt, annotationTextAt, namedGroupNets, nearestTerminal, pickAt, pickLabel, pickWire, removableVertexAt, scheduleInteractionRender } from './main.js';
 
 let hoverMove = false; // pointer rests where a press moves a block or box
@@ -28,7 +29,7 @@ export function netMarkerRefs(nets) {
 
 function sameHover(a, b) {
   if (!a || !b) return a === b;
-  return a.kind === b.kind && (a.kind === 'net' ? a.ids.join(' ') === b.ids.join(' ') : a.refdes === b.refdes);
+  return a.kind === b.kind && (a.kind === 'net' ? a.ids.join(' ') === b.ids.join(' ') && a.source === b.source && a.anchor?.x === b.anchor?.x && a.anchor?.y === b.anchor?.y : a.refdes === b.refdes);
 }
 
 export function setHoverTarget(next, fromPanel = false) {
@@ -88,9 +89,20 @@ export function updateCanvasHover(w) {
     const terminal = nearestTerminal(w);
     net = terminal ? editor.circuit.netOfTerminal({ comp: terminal.refdes, term: terminal.term }) : pickWire(w)?.net || null;
   }
-  // A pin or wire previews its net; a part body previews the part's own row.
-  const body = !net && hit?.refdes && !hit.term ? editor.circuit.components.get(hit.refdes) : null;
+  // A pin or wire previews its net; so does the body of a part that stands
+  // for its net (a port, supply, ground, or VCM). Any other part body
+  // previews the part's own row.
+  let body = !net && hit?.refdes && !hit.term ? editor.circuit.components.get(hit.refdes) : null;
+  // A supply, ground, or VCM's beams leave from its terminal.
+  let anchor = null;
+  if (body && (isReferenceMarker(body) || INTERFACE_PIN_TYPES.has(body.type))) {
+    const terminal = body.worldTerminals().find((t) => editor.circuit.netOfTerminal({ comp: body.refdes, term: t.name }));
+    net = terminal ? editor.circuit.netOfTerminal({ comp: body.refdes, term: terminal.name }) : null;
+    if (net && isReferenceMarker(body)) anchor = { x: terminal.x, y: terminal.y };
+    if (net) body = null;
+  }
   setHoverTarget(net
-    ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id) }
+    ? { kind: 'net', ids: namedGroupNets(net).map((member) => member.id), source: net.id, anchor }
     : body && body.type !== 'solder' ? { kind: 'component', refdes: body.refdes } : null);
+  syncNetBeams();
 }

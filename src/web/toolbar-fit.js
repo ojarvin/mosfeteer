@@ -4,7 +4,7 @@
  * `data-compact` list, and style.css keys its rules on the tokens:
  *
  *   export, new         those file actions become icons
- *   fold                New, Export, and the view toggles move into More
+ *   fold                New, Export, and the window toggles move into More
  *   save                Save becomes an icon
  *
  * The editor picks the first stage count at which the row fits and the

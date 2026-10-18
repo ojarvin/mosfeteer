@@ -238,13 +238,13 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     const accents = settings.filter((id) => id.startsWith('accent:'));
     assert.equal(accents[0], 'accent:');
     assert.ok(accents.includes('accent:blue') && accents.length > 10, accents.join());
-    for (const id of ['btn-scroll-scheme', 'btn-tips']) assert.ok(settings.includes(id), id);
+    for (const id of ['btn-scroll-scheme', 'btn-tips', 'btn-grid', 'btn-guides', 'btn-crosshair', 'btn-net-beams']) assert.ok(settings.includes(id), id);
     assert.equal(await h.evaluate(`document.getElementById('btn-tips').getAttribute('role')`), 'menuitemcheckbox');
     assert.deepEqual(await h.evaluate(`(() => { const card = document.getElementById('tip-card'); return [card.getAttribute('role'), card.hidden]; })()`), ['status', true]);
     for (const id of ['btn-tutorial', 'btn-symbols']) assert.ok(!settings.includes(id), id);
     await h.key('Escape');
-    // Not in the view cluster, so a folded toolbar keeps it.
-    assert.equal(await h.evaluate(`!!document.querySelector('.view-cluster #btn-settings')`), false);
+    // The view toggles have no toolbar buttons of their own.
+    assert.equal(await h.evaluate(`!!document.querySelector('.toolbar > .toolbar-cluster > :is(#btn-grid, #btn-guides, #btn-crosshair)')`), false);
     assert.equal(await h.evaluate(`!!document.querySelector('#document-menu :is(#btn-scroll-scheme, #btn-tips, #btn-tutorial, [data-page-guide])')`), false);
     assert.equal(await h.evaluate(`!!document.querySelector('#help-dialog #btn-tutorial')`), true, 'the tutorial is in Learn');
   });

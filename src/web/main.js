@@ -80,6 +80,7 @@ import { revealStartup } from './startup.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
+import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
@@ -305,14 +306,22 @@ let activePlacementGuides = [];
 let activeSymmetryCells = null;
 let cursor = { x: 0, y: 0 };
 let cursorInCanvas = false;
+// The grid, guides, and crosshair are kept between visits, as the other
+// Settings are (toolbar-ui.js setGrid and the rest write them).
+function storedViewToggle(name, fallback) {
+  try {
+    const saved = localStorage.getItem(`mosfeteer.${name}`);
+    return saved === null ? fallback : saved === '1';
+  } catch { return fallback; }
+}
 // Off by default: the placement guides now say where an object lines up, and
 // a full-window crosshair on top of them is more ink than help. `C` brings it
 // back for anyone who reads position off the rulers.
-let crosshairVisible = false;
+let crosshairVisible = storedViewToggle('crosshair', false);
 // Spacing and alignment guides. On by default; `G` and #btn-guides turn them
 // off for a drawing being laid out by hand, without touching the symmetry
 // axis, which is armed deliberately rather than offered.
-let guidesVisible = true;
+let guidesVisible = storedViewToggle('guides', true);
 // The page guide preset ({ preset, textPt }) or null; see core/page-guide.js.
 let pageGuide = (() => {
   try { return normalizePageGuide(localStorage.getItem('mosfeteer.pageGuide')); } catch { return null; }
@@ -332,7 +341,7 @@ let scrollScheme = (() => {
 })();
 let altHeld = false;
 let pendingKey = null; // { key, at } for dd chord
-let showGrid = true; // '#' toggles the placement grid
+let showGrid = storedViewToggle('grid', true); // '#' toggles the placement grid
 let history = []; // undo stack (JSON blobs)
 let future = []; // redo stack
 let zoom = 0.7; // px per world unit (a 40-unit cell renders as 28px)
@@ -2886,6 +2895,7 @@ export function renderCanvas(modelKey) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
+    mountNetBeams(canvasSvgEl);
     // The snap pulse lives outside the per-frame overlay so its animation
     // plays once per new target instead of restarting on every repaint.
     snapLayerEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -3049,6 +3059,7 @@ export function renderCanvas(modelKey) {
   drawRubber();
   syncLinkBubbles();
   syncSnapPulse();
+  syncNetBeams();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
@@ -7392,6 +7403,7 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // The toolbar's initial sync renders, so it waits until the render state
 // above has been declared.
 installToolbarUi();
+installNetBeams();
 installModelFigure();
 
 // ----- narrow-window folding --------------------------------------------------

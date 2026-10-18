@@ -91,6 +91,18 @@ the active tool, focus) from the drawing's palette, or the default teal
 (`src/web/accent.js`): a browser preference like the theme, shaded for
 each theme, never part of a design or its exports.
 
+Settings → Display holds the view toggles: Grid (`#`), Placement guides
+(`Shift+G`), Crosshair (`Shift+C`), Dark theme, and Net beams
+(`net-beams` on the command line). Every Settings choice is a browser
+preference, kept between visits (`localStorage`). With net
+beams on, while the pointer is over a net, or a port, supply, ground, or
+VCM on it, a beam arched over the top runs from the cursor (snapped to the
+grid; a supply, ground, or VCM's own terminal) to each other physical net
+its name virtually connects it to, landing on the terminal of a supply,
+ground, or VCM there, else on that net's nearest wire (`src/core/net-beams.js`,
+`src/web/net-beams.js`). The beams show nothing during a drag or a
+side-panel hover.
+
 The sizing window (`Shift+Z`, `src/web/sizing-window.js`) is a grid of
 every transistor's W, L, m and size-label placement and every passive's or
 source's value (`tableParts`, `src/core/parts-table.js`), filled like a

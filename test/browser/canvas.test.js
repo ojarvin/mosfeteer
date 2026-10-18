@@ -169,15 +169,18 @@ describe('canvas editing', { skip: browserSkip() }, () => {
     assert.equal(await circuit('c.netHighlights.size'), 0);
   });
 
-  test('Shift+G and the toolbar button turn the placement guides off and on', async () => {
-    const pressed = () => h.evaluate(`document.getElementById('btn-guides').getAttribute('aria-pressed')`);
+  test('Shift+G and the Settings item turn the placement guides off and on', async () => {
+    const pressed = () => h.evaluate(`document.getElementById('btn-guides').getAttribute('aria-checked')`);
     const before = (await state()).guides;
     assert.equal(await pressed(), String(before));
     await h.key('G', { shiftKey: true });
     assert.equal((await state()).guides, !before);
     assert.equal(await pressed(), String(!before));
+    await h.click('#btn-settings');
     await h.click('#btn-guides');
     assert.equal((await state()).guides, before);
+    assert.equal(await pressed(), String(before));
+    await h.key('Escape');
   });
 
   test('Ctrl+E opens the export dialog', async () => {

@@ -371,7 +371,6 @@ button:focus-visible {
   height: 17px;
 }
 
-.view-cluster .icon-button,
 .window-cluster .icon-button,
 .settings-cluster .icon-button,
 .atlas-head .icon-button,
@@ -381,7 +380,6 @@ button:focus-visible {
   border-color: transparent;
 }
 
-.view-cluster .icon-button:hover,
 .window-cluster .icon-button:hover,
 .atlas-head .icon-button:hover,
 .settings-cluster .icon-button:hover,
@@ -391,10 +389,8 @@ button:focus-visible {
   background: var(--bg-hover);
 }
 
-/* One shared "on" look for every toggle button: the view switches, the
-   window toggles, and the canvas-corner panel toggles -- an accent icon on
+/* One shared "on" look for every toggle button: the window toggles, and the canvas-corner panel toggles -- an accent icon on
    a light accent tint. (A segmented control's choice is raised instead.) */
-.view-cluster .icon-button[aria-pressed="true"],
 .window-cluster .icon-button[aria-pressed="true"],
 .atlas-head .icon-button[aria-pressed="true"],
 .canvas-panel-toggle[aria-pressed="true"],
@@ -767,7 +763,7 @@ button:focus-visible {
   padding: 6px 8px;
 }
 
-.toolbar[data-compact~="fold"] :is(.view-cluster, .window-cluster, #btn-new-document, #btn-export) {
+.toolbar[data-compact~="fold"] :is(.window-cluster, #btn-new-document, #btn-export) {
   display: none;
 }
 
@@ -5074,6 +5070,20 @@ button.off {
   stroke-linejoin: round;
 }
 
+/* Net beams (net-beams.js): from the pointer to each net its name
+   connects, as bright where they land as where they leave, spreading
+   fainter over the arch. On the dark theme they add up as light does. */
+.net-beams stop { stop-color: var(--accent); }
+.net-beam-end { stop-opacity: 0.4; }
+.net-beam-mid { stop-opacity: 0.18; }
+.net-beam-core-end { stop-opacity: 0.7; }
+.net-beam-core-mid { stop-opacity: 0.25; }
+.net-beam-core { fill: none; stroke-width: 1.2; stroke-linecap: round; }
+.net-beam-landing { fill: var(--accent); fill-opacity: 0.45; }
+html.dark .net-beams { mix-blend-mode: screen; }
+html.dark .net-beam-end { stop-opacity: 0.55; }
+html.dark .net-beam-mid { stop-opacity: 0.26; }
+
 .gesture-hover-comp {
   fill: var(--accent);
   fill-opacity: 0.06;
@@ -6779,6 +6789,7 @@ body.chrome-over .canvas svg {
 
 body.chrome-over .canvas .editor-overlay,
 body.chrome-over .canvas .snap-layer,
+body.chrome-over .canvas .net-beams,
 body.chrome-over .canvas .gesture-overlay {
   visibility: hidden;
 }

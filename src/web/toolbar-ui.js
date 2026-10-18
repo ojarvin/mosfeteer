@@ -491,12 +491,18 @@ export function toggleTheme() {
   else apply();
 }
 
-/** Turn the placement grid on/off; keeps the toolbar button and the '#'
+/** Keep a view toggle for the next visit (main.js storedViewToggle). */
+function storeViewToggle(name, on) {
+  try { localStorage.setItem(`mosfeteer.${name}`, on ? '1' : '0'); } catch { /* per-session only */ }
+}
+
+/** Turn the placement grid on/off; keeps the Settings item and the '#'
  *  keybinding in sync. */
 export function setGrid(on) {
-  editor.showGrid = on;
+  editor.showGrid = !!on;
+  storeViewToggle('grid', editor.showGrid);
   if (gridBtn) {
-    gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
+    gridBtn.setAttribute('aria-checked', String(editor.showGrid));
   }
   render();
   hintLine(editor.showGrid ? 'grid shown' : 'grid hidden');
@@ -507,9 +513,10 @@ export function setGrid(on) {
 // render when the pointer is inside.
 export function setCrosshair(on, announce = true) {
   editor.crosshairVisible = !!on;
+  storeViewToggle('crosshair', editor.crosshairVisible);
 
   if (crosshairBtn) {
-    crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
+    crosshairBtn.setAttribute('aria-checked', String(editor.crosshairVisible));
   }
   render();
   if (announce) hintLine(editor.crosshairVisible ? 'crosshair shown' : 'crosshair hidden');
@@ -519,8 +526,9 @@ export function setCrosshair(on, announce = true) {
 // the crosshair rather than anything the document carries.
 export function setGuides(on, announce = true) {
   editor.guidesVisible = !!on;
+  storeViewToggle('guides', editor.guidesVisible);
   if (guidesBtn) {
-    guidesBtn.setAttribute('aria-pressed', String(editor.guidesVisible));
+    guidesBtn.setAttribute('aria-checked', String(editor.guidesVisible));
   }
   render();
   if (announce) hintLine(editor.guidesVisible ? 'placement guides shown' : 'placement guides hidden');
@@ -668,12 +676,12 @@ export function installToolbarUi() {
 
   if (gridBtn) {
     gridBtn.addEventListener('click', () => setGrid(!editor.showGrid));
-    gridBtn.setAttribute('aria-pressed', String(editor.showGrid));
+    gridBtn.setAttribute('aria-checked', String(editor.showGrid));
   }
 
   if (guidesBtn) {
     guidesBtn.addEventListener('click', () => setGuides(!editor.guidesVisible));
-    guidesBtn.setAttribute('aria-pressed', String(editor.guidesVisible));
+    guidesBtn.setAttribute('aria-checked', String(editor.guidesVisible));
   }
 
   for (const item of document.querySelectorAll('[data-page-guide]')) {
@@ -687,7 +695,7 @@ export function installToolbarUi() {
 
   if (crosshairBtn) {
     crosshairBtn.addEventListener('click', () => setCrosshair(!editor.crosshairVisible));
-    crosshairBtn.setAttribute('aria-pressed', String(editor.crosshairVisible));
+    crosshairBtn.setAttribute('aria-checked', String(editor.crosshairVisible));
   }
 
   if (modeToolbarEl) {

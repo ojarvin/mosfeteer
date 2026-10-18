@@ -10,6 +10,7 @@ import { analysisDialog, canvasEl, cmdInput, cmdSuggestionsEl, reduceMotionButto
 import { editor } from './editor-state.js';
 import { applyLogDrawerEvent, hintLine, logCommand, logLine } from './status-bar-ui.js';
 import { toggleTheme, setGrid, setCrosshair, setGuides } from './toolbar-ui.js';
+import { netBeamsShown, setNetBeams } from './net-beams.js';
 import { setSidePanelVisible, sidePanelVisible } from './side-panel.js';
 import { toggleAnalysisDock } from './analysis-ui.js';
 import { addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } from './beats-ui.js';
@@ -68,6 +69,7 @@ export const ACTIONS = {
   beats: (state) => toggleTo(state, editor.beatStripOpen, toggleBeatStrip),
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
   'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
+  'net-beams': (state) => setNetBeams(state ?? !netBeamsShown()),
   trackpad: (state) => toggleTo(state, checked(scrollSchemeButton), () => scrollSchemeButton?.click()),
   'page-guide': (state) => (state
     ? document.querySelector(`[data-page-guide="${state === 'none' ? '' : state}"]`)?.click()

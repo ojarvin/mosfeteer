@@ -102,6 +102,7 @@ export const sidePanelEl = document.getElementById('side-panel');
 export const sidePanelToggleEl = document.getElementById('btn-side-panel');
 export const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 export const reduceMotionButton = document.getElementById('btn-reduce-motion');
+export const netBeamsButton = document.getElementById('btn-net-beams');
 export const themeBtn = document.getElementById('btn-theme');
 /** The theme toggles: Settings → Dark theme (in either top bar). */
 export const themeButtons = [themeBtn].filter(Boolean);
