@@ -49,6 +49,11 @@ test('timing VDD=0,.35,.7,1 draws the row as a box on the grid with its curve in
   assert.equal(b.h, 2 * GRID);
   assert.deepEqual(name(circuit, 'VDD').timing.values, [0, 0.35, 0.7, 1]);
   assert.match(svgString(circuit), /class="timing-analog"/);
+  // Exported, every element names each attribute once, as XML requires.
+  for (const [tag] of svgString(circuit, { background: true }).matchAll(/<[a-z][^>]*>/g)) {
+    const names = [...tag.matchAll(/\s([a-z:-]+)="/g)].map((m) => m[1]);
+    assert.equal(new Set(names).size, names.length, tag);
+  }
   const reloaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
   assert.deepEqual(existingTimingDiagram(reloaded).values.get('VDD'), [0, 0.35, 0.7, 1]);
   // Redrawn without the wave given, it keeps it.

@@ -802,7 +802,9 @@ function analogWaveSvg(label, opacity = '') {
   const parts = [];
   if (bipolar) parts.push(`<path d="M ${fmt(x0)} ${fmt(top + h / 2)} H ${fmt(x0 + (trace.at(-1)?.[0] ?? 0))}" fill="none" ${dashed}/>`);
   for (const [x, v] of thresholds) parts.push(`<path d="M ${fmt(x0)} ${fmt(y(v))} H ${fmt(x0 + x)}" fill="none" ${dashed}/>`);
-  parts.push(`<path d="${d(trace)}" fill="none" stroke-linejoin="round" ${styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation')}/>`);
+  // Round joins at the curve's corners, in place of the annotation's own.
+  const curve = styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="round"');
+  parts.push(`<path d="${d(trace)}" fill="none" ${curve}/>`);
   return `<g class="timing-analog"${opacity}>${parts.join('')}</g>`;
 }
 
