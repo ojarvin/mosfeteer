@@ -44,6 +44,24 @@ menu, or their keys. Docked (the button, or a drag to the pane's right
 edge), a window becomes a section of the side panel that its title bar
 folds and its top edge resizes; dragging the title bar out floats it
 again. No window covers the tool rail itself (the paper below it is free).
+Each window has a default place (its `place` option, `PLACE` in
+`floating-window.js`): beats bottom center, the optimizer's run top center,
+history and reference windows top left (each further reference window a
+step lower and to the right), the calculator bottom left, the rest top
+right. A window stays where it
+is dragged (per window, in this browser); double-clicking its title bar
+puts it back in its default place, keeping its size. The window with the
+keyboard focus in it has its border and title bar in the accent. Pressing
+a window gives it the focus (the control pressed, else the window itself),
+and keys go to it rather than the drawing until the drawing is pressed;
+Escape on a window holding the focus itself closes it, and so does the
+window's own key (`toggleKey`: Shift+S, Shift+N, ...) pressed in it, unless
+in a field being typed in. Shift+S opens the analysis with the keyboard in
+it.
+A reference window's × (or Escape) hides the last one shown, keeping its
+design for Shift+V, and closes any other; with the keyboard in it, `f`
+fits it, Ctrl+C copies its picture, and Shift+V hides the windows. Its
+Clear, as the calculator's, empties it to pick a design or paste a picture.
 Escape on the drawing lets go of one thing a press: a tool's draft or a
 pending key, then the selection, and with nothing left the window at the
 front (the one last opened or pressed; `closeFrontWindow` in

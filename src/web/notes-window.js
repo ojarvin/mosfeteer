@@ -102,7 +102,7 @@ function startEditing() {
   win.source.focus();
 }
 
-function stopEditing({ focusCanvas = false } = {}) {
+function stopEditing() {
   if (!win || !editing) return;
   finishEditStep();
   editing = false;
@@ -112,7 +112,6 @@ function stopEditing({ focusCanvas = false } = {}) {
   win.edit.title = 'Edit';
   shownKey = null;
   renderView();
-  if (focusCanvas) canvasEl.focus({ preventScroll: true });
 }
 
 /** Tab indents the lines the caret or selection is on by two spaces (a
@@ -151,8 +150,10 @@ function onSourceKey(ev) {
   if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) {
     ev.preventDefault();
     ev.stopPropagation();
-    stopEditing({ focusCanvas: ev.key === 'Escape' });
-    if (ev.key !== 'Escape') win.view.focus();
+    // The notes keep the keyboard, read now (the window itself when they
+    // are empty): Esc again closes them.
+    stopEditing();
+    (win.view.hidden ? win.el : win.view).focus({ preventScroll: true });
   }
 }
 
@@ -229,7 +230,7 @@ function build() {
     if (!editing && !ev.target.closest('a')) startEditing();
   });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true });
+  const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N' });
   win = { el: node, view, source, edit, empty, chrome };
 }
 

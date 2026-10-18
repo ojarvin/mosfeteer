@@ -86,6 +86,8 @@ test('global shortcuts yield to interactive controls', () => {
   assert.equal(isKeyboardSurfaceTarget({ tagName: 'BUTTON' }), true);
   assert.equal(isKeyboardSurfaceTarget({ tagName: 'div', closest: (selector) => selector.includes('option') }), true);
   assert.equal(isKeyboardSurfaceTarget({ tagName: 'div' }), false);
+  // A floating window holding the focus itself.
+  assert.equal(isKeyboardSurfaceTarget({ tagName: 'DIV', classList: { contains: (name) => name === 'floating-window' } }), true);
 });
 
 test('annotation endpoints move and reject invalid shapes', () => {

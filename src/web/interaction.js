@@ -150,7 +150,8 @@ export function shouldPanTouch({ pointerType = '', hasHit = false, mode = 'norma
 
 export function isKeyboardSurfaceTarget(target) {
   const tag = String(target?.tagName || '').toUpperCase();
-  return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'OPTION'].includes(tag) ||
+  // A floating window holding the focus itself has the keyboard too.
+  return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'OPTION'].includes(tag) || !!target?.classList?.contains('floating-window') ||
     !!target?.isContentEditable || !!target?.closest?.('[role="menuitem"],[role="option"],[role="separator"]');
 }
 

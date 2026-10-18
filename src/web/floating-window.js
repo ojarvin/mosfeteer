@@ -42,6 +42,7 @@ export function floatingWindowPosition(pane, size, stored, place, avoid = null) 
 export const PLACE = Object.freeze({
   topRight: (pane, size) => ({ x: pane.w - size.w - 52, y: MARGIN }),
   topCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: 56 }),
+  bottomLeft: (pane, size) => ({ x: MARGIN, y: pane.h - size.h - 12 }),
   bottomCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: pane.h - size.h - 12 }),
 });
 
@@ -97,10 +98,12 @@ export function closeFrontWindow() {
  * the column's height; the button again, or dragging its title bar out,
  * floats it where it was. A click on a docked window's title bar folds it
  * to that bar. Where a window is, docked or not, is kept per window in this
- * browser. Returns { place() }, to call after showing it (it also comes to
+ * browser. `toggleKey` (with Shift: 'S' for Shift+S) is the key that opens
+ * and closes it, which closes it from inside it too, where the drawing's
+ * keys do not reach (not while typing in a field). Returns { place() }, to call after showing it (it also comes to
  * the front, popping into place), and dispose(), for a window that is removed rather than hidden.
  */
-export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true }) {
+export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true, toggleKey = null }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
   const panel = document.getElementById('side-panel');
   const header = el.querySelector('.floating-window-header');
@@ -239,6 +242,28 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
     writePlace(key, stored);
     syncDockButton();
   };
+
+  // Pressed, a window takes the keyboard, and its title bar shows it: what
+  // was pressed when that takes focus, else the window itself -- which
+  // keeps keys from the drawing until the drawing is pressed (Escape there
+  // closes the window, as on the drawing).
+  if (!el.hasAttribute('tabindex')) el.tabIndex = -1;
+  el.addEventListener('pointerdown', (ev) => {
+    const own = ev.target.closest('button, input, select, textarea, a, [tabindex], [contenteditable]');
+    if ((!own || own === el) && !el.contains(document.activeElement)) el.focus({ preventScroll: true });
+  }, true);
+  const typing = (target) => !!target.closest('textarea, select, [contenteditable="true"]')
+    || (target.tagName === 'INPUT' && !['button', 'checkbox', 'radio', 'range', 'submit'].includes(target.type));
+  el.addEventListener('keydown', (ev) => {
+    if (!closeButton || ev.defaultPrevented) return;
+    const escape = ev.key === 'Escape' && ev.target === el;
+    const toggle = toggleKey && ev.key === toggleKey && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !typing(ev.target);
+    if (!escape && !toggle) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeButton.click();
+    pane.querySelector('#canvas')?.focus({ preventScroll: true });
+  });
 
   // The window last opened or pressed comes to the front of the others.
   const raise = () => {

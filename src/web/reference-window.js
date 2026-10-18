@@ -313,13 +313,18 @@ function createWindow(doc = null) {
   const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap: open this design in the editor, and show the one open now in this window');
   const copy = headerButton('reference-copy', 'copy', 'Copy the picture', 'Copy what this window shows to the clipboard as a picture (Ctrl+C with the pointer over it)');
   const another = headerButton('reference-new', 'plus', 'Another reference window', 'Open another reference window');
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'window-clear';
+  clear.title = 'Clear';
+  clear.textContent = 'Clear';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'floating-window-close';
   close.setAttribute('aria-label', 'Close the reference window');
-  close.title = 'Close this reference window';
+  close.title = 'Close (Shift+V shows it again)';
   close.textContent = '×';
-  header.append(title, fitButton, copy, swap, another, close);
+  header.append(title, fitButton, copy, swap, another, clear, close);
   const viewport = document.createElement('div');
   viewport.className = 'reference-viewport';
   const image = document.createElement('img');
@@ -337,13 +342,15 @@ function createWindow(doc = null) {
   el.hidden = hidden;
   pane.appendChild(el);
 
-  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap };
+  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap, clear };
   win.chrome = floatingWindow(el, {
     key: `reference-${slot}`,
     resizable: true,
-    onClose: () => closeWindow(win),
-    // Down the right side, each further window a step lower.
-    place: (paneSize, size) => ({ x: paneSize.w - size.w - 52, y: 56 + (slot - 1) * 36 }),
+    // The last one shown hides, keeping what it shows for Shift+V; another
+    // goes.
+    onClose: () => (windows.length > 1 ? closeWindow(win) : setHidden(true)),
+    // At the top left, each further window a step lower and to the right.
+    place: () => ({ x: 8 + (slot - 1) * 36, y: 8 + (slot - 1) * 36 }),
   });
   title.addEventListener('click', () => openPicker(win));
   another.addEventListener('click', () => {
@@ -351,9 +358,27 @@ function createWindow(doc = null) {
     if (next) openPicker(next);
   });
   fitButton.addEventListener('click', () => fit(win));
+  // Clear: nothing shown, as a new window, ready to pick a design or paste.
+  clear.addEventListener('click', () => setDocument(win, null));
   copy.addEventListener('click', () => copyPicture(win));
   swap.addEventListener('click', () => void swapWithEditor(win));
   installViewport(win);
+  // With the keyboard here, its keys are the window's: f fits it, Ctrl+C
+  // copies its picture, Shift+V hides the windows.
+  el.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented || ev.altKey || ev.target.closest('input, textarea, select')) return;
+    const mod = ev.ctrlKey || ev.metaKey;
+    const act = !mod && (ev.key === 'f' || ev.key === 'F') ? () => fit(win)
+      : mod && !ev.shiftKey && ev.key.toLowerCase() === 'c' ? () => copyPicture(win)
+        : !mod && ev.key === 'V' ? () => {
+          setHidden(true);
+          document.getElementById('canvas')?.focus({ preventScroll: true });
+        } : null;
+    if (!act) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    act();
+  });
   el.addEventListener('pointerenter', () => { hovered = win; });
   el.addEventListener('pointerleave', () => { if (hovered === win) hovered = null; });
   windows.push(win);
@@ -374,6 +399,7 @@ function setPicture(win, image) {
   win.revision = null;
   win.title.textContent = 'Pasted picture ▾';
   win.swap.disabled = true;
+  win.clear.disabled = false;
   showMessage(win, '');
   fit(win);
   remember();
@@ -390,6 +416,7 @@ async function setState(win, title, state) {
   win.revision = null;
   win.fitted = true;
   win.swap.disabled = true;
+  win.clear.disabled = false;
   win.title.textContent = `${title} ▾`;
   showMessage(win, 'Loading…');
   remember();
@@ -418,7 +445,8 @@ export function showStateInReference(title, state) {
 
 function setDocument(win, doc) {
   win.pasted = null;
-  win.swap.disabled = false;
+  win.swap.disabled = !doc;
+  win.clear.disabled = !doc;
   win.doc = doc ? { path: doc.path, name: doc.name } : null;
   win.picture = null;
   win.etag = null;
@@ -579,7 +607,12 @@ export function toggleReferenceWindows() {
     remember();
     return;
   }
-  hidden = !hidden;
+  setHidden(!hidden);
+}
+
+/** Hide the reference windows, keeping what they show, or show them again. */
+function setHidden(on) {
+  hidden = on;
   for (const win of windows) {
     win.el.hidden = hidden;
     if (!hidden) {
@@ -587,6 +620,7 @@ export function toggleReferenceWindows() {
       void loadInto(win);
     }
   }
+  if (hidden && windows.includes(hovered)) hovered = null;
   if (!hidden) for (const win of windows) if (win.fitted) fit(win);
   remember();
   syncButton();

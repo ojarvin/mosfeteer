@@ -1039,7 +1039,8 @@ button:disabled {
   min-height: 0;
 }
 
-.calculator-clear {
+/* A window's Clear (the calculator's, a reference window's): text, small. */
+.window-clear {
   flex: none;
   height: var(--control-h-sm);
   padding: 0 8px;
@@ -2008,6 +2009,24 @@ button:disabled {
 
 .floating-window.front {
   z-index: 21;
+}
+
+/* The window with the keyboard (the focus is in it, so keys go to it, not
+   to the drawing): its border and title bar in the accent. */
+.floating-window:focus {
+  outline: none;
+}
+
+.floating-window:focus-within {
+  border-color: var(--accent);
+}
+
+.floating-window:focus-within .floating-window-header {
+  background: var(--accent-tint);
+}
+
+.floating-window:focus-within .floating-window-title {
+  color: var(--accent);
 }
 
 .floating-window-header {
@@ -6277,7 +6296,10 @@ details.analysis-options > * + * {
   background: var(--danger);
 }
 
+/* Its own height in a long list, which scrolls under it rather than
+   squeezing it. */
 .component-context-menu .context-submenu-search {
+  flex: none;
   width: 100%;
   margin-bottom: 4px;
   padding: 4px 8px;

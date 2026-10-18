@@ -14,7 +14,7 @@ import { calculate, formatResult, replayNames, siResult } from '../core/calculat
 import { CALCULATOR_HISTORY } from '../core/window-state.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
-import { floatingWindow } from './floating-window.js';
+import { PLACE, floatingWindow } from './floating-window.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
 import { element as el } from './dom.js';
 
@@ -117,7 +117,7 @@ function onKey(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the calculator', title: 'Close (Shift+E)', text: '×' });
-  const clear = el('button', { type: 'button', class: 'calculator-clear', title: 'Clear', text: 'Clear', onclick: clearCalculator });
+  const clear = el('button', { type: 'button', class: 'window-clear', title: 'Clear', text: 'Clear', onclick: clearCalculator });
   const list = el('ol', { class: 'calculator-list', 'aria-live': 'polite' });
   const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2. clear starts afresh.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
@@ -128,7 +128,7 @@ function build() {
   node.style.setProperty('--calculator-rows', String(SHOWN));
   input.addEventListener('keydown', onKey);
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'calculator', onClose: hide, resizable: true });
+  const chrome = floatingWindow(node, { key: 'calculator', onClose: hide, resizable: true, place: PLACE.bottomLeft, toggleKey: 'E' });
   win = { el: node, list, empty, input, chrome };
 }
 

@@ -41810,7 +41810,10 @@ function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   analysisDialog.hidden = false;
   analysisWindow?.place();
   syncAnalysisButton(true);
+  // Shift+S gives the window the keyboard, not its first field, so Shift+S
+  // there closes it again.
   if (focus) analysisInput?.focus();
+  else analysisDialog.focus({ preventScroll: true });
 }
 
 let analysisInputPrevious = '';
@@ -42289,7 +42292,7 @@ function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
-  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true });
+  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true, toggleKey: 'S' });
 
   analysisButton?.addEventListener('click', () => toggleAnalysisDock());
 
@@ -48496,7 +48499,7 @@ function openTimingDialog() {
     renderPairs();
     renderNotes();
   };
-  timingEditor = { dialog, grid, close, follow, window: floatingWindow(dialog, { key: 'timing', onClose: close, place: PLACE.topCenter }) };
+  timingEditor = { dialog, grid, close, follow, window: floatingWindow(dialog, { key: 'timing', onClose: close }) };
   timingEditor.window.place();
   syncTimingToggle();
   grid.focus();
@@ -48639,7 +48642,7 @@ function installBeatsUi() {
   document.getElementById('btn-beats')?.addEventListener('click', toggleBeatStrip);
   document.getElementById('btn-window-beats')?.addEventListener('click', toggleBeatStrip);
   document.getElementById('btn-window-timing')?.addEventListener('click', toggleTimingDialog);
-  if (beatStripEl) beatWindow = floatingWindow(beatStripEl, { key: 'beats', place: PLACE.bottomCenter });
+  if (beatStripEl) beatWindow = floatingWindow(beatStripEl, { key: 'beats', place: PLACE.bottomCenter, toggleKey: 'B' });
 }
 
 __exports.plainMarkup = plainMarkup;
@@ -49341,7 +49344,7 @@ let calculate, formatResult, replayNames, siResult; __bind(() => { ({ calculate,
 let CALCULATOR_HISTORY; __bind(() => { ({ CALCULATOR_HISTORY } = __require("src/core/window-state.js")); });
 let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
+let PLACE, floatingWindow; __bind(() => { ({ PLACE, floatingWindow } = __require("src/web/floating-window.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
@@ -49463,7 +49466,7 @@ function onKey(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the calculator', title: 'Close (Shift+E)', text: '×' });
-  const clear = el('button', { type: 'button', class: 'calculator-clear', title: 'Clear', text: 'Clear', onclick: clearCalculator });
+  const clear = el('button', { type: 'button', class: 'window-clear', title: 'Clear', text: 'Clear', onclick: clearCalculator });
   const list = el('ol', { class: 'calculator-list', 'aria-live': 'polite' });
   const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2. clear starts afresh.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
@@ -49474,7 +49477,7 @@ function build() {
   node.style.setProperty('--calculator-rows', String(SHOWN));
   input.addEventListener('keydown', onKey);
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'calculator', onClose: hide, resizable: true });
+  const chrome = floatingWindow(node, { key: 'calculator', onClose: hide, resizable: true, place: PLACE.bottomLeft, toggleKey: 'E' });
   win = { el: node, list, empty, input, chrome };
 }
 
@@ -55942,6 +55945,7 @@ function floatingWindowPosition(pane, size, stored, place, avoid = null) {
 const PLACE = Object.freeze({
   topRight: (pane, size) => ({ x: pane.w - size.w - 52, y: MARGIN }),
   topCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: 56 }),
+  bottomLeft: (pane, size) => ({ x: MARGIN, y: pane.h - size.h - 12 }),
   bottomCenter: (pane, size) => ({ x: (pane.w - size.w) / 2, y: pane.h - size.h - 12 }),
 });
 
@@ -55997,10 +56001,12 @@ function closeFrontWindow() {
  * the column's height; the button again, or dragging its title bar out,
  * floats it where it was. A click on a docked window's title bar folds it
  * to that bar. Where a window is, docked or not, is kept per window in this
- * browser. Returns { place() }, to call after showing it (it also comes to
+ * browser. `toggleKey` (with Shift: 'S' for Shift+S) is the key that opens
+ * and closes it, which closes it from inside it too, where the drawing's
+ * keys do not reach (not while typing in a field). Returns { place() }, to call after showing it (it also comes to
  * the front, popping into place), and dispose(), for a window that is removed rather than hidden.
  */
-function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true }) {
+function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = true, toggleKey = null }) {
   const pane = el.closest('.canvas-pane') || el.parentElement;
   const panel = document.getElementById('side-panel');
   const header = el.querySelector('.floating-window-header');
@@ -56139,6 +56145,28 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
     writePlace(key, stored);
     syncDockButton();
   };
+
+  // Pressed, a window takes the keyboard, and its title bar shows it: what
+  // was pressed when that takes focus, else the window itself -- which
+  // keeps keys from the drawing until the drawing is pressed (Escape there
+  // closes the window, as on the drawing).
+  if (!el.hasAttribute('tabindex')) el.tabIndex = -1;
+  el.addEventListener('pointerdown', (ev) => {
+    const own = ev.target.closest('button, input, select, textarea, a, [tabindex], [contenteditable]');
+    if ((!own || own === el) && !el.contains(document.activeElement)) el.focus({ preventScroll: true });
+  }, true);
+  const typing = (target) => !!target.closest('textarea, select, [contenteditable="true"]')
+    || (target.tagName === 'INPUT' && !['button', 'checkbox', 'radio', 'range', 'submit'].includes(target.type));
+  el.addEventListener('keydown', (ev) => {
+    if (!closeButton || ev.defaultPrevented) return;
+    const escape = ev.key === 'Escape' && ev.target === el;
+    const toggle = toggleKey && ev.key === toggleKey && ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !typing(ev.target);
+    if (!escape && !toggle) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeButton.click();
+    pane.querySelector('#canvas')?.focus({ preventScroll: true });
+  });
 
   // The window last opened or pressed comes to the front of the others.
   const raise = () => {
@@ -59567,7 +59595,8 @@ function shouldPanTouch({ pointerType = '', hasHit = false, mode = 'normal' } = 
 
 function isKeyboardSurfaceTarget(target) {
   const tag = String(target?.tagName || '').toUpperCase();
-  return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'OPTION'].includes(tag) ||
+  // A floating window holding the focus itself has the keyboard too.
+  return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'OPTION'].includes(tag) || !!target?.classList?.contains('floating-window') ||
     !!target?.isContentEditable || !!target?.closest?.('[role="menuitem"],[role="option"],[role="separator"]');
 }
 
@@ -69575,7 +69604,7 @@ function startEditing() {
   win.source.focus();
 }
 
-function stopEditing({ focusCanvas = false } = {}) {
+function stopEditing() {
   if (!win || !editing) return;
   finishEditStep();
   editing = false;
@@ -69585,7 +69614,6 @@ function stopEditing({ focusCanvas = false } = {}) {
   win.edit.title = 'Edit';
   shownKey = null;
   renderView();
-  if (focusCanvas) canvasEl.focus({ preventScroll: true });
 }
 
 /** Tab indents the lines the caret or selection is on by two spaces (a
@@ -69624,8 +69652,10 @@ function onSourceKey(ev) {
   if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey))) {
     ev.preventDefault();
     ev.stopPropagation();
-    stopEditing({ focusCanvas: ev.key === 'Escape' });
-    if (ev.key !== 'Escape') win.view.focus();
+    // The notes keep the keyboard, read now (the window itself when they
+    // are empty): Esc again closes them.
+    stopEditing();
+    (win.view.hidden ? win.el : win.view).focus({ preventScroll: true });
   }
 }
 
@@ -69702,7 +69732,7 @@ function build() {
     if (!editing && !ev.target.closest('a')) startEditing();
   });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true });
+  const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N' });
   win = { el: node, view, source, edit, empty, chrome };
 }
 
@@ -72467,7 +72497,7 @@ function build() {
     if (ev.key === 'Escape' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) hidePlots();
   });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'plots', onClose: hidePlots, resizable: true });
+  const chrome = floatingWindow(node, { key: 'plots', onClose: hidePlots, resizable: true, toggleKey: 'W' });
   win = { el: node, body, chrome };
 }
 
@@ -73230,13 +73260,18 @@ function createWindow(doc = null) {
   const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap: open this design in the editor, and show the one open now in this window');
   const copy = headerButton('reference-copy', 'copy', 'Copy the picture', 'Copy what this window shows to the clipboard as a picture (Ctrl+C with the pointer over it)');
   const another = headerButton('reference-new', 'plus', 'Another reference window', 'Open another reference window');
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'window-clear';
+  clear.title = 'Clear';
+  clear.textContent = 'Clear';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'floating-window-close';
   close.setAttribute('aria-label', 'Close the reference window');
-  close.title = 'Close this reference window';
+  close.title = 'Close (Shift+V shows it again)';
   close.textContent = '×';
-  header.append(title, fitButton, copy, swap, another, close);
+  header.append(title, fitButton, copy, swap, another, clear, close);
   const viewport = document.createElement('div');
   viewport.className = 'reference-viewport';
   const image = document.createElement('img');
@@ -73254,13 +73289,15 @@ function createWindow(doc = null) {
   el.hidden = hidden;
   pane.appendChild(el);
 
-  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap };
+  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap, clear };
   win.chrome = floatingWindow(el, {
     key: `reference-${slot}`,
     resizable: true,
-    onClose: () => closeWindow(win),
-    // Down the right side, each further window a step lower.
-    place: (paneSize, size) => ({ x: paneSize.w - size.w - 52, y: 56 + (slot - 1) * 36 }),
+    // The last one shown hides, keeping what it shows for Shift+V; another
+    // goes.
+    onClose: () => (windows.length > 1 ? closeWindow(win) : setHidden(true)),
+    // At the top left, each further window a step lower and to the right.
+    place: () => ({ x: 8 + (slot - 1) * 36, y: 8 + (slot - 1) * 36 }),
   });
   title.addEventListener('click', () => openPicker(win));
   another.addEventListener('click', () => {
@@ -73268,9 +73305,27 @@ function createWindow(doc = null) {
     if (next) openPicker(next);
   });
   fitButton.addEventListener('click', () => fit(win));
+  // Clear: nothing shown, as a new window, ready to pick a design or paste.
+  clear.addEventListener('click', () => setDocument(win, null));
   copy.addEventListener('click', () => copyPicture(win));
   swap.addEventListener('click', () => void swapWithEditor(win));
   installViewport(win);
+  // With the keyboard here, its keys are the window's: f fits it, Ctrl+C
+  // copies its picture, Shift+V hides the windows.
+  el.addEventListener('keydown', (ev) => {
+    if (ev.defaultPrevented || ev.altKey || ev.target.closest('input, textarea, select')) return;
+    const mod = ev.ctrlKey || ev.metaKey;
+    const act = !mod && (ev.key === 'f' || ev.key === 'F') ? () => fit(win)
+      : mod && !ev.shiftKey && ev.key.toLowerCase() === 'c' ? () => copyPicture(win)
+        : !mod && ev.key === 'V' ? () => {
+          setHidden(true);
+          document.getElementById('canvas')?.focus({ preventScroll: true });
+        } : null;
+    if (!act) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    act();
+  });
   el.addEventListener('pointerenter', () => { hovered = win; });
   el.addEventListener('pointerleave', () => { if (hovered === win) hovered = null; });
   windows.push(win);
@@ -73291,6 +73346,7 @@ function setPicture(win, image) {
   win.revision = null;
   win.title.textContent = 'Pasted picture ▾';
   win.swap.disabled = true;
+  win.clear.disabled = false;
   showMessage(win, '');
   fit(win);
   remember();
@@ -73307,6 +73363,7 @@ async function setState(win, title, state) {
   win.revision = null;
   win.fitted = true;
   win.swap.disabled = true;
+  win.clear.disabled = false;
   win.title.textContent = `${title} ▾`;
   showMessage(win, 'Loading…');
   remember();
@@ -73335,7 +73392,8 @@ function showStateInReference(title, state) {
 
 function setDocument(win, doc) {
   win.pasted = null;
-  win.swap.disabled = false;
+  win.swap.disabled = !doc;
+  win.clear.disabled = !doc;
   win.doc = doc ? { path: doc.path, name: doc.name } : null;
   win.picture = null;
   win.etag = null;
@@ -73496,7 +73554,12 @@ function toggleReferenceWindows() {
     remember();
     return;
   }
-  hidden = !hidden;
+  setHidden(!hidden);
+}
+
+/** Hide the reference windows, keeping what they show, or show them again. */
+function setHidden(on) {
+  hidden = on;
   for (const win of windows) {
     win.el.hidden = hidden;
     if (!hidden) {
@@ -73504,6 +73567,7 @@ function toggleReferenceWindows() {
       void loadInto(win);
     }
   }
+  if (hidden && windows.includes(hovered)) hovered = null;
   if (!hidden) for (const win of windows) if (win.fitted) fit(win);
   remember();
   syncButton();
@@ -76865,7 +76929,7 @@ function build() {
   });
   window.addEventListener('mouseup', () => { dragging = false; });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true });
+  const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true, toggleKey: 'Z' });
   win = { el: node, grid, body, filter, empty, status, chrome };
 }
 

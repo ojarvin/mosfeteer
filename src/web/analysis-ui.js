@@ -825,7 +825,10 @@ function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   analysisDialog.hidden = false;
   analysisWindow?.place();
   syncAnalysisButton(true);
+  // Shift+S gives the window the keyboard, not its first field, so Shift+S
+  // there closes it again.
   if (focus) analysisInput?.focus();
+  else analysisDialog.focus({ preventScroll: true });
 }
 
 let analysisInputPrevious = '';
@@ -1304,7 +1307,7 @@ export function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
 
-  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true });
+  if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true, toggleKey: 'S' });
 
   analysisButton?.addEventListener('click', () => toggleAnalysisDock());
 

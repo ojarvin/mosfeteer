@@ -113,6 +113,95 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await closeAll();
   });
 
+  test('the window with the keyboard shows it in its title bar; a reference window opens at the top left, the calculator at the bottom left', async () => {
+    await h.open('beats');
+    await h.key('E', { shiftKey: true });
+    await h.key('V', { shiftKey: true });
+    await h.until(`!!document.querySelector('.calculator-window:not([hidden])') && !!document.querySelector('.reference-window:not([hidden])')`);
+    // Back in their default places, wherever the tests before left them.
+    await h.evaluate(`['.calculator-window', '.reference-window'].forEach((w) => document.querySelector(w + ' .floating-window-header').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))`);
+    const litNow = `[...document.querySelectorAll('.floating-window:not([hidden])')].filter((w) => getComputedStyle(w.querySelector('.floating-window-header')).backgroundColor !== 'rgba(0, 0, 0, 0)').map((w) => w.className.split(' ')[1])`;
+    // The lit windows, once they settle on `expected`.
+    const lit = async (expected) => {
+      await h.until(`JSON.stringify(${litNow}) === ${JSON.stringify(JSON.stringify(expected))}`).catch(() => {});
+      return h.evaluate(litNow);
+    };
+    // A key where the focus is, as typed.
+    const type = (key) => h.evaluate(`(document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true }))`);
+    await h.evaluate(`document.getElementById('canvas').focus()`);
+    assert.deepEqual(await lit([]), [], 'the drawing has the keyboard');
+    await h.evaluate(`document.querySelector('.calculator-window input, .calculator-window textarea, .calculator-window button').focus()`);
+    assert.deepEqual(await lit(['calculator-window']), ['calculator-window']);
+    await h.evaluate(`document.querySelector('.reference-window .floating-window-dock').focus()`);
+    assert.deepEqual(await lit(['reference-window']), ['reference-window']);
+    // Back and forth by pressing: the drawing, then a window's title bar.
+    const press = async (selector, fx = 0, dx = 20) => {
+      const at = await h.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.x + r.width * ${fx} + ${dx}, y: r.y + r.height / 2 }; })()`);
+      await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });
+      await h.mouse('mousePressed', at.x, at.y);
+      await h.mouse('mouseReleased', at.x, at.y);
+    };
+    await press('#canvas', 0.6, 0);
+    assert.deepEqual(await lit([]), []);
+    await press('.calculator-window .floating-window-title');
+    assert.deepEqual(await lit(['calculator-window']), ['calculator-window']);
+    await press('#canvas', 0.6, 0);
+    assert.deepEqual(await lit([]), []);
+    await press('.calculator-window .floating-window-title');
+    assert.deepEqual(await lit(['calculator-window']), ['calculator-window']);
+    // The drawing's keys wait while it has the keyboard; Escape closes it.
+    const grid = () => h.evaluate(`!!document.querySelector('#canvas .grid-line')`);
+    const gridBefore = await grid();
+    await type('#');
+    assert.equal(await grid(), gridBefore, 'no grid toggled');
+    await type('Escape');
+    await h.until(`!!document.querySelector('.calculator-window[hidden]')`);
+    assert.equal(await h.evaluate(`document.activeElement?.id`), 'canvas');
+    await h.key('E', { shiftKey: true });
+    await h.until(`!!document.querySelector('.calculator-window:not([hidden])')`);
+    const calc = await h.evaluate(`(() => {
+      const win = document.querySelector('.calculator-window').getBoundingClientRect();
+      const pane = document.querySelector('.canvas-pane').getBoundingClientRect();
+      return { left: win.left - pane.left, gap: pane.bottom - win.bottom };
+    })()`);
+    assert.ok(calc.left < 80 && calc.gap < 30, JSON.stringify(calc));
+    // Top left, beside the tool rail.
+    const place = await h.evaluate(`(() => {
+      const win = document.querySelector('.reference-window').getBoundingClientRect();
+      const pane = document.querySelector('.canvas-pane').getBoundingClientRect();
+      const rail = document.querySelector('.mode-toolbar').getBoundingClientRect();
+      return { left: win.left - pane.left, top: win.top - pane.top, rail: rail.right - pane.left, mid: pane.width / 2 };
+    })()`);
+    assert.ok(place.left >= place.rail && place.left < place.rail + 20 && place.top < 20, JSON.stringify(place));
+    await closeAll();
+  });
+
+  test('Shift+S opens the analysis with the keyboard, and Shift+S in it closes it; Esc out of the notes source keeps them lit', async () => {
+    await h.open('beats');
+    await closeAll();
+    const litNow = `[...document.querySelectorAll('.floating-window:not([hidden])')].filter((w) => w.matches(':focus-within')).map((w) => [...w.classList].find((c) => c !== 'floating-window'))`;
+    const type = (key, init = {}) => h.evaluate(`(document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true, ...${JSON.stringify(init)} }))`);
+    await h.key('S', { shiftKey: true });
+    await h.until(`${litNow}.length === 1`);
+    assert.deepEqual(await h.evaluate(litNow), ['analysis-dock']);
+    await type('S', { shiftKey: true });
+    await h.until(`document.getElementById('analysis-dialog').hidden`);
+    assert.equal(await h.evaluate(`document.activeElement?.id`), 'canvas');
+    // The notes on Shift+N (n is free text now); an empty design's open to write.
+    await h.key('N', { shiftKey: true });
+    await h.until(`document.activeElement?.matches('.notes-source')`);
+    assert.deepEqual(await h.evaluate(litNow), ['notes-window']);
+    await type('Escape');
+    await h.until(`!document.querySelector('.notes-window.editing')`);
+    assert.deepEqual(await h.evaluate(litNow), ['notes-window'], 'read now, still with the keyboard');
+    await type('Escape');
+    await h.until(`!!document.querySelector('.notes-window[hidden]')`);
+    // n picks the free-text tool.
+    await h.key('n');
+    await h.until(`document.getElementById('btn-mode-annotation').getAttribute('aria-pressed') === 'true'`);
+    await h.key('Escape');
+  });
+
   test('a picture pasted with the pointer over a reference window shows there, not on the drawing', async () => {
     await h.open('beats');
     await h.key('V', { shiftKey: true });

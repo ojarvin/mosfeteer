@@ -653,7 +653,7 @@ function build() {
   });
   window.addEventListener('mouseup', () => { dragging = false; });
   canvasEl.closest('.canvas-pane').append(node);
-  const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true });
+  const chrome = floatingWindow(node, { key: 'sizing', onClose: hide, resizable: true, toggleKey: 'Z' });
   win = { el: node, grid, body, filter, empty, status, chrome };
 }
 

@@ -9,7 +9,8 @@ another designer; neither is ever drawn or exported with the figure.
 `Circuit#notes` is Markdown text (`notes` in the file, left out when
 empty). `Shift+N`, the toolbar's Notes, More → Notes, or `:notes` shows the notes
 window (`src/web/notes-window.js`): the notes rendered, or -- Edit, a
-double-click, Enter -- their source, until Esc or Ctrl/Cmd+Enter. Empty
+double-click, Enter -- their source, until Esc or Ctrl/Cmd+Enter, which
+leave the window the keyboard (Esc again closes it). Empty
 notes open ready to write. In the source, Tab indents the lines under the
 caret or selection by two spaces and Shift+Tab takes up to two away (the
 field's own Ctrl+Z undoes either).
