@@ -12,7 +12,7 @@ import { collapseCollinear } from './wireedit.js';
 import { busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneLiteralPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
-import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue } from './line-style.js';
+import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { normalizePartsTable, partsTableLayout } from './parts-table.js';
@@ -943,8 +943,12 @@ function normalizeTiming(timing) {
   const arrows = list(timing.arrows, withText).map(({ text, ...arrow }) => (text ? { ...arrow, text } : arrow));
   const marks = list(timing.marks, edge);
   const spans = list(timing.spans, withText);
-  // A drawn arrow, mark or span (or a span's or an arrow's text) says which it is.
-  const part = ['arrow', 'mark', 'span', 'note', 'arrow-note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
+  // Breaks: the slot each leaves time out of, through every row at once or
+  // through each row (`rows`).
+  const breaks = list(timing.breaks, (value) => (Number.isInteger(value?.at) && value.at >= 0 && value.at <= 1024
+    ? { at: value.at, ...(value.rows === true ? { rows: true } : {}) } : null));
+  // A drawn arrow, mark, span or break (or a span's or an arrow's text) says which it is.
+  const part = ['arrow', 'mark', 'span', 'break', 'note', 'arrow-note'].includes(timing.part) && Number.isInteger(timing.item) && timing.item >= 0 ? timing.part : null;
   // An analog row: its values (-1..1) at the slots' starts, whether they
   // hold through the slot; any row's height in cells (even, from 2).
   const level = (value) => (Number.isFinite(Number(value)) ? Math.max(-1, Math.min(1, Math.round(Number(value) * 1e4) / 1e4)) : null);
@@ -974,6 +978,7 @@ function normalizeTiming(timing) {
     ...(arrows.length ? { arrows } : {}),
     ...(marks.length ? { marks } : {}),
     ...(spans.length ? { spans } : {}),
+    ...(breaks.length ? { breaks } : {}),
     ...(part ? { part, item: timing.item } : {}),
   };
 }
@@ -1494,6 +1499,15 @@ export class LabelInstance {
     return true;
   }
 
+  /** A timing diagram's break drawn by this box (timingBreakGeometry):
+   *  down its middle, a cell past the waves when it runs through every
+   *  row, a little past its row when through each. */
+  timingBreak() {
+    const box = rectFromPoints([this.anchor, this.end]);
+    const each = this.timing?.breaks?.[this.timing.item]?.rows;
+    return timingBreakGeometry(box.x + box.w / 2, box.y, box.y + box.h, each ? {} : { reach: GRID });
+  }
+
   /** The points a shape's geometry stays within: a curve's control points
    *  too, which hold it. */
   shapePoints() {
@@ -1599,6 +1613,8 @@ export class LabelInstance {
     if (this.kind === 'arrow' || this.kind === 'line') return rectFromPoints(this.shapePoints());
     if (this.kind === 'box') {
       if (this.table) this.syncTableBox();
+      // A timing diagram's break reaches past what it cuts.
+      if (this.timing?.part === 'break') return rectUnion([rectFromPoints([this.anchor, this.end]), this.timingBreak().rect]);
       return rectFromPoints([this.anchor, this.end]);
     }
     const b = this.bbox();
@@ -1735,7 +1751,7 @@ export class LabelInstance {
   resizeBox(rect) {
     // A parts table is the size of what it lists; an analog wave the size
     // of its row.
-    if (this.kind !== 'box' || this.table || this.timing?.analog) return false;
+    if (this.kind !== 'box' || this.table || this.timing?.analog || this.timing?.part === 'break') return false;
     const next = { x0: snap(rect.x), y0: snap(rect.y), x1: snap(rect.x + rect.w), y1: snap(rect.y + rect.h) };
     if (next.x1 <= next.x0 || next.y1 <= next.y0) return false;
     const prev = {

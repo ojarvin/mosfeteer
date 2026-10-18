@@ -1,6 +1,6 @@
-/** The timing editor's arrows, marks and spans in a browser: picking edges
- *  in the grid, the keys and buttons, a span's text, and edits to the slots
- *  carrying them along. */
+/** The timing editor's arrows, marks, spans and breaks in a browser: picking
+ *  edges in the grid, the keys and buttons, a span's text, and edits to the
+ *  slots carrying them along. */
 
 import { describe, before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +30,7 @@ function beaten() {
 
 describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { clocked: clockAndQ(), phased: twoPhases(), noted: clockAndQ(), beaten: beaten(), repeated: clockAndQ(), ramped: clockAndQ(), broken: clockAndQ() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const parts = () => h.evaluate(`window.__circuit().labels.filter((l) => l.timing?.part).map((l) => ({ part: l.timing.part, text: l.text, item: l.timing.item, curve: !!l.curve }))`);
@@ -219,6 +219,40 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.until(`!window.__circuit().labels.some((l) => l.kind === 'box' && l.timing?.phase === 'Q')`);
     assert.equal(await name('Q', 'bits'), '0011');
     await h.until(`!document.querySelector('.timing-cell.analog')`);
+    await h.key('K', { shiftKey: true });
+  });
+
+  test('b breaks the cursor\'s slot through every row, then each row, then not; slot edits carry it', async () => {
+    await h.open('broken');
+    if (!(await h.evaluate(`!!document.querySelector('.timing-dialog .timing-grid')`))) await h.key('K', { shiftKey: true });
+    await h.until(`document.querySelectorAll('.timing-grid-line')[0]?.querySelectorAll('.timing-cell:not(.new)').length === 4`);
+    const breaks = () => h.evaluate(`window.__circuit().labels.find((l) => l.timing)?.timing.breaks || []`);
+    const drawn = () => h.evaluate(`document.querySelectorAll('#canvas .timing-break').length`);
+    await gridKey('Home');
+    await gridKey('ArrowRight');
+    await gridKey('b');
+    assert.deepEqual(await breaks(), [{ at: 1 }]);
+    await h.until(`document.querySelectorAll('#canvas .timing-break').length === 1`);
+    assert.match(await h.evaluate(`document.querySelector('.timing-grid-foot').textContent`), /slot 2 of 4, broken/);
+    await gridKey('b');
+    assert.deepEqual(await breaks(), [{ at: 1, rows: true }]);
+    await h.until(`document.querySelectorAll('#canvas .timing-break').length === 2`);
+    // Each row in the list switches it back.
+    await h.evaluate(`[...document.querySelectorAll('.timing-note button')].find((b) => b.textContent === 'Each row').click()`);
+    assert.deepEqual(await breaks(), [{ at: 1 }]);
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('.timing-note button')].find((b) => b.textContent === 'Each row').getAttribute('aria-pressed')`), 'false');
+    // A slot repeated before it moves it on; its own slot removed takes it.
+    await gridKey('ArrowLeft');
+    await gridKey('+');
+    assert.deepEqual(await breaks(), [{ at: 2 }]);
+    await gridKey('ArrowRight');
+    await gridKey('Delete');
+    assert.deepEqual(await breaks(), []);
+    assert.equal(await drawn(), 0);
+    // After the last slot there is nothing to break.
+    await gridKey('End');
+    await gridKey('b');
+    assert.match(await h.evaluate(`document.querySelector('.timing-dialog-status').textContent`), /put the cursor on one/);
     await h.key('K', { shiftKey: true });
   });
 });

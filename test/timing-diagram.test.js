@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
-import { plainTexText } from '../src/core/render.js';
+import { plainTexText, svgString } from '../src/core/render.js';
 import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
 import { addTimingDiagram, defaultTimingPairs, existingTimingDiagram, parseTimingBits, timingBeatBands, timingBeatStates, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
 
@@ -351,6 +351,56 @@ test('arrows, marks and spans sit on the edges, follow them, and wait while an e
   assert.deepEqual(parts().map((l) => l.timing.part).sort(), ['note', 'span', 'span', 'span']);
   run(circuit, 'timing --clear all');
   assert.equal(parts().length, 0);
+});
+
+test('a break leaves time out of its slot, through every row or through each, above the waves', () => {
+  const circuit = new Circuit();
+  run(circuit, 'timing --add CLK,Q', 'timing CLK=0101 Q=0011 --slot 4');
+  const result = runCommand(circuit, 'timing --break 2,4:rows');
+  assert.match(result.text, /2 breaks/);
+  const cuts = () => [...circuit.labels.values()].filter((l) => l.timing?.part === 'break');
+  const waves = [...circuit.labels.values()].filter((l) => l.timing && l.kind === 'line' && !l.timing.part);
+  const top = Math.min(...waves.map((l) => l.bbox().y));
+  const bottom = Math.max(...waves.map((l) => l.bbox().y + l.bbox().h));
+  const left = Math.min(...waves.map((l) => l.bbox().x));
+  // Slot 2 through every row: one box over the slot, top row to bottom row.
+  const across = cuts().filter((l) => l.timing.item === 0);
+  assert.equal(across.length, 1);
+  assert.equal(across[0].kind, 'box');
+  assert.equal(across[0].drawOrder, 1);
+  const lead = 2 * 40;
+  assert.deepEqual([across[0].anchor.x, across[0].end.x], [left + lead + 160, left + lead + 320]);
+  assert.deepEqual([across[0].anchor.y, across[0].end.y], [top, bottom]);
+  // Slot 4 through each row: a box per row, each that row's height.
+  const each = cuts().filter((l) => l.timing.item === 1);
+  assert.deepEqual(each.map((l) => l.timing.phase), ['CLK', 'Q']);
+  assert.ok(each.every((l) => l.end.y - l.anchor.y === 80));
+  // Two S curves on paper, reaching past what they cut: one S each even
+  // through every row (a curve is two cubic pieces).
+  const svg = svgString(circuit);
+  assert.equal(svg.match(/class="timing-break"/g).length, 3);
+  const strokes = [...svg.matchAll(/class="timing-break"><path [^>]*\/><path d="([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(strokes.every((d) => (d.match(/C/g) || []).length === 4), 'two curves of two pieces each');
+  // Through every row a cell past the waves; through each, a little past its row.
+  assert.deepEqual([across[0].inkRect().y, across[0].inkRect().y + across[0].inkRect().h], [top - 40, bottom + 40]);
+  assert.equal(each[0].inkRect().y, each[0].anchor.y - 10);
+  // One break a slot: the last asked for wins.
+  run(circuit, 'timing --break 2:rows');
+  assert.deepEqual(existingTimingDiagram(circuit).breaks, [{ at: 3, rows: true }, { at: 1, rows: true }]);
+  // A slot gone waits; back, it is drawn again. Saved and loaded, it stays.
+  run(circuit, 'timing CLK=01 Q=00');
+  assert.deepEqual(existingTimingDiagram(circuit).missing, [{ kind: 'break', index: 0 }]);
+  run(circuit, 'timing CLK=0101 Q=0011');
+  assert.deepEqual(existingTimingDiagram(circuit).missing, []);
+  const loaded = Circuit.fromJSON(JSON.parse(JSON.stringify(circuit.toJSON())));
+  assert.equal(existingTimingDiagram(loaded).breaks.length, 2);
+  // A slot past the end, or anything but N and N:rows, is refused.
+  const before = JSON.stringify(circuit.toJSON());
+  assert.throws(() => runCommand(circuit, 'timing --break 5'), /no slot 5: it has 4/);
+  assert.throws(() => runCommand(circuit, 'timing --break 2:each'), /N:rows/);
+  assert.equal(JSON.stringify(circuit.toJSON()), before);
+  run(circuit, 'timing --clear breaks');
+  assert.equal(cuts().length, 0);
 });
 
 test('an arrow or mark asked for must land on an edge; nothing changes when it does not', () => {

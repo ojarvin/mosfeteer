@@ -198,7 +198,19 @@ buttons removes them and edits a span's text. Something whose edge has gone
 again when the edge returns. The command takes them as `ROW:N`, the row's
 edge at the start of slot N (slots+1 for the one after the last): `timing
 --arrow "CLK:2>Q:2=$t_{cq}$" --mark CLK:4 --span "φ1:3>φ2:3=$t_{nov}$"`, `--clear
-arrows,marks,spans|all`; one asked for that lands on no edge is refused.
+arrows,marks,spans,breaks|all`; one asked for that lands on no edge is refused.
+
+A **Break** leaves time out of a slot: two S curves down its middle on
+paper that hides the waves between them, through every row at once or
+through each row on its own. It belongs to the slot rather than an edge, so
+it moves with inserted or removed slots and goes with its slot's removal.
+In the editor `b` breaks the cursor's slot through every row, again
+through each row, again not at all; **Each row** in the list switches one.
+The command takes slots: `timing --break 3,6:rows` (slot 3 through every
+row, slot 6 through each); a slot past the end is refused. Breaks draw
+above the waves (`drawOrder` 1), as boxes over their slot
+(`timing.part: 'break'`) whose ink reaches past them: a cell above and
+below the waves through every row, a little past each row through each.
 
 The diagram's annotations remember their phase and wave, so drawing it again
 replaces it rather than adding another. They are ordinary lines otherwise:

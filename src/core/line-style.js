@@ -170,3 +170,34 @@ export function curvedArrowGeometry(start, end, { unit = 40, length = TIMING_ARR
   const head = arrowheadGeometry(base, end, length, halfWidth);
   return { start, c1, c2, end, shaft: { c1, c2, end: base }, head };
 }
+
+/** A timing diagram's break: how far apart its two lines are, how far
+ *  each waves either side (at least), and how far they reach past what
+ *  they cut. */
+export const TIMING_BREAK = Object.freeze({ gap: 12, wave: 4, reach: 10 });
+
+/**
+ * A timing diagram's break at `x`, cutting from `top` to `bottom`: two
+ * parallel S shapes, the time between them left out. However far they
+ * reach, each is one S (bowing left, then right), its bow wider the
+ * longer it is. Each line is two
+ * cubic pieces ({ from, c1, c2, to }), top down; `rect` is what they stay
+ * within.
+ */
+export function timingBreakGeometry(x, top, bottom, { gap = TIMING_BREAK.gap, wave = TIMING_BREAK.wave, reach = TIMING_BREAK.reach } = {}) {
+  const y0 = top - reach;
+  const y1 = bottom + reach;
+  const half = (y1 - y0) / 2;
+  const bow = Math.max(wave, half / 20);
+  // Controls level with a piece's ends bulge it three quarters as far.
+  const bulge = (bow * 4) / 3;
+  const line = (cx) => [-1, 1].map((side, i) => {
+    const [a, b] = [y0 + i * half, y0 + (i + 1) * half];
+    return { from: { x: cx, y: a }, c1: { x: cx + side * bulge, y: a + half / 3 }, c2: { x: cx + side * bulge, y: b - half / 3 }, to: { x: cx, y: b } };
+  });
+  return {
+    left: line(x - gap / 2),
+    right: line(x + gap / 2),
+    rect: { x: x - gap / 2 - bow, y: y0, w: gap + 2 * bow, h: y1 - y0 },
+  };
+}

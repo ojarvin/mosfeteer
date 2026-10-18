@@ -687,6 +687,7 @@ function shapeAnnotationSvg(label, opacity = '') {
   if (label.kind === 'box' && label.plot) return plotAnnotationSvg(label, opacity);
   if (label.kind === 'box' && label.table) return partsTableSvg(label, opacity);
   if (label.kind === 'box' && label.timing?.analog) return analogWaveSvg(label, opacity);
+  if (label.kind === 'box' && label.timing?.part === 'break') return timingBreakSvg(label, opacity);
   if (label.kind === 'box' && label.image) {
     // A pasted picture, whole and undistorted in its box.
     const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
@@ -806,6 +807,20 @@ function analogWaveSvg(label, opacity = '') {
   const curve = styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation').replace(/stroke-linejoin="[^"]*"/, 'stroke-linejoin="round"');
   parts.push(`<path d="${d(trace)}" fill="none" ${curve}/>`);
   return `<g class="timing-analog"${opacity}>${parts.join('')}</g>`;
+}
+
+/**
+ * A timing diagram's break (timing-diagram.js): two S curves down the
+ * middle of its box, top to bottom, on paper that hides what they cut.
+ */
+function timingBreakSvg(label, opacity = '') {
+  const { left, right } = label.timingBreak();
+  const pieces = (line) => line.map(({ c1, c2, to }) => `C ${pt(c1.x, c1.y)} ${pt(c2.x, c2.y)} ${pt(to.x, to.y)}`).join(' ');
+  const down = (line) => `M ${pt(line[0].from.x, line[0].from.y)} ${pieces(line)}`;
+  const up = [...right].reverse().map(({ from, c1, c2, to }) => ({ from: to, c1: c2, c2: c1, to: from }));
+  const paper = `${down(left)} L ${pt(up[0].from.x, up[0].from.y)} ${pieces(up)} Z`;
+  const stroke = styleAttrs({ ...label.style, lineStyle: 'solid' }, 'annotation');
+  return `<g class="timing-break"${opacity}><path d="${paper}" fill="#fff" stroke="none"/><path d="${down(left)} ${down(right)}" fill="none" ${stroke}/></g>`;
 }
 
 /** The waveform a voltage source shows inside its circle, if any. */

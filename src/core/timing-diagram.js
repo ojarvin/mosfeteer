@@ -29,6 +29,11 @@
  * extremes is a threshold, a dashed line at its level from the row's start.
  * Any row may be taller than two cells (`height`, even cells).
  *
+ * A break leaves time out: two S curves down the middle of a slot, on
+ * paper that hides the waves between them -- through every row at once, or
+ * through each row on its own (`rows`). It belongs to its slot, not to an
+ * edge, so it is drawn wherever that slot is.
+ *
  * A row's wave is, first to last: the one given for it; the one it had in
  * the diagram already; for a complement (a barred phase), its phase drawn
  * inverted, gaps included; one slot per beat, high where the phase's
@@ -478,13 +483,13 @@ export function existingTimingDiagram(circuit) {
   const order = sorted.map((label) => label.timing.phase);
   // The diagram's own signals, spelled as their names are.
   const signals = sorted.filter((label) => label.timing.signal).map((label) => ({ key: label.timing.phase, source: label.text }));
-  const { arrows = [], marks = [], spans = [] } = first.timing;
+  const { arrows = [], marks = [], spans = [], breaks = [] } = first.timing;
   // The arrows, marks and spans not drawn: their edges have gone.
   const owner = { note: 'span', 'arrow-note': 'arrow' };
   const drawn = new Set(parts.filter((label) => label.timing.part).map((label) => `${owner[label.timing.part] || label.timing.part}:${label.timing.item}`));
-  const missing = Object.entries({ arrow: arrows, mark: marks, span: spans })
+  const missing = Object.entries({ arrow: arrows, mark: marks, span: spans, break: breaks })
     .flatMap(([kind, list]) => list.flatMap((_, index) => (drawn.has(`${kind}:${index}`) ? [] : [{ kind, index }])));
-  return { ids: parts.map((label) => label.id), bits, shifts, values, holds, heights, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', arrows, marks, spans, missing };
+  return { ids: parts.map((label) => label.id), bits, shifts, values, holds, heights, order, signals, x, y, slot: first.timing.slot, gaps: first.timing.gaps === false ? 'none' : first.timing.gaps ?? 'auto', arrows, marks, spans, breaks, missing };
 }
 
 /** `phases` in `order` (phase keys) where it names them; the rest after, in
@@ -542,9 +547,10 @@ export function timingRowSources(circuit, { fromBeats = false, typed = new Map()
 /** Two edge references ({ row, at }) the same edge. */
 const sameEdge = (a, b) => samePhase(a.row, b.row) && a.at === b.at;
 
-/** The diagram's arrows, marks and spans as given (edge references by row
- *  key), each once; a span's text trimmed. */
-function timingNotes({ arrows = [], marks = [], spans = [] }) {
+/** The diagram's arrows, marks, spans and breaks as given (edge references
+ *  by row key), each once -- one break a slot, the last given -- a span's
+ *  text trimmed. */
+function timingNotes({ arrows = [], marks = [], spans = [], breaks = [] }) {
   const edge = (ref) => ({ row: String(ref.row), at: Math.round(Number(ref.at)) });
   const unique = (list, same) => list.filter((item, i) => list.findIndex((other) => same(item, other)) === i);
   return {
@@ -554,6 +560,7 @@ function timingNotes({ arrows = [], marks = [], spans = [] }) {
     }), (a, b) => sameEdge(a.from, b.from) && sameEdge(a.to, b.to)),
     marks: unique(marks.map(edge), sameEdge),
     spans: unique(spans.map((span) => ({ from: edge(span.from), to: edge(span.to), text: String(span.text ?? '').trim() })), (a, b) => sameEdge(a.from, b.from) && sameEdge(a.to, b.to)),
+    breaks: unique(breaks.map((item) => ({ at: Math.round(Number(item.at)), ...(item.rows ? { rows: true } : {}) })).reverse(), (a, b) => a.at === b.at).reverse(),
   };
 }
 
@@ -640,7 +647,7 @@ export function removeTimingDiagram(circuit) {
  * plus its own. Returns the rows: [{ phase, bits, from, shift, label, line,
  * lines }].
  */
-export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, need = [], heights: givenHeights = {}, hold: givenHold = {} } = {}) {
+export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = null, gaps = null, shifts: givenShifts = {}, order = null, place = false, add = [], remove = [], arrows = null, marks = null, spans = null, breaks = null, need = [], heights: givenHeights = {}, hold: givenHold = {} } = {}) {
   const current = timingPhases(circuit);
   for (const name of add) {
     if (!String(name).trim()) throw new Error('a signal needs a name');
@@ -715,8 +722,9 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     const edge = r < 0 ? null : edges[r].find((candidate) => candidate.at === ref.at);
     return edge ? { x: edge.x, row: r } : null;
   };
-  const notes = timingNotes({ arrows: arrows ?? before?.arrows ?? [], marks: marks ?? before?.marks ?? [], spans: spans ?? before?.spans ?? [] });
+  const notes = timingNotes({ arrows: arrows ?? before?.arrows ?? [], marks: marks ?? before?.marks ?? [], spans: spans ?? before?.spans ?? [], breaks: breaks ?? before?.breaks ?? [] });
   const layout = notesLayout(notes, edgeOf, geometry);
+  const cuts = breaksLayout(notes.breaks, columns, geometry);
   // What was just asked for must be drawn; one kept from before whose edge
   // has gone waits for it.
   const describe = (ref) => {
@@ -725,6 +733,11 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   };
   for (const { kind, item } of need) {
     const list = notes[`${kind}s`];
+    if (kind === 'break') {
+      const count = slotStarts(columns).length - 1;
+      if (item.at >= count) throw new Error(`the diagram has no slot ${item.at + 1}: it has ${count}`);
+      continue;
+    }
     const index = list.findIndex((other) => (kind === 'mark' ? sameEdge(other, item) : sameEdge(other.from, item.from) && sameEdge(other.to, item.to)));
     if (index < 0 || !layout.missing.some((m) => m.kind === kind && m.index === index)) continue;
     const ends = kind === 'mark' ? [item] : [item.from, item.to];
@@ -743,6 +756,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
     ...(notes.arrows.length ? { arrows: notes.arrows } : {}),
     ...(notes.marks.length ? { marks: notes.marks } : {}),
     ...(notes.spans.length ? { spans: notes.spans } : {}),
+    ...(notes.breaks.length ? { breaks: notes.breaks } : {}),
   };
   const labels = rows.map(({ key, source, bits, values, hold, height, from, signal }, row) => circuit.addLabel({
     text: source,
@@ -777,7 +791,7 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
   }
   labels.forEach((label, row) => label.moveTo(waveX - LABEL_GAP - label.bbox().w / 2, top + geometry.tops[row] + geometry.heights[row] / 2));
   drawNotes(circuit, notes, layout, { x: waveX, y: top }, settings);
-  return labels.map((label, row) => {
+  const drawnRows = labels.map((label, row) => {
     const { key, bits, values, hold, from, signal } = rows[row];
     const rowTop = top + geometry.tops[row];
     let line;
@@ -795,6 +809,33 @@ export function addTimingDiagram(circuit, { bits: given = {}, fromBeats = false,
       line = circuit.addAnnotation('line', { points, timing: { phase: key, ...settings } }).id;
     }
     return { phase: key, bits, ...(values ? { values, ...(hold ? { hold: true } : {}) } : {}), from, shift: own(key), label: label.id, line, lines: [line], ...(signal ? { signal: true } : {}) };
+  });
+  // Breaks over the waves, drawn above them.
+  for (const { index, x0, x1, y0, y1, row } of cuts) {
+    circuit.addAnnotation('box', {
+      x: waveX + x0, y: top + y0, end: { x: waveX + x1, y: top + y1 },
+      style: { width: 'thin', lineStyle: 'solid' }, drawOrder: 1,
+      timing: { phase: rows[row].key, part: 'break', item: index, ...settings },
+    });
+  }
+  return drawnRows;
+}
+
+/**
+ * Where the breaks go, from the waves' top-left corner: a box over its
+ * slot, from the first row's top to the last row's bottom, or (`rows`) one
+ * per row over that row alone; the break is drawn down its middle. Returns
+ * [{ index, row, x0, x1, y0, y1 }]; a break whose slot is past the end has
+ * none.
+ */
+function breaksLayout(breaks, columns, rows) {
+  const starts = slotStarts(columns);
+  return breaks.flatMap((item, index) => {
+    const slot = columns.find((column) => column.kind === 'slot' && column.at === item.at);
+    if (!slot) return [];
+    const [x0, x1] = [starts[item.at], starts[item.at] + slot.w];
+    if (!item.rows) return [{ index, row: 0, x0, x1, y0: 0, y1: rows.bottom }];
+    return rows.tops.map((y, row) => ({ index, row, x0, x1, y0: y, y1: y + rows.heights[row] }));
   });
 }
 

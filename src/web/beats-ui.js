@@ -554,9 +554,9 @@ function openTimingDialog() {
     session: null,
     place: false,
     // Arrows, marks and spans on the edges (edge: { row: phase key, at:
-    // slot boundary }), and an arrow or span begun at an edge, waiting for
-    // its other end.
-    notes: { arrows: [], marks: [], spans: [] },
+    // slot boundary }), breaks in slots ({ at, rows }), and an arrow or span
+    // begun at an edge, waiting for its other end.
+    notes: { arrows: [], marks: [], spans: [], breaks: [] },
     pending: null,
     // A number being typed into the cursor's slot (.35, -0.5), or null.
     entry: null,
@@ -587,7 +587,7 @@ function openTimingDialog() {
     })));
     state.slot = drawn?.slot || DEFAULT_SLOT_CELLS;
     state.gaps = drawn?.gaps ?? 'none';
-    state.notes = { arrows: [...(drawn?.arrows || [])], marks: [...(drawn?.marks || [])], spans: (drawn?.spans || []).map((span) => ({ ...span })) };
+    state.notes = { arrows: [...(drawn?.arrows || [])], marks: [...(drawn?.marks || [])], spans: (drawn?.spans || []).map((span) => ({ ...span })), breaks: (drawn?.breaks || []).map((item) => ({ ...item })) };
     state.pending = null;
     state.session = null;
     state.cursor.row = Math.max(0, Math.min(state.cursor.row, rows.length - 1));
@@ -792,7 +792,7 @@ function openTimingDialog() {
       grid.append(element('div', { class: 'timing-grid-line' }, [name, cells, shift]));
     });
     const count = element('div', { class: 'timing-grid-foot', text: !rows.length ? 'no rows yet: add a signal below'
-      : state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}` : `after slot ${n}: type to add one` });
+      : state.cursor.slot < n ? `slot ${state.cursor.slot + 1} of ${n}${state.notes.breaks.some((item) => item.at === state.cursor.slot) ? ', broken' : ''}` : `after slot ${n}: type to add one` });
     grid.append(count);
     removeRow.disabled = !rows[state.cursor.row]?.signal;
     const cursorRow = rows[state.cursor.row];
@@ -835,6 +835,10 @@ function openTimingDialog() {
   const noteAt = (kind) => {
     const { row: r, slot } = state.cursor;
     if (!rows[r]) return;
+    if (kind === 'break') {
+      breakAt(slot);
+      return;
+    }
     const ref = edgeRef(r, slot);
     if (!hasEdge(r, slot)) {
       status.textContent = `${plainMarkup(rows[r].source)} has no edge at the start of slot ${slot + 1}: put the cursor on a slot whose row changes level as it begins`;
@@ -867,6 +871,22 @@ function openTimingDialog() {
     // A new span asks for its text.
     if (kind === 'span') notesBox.querySelector('.timing-note:last-of-type input')?.focus();
   };
+  // A break in the cursor's slot: through every row, then through each row,
+  // then none.
+  const breakAt = (slot) => {
+    if (slot >= length()) {
+      status.textContent = 'A break goes in a slot: put the cursor on one';
+      return;
+    }
+    status.textContent = '';
+    state.pending = null;
+    const index = state.notes.breaks.findIndex((item) => item.at === slot);
+    const cut = state.notes.breaks[index];
+    if (!cut) state.notes.breaks.push({ at: slot });
+    else if (!cut.rows) state.notes.breaks[index] = { at: slot, rows: true };
+    else state.notes.breaks.splice(index, 1);
+    change();
+  };
   const cancelPending = () => {
     if (!state.pending) return false;
     state.pending = null;
@@ -880,6 +900,8 @@ function openTimingDialog() {
     state.notes.marks = state.notes.marks.map(move);
     state.notes.arrows = state.notes.arrows.map((item) => ({ ...item, from: move(item.from), to: move(item.to) }));
     state.notes.spans = state.notes.spans.map((item) => ({ ...item, from: move(item.from), to: move(item.to) }));
+    // A break goes with its slot.
+    state.notes.breaks = state.notes.breaks.filter((item) => by > 0 || item.at !== from).map((item) => (item.at > from ? { ...item, at: item.at + by } : item));
     if (state.pending) state.pending = { ...state.pending, from: move(state.pending.from) };
   };
   const notesBox = element('div', { class: 'timing-section timing-notes' });
@@ -917,16 +939,26 @@ function openTimingDialog() {
     state.notes.arrows.forEach((arrow, index) => item('arrow', index, `${edgeName(arrow.from)} → ${edgeName(arrow.to)}`, [textField(arrow, 'text (optional)', 'Arrow text')]));
     state.notes.marks.forEach((mark, index) => item('mark', index, edgeName(mark)));
     state.notes.spans.forEach((span, index) => item('span', index, `${edgeName(span.from)} ↔ ${edgeName(span.to)}`, [textField(span, 'text, e.g. $t_{su}$', 'Span text')]));
+    state.notes.breaks.forEach((cut, index) => {
+      const each = element('button', { type: 'button', text: 'Each row', 'aria-pressed': String(!!cut.rows) });
+      each.addEventListener('click', () => {
+        state.notes.breaks[index] = cut.rows ? { at: cut.at } : { at: cut.at, rows: true };
+        change();
+        grid.focus();
+      });
+      item('break', index, `slot ${cut.at + 1}`, [element('div', { class: 'segmented' }, [each])]);
+    });
     const hint = state.pending
       ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
-      : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
+      : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length && !state.notes.breaks.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
     notesBox.append(
-      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows, marks, and spans' }),
+      element('span', { class: 'timing-pairs-title', text: 'On the edges', title: 'Arrows, marks, spans, and breaks' }),
       element('div', { class: 'timing-dialog-options' }, [
         element('div', { class: 'segmented', role: 'group', 'aria-label': 'On the edges' }, [
           noteButton('Arrow', 'An arrow from the edge at the cursor to the edge it causes: then pick that one (a)', 'arrow'),
           noteButton('Mark', 'A dashed line through every row at the edge at the cursor; again takes it away (m)', 'mark'),
           noteButton('Span', 'A time between the edge at the cursor and another: dashed lines and an arrow below the diagram, its text under it (s)', 'span'),
+          noteButton('Break', 'Time left out in the cursor\'s slot: two S curves through every row, then through each row, then none (b)', 'break'),
         ]),
       ]),
       ...(hint ? [element('p', { class: 'timing-note-hint', text: hint })] : []),
@@ -1103,8 +1135,8 @@ function openTimingDialog() {
       repeatSlot();
     } else if (event.key === '*') {
       repeatSequence();
-    } else if (['a', 'm', 's'].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      noteAt({ a: 'arrow', m: 'mark', s: 'span' }[event.key]);
+    } else if (['a', 'm', 's', 'b'].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      noteAt({ a: 'arrow', m: 'mark', s: 'span', b: 'break' }[event.key]);
     } else if (event.key === 'Delete' || event.key === 'Backspace') {
       removeSlot();
     } else return;
@@ -1213,7 +1245,7 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through every row, again through each row, again not at all.' }),
       ]),
       section('Slots', [
         segmented('Slots', [

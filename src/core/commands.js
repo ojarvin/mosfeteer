@@ -99,6 +99,7 @@ const FLAG_ARITY = {
   arrow: 1,
   mark: 1,
   span: 1,
+  break: 1,
   clear: 1,
 };
 
@@ -552,7 +553,8 @@ export function commandHelp() {
     '                                   after the last): --arrow CLK:2>Q:2,... draws a curved arrow from an edge to the',
     '                                   transition it causes ("CLK:2>Q:2=TEXT;..." labels it); --mark ROW:N,... a dashed line through every row; --span',
     '                                   "A:N>B:M=TEXT;..." dashed lines at two edges and an arrow between them below the',
-    '                                   waves, TEXT under it. --clear arrows,marks,spans (or all) takes them away first.',
+    '                                   waves, TEXT under it. --break N,... leaves time out of slot N: two S curves through',
+    '                                   every row (N:rows, through each row). --clear arrows,marks,spans,breaks (or all) takes them away first.',
     '                                   They follow their edges as the waves change; one whose edge has gone waits for it',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
@@ -1132,8 +1134,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
       return { from: edge(parts[0].trim(), flag), to: edge(parts[1].trim(), flag) };
     };
     const clearText = flags.clear ? String(flags.clear[0]).split(',').map((kind) => kind.trim()).filter(Boolean) : [];
-    for (const kind of clearText) if (!['arrows', 'marks', 'spans', 'all'].includes(kind)) throw new Error(`--clear takes arrows, marks, spans or all, not "${kind}"`);
+    for (const kind of clearText) if (!['arrows', 'marks', 'spans', 'breaks', 'all'].includes(kind)) throw new Error(`--clear takes arrows, marks, spans, breaks or all, not "${kind}"`);
     const cleared = (kind) => clearText.includes(kind) || clearText.includes('all');
+    // A break: N (slot N, through every row) or N:rows (through each row).
+    const cut = (text) => {
+      const [slotText, how, ...rest] = text.split(':').map((part) => part.trim());
+      const slotNumber = Number(slotText);
+      if (!Number.isInteger(slotNumber) || slotNumber < 1 || rest.length || (how !== undefined && how !== 'rows')) throw new Error(`--break takes slots as N (through every row) or N:rows (through each row), not "${text}"`);
+      return { at: slotNumber - 1, ...(how ? { rows: true } : {}) };
+    };
     const need = [];
     const notes = {};
     // An arrow's or a span's text follows `=`; with text, items part at `;`.
@@ -1145,6 +1154,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ['arrows', 'arrow', /=|;/.test(String(flags.arrow?.[0] ?? '')) ? ';' : ',', withText('arrow')],
       ['marks', 'mark', ',', (text) => edge(text, 'mark')],
       ['spans', 'span', ';', withText('span')],
+      ['breaks', 'break', ',', cut],
     ]) {
       const added = flags[flag] ? String(flags[flag][0]).split(separator).map((item) => item.trim()).filter(Boolean).map(parse) : [];
       need.push(...added.map((item) => ({ kind: flag, item })));
@@ -1164,7 +1174,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const moved = (row) => [row.shift.fall ? ` fall ${row.shift.fall > 0 ? '+' : ''}${row.shift.fall}` : '', row.shift.rise ? ` rise ${row.shift.rise > 0 ? '+' : ''}${row.shift.rise}` : ''].join('');
     const drawn = existingTimingDiagram(circuit);
     const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-    const extras = [[drawn.arrows.length, 'arrow'], [drawn.marks.length, 'mark'], [drawn.spans.length, 'span']].filter(([n]) => n).map(([n, word]) => count(n, word));
+    const extras = [[drawn.arrows.length, 'arrow'], [drawn.marks.length, 'mark'], [drawn.spans.length, 'span'], [drawn.breaks.length, 'break']].filter(([n]) => n).map(([n, word]) => count(n, word));
     const waiting = drawn.missing.length ? `; ${count(drawn.missing.length, 'annotation')} wait${drawn.missing.length === 1 ? 's' : ''} for an edge that has gone` : '';
     return result(`drew a timing diagram: ${rows.map((row) => `${plainTexText(row.phase)} ${wave(row)}${moved(row)}`).join(', ')}${extras.length ? `; ${extras.join(', ')}` : ''}${waiting}`, rows, true);
   }
