@@ -19,7 +19,7 @@
  * zoomed); a spec with another `key` starts afresh.
  */
 
-import { parseLabelRuns } from '../core/model.js';
+import { mathRuns } from '../core/math-text.js';
 import { axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } from '../core/plot-scale.js';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -32,10 +32,10 @@ function svg(name, attrs = {}) {
   return node;
 }
 
-/** Text with _{} and ^{} markup, as tspans. */
+/** Text with _{} and ^{} markup, as tspans, set as math (math-text.js). */
 function markupText(text, attrs) {
   const node = svg('text', attrs);
-  for (const run of parseLabelRuns(String(text))) {
+  for (const run of mathRuns(text)) {
     const span = svg('tspan', run.sub || run.super ? { 'baseline-shift': run.sub ? '-25%' : '35%', 'font-size': '72%' } : {});
     span.textContent = run.text;
     node.append(span);

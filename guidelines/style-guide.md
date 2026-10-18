@@ -441,7 +441,7 @@ corresponding net branch.
 
 Clipboard images use the same print-ready appearance as file exports: white
 paper, no grid, editor overlays, cursor, or pin dots, and the embedded math font
-when equations are present. Copy as image renders only the selected objects
+when equations, plots, or parts tables are present. Copy as image renders only the selected objects
 (including their owned labels and complete nets), with one grid cell of padding;
 with nothing selected it uses the whole drawing. Editor theme and grid settings
 remain independent of this appearance.

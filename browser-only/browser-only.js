@@ -23849,6 +23849,47 @@ __exports.BUBBLE_RADIUS = BUBBLE_RADIUS;
 __exports.BUBBLE_DOT = BUBBLE_DOT;
 };
 
+__modules["src/core/math-text.js"] = function (__require, __exports) {
+__exports.mathItalic = mathItalic;
+__exports.mathText = mathText;
+__exports.mathRuns = mathRuns;
+let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+/**
+ * Plot text set as TeX sets math, for the math font (Latin Modern Math): a
+ * variable -- a single Latin letter or lowercase Greek one -- in the font's
+ * math italic letters, words and units (dB, Re, step response) upright, and
+ * numbers upright with a true minus sign. The font has no italic face of its
+ * own, so its italics are these letters rather than a slanted style. Used by
+ * the plots on the drawing (render.js) and in the windows (plot-view.js).
+ */
+
+
+
+/** A letter's math italic form, or the letter when it has none. */
+function mathItalic(ch) {
+  const code = ch.codePointAt(0);
+  if (ch === 'h') return 'ℎ'; // the block's one gap: Planck's constant stands in
+  if (code >= 0x41 && code <= 0x5a) return String.fromCodePoint(0x1d434 + code - 0x41);
+  if (code >= 0x61 && code <= 0x7a) return String.fromCodePoint(0x1d44e + code - 0x61);
+  if (code >= 0x3b1 && code <= 0x3c9) return String.fromCodePoint(0x1d6fc + code - 0x3b1);
+  return ch;
+}
+
+/** `text` with its lone letters in math italic and its minus signs true. */
+function mathText(text) {
+  return String(text)
+    .replace(/[A-Za-zα-ω]+/g, (word) => (word.length === 1 ? mathItalic(word) : word))
+    .replace(/(^|[\s(=])-(?=[\d.∞])/g, '$1−');
+}
+
+/** A plot text's runs (_{} and ^{} markup, as parseLabelRuns reads it),
+ *  each run's text set as math. */
+function mathRuns(text) {
+  return parseLabelRuns(String(text)).map((run) => ({ ...run, text: mathText(run.text) }));
+}
+
+};
+
 __modules["src/core/model.js"] = function (__require, __exports) {
 __exports.canonicalNetName = canonicalNetName;
 __exports.normalizeDesignLink = normalizeDesignLink;
@@ -32928,6 +32969,8 @@ let BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth; __bind
 let TRANSFER_FUNCTION_TYPES; __bind(() => { ({ TRANSFER_FUNCTION_TYPES } = __require("src/core/transfer-function.js")); });
 let normalizePageGuide, pageGuideFrame; __bind(() => { ({ normalizePageGuide, pageGuideFrame } = __require("src/core/page-guide.js")); });
 let bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure; __bind(() => { ({ bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } = __require("src/core/bode-figure.js")); });
+let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
+
 
 
 
@@ -33672,11 +33715,13 @@ function plotAnnotationSvg(label, opacity = '') {
     const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
     return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
   };
+  // Its text is math (math-text.js), in the math font with math labels'
+  // outline to give the light face their weight.
   const text = (item) => {
-    const runs = parseLabelRuns(item.text).map((run) => (run.sub || run.super
+    const runs = mathRuns(item.text).map((run) => (run.sub || run.super
       ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
       : escapeSvg(run.text))).join('');
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="sans-serif" font-style="italic" font-size="${fmt(fontSize)}" fill="${color}" stroke="none">${runs}</text>`;
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
   };
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;
@@ -54783,9 +54828,9 @@ function applyExportDarkTheme(svg) {
 
 // An exported drawing leaves this page: a standalone SVG, a PNG rasterized
 // from it, and the server's PDF print all lose the stylesheet that loads the
-// math font. Embedding the face makes exported equations look like the ones on
-// screen instead of falling back to a Times clone. Only drawings that actually
-// carry math pay the ~0.5 MB.
+// math font. Embedding the face makes exported equations, plots, and parts
+// tables look like the ones on screen instead of falling back to a Times
+// clone. Only drawings that set text in it pay the ~0.5 MB.
 let mathFontFaceCss = null;
 
 async function embeddedMathFontFace() {
@@ -54803,7 +54848,7 @@ async function embeddedMathFontFace() {
 }
 
 async function withEmbeddedMathFont(svg) {
-  if (!svg.includes('schematic-math-label')) return svg;
+  if (!svg.includes('schematic-math-label') && !svg.includes('Latin Modern Math')) return svg;
   const face = await embeddedMathFontFace();
   return face ? svg.replace(/(<svg\b[^>]*>)/, `$1<style>${face}</style>`) : svg;
 }
@@ -72255,7 +72300,7 @@ __exports.validDocumentName = validDocumentName;
 __modules["src/web/plot-view.js"] = function (__require, __exports) {
 __exports.createPlotView = createPlotView;
 __exports.linkPlots = linkPlots;
-let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let mathRuns; __bind(() => { ({ mathRuns } = __require("src/core/math-text.js")); });
 let axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes; __bind(() => { ({ axisTicks, fitRange, fromU, thinSeries, toU, valueAt, zoomAbout, zoomAxes } = __require("src/core/plot-scale.js")); });
 /**
  * The one interactive plot every analysis view uses (responses, steps,
@@ -72291,10 +72336,10 @@ function svg(name, attrs = {}) {
   return node;
 }
 
-/** Text with _{} and ^{} markup, as tspans. */
+/** Text with _{} and ^{} markup, as tspans, set as math (math-text.js). */
 function markupText(text, attrs) {
   const node = svg('text', attrs);
-  for (const run of parseLabelRuns(String(text))) {
+  for (const run of mathRuns(text)) {
     const span = svg('tspan', run.sub || run.super ? { 'baseline-shift': run.sub ? '-25%' : '35%', 'font-size': '72%' } : {});
     span.textContent = run.text;
     node.append(span);

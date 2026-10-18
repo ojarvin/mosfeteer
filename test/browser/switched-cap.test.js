@@ -43,7 +43,7 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.until(`!document.querySelector('.plots-window')?.hidden && document.querySelectorAll('.sc-plots-view .plot-view path').length > 0`);
     assert.equal(await h.evaluate(`document.querySelectorAll('.sc-legend .signal-flow-legend-row').length`), 2, 'both readouts on the graph');
     // Magnitude over phase, the phase numbering their one axis.
-    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.sc-graph .plot-view')].map((p) => [p.classList.contains('bode-magnitude') ? 'magnitude' : 'phase', /°/.test(p.textContent), /f\\/f/.test(p.textContent)])`), [['magnitude', false, false], ['phase', true, true]]);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.sc-graph .plot-view')].map((p) => [p.classList.contains('bode-magnitude') ? 'magnitude' : 'phase', /°/.test(p.textContent), /𝑓\\/𝑓/.test(p.textContent)])`), [['magnitude', false, false], ['phase', true, true]]);
     // A capacitance is a Values row: a slider and a field. Its number moves
     // the plots, not the equation, and is the design's.
     assert.equal(await h.evaluate(`document.querySelectorAll('.sc-values .signal-flow-coefficient input[type="range"]').length`), 2);

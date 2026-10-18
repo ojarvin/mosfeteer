@@ -12,6 +12,7 @@ import { BUS_COUNT_SIZE, busCountLabels, busMarkD, busTerminalMarks, busWidth } 
 import { TRANSFER_FUNCTION_TYPES } from './transfer-function.js';
 import { normalizePageGuide, pageGuideFrame } from './page-guide.js';
 import { bodeFigure, locusFigure, responseFigure, stepFigure, swingFigure } from './bode-figure.js';
+import { mathRuns } from './math-text.js';
 
 function pt(x, y) {
   return `${fmt(x)} ${fmt(y)}`;
@@ -742,11 +743,13 @@ function plotAnnotationSvg(label, opacity = '') {
     const part = PLOT_STROKES[role] || PLOT_STROKES.axis;
     return `stroke="${ink}" stroke-width="${part.width}" fill="none"${part.dash ? ` stroke-dasharray="${part.dash}"` : ''}`;
   };
+  // Its text is math (math-text.js), in the math font with math labels'
+  // outline to give the light face their weight.
   const text = (item) => {
-    const runs = parseLabelRuns(item.text).map((run) => (run.sub || run.super
+    const runs = mathRuns(item.text).map((run) => (run.sub || run.super
       ? `<tspan baseline-shift="${run.sub ? '-' : ''}${fmt(fontSize * 0.25)}" font-size="${fmt(fontSize * 0.68)}">${escapeSvg(run.text)}</tspan>`
       : escapeSvg(run.text))).join('');
-    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="sans-serif" font-style="italic" font-size="${fmt(fontSize)}" fill="${color}" stroke="none">${runs}</text>`;
+    return `<text x="${fmt(item.x)}" y="${fmt(item.y)}" text-anchor="${item.anchor}" font-family="${escapeSvg(MATH_FONT_FAMILY)}" font-size="${fmt(fontSize)}" fill="${color}" stroke="${color}" stroke-width="${fmt(fontSize * 0.02)}">${runs}</text>`;
   };
   const parts = figure.items.map((item) => {
     if (item.type === 'line') return `<line x1="${fmt(item.x1)}" y1="${fmt(item.y1)}" x2="${fmt(item.x2)}" y2="${fmt(item.y2)}" ${stroke(item.role)} stroke-linecap="butt"/>`;

@@ -218,8 +218,10 @@ hover glows) in that color without changing their own styles.
   drawing export to its exact width, centered, so the figure at full column
   width gets the guide's text size. The editor draws the same frame.
 - Labels support `_{...}` and `^{...}`. Math uses the vendored Latin Modern
-  Math face in `src/web/fonts/`; exports embed it when the drawing contains
-  math. Persisted/exported text never contains provenance markers.
+  Math face in `src/web/fonts/`; so do plots, on the drawing and in the
+  windows: lone letters in its math italic, words, units, and numbers
+  upright, minus signs true (`src/core/math-text.js`). Exports embed the
+  face whenever their text is set in it. Persisted/exported text never contains provenance markers.
 
 ## Linked designs
 

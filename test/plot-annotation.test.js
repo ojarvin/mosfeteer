@@ -30,7 +30,8 @@ test('a box carrying a plot saves, loads, and draws the sketch instead of a fram
   assert.deepEqual(again.plot, box.plot);
   const svg = svgString(loaded);
   assert.match(svg, /class="plot-annotation"/);
-  assert.match(svg, /ω<tspan[^>]*>p1<\/tspan>/);
+  // Its text is math: the math font, the corner's ω_{p1} in math italic.
+  assert.match(svg, /font-family="&apos;Latin Modern Math&apos;[^"]*"[^>]*>𝜔<tspan[^>]*>𝑝1<\/tspan>/);
   assert.doesNotMatch(svg, /<rect x="0" y="0" width="640" height="400"/);
   // Its own paper, unframed, so the canvas grid stays out of the plot.
   assert.match(svg, /<rect class="plot-paper" x="0" y="0" width="640" height="400" fill="#fff" stroke="none"\/>/);

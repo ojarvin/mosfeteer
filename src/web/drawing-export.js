@@ -55,9 +55,9 @@ export function applyExportDarkTheme(svg) {
 
 // An exported drawing leaves this page: a standalone SVG, a PNG rasterized
 // from it, and the server's PDF print all lose the stylesheet that loads the
-// math font. Embedding the face makes exported equations look like the ones on
-// screen instead of falling back to a Times clone. Only drawings that actually
-// carry math pay the ~0.5 MB.
+// math font. Embedding the face makes exported equations, plots, and parts
+// tables look like the ones on screen instead of falling back to a Times
+// clone. Only drawings that set text in it pay the ~0.5 MB.
 let mathFontFaceCss = null;
 
 async function embeddedMathFontFace() {
@@ -75,7 +75,7 @@ async function embeddedMathFontFace() {
 }
 
 export async function withEmbeddedMathFont(svg) {
-  if (!svg.includes('schematic-math-label')) return svg;
+  if (!svg.includes('schematic-math-label') && !svg.includes('Latin Modern Math')) return svg;
   const face = await embeddedMathFontFace();
   return face ? svg.replace(/(<svg\b[^>]*>)/, `$1<style>${face}</style>`) : svg;
 }

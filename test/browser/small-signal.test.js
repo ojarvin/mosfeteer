@@ -239,10 +239,10 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const [magnitude, phase] = await stack();
     assert.match(magnitude.cls, /bode-magnitude/);
     assert.match(magnitude.text, /\(dB\)/);
-    assert.doesNotMatch(magnitude.text, /ω/);
+    assert.doesNotMatch(magnitude.text, /𝜔/);
     assert.match(phase.cls, /bode-phase/);
     assert.match(phase.text, /°/);
-    assert.match(phase.text, /ω/);
+    assert.match(phase.text, /𝜔/);
     assert.doesNotMatch(magnitude.text + phase.text, /\\frac/, 'axis names are not raw TeX');
     const before = (await bode()).xRanges;
     assert.deepEqual(before[0], before[1]);

@@ -58,7 +58,7 @@ test('rasterization failures reach the write caller, including tainted canvases'
   assert.throws(() => pngDataUrlBlob('data:,'), /clipboard PNG/);
 });
 
-test('standalone drawings embed the math face only when MathML is present', async (t) => {
+test('standalone drawings embed the math face only when MathML or text in the face is present', async (t) => {
   let fetched = 0;
   t.mock.method(globalThis, 'fetch', async (url) => {
     fetched++;
@@ -73,4 +73,6 @@ test('standalone drawings embed the math face only when MathML is present', asyn
   assert.equal(fetched, 1);
   await withEmbeddedMathFont(math);
   assert.equal(fetched, 1, 'cache the face across exports and clipboard writes');
+  // A plot's or parts table's text, set in the face.
+  assert.match(await withEmbeddedMathFont(`<svg><text font-family="&apos;Latin Modern Math&apos;,serif">10</text></svg>`), /<style>@font-face/);
 });
