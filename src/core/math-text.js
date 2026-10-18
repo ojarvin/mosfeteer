@@ -19,15 +19,28 @@ export function mathItalic(ch) {
   return ch;
 }
 
-/** `text` with its lone letters in math italic and its minus signs true. */
+// The math italic letters: Latin, Planck's h, lowercase Greek.
+const ITALIC = /[\u{1D434}-\u{1D467}\u{1D6FC}-\u{1D714}ℎ]/u;
+const HAIR = ' ';
+
+/** `text` with its lone letters in math italic and its minus signs true. A
+ *  bar or closing parenthesis against an italic letter is kept off it by a
+ *  hair space, as TeX's italic correction keeps |T| from touching. */
 export function mathText(text) {
   return String(text)
     .replace(/[A-Za-zα-ω]+/g, (word) => (word.length === 1 ? mathItalic(word) : word))
-    .replace(/(^|[\s(=])-(?=[\d.∞])/g, '$1−');
+    .replace(/(^|[\s(=])-(?=[\d.∞])/g, '$1−')
+    .replace(new RegExp(`(${ITALIC.source})(?=[|)])`, 'gu'), `$1${HAIR}`)
+    .replace(new RegExp(`\\|(?=${ITALIC.source})`, 'gu'), `|${HAIR}`);
 }
 
 /** A plot text's runs (_{} and ^{} markup, as parseLabelRuns reads it),
- *  each run's text set as math. */
+ *  each run's text set as math. A run opening on a bar or parenthesis after
+ *  one ending in an italic letter (the |A_{v}| closing bar) is kept off it too. */
 export function mathRuns(text) {
-  return parseLabelRuns(String(text)).map((run) => ({ ...run, text: mathText(run.text) }));
+  const runs = parseLabelRuns(String(text)).map((run) => ({ ...run, text: mathText(run.text) }));
+  for (let i = 1; i < runs.length; i++) {
+    if (/^[|)]/.test(runs[i].text) && new RegExp(`${ITALIC.source}$`, 'u').test(runs[i - 1].text)) runs[i].text = HAIR + runs[i].text;
+  }
+  return runs;
 }

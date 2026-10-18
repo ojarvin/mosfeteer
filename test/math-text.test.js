@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mathItalic, mathRuns, mathText } from '../src/core/math-text.js';
 
 test('lone letters are math italic, words and units upright', () => {
-  assert.equal(mathText('|H| (dB)'), '|𝐻| (dB)');
-  assert.equal(mathText('ω (g/C)'), '𝜔 (𝑔/𝐶)');
+  assert.equal(mathText('|H| (dB)'), '|\u200A𝐻\u200A| (dB)');
+  assert.equal(mathText('ω (g/C)'), '𝜔 (𝑔/𝐶\u200A)');
   assert.equal(mathText('Re s'), 'Re 𝑠');
   assert.equal(mathText('step response'), 'step response');
   assert.equal(mathText('input (dBFS)'), 'input (dBFS)');
@@ -27,4 +27,11 @@ test('numbers keep upright digits and take a true minus sign', () => {
   assert.deepEqual(mathRuns('10^{-3}').map((run) => run.text), ['10', '−3']);
   // A dash between words is left alone.
   assert.equal(mathText('roll-off'), 'roll-off');
+});
+
+test('a bar or closing parenthesis stands a hair off an italic letter, across a subscript too', () => {
+  assert.equal(mathText('|T|'), '|\u200A𝑇\u200A|');
+  assert.deepEqual(mathRuns('|A_{v}|').map((run) => run.text), ['|\u200A𝐴', '𝑣', '\u200A|']);
+  // Upright words keep their bars and parentheses close.
+  assert.equal(mathText('|NTF| (dBFS)'), '|NTF| (dBFS)');
 });
