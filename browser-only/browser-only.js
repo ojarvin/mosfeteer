@@ -42355,7 +42355,7 @@ function moveLabelSafely(label, x, y) {
   }
 }
 
-// Free text typed before it is placed (Shift+N), or null to type it after.
+// Free text typed before it is placed (n), or null to type it after.
 let pendingAnnotationText = null;
 
 /** Place a label through the persistent Virtuoso label tools: the text typed
@@ -42419,7 +42419,7 @@ function promptLabelText({ title, placeholder = '' }) {
   });
 }
 
-/** Shift+N: the text first, then a click places it. Esc leaves the tool;
+/** n: the text first, then a click places it. Esc leaves the tool;
  *  Enter on an empty field places a label to type into. */
 function askAnnotationText() {
   pendingAnnotationText = null;
@@ -50260,7 +50260,7 @@ const EDITOR_COMMANDS = [
   { name: 'calculator', aliases: ['calc', 'calculate', 'math-window'], toggle: true, help: 'show or hide the calculator: type 20*log(123), Enter works it out (Shift+E)' },
   { name: 'history', aliases: ['checkpoints', 'checkpoint', 'save-points', 'savepoints', 'versions', 'revisions', 'snapshots'], toggle: true, help: 'show or hide the design\'s history: its last ten saves and pinned checkpoints, to view, restore, or remove' },
   { name: 'sizing', aliases: ['sizes', 'parts', 'device-sizes', 'values'], toggle: true, help: 'show or hide the sizing window: W, L, m of the transistors and values of the passives (Shift+Z)' },
-  { name: 'notes', aliases: ['note', 'notebook', 'design-notes', 'memo'], toggle: true, help: 'show or hide the design\'s notes: Markdown with $math$, @M1 mentions a part, [[amp]] links a design (n)' },
+  { name: 'notes', aliases: ['note', 'notebook', 'design-notes', 'memo'], toggle: true, help: 'show or hide the design\'s notes: Markdown with $math$, @M1 mentions a part, [[amp]] links a design (Shift+N)' },
   { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
   { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },
@@ -50310,7 +50310,7 @@ const EDITOR_COMMANDS = [
   { name: 'delete', aliases: ['erase', 'cut'], canvas: true, help: 'delete the selection (dd)' },
   { name: 'select-all', aliases: ['all'], canvas: true, help: 'select everything (Ctrl/Cmd+A)' },
   { name: 'net-label', aliases: ['name-net', 'label-wire'], canvas: true, help: 'place net labels on wires (l)' },
-  { name: 'free-text', aliases: ['annotation-tool', 'comment'], canvas: true, help: 'place a free annotation (Shift+N)' },
+  { name: 'free-text', aliases: ['annotation-tool', 'comment'], canvas: true, help: 'place a free annotation (n)' },
   { name: 'equation', aliases: ['latex', 'math', 'formula'], canvas: true, help: 'place a LaTeX equation (e)' },
   { name: 'arrow', canvas: true, help: 'draw an annotation arrow (a)' },
   { name: 'box', aliases: ['rectangle', 'frame'], canvas: true, help: 'draw an annotation box, or box the selection (b)' },
@@ -67561,7 +67561,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === 'N' && shiftKey) {
+  if (key === 'n') {
     activateAnnotation();
     return;
   }
@@ -67603,8 +67603,8 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // n: the design's notes, open or closed.
-  if (key === 'n') {
+  // Shift+N: the design's notes, open or closed.
+  if (key === 'N') {
     toggleNotes();
     return;
   }
@@ -67962,7 +67962,7 @@ function toolSwitchForKey(key, shiftKey = false) {
   if (!inside || (drag && !hasModalPlacement())) return null;
   if (key === 'w' && wire) return null;
   if (wire && wireTerminalLetter(key)) return null;
-  if (key === 'N' && shiftKey) return activateAnnotation;
+  if (key === 'n' && !shiftKey) return activateAnnotation;
   const tools = {
     i: activatePlace,
     w: activateWire,
@@ -69403,7 +69403,7 @@ let beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelectio
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * The notes window: a design's notes (`Circuit#notes`, core/notes.js) shown
- * rendered (core/notes-markdown.js) and edited as Markdown source. `n` (or
+ * rendered (core/notes-markdown.js) and edited as Markdown source. Shift+N (or
  * the toolbar's Notes) shows or hides it; Edit, a double-click, or Enter
  * on the rendered notes opens the source, and Esc or Ctrl/Cmd+Enter
  * finishes; there Tab and Shift+Tab indent and unindent lines (lists nest
@@ -69608,7 +69608,7 @@ function onViewClick(ev) {
 // ----- the window --------------------------------------------------------------------
 
 function build() {
-  const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (n)', text: '×' });
+  const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (Shift+N)', text: '×' });
   const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit', text: 'Edit' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Notes about this design: why it is drawn so, what to check. Markdown with $math$; @M1 or @V_{out} mentions a part or net, [[amp]] links another design. Double-click to write.' });
@@ -69664,7 +69664,7 @@ function hide() {
   canvasEl.focus({ preventScroll: true });
 }
 
-/** `n`: show or hide the notes. */
+/** Shift+N: show or hide the notes. */
 function toggleNotes() {
   if (notesShown()) hide();
   else show();
@@ -79823,7 +79823,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['terminal letters', 'pick or complete a terminal connection while wiring'],
     ['Backspace (wire)', 'remove the latest uncommitted wire vertex'],
     ['l', 'type net label names (a bus DOUT[3:0] spells out its bits), then click wires to place each'],
-    ['Shift+N', 'type free text, then click to place it once'],
+    ['n', 'type free text, then click to place it once'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
     ['b', 'place one two-point box, then return to selection; with a selection, box it (in the box tool, click objects to pick them, Enter boxes them)'],
@@ -79888,7 +79888,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+W', 'show or hide the plots of a signal-flow diagram: responses, step, root locus, swing, loop gain, and the nets in time; drag pans, right-drag zooms, double-click fits'],
     ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall, clear starts afresh'],
     ['Shift+Z', 'show or hide the sizing window: W, L, m of the transistors and values of the passives; type to fill the selected cells, Ctrl+C / Ctrl+V copy and paste; Annotate puts a parts table on the drawing'],
-    ['n', 'show or hide the design\'s notes: Markdown with $math$; @M1 or @V_{out} mentions a part or net (hover glows it, click selects it), [[amp]] links a design; double-click to edit (Tab / Shift+Tab indent and unindent: lists nest by indentation), Esc finishes'],
+    ['Shift+N', 'show or hide the design\'s notes: Markdown with $math$; @M1 or @V_{out} mentions a part or net (hover glows it, click selects it), [[amp]] links a design; double-click to edit (Tab / Shift+Tab indent and unindent: lists nest by indentation), Esc finishes'],
     ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
@@ -79951,7 +79951,7 @@ const EDITOR_KEYMAP = Object.freeze([
   ]],
   ['labels', [
     ['l', 'type the names, then click a wire for each; Esc exits'],
-    ['Shift+N', 'type the text, then click to place it; returns to selection'],
+    ['n', 'type the text, then click to place it; returns to selection'],
     ['t / = / F2', 'edit the selected (or pointed-at) label or part name'],
     ['Shift+Left / Shift+Right', 'align left / right (center default)'],
     ['dd / Delete', 'delete the selected label'],

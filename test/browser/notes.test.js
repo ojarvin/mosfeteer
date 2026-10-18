@@ -25,7 +25,7 @@ describe('design notes', { skip: browserSkip() }, () => {
 
   test('n opens empty notes ready to write; Esc shows them rendered, mentions and links live', async () => {
     await h.open('amp');
-    await h.key('n');
+    await h.key('N', { shiftKey: true });
     await h.until(`!!document.querySelector('.notes-window:not([hidden])') && document.activeElement === document.querySelector('.notes-source')`);
     await typeNotes('# Bias\nGain from @M1 into @V_{SS}; see [[child]] and [[gone]]. $g_m r_o$');
     assert.equal(await editor('editor.circuit.notes'), '# Bias\nGain from @M1 into @V_{SS}; see [[child]] and [[gone]]. $g_m r_o$');
@@ -112,7 +112,7 @@ describe('design notes', { skip: browserSkip() }, () => {
     await h.open('child');
     await h.until(`!document.querySelector('.notes-view h3') && document.querySelector('.notes-source')?.hidden === false || !!document.querySelector('.notes-empty:not([hidden])')`);
     assert.equal(await editor('editor.circuit.notes'), '');
-    await h.key('n');
+    await h.key('N', { shiftKey: true });
     assert.equal(await h.evaluate(`document.querySelector('.notes-window').hidden`), true);
   });
 });

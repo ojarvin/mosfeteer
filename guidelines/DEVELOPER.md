@@ -95,7 +95,7 @@ derived from its physical net name, and removing one occurrence leaves the net
 and its name intact. Net labels are placed where their box touches their
 drawable wire (see `docs/model.md`); the editor's
 `l` tool requires an unambiguous physical wire, using one selected/highlighted
-net to resolve a crossing. `Shift+N` places one free annotation and then
+net to resolve a crossing. `n` places one free annotation and then
 returns to selection; `a` and `b` likewise place one arrow or box annotation.
 `b` with a selection instead boxes it one cell out (`src/core/wrap-box.js`, the
 `box` command); in the box tool, clicking objects picks them and Enter boxes them.
@@ -279,7 +279,7 @@ three files at a time on GitHub's small runner.
   `--accent-tint`; a highlighted menu item is a solid accent row; a dialog
   or window ends in a row of plain-word actions (`.dialog-actions`, no
   icons), the default one filled (`.primary-action` or `.confirm-action`).
-- **Tooltips say what a control is**, then its key: `Notes (n)`,
+- **Tooltips say what a control is**, then its key: `Notes (Shift+N)`,
   `Save (Ctrl/Cmd+S)`. Add only live information (`Saved · <path>`, a
   value's numbers); how to use it belongs in Learn and the docs.
 - **Don't fight `eval`.** It is the single source of truth for "is this

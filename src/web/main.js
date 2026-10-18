@@ -6730,7 +6730,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  if (key === 'N' && shiftKey) {
+  if (key === 'n') {
     activateAnnotation();
     return;
   }
@@ -6772,8 +6772,8 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
-  // n: the design's notes, open or closed.
-  if (key === 'n') {
+  // Shift+N: the design's notes, open or closed.
+  if (key === 'N') {
     toggleNotes();
     return;
   }
@@ -7131,7 +7131,7 @@ function toolSwitchForKey(key, shiftKey = false) {
   if (!inside || (drag && !hasModalPlacement())) return null;
   if (key === 'w' && wire) return null;
   if (wire && wireTerminalLetter(key)) return null;
-  if (key === 'N' && shiftKey) return activateAnnotation;
+  if (key === 'n' && !shiftKey) return activateAnnotation;
   const tools = {
     i: activatePlace,
     w: activateWire,

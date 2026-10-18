@@ -1,6 +1,6 @@
 /**
  * The notes window: a design's notes (`Circuit#notes`, core/notes.js) shown
- * rendered (core/notes-markdown.js) and edited as Markdown source. `n` (or
+ * rendered (core/notes-markdown.js) and edited as Markdown source. Shift+N (or
  * the toolbar's Notes) shows or hides it; Edit, a double-click, or Enter
  * on the rendered notes opens the source, and Esc or Ctrl/Cmd+Enter
  * finishes; there Tab and Shift+Tab indent and unindent lines (lists nest
@@ -205,7 +205,7 @@ function onViewClick(ev) {
 // ----- the window --------------------------------------------------------------------
 
 function build() {
-  const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (n)', text: '×' });
+  const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (Shift+N)', text: '×' });
   const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit', text: 'Edit' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Notes about this design: why it is drawn so, what to check. Markdown with $math$; @M1 or @V_{out} mentions a part or net, [[amp]] links another design. Double-click to write.' });
@@ -261,7 +261,7 @@ function hide() {
   canvasEl.focus({ preventScroll: true });
 }
 
-/** `n`: show or hide the notes. */
+/** Shift+N: show or hide the notes. */
 export function toggleNotes() {
   if (notesShown()) hide();
   else show();

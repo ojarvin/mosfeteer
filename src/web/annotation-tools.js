@@ -74,7 +74,7 @@ export function moveLabelSafely(label, x, y) {
   }
 }
 
-// Free text typed before it is placed (Shift+N), or null to type it after.
+// Free text typed before it is placed (n), or null to type it after.
 let pendingAnnotationText = null;
 
 /** Place a label through the persistent Virtuoso label tools: the text typed
@@ -138,7 +138,7 @@ function promptLabelText({ title, placeholder = '' }) {
   });
 }
 
-/** Shift+N: the text first, then a click places it. Esc leaves the tool;
+/** n: the text first, then a click places it. Esc leaves the tool;
  *  Enter on an empty field places a label to type into. */
 export function askAnnotationText() {
   pendingAnnotationText = null;

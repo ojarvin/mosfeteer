@@ -7,7 +7,7 @@ another designer; neither is ever drawn or exported with the figure.
 ## Notes
 
 `Circuit#notes` is Markdown text (`notes` in the file, left out when
-empty). `n`, the toolbar's Notes, More → Notes, or `:notes` shows the notes
+empty). `Shift+N`, the toolbar's Notes, More → Notes, or `:notes` shows the notes
 window (`src/web/notes-window.js`): the notes rendered, or -- Edit, a
 double-click, Enter -- their source, until Esc or Ctrl/Cmd+Enter. Empty
 notes open ready to write. In the source, Tab indents the lines under the

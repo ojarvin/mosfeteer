@@ -18,7 +18,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
   test('every window has one title bar, a dock button and a close × at its right, and floats over the drawing', async () => {
     await h.open('beats');
     for (const key of ['S', 'B', 'K', 'W', 'E']) await h.key(key, { shiftKey: true });
-    await h.key('n');
+    await h.key('N', { shiftKey: true });
     await sleep(300);
     const windows = await h.evaluate(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden).map((w) => {
       const header = w.querySelector('.floating-window-header');
@@ -46,7 +46,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`!!document.querySelector('#btn-window-plots, [data-proxy-for="btn-window-plots"]')`), false);
     // Each tool's tooltip is its name and its key.
     const titles = await h.evaluate(`[...document.querySelectorAll('.window-cluster > button, .view-cluster > button')].map((b) => b.title)`);
-    assert.deepEqual(titles, ['Beats (Shift+B)', 'Timing diagram (Shift+K)', 'Small-signal analysis (Shift+S)', 'Reference windows (Shift+V)', 'Calculator (Shift+E)', 'Notes (n)', 'Sizing (Shift+Z)', 'Grid (#)', 'Placement guides (Shift+G)', 'Crosshair (Shift+C)']);
+    assert.deepEqual(titles, ['Beats (Shift+B)', 'Timing diagram (Shift+K)', 'Small-signal analysis (Shift+S)', 'Reference windows (Shift+V)', 'Calculator (Shift+E)', 'Notes (Shift+N)', 'Sizing (Shift+Z)', 'Grid (#)', 'Placement guides (Shift+G)', 'Crosshair (Shift+C)']);
     // A narrow window folds the group; More still opens every one of them.
     await h.send('Emulation.setDeviceMetricsOverride', { width: 500, height: 800, deviceScaleFactor: 1, mobile: false });
     await sleep(400);
@@ -163,7 +163,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     // Stepping through the beats opens their window by itself.
     await h.key('ArrowRight', { altKey: true });
     await h.until(`!document.getElementById('beat-strip').hidden`);
-    await h.key('n'); // and the notes, in front of it
+    await h.key('N', { shiftKey: true }); // and the notes, in front of it
     await h.until(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden && w.offsetParent).length === 2`);
     const ref = await h.evaluate(`window.__circuit().comps.find((c) => c.type !== 'solder').refdes`);
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection([${JSON.stringify(ref)}]); m.render(); })`);

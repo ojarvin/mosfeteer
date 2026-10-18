@@ -520,7 +520,7 @@ a bus range spelled out bit by bit (`DOUT[3:0]` places `DOUT[3]` ...
 `DOUT[0]`) -- and each click on an unambiguous physical wire places the next,
 handing back to selection after the last (Enter on an empty field names each
 wire after it is clicked instead); at a crossing, select/highlight the
-intended net first. `Shift+N` likewise asks for its text first, places it
+intended net first. `n` likewise asks for its text first, places it
 once, and returns to selection; `a` places a multi-point arrow by
 clicking vertices, while `b` places one box. The generic insert-menu entry is
 also an annotation. A picture pasted onto the drawing (Ctrl/Cmd+V with a PNG,
