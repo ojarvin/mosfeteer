@@ -1,5 +1,5 @@
 import { plainName, railNameKey } from '../rail-names.js';
-import { asList, MOS_TYPES } from './shared.js';
+import { asList, chopperShortedNets, MOS_TYPES } from './shared.js';
 import {
   canonicalNetName,
   isReferenceMarker,
@@ -162,19 +162,39 @@ export function collectAcGrounds(circuit, values = []) {
  * separate, so the solve maps every member onto the first one it meets. The
  * returned map holds only the members that are not the representative. */
 function virtualNetAliases(circuit) {
+  // Nets joined by name, or through a chopper (a short in every analysis),
+  // are one node, named by the first net of the group.
+  const parent = new Map();
+  const find = (id) => {
+    let root = id;
+    while (parent.get(root) !== root) root = parent.get(root);
+    parent.set(id, root);
+    return root;
+  };
+  const order = new Map();
+  const join = (a, b) => {
+    const [x, y] = [find(a), find(b)];
+    if (x === y) return;
+    if (order.get(x) < order.get(y)) parent.set(y, x);
+    else parent.set(x, y);
+  };
   const byName = new Map();
   for (const net of circuit.nets.values()) {
+    parent.set(net.id, net.id);
+    order.set(net.id, order.size);
     // A rail's spellings are one name, as in the model: VDD is V_{DD}.
     const name = railNameKey(canonicalNetName(net.name));
     if (!name) continue;
     // Case-sensitive, like `Circuit#logicallyConnected` and the net list's
     // own grouping: one spelling is one name.
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push(net.id);
+    if (byName.has(name)) join(byName.get(name), net.id);
+    else byName.set(name, net.id);
   }
+  for (const [a, b] of chopperShortedNets(circuit)) join(a.id, b.id);
   const aliases = new Map();
-  for (const ids of byName.values()) {
-    for (const id of ids.slice(1)) aliases.set(id, ids[0]);
+  for (const id of parent.keys()) {
+    const root = find(id);
+    if (root !== id) aliases.set(id, root);
   }
   return aliases;
 }

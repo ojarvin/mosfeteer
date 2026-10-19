@@ -9,7 +9,7 @@ const view = { x: -80, y: -80, w: 400, h: 400 };
 test('insert categories keep switches and macros separate and include vccs with sources', async () => {
   const { symbolCategories } = await import('../src/core/components/categories.js');
   const groups = Object.fromEntries(symbolCategories().map(({ title, types }) => [title, types]));
-  assert.deepEqual(groups.Switches, ['switch_open', 'switch_closed']);
+  assert.deepEqual(groups.Switches, ['switch_open', 'switch_closed', 'chopper']);
   assert.deepEqual([...groups['Sources & power']].sort(), ['current_source', 'ground', 'supply', 'vccs', 'vcm', 'vcvs', 'voltage_source']);
   assert.deepEqual([...groups.Macros].sort(), ['adc', 'adc_diff', 'comparator', 'comparator_clocked', 'dac', 'dac_diff', 'gm', 'gm_cmfb', 'opamp', 'opamp_diff', 'opamp_diff_cmfb']);
   assert.ok(groups.Logic.includes('mux2') && groups.Logic.includes('tristate_buffer') && groups.Logic.includes('xnor3_gate'));

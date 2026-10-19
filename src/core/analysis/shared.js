@@ -19,3 +19,22 @@ export const MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
 
 /** Primitive kinds that are plain two-terminal passives. */
 export const PASSIVE_KINDS = new Set(['resistor', 'capacitor', 'inductor', 'conductance', 'admittance']);
+
+/** The pin pairs a chopper shorts: every analysis takes it as two straight
+ *  wires, in to out on each side. */
+export const CHOPPER_SHORTS = [['ip', 'op'], ['im', 'om']];
+
+/** The nets each chopper joins, as [net, net] pairs (net objects), for the
+ *  pairs whose pins are both wired. */
+export function chopperShortedNets(circuit) {
+  const pairs = [];
+  for (const component of circuit.components.values()) {
+    if (component.type !== 'chopper') continue;
+    for (const [a, b] of CHOPPER_SHORTS) {
+      const left = circuit.netOfTerminal({ comp: component.refdes, term: a });
+      const right = circuit.netOfTerminal({ comp: component.refdes, term: b });
+      if (left && right && left !== right) pairs.push([left, right]);
+    }
+  }
+  return pairs;
+}

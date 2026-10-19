@@ -1084,6 +1084,11 @@ export function svgString(circuit, opts = {}) {
     }
   }
 
+  // A chopper sent to the back draws under the wires, so a wire can run
+  // across its box (a diode connection through a cascode's chopper).
+  const underWiresAt = parts.length;
+  const underWires = [];
+
   // Middle layer: wires deliberately sit behind components and labels. Their
   // rounded caps still overlap terminal leads at the exact electrical point.
   const nets = [...circuit.nets.values()].sort((a, b) => byDrawOrder(a, b, (x, y) => x.id.localeCompare(y.id)));
@@ -1200,31 +1205,33 @@ export function svgString(circuit, opts = {}) {
   const barred = new Set(bars.flatMap((bar) => bar.refs));
   // Top layer: components and their body/value graphics sit above wires.
   for (const c of comps) {
+    const out = c.behindWires ? underWires : parts;
     const t = c.transform;
     const opacity = refOpacity(c.refdes);
     // A sized body (a block, a transfer function) draws its own outline and text.
     const sizedBody = c.bodySize;
     const textGraphics = sizedBody ? [] : defOf(c).graphics.filter((g) => g.kind === 'text');
     const bodyGraphics = [...defOf(c).graphics.filter((g) => g.kind !== 'text'), ...waveformGraphics(c)];
-    parts.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
+    out.push(`<g transform="${transformToSvg(t)}"${opacity} data-ref="${escapeSvg(c.refdes)}" role="button" tabindex="0" aria-label="${escapeSvg(`Component ${c.refdes}, ${c.type}`)}"><g class="sym" data-ref="${escapeSvg(c.refdes)}">`);
     if (sizedBody) {
       const r = sizedBody;
-      parts.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
+      out.push(`<rect x="${fmt(-r.w / 2)}" y="${fmt(-r.h / 2)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="#fff" ${styleAttrs(compStyle(c), 'emph')}/>`);
     } else {
       const leadsInked = inkLeads(c);
       for (const g of bodyGraphics) {
         if (leadsInked && g.terminalLead) continue;
         if (barred.has(c.refdes) && g.fill === 'foreground') continue;
-        parts.push(graphicsToSvg(g, '', compStyle(c)));
+        out.push(graphicsToSvg(g, '', compStyle(c)));
       }
     }
-    parts.push('</g></g>');
-    for (const g of textGraphics) parts.push(opacity ? `<g${opacity}>${symbolTextSvg(g, t, compStyle(c)?.color || '#111')}</g>` : symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
+    out.push('</g></g>');
+    for (const g of textGraphics) out.push(opacity ? `<g${opacity}>${symbolTextSvg(g, t, compStyle(c)?.color || '#111')}</g>` : symbolTextSvg(g, t, compStyle(c)?.color || '#111'));
     if (o.includeBBox) {
       const r = c.bboxWorld();
-      parts.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
+      out.push(`<rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#0a8" stroke-dasharray="4 4" stroke-width="1"/>`);
     }
   }
+  parts.splice(underWiresAt, 0, ...underWires);
 
   // Joined supply bars: one continuous bar over each run of aligned same-rail
   // supplies, in the slab's own ink, so the row reads as one bar. It covers
@@ -1483,7 +1490,7 @@ export function editorOverlay(circuit, opts = {}) {
   };
   for (const ref of opts.resizeBlocks || []) {
     const c = circuit.components.get(ref);
-    if (c?.type === 'block') handleParts.push(resizeHandles('component', c.refdes, c.refdes, c.bboxWorld()));
+    if (c?.type === 'block' || c?.type === 'chopper') handleParts.push(resizeHandles('component', c.refdes, c.refdes, c.bboxWorld()));
   }
   for (const id of opts.resizeBoxes || []) {
     const label = circuit.labels.get(id);

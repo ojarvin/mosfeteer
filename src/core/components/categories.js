@@ -13,7 +13,7 @@ import { symbolTypeNames } from './index.js';
 export const SYMBOL_CATEGORY_RULES = [
   ['Passives', /^(variable_)?(resistor|capacitor|inductor)$|^(impedance|diode)$/],
   ['Semiconductors / actives', /^(nmos|pmos|nmosb|pmosb|npn|pnp)$/],
-  ['Switches', /^switch_/],
+  ['Switches', /^switch_|^chopper$/],
   ['Sources & power', /^(current_source|voltage_source|vccs|vcvs|supply|ground|vcm)$/],
   ['Interfaces / ports', /^(input|output|inputoutput|port)$/],
   ['Macros', /^(opamp|opamp_diff|opamp_diff_cmfb|gm|gm_cmfb|comparator|comparator_clocked|adc|dac|adc_diff|dac_diff)$/],

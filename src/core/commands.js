@@ -393,7 +393,8 @@ export function evaluate(circuit) {
           });
         }
         for (const comp of comps) {
-          if (annotated(comp)) continue;
+          // A part drawn under the wires lets them cross it.
+          if (annotated(comp) || comp.behindWires) continue;
           const compBox = comp.bboxWorld();
           if (segThroughInterior(a, b, compBox) &&
               !gateBodyCrossingAllowed(a, b, compBox, gateEnv)) {

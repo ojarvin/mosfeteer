@@ -80,7 +80,9 @@ overlap is a Design Check error and is never auto-merged. Tidy repairs
 (`src/core/tidy.js`) never guess intent.
 
 **Rendering.** Annotations draw under wires, parts and labels above;
-`drawOrder` reorders only within a category. Exports frame the ink
+`drawOrder` reorders only within a category, except that a chopper sent to
+the back (`ComponentInstance#behindWires`) draws under the wires, which may
+then cross it. Exports frame the ink
 (`Circuit#inkBounds`). Persisted or exported text never carries provenance
 markers.
 

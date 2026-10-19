@@ -315,5 +315,20 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     assert.match(await ed(`e.inlineInput.value`), /^R_?\{?2\}?$/);
     await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.inlineInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))`);
   });
-});
 
+  test('a selected chopper drags wider from a corner handle, in one undo step', async () => {
+    const circuit = new Circuit();
+    // R1 keeps the fitted view wide enough for the drag.
+    for (const line of ['add chopper CH1 --at 0 0', 'add resistor R1 --at 800 400']) runCommand(circuit, line);
+    await h.evaluate(`window.__load(${JSON.stringify(circuit.toJSON())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    await press(0, 0);
+    await until(`e.multi.has('CH1')`);
+    await h.until(`!!document.querySelector('[data-resize-id="CH1"] [data-resize-handle="se"]')`);
+    await press(160, 40, { to: { x: 320, y: 40 } });
+    await until(`c.components.get('CH1').blockSize.w === 480`);
+    assert.deepEqual(await ed(`c.components.get('CH1').bboxWorld()`), { x: -160, y: -40, w: 480, h: 80 });
+    await h.key('z', { ctrlKey: true });
+    await until(`c.components.get('CH1').blockSize.w === 320`);
+  });
+});

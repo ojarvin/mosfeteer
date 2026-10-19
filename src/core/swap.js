@@ -32,7 +32,7 @@ import { WAVEFORM_TYPES } from './components/current.js';
 
 const BJT_TYPES = new Set(['npn', 'pnp']);
 // An oscillator only drives: no other part takes its place, nor it another's.
-const UNSWAPPABLE = new Set(['solder', 'block', 'oscillator']);
+const UNSWAPPABLE = new Set(['solder', 'block', 'chopper', 'oscillator']);
 
 // Terminals that play the same role under different names.
 const MOS_TO_BJT = { g: 'b', d: 'c', s: 'e' };

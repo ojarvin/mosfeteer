@@ -61,10 +61,10 @@ export function updateCanvasHover(w) {
   const selecting = !quiet && !editor.wire && !editor.moveMode && !editor.copyMode && !editor.deleteMode;
   const hit = selecting ? pickAt(w) : null;
   const hitComponent = hit?.refdes ? editor.circuit.components.get(hit.refdes) : null;
-  // A selected block shows resize handles on its outline; pin handles there
-  // would sit on top of them.
+  // A selected block or chopper shows resize handles on its outline; pin
+  // handles there would sit on top of them.
   const pinsRef = hitComponent && isPinDragCandidate(hitComponent.def) &&
-    !(hitComponent.type === 'block' && editor.multi.has(hitComponent.refdes)) ? hitComponent.refdes : null;
+    !(['block', 'chopper'].includes(hitComponent.type) && editor.multi.has(hitComponent.refdes)) ? hitComponent.refdes : null;
   // Mirror canvasMouseDown's order: annotation drag points and outlines are
   // picked before labels and components.
   const annotation = selecting ? annotationEndpointAt(w)?.label || annotationGeometryAt(w) : null;

@@ -118,7 +118,8 @@ export function analyzeSwitchedCap(circuit, options = {}) {
   const inputNode = context.input.node;
   const outputNode = context.output.node;
 
-  // The parts: capacitors, switches, op-amps; markers carry nothing.
+  // The parts: capacitors, switches, op-amps; markers carry nothing, and a
+  // chopper is a short the context has already joined its nets through.
   const capacitors = [];
   const switches = [];
   const opamps = [];
@@ -143,7 +144,7 @@ export function analyzeSwitchedCap(circuit, options = {}) {
       const { model, parameter } = opampModel(component);
       if (model === 'gbw') return failure('opamp-model', `${component.refdes} is modeled by its gain-bandwidth, which needs settling in time within a phase: this analysis takes an ideal or a finite-gain op-amp (its small-signal parameters).`);
       opamps.push({ refdes: component.refdes, type, ...nodes, gain: model === 'finite-gain' ? parameter : null });
-    } else if (!PORTS.has(type) && !isReferenceMarker(component)) {
+    } else if (!PORTS.has(type) && type !== 'chopper' && !isReferenceMarker(component)) {
       return failure('unsupported-part', `${component.refdes} (${type}): the switched-capacitor analysis takes capacitors, switches, op-amps, and ports.`);
     }
   }

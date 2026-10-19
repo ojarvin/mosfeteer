@@ -18,9 +18,11 @@ const MOS_CURRENT_SOURCE_MODELS = new Set([
   'open',
 ]);
 const TRIODE_MODELS = new Set(['triode', 'rds', 'r-ds', 'resistor']);
+// A chopper is a short, which the analysis context makes by joining its
+// nets (context.js virtualNetAliases): it adds no element of its own.
 const IGNORED_TYPES = new Set([
   'ground', 'supply', 'vcm', 'port',
-  'input', 'output', 'inputoutput', 'solder',
+  'input', 'output', 'inputoutput', 'solder', 'chopper',
 ]);
 
 function diagnostic(code, message, component = null, severity = 'error', migration = null) {

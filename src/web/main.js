@@ -3011,7 +3011,8 @@ export function renderCanvas(modelKey) {
     alignTool: alignOverlay(),
     resizeBlocks: alignTool ? [] : [...multi].filter((ref) => {
       const component = circuit.components.get(ref);
-      return component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY;
+      return component?.type === 'chopper'
+        || (component?.type === 'block' && component.transform.rotation % 360 === 0 && !component.transform.mirrorX && !component.transform.mirrorY);
     }),
     resizeBoxes: alignTool ? [] : [...selLabels].filter((id) => circuit.labels.get(id)?.kind === 'box' && !circuit.labels.get(id).table && !circuit.labels.get(id).timing?.analog),
     hoverAnnotation: drag || alignTool ? null : hoverAnnotationId,
@@ -4302,7 +4303,7 @@ function canvasMouseDown(ev) {
   if (handleOwner?.dataset.resizeKind === 'component') {
     const refdes = handleOwner.dataset.resizeId;
     const component = circuit.components.get(refdes);
-    if (component?.type === 'block') {
+    if (component?.type === 'block' || component?.type === 'chopper') {
       const origin = component.bboxWorld();
       setSelection([refdes]);
       setLabelSelection([]);

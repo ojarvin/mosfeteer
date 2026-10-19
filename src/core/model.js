@@ -6,6 +6,7 @@ import { normalizeBand, normalizeOptimizeSetup } from './analysis/optimize-setup
 import { applyTransform, applyDir, inverseTransform, rectFromPoints, rectsOverlap, rectUnion, transformRect } from './geometry.js';
 import { snap, snapPoint, GRID } from './grid.js';
 import { getSymbol, seriesTerminalNames } from './components/index.js';
+import { chopperSymbol } from './components/chopper.js';
 import { SOURCE_WAVEFORMS, WAVEFORM_TYPES } from './components/current.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
@@ -43,6 +44,12 @@ const REFERENCE_MARKER_LEGACY_GLOBAL_NAMES = Object.freeze({ ground: Object.free
 // rotation, on the grid.
 function blockSpan(value) {
   return Math.max(2 * GRID, Math.ceil(snap(Number(value)) / (2 * GRID)) * 2 * GRID);
+}
+
+// A chopper is at least four cells wide, so its cross keeps a cell clear of
+// each edge and its pins stay apart.
+function chopperSpan(value) {
+  return Math.max(4 * GRID, blockSpan(value));
 }
 
 const SIGNAL_FLOW_TYPES = new Set(['signal_sum', 'signal_multiply']);
@@ -1993,6 +2000,9 @@ export class ComponentInstance {
           return { name: t.name, side, offset: side === 'top' || side === 'bottom' ? t.x + 80 : t.y + 80 };
         })).map((t) => ({ name: String(t.name), side: String(t.side), offset: snap(Number(t.offset)) }))
       : null;
+    // A chopper's symbol is rebuilt for its size (chopperSymbol), so its
+    // pins, outline, and cross follow a resize.
+    if (this.type === 'chopper') this.setChopperSize(opts.blockSize ?? this.def.bbox);
     this.analysis = {
       model: normalizeSmallSignalDeviceModel(opts.analysis?.model ?? opts.analysis?.smallSignalModel),
       role: opts.analysis?.role || null,
@@ -2049,6 +2059,21 @@ export class ComponentInstance {
       const dir = item.side === 'top' ? { x: 0, y: -1 } : item.side === 'right' ? { x: 1, y: 0 } : item.side === 'bottom' ? { x: 0, y: 1 } : { x: -1, y: 0 };
       return { name: item.name, x, y, direction: 'passive', dir };
     });
+  }
+
+  /** Whether the part draws under the wires: a chopper sent to the back, so
+   *  a wire may run across its box. */
+  get behindWires() {
+    return this.type === 'chopper' && this.drawOrder < 0;
+  }
+
+  setChopperSize({ w, h }) {
+    if (this.type !== 'chopper') throw new Error(`component ${this.refdes} is not a chopper`);
+    const size = { w: chopperSpan(w), h: blockSpan(h) };
+    if (![size.w, size.h].every(Number.isFinite)) throw new Error('chopper size must be finite');
+    this.blockSize = size;
+    this.def = chopperSymbol(size.w, size.h);
+    return this;
   }
 
   setBlockSize(size = {}, options = {}) {
@@ -2185,6 +2210,7 @@ export class ComponentInstance {
         : {}),
       transform: { ...this.transform },
       ...(this.type === 'block' ? { blockSize: { ...this.blockSize }, blockTerminals: this.blockTerminals.map((t) => ({ ...t })) } : {}),
+      ...(this.type === 'chopper' ? { blockSize: { ...this.blockSize } } : {}),
       ...(this.negativeInputs.size ? { negativeInputs: [...this.negativeInputs] } : {}),
       ...(this.joinBar ? { joinBar: true } : {}),
       ...(this.link ? { link: this.link } : {}),
@@ -2601,9 +2627,9 @@ export class Circuit {
     }
     this.components.set(inst.refdes, inst);
     // Every symbol with a label offset carries its instance label from the
-    // start. Default numeric names persist explicit textbook markup (M_{1}),
+    // start, but one that waits to be named (a chopper). Default numeric names persist explicit textbook markup (M_{1}),
     // while the connectivity id remains compact (M1).
-    if (!opts.noLabel) this._ensureComponentInstanceLabel(inst);
+    if (!opts.noLabel && inst.def.labelByDefault !== false) this._ensureComponentInstanceLabel(inst);
     // A normal insertion can materialize its optional signal signs now. A
     // JSON load defers this until its authored labels have been read, while a
     // paste keeps the option in the component payload and reaches this path
@@ -3160,11 +3186,12 @@ export class Circuit {
     return c;
   }
 
-  /** Resize a schematic block from a world-space rectangle. The block's
+  /** Resize a schematic block (or a chopper) from a world-space rectangle. The block's
    * origin follows the rectangle center, while occupied perimeter positions
    * stay fixed whenever the new rectangle can contain them. */
   resizeBlock(refdes, rect = {}) {
     const component = this.getComponent(refdes);
+    if (component.type === 'chopper') return this._resizeChopper(component, rect);
     if (component.type !== 'block') throw new Error(`component ${refdes} is not a schematic block`);
     if (component.transform.rotation % 360 !== 0 || component.transform.mirrorX || component.transform.mirrorY) {
       throw new Error('resizing a rotated or mirrored schematic block is not supported');
@@ -3258,26 +3285,7 @@ export class Circuit {
       component.setBlockSize({ w, h }, { preserveSlots });
       component.transform.x = x + w / 2;
       component.transform.y = y + h / 2;
-      this.invalidateRoutingCache();
-      // Each pin on a moved edge slides on its own, so only the legs at those
-      // pins change; a net whose pins stay put keeps its drawing unless the
-      // grown body now covers it.
-      const terminals = new Map([...beforePoints].map(([name, before]) => [name, { before, after: component.terminalWorld(name) }]));
-      const moved = new Map([[refdes, { dx: 0, dy: 0, slide: true, terminals }]]);
-      const body = component.bboxWorld();
-      for (const id of touched) {
-        const net = this.nets.get(id);
-        if (!net) continue;
-        const slid = net.terminals.some((t) => {
-          const move = t.comp === refdes && terminals.get(t.term);
-          return move && (move.before.x !== move.after.x || move.before.y !== move.after.y);
-        });
-        const covered = () => net.paths().some((path) => path.some((p, i) => i > 0 && segThroughInterior(path[i - 1], p, body)));
-        if (slid ? this.rerouteNet(net, moved) && !covered() : !covered()) continue;
-        if (this.rerouteNet(net, 'refresh')) continue;
-        throw new Error(`unable to route net ${id} after block resize`);
-      }
-      this.connectCoincident(refdes);
+      this._rerouteResized(component, beforePoints, touched);
       return component;
     } catch (error) {
       component.transform = beforeTransform;
@@ -3286,6 +3294,70 @@ export class Circuit {
       this._restoreNetTopology(topology);
       throw error;
     }
+  }
+
+  /** Resize a chopper from a world-space rectangle, turned or mirrored as it
+   * may be. On each axis the edge that did not move holds; its pins move with
+   * the edges. */
+  _resizeChopper(component, rect) {
+    const refdes = component.refdes;
+    const old = component.bboxWorld();
+    const turned = component.transform.rotation % 180 !== 0;
+    // Even cell counts keep the center, and so the pins, on the grid.
+    const fit = (axis, span, min) => {
+      let lo = snap(Number(rect[axis]));
+      let hi = snap(Number(rect[axis]) + Number(rect[span]));
+      if (![lo, hi].every(Number.isFinite)) throw new Error('chopper rectangle must contain finite coordinates');
+      const length = min(hi - lo);
+      if (lo !== old[axis]) lo = hi - length;
+      else hi = lo + length;
+      return { length, center: (lo + hi) / 2 };
+    };
+    const across = fit('x', 'w', turned ? blockSpan : chopperSpan);
+    const down = fit('y', 'h', turned ? chopperSpan : blockSpan);
+    const beforeTransform = { ...component.transform };
+    const beforeSize = { ...component.blockSize };
+    const topology = this._snapshotNetTopology();
+    const touched = new Set([...this.nets.values()].filter((net) => net.terminals.some((t) => t.comp === refdes)).map((net) => net.id));
+    const beforePoints = new Map(component.terminalDefs.map((t) => [t.name, component.terminalWorld(t.name)]));
+    try {
+      component.setChopperSize(turned ? { w: down.length, h: across.length } : { w: across.length, h: down.length });
+      component.transform.x = across.center;
+      component.transform.y = down.center;
+      this._rerouteResized(component, beforePoints, touched);
+      return component;
+    } catch (error) {
+      component.transform = beforeTransform;
+      component.setChopperSize(beforeSize);
+      this._restoreNetTopology(topology);
+      throw error;
+    }
+  }
+
+  /** Reroute the nets `touched` of a part just resized, its pins having been
+   * at `beforePoints` (name -> world point). */
+  _rerouteResized(component, beforePoints, touched) {
+    const refdes = component.refdes;
+    this.invalidateRoutingCache();
+    // Each pin on a moved edge slides on its own, so only the legs at those
+    // pins change; a net whose pins stay put keeps its drawing unless the
+    // grown body now covers it.
+    const terminals = new Map([...beforePoints].map(([name, before]) => [name, { before, after: component.terminalWorld(name) }]));
+    const moved = new Map([[refdes, { dx: 0, dy: 0, slide: true, terminals }]]);
+    const body = component.bboxWorld();
+    for (const id of touched) {
+      const net = this.nets.get(id);
+      if (!net) continue;
+      const slid = net.terminals.some((t) => {
+        const move = t.comp === refdes && terminals.get(t.term);
+        return move && (move.before.x !== move.after.x || move.before.y !== move.after.y);
+      });
+      const covered = () => net.paths().some((path) => path.some((p, i) => i > 0 && segThroughInterior(path[i - 1], p, body)));
+      if (slid ? this.rerouteNet(net, moved) && !covered() : !covered()) continue;
+      if (this.rerouteNet(net, 'refresh')) continue;
+      throw new Error(`unable to route net ${id} after ${component.type} resize`);
+    }
+    this.connectCoincident(refdes);
   }
 
   setTransform(refdes, { rotation, mirrorX, mirrorY } = {}) {

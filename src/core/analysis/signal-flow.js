@@ -25,13 +25,15 @@ import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } f
 import { canonicalNetName } from '../model.js';
 import { COLOR_PALETTE } from '../style.js';
 import { samplePath } from './sampling.js';
+import { chopperShortedNets } from './shared.js';
 
 const JUNCTIONS = new Set(['signal_sum', 'signal_multiply', 'gain']);
 const JUNCTION_INPUTS = ['n', 's', 'w'];
 // Parts that drive a signal from outside the diagram: an input port, a dither source.
 const SOURCE_TYPES = new Set(['input', 'dither']);
 // Parts that may sit on a signal wire without taking part in it.
-const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput']);
+// A chopper is a short: the wires through it are one signal (signalFlowGraph).
+const PASSIVE_TYPES = new Set(['solder', 'output', 'port', 'inputoutput', 'chopper']);
 
 // Parts whose output is in their input's domain (s or z).
 const PASS_THROUGH = new Set([...JUNCTIONS, 'quantizer']);
@@ -66,8 +68,15 @@ function signalKey(net) {
 export function signalFlowGraph(circuit) {
   const signals = new Map();
   const issues = [];
+  // Keys a chopper joins go by one of them.
+  const joined = new Map();
+  const joinedKey = (key) => (joined.has(key) ? joinedKey(joined.get(key)) : key);
+  for (const [a, b] of chopperShortedNets(circuit)) {
+    const [x, y] = [joinedKey(signalKey(a)), joinedKey(signalKey(b))];
+    if (x !== y) joined.set(y, x);
+  }
   const signalOf = (net) => {
-    const key = signalKey(net);
+    const key = joinedKey(signalKey(net));
     let signal = signals.get(key);
     if (!signal) {
       signal = { key, name: net.name || net.id, display: net.name || net.id, netIds: [], drivers: [], readers: [], others: [] };

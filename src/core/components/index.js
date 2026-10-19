@@ -22,6 +22,7 @@ import { variable_resistor, variable_capacitor, variable_inductor } from './vari
 import { solder } from './solder.js';
 import { switch_open, switch_closed } from './switch.js';
 import { block } from './block.js';
+import { chopper } from './chopper.js';
 import { mux2 } from './mux.js';
 import { signal_sum, signal_multiply, oscillator, filter_lpf, filter_hpf, filter_bpf, filter_notch, tf_s, tf_z, tf_dac, tf_dac_rz, tf_delay, tf_zdelay, gain, sampler, quantizer, dither } from './signal-flow.js';
 
@@ -107,6 +108,7 @@ export const symbolTypes = {
   solder,
   switch_open,
   switch_closed,
+  chopper,
   block,
   signal_sum,
   signal_multiply,
