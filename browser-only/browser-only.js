@@ -70825,7 +70825,7 @@ function renderOptimize() {
   const { sources } = signalFlowGraph(circuit);
   const current = setup();
   body.replaceChildren(
-    el('p', { class: 'field-hint', text: 'Searches the free coefficients (an evolution strategy, CMA-ES, from their numbers now) for the best goal that keeps every limit: specs on a transfer function\'s magnitude, in dB, and the swing test simulated. Any diagram: a modulator\'s loop filter or a plain filter.' }),
+    el('p', { class: 'field-hint', text: 'Searches the free coefficients for the best goal that meets every limit: specs on |H| in dB, and the simulated swing test. It uses CMA-ES, starting from the coefficients\' current values. Works on any diagram, a modulator or a plain filter.' }),
     coefficientTable(circuit, current),
     specList(current, sources),
     constraintsBlock(current),
@@ -70902,9 +70902,9 @@ function specList(current, sources) {
     const poles = POLE_MEASURES.includes(spec.measure);
     return el('div', { class: 'signal-flow-optimize-spec' }, [
       select('action', [['minimize', 'Minimize'], ['maximize', 'Maximize'], ['below', 'Keep below'], ['above', 'Keep above']], 'Goal or limit'),
-      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest'], ['q', 'pole Q'], ['radius', 'pole radius']], 'Measure: of the magnitude over a band, or of the poles (the highest Q of a pair, the largest |z|)'),
+      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest'], ['q', 'pole Q'], ['radius', 'pole radius']], 'Measure: |H| over a band, or the poles (highest pair Q, largest |z|)'),
       el('span', { class: 'signal-flow-optimize-word', text: poles ? 'of H from' : '|H| from' }),
-      select('input', inputs.length ? inputs : [['', '(no source)']], 'The transfer function, from this source to the output'),
+      select('input', inputs.length ? inputs : [['', '(no source)']], 'Source'),
       ...(poles ? [] : [select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band')]),
       ...(!poles && spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
       ...(limit ? [field('value', poles ? (spec.measure === 'q' ? 'Q' : '|z|') : 'dB', poles ? 'Limit' : 'Limit, dB'), ...(poles ? [] : [el('span', { class: 'signal-flow-optimize-word', text: 'dB' })])] : []),
@@ -70925,8 +70925,8 @@ function specList(current, sources) {
     el('div', { class: 'signal-flow-optimize-heading', text: 'Specs' }),
     ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
-    el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the signal band set above the plots. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
-    el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of a pair of the transfer function\'s poles (a z pole read as s = ln z): how much it rings, at whatever frequency -- 0.5 for real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; the same radius rings more the higher its frequency. A loop\'s NTF and STF share their poles.' }),
+    el('p', { class: 'field-hint', text: '|H| runs from the source to the output picked above, in dB over f/fs (s in units of 1/Ts). The band is the signal band set above the plots. Average is the power average (in-band noise); peak and lowest are the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: NTF peak below 3.5 dB (1.5).' }),
+    el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of any pole pair (a z pole read as s = ln z): how much it rings. 0.5 is real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; at the same radius, a higher frequency rings more. A loop\'s NTF and STF share their poles.' }),
   ]);
 }
 
@@ -70940,7 +70940,7 @@ function swingBlock(circuit, current, sources) {
   if (real.some((s) => s.id === swing.input)) source.value = swing.input;
   else if (real.length) { swing.input = real[0].id; }
   const amplitude = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Amplitude, dBFS', value: String(swing.amplitude), onchange: (ev) => { const v = Number(ev.target.value); if (Number.isFinite(v)) { swing.amplitude = v; changed(); } } });
-  const measure = el('select', { 'aria-label': 'What a limit compares with', title: 'What each limit compares with. A net\'s 3-sigma level is the one its swing passes as rarely as a Gaussian passes +-3 sigma (0.27% of the samples); 4 sigma, 0.006%. The swings are not Gaussian: sigma names how rare. The highest peak is strict but noisy -- a loop near overload makes rare large excursions, so it scatters by dBs with the coefficients\' last digits.', onchange: (ev) => { swing.measure = ev.target.value; changed(); renderOptimize(); } }, [
+  const measure = el('select', { 'aria-label': 'What a limit compares with', title: 'What each limit compares with', onchange: (ev) => { swing.measure = ev.target.value; changed(); renderOptimize(); } }, [
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
@@ -70987,12 +70987,12 @@ function swingBlock(circuit, current, sources) {
         const text = level && swing.measure !== 'peak' ? `${level} (${peak})` : peak;
         return el('div', { class: 'signal-flow-optimize-limit' }, [math(signal.name), input, el('span', { class: 'signal-flow-optimize-word', text: 'dBFS' }),
           el('label', { class: 'signal-flow-optimize-aim', title: 'Aim at the limit' }, [aim, el('span', { text: 'aim' })]),
-          el('span', { class: 'signal-flow-optimize-number', text, title: text ? `At the best numbers found, verified at length: ${level && swing.measure !== 'peak' ? `its ${MEASURE_TEXT[swing.measure]} (its highest peak in brackets)` : 'its highest peak'}, dBFS` : '' })]);
+          el('span', { class: 'signal-flow-optimize-number', text, title: text ? `Best found, verified: ${level && swing.measure !== 'peak' ? `${MEASURE_TEXT[swing.measure]} (highest peak)` : 'highest peak'}, dBFS` : '' })]);
       })));
     }
     const sources = [...api.circuit().components.values()].filter((c) => c.type === 'dither').map((c) => c.refdes);
-    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.` : ' No dither: draw a dither source, with a gain after it, for some.';
-    children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
+    const ditherText = sources.length ? ` Dither sources (${sources.join(', ')}) draw new numbers in every run.` : ' No dither: add a dither source with a gain after it for some.';
+    children.push(el('p', { class: 'field-hint', text: `Each candidate is simulated with a sine of this amplitude, rounding at each quantizer. It must stay stable at this amplitude and 1 dB above, and each limited net must stay under its limit by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked on four runs of 4096 samples; each new best is verified on eight runs of 16384 plus two 1 dB above, which must all hold. The numbers shown are from the verification. A 3-sigma level is exceeded 0.27% of the time (4 sigma: 0.006%); sigma names how rare, as the swing is not Gaussian. The highest peak is strict but scatters by dBs near overload.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
@@ -71005,7 +71005,7 @@ function constraintsBlock(current) {
     try {
       const parsed = parseConstraints(field.value);
       field.classList.remove('invalid');
-      note.textContent = parsed.length ? `${parsed.length} constraint${parsed.length === 1 ? '' : 's'}, kept like a limit: a candidate breaking one misses by how far it is short.` : 'Relations between coefficients, kept like a limit: a >= b, a <= b, > or <; each side any expression of coefficients (2*g_1). Commas between them.';
+      note.textContent = parsed.length ? `${parsed.length} constraint${parsed.length === 1 ? '' : 's'}, kept like limits: a candidate that breaks one misses by how far it falls short.` : 'Relations kept like limits: a >= b, a <= b, > or <, each side any expression (2*g_1), separated by commas.';
       note.classList.remove('analysis-error');
       return true;
     } catch (error) {
@@ -71029,7 +71029,7 @@ function constraintsBlock(current) {
 }
 
 function runBlock(current) {
-  const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'How many candidates to score at most', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
+  const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'Most candidates to score', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
   const prune = el('input', { type: 'checkbox', 'aria-label': 'Zero coefficients that barely matter' });
   prune.checked = current.prune !== false;
   prune.addEventListener('change', () => { current.prune = prune.checked; changed(); });
@@ -71078,8 +71078,8 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
   const specs = result.specs || [];
   const row = (label, start, best, ok) => el('div', { class: `signal-flow-optimize-metric${ok === false ? ' analysis-error' : ''}` }, [
     el('span', { text: label }),
-    el('span', { class: 'signal-flow-optimize-number', text: start, title: 'At the numbers it started from' }),
-    el('span', { class: 'signal-flow-optimize-number', text: best, title: `At the ${endLabel.toLowerCase()} numbers` }),
+    el('span', { class: 'signal-flow-optimize-number', text: start, title: 'At the start' }),
+    el('span', { class: 'signal-flow-optimize-number', text: best, title: endLabel }),
   ]);
   const db = (v) => (v === null || v === undefined ? '–' : `${v.toFixed(1)} dB`);
   const limits = setup().swing.limits;
@@ -71116,15 +71116,15 @@ function resultBlock(sources) {
     ...scoreRows(found, sources, ['Start', found.fractions ? 'Fractions' : 'Found']),
     el('div', { class: 'signal-flow-graph-actions' }, [
       el('button', { type: 'button', text: 'Revert', title: 'Revert', disabled: !reverting, onclick: revert }),
-      el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Put the fractions into the coefficients, exactly' : 'Put the numbers found into the coefficients (rounded to 4 digits)', onclick: apply }),
+      el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Apply the fractions exactly' : 'Apply, rounded to 4 digits', onclick: apply }),
     ]),
   );
-  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No candidate on fractions met every limit: allow a larger n (or n = a finer one), turn off one n per block, loosen a limit, or run again.' : 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
+  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No fraction candidate met every limit. Allow a larger n, turn off one n per block, loosen a limit, or run again.' : 'No candidate met every limit. Loosen one, widen a coefficient\'s range, free another, or run again (each run starts from the current values).' }));
   if (found.zeroed?.length) {
     host.append(el('p', { class: 'field-hint signal-flow-optimize-zeroed' }, [
-      el('span', { text: 'Set to zero, as they barely mattered (every limit still met): ' }),
+      el('span', { text: 'Set to zero, every limit still met: ' }),
       ...found.zeroed.flatMap((name, i) => [...(i ? [el('span', { text: ', ' })] : []), math(symbolText(name))]),
-      el('span', { text: '. Apply fixes them at zero; set one Free to bring it back.' }),
+      el('span', { text: '. Apply fixes them at zero; set one to Free to bring it back.' }),
     ]));
   }
   if (found.sensitivity?.length) host.append(sensitivityBlock(found.sensitivity, found.specs, sources));
@@ -71144,7 +71144,7 @@ function sensitivityBlock(entries, specs, sources) {
   };
   return el('div', { class: 'signal-flow-optimize-sensitivity' }, [
     el('div', { class: 'signal-flow-optimize-heading', text: fragile.length ? `Sensitive to ${fragile.length === 1 ? 'one coefficient' : `${fragile.length} coefficients`}` : 'Sensitivity: none fragile' }),
-    el('p', { class: 'field-hint', text: `Each coefficient moved 1% of itself, the others held: the largest change of any spec (the transfer functions; the swing test is too noisy to difference). ${SENSITIVE_DB} dB per 1% or more, or the stability lost at 1% off, is marked: the parts realizing it must match that well. "On a limit": 1% off misses a limit the result just meets.` }),
+    el('p', { class: 'field-hint', text: `The largest change of any transfer-function spec when one coefficient moves 1% (the swing test is too noisy for this). Marked: ${SENSITIVE_DB} dB or more per 1%, or unstable at 1% off; its parts must match that well. "On a limit": 1% off misses a limit the result just meets.` }),
     gridTable(['Coefficient', 'Change'], entries.map(row)),
   ]);
 }
@@ -71274,8 +71274,8 @@ function fractionsBlock(current) {
     children.push(
       el('div', { class: 'signal-flow-swing-controls' }, [
         el('span', { class: 'signal-flow-optimize-fractions-n' }, [el('label', { text: 'n' }), kind, field]),
-        check('powersOfTwo', 'powers of two', 'n = 1, 2, 4, 8, ...: shifts in a digital filter, binary-weighted unit arrays (with ≤)'),
-        check('shared', 'one n per block', 'The gains into the same block (through sums: an integrator, the quantizer) share one n, its reference element; off, each coefficient has its own'),
+        check('powersOfTwo', 'powers of two', 'n = 1, 2, 4, 8, …: shifts, or binary-weighted unit arrays (with ≤)'),
+        check('shared', 'one n per block', 'Gains into the same block (through sums) share one n; off, each coefficient has its own'),
       ]),
       ...(free.length ? [el('details', { class: 'signal-flow-paste-box signal-flow-round-limits', ...(setCount ? { open: '' } : {}) }, [
         el('summary', { text: `n per coefficient (${setCount} set)` }),
@@ -71286,7 +71286,7 @@ function fractionsBlock(current) {
       ])] : []),
     );
   }
-  children.push(el('p', { class: 'field-hint', text: 'The search keeps each free coefficient a simple fraction m/n -- m units over n, whatever the units are: every candidate is snapped to fractions before it is scored, so the limits, constraints, and goals are weighed on numbers that can be built, and then each moves by one unit while that helps. The gains into one block share its n (m1/n, m2/n, ...). n ≤ takes the n up to it that fits each candidate best; n = that n exactly. A block takes the largest n set among its gains.' }));
+  children.push(el('p', { class: 'field-hint', text: 'Each free coefficient stays a fraction m/n: candidates snap to fractions before scoring, so limits and goals are judged on buildable values, then each moves one unit while that helps. Gains into one block share its n (m1/n, m2/n, …), the largest n set among them. n ≤ picks the best n up to it; n = uses it exactly.' }));
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
 
@@ -71309,7 +71309,7 @@ function fractionsTable(result) {
       ]));
     }
   }
-  const notes = coarse.map(({ name, n }) => el('p', { class: 'field-hint', text: `${plainName(name)} is a single unit of n = ${n}, far smaller than a gain beside it: a larger n for its block would let it be set finer.` }));
+  const notes = coarse.map(({ name, n }) => el('p', { class: 'field-hint', text: `${plainName(name)} is one unit of n = ${n}, far smaller than its neighbours: a larger n for its block would set it finer.` }));
   return [gridTable(['', 'm/n', 'Value'], rows), ...notes];
 }
 
@@ -75460,16 +75460,16 @@ function domainsGuide() {
   return el('details', { class: 'signal-flow-paste-box signal-flow-guide' }, [
     el('summary', { text: 'Between s and z: samplers and DACs' }),
     el('div', { class: 'signal-flow-guide-head', text: 's to z: the sampler, only' }),
-    line(['An ideal sampler: it reads the continuous signal just before each ', tex('t = nT'), ' and passes on the numbers ', tex('x[n]'), '. No hold, and no anti-aliasing: it is not a sample-and-hold or a ZOH. Its value is the period ', tex('T'), '. Put an H(s) block before it to filter what it reads.']),
+    line(['An ideal sampler reads the signal just before each ', tex('t = nT'), ' and passes on ', tex('x[n]'), '. It has no hold and no anti-aliasing (not a sample-and-hold or ZOH). Its value is the period ', tex('T'), '; put an H(s) block before it to filter.']),
     el('div', { class: 'signal-flow-guide-head', text: 'z to s: any H(s) block reading a sampled signal is a DAC' }),
-    line(['Each sample enters it as an impulse ', tex('x[n]\\,\\delta(t - nT)'), ', so its H(s) is the DAC’s pulse. The presets:']),
-    line(['DAC (NRZ) preset, a zero-order hold for a whole period:', shown('\\frac{1 - e^{-sT}}{s}')]),
-    line(['DAC (RZ) preset, held half a period:', shown('\\frac{1 - e^{-sT/2}}{s}')]),
-    line(['Any other pulse is typed into an H(s) block. With excess loop delay (or a delay block drawn before the DAC):', shown('e^{-sT_d}\\,\\frac{1 - e^{-sT}}{s}')]),
-    line(['A hold into an integrator, as one block:', shown('\\frac{1 - e^{-sT}}{s^2}')]),
-    line(['A sample-and-hold driving continuous circuits is a sampler, then an NRZ DAC.']),
+    line(['Each sample enters as an impulse ', tex('x[n]\\,\\delta(t - nT)'), ', so the H(s) is the DAC pulse. Presets:']),
+    line(['DAC (NRZ), held a whole period:', shown('\\frac{1 - e^{-sT}}{s}')]),
+    line(['DAC (RZ), held half a period:', shown('\\frac{1 - e^{-sT/2}}{s}')]),
+    line(['Type any other pulse into an H(s) block. With excess loop delay (or a delay block before the DAC):', shown('e^{-sT_d}\\,\\frac{1 - e^{-sT}}{s}')]),
+    line(['A hold into an integrator, in one block:', shown('\\frac{1 - e^{-sT}}{s^2}')]),
+    line(['A sample-and-hold is a sampler, then an NRZ DAC.']),
     el('div', { class: 'signal-flow-guide-head', text: 'No transform is applied' }),
-    line(['A continuous path from a DAC to a sampler is sampled exactly at the coefficients’ numbers (its pulse response read at each ', tex('t = nT'), '): nothing is converted by the bilinear, matched-z, or any other approximation. To design in z, draw ', tex('H(z)'), ' blocks; ', tex('z^{-1}'), ' is the Delay z^-1 preset.']),
+    line(['A continuous path from a DAC to a sampler is sampled exactly (its pulse response at each ', tex('t = nT'), '), with no bilinear, matched-z, or other approximation. To design in z, draw ', tex('H(z)'), ' blocks; ', tex('z^{-1}'), ' is the Delay z^-1 preset.']),
   ]);
 }
 
@@ -75490,7 +75490,7 @@ function fillForm() {
 
   const table = section.querySelector('.signal-flow-sources');
   table.replaceChildren();
-  if (!sources.length) table.append(el('p', { class: 'field-hint', text: 'No sources yet: a source is an input port, or any named wire nothing drives.' }));
+  if (!sources.length) table.append(el('p', { class: 'field-hint', text: 'No sources yet. A source is an input port or a named wire nothing drives.' }));
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
@@ -75559,7 +75559,7 @@ let locusRun = 0;
 
 function locusSection() {
   return el('div', { class: 'signal-flow-locus', hidden: true }, [
-    el('p', { class: 'field-hint signal-flow-locus-empty', text: 'Derive first: the locus follows one result\'s poles as one coefficient sweeps.' }),
+    el('p', { class: 'field-hint signal-flow-locus-empty', text: 'Derive first. The locus follows a result\'s poles as one coefficient sweeps.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Poles of' }), el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' }),
       el('label', { text: 'as' }), el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() }),
@@ -75610,7 +75610,7 @@ function runLocus() {
   const to = fraction(host.querySelector('.signal-flow-locus-to').value);
   const ks = locusSteps(from, to);
   if (!entry || !name || !ks.length || Math.sign(from) !== Math.sign(to)) {
-    status.textContent = 'Pick a result and a coefficient, and a range from one number to another of the same sign.';
+    status.textContent = 'Pick a result, a coefficient, and a range of one sign.';
     return;
   }
   const evaluate = locusEvaluator(entry, name);
@@ -75628,7 +75628,7 @@ function runLocus() {
     const current = resolved()[name] ?? 1;
     const result = rootLocus(evaluate, { ks, current });
     if (!result) {
-      status.textContent = 'This result has no numeric poles to follow (a delay, or a continuous input through a sampler).';
+      status.textContent = 'This result has no numeric poles (a delay, or a continuous input through a sampler).';
       locus = null;
     } else {
       locus = { plot: { ...locusPlot(result, { parameter: symbolText(name), label: entry.label, color: TRACE_COLORS[0] }), source: name } };
@@ -75675,7 +75675,7 @@ function renderLocus() {
   host.append(view.el);
   view.set(locusSpec(locus.plot));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate locus', title: 'Put this root locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate locus', title: 'Annotate the locus', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
   ]));
 }
 
@@ -75689,7 +75689,7 @@ function loopSection() {
       el('label', { text: 'Break the loop at' }),
       el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } }),
     ]),
-    el('p', { class: 'field-hint', text: 'T is what returns, with a minus sign, for 1 injected where the loop is broken (every source at zero): a negative-feedback loop gain, so a quantizer\'s NTF is 1/(1 + T).' }),
+    el('p', { class: 'field-hint', text: 'T is minus what returns for 1 injected at the break, every source at zero. A quantizer\'s NTF is then 1/(1 + T).' }),
     el('div', { class: 'signal-flow-loop-body' }),
   ]);
 }
@@ -75788,7 +75788,7 @@ function swingSection() {
   const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
   const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
-    el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
+    el('p', { class: 'field-hint', text: 'Simulates a sine into one source at the coefficients above, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots each net\'s peak as the amplitude sweeps to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Sine into' }), source,
       el('label', { text: 'at f/fs' }), frequency,
@@ -76113,7 +76113,7 @@ function pasteCoefficients() {
   return el('details', { class: 'signal-flow-paste-box' }, [
     el('summary', { text: 'Paste coefficients (delta-sigma toolbox)' }),
     area,
-    el('p', { class: 'field-hint', text: 'Name = numbers, one per line: a vector names its entries a_1, a_2, ... (MATLAB output pastes as it prints). Name the diagram\'s gains to match: a_1, b_1, c_1, g_1.' }),
+    el('p', { class: 'field-hint', text: 'One name = numbers per line; a vector fills a_1, a_2, …. MATLAB output pastes as printed. Name the diagram\'s gains to match (a_1, b_1, c_1, g_1).' }),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Apply', onclick: apply })]),
   ]);
 }
@@ -76304,13 +76304,13 @@ const GRAPH_VIEWS = new Set(['magnitude', 'phase', 'step']);
  *  diagram with feedback (its tab returns when one is drawn). */
 function plotTabs() {
   return [
-    ['magnitude', 'Magnitude', 'The magnitude responses (in dBFS with a simulated spectrum)'],
-    ['phase', 'Phase', 'The phase responses, in degrees'],
-    ['step', 'Step', 'The step responses: overshoot and settling (a sampled result in samples)'],
-    ['locus', 'Locus', 'The poles as one coefficient sweeps'],
-    ['swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'],
-    ...(loopSignals().length ? [['loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins']] : []),
-    ['time', 'Time', 'The nets in time, driven by a sine, simulated'],
+    ['magnitude', 'Magnitude', 'Magnitude (dBFS with a simulated spectrum)'],
+    ['phase', 'Phase', 'Phase, in degrees'],
+    ['step', 'Step', 'Step response (sampled results in samples)'],
+    ['locus', 'Locus', 'Poles as one coefficient sweeps'],
+    ['swing', 'Swing', 'Net peaks as a sine\'s amplitude sweeps'],
+    ...(loopSignals().length ? [['loop', 'Loop', 'Loop gain T: crossover and margins']] : []),
+    ['time', 'Time', 'Nets in time, simulated with a sine'],
   ];
 }
 
@@ -76370,8 +76370,8 @@ function renderGraph() {
       return el('button', { type: 'button', text, title, 'aria-pressed': String(pressed), disabled: forced && value !== 'normalized', onclick: () => choose(value) });
     };
     head.append(el('div', { class: 'segmented signal-flow-axis', role: 'group', 'aria-label': 'Frequency axis' }, [
-      button('omega', 'ω', 'ω in the units of the coefficients'),
-      button('normalized', 'f/fs', forced ? 'A z result is on the graph: everything plots over f/fs, s in units of 1/Ts' : 'f/fs, reading s in units of 1/Ts: f/fs = ω/2π, to ½'),
+      button('omega', 'ω', 'ω, in the coefficients\' units'),
+      button('normalized', 'f/fs', forced ? 'f/fs: a z result is plotted (s in units of 1/Ts)' : 'f/fs (s in units of 1/Ts; f/fs = ω/2π, up to ½)'),
     ]));
   }
   if (head.children.length) host.append(head);
@@ -76390,7 +76390,7 @@ function renderGraph() {
     const math = el('span', { class: 'signal-flow-legend-math' });
     math.innerHTML = texToMathML(trace.label);
     math.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); } });
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); } });
     legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
   }
   host.append(legend);
@@ -76619,10 +76619,10 @@ function renderResults() {
       // coefficients below, so it follows the sliders.
       const shown = sampledEquation(entry, valuesFor(entry.value, latest.variable));
       block.append(mathRow(`From ${entry.inputName}, at the coefficients below`, shown.equation));
-      if (shown.mixed) block.append(el('p', { class: 'field-hint', text: `${entry.inputName} is continuous: its path to the sampler stays in s (s = jω, z = e^jωT): a tone in at f comes out at f, images aside.` }));
+      if (shown.mixed) block.append(el('p', { class: 'field-hint', text: `${entry.inputName} is continuous, so its path stays in s (s = jω, z = e^jωT): a tone at f comes out at f, images aside.` }));
       if (shown.zeros?.length) block.append(rootRow('Zeros', shown.zeros, 'z'));
       if (shown.poles?.length) block.append(rootRow(shown.mixed ? 'Poles of the sampled loop' : 'Poles', shown.poles, 'z'));
-      if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole lies outside the unit circle: the sampled loop is unstable at these numbers, whatever the magnitude plot shows.' }));
+      if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole is outside the unit circle: the loop is unstable at these values, whatever the magnitude shows.' }));
       appendSqnr(block, entry, entry.value.at(valuesFor(entry.value, latest.variable)));
       appendTraceButton(block, entry);
       host.append(block);
@@ -76654,7 +76654,7 @@ function appendSqnr(block, entry, ntf) {
   const component = editor.circuit.components.get(entry.quantizer);
   const levels = Number(component?.value) || 2;
   if (!bandEdges(band).length) {
-    block.append(el('p', { class: 'field-hint', text: 'Set the signal band above the plots (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
+    block.append(el('p', { class: 'field-hint', text: 'Set the signal band above the plots (bw, and f0 for band-pass) to get the peak SQNR.' }));
     return;
   }
   const sqnr = bandSqnr(ntf, levels, band);
@@ -76754,7 +76754,7 @@ function installSignalFlowUi() {
       el('legend', { text: 'Signals' }),
       el('div', { class: 'signal-flow-source signal-flow-output-row' }, [el('label', { for: 'signal-flow-output', class: 'signal-flow-source-name', text: 'Output' }), output]),
       el('div', { class: 'signal-flow-sources' }),
-      el('p', { class: 'field-hint', text: 'A source is an input port or a named wire nothing drives.' }),
+      el('p', { class: 'field-hint', text: 'A source is an input port or a named wire nothing drives. A constant only matters where it multiplies a signal; elsewhere it acts as zero.' }),
     ]),
     el('div', { class: 'signal-flow-issues', hidden: true }),
     el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
@@ -76776,7 +76776,7 @@ function installSignalFlowUi() {
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
-      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equations stay symbolic. = b_1 makes one follow another.' }),
+      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these values; the equations stay symbolic. Type = b_1 (or = 2*b_1, = T/2) to make one follow others.' }),
       pasteCoefficients(),
     ]),
     optimizeSection({
@@ -76836,7 +76836,7 @@ function installSignalFlowUi() {
     fillForm();
   });
   plots = el('div', { class: 'signal-flow-plots-view' }, [
-    el('p', { class: 'field-hint signal-flow-plots-empty', text: 'The plots are a signal-flow diagram\'s: draw one (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S).' }),
+    el('p', { class: 'field-hint signal-flow-plots-empty', text: 'Draw a signal-flow diagram (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S).' }),
     el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
     el('div', { class: 'signal-flow-graph' }),
     locusSection(),

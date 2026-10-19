@@ -96,7 +96,7 @@ export function renderOptimize() {
   const { sources } = signalFlowGraph(circuit);
   const current = setup();
   body.replaceChildren(
-    el('p', { class: 'field-hint', text: 'Searches the free coefficients (an evolution strategy, CMA-ES, from their numbers now) for the best goal that keeps every limit: specs on a transfer function\'s magnitude, in dB, and the swing test simulated. Any diagram: a modulator\'s loop filter or a plain filter.' }),
+    el('p', { class: 'field-hint', text: 'Searches the free coefficients for the best goal that meets every limit: specs on |H| in dB, and the simulated swing test. It uses CMA-ES, starting from the coefficients\' current values. Works on any diagram, a modulator or a plain filter.' }),
     coefficientTable(circuit, current),
     specList(current, sources),
     constraintsBlock(current),
@@ -173,9 +173,9 @@ function specList(current, sources) {
     const poles = POLE_MEASURES.includes(spec.measure);
     return el('div', { class: 'signal-flow-optimize-spec' }, [
       select('action', [['minimize', 'Minimize'], ['maximize', 'Maximize'], ['below', 'Keep below'], ['above', 'Keep above']], 'Goal or limit'),
-      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest'], ['q', 'pole Q'], ['radius', 'pole radius']], 'Measure: of the magnitude over a band, or of the poles (the highest Q of a pair, the largest |z|)'),
+      select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest'], ['q', 'pole Q'], ['radius', 'pole radius']], 'Measure: |H| over a band, or the poles (highest pair Q, largest |z|)'),
       el('span', { class: 'signal-flow-optimize-word', text: poles ? 'of H from' : '|H| from' }),
-      select('input', inputs.length ? inputs : [['', '(no source)']], 'The transfer function, from this source to the output'),
+      select('input', inputs.length ? inputs : [['', '(no source)']], 'Source'),
       ...(poles ? [] : [select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band')]),
       ...(!poles && spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
       ...(limit ? [field('value', poles ? (spec.measure === 'q' ? 'Q' : '|z|') : 'dB', poles ? 'Limit' : 'Limit, dB'), ...(poles ? [] : [el('span', { class: 'signal-flow-optimize-word', text: 'dB' })])] : []),
@@ -196,8 +196,8 @@ function specList(current, sources) {
     el('div', { class: 'signal-flow-optimize-heading', text: 'Specs' }),
     ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
-    el('p', { class: 'field-hint', text: '|H| is from the source to the output picked above, in dB, over f/fs (s read in units of 1/Ts); the band is the signal band set above the plots. Average is the power average (noise in band), peak and lowest the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: the NTF\'s peak below 3.5 dB (1.5).' }),
-    el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of a pair of the transfer function\'s poles (a z pole read as s = ln z): how much it rings, at whatever frequency -- 0.5 for real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; the same radius rings more the higher its frequency. A loop\'s NTF and STF share their poles.' }),
+    el('p', { class: 'field-hint', text: '|H| runs from the source to the output picked above, in dB over f/fs (s in units of 1/Ts). The band is the signal band set above the plots. Average is the power average (in-band noise); peak and lowest are the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: NTF peak below 3.5 dB (1.5).' }),
+    el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of any pole pair (a z pole read as s = ln z): how much it rings. 0.5 is real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; at the same radius, a higher frequency rings more. A loop\'s NTF and STF share their poles.' }),
   ]);
 }
 
@@ -211,7 +211,7 @@ function swingBlock(circuit, current, sources) {
   if (real.some((s) => s.id === swing.input)) source.value = swing.input;
   else if (real.length) { swing.input = real[0].id; }
   const amplitude = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Amplitude, dBFS', value: String(swing.amplitude), onchange: (ev) => { const v = Number(ev.target.value); if (Number.isFinite(v)) { swing.amplitude = v; changed(); } } });
-  const measure = el('select', { 'aria-label': 'What a limit compares with', title: 'What each limit compares with. A net\'s 3-sigma level is the one its swing passes as rarely as a Gaussian passes +-3 sigma (0.27% of the samples); 4 sigma, 0.006%. The swings are not Gaussian: sigma names how rare. The highest peak is strict but noisy -- a loop near overload makes rare large excursions, so it scatters by dBs with the coefficients\' last digits.', onchange: (ev) => { swing.measure = ev.target.value; changed(); renderOptimize(); } }, [
+  const measure = el('select', { 'aria-label': 'What a limit compares with', title: 'What each limit compares with', onchange: (ev) => { swing.measure = ev.target.value; changed(); renderOptimize(); } }, [
     el('option', { value: 'sigma3', text: '3σ level' }), el('option', { value: 'sigma4', text: '4σ level' }), el('option', { value: 'peak', text: 'highest peak' }),
   ]);
   measure.value = swing.measure;
@@ -258,12 +258,12 @@ function swingBlock(circuit, current, sources) {
         const text = level && swing.measure !== 'peak' ? `${level} (${peak})` : peak;
         return el('div', { class: 'signal-flow-optimize-limit' }, [math(signal.name), input, el('span', { class: 'signal-flow-optimize-word', text: 'dBFS' }),
           el('label', { class: 'signal-flow-optimize-aim', title: 'Aim at the limit' }, [aim, el('span', { text: 'aim' })]),
-          el('span', { class: 'signal-flow-optimize-number', text, title: text ? `At the best numbers found, verified at length: ${level && swing.measure !== 'peak' ? `its ${MEASURE_TEXT[swing.measure]} (its highest peak in brackets)` : 'its highest peak'}, dBFS` : '' })]);
+          el('span', { class: 'signal-flow-optimize-number', text, title: text ? `Best found, verified: ${level && swing.measure !== 'peak' ? `${MEASURE_TEXT[swing.measure]} (highest peak)` : 'highest peak'}, dBFS` : '' })]);
       })));
     }
     const sources = [...api.circuit().components.values()].filter((c) => c.type === 'dither').map((c) => c.refdes);
-    const ditherText = sources.length ? ` The dither sources (${sources.join(', ')}) draw their numbers in every run.` : ' No dither: draw a dither source, with a gain after it, for some.';
-    children.push(el('p', { class: 'field-hint', text: `The diagram is simulated at each candidate's numbers, a sine of this amplitude in (rounding at each quantizer): it must not run away, also 1 dB above it, and each net with a limit must stay under it by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked by four runs of 4096 samples; each new best is verified with eight runs of 16384 and two more 1 dB above, which must all hold, and those are the numbers shown.${ditherText}` }));
+    const ditherText = sources.length ? ` Dither sources (${sources.join(', ')}) draw new numbers in every run.` : ' No dither: add a dither source with a gain after it for some.';
+    children.push(el('p', { class: 'field-hint', text: `Each candidate is simulated with a sine of this amplitude, rounding at each quantizer. It must stay stable at this amplitude and 1 dB above, and each limited net must stay under its limit by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked on four runs of 4096 samples; each new best is verified on eight runs of 16384 plus two 1 dB above, which must all hold. The numbers shown are from the verification. A 3-sigma level is exceeded 0.27% of the time (4 sigma: 0.006%); sigma names how rare, as the swing is not Gaussian. The highest peak is strict but scatters by dBs near overload.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
@@ -276,7 +276,7 @@ function constraintsBlock(current) {
     try {
       const parsed = parseConstraints(field.value);
       field.classList.remove('invalid');
-      note.textContent = parsed.length ? `${parsed.length} constraint${parsed.length === 1 ? '' : 's'}, kept like a limit: a candidate breaking one misses by how far it is short.` : 'Relations between coefficients, kept like a limit: a >= b, a <= b, > or <; each side any expression of coefficients (2*g_1). Commas between them.';
+      note.textContent = parsed.length ? `${parsed.length} constraint${parsed.length === 1 ? '' : 's'}, kept like limits: a candidate that breaks one misses by how far it falls short.` : 'Relations kept like limits: a >= b, a <= b, > or <, each side any expression (2*g_1), separated by commas.';
       note.classList.remove('analysis-error');
       return true;
     } catch (error) {
@@ -300,7 +300,7 @@ function constraintsBlock(current) {
 }
 
 function runBlock(current) {
-  const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'How many candidates to score at most', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
+  const budget = el('input', { type: 'text', class: 'signal-flow-optimize-field', 'aria-label': 'Evaluations', title: 'Most candidates to score', value: String(current.evaluations), onchange: (ev) => { const v = Math.round(Number(ev.target.value)); if (v >= 50) { current.evaluations = v; changed(); } } });
   const prune = el('input', { type: 'checkbox', 'aria-label': 'Zero coefficients that barely matter' });
   prune.checked = current.prune !== false;
   prune.addEventListener('change', () => { current.prune = prune.checked; changed(); });
@@ -349,8 +349,8 @@ function scoreRows(result, sources, [startLabel, endLabel]) {
   const specs = result.specs || [];
   const row = (label, start, best, ok) => el('div', { class: `signal-flow-optimize-metric${ok === false ? ' analysis-error' : ''}` }, [
     el('span', { text: label }),
-    el('span', { class: 'signal-flow-optimize-number', text: start, title: 'At the numbers it started from' }),
-    el('span', { class: 'signal-flow-optimize-number', text: best, title: `At the ${endLabel.toLowerCase()} numbers` }),
+    el('span', { class: 'signal-flow-optimize-number', text: start, title: 'At the start' }),
+    el('span', { class: 'signal-flow-optimize-number', text: best, title: endLabel }),
   ]);
   const db = (v) => (v === null || v === undefined ? '–' : `${v.toFixed(1)} dB`);
   const limits = setup().swing.limits;
@@ -387,15 +387,15 @@ function resultBlock(sources) {
     ...scoreRows(found, sources, ['Start', found.fractions ? 'Fractions' : 'Found']),
     el('div', { class: 'signal-flow-graph-actions' }, [
       el('button', { type: 'button', text: 'Revert', title: 'Revert', disabled: !reverting, onclick: revert }),
-      el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Put the fractions into the coefficients, exactly' : 'Put the numbers found into the coefficients (rounded to 4 digits)', onclick: apply }),
+      el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Apply the fractions exactly' : 'Apply, rounded to 4 digits', onclick: apply }),
     ]),
   );
-  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No candidate on fractions met every limit: allow a larger n (or n = a finer one), turn off one n per block, loosen a limit, or run again.' : 'No candidate met every limit: loosen one, give a coefficient more range, free another, or run again (each run starts from the coefficients\' numbers now).' }));
+  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No fraction candidate met every limit. Allow a larger n, turn off one n per block, loosen a limit, or run again.' : 'No candidate met every limit. Loosen one, widen a coefficient\'s range, free another, or run again (each run starts from the current values).' }));
   if (found.zeroed?.length) {
     host.append(el('p', { class: 'field-hint signal-flow-optimize-zeroed' }, [
-      el('span', { text: 'Set to zero, as they barely mattered (every limit still met): ' }),
+      el('span', { text: 'Set to zero, every limit still met: ' }),
       ...found.zeroed.flatMap((name, i) => [...(i ? [el('span', { text: ', ' })] : []), math(symbolText(name))]),
-      el('span', { text: '. Apply fixes them at zero; set one Free to bring it back.' }),
+      el('span', { text: '. Apply fixes them at zero; set one to Free to bring it back.' }),
     ]));
   }
   if (found.sensitivity?.length) host.append(sensitivityBlock(found.sensitivity, found.specs, sources));
@@ -415,7 +415,7 @@ function sensitivityBlock(entries, specs, sources) {
   };
   return el('div', { class: 'signal-flow-optimize-sensitivity' }, [
     el('div', { class: 'signal-flow-optimize-heading', text: fragile.length ? `Sensitive to ${fragile.length === 1 ? 'one coefficient' : `${fragile.length} coefficients`}` : 'Sensitivity: none fragile' }),
-    el('p', { class: 'field-hint', text: `Each coefficient moved 1% of itself, the others held: the largest change of any spec (the transfer functions; the swing test is too noisy to difference). ${SENSITIVE_DB} dB per 1% or more, or the stability lost at 1% off, is marked: the parts realizing it must match that well. "On a limit": 1% off misses a limit the result just meets.` }),
+    el('p', { class: 'field-hint', text: `The largest change of any transfer-function spec when one coefficient moves 1% (the swing test is too noisy for this). Marked: ${SENSITIVE_DB} dB or more per 1%, or unstable at 1% off; its parts must match that well. "On a limit": 1% off misses a limit the result just meets.` }),
     gridTable(['Coefficient', 'Change'], entries.map(row)),
   ]);
 }
@@ -545,8 +545,8 @@ function fractionsBlock(current) {
     children.push(
       el('div', { class: 'signal-flow-swing-controls' }, [
         el('span', { class: 'signal-flow-optimize-fractions-n' }, [el('label', { text: 'n' }), kind, field]),
-        check('powersOfTwo', 'powers of two', 'n = 1, 2, 4, 8, ...: shifts in a digital filter, binary-weighted unit arrays (with ≤)'),
-        check('shared', 'one n per block', 'The gains into the same block (through sums: an integrator, the quantizer) share one n, its reference element; off, each coefficient has its own'),
+        check('powersOfTwo', 'powers of two', 'n = 1, 2, 4, 8, …: shifts, or binary-weighted unit arrays (with ≤)'),
+        check('shared', 'one n per block', 'Gains into the same block (through sums) share one n; off, each coefficient has its own'),
       ]),
       ...(free.length ? [el('details', { class: 'signal-flow-paste-box signal-flow-round-limits', ...(setCount ? { open: '' } : {}) }, [
         el('summary', { text: `n per coefficient (${setCount} set)` }),
@@ -557,7 +557,7 @@ function fractionsBlock(current) {
       ])] : []),
     );
   }
-  children.push(el('p', { class: 'field-hint', text: 'The search keeps each free coefficient a simple fraction m/n -- m units over n, whatever the units are: every candidate is snapped to fractions before it is scored, so the limits, constraints, and goals are weighed on numbers that can be built, and then each moves by one unit while that helps. The gains into one block share its n (m1/n, m2/n, ...). n ≤ takes the n up to it that fits each candidate best; n = that n exactly. A block takes the largest n set among its gains.' }));
+  children.push(el('p', { class: 'field-hint', text: 'Each free coefficient stays a fraction m/n: candidates snap to fractions before scoring, so limits and goals are judged on buildable values, then each moves one unit while that helps. Gains into one block share its n (m1/n, m2/n, …), the largest n set among them. n ≤ picks the best n up to it; n = uses it exactly.' }));
   return el('div', { class: 'signal-flow-optimize-group' }, children);
 }
 
@@ -580,7 +580,7 @@ function fractionsTable(result) {
       ]));
     }
   }
-  const notes = coarse.map(({ name, n }) => el('p', { class: 'field-hint', text: `${plainName(name)} is a single unit of n = ${n}, far smaller than a gain beside it: a larger n for its block would let it be set finer.` }));
+  const notes = coarse.map(({ name, n }) => el('p', { class: 'field-hint', text: `${plainName(name)} is one unit of n = ${n}, far smaller than its neighbours: a larger n for its block would set it finer.` }));
   return [gridTable(['', 'm/n', 'Value'], rows), ...notes];
 }
 

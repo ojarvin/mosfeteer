@@ -199,16 +199,16 @@ function domainsGuide() {
   return el('details', { class: 'signal-flow-paste-box signal-flow-guide' }, [
     el('summary', { text: 'Between s and z: samplers and DACs' }),
     el('div', { class: 'signal-flow-guide-head', text: 's to z: the sampler, only' }),
-    line(['An ideal sampler: it reads the continuous signal just before each ', tex('t = nT'), ' and passes on the numbers ', tex('x[n]'), '. No hold, and no anti-aliasing: it is not a sample-and-hold or a ZOH. Its value is the period ', tex('T'), '. Put an H(s) block before it to filter what it reads.']),
+    line(['An ideal sampler reads the signal just before each ', tex('t = nT'), ' and passes on ', tex('x[n]'), '. It has no hold and no anti-aliasing (not a sample-and-hold or ZOH). Its value is the period ', tex('T'), '; put an H(s) block before it to filter.']),
     el('div', { class: 'signal-flow-guide-head', text: 'z to s: any H(s) block reading a sampled signal is a DAC' }),
-    line(['Each sample enters it as an impulse ', tex('x[n]\\,\\delta(t - nT)'), ', so its H(s) is the DAC’s pulse. The presets:']),
-    line(['DAC (NRZ) preset, a zero-order hold for a whole period:', shown('\\frac{1 - e^{-sT}}{s}')]),
-    line(['DAC (RZ) preset, held half a period:', shown('\\frac{1 - e^{-sT/2}}{s}')]),
-    line(['Any other pulse is typed into an H(s) block. With excess loop delay (or a delay block drawn before the DAC):', shown('e^{-sT_d}\\,\\frac{1 - e^{-sT}}{s}')]),
-    line(['A hold into an integrator, as one block:', shown('\\frac{1 - e^{-sT}}{s^2}')]),
-    line(['A sample-and-hold driving continuous circuits is a sampler, then an NRZ DAC.']),
+    line(['Each sample enters as an impulse ', tex('x[n]\\,\\delta(t - nT)'), ', so the H(s) is the DAC pulse. Presets:']),
+    line(['DAC (NRZ), held a whole period:', shown('\\frac{1 - e^{-sT}}{s}')]),
+    line(['DAC (RZ), held half a period:', shown('\\frac{1 - e^{-sT/2}}{s}')]),
+    line(['Type any other pulse into an H(s) block. With excess loop delay (or a delay block before the DAC):', shown('e^{-sT_d}\\,\\frac{1 - e^{-sT}}{s}')]),
+    line(['A hold into an integrator, in one block:', shown('\\frac{1 - e^{-sT}}{s^2}')]),
+    line(['A sample-and-hold is a sampler, then an NRZ DAC.']),
     el('div', { class: 'signal-flow-guide-head', text: 'No transform is applied' }),
-    line(['A continuous path from a DAC to a sampler is sampled exactly at the coefficients’ numbers (its pulse response read at each ', tex('t = nT'), '): nothing is converted by the bilinear, matched-z, or any other approximation. To design in z, draw ', tex('H(z)'), ' blocks; ', tex('z^{-1}'), ' is the Delay z^-1 preset.']),
+    line(['A continuous path from a DAC to a sampler is sampled exactly (its pulse response at each ', tex('t = nT'), '), with no bilinear, matched-z, or other approximation. To design in z, draw ', tex('H(z)'), ' blocks; ', tex('z^{-1}'), ' is the Delay z^-1 preset.']),
   ]);
 }
 
@@ -229,7 +229,7 @@ function fillForm() {
 
   const table = section.querySelector('.signal-flow-sources');
   table.replaceChildren();
-  if (!sources.length) table.append(el('p', { class: 'field-hint', text: 'No sources yet: a source is an input port, or any named wire nothing drives.' }));
+  if (!sources.length) table.append(el('p', { class: 'field-hint', text: 'No sources yet. A source is an input port or a named wire nothing drives.' }));
   // Every source starts as an input: each gets its own transfer function
   // (superposition holds the others at zero for it).
   for (const source of sources) {
@@ -298,7 +298,7 @@ let locusRun = 0;
 
 function locusSection() {
   return el('div', { class: 'signal-flow-locus', hidden: true }, [
-    el('p', { class: 'field-hint signal-flow-locus-empty', text: 'Derive first: the locus follows one result\'s poles as one coefficient sweeps.' }),
+    el('p', { class: 'field-hint signal-flow-locus-empty', text: 'Derive first. The locus follows a result\'s poles as one coefficient sweeps.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Poles of' }), el('select', { class: 'signal-flow-locus-entry', 'aria-label': 'Result' }),
       el('label', { text: 'as' }), el('select', { class: 'signal-flow-locus-name', 'aria-label': 'Coefficient to sweep', onchange: () => fillLocusRange() }),
@@ -349,7 +349,7 @@ function runLocus() {
   const to = fraction(host.querySelector('.signal-flow-locus-to').value);
   const ks = locusSteps(from, to);
   if (!entry || !name || !ks.length || Math.sign(from) !== Math.sign(to)) {
-    status.textContent = 'Pick a result and a coefficient, and a range from one number to another of the same sign.';
+    status.textContent = 'Pick a result, a coefficient, and a range of one sign.';
     return;
   }
   const evaluate = locusEvaluator(entry, name);
@@ -367,7 +367,7 @@ function runLocus() {
     const current = resolved()[name] ?? 1;
     const result = rootLocus(evaluate, { ks, current });
     if (!result) {
-      status.textContent = 'This result has no numeric poles to follow (a delay, or a continuous input through a sampler).';
+      status.textContent = 'This result has no numeric poles (a delay, or a continuous input through a sampler).';
       locus = null;
     } else {
       locus = { plot: { ...locusPlot(result, { parameter: symbolText(name), label: entry.label, color: TRACE_COLORS[0] }), source: name } };
@@ -414,7 +414,7 @@ function renderLocus() {
   host.append(view.el);
   view.set(locusSpec(locus.plot));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate locus', title: 'Put this root locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate locus', title: 'Annotate the locus', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
   ]));
 }
 
@@ -428,7 +428,7 @@ function loopSection() {
       el('label', { text: 'Break the loop at' }),
       el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } }),
     ]),
-    el('p', { class: 'field-hint', text: 'T is what returns, with a minus sign, for 1 injected where the loop is broken (every source at zero): a negative-feedback loop gain, so a quantizer\'s NTF is 1/(1 + T).' }),
+    el('p', { class: 'field-hint', text: 'T is minus what returns for 1 injected at the break, every source at zero. A quantizer\'s NTF is then 1/(1 + T).' }),
     el('div', { class: 'signal-flow-loop-body' }),
   ]);
 }
@@ -527,7 +527,7 @@ function swingSection() {
   const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
   const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
-    el('p', { class: 'field-hint', text: 'Simulates the diagram at the coefficients above with a sine into one source, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots every net\'s peak as the amplitude sweeps up to overload.' }),
+    el('p', { class: 'field-hint', text: 'Simulates a sine into one source at the coefficients above, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots each net\'s peak as the amplitude sweeps to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
       el('label', { text: 'Sine into' }), source,
       el('label', { text: 'at f/fs' }), frequency,
@@ -852,7 +852,7 @@ function pasteCoefficients() {
   return el('details', { class: 'signal-flow-paste-box' }, [
     el('summary', { text: 'Paste coefficients (delta-sigma toolbox)' }),
     area,
-    el('p', { class: 'field-hint', text: 'Name = numbers, one per line: a vector names its entries a_1, a_2, ... (MATLAB output pastes as it prints). Name the diagram\'s gains to match: a_1, b_1, c_1, g_1.' }),
+    el('p', { class: 'field-hint', text: 'One name = numbers per line; a vector fills a_1, a_2, …. MATLAB output pastes as printed. Name the diagram\'s gains to match (a_1, b_1, c_1, g_1).' }),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Apply', onclick: apply })]),
   ]);
 }
@@ -1043,13 +1043,13 @@ const GRAPH_VIEWS = new Set(['magnitude', 'phase', 'step']);
  *  diagram with feedback (its tab returns when one is drawn). */
 function plotTabs() {
   return [
-    ['magnitude', 'Magnitude', 'The magnitude responses (in dBFS with a simulated spectrum)'],
-    ['phase', 'Phase', 'The phase responses, in degrees'],
-    ['step', 'Step', 'The step responses: overshoot and settling (a sampled result in samples)'],
-    ['locus', 'Locus', 'The poles as one coefficient sweeps'],
-    ['swing', 'Swing', 'Each net\'s peak as a sine\'s amplitude sweeps, simulated'],
-    ...(loopSignals().length ? [['loop', 'Loop', 'The loop gain T at a broken signal: crossover, phase and gain margins']] : []),
-    ['time', 'Time', 'The nets in time, driven by a sine, simulated'],
+    ['magnitude', 'Magnitude', 'Magnitude (dBFS with a simulated spectrum)'],
+    ['phase', 'Phase', 'Phase, in degrees'],
+    ['step', 'Step', 'Step response (sampled results in samples)'],
+    ['locus', 'Locus', 'Poles as one coefficient sweeps'],
+    ['swing', 'Swing', 'Net peaks as a sine\'s amplitude sweeps'],
+    ...(loopSignals().length ? [['loop', 'Loop', 'Loop gain T: crossover and margins']] : []),
+    ['time', 'Time', 'Nets in time, simulated with a sine'],
   ];
 }
 
@@ -1109,8 +1109,8 @@ function renderGraph() {
       return el('button', { type: 'button', text, title, 'aria-pressed': String(pressed), disabled: forced && value !== 'normalized', onclick: () => choose(value) });
     };
     head.append(el('div', { class: 'segmented signal-flow-axis', role: 'group', 'aria-label': 'Frequency axis' }, [
-      button('omega', 'ω', 'ω in the units of the coefficients'),
-      button('normalized', 'f/fs', forced ? 'A z result is on the graph: everything plots over f/fs, s in units of 1/Ts' : 'f/fs, reading s in units of 1/Ts: f/fs = ω/2π, to ½'),
+      button('omega', 'ω', 'ω, in the coefficients\' units'),
+      button('normalized', 'f/fs', forced ? 'f/fs: a z result is plotted (s in units of 1/Ts)' : 'f/fs (s in units of 1/Ts; f/fs = ω/2π, up to ½)'),
     ]));
   }
   if (head.children.length) host.append(head);
@@ -1129,7 +1129,7 @@ function renderGraph() {
     const math = el('span', { class: 'signal-flow-legend-math' });
     math.innerHTML = texToMathML(trace.label);
     math.style.color = trace.color;
-    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove this trace from the graph', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); } });
+    const remove = el('button', { type: 'button', class: 'signal-flow-legend-remove', 'aria-label': 'Remove this trace', title: 'Remove', text: '×', onclick: () => { traces = traces.filter((t) => t !== trace); renderCoefficients(); renderGraph(); } });
     legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
   }
   host.append(legend);
@@ -1358,10 +1358,10 @@ function renderResults() {
       // coefficients below, so it follows the sliders.
       const shown = sampledEquation(entry, valuesFor(entry.value, latest.variable));
       block.append(mathRow(`From ${entry.inputName}, at the coefficients below`, shown.equation));
-      if (shown.mixed) block.append(el('p', { class: 'field-hint', text: `${entry.inputName} is continuous: its path to the sampler stays in s (s = jω, z = e^jωT): a tone in at f comes out at f, images aside.` }));
+      if (shown.mixed) block.append(el('p', { class: 'field-hint', text: `${entry.inputName} is continuous, so its path stays in s (s = jω, z = e^jωT): a tone at f comes out at f, images aside.` }));
       if (shown.zeros?.length) block.append(rootRow('Zeros', shown.zeros, 'z'));
       if (shown.poles?.length) block.append(rootRow(shown.mixed ? 'Poles of the sampled loop' : 'Poles', shown.poles, 'z'));
-      if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole lies outside the unit circle: the sampled loop is unstable at these numbers, whatever the magnitude plot shows.' }));
+      if (shown.poles?.some((p) => Math.hypot(p.re, p.im) > 1 + 1e-9)) block.append(el('p', { class: 'analysis-error', text: 'A pole is outside the unit circle: the loop is unstable at these values, whatever the magnitude shows.' }));
       appendSqnr(block, entry, entry.value.at(valuesFor(entry.value, latest.variable)));
       appendTraceButton(block, entry);
       host.append(block);
@@ -1393,7 +1393,7 @@ function appendSqnr(block, entry, ntf) {
   const component = editor.circuit.components.get(entry.quantizer);
   const levels = Number(component?.value) || 2;
   if (!bandEdges(band).length) {
-    block.append(el('p', { class: 'field-hint', text: 'Set the signal band above the plots (bw, and f0 for a band-pass signal) for this NTF\'s peak SQNR.' }));
+    block.append(el('p', { class: 'field-hint', text: 'Set the signal band above the plots (bw, and f0 for band-pass) to get the peak SQNR.' }));
     return;
   }
   const sqnr = bandSqnr(ntf, levels, band);
@@ -1493,7 +1493,7 @@ export function installSignalFlowUi() {
       el('legend', { text: 'Signals' }),
       el('div', { class: 'signal-flow-source signal-flow-output-row' }, [el('label', { for: 'signal-flow-output', class: 'signal-flow-source-name', text: 'Output' }), output]),
       el('div', { class: 'signal-flow-sources' }),
-      el('p', { class: 'field-hint', text: 'A source is an input port or a named wire nothing drives.' }),
+      el('p', { class: 'field-hint', text: 'A source is an input port or a named wire nothing drives. A constant only matters where it multiplies a signal; elsewhere it acts as zero.' }),
     ]),
     el('div', { class: 'signal-flow-issues', hidden: true }),
     el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
@@ -1515,7 +1515,7 @@ export function installSignalFlowUi() {
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
-      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equations stay symbolic. = b_1 makes one follow another.' }),
+      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these values; the equations stay symbolic. Type = b_1 (or = 2*b_1, = T/2) to make one follow others.' }),
       pasteCoefficients(),
     ]),
     optimizeSection({
@@ -1575,7 +1575,7 @@ export function installSignalFlowUi() {
     fillForm();
   });
   plots = el('div', { class: 'signal-flow-plots-view' }, [
-    el('p', { class: 'field-hint signal-flow-plots-empty', text: 'The plots are a signal-flow diagram\'s: draw one (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S).' }),
+    el('p', { class: 'field-hint signal-flow-plots-empty', text: 'Draw a signal-flow diagram (H(s), H(z), sums, gains, quantizers), then Derive in the analysis window (Shift+S).' }),
     el('div', { class: 'signal-flow-graph-head signal-flow-plots-head' }),
     el('div', { class: 'signal-flow-graph' }),
     locusSection(),
