@@ -516,9 +516,9 @@ pin list) reads best left-aligned in the monospace face (`style.mono`).
 Use the canonical `addNetLabel`, `renameNet`, and `renameNetLabel` APIs for
 electrical labels and net names. Net-label text follows the physical net name;
 removing one label occurrence does not remove or rename its net. In the editor,
-`l` asks for the names first -- several, separated by spaces or commas,
+`l` asks for the names first -- several, separated by spaces,
 a bus range spelled out bit by bit (`DOUT[3:0]` places `DOUT[3]` ...
-`DOUT[0]`) -- and each click on an unambiguous physical wire places the next,
+`DOUT[0]`), a comma list (`A,B`) one label for its parallel nets -- and each click on an unambiguous physical wire places the next,
 handing back to selection after the last (Enter on an empty field names each
 wire after it is clicked instead); at a crossing, select/highlight the
 intended net first. `n` likewise asks for its text first, places it

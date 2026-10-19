@@ -155,12 +155,12 @@ export function askAnnotationText() {
   });
 }
 
-/** l: the names first -- several, separated by spaces or commas, a bus
- *  range spelled out bit by bit (`DOUT[3:0]`) -- then each click on a wire
- *  places the next. Esc leaves the tool; Enter on an empty field names each
+/** l: the names first -- several, separated by spaces, a bus range spelled
+ *  out bit by bit (`DOUT[3:0]`), a list (`A,B`) one label for its nets --
+ *  then each click on a wire places the next. Esc leaves the tool; Enter on an empty field names each
  *  wire after it is clicked, as before. */
 export function askNetLabelNames() {
-  promptLabelText({ title: 'Net label', placeholder: 'name(s): CLK, DOUT[3:0] … Enter alone: name each after placing' }).then((text) => {
+  promptLabelText({ title: 'Net label', placeholder: 'name(s): CLK DOUT[3:0] A,B … Enter alone: name each after placing' }).then((text) => {
     if (editor.labelMode !== 'net') return;
     if (text === null) {
       activateSelect();

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
-import { busBits, busMarkD, busMarkPoints, busTerminalMarks, busWidth, netNamesConnect, expandLabelNames, straightLeadLength } from '../src/core/bus.js';
+import { busBits, busGroupName, busMarkD, busMarkPoints, busTerminalMarks, busWidth, netNameMembers, netNamesConnect, expandLabelNames, straightLeadLength } from '../src/core/bus.js';
 import { getSymbol } from '../src/core/components/index.js';
 
 test('bus names carry a bit range in brackets or angle brackets', () => {
@@ -186,6 +186,59 @@ test('typed label names spell a bus out bit by bit, in written order', () => {
   // One bit, plain names, and commas inside markup are left as they are.
   assert.deepEqual(expandLabelNames('D[3] V_{a,b}  RST'), ['D[3]', 'V_{a,b}', 'RST']);
   assert.deepEqual(expandLabelNames('  '), []);
+  // A comma inside a name lists parallel nets: one label for them all.
+  assert.deepEqual(expandLabelNames('A,B,C D<1>,D<0>'), ['A,B,C', 'D<1>,D<0>']);
+});
+
+test('a comma-separated name lists parallel nets, and listed bits are the range they run', () => {
+  assert.deepEqual(netNameMembers('A,B,C'), ['A', 'B', 'C']);
+  assert.deepEqual(netNameMembers('A, D[1:0]'), ['A', 'D<1>', 'D<0>']);
+  assert.deepEqual(netNameMembers('V_{a,b}'), ['V_{a,b}']);
+  assert.equal(busWidth('A,B,C'), 3);
+  assert.equal(busWidth('A,D<1:0>'), 3);
+  assert.equal(busWidth('V_{a,b}'), 0);
+  // D<1:0> and D<1>,D<0> are one connection, and one group.
+  assert.equal(busGroupName('D<1>,D<0>'), 'D<1:0>');
+  assert.equal(busGroupName('D[1:0]'), 'D<1:0>');
+  assert.equal(busGroupName('D<3>,D<2:0>'), 'D<3:0>');
+  assert.equal(busGroupName('A, B'), 'A,B');
+  assert.equal(busGroupName('D<0>,D<2>'), 'D<0>,D<2>');
+  assert.equal(busGroupName('A'), null);
+  assert.ok(netNamesConnect('A,B,C', 'B'));
+  assert.ok(netNamesConnect('A,B', 'B,C'));
+  assert.ok(netNamesConnect('D<1>,D<0>', 'D<1:0>'));
+  assert.ok(netNamesConnect('A,VSS', 'V_{SS}'));
+  assert.ok(!netNamesConnect('A,B', 'C'));
+  assert.equal(busBits('A,D<1>'), null);
+});
+
+test('a net named as a list is a bus: a slash with its count, probes, and connections by name', () => {
+  const circuit = new Circuit();
+  for (const line of [
+    'add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'connect R1.b R2.a --name "A, B"',
+    'add resistor R3 --at 0 400', 'add resistor R4 --at 400 400', 'connect R3.b R4.a --name B',
+    'add resistor R5 --at 0 800', 'add resistor R6 --at 400 800', 'connect R5.b R6.a --name C',
+    'add resistor R7 --at 0 1200', 'add resistor R8 --at 400 1200', 'connect R7.b R8.a --name D<1:0>',
+    'add resistor R9 --at 0 1600', 'add resistor R10 --at 400 1600', 'connect R9.b R10.a --name D<1>,D<0>',
+  ]) runCommand(circuit, line);
+  const [list, b, c, range, bits] = ['R1', 'R3', 'R5', 'R7', 'R9'].map((comp) => circuit.netOfTerminal({ comp, term: 'b' }));
+  // One spelling: the spaces around the comma go.
+  assert.equal(list.name, 'A,B');
+  assert.ok(circuit.logicallyConnected(list, b));
+  assert.ok(!circuit.logicallyConnected(list, c));
+  assert.equal(circuit.netGroupKey(range), circuit.netGroupKey(bits));
+  assert.equal(circuit.setBusCountShown(list, true), true);
+  assert.match(svgString(circuit), /class="bus-count"[^>]*>2</);
+  // A probe on the list colors B; a later probe on B takes the list.
+  const color = (n) => circuit.netHighlight(n);
+  const first = circuit.cycleNetHighlight(list);
+  assert.equal(color(b), first);
+  assert.equal(color(c), null);
+  const second = circuit.cycleNetHighlight(b);
+  assert.equal(color(list), second);
+  // An empty name in a list is refused.
+  assert.throws(() => circuit.renameNet(c, 'C,'), /empty name/);
+  assert.equal(c.name, 'C');
 });
 
 test('two pins close together on one wire share a slash, mid-way; a junction keeps one each', () => {

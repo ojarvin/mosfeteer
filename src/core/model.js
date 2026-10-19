@@ -10,7 +10,7 @@ import { chopperSymbol } from './components/chopper.js';
 import { SOURCE_WAVEFORMS, WAVEFORM_TYPES } from './components/current.js';
 import { balancedCrossCoupling, steinerBranches, bodyClearanceSafe, gateBodyCrossingAllowed, segThroughInterior, smartRoute } from './router.js';
 import { collapseCollinear } from './wireedit.js';
-import { busBits, busGroupName, busGroupsWithin, busWidth, latestBusColor, netNamesConnect } from './bus.js';
+import { busGroupName, busGroupsWithin, busWidth, isBusName, netNameParts, netNameSpelling, netNamesConnect } from './bus.js';
 import { LABEL_FONT_SIZES, labelFontSize, strokeWidth } from './style.js';
 import { cloneLiteralPath, clonePath, hasPositiveBranchOverlap, joinBranchEnds, junctionPoints, normalizePath, pathLength, pointOnPath, reduceBranches, samePolylineSet, splitBranchAt, splitByComponent, validateWiring, wireSegments } from './wiring.js';
 import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArrowheadStyles, polylineArrowheadValue, timingBreakGeometry } from './line-style.js';
@@ -21,9 +21,11 @@ import { PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } from '
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
 /** Canonical physical net-name form. Names are case-sensitive; only outer
- * whitespace is non-semantic. Empty names mean that a net is unnamed. */
+ * whitespace is non-semantic, and the spaces around a list's commas
+ * (`A, B` -> `A,B`, bus.js). Empty names mean that a net is unnamed. */
 export function canonicalNetName(name) {
-  return String(name ?? '').trim();
+  const text = String(name ?? '').trim();
+  return text.includes(',') ? netNameSpelling(text) : text;
 }
 
 /** Shared reference markers.  Unnamed markers are global AC references;
@@ -142,18 +144,23 @@ export function referenceMarkerName(component) {
 }
 
 /** A net's color in `colors` (netGroupKey -> color, in probe order): its
- * group's own, or for a bus or bit name the latest probe on a name it
- * connects to (bus.js latestBusColor). */
+ * group's own, or for a bus, bit, or listed name the latest probe on a name
+ * it connects to (bus.js netNamesConnect): a bus shows the bit probed last,
+ * a bit shows a bus probed after it, and one bit never reaches another. */
 export function busNetHighlight(circuit, colors, net) {
   const key = circuit.netGroupKey(net);
-  if (!busBits(net?.name) || !key.startsWith('name:')) return colors.get(key) || null;
-  const names = new Map([...colors].map(([group, color]) => [group.replace(/^name:/, ''), color]));
-  return latestBusColor(net.name, names);
+  if (!net?.name || !key.startsWith('name:')) return colors.get(key) || null;
+  const nameOf = (group) => group.replace(/^name:/, '');
+  // A plain name takes a bus's color only from a list that names it.
+  if (!isBusName(net.name) && ![...colors.keys()].some((group) => isBusName(nameOf(group)))) return colors.get(key) || null;
+  let latest = null;
+  for (const [group, color] of colors) if (color && (group === key || netNamesConnect(net.name, nameOf(group)))) latest = color;
+  return latest;
 }
 
 /** Record a probe: `key` takes `color` (null clears it) as the latest probe,
- * and a probe on a bus range hands its color down to the bits and part
- * ranges inside it by clearing theirs. */
+ * and a probe on a bus hands its color down to the bits, part ranges, and
+ * listed names inside it by clearing theirs. */
 export function applyNetProbe(colors, key, color) {
   colors.delete(key);
   if (!color) return;
@@ -3701,6 +3708,8 @@ export class Circuit {
     const previousName = net.name;
     const canonical = canonicalNetName(name);
     if (!canonical && this.netLabels(net).length > 0) throw new Error(`cannot clear name of net ${net.id} while net labels are attached`);
+    // A comma only separates the nets a name lists (bus.js).
+    if (netNameParts(canonical).some((part) => !part)) throw new Error(`net name "${canonical}" lists an empty name: a comma separates parallel nets`);
     net.name = canonical;
     // Renaming an unnamed reference-attached net away from its global rail
     // name makes that marker local.  Persist the same child label used by the
@@ -3776,8 +3785,9 @@ export class Circuit {
 
   /** The electrical group a physical net belongs to: nets on one unnamed
    * rail share the rail name, equally named nets are virtually connected,
-   * and any other net stands alone under its id. A bus or bit name is one
-   * group whichever brackets spell it (bus.js). */
+   * and any other net stands alone under its id. A bus, bit, or list name
+   * is one group however it is spelled: either brackets, or its bits listed
+   * (`D<1>,D<0>` is `D<1:0>`, bus.js busGroupName). */
   netGroupKey(net) {
     if (!net?.id) return '';
     const rail = this.unnamedReferenceInfo(net)?.globalName;

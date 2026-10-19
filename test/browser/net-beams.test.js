@@ -21,10 +21,22 @@ function outs() {
   return circuit.toJSON();
 }
 
+/** A wire named for two nets, A,B, and wires named A, B, and C apart. */
+function lists() {
+  const circuit = new Circuit();
+  for (const line of [
+    'add resistor R1 --at 0 0', 'add resistor R2 --at 400 0', 'connect R1.b R2.a --name A,B',
+    'add resistor R3 --at 0 800', 'add resistor R4 --at 400 800', 'connect R3.b R4.a --name A',
+    'add resistor R5 --at 1200 800', 'add resistor R6 --at 1600 800', 'connect R5.b R6.a --name B',
+    'add resistor R7 --at 1200 0', 'add resistor R8 --at 1600 0', 'connect R7.b R8.a --name C',
+  ]) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
 describe('net beams', { skip: browserSkip() }, () => {
   let h;
   before(async () => {
-    h = await start({ docs: { outs: outs() }, width: 1400, height: 900 });
+    h = await start({ docs: { outs: outs(), lists: lists() }, width: 1400, height: 900 });
     await h.open('outs');
   });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
@@ -64,6 +76,22 @@ describe('net beams', { skip: browserSkip() }, () => {
     assert.deepEqual(ends, terminals);
     await hover(800, 400);
     await h.until(`document.querySelectorAll('.net-beams .net-beam').length === 0`);
+  });
+
+  test('go from a net named as a list to each net it names, and from each of those back to it', async () => {
+    await h.open('lists');
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    await hover(200, 0);
+    await h.until(`document.querySelectorAll('.net-beams .net-beam').length === 2`);
+    // B reaches the list, not A.
+    await hover(1400, 800);
+    await h.until(`document.querySelectorAll('.net-beams .net-beam').length === 1`);
+    await hover(1400, 0);
+    await h.until(`document.querySelectorAll('.net-beams .net-beam').length === 0`);
+    // The net list shows A and B under the list's row.
+    const rows = await h.evaluate(`${h.module('main.js')}.then((m) => m.visibleNets().map((net) => net.name))`);
+    assert.deepEqual(rows, ['A,B', 'C']);
+    await h.open('outs');
   });
 
   test('the command line turns them off, and the choice is kept', async () => {

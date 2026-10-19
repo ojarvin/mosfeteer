@@ -175,12 +175,19 @@ A net named with a bit range, `D[7:0]` or `D<7:0>`, is a bus
 (`src/core/bus.js`): by the Virtuoso convention it stands for the parallel
 nets `D[7]` ... `D[0]`, so a net named for one bit (`D[1]` or `D<1>`; the
 brackets are one notation) is virtually connected to that bit
-(`netNamesConnect`), while two different bits are not. Each bus or bit name
-is its own `netGroupKey`, and highlights keep probe order: a bus or bit net
+(`netNamesConnect`), while two different bits are not. A comma-separated
+name lists parallel nets the same way: `A,B,C` is a bus of A, B, and C, and
+`D<1>,D<0>` is `D<1:0>` (`netNameMembers`). A comma outside braces is only
+that separator: the net's name is spelled without spaces around it
+(`canonicalNetName`), and an empty listed name is refused. Two names
+connect when they share a member net. Each bus or bit name is its own
+`netGroupKey`, a list of bits spelled as the ranges they run
+(`busGroupName`), and highlights keep probe order: a bus or bit net
 shows the latest probe on any name it connects to (`busNetHighlight`), so a
 bit's probe colors that bit and the bus, and a bus probe clears its bits' own
 colors so they all show the bus color (`applyNetProbe`). The net list lists
-bits under their bus, and hovering a bus glows all its bits (a bit, the bus).
+bits and listed names under their bus, and hovering a bus glows (and beams
+to) all its bits and names (a bit or name, the bus).
 The renderer draws a one-cell 45-degree slash on a multi-bit net at each
 pin, whole cells clear of the drawn part along the pin (`busTerminalMarks`: at
 an ADC's terminal, a cell out from a port, two from a pin on a body's edge

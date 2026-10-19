@@ -24,7 +24,7 @@ import { addTerminalStubs, stubLabelPlacement } from '../core/stubs.js';
 import { PIN_RAIL_TYPES, addPinRail, pinEscape, railRotation } from '../core/pin-rails.js';
 import { tidySelection } from '../core/tidy.js';
 import { addBoxAround } from '../core/wrap-box.js';
-import { busBits, busWidth, netNamesConnect } from '../core/bus.js';
+import { busBits, busWidth, isBusName, netNameMembers, netNamesConnect } from '../core/bus.js';
 import { circuitPageGuideFrame, normalizePageGuide, pageGuideCaption } from '../core/page-guide.js';
 import { drawnBusCounts, editorOverlay, svgString } from '../core/render.js';
 import { timingBeatBands } from '../core/timing-diagram.js';
@@ -805,16 +805,24 @@ function referenceGroupNets(netOrInfo) {
 }
 
 /** The net list's row for a net: its electrical group, except that the bits
- *  of a bus (bus.js) that a bus range reaches are listed under that bus. */
+ *  and names a bus (bus.js: a range or a list) reaches are listed under that
+ *  bus, and ranges of one base share a row. */
 function namedNetGroupKey(net) {
-  const bus = busBits(net?.name);
-  if (bus && [...circuit.nets.values()].some((other) => busWidth(other.name) && netNamesConnect(other.name, net.name))) return `bus:${bus.base}`;
-  return circuit.netGroupKey(net);
+  const groups = netGroupIndex();
+  const atom = busAtom(groups, net);
+  return atom ? `bus:${groups.find(atom)}` : circuit.netGroupKey(net);
+}
+
+/** The first of a net's member names (bus.js netNameMembers) that a bus
+ *  in the drawing reaches, or null. */
+function busAtom(groups, net) {
+  if (!groups.buses.length || !net?.name) return null;
+  return netNameMembers(net.name).map((member) => `net:${member}`).find((atom) => groups.parent.has(atom)) || null;
 }
 
 /** The nets that go with `net` when it is hovered or picked: its group, and
- *  for a bus or bit every net it reaches by name -- a bus all its bits, a
- *  bit the bus (not the other bits). */
+ *  for a bus, a bit, or a name a bus lists every net it reaches by name -- a
+ *  bus all its bits and names, a bit or name the bus (not the others). */
 export function namedGroupNets(net) {
   if (!net?.id) return referenceGroupNets(net);
   let groups = netGroupIndex();
@@ -824,26 +832,44 @@ export function namedGroupNets(net) {
     groups = netGroupIndex();
   }
   const members = groups.keyOf.has(net) ? groups.byKey.get(groups.keyOf.get(net)) : [net];
-  if (!busBits(net.name)) return [...members];
+  if (!isBusName(net.name) && !busAtom(groups, net)) return [...members];
   return [...circuit.nets.values()].filter((candidate) => members.includes(candidate) || netNamesConnect(candidate.name, net.name));
 }
 
 // Every net's group, built once per model (or preview) revision: the net
 // list asks for each net's group, and keying every net for every row was
-// quadratic in the nets (and a label scan per key on top).
+// quadratic in the nets (and a label scan per key on top). The buses join
+// what they reach (by member name, `net:D<1>`, and by base, `base:D`).
 let netGroupCache = null;
 function netGroupIndex() {
   const revision = `${modelRevision}:${previewRevision}`;
   if (netGroupCache?.revision === revision && netGroupCache.circuit === circuit) return netGroupCache;
   const byKey = new Map();
   const keyOf = new Map();
+  const parent = new Map();
+  const find = (atom) => {
+    let root = atom;
+    while (parent.get(root) !== root) root = parent.get(root);
+    parent.set(atom, root);
+    return root;
+  };
+  const buses = [];
   for (const candidate of circuit.nets.values()) {
     const key = circuit.netGroupKey(candidate);
     keyOf.set(candidate, key);
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(candidate);
+    if (!busWidth(candidate.name)) continue;
+    buses.push(candidate);
+    const members = netNameMembers(candidate.name);
+    const atoms = [...members.map((member) => `net:${member}`), ...members.map((member) => busBits(member)).filter(Boolean).map((bit) => `base:${bit.base}`)];
+    for (const atom of atoms) if (!parent.has(atom)) parent.set(atom, atom);
+    for (const atom of atoms.slice(1)) {
+      const [a, b] = [find(atoms[0]), find(atom)];
+      if (a !== b) parent.set(b, a);
+    }
   }
-  netGroupCache = { revision, circuit, byKey, keyOf };
+  netGroupCache = { revision, circuit, byKey, keyOf, parent, find, buses };
   return netGroupCache;
 }
 
