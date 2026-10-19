@@ -43,9 +43,7 @@ function renderDeleteWording() {
   deleteWording = forget;
   if (deleteCircuitBtn) {
     setButtonText(deleteCircuitBtn, forget ? 'Remove from list…' : 'Delete document…');
-    deleteCircuitBtn.title = forget
-      ? 'Take the current document off the document list; its file stays on disk'
-      : 'Permanently delete the current document file';
+    deleteCircuitBtn.title = forget ? 'The file stays on disk' : '';
   }
 }
 
@@ -206,7 +204,7 @@ async function refreshCircuitList() {
     actions.label = 'More';
     if (lockedFolder) actions.append(new Option(`Allow access to folder “${lockedFolder}”…`, PICKER_ACCESS));
     actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE));
-    actions.append(new Option(persistence.browserOnly ? 'Open folder…' : 'Change workspace folder…', PICKER_WORKSPACE));
+    actions.append(new Option(persistence.browserOnly ? 'Open folder…' : 'Workspace folder…', PICKER_WORKSPACE));
     if (clearable) actions.append(new Option(`Clear ${folder ? 'other ' : ''}opened files from the list…`, PICKER_CLEAR));
     children.push(actions);
     circuitSelectEl.replaceChildren(...children);
@@ -816,7 +814,7 @@ function canRenameDocument() {
 
 let renaming = false;
 
-/** Rename document…: the name field takes the new name; Enter renames the
+/** Rename…: the name field takes the new name; Enter renames the
  *  file, Escape (or leaving the field) keeps the old one. */
 function beginDocumentRename() {
   for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
@@ -844,7 +842,7 @@ function endDocumentRename() {
  * content is written under the new name, then the old file goes. Unsaved
  * edits stay unsaved. A name already taken is refused.
  */
-/** The editor's rename (the name field, More → Rename document…): the
+/** The editor's rename (the name field, More → Rename…): the
  *  open design's file, in its folder. */
 async function renameDocument(name) {
   return !!await renameDesign(editor.currentDocumentPath, name, { dir: editor.currentDocumentDir });

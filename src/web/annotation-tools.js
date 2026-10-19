@@ -256,7 +256,7 @@ export function placeShapeAnnotation(world, endOverride = null) {
     const next = endOverride || point;
     const previous = editor.annotationPoints.at(-1);
     if (!previous || previous.x !== next.x || previous.y !== next.y) editor.annotationPoints.push(next);
-    hintLine(`arrow point ${editor.annotationPoints.length}; Enter ends at the cursor, Backspace removes a point`);
+    hintLine(`ARROW: point ${editor.annotationPoints.length} · Enter ends · Backspace removes a point`);
     render();
     return false;
   }
@@ -514,7 +514,7 @@ export function selectedLines() {
 export function joinSelectedLines() {
   const lines = selectedLines();
   if (lines.length < 2) {
-    hintLine('JOIN: select two or more line annotations that meet end to end or share a stretch');
+    hintLine('JOIN: select two or more lines that meet end to end');
     return;
   }
   let joined = null;

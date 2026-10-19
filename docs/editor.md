@@ -123,7 +123,7 @@ until both make a size; nothing else is kept there, so the grid redraws
 from the design on every change. Annotate adds a
 parts table to the drawing ([`model.md`](model.md)).
 
-More → History… (`:history`) lists the design's save points and checkpoints,
+More → History (`:history`) lists the design's save points and checkpoints,
 kept in its file ([`docs/notes-and-history.md`](notes-and-history.md)).
 
 What the editor's windows show for a design is saved with it

@@ -123,7 +123,7 @@ function coefficientTable(circuit, current) {
       changed();
     };
     const mode = linked
-      ? el('span', { class: 'signal-flow-optimize-linked', text: `= ${links[name]}`, title: 'Linked: follows its link' })
+      ? el('span', { class: 'signal-flow-optimize-linked', text: `= ${links[name]}`, title: 'Linked' })
       : el('select', { 'aria-label': `${name}: free or fixed`, onchange: (ev) => { update({ fixed: ev.target.value === 'fixed' }); renderOptimize(); } }, [
         el('option', { value: 'free', text: 'Free' }), el('option', { value: 'fixed', text: 'Fixed' }),
       ]);

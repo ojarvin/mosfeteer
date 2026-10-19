@@ -263,7 +263,7 @@ export function toggleSelectionInBeat(target = 'hide') {
   }
   const ids = beatSelectionIds();
   if (!ids.length) {
-    hintLine('BEATS: select parts or labels to show, dim, or hide — wires follow the parts they join');
+    hintLine('BEATS: select parts or labels to show, dim, or hide');
     return;
   }
   const view = resolveBeat(editor.circuit, index);
@@ -293,7 +293,7 @@ export function flipSelectedSwitches() {
   const index = activeBeatIndex();
   const groups = selectedSwitchGroups({ onBeat: index !== null });
   if (!groups.length) {
-    hintLine('SWITCH: select a switch to open or close it (with every switch on its phase)');
+    hintLine('SWITCH: select a switch to open or close its phase');
     return;
   }
   const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(editor.circuit, c.refdes, index));
@@ -309,9 +309,9 @@ export function flipSelectedSwitches() {
 }
 
 function beatHintText(index) {
-  if (!editor.circuit.beats.length) return '+ adds a beat; it starts as a copy of the one before.';
+  if (!editor.circuit.beats.length) return 'Add a beat (+) to start.';
   if (index === null) return 'Whole drawing. Alt+→ steps into the beats.';
-  return 'Faintest: hidden here. h hides · Shift+H dims · from this beat on · s flips a switch · drawing edits reach every beat.';
+  return 'h hides · Shift+H dims · s flips a switch';
 }
 
 /** The strip's dot for one beat: how does the selection look in it? */
@@ -950,15 +950,15 @@ function openTimingDialog() {
     });
     const hint = state.pending
       ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
-      : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length && !state.notes.breaks.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
+      : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length && !state.notes.breaks.length ? 'Click an edge to annotate it' : '';
     notesBox.append(
-      element('span', { class: 'timing-pairs-title', text: 'Annotations', title: 'Arrows, marks, spans, and breaks' }),
+      element('span', { class: 'timing-pairs-title', text: 'Annotations' }),
       element('div', { class: 'timing-dialog-options' }, [
         element('div', { class: 'segmented', role: 'group', 'aria-label': 'Annotations' }, [
-          noteButton('Arrow', 'An arrow from the edge at the cursor to the edge it causes: then pick that one (a)', 'arrow'),
-          noteButton('Mark', 'A dashed line through every row at the edge at the cursor; again takes it away (m)', 'mark'),
-          noteButton('Span', 'A time between the edge at the cursor and another: dashed lines and an arrow below the diagram, its text under it (s)', 'span'),
-          noteButton('Break', 'Time left out in the cursor\'s slot: two S curves through every row, then through each row, then none (b)', 'break'),
+          noteButton('Arrow', 'Arrow (a)', 'arrow'),
+          noteButton('Mark', 'Mark (m)', 'mark'),
+          noteButton('Span', 'Span (s)', 'span'),
+          noteButton('Break', 'Break (b)', 'break'),
         ]),
       ]),
       ...(hint ? [element('p', { class: 'timing-note-hint', text: hint })] : []),
@@ -1238,10 +1238,10 @@ function openTimingDialog() {
   const dialog = element('section', { class: 'floating-window timing-dialog', 'data-editor-edge': 'right', 'aria-labelledby': 'timing-window-title' }, [
     element('header', { class: 'floating-window-header' }, [
       element('h2', { id: 'timing-window-title', class: 'floating-window-title', text: 'Timing diagram' }),
-      element('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the timing diagram', title: 'Close (Esc or Shift+K)', text: '×' }),
+      element('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the timing diagram', title: 'Close (Shift+K)', text: '×' }),
     ]),
     element('div', { class: 'timing-dialog-body' }, [
-      element('p', { class: 'timing-dialog-legend', text: 'A row per switch phase (and any signal you add), a column per slot. Click a slot to flip it.' }),
+      element('p', { class: 'timing-dialog-legend', text: 'A row per phase or signal, a column per slot. Click a slot to flip it.' }),
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
@@ -1280,7 +1280,7 @@ function openTimingDialog() {
       // The two ways between the timing and the beats, and where the
       // diagram sits, each said once.
       element('div', { class: 'timing-beats' }, [
-        element('p', { class: 'timing-beats-note', text: 'Beats step the drawing through this timing: each beat closes the switches whose phase is high.' }),
+        element('p', { class: 'timing-beats-note', text: 'Each beat closes the switches whose phase is high.' }),
         element('div', { class: 'timing-beats-actions' }, [replace, element('span', { class: 'timing-beats-spacer' }), fromBeats, makeBeats]),
       ]),
     ]),

@@ -253,7 +253,8 @@ export function updateInsertMenu() {
   insertMenu.textContent = '';
   const query = document.createElement('div');
   query.className = 'insert-menu-query';
-  query.textContent = editor.insertQuery ? `~ ${editor.insertQuery}` : 'type to filter…';
+  query.textContent = editor.insertQuery || 'Type to filter…';
+  query.classList.toggle('empty', !editor.insertQuery);
   insertMenu.appendChild(query);
   const groups = insertMenuGroups();
   insertMenu._entries = groups.flatMap((group) => group.entries);

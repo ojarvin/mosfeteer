@@ -319,7 +319,7 @@ export function exportCircuit() {
   const selectionCount = document.getElementById('export-selection-count');
   if (selectionCount) {
     const count = exportSelection ? exportSelection.refs.size + exportSelection.labels.length + exportSelection.netIds.size + exportSelection.wireKeys.size : 0;
-    selectionCount.textContent = exportSelection ? `(${count} selected)` : '(nothing selected)';
+    selectionCount.textContent = exportSelection ? `${count} selected` : 'nothing selected';
   }
   // The Atlas's export shares these boxes: set every one.
   for (const input of exportForm.querySelectorAll('input[name="format"]')) {

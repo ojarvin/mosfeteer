@@ -109,7 +109,7 @@ function stopEditing() {
   win.el.classList.remove('editing');
   win.source.hidden = true;
   win.edit.textContent = 'Edit';
-  win.edit.title = 'Edit';
+  win.edit.title = 'Edit (double-click)';
   shownKey = null;
   renderView();
 }
@@ -207,9 +207,9 @@ function onViewClick(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (Shift+N)', text: '×' });
-  const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit', text: 'Edit' });
+  const edit = el('button', { type: 'button', class: 'notes-edit window-action', title: 'Edit (double-click)', text: 'Edit' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
-  const empty = el('p', { class: 'field-hint notes-empty', text: 'Notes about this design: why it is drawn so, what to check. Markdown with $math$; @M1 or @V_{out} mentions a part or net, [[amp]] links another design. Double-click to write.' });
+  const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: '# Bias\nM1 sets the tail current: see @M1, [[bias-gen]], $I_D = \\frac{1}{2}\\mu C_{ox} V_{ov}^2$' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), edit, close]),

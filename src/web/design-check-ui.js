@@ -43,7 +43,7 @@ function evaluationText(report) {
     report.netNameWarnings?.length && `${report.netNameWarnings.length} merged net name conflict(s)`,
     report.brokenLinks?.length && `${report.brokenLinks.length} broken link(s)`,
   ].filter(Boolean);
-  return problems.length ? `Check: ${problems.join('; ')}` : 'Check: no evaluator violations';
+  return problems.length ? `Check: ${problems.join('; ')}` : 'Check: no issues found';
 }
 
 const CHECK_CATEGORIES = [

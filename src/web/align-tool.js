@@ -15,7 +15,7 @@ import { annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEdit
 // edge or point of the selection's outline, the second a matching edge or
 // point of another object. Nothing is stored: the selection is the group.
 
-export const ALIGN_SOURCE_HINT = 'ALIGN: click an edge or point of the selection (click objects to change it); Esc exits';
+export const ALIGN_SOURCE_HINT = 'ALIGN: click an edge or point of the selection · Esc exits';
 const ALIGN_POINT_PX = 10;
 
 /** World units per screen pixel, for hit radii that keep their on-screen size. */
@@ -124,7 +124,7 @@ export function alignMouseDown(startWorld, startClient, ev) {
     return;
   }
   if (editor.alignTool.source) {
-    hintLine('ALIGN: click a highlighted edge or point of another object; Esc picks again');
+    hintLine('ALIGN: click an edge or point of another object · Esc picks again');
     return;
   }
   // Before a source is picked, clicks shape the selection as in Select.

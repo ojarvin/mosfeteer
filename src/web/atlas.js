@@ -82,7 +82,7 @@ let lastQuery = '';
 const HINTS = {
   // The few keys that get around; Learn (?) lists them all.
   workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? every key',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag to move · F fits all · Esc returns · ? every key',
+  symbols: 'Every symbol · drag to move · F fits all · Esc returns · ? every key',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -582,12 +582,12 @@ function syncHint() {
   const parts = [];
   if (names.length === 1) {
     parts.push(name(names[0]), ...tagsOf(names[0]));
-    parts.push(' · Enter opens · Z zooms to it · Esc lets go');
+    parts.push(' · Enter opens · Z zooms to it · Esc clears');
   } else {
     const shown = names.slice(0, 3);
     shown.forEach((entry, i) => parts.push(...(i ? [', '] : []), name(entry)));
     if (names.length > shown.length) parts.push(` and ${names.length - shown.length} more`);
-    parts.push(' · Ctrl+Shift+C copies them · Esc lets go');
+    parts.push(' · Ctrl+Shift+C copies them · Esc clears');
   }
   hintEl.replaceChildren(...parts);
 }
@@ -1317,10 +1317,10 @@ function syncList() {
   const flag = (on, what) => el('td', { class: 'atlas-list-flag', 'aria-label': on ? what : `no ${what}` }, on ? [el('span', { class: 'atlas-list-check', text: '✓' })] : []);
   const rows = listedEntries().map((entry) => {
     const modified = entry.modified ? formatModifiedTime(entry.modified) : '';
-    const name = el('span', { class: 'atlas-list-name', title: 'Double-click (or F2) to rename', text: entry.name });
+    const name = el('span', { class: 'atlas-list-name', title: 'Rename (F2)', text: entry.name });
     const nameCell = el('td', { class: 'atlas-list-name-cell' }, [name, entry.current ? el('span', { class: 'atlas-list-open', text: 'open' }) : '']);
     name.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startRename(nameCell, entry); });
-    const tagsCell = el('td', { class: 'atlas-list-tags', title: 'Double-click (or #) to edit the tags', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') });
+    const tagsCell = el('td', { class: 'atlas-list-tags', title: 'Tags (#)', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') });
     tagsCell.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startTagEdit(tagsCell, entry); });
     const row = el('tr', { 'data-id': entry.id }, [
       nameCell,
@@ -2715,19 +2715,19 @@ function showEmptyDesk() {
   const text = document.createElement('p');
   const actions = document.createElement('div');
   actions.className = 'atlas-empty-actions';
-  const newButton = (primary) => button('New design', 'Start a new schematic', newDesign, primary);
-  const openButton = () => button('Open design…', 'Open a design file (Ctrl/Cmd+O)', openDesign);
-  const folderButton = (primary) => button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'A folder of designs as the workspace', () => openOntoDesk('folder'), primary);
+  const newButton = (primary) => button('New design', 'New design', newDesign, primary);
+  const openButton = () => button('Open design…', 'Open (Ctrl/Cmd+O)', openDesign);
+  const folderButton = (primary) => button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'Workspace folder', () => openOntoDesk('folder'), primary);
   if (folder?.locked) {
     heading.textContent = `Allow access to “${folder.name}”`;
-    text.textContent = 'The browser asks again, each visit, before it lets Mosfeteer read the folder.';
-    actions.append(button(`Allow access to “${folder.name}”…`, 'The browser needs your permission again to read this folder', allowFolderAccess, true), newButton(false), folderButton(false));
+    text.textContent = 'The browser asks for permission on each visit.';
+    actions.append(button(`Allow access to “${folder.name}”…`, 'Allow access', allowFolderAccess, true), newButton(false), folderButton(false));
   } else if (persistence.browserOnly && !folder) {
     heading.textContent = 'Keep your designs in one folder';
     titleEl.textContent = 'No folder yet';
     text.textContent = savesInPlace
-      ? 'Mosfeteer keeps each design as a .json file. Make one folder for all of them and open it: new designs save straight into it, and they all lay out here next time.'
-      : 'Mosfeteer keeps each design as a .json file. This browser can read a folder of them but not save in place: Save downloads a copy. Chrome and Edge save straight into the folder.';
+      ? 'Each design is a .json file. Open a folder to keep them together; new designs save into it.'
+      : 'Each design is a .json file. This browser can read a folder but not save into it, so Save downloads a copy. Chrome and Edge save in place.';
     actions.append(folderButton(true), newButton(false), openButton());
   } else {
     heading.textContent = folder?.name || !persistence.browserOnly ? `No designs in “${folder?.name || titleEl.textContent}” yet` : 'No designs open yet';
@@ -2740,7 +2740,7 @@ function showEmptyDesk() {
   if (drawn) {
     const back = document.createElement('p');
     back.className = 'atlas-empty-back';
-    back.append(button(`Back to ${editor.currentCircuitName ? `“${editor.currentCircuitName}”` : 'the unsaved drawing'}`, 'The drawing that was on screen (Shift+Backspace)', () => closeAtlas()));
+    back.append(button(`Back to ${editor.currentCircuitName ? `“${editor.currentCircuitName}”` : 'the unsaved drawing'}`, 'Back to the editor (Shift+Backspace)', () => closeAtlas()));
     box.append(back);
   }
   statusEl.textContent = '';
@@ -2803,9 +2803,7 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
   if (openFolderEl) {
     openFolderEl.hidden = source !== 'workspace';
-    openFolderEl.title = persistence.browserOnly
-      ? 'Open another folder of designs as the workspace'
-      : 'Show another folder of designs as the workspace (Ctrl/Cmd+O)';
+    openFolderEl.title = persistence.browserOnly ? 'Workspace folder' : 'Workspace folder (Ctrl/Cmd+O)';
   }
   // Node mode opens single files in the editor; browser-only mode can add
   // files from anywhere to the desk.

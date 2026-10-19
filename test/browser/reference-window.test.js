@@ -70,7 +70,7 @@ describe('reference windows', { skip: browserSkip() }, () => {
     await h.click(clear);
     await h.until(`document.querySelector('.reference-window .reference-picture').hidden`);
     assert.match(await h.evaluate(`document.querySelector('.reference-window .reference-title').textContent`), /^Pick a design/);
-    assert.match(await h.evaluate(`document.querySelector('.reference-window .reference-message').textContent`), /pick a design, or paste a picture/);
+    assert.match(await h.evaluate(`document.querySelector('.reference-window .reference-message').textContent`), /Pick a design from the title, or paste a picture/);
     assert.equal(await h.evaluate(`document.querySelector(${JSON.stringify(clear)}).disabled`), true);
     assert.deepEqual(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows.references?.items ?? [])`), []);
   });

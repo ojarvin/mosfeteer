@@ -43,8 +43,8 @@ function openRenumberDialog() {
     element('h2', { text: 'Renumber parts' }),
     element('p', {
       text: selected.length
-        ? `The ${selected.length} selected parts that are named automatically (M1, R2, …) trade the numbers they hold, in the order picked.`
-        : 'Parts named automatically (M1, R2, …) are numbered again, each letter on its own: along each row (or column), then row by row. Nearly level parts share a row. Parts named by hand keep their names.',
+        ? `The ${selected.length} selected automatically named parts swap numbers in the order picked.`
+        : 'Automatically named parts (M1, R2, …) are numbered in the order picked. Parts named by hand keep their names.',
     }),
     grid,
     element('div', { class: 'dialog-actions' }, [element('button', { type: 'button', value: 'cancel', text: 'Cancel' })]),

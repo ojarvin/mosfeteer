@@ -8,7 +8,7 @@ import { INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNa
 import { switchPhase } from '../core/beats.js';
 import { resolveColor } from '../core/style.js';
 import { GRID } from '../core/grid.js';
-import { componentPaletteItems } from './toolbar.js';
+import { componentPaletteItems, shortPlacementLabel } from './toolbar.js';
 import { canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl } from './elements.js';
 import { logLine } from './status-bar-ui.js';
 import { clearDiagnosticFocus } from './design-check-ui.js';
@@ -126,7 +126,7 @@ export function renderComponents() {
     if (comp.analysis?.ignoreBodyEffect === true) analysisTags.push('V_BS=0');
     if (comp.analysis?.ignoreBodyEffect === false) analysisTags.push('body effect');
     if (switchPhase(comp)) analysisTags.unshift(plainMarkup(switchPhase(comp)));
-    meta.textContent = `${comp.type}${analysisTags.map((tag) => ` · ${tag}`).join('')}`;
+    meta.textContent = `${shortPlacementLabel(comp.type)}${analysisTags.map((tag) => ` · ${tag}`).join('')}`;
 
     row.appendChild(ref);
     row.appendChild(meta);
@@ -503,7 +503,7 @@ export function renderDetail() {
     return;
   }
 
-  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${switchPhase(comp) ? `phase ${plainMarkup(comp.value)}` : comp.value}` : comp.type));
+  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${shortPlacementLabel(comp.type)} · ${switchPhase(comp) ? `phase ${plainMarkup(comp.value)}` : comp.value}` : shortPlacementLabel(comp.type)));
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   thead.innerHTML = '<tr><th>Pin</th><th>Net</th><th>Position</th></tr>';

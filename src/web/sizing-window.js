@@ -618,7 +618,7 @@ function build() {
   const grid = el('div', { class: 'sizing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Sizes and values' }, [table]);
   const empty = el('p', { class: 'field-hint sizing-empty', hidden: true });
   const status = el('p', { class: 'field-hint sizing-status', role: 'status' });
-  const hint = el('p', { class: 'field-hint sizing-hint', text: 'Type to fill the selected cells. Delete clears them. Ctrl+C and Ctrl+V copy and paste, also from a spreadsheet.' });
+  const hint = el('p', { class: 'field-hint sizing-hint', text: 'Type to fill the selected cells. Ctrl+C and Ctrl+V work with spreadsheets.' });
   const annotateButton = el('button', { type: 'button', class: 'primary-action', title: 'Put a parts table on the drawing', text: 'Annotate', onclick: annotate });
   const node = el('section', { class: 'floating-window sizing-window', 'aria-labelledby': 'sizing-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'sizing-title', class: 'floating-window-title', text: 'Sizing' }), close]),

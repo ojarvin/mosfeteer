@@ -88,7 +88,7 @@ rotated out.
   preview transaction keep it as it is (`applyJson`, like the windows'
   state); the editor takes the history each write returns.
 
-More → History…, or `:history`, shows the history window
+More → History, or `:history`, shows the history window
 (`src/web/history-window.js`), which reads the history from the file each
 time it shows it or the file changes, and writes every change straight to
 the file -- unsaved drawing edits stay unsaved. Per entry: **View** shows it

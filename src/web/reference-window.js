@@ -308,21 +308,20 @@ function createWindow(doc = null) {
   const title = document.createElement('button');
   title.type = 'button';
   title.className = 'reference-title floating-window-title';
-  title.title = 'Show another design in this window';
-  const fitButton = headerButton('reference-fit', 'fit', 'Fit', 'Fit the whole design in the window (f with the pointer over it, or double-click it); right-drag zooms to a box');
-  const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap: open this design in the editor, and show the one open now in this window');
-  const copy = headerButton('reference-copy', 'copy', 'Copy the picture', 'Copy what this window shows to the clipboard as a picture (Ctrl+C with the pointer over it)');
-  const another = headerButton('reference-new', 'plus', 'Another reference window', 'Open another reference window');
+  title.title = 'Pick a design';
+  const fitButton = headerButton('reference-fit', 'fit', 'Fit', 'Fit (f)');
+  const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap with the editor');
+  const copy = headerButton('reference-copy', 'copy', 'Copy the picture', 'Copy as picture (Ctrl/Cmd+C)');
+  const another = headerButton('reference-new', 'plus', 'Another reference window', 'New reference window');
   const clear = document.createElement('button');
   clear.type = 'button';
-  clear.className = 'window-clear';
-  clear.title = 'Clear';
-  clear.textContent = 'Clear';
+  clear.className = 'window-clear window-action';
+    clear.textContent = 'Clear';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'floating-window-close';
   close.setAttribute('aria-label', 'Close the reference window');
-  close.title = 'Close (Shift+V shows it again)';
+  close.title = 'Close';
   close.textContent = '×';
   header.append(title, fitButton, copy, swap, another, clear, close);
   const viewport = document.createElement('div');
@@ -454,7 +453,7 @@ function setDocument(win, doc) {
   win.fitted = true;
   win.title.textContent = doc ? doc.name : 'Pick a design…';
   win.title.append(document.createTextNode(' ▾'));
-  showMessage(win, doc ? 'Loading…' : 'Click the title to pick a design, or paste a picture (Ctrl+V)');
+  showMessage(win, doc ? 'Loading…' : 'Pick a design from the title, or paste a picture');
   if (doc) void loadInto(win, { force: true });
   remember();
 }
@@ -638,7 +637,7 @@ export function installReferenceWindows() {
       if (windows.includes(win)) setPicture(win, image);
       logLine('Picture pasted into the reference window');
     }, (err) => {
-      if (windows.includes(win)) showMessage(win, win.picture ? '' : 'Click the title to pick a design, or paste a picture (Ctrl+V)');
+      if (windows.includes(win)) showMessage(win, win.picture ? '' : 'Pick a design from the title, or paste a picture');
       logLine(`Could not paste the picture: ${err.message}`, 'error');
     });
     return true;

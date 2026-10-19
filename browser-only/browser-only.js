@@ -40892,7 +40892,7 @@ let annotationEndpointAt, annotationGeometryAt, annotationTextAt, applyEditorSel
 // edge or point of the selection's outline, the second a matching edge or
 // point of another object. Nothing is stored: the selection is the group.
 
-const ALIGN_SOURCE_HINT = 'ALIGN: click an edge or point of the selection (click objects to change it); Esc exits';
+const ALIGN_SOURCE_HINT = 'ALIGN: click an edge or point of the selection · Esc exits';
 const ALIGN_POINT_PX = 10;
 
 /** World units per screen pixel, for hit radii that keep their on-screen size. */
@@ -41001,7 +41001,7 @@ function alignMouseDown(startWorld, startClient, ev) {
     return;
   }
   if (editor.alignTool.source) {
-    hintLine('ALIGN: click a highlighted edge or point of another object; Esc picks again');
+    hintLine('ALIGN: click an edge or point of another object · Esc picks again');
     return;
   }
   // Before a source is picked, clicks shape the selection as in Select.
@@ -43064,7 +43064,7 @@ function placeShapeAnnotation(world, endOverride = null) {
     const next = endOverride || point;
     const previous = editor.annotationPoints.at(-1);
     if (!previous || previous.x !== next.x || previous.y !== next.y) editor.annotationPoints.push(next);
-    hintLine(`arrow point ${editor.annotationPoints.length}; Enter ends at the cursor, Backspace removes a point`);
+    hintLine(`ARROW: point ${editor.annotationPoints.length} · Enter ends · Backspace removes a point`);
     render();
     return false;
   }
@@ -43322,7 +43322,7 @@ function selectedLines() {
 function joinSelectedLines() {
   const lines = selectedLines();
   if (lines.length < 2) {
-    hintLine('JOIN: select two or more line annotations that meet end to end or share a stretch');
+    hintLine('JOIN: select two or more lines that meet end to end');
     return;
   }
   let joined = null;
@@ -44143,7 +44143,7 @@ let lastQuery = '';
 const HINTS = {
   // The few keys that get around; Learn (?) lists them all.
   workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? every key',
-  symbols: 'Every symbol, drawn from the registry as it is now · drag to move · F fits all · Esc returns · ? every key',
+  symbols: 'Every symbol · drag to move · F fits all · Esc returns · ? every key',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */
@@ -44643,12 +44643,12 @@ function syncHint() {
   const parts = [];
   if (names.length === 1) {
     parts.push(name(names[0]), ...tagsOf(names[0]));
-    parts.push(' · Enter opens · Z zooms to it · Esc lets go');
+    parts.push(' · Enter opens · Z zooms to it · Esc clears');
   } else {
     const shown = names.slice(0, 3);
     shown.forEach((entry, i) => parts.push(...(i ? [', '] : []), name(entry)));
     if (names.length > shown.length) parts.push(` and ${names.length - shown.length} more`);
-    parts.push(' · Ctrl+Shift+C copies them · Esc lets go');
+    parts.push(' · Ctrl+Shift+C copies them · Esc clears');
   }
   hintEl.replaceChildren(...parts);
 }
@@ -45378,10 +45378,10 @@ function syncList() {
   const flag = (on, what) => el('td', { class: 'atlas-list-flag', 'aria-label': on ? what : `no ${what}` }, on ? [el('span', { class: 'atlas-list-check', text: '✓' })] : []);
   const rows = listedEntries().map((entry) => {
     const modified = entry.modified ? formatModifiedTime(entry.modified) : '';
-    const name = el('span', { class: 'atlas-list-name', title: 'Double-click (or F2) to rename', text: entry.name });
+    const name = el('span', { class: 'atlas-list-name', title: 'Rename (F2)', text: entry.name });
     const nameCell = el('td', { class: 'atlas-list-name-cell' }, [name, entry.current ? el('span', { class: 'atlas-list-open', text: 'open' }) : '']);
     name.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startRename(nameCell, entry); });
-    const tagsCell = el('td', { class: 'atlas-list-tags', title: 'Double-click (or #) to edit the tags', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') });
+    const tagsCell = el('td', { class: 'atlas-list-tags', title: 'Tags (#)', text: (entry.index?.tags || []).map((tag) => `#${tag}`).join(' ') });
     tagsCell.addEventListener('dblclick', (ev) => { ev.stopPropagation(); startTagEdit(tagsCell, entry); });
     const row = el('tr', { 'data-id': entry.id }, [
       nameCell,
@@ -46776,19 +46776,19 @@ function showEmptyDesk() {
   const text = document.createElement('p');
   const actions = document.createElement('div');
   actions.className = 'atlas-empty-actions';
-  const newButton = (primary) => button('New design', 'Start a new schematic', newDesign, primary);
-  const openButton = () => button('Open design…', 'Open a design file (Ctrl/Cmd+O)', openDesign);
-  const folderButton = (primary) => button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'A folder of designs as the workspace', () => openOntoDesk('folder'), primary);
+  const newButton = (primary) => button('New design', 'New design', newDesign, primary);
+  const openButton = () => button('Open design…', 'Open (Ctrl/Cmd+O)', openDesign);
+  const folderButton = (primary) => button(persistence.browserOnly ? 'Open folder…' : 'Change folder…', 'Workspace folder', () => openOntoDesk('folder'), primary);
   if (folder?.locked) {
     heading.textContent = `Allow access to “${folder.name}”`;
-    text.textContent = 'The browser asks again, each visit, before it lets Mosfeteer read the folder.';
-    actions.append(button(`Allow access to “${folder.name}”…`, 'The browser needs your permission again to read this folder', allowFolderAccess, true), newButton(false), folderButton(false));
+    text.textContent = 'The browser asks for permission on each visit.';
+    actions.append(button(`Allow access to “${folder.name}”…`, 'Allow access', allowFolderAccess, true), newButton(false), folderButton(false));
   } else if (persistence.browserOnly && !folder) {
     heading.textContent = 'Keep your designs in one folder';
     titleEl.textContent = 'No folder yet';
     text.textContent = savesInPlace
-      ? 'Mosfeteer keeps each design as a .json file. Make one folder for all of them and open it: new designs save straight into it, and they all lay out here next time.'
-      : 'Mosfeteer keeps each design as a .json file. This browser can read a folder of them but not save in place: Save downloads a copy. Chrome and Edge save straight into the folder.';
+      ? 'Each design is a .json file. Open a folder to keep them together; new designs save into it.'
+      : 'Each design is a .json file. This browser can read a folder but not save into it, so Save downloads a copy. Chrome and Edge save in place.';
     actions.append(folderButton(true), newButton(false), openButton());
   } else {
     heading.textContent = folder?.name || !persistence.browserOnly ? `No designs in “${folder?.name || titleEl.textContent}” yet` : 'No designs open yet';
@@ -46801,7 +46801,7 @@ function showEmptyDesk() {
   if (drawn) {
     const back = document.createElement('p');
     back.className = 'atlas-empty-back';
-    back.append(button(`Back to ${editor.currentCircuitName ? `“${editor.currentCircuitName}”` : 'the unsaved drawing'}`, 'The drawing that was on screen (Shift+Backspace)', () => closeAtlas()));
+    back.append(button(`Back to ${editor.currentCircuitName ? `“${editor.currentCircuitName}”` : 'the unsaved drawing'}`, 'Back to the editor (Shift+Backspace)', () => closeAtlas()));
     box.append(back);
   }
   statusEl.textContent = '';
@@ -46864,9 +46864,7 @@ async function openAtlas({ source = 'workspace', animate = true, startup = false
   if (newCircuitEl) newCircuitEl.hidden = source !== 'workspace';
   if (openFolderEl) {
     openFolderEl.hidden = source !== 'workspace';
-    openFolderEl.title = persistence.browserOnly
-      ? 'Open another folder of designs as the workspace'
-      : 'Show another folder of designs as the workspace (Ctrl/Cmd+O)';
+    openFolderEl.title = persistence.browserOnly ? 'Workspace folder' : 'Workspace folder (Ctrl/Cmd+O)';
   }
   // Node mode opens single files in the editor; browser-only mode can add
   // files from anywhere to the desk.
@@ -47894,7 +47892,7 @@ function toggleSelectionInBeat(target = 'hide') {
   }
   const ids = beatSelectionIds();
   if (!ids.length) {
-    hintLine('BEATS: select parts or labels to show, dim, or hide — wires follow the parts they join');
+    hintLine('BEATS: select parts or labels to show, dim, or hide');
     return;
   }
   const view = resolveBeat(editor.circuit, index);
@@ -47924,7 +47922,7 @@ function flipSelectedSwitches() {
   const index = activeBeatIndex();
   const groups = selectedSwitchGroups({ onBeat: index !== null });
   if (!groups.length) {
-    hintLine('SWITCH: select a switch to open or close it (with every switch on its phase)');
+    hintLine('SWITCH: select a switch to open or close its phase');
     return;
   }
   const stateOf = (c) => (index === null ? switchState(c) : switchStateAt(editor.circuit, c.refdes, index));
@@ -47940,9 +47938,9 @@ function flipSelectedSwitches() {
 }
 
 function beatHintText(index) {
-  if (!editor.circuit.beats.length) return '+ adds a beat; it starts as a copy of the one before.';
+  if (!editor.circuit.beats.length) return 'Add a beat (+) to start.';
   if (index === null) return 'Whole drawing. Alt+→ steps into the beats.';
-  return 'Faintest: hidden here. h hides · Shift+H dims · from this beat on · s flips a switch · drawing edits reach every beat.';
+  return 'h hides · Shift+H dims · s flips a switch';
 }
 
 /** The strip's dot for one beat: how does the selection look in it? */
@@ -48581,15 +48579,15 @@ function openTimingDialog() {
     });
     const hint = state.pending
       ? `${state.pending.kind === 'arrow' ? 'Arrow' : 'Span'} from ${edgeName(state.pending.from)}: pick the other edge (${state.pending.kind === 'arrow' ? 'a' : 's'} at the cursor, or click it); Esc cancels`
-      : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length && !state.notes.breaks.length ? 'Put the cursor on an edge (or click one) to draw on it' : '';
+      : !state.notes.arrows.length && !state.notes.marks.length && !state.notes.spans.length && !state.notes.breaks.length ? 'Click an edge to annotate it' : '';
     notesBox.append(
-      element('span', { class: 'timing-pairs-title', text: 'Annotations', title: 'Arrows, marks, spans, and breaks' }),
+      element('span', { class: 'timing-pairs-title', text: 'Annotations' }),
       element('div', { class: 'timing-dialog-options' }, [
         element('div', { class: 'segmented', role: 'group', 'aria-label': 'Annotations' }, [
-          noteButton('Arrow', 'An arrow from the edge at the cursor to the edge it causes: then pick that one (a)', 'arrow'),
-          noteButton('Mark', 'A dashed line through every row at the edge at the cursor; again takes it away (m)', 'mark'),
-          noteButton('Span', 'A time between the edge at the cursor and another: dashed lines and an arrow below the diagram, its text under it (s)', 'span'),
-          noteButton('Break', 'Time left out in the cursor\'s slot: two S curves through every row, then through each row, then none (b)', 'break'),
+          noteButton('Arrow', 'Arrow (a)', 'arrow'),
+          noteButton('Mark', 'Mark (m)', 'mark'),
+          noteButton('Span', 'Span (s)', 'span'),
+          noteButton('Break', 'Break (b)', 'break'),
         ]),
       ]),
       ...(hint ? [element('p', { class: 'timing-note-hint', text: hint })] : []),
@@ -48869,10 +48867,10 @@ function openTimingDialog() {
   const dialog = element('section', { class: 'floating-window timing-dialog', 'data-editor-edge': 'right', 'aria-labelledby': 'timing-window-title' }, [
     element('header', { class: 'floating-window-header' }, [
       element('h2', { id: 'timing-window-title', class: 'floating-window-title', text: 'Timing diagram' }),
-      element('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the timing diagram', title: 'Close (Esc or Shift+K)', text: '×' }),
+      element('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the timing diagram', title: 'Close (Shift+K)', text: '×' }),
     ]),
     element('div', { class: 'timing-dialog-body' }, [
-      element('p', { class: 'timing-dialog-legend', text: 'A row per switch phase (and any signal you add), a column per slot. Click a slot to flip it.' }),
+      element('p', { class: 'timing-dialog-legend', text: 'A row per phase or signal, a column per slot. Click a slot to flip it.' }),
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
@@ -48911,7 +48909,7 @@ function openTimingDialog() {
       // The two ways between the timing and the beats, and where the
       // diagram sits, each said once.
       element('div', { class: 'timing-beats' }, [
-        element('p', { class: 'timing-beats-note', text: 'Beats step the drawing through this timing: each beat closes the switches whose phase is high.' }),
+        element('p', { class: 'timing-beats-note', text: 'Each beat closes the switches whose phase is high.' }),
         element('div', { class: 'timing-beats-actions' }, [replace, element('span', { class: 'timing-beats-spacer' }), fromBeats, makeBeats]),
       ]),
     ]),
@@ -49118,6 +49116,7 @@ let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figu
 let axisName, bodeSpecs, responseSpec; __bind(() => { ({ axisName, bodeSpecs, responseSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let sharedValueRow; __bind(() => { ({ valueRow: sharedValueRow } = __require("src/web/value-row.js")); });
+let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
@@ -49144,6 +49143,7 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
  * on the symbolic solve, fail with it, or take its approximations. The
  * loop gain is drawn from its derived coefficients.
  */
+
 
 
 
@@ -49741,14 +49741,14 @@ function installBodeUi() {
     const card = el('div', { id: 'analysis-plots-card', class: 'signal-flow-plots', hidden: true }, [
       el('div', { class: 'card-heading', text: 'Plots' }),
       el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Bode plots of the gain, the impedances, and the loop gain; each Derive adds its gain to the graph.' }),
-        el('button', { type: 'button', class: 'analysis-show-plots', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, ['Show plots']),
+        el('span', { class: 'field-hint', text: 'Gain, impedances, and loop gain.' }),
+        el('button', { type: 'button', class: 'analysis-show-plots', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
       ]),
     ]);
     valuesEl = el('fieldset', { id: 'analysis-values', class: 'analysis-approximations bode-values', hidden: true }, [
       el('legend', { text: 'Values' }),
       el('div', { class: 'bode-value-rows' }),
-      el('p', { class: 'field-hint', text: 'The plots are drawn at these values, solved in numbers: the full model, exact (no Miller splitting or other approximation), at any size; the equations stay symbolic. Each gm starts at one unit g, each capacitor at one unit C (loads on the output at 10), each ro and resistor at gm·ro units; frequency is in g/C. Slide, or type any value.' }),
+      el('p', { class: 'field-hint', text: 'The plots use these values with the exact model; the equations stay symbolic. gm starts at one unit g, capacitors at one unit C (output loads at 10), ro and resistors at gm·ro; frequency is in g/C.' }),
       el('div', { class: 'bode-values-actions' }, [
         el('button', {
           type: 'button',
@@ -49766,7 +49766,7 @@ function installBodeUi() {
     result.after(card, valuesEl);
   }
   plotsEl = el('div', { class: 'bode-plots-view' }, [
-    el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S), and each gain joins this graph: plot a supply\'s way to the output beside the signal\'s, or any two settings.' }),
+    el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S) to plot its gain here.' }),
     el('div', { class: 'signal-flow-graph-head bode-plots-head' }),
     el('div', { class: 'bode-plots-graph' }),
     el('div', { class: 'signal-flow-legend bode-legend' }),
@@ -49835,7 +49835,7 @@ function row(entry) {
   const result = el('span', { class: `calculator-result${entry.error ? ' analysis-error' : ''}`, text: entry.error ? entry.result : `= ${entry.result}` });
   const item = el('li', { class: 'calculator-entry' }, [el('span', { class: 'calculator-input', text: entry.input }), result]);
   if (!entry.error) {
-    item.title = 'Click to put this value in the line';
+    item.title = 'Insert';
     item.addEventListener('click', () => insert(entry.result.split(' ')[0]));
   }
   return item;
@@ -49920,9 +49920,9 @@ function onKey(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the calculator', title: 'Close (Shift+E)', text: '×' });
-  const clear = el('button', { type: 'button', class: 'window-clear', title: 'Clear', text: 'Clear', onclick: clearCalculator });
+  const clear = el('button', { type: 'button', class: 'window-clear window-action', text: 'Clear', onclick: clearCalculator });
   const list = el('ol', { class: 'calculator-list', 'aria-live': 'polite' });
-  const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2. clear starts afresh.' });
+  const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
   const node = el('section', { class: 'floating-window calculator-window', 'aria-labelledby': 'calculator-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), clear, close]),
@@ -51443,6 +51443,7 @@ let appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu; __bind(() => { ({ 
 let appendBeatContextItems, plainMarkup; __bind(() => { ({ appendBeatContextItems, plainMarkup } = __require("src/web/beats-ui.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
+let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("src/web/toolbar.js")); });
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
 let busWidth, netNamesConnect; __bind(() => { ({ busWidth, netNamesConnect } = __require("src/core/bus.js")); });
@@ -51454,6 +51455,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -52059,7 +52061,7 @@ function openComponentContextMenu(target, x, y) {
   if (contextComponent) appendMarkupText(heading, componentDisplayName(contextComponent));
   else if (contextNetwork) appendMarkupText(heading, contextNetwork.name || '(unnamed net)');
   else heading.textContent = target.kind === 'label' ? 'Label' : 'Selection';
-  const headingMeta = contextComponent ? contextComponent.type : contextNetwork ? contextNetwork.id : '';
+  const headingMeta = contextComponent ? shortPlacementLabel(contextComponent.type) : contextNetwork ? contextNetwork.id : '';
   const meta = [headingMeta, scopeSuffix.trim()].filter(Boolean).join(' ');
   if (meta) heading.append(` · ${meta}`);
   menu.appendChild(heading);
@@ -53208,7 +53210,7 @@ function evaluationText(report) {
     report.netNameWarnings?.length && `${report.netNameWarnings.length} merged net name conflict(s)`,
     report.brokenLinks?.length && `${report.brokenLinks.length} broken link(s)`,
   ].filter(Boolean);
-  return problems.length ? `Check: ${problems.join('; ')}` : 'Check: no evaluator violations';
+  return problems.length ? `Check: ${problems.join('; ')}` : 'Check: no issues found';
 }
 
 const CHECK_CATEGORIES = [
@@ -53639,9 +53641,7 @@ function renderDeleteWording() {
   deleteWording = forget;
   if (deleteCircuitBtn) {
     setButtonText(deleteCircuitBtn, forget ? 'Remove from list…' : 'Delete document…');
-    deleteCircuitBtn.title = forget
-      ? 'Take the current document off the document list; its file stays on disk'
-      : 'Permanently delete the current document file';
+    deleteCircuitBtn.title = forget ? 'The file stays on disk' : '';
   }
 }
 
@@ -53802,7 +53802,7 @@ async function refreshCircuitList() {
     actions.label = 'More';
     if (lockedFolder) actions.append(new Option(`Allow access to folder “${lockedFolder}”…`, PICKER_ACCESS));
     actions.append(new Option('Browse for a file… (Ctrl/Cmd+O)', PICKER_OPEN_FILE));
-    actions.append(new Option(persistence.browserOnly ? 'Open folder…' : 'Change workspace folder…', PICKER_WORKSPACE));
+    actions.append(new Option(persistence.browserOnly ? 'Open folder…' : 'Workspace folder…', PICKER_WORKSPACE));
     if (clearable) actions.append(new Option(`Clear ${folder ? 'other ' : ''}opened files from the list…`, PICKER_CLEAR));
     children.push(actions);
     circuitSelectEl.replaceChildren(...children);
@@ -54412,7 +54412,7 @@ function canRenameDocument() {
 
 let renaming = false;
 
-/** Rename document…: the name field takes the new name; Enter renames the
+/** Rename…: the name field takes the new name; Enter renames the
  *  file, Escape (or leaving the field) keeps the old one. */
 function beginDocumentRename() {
   for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
@@ -54440,7 +54440,7 @@ function endDocumentRename() {
  * content is written under the new name, then the old file goes. Unsaved
  * edits stay unsaved. A name already taken is refused.
  */
-/** The editor's rename (the name field, More → Rename document…): the
+/** The editor's rename (the name field, More → Rename…): the
  *  open design's file, in its folder. */
 async function renameDocument(name) {
   return !!await renameDesign(editor.currentDocumentPath, name, { dir: editor.currentDocumentDir });
@@ -55754,7 +55754,7 @@ function exportCircuit() {
   const selectionCount = document.getElementById('export-selection-count');
   if (selectionCount) {
     const count = exportSelection ? exportSelection.refs.size + exportSelection.labels.length + exportSelection.netIds.size + exportSelection.wireKeys.size : 0;
-    selectionCount.textContent = exportSelection ? `(${count} selected)` : '(nothing selected)';
+    selectionCount.textContent = exportSelection ? `${count} selected` : 'nothing selected';
   }
   // The Atlas's export shares these boxes: set every one.
   for (const input of exportForm.querySelectorAll('input[name="format"]')) {
@@ -56530,7 +56530,7 @@ function floatingWindow(el, { key, onClose, place = PLACE.topRight, resizable = 
   resizer.className = 'floating-window-dock-resizer';
   resizer.setAttribute('role', 'separator');
   resizer.setAttribute('aria-orientation', 'horizontal');
-  resizer.title = 'Drag to resize; double-click to reset';
+  resizer.title = 'Resize';
   el.prepend(resizer);
   resizer.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 || !docked()) return;
@@ -57888,7 +57888,7 @@ function linkTargets() {
 function toggleAllLinkBubbles() {
   const linked = [...editor.circuit.components.values()].filter((c) => c.link);
   if (!linked.length) {
-    hintLine('LINK: no part links to a design yet (right-click a part → Link to design)');
+    hintLine('LINK: no part links to a design yet · right-click a part → Link to design');
     return;
   }
   toggleLinkBubbles(linked);
@@ -57899,7 +57899,7 @@ function toggleAllLinkBubbles() {
 function toggleLinkBubbles(components = linkTargets()) {
   const linked = components.filter((c) => c.link);
   if (!linked.length) {
-    hintLine('LINK: select a part linked to a design (right-click → Link to design), then o shows it beside the drawing');
+    hintLine('LINK: select a linked part, then o shows its design');
     return;
   }
   followDocument();
@@ -58253,7 +58253,7 @@ function goUpToParent() {
   const parents = usedIn.parents;
   if (parents.length === 1) return openParentDesign(parents[0]);
   if (!parents.length) {
-    hintLine('LINK: no design links to this one; Alt+↓ on a linked part opens its design');
+    hintLine('LINK: no design links to this one');
     return false;
   }
   const chip = document.querySelector('#hierarchy-trail .hierarchy-used-in')?.getBoundingClientRect();
@@ -58676,7 +58676,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * The history is the file's, read from it whenever the window shows it,
  * and every change to it is written at once -- pinning or removing never
  * makes the design unsaved, and leaves unsaved drawing edits as they are.
- * More → History…, or `:history`, shows or hides it.
+ * More → History, or `:history`, shows or hides it.
  */
 
 
@@ -58917,7 +58917,7 @@ function renderList() {
   win.top.replaceChildren(...(form && form.id === null ? [pinForm(null)] : []));
   if (!file) {
     win.list.replaceChildren();
-    message('Save the design to start its history: every save is kept (the last ten), and any of them can be pinned as a named checkpoint that stays.');
+    message('Save the design to start its history. The last ten saves are kept; a checkpoint stays.');
     return;
   }
   if (file.error) {
@@ -58927,7 +58927,7 @@ function renderList() {
   }
   if (!file.entries) {
     message('This file\'s history does not fit its drawing (was the file edited outside Mosfeteer?), so it cannot be read. It stays in the file until you remove it.');
-    win.list.replaceChildren(el('li', {}, [el('button', { type: 'button', class: 'history-afresh', text: 'Remove it and start afresh', onclick: () => void startAfresh() })]));
+    win.list.replaceChildren(el('li', {}, [el('button', { type: 'button', class: 'history-afresh window-action', text: 'Remove it and start afresh', onclick: () => void startAfresh() })]));
     return;
   }
   message(file.entries.length ? '' : 'No save points yet: the next Save is the first.');
@@ -58948,8 +58948,8 @@ function renderHistoryWindow() {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the history', title: 'Close', text: '×' });
-  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint', title: 'Pin as a checkpoint', text: 'Checkpoint…' });
-  const clear = el('button', { type: 'button', class: 'history-clear', title: 'Remove save points', text: 'Remove save points', hidden: true });
+  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint window-action', title: 'New checkpoint', text: 'Checkpoint…' });
+  const clear = el('button', { type: 'button', class: 'history-clear window-action', text: 'Remove save points', hidden: true });
   const top = el('div', { class: 'history-top' });
   const message = el('p', { class: 'field-hint history-message' });
   const list = el('ul', { class: 'history-list' });
@@ -58991,7 +58991,7 @@ function hide() {
   canvasEl.focus({ preventScroll: true });
 }
 
-/** More → History…: show or hide the design's history. */
+/** More → History: show or hide the design's history. */
 function toggleHistory() {
   if (historyShown()) hide();
   else show();
@@ -59594,7 +59594,8 @@ function updateInsertMenu() {
   insertMenu.textContent = '';
   const query = document.createElement('div');
   query.className = 'insert-menu-query';
-  query.textContent = editor.insertQuery ? `~ ${editor.insertQuery}` : 'type to filter…';
+  query.textContent = editor.insertQuery || 'Type to filter…';
+  query.classList.toggle('empty', !editor.insertQuery);
   insertMenu.appendChild(query);
   const groups = insertMenuGroups();
   insertMenu._entries = groups.flatMap((group) => group.entries);
@@ -63792,7 +63793,7 @@ function syncDocumentSurface() {
   // answers each one with a forced layout.
   const heading = document.getElementById('mode-heading');
   if (heading && heading.textContent !== 'Schematic tools') heading.textContent = 'Schematic tools';
-  const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
+  const placeholder = 'Search actions or type a command (move R1 120 80)';
   if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
   if (netLabelButton && netLabelButton.title !== 'Net label (l)') {
@@ -65143,7 +65144,7 @@ function doWireClick(x, y, terminalHit) {
       wire.source = { refdes: hit.refdes, term: hit.term };
       wire.points = [];
       cursor = { x: hit.x ?? x, y: hit.y ?? y };
-      hintLine(`wire from ${hit.refdes}.${hit.term} — terminal clicks commit; other clicks guide; Enter commits elsewhere`);
+      hintLine(`WIRE: from ${hit.refdes}.${hit.term} · click a terminal to finish · Enter ends here`);
       noteWireToolStart();
     } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
       logLine('same terminal — click the other terminal');
@@ -65247,7 +65248,7 @@ function startWireAt(w) {
     wire.source = { x: P.x, y: P.y, netId: wireHit.net.id };
     wire.points = [];
     cursor = { x: P.x, y: P.y };
-    hintLine(`wire from net ${wireHit.net.id} @ (${P.x},${P.y}) — click points, then click/Enter on a target`);
+    hintLine(`WIRE: from net ${wireHit.net.id} · click points, then a target · Enter ends here`);
   } else {
     wire.source = { x: snap(w.x), y: snap(w.y) };
     wire.points = [];
@@ -65548,7 +65549,7 @@ function beginPinWire(moveDrag, w) {
   drag = { mode: 'pinwire', startWorld: moveDrag.startWorld, startClient: moveDrag.startClient };
   noteTip('pin-drag');
   cursor = pinWireCursor(w);
-  hintLine(`wire from ${wire.source.refdes}.${wire.source.term} — drop on a pin or wire, or in space to add a part`);
+  hintLine(`WIRE: from ${wire.source.refdes}.${wire.source.term} · drop on a pin or wire, or in space to add a part`);
   render();
 }
 
@@ -65581,7 +65582,7 @@ function beginBranchWire(segDrag, w) {
   drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient };
   noteTip('pin-drag');
   cursor = pinWireCursor(w);
-  hintLine('branch wire — drop on a pin or wire, or in space to add a part');
+  hintLine('WIRE: branch · drop on a pin or wire, or in space to add a part');
   render();
 }
 
@@ -67265,7 +67266,7 @@ function canvasMouseUp(ev) {
   const next = nextStackedSelection(click.candidates, click.pressKey);
   if (!next) return;
   selectStackedKey(next);
-  hintLine(`selected ${stackedKeyName(next)} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next object here`);
+  hintLine(`selected ${stackedKeyName(next)} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next`);
   render();
 }
 
@@ -67608,7 +67609,7 @@ function finishCanvasMouseUp(ev) {
       const [kind, ...rest] = pick.split(':');
       applyEditorSelection({ kind, id: rest.join(':') }, true);
       if (kind === 'wire') syncSelectedNetSolders();
-      hintLine('BOX: click more objects to add them; Enter or b boxes them; click paper for a free box');
+      hintLine('BOX: click objects to add them · Enter boxes them · click paper for a free box');
       render();
     } else if (drag.moved) {
       if (!annotationStart) annotationStart = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
@@ -67895,7 +67896,7 @@ function onWireKey(key) {
     } else if (!wire.source) {
       wire.source = { refdes: comp.refdes, term: key };
       wire.points = [];
-      hintLine(`wire from ${comp.refdes}.${key} — click/type the target terminal`);
+      hintLine(`WIRE: from ${comp.refdes}.${key} · click or type the target terminal`);
     } else if (comp.refdes === wire.source.refdes && key === wire.source.term) {
       logLine('same terminal');
     } else {
@@ -67995,7 +67996,7 @@ function editSelectionText() {
   if (pointed) return inlineEditLabel(pointed);
   const hovered = compUnderCursor();
   if (hovered) return editPart(hovered);
-  hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
+  hintLine('nothing selected to edit');
 }
 
 /** Shift+T: re-lay the selection's nets fresh and move its crowded labels
@@ -68330,7 +68331,7 @@ function onNormalKey(key, shiftKey = false) {
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
       if (deleteSelection()) render();
-      else hintLine('dd deletes the selection; select something first, or press Delete for the delete tool');
+      else hintLine('nothing selected to delete');
       pendingKey = null;
     } else {
       pendingKey = { key: 'd', at: Date.now() };
@@ -68378,7 +68379,7 @@ function onNormalKey(key, shiftKey = false) {
     } else if (!hasWireSelection && selectedNets.size === 0 && multi.size === 0 && selLabels.size === 1 && labels.length === 1) {
       cycleLabelSelection(shiftKey ? -1 : 1);
     } else {
-      hintLine('Tab steps from one selected part or label to the next; select just one');
+      hintLine('select one part or label to step with Tab');
     }
     return;
   }
@@ -68751,7 +68752,7 @@ function activateWire() {
   // never become direct/fixed nets.
   wire = newWireDraft();
   gestureWire = false;
-  hintLine(`wiring (${routeMode}): click a terminal or point to start; Alt snaps to the nearest terminal; terminal clicks commit, Enter commits elsewhere`);
+  hintLine(`WIRE (${routeMode}): click a terminal or point to start · Alt snaps`);
   render();
 }
 
@@ -68781,7 +68782,7 @@ function activateCopy() {
   labelMode = null;
   annotationPoints = [];
   copyMode = true; // source click and placement are handled by the canvas
-  hintLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
+  hintLine('COPY: click an object, move the copy, then click · Esc exits');
   render();
 }
 
@@ -69555,7 +69556,7 @@ __exports.setReduceMotionSetting = setReduceMotionSetting;
 __exports.arriving = arriving;
 /**
  * Reduced motion: the system's preference, or the app's own setting
- * (Settings → Reduce animations). While either asks for it the root element
+ * (Settings → Reduce motion). While either asks for it the root element
  * carries `data-reduce-motion`, which the stylesheet's reduced-motion rules
  * key on, and reducedMotion() is what scripted animations ask.
  */
@@ -70220,7 +70221,7 @@ function stopEditing() {
   win.el.classList.remove('editing');
   win.source.hidden = true;
   win.edit.textContent = 'Edit';
-  win.edit.title = 'Edit';
+  win.edit.title = 'Edit (double-click)';
   shownKey = null;
   renderView();
 }
@@ -70318,9 +70319,9 @@ function onViewClick(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (Shift+N)', text: '×' });
-  const edit = el('button', { type: 'button', class: 'notes-edit', title: 'Edit', text: 'Edit' });
+  const edit = el('button', { type: 'button', class: 'notes-edit window-action', title: 'Edit (double-click)', text: 'Edit' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
-  const empty = el('p', { class: 'field-hint notes-empty', text: 'Notes about this design: why it is drawn so, what to check. Markdown with $math$; @M1 or @V_{out} mentions a part or net, [[amp]] links another design. Double-click to write.' });
+  const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: '# Bias\nM1 sets the tail current: see @M1, [[bias-gen]], $I_D = \\frac{1}{2}\\mu C_{ox} V_{ov}^2$' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), edit, close]),
@@ -70851,7 +70852,7 @@ function coefficientTable(circuit, current) {
       changed();
     };
     const mode = linked
-      ? el('span', { class: 'signal-flow-optimize-linked', text: `= ${links[name]}`, title: 'Linked: follows its link' })
+      ? el('span', { class: 'signal-flow-optimize-linked', text: `= ${links[name]}`, title: 'Linked' })
       : el('select', { 'aria-label': `${name}: free or fixed`, onchange: (ev) => { update({ fixed: ev.target.value === 'fixed' }); renderOptimize(); } }, [
         el('option', { value: 'free', text: 'Free' }), el('option', { value: 'fixed', text: 'Fixed' }),
       ]);
@@ -73864,21 +73865,20 @@ function createWindow(doc = null) {
   const title = document.createElement('button');
   title.type = 'button';
   title.className = 'reference-title floating-window-title';
-  title.title = 'Show another design in this window';
-  const fitButton = headerButton('reference-fit', 'fit', 'Fit', 'Fit the whole design in the window (f with the pointer over it, or double-click it); right-drag zooms to a box');
-  const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap: open this design in the editor, and show the one open now in this window');
-  const copy = headerButton('reference-copy', 'copy', 'Copy the picture', 'Copy what this window shows to the clipboard as a picture (Ctrl+C with the pointer over it)');
-  const another = headerButton('reference-new', 'plus', 'Another reference window', 'Open another reference window');
+  title.title = 'Pick a design';
+  const fitButton = headerButton('reference-fit', 'fit', 'Fit', 'Fit (f)');
+  const swap = headerButton('reference-swap', 'repeat', 'Swap with the editor', 'Swap with the editor');
+  const copy = headerButton('reference-copy', 'copy', 'Copy the picture', 'Copy as picture (Ctrl/Cmd+C)');
+  const another = headerButton('reference-new', 'plus', 'Another reference window', 'New reference window');
   const clear = document.createElement('button');
   clear.type = 'button';
-  clear.className = 'window-clear';
-  clear.title = 'Clear';
-  clear.textContent = 'Clear';
+  clear.className = 'window-clear window-action';
+    clear.textContent = 'Clear';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'floating-window-close';
   close.setAttribute('aria-label', 'Close the reference window');
-  close.title = 'Close (Shift+V shows it again)';
+  close.title = 'Close';
   close.textContent = '×';
   header.append(title, fitButton, copy, swap, another, clear, close);
   const viewport = document.createElement('div');
@@ -74010,7 +74010,7 @@ function setDocument(win, doc) {
   win.fitted = true;
   win.title.textContent = doc ? doc.name : 'Pick a design…';
   win.title.append(document.createTextNode(' ▾'));
-  showMessage(win, doc ? 'Loading…' : 'Click the title to pick a design, or paste a picture (Ctrl+V)');
+  showMessage(win, doc ? 'Loading…' : 'Pick a design from the title, or paste a picture');
   if (doc) void loadInto(win, { force: true });
   remember();
 }
@@ -74194,7 +74194,7 @@ function installReferenceWindows() {
       if (windows.includes(win)) setPicture(win, image);
       logLine('Picture pasted into the reference window');
     }, (err) => {
-      if (windows.includes(win)) showMessage(win, win.picture ? '' : 'Click the title to pick a design, or paste a picture (Ctrl+V)');
+      if (windows.includes(win)) showMessage(win, win.picture ? '' : 'Pick a design from the title, or paste a picture');
       logLine(`Could not paste the picture: ${err.message}`, 'error');
     });
     return true;
@@ -74262,8 +74262,8 @@ function openRenumberDialog() {
     element('h2', { text: 'Renumber parts' }),
     element('p', {
       text: selected.length
-        ? `The ${selected.length} selected parts that are named automatically (M1, R2, …) trade the numbers they hold, in the order picked.`
-        : 'Parts named automatically (M1, R2, …) are numbered again, each letter on its own: along each row (or column), then row by row. Nearly level parts share a row. Parts named by hand keep their names.',
+        ? `The ${selected.length} selected automatically named parts swap numbers in the order picked.`
+        : 'Automatically named parts (M1, R2, …) are numbered in the order picked. Parts named by hand keep their names.',
     }),
     grid,
     element('div', { class: 'dialog-actions' }, [element('button', { type: 'button', value: 'cancel', text: 'Cancel' })]),
@@ -74469,7 +74469,7 @@ let INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIde
 let switchPhase; __bind(() => { ({ switchPhase } = __require("src/core/beats.js")); });
 let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
-let componentPaletteItems; __bind(() => { ({ componentPaletteItems } = __require("src/web/toolbar.js")); });
+let componentPaletteItems, shortPlacementLabel; __bind(() => { ({ componentPaletteItems, shortPlacementLabel } = __require("src/web/toolbar.js")); });
 let canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl; __bind(() => { ({ canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl } = __require("src/web/elements.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let clearDiagnosticFocus; __bind(() => { ({ clearDiagnosticFocus } = __require("src/web/design-check-ui.js")); });
@@ -74609,7 +74609,7 @@ function renderComponents() {
     if (comp.analysis?.ignoreBodyEffect === true) analysisTags.push('V_BS=0');
     if (comp.analysis?.ignoreBodyEffect === false) analysisTags.push('body effect');
     if (switchPhase(comp)) analysisTags.unshift(plainMarkup(switchPhase(comp)));
-    meta.textContent = `${comp.type}${analysisTags.map((tag) => ` · ${tag}`).join('')}`;
+    meta.textContent = `${shortPlacementLabel(comp.type)}${analysisTags.map((tag) => ` · ${tag}`).join('')}`;
 
     row.appendChild(ref);
     row.appendChild(meta);
@@ -74986,7 +74986,7 @@ function renderDetail() {
     return;
   }
 
-  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${comp.type} · ${switchPhase(comp) ? `phase ${plainMarkup(comp.value)}` : comp.value}` : comp.type));
+  detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${shortPlacementLabel(comp.type)} · ${switchPhase(comp) ? `phase ${plainMarkup(comp.value)}` : comp.value}` : shortPlacementLabel(comp.type)));
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   thead.innerHTML = '<tr><th>Pin</th><th>Net</th><th>Position</th></tr>';
@@ -76045,7 +76045,7 @@ function renderCoefficients({ force = false } = {}) {
     label.innerHTML = texToMathML(symbolText(name));
     const slider = el('input', { type: 'range', min: String(-3 * PER_DECADE), max: String(3 * PER_DECADE), step: '1', 'aria-label': `${name}: slide to change` });
     slider.value = String(indexE24(Math.abs(value) || 1));
-    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'A number, a fraction m/n, or = another coefficient', value: linked ? `= ${links()[name]}` : coefficientText(name, value) });
+    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'Value, m/n, or = coefficient', value: linked ? `= ${links()[name]}` : coefficientText(name, value) });
     const row = el('div', { class: 'signal-flow-coefficient', 'data-name': name }, [label, slider, field]);
     slider.addEventListener('input', () => {
       // The slider sets the size; a value typed negative keeps its sign.
@@ -76742,19 +76742,19 @@ function installSignalFlowUi() {
   const scroll = analysisDialog?.querySelector('.analysis-scroll');
   if (!scroll) return;
   modeBar = el('div', { class: 'segmented analysis-mode', role: 'group', 'aria-label': 'Analysis mode' }, [
-    el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis of a transistor circuit', onclick: () => setMode('circuit', { user: true }) }),
+    el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis', onclick: () => setMode('circuit', { user: true }) }),
     el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Signal-flow analysis', onclick: () => setMode('signal-flow', { user: true }) }),
   ]);
   const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
-    el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
+    el('p', { class: 'analysis-intro', text: 'Pick the output and set each source to input, zero, or a constant. Derive gives each input\'s transfer function to the output.' }),
     domainsGuide(),
     // One card for the signals: the output, then every source, row by row.
     el('fieldset', { class: 'analysis-approximations' }, [
       el('legend', { text: 'Signals' }),
       el('div', { class: 'signal-flow-source signal-flow-output-row' }, [el('label', { for: 'signal-flow-output', class: 'signal-flow-source-name', text: 'Output' }), output]),
       el('div', { class: 'signal-flow-sources' }),
-      el('p', { class: 'field-hint', text: 'A constant matters only where it multiplies a signal; elsewhere it adds no transfer function, the same as zero.' }),
+      el('p', { class: 'field-hint', text: 'A source is an input port or a named wire nothing drives.' }),
     ]),
     el('div', { class: 'signal-flow-issues', hidden: true }),
     el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
@@ -76768,7 +76768,7 @@ function installSignalFlowUi() {
       el('div', { class: 'signal-flow-band-host' }),
       el('div', { class: 'signal-flow-plots-open' }, [
         el('span', { class: 'field-hint', text: 'Responses, step, root locus, swing, loop gain, and the nets in time.' }),
-        el('button', { type: 'button', class: 'signal-flow-show-plots', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
+        el('button', { type: 'button', class: 'signal-flow-show-plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
       ]),
     ]),
     // The tuning comes after what it tunes: the coefficients' sliders, then
@@ -76776,7 +76776,7 @@ function installSignalFlowUi() {
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
-      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value -- or = b_1 (= 2*b_1, = T/2) to make one follow others.' }),
+      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equations stay symbolic. = b_1 makes one follow another.' }),
       pasteCoefficients(),
     ]),
     optimizeSection({
@@ -77503,7 +77503,7 @@ function build() {
   const grid = el('div', { class: 'sizing-grid', tabindex: '0', role: 'grid', 'aria-label': 'Sizes and values' }, [table]);
   const empty = el('p', { class: 'field-hint sizing-empty', hidden: true });
   const status = el('p', { class: 'field-hint sizing-status', role: 'status' });
-  const hint = el('p', { class: 'field-hint sizing-hint', text: 'Type to fill the selected cells. Delete clears them. Ctrl+C and Ctrl+V copy and paste, also from a spreadsheet.' });
+  const hint = el('p', { class: 'field-hint sizing-hint', text: 'Type to fill the selected cells. Ctrl+C and Ctrl+V work with spreadsheets.' });
   const annotateButton = el('button', { type: 'button', class: 'primary-action', title: 'Put a parts table on the drawing', text: 'Annotate', onclick: annotate });
   const node = el('section', { class: 'floating-window sizing-window', 'aria-labelledby': 'sizing-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'sizing-title', class: 'floating-window-title', text: 'Sizing' }), close]),
@@ -78922,7 +78922,7 @@ function installSwitchedCapUi() {
   const select = (id, key) => el('select', { id, onchange: (ev) => { settings()[key] = ev.target.value; markSettingsChanged(); } });
   const row = (label, id, control) => el('div', { class: 'signal-flow-source' }, [el('label', { for: id, class: 'signal-flow-source-name', text: label }), control]);
   section = el('div', { id: 'analysis-switched-cap', class: 'signal-flow-section sc-section', hidden: true }, [
-    el('p', { class: 'analysis-intro', text: 'Each phase of the clock closes its switches; charge is kept from phase to phase. Op-amps are as their small-signal model says (ideal, or a finite gain), the input is held through each period, and the output is read at the end of the phase you pick: Derive gives its exact H(z), and its kT/C noise when asked.' }),
+    el('p', { class: 'analysis-intro', text: 'Derive gives the exact H(z) from the timing diagram\'s phases, and the kT/C noise when asked.' }),
     el('fieldset', { class: 'analysis-approximations' }, [
       el('legend', { text: 'Signals' }),
       row('Input', 'sc-input', select('sc-input', 'input')),
@@ -78936,8 +78936,8 @@ function installSwitchedCapUi() {
     el('div', { class: 'signal-flow-plots' }, [
       el('div', { class: 'card-heading', text: 'Plots' }),
       el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Each Derive adds its result to the graph: magnitude and phase over f/f_s.' }),
-        el('button', { type: 'button', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
+        el('span', { class: 'field-hint', text: 'Magnitude and phase over f/f_s.' }),
+        el('button', { type: 'button', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
       ]),
     ]),
     el('fieldset', { class: 'analysis-approximations sc-noise' }, [
@@ -78947,24 +78947,24 @@ function installSwitchedCapUi() {
         ' kT/C noise with each Derive',
       ]),
       el('div', { class: 'sc-noise-result' }),
-      el('p', { class: 'field-hint', text: 'Each phase leaves its switches\' thermal noise on the capacitors they touch as it ends: kT over the capacitance it sees, moved on by the op-amps as the signal is, here referred to the input. The op-amps\' own noise is not included.' }),
+      el('p', { class: 'field-hint', text: 'Switch noise, kT/C per phase, referred to the input. Op-amp noise is not included.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations sc-calc', hidden: true }, [
       el('legend', { text: 'Noise calculator' }),
       el('div', { class: 'sc-calc-fields' }),
       el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
-      el('p', { class: 'field-hint', text: 'Each capacitance in farads (1p), each gain, the temperature, and the sample rate f_s: the input-referred RMS over the band to f_s/2, and the density of the white noise with that RMS.' }),
+      el('p', { class: 'field-hint', text: 'Input-referred RMS over the band to f_s/2, and its white-noise density.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
       el('legend', { text: 'Values' }),
       el('div', { class: 'signal-flow-coefficient-rows sc-value-rows' }),
-      el('p', { class: 'field-hint', text: 'The capacitances, and the gain of each finite-gain op-amp (its small-signal model): the graph and the poles and zeros use these numbers; the equation stays symbolic. Slide, or type any value. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
+      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equation stays symbolic.' }),
     ]),
   ]);
-  annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Write the equation under the drawing', onclick: annotate });
+  annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Annotate the equation', onclick: annotate });
   const actions = [
     annotateButton,
-    el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive the transfer function (Enter)', onclick: derive }),
+    el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];
   // Enter in a field derives here.
   section.addEventListener('keydown', (ev) => {
@@ -78983,7 +78983,7 @@ function installSwitchedCapUi() {
   registerAnalysisMode({
     mode: 'switched-cap',
     label: 'Switched-cap',
-    hint: 'The exact H(z) of a switched-capacitor circuit, phase by phase from its timing diagram',
+    hint: 'Switched-capacitor analysis',
     title: 'Switched-capacitor analysis',
     section,
     actions,
@@ -79378,28 +79378,28 @@ const TIPS = Object.freeze([
     trigger: 'wire-start',
     after: 2,
     retiredBy: 'terminal-snap',
-    text: 'Hold Alt while wiring: the cursor jumps to the nearest terminal or free wire end, so there is no need to aim.',
+    text: 'Hold Alt while wiring to snap to the nearest terminal or wire end.',
   },
   {
     id: 'pin-drag',
     trigger: 'wire-tool-start',
     after: 3,
     retiredBy: 'pin-drag',
-    text: 'Wiring works without the Wire tool too: drag from any pin. Drop in empty space to add a part there.',
+    text: 'Drag from any pin to draw a wire. Drop it in empty space to add a part there.',
   },
   {
     id: 'place-symmetry',
     trigger: 'place-repeat',
     after: 2,
     retiredBy: 'symmetry',
-    text: 'Hold Alt while placing to add a mirrored twin about an axis, which suits differential pairs and mirrors.',
+    text: 'Hold Alt while placing to add a mirrored twin, for differential pairs and mirrors.',
   },
   {
     id: 'radial',
     trigger: 'move-start',
     after: 3,
     retiredBy: 'radial',
-    text: 'Right-hold the paper and flick to drop a part; on a pin, part, or wire the ring fits what is there.',
+    text: 'Right-hold and flick to add a part. On a pin, part, or wire, the ring offers what fits there.',
   },
   {
     id: 'knife',
@@ -79420,21 +79420,21 @@ const TIPS = Object.freeze([
     trigger: 'switch-phase-set',
     after: 2,
     retiredBy: 'phase-menu',
-    text: 'Right-click a switch → Phase: a phase in use, or its complement (overbar). s flips a whole phase.',
+    text: 'Right-click a switch → Phase sets its phase. s flips a whole phase.',
   },
   {
     id: 'timing-diagram',
     trigger: 'switch-phase-set',
     after: 4,
     retiredBy: 'timing-open',
-    text: 'Shift+K draws a timing diagram of the phases, edited as a grid of slots beside the drawing.',
+    text: 'Shift+K opens the timing diagram of the switch phases.',
   },
   {
     id: 'timing-beats',
     trigger: 'timing-drawn',
     after: 2,
     retiredBy: 'phase-beats',
-    text: 'Make beats in the timing editor writes the timing into the beats: one beat per state, its high phases closed.',
+    text: 'Make beats in the timing diagram adds one beat per clock state.',
   },
 ]);
 
@@ -80433,7 +80433,7 @@ const PLACEMENT_LABELS = {
   signal_sum: 'Sum junction', signal_multiply: 'Multiply junction',
   comparator: 'Comparator', comparator_clocked: 'Clocked comparator',
   filter_lpf: 'Low-pass filter', filter_hpf: 'High-pass filter', filter_bpf: 'Band-pass filter', filter_notch: 'Notch filter', oscillator: 'Oscillator',
-  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', quantizer: 'Quantizer (N levels)',
+  tf_s: 'Transfer function H(s)', tf_z: 'Transfer function H(z)', tf_dac: 'DAC, z to s (NRZ pulse: zero-order hold)', tf_dac_rz: 'DAC, z to s (RZ pulse: half-period hold)', tf_delay: 'Delay e^-sT', tf_zdelay: 'Delay z^-1', gain: 'Gain', sampler: 'Sampler, s to z (ideal: no hold)', quantizer: 'Quantizer (N levels)', dither: 'Dither',
 };
 
 const PLACEMENT_ALIASES = {
@@ -80567,7 +80567,7 @@ const naturalCompare = new Intl.Collator(undefined, { numeric: true, sensitivity
 const EDITOR_KEYMAP = Object.freeze([
   ['draw', [
     ['i', 'insert mode (fuzzy-search component and label placement)'],
-    ['w', 'wire mode: click terminals or points; hold Alt to snap the cursor to the nearest terminal or free wire end; a click on a free wire end joins it; Enter commits'],
+    ['w', 'wire mode: click terminals or points, Enter commits; hold Alt to snap to the nearest terminal or wire end'],
     ['F3', 'toggle the wire route choice (orthogonal / diagonal)'],
     ['/ (wire)', 'flip which way the corner under the cursor turns'],
     ['drag from a pin', 'draw a wire without Wire mode; drop on a pin or wire, or in space to add a part'],
@@ -80577,7 +80577,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['n', 'type free text, then click to place it once'],
     ['e', 'place a LaTeX equation label; starts with $$ and opens the inline editor'],
     ['a', 'place a multi-point arrow; click vertices and press Enter'],
-    ['b', 'place one two-point box, then return to selection; with a selection, box it (in the box tool, click objects to pick them, Enter boxes them)'],
+    ['b', 'place a box; with a selection, box it'],
     ['Shift+L', 'persistent multi-point line annotation placement'],
   ]],
   ['edit', [
@@ -80598,30 +80598,30 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+Shift+V', 'paste style from one copied object'],
     ['Delete', 'persistent delete; click objects while armed'],
     ['dd', 'delete the selected object set'],
-    ['q', 'change the type of the selected (or pointed-at) parts: nmos to pmos, R to C, ...; wiring stays where the pins carry over'],
-    ['g / v (on a pin)', 'wire a ground / supply one cell out from the unconnected pin under the cursor, pointing the way the pin leads'],
+    ['q', 'change the type of the selected parts (nmos to pmos, R to C); wiring stays'],
+    ['g / v (on a pin)', 'wire a ground / supply to the unconnected pin under the cursor'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
-    ['o', 'show or hide the selected (or pointed-at) part\'s linked design beside the drawing; link a part from its right-click menu'],
+    ['o', 'show or hide the selected part\'s linked design beside the drawing'],
     ['Shift+O', 'show or hide every linked part\'s design beside the drawing'],
-    ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design (or double-click its bubble) / back up to the design it was opened from, else to one it is used in'],
+    ['Alt+↓ / Alt+↑', 'open the selected part\'s linked design / back up to the design it was opened from'],
     ['Shift+J', 'join the selected line annotations into one continuous line (they meet end to end or share a stretch)'],
-    ['Shift+K', 'timing diagram of the switch phases and signals you add: edit its slots in a grid beside the drawing; Make beats writes the timing into the beats'],
-    ['Box over vertices', 'a box catching only some vertices of lines or arrows picks them, on any number of lines; Shift+box or Shift/Ctrl-click a vertex adds more; drag one to move them together, Delete removes them, Escape lets go'],
+    ['Shift+K', 'show or hide the timing diagram of the switch phases and signals'],
+    ['Box over vertices', 'pick vertices of lines or arrows; Shift+box or Shift/Ctrl-click adds more; drag moves them, Delete removes them'],
     ['.', 'repeat the last rotate, mirror, swap, rail, or stubs on the current selection'],
     ['Shift+Up / Shift+Down', 'bring selected objects to front / send to back'],
     ['Ctrl/Cmd+Shift+Arrows', 'align selected edges; repeat to center that axis'],
     ['Shift+A', 'align to: click an edge or point of the selection, then a matching one of another object; the set moves as one'],
-    ['Space', 'wire stubs: a labeled stub (net1, net2, ...) on every unconnected terminal of the selected parts; any that would short are skipped'],
+    ['Space', 'wire stubs: a labeled stub on every unconnected terminal of the selected parts'],
     ['9', 'highlight nets: each click cycles a net group\'s color'],
     ['8', 'remove every net highlight'],
-    ['t / = / F2', 'edit the text of the selection (a label, a part\'s name, a net\'s label) or of what the cursor points at; with several switches or rails selected, the phase or rail name goes to all'],
+    ['t / = / F2', 'edit the text of the selection or of what the cursor points at; with several switches or rails, edits them all'],
     ['Ctrl/Cmd+I', 'toggle italic on selected labels'],
     ['Ctrl/Cmd+B', 'toggle bold on selected labels'],
-    ['Shift+Enter / Tab', 'while editing text: a new line (blank lines too); in free text Tab indents and Shift+Tab unindents (the style panel\'s M sets a monospace face, for tables)'],
+    ['Shift+Enter / Tab', 'while editing text: a new line; in free text Tab indents and Shift+Tab unindents'],
   ]],
   ['select', [
     ['Enter', 'select the label or component under the cursor'],
-    ['click a selected object', 'select the next object stacked at that point (pins, wires, dots, part boxes); a press there drags the selected one'],
+    ['click a selected object', 'select the next object stacked at that point'],
     ['Ctrl/Cmd+A', 'select all components, labels, and non-empty nets'],
     ['Tab / Shift+Tab (selection)', 'cycle a selected component or label forward / backward'],
     ['Tab / Shift+Tab (focus)', 'focus semantic canvas objects; Enter/Space selects one'],
@@ -80635,12 +80635,12 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
     ['Shift+S', 'show or hide the small-signal analysis window'],
-    ['Shift+V', 'show or hide reference windows: another design beside this one, zoomed and panned on its own; its title picks the design'],
-    ['Shift+W', 'show or hide the plots of a signal-flow diagram: responses, step, root locus, swing, loop gain, and the nets in time; drag pans, right-drag zooms, double-click fits'],
-    ['Shift+E', 'show or hide the calculator: 20*log(123), 4.7k, R = 10k, ans; Enter works a line out, Up/Down recall, clear starts afresh'],
-    ['Shift+Z', 'show or hide the sizing window: W, L, m of the transistors and values of the passives; type to fill the selected cells, Ctrl+C / Ctrl+V copy and paste; Annotate puts a parts table on the drawing'],
-    ['Shift+N', 'show or hide the design\'s notes: Markdown with $math$; @M1 or @V_{out} mentions a part or net (hover glows it, click selects it), [[amp]] links a design; double-click to edit (Tab / Shift+Tab indent and unindent: lists nest by indentation), Esc finishes'],
-    ['Shift+Backspace', 'Atlas view: every design at its real size; Enter or double-click opens one, Esc clears the pick, Shift+Backspace (or Enter with nothing picked) returns'],
+    ['Shift+V', 'show or hide reference windows: another design beside this one'],
+    ['Shift+W', 'show or hide the plots; drag pans, right-drag zooms, double-click fits'],
+    ['Shift+E', 'show or hide the calculator; Up/Down recall'],
+    ['Shift+Z', 'show or hide the sizing window: transistor W, L, m and passive values'],
+    ['Shift+N', 'show or hide the design\'s notes: Markdown with $math$, @M1 mentions, [[amp]] links; double-click edits, Esc finishes'],
+    ['Shift+Backspace', 'Atlas: every design in the workspace; Enter opens the picked one'],
     ['Space+drag', 'pan the view'],
     ['touch / pen', 'blank touch pans; object gestures use pointer capture and cancel safely'],
   ]],
@@ -80676,10 +80676,10 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Ctrl/Cmd+E', 'open the export dialog'],
     ['drop a file', 'drop a .json file on the window to open a copy'],
     ['x / Shift+X', 'check / save without checking'],
-    ['/ / Ctrl/Cmd+F', 'find parts, nets, and any label text (in the Atlas: search every design); Esc clears, then returns to the canvas'],
-    ['Ctrl/Cmd+H', 'replace text in every matching label: net names (labeled or not), part names, switch phases, annotations; M1 finds M_{1}; Aa matches case, .* takes a regular expression ($1 in the replacement); Enter replaces all; Esc clears both fields and returns to the canvas'],
-    [':', 'find and run anything: type words to search every action, toggle, and menu item, Up/Down pick, Enter runs; or type a command (:connect R1.a R2.a); Up/Down on an empty line recall history'],
-    [': Tab / Shift+Tab', 'complete the command word, synonyms included (sett → settings); editor commands work panels, toggles, and menus (:grid off, :panel, :analysis, :export)'],
+    ['/ / Ctrl/Cmd+F', 'find parts, nets, and label text; Esc clears'],
+    ['Ctrl/Cmd+H', 'replace text in names and labels; Aa matches case, .* uses a regular expression; Enter replaces all'],
+    [':', 'search every action, or type a command (connect R1.a R2.a); Up/Down recall history'],
+    [': Tab / Shift+Tab', 'complete the command word (:grid off, :panel, :export)'],
     ['status message', 'click (or hover) the last message to open the log; the pin keeps it open'],
     ['explain eval', 'group design-check issues with repair hints'],
     ['explain connect A.t B.t', 'dry-run a route and report path/bends/pin escapes'],

@@ -33,44 +33,44 @@
         <div id="tags-pop" class="toolbar-menu tags-menu" role="dialog" aria-label="Tags" hidden>
           <label for="panel-tags" class="toolbar-menu-heading">Tags</label>
           <input id="panel-tags" type="text" placeholder="ota bias …" aria-label="This document's tags, separated by spaces" autocomplete="off" spellcheck="false" />
-          <p class="toolbar-menu-note">Words separated by spaces; Enter sets them. In the Atlas, #tag finds the designs that carry it.</p>
+          <p class="toolbar-menu-note">Separate with spaces. #tag finds them in the Atlas.</p>
         </div>
       </div>
       <button id="btn-atlas" type="button" class="atlas-button" data-icon="atlas" aria-keyshortcuts="Shift+Backspace" title="Atlas (Shift+Backspace)">Atlas</button>
     </div>
 
     <div class="toolbar-cluster file-cluster" role="group" aria-label="File actions">
-      <button id="btn-new-document" data-icon="file-plus" title="Start a new schematic">New</button>
+      <button id="btn-new-document" data-icon="file-plus" title="New design">New</button>
       <button id="btn-save" class="save-action" data-icon="save" data-action="save" title="Save (Ctrl/Cmd+S)">Save</button>
       <button id="btn-export" data-icon="download" title="Export (Ctrl/Cmd+E)">Export</button>
       <div class="toolbar-popover">
-        <button id="btn-document-menu" class="icon-button" data-icon="more" aria-haspopup="menu" aria-expanded="false" aria-controls="document-menu" aria-label="More document actions" title="More document actions">More</button>
+        <button id="btn-document-menu" class="icon-button" data-icon="more" aria-haspopup="menu" aria-expanded="false" aria-controls="document-menu" aria-label="More document actions" title="More">More</button>
         <div id="document-menu" class="toolbar-menu" role="menu" aria-label="More document actions" hidden>
           <!-- A crowded toolbar folds these buttons into this menu; each item
                clicks the real (hidden) button, so behavior stays in one place. -->
           <button type="button" role="menuitem" class="fold-only" data-icon="file-plus" data-proxy-for="btn-new-document">New</button>
           <button type="button" role="menuitem" class="fold-only" data-icon="download" data-proxy-for="btn-export">Export…</button>
           <span class="toolbar-menu-separator fold-only" role="separator"></span>
-          <button id="btn-open-file" type="button" role="menuitem" data-icon="folder-open" title="Open (Ctrl/Cmd+O)">Open file…</button>
-          <button id="btn-save-as" type="button" role="menuitem" data-icon="save" title="Save as (Ctrl/Cmd+Shift+S)">Save as…</button>
-          <button id="btn-history" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="history" title="Save history and checkpoints">History…</button>
-          <button id="btn-rename-document" type="button" role="menuitem" data-icon="text" title="Rename the document's file" disabled>Rename document…</button>
-          <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" title="Show in file manager" disabled>Show in folder</button>
-          <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace" title="Workspace folder">Change workspace folder…</button>
+          <button id="btn-open-file" type="button" role="menuitem" data-icon="folder-open">Open… <kbd>Ctrl/Cmd+O</kbd></button>
+          <button id="btn-save-as" type="button" role="menuitem" data-icon="save">Save as… <kbd>Ctrl/Cmd+Shift+S</kbd></button>
+          <button id="btn-history" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="history">History</button>
+          <button id="btn-rename-document" type="button" role="menuitem" data-icon="text" disabled>Rename…</button>
+          <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" disabled>Show in folder</button>
+          <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace">Workspace folder…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-renumber" type="button" role="menuitem" data-icon="renumber" title="Renumber parts (M1, R2, …)">Renumber parts…</button>
+          <button id="btn-renumber" type="button" role="menuitem" data-icon="renumber">Renumber parts…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats" title="Beats (Shift+B)">Beats <kbd>Shift+B</kbd></button>
-          <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats" title="Beats from the switch phases">Make beats from phases</button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="analysis" data-proxy-for="btn-analysis" title="Small-signal analysis (Shift+S)">Small-signal analysis <kbd>Shift+S</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="reference" data-proxy-for="btn-window-reference" title="Reference windows (Shift+V)">Reference windows <kbd>Shift+V</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="calculator" data-proxy-for="btn-window-calculator" title="Calculator (Shift+E)">Calculator <kbd>Shift+E</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="notes" data-proxy-for="btn-window-notes" title="Notes (Shift+N)">Notes <kbd>Shift+N</kbd></button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="sizing" data-proxy-for="btn-window-sizing" title="Sizing (Shift+Z)">Sizing <kbd>Shift+Z</kbd></button>
-          <button id="btn-timing-diagram" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="timing" title="Timing diagram (Shift+K)">Timing diagram… <kbd>Shift+K</kbd></button>
-          <button id="btn-present" type="button" role="menuitem" data-icon="play" title="Present (Shift+F5)">Present <kbd>Shift+F5</kbd></button>
+          <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats">Beats <kbd>Shift+B</kbd></button>
+          <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats">Make beats from phases</button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="analysis" data-proxy-for="btn-analysis">Small-signal analysis <kbd>Shift+S</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="reference" data-proxy-for="btn-window-reference">Reference windows <kbd>Shift+V</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="calculator" data-proxy-for="btn-window-calculator">Calculator <kbd>Shift+E</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="notes" data-proxy-for="btn-window-notes">Notes <kbd>Shift+N</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="sizing" data-proxy-for="btn-window-sizing">Sizing <kbd>Shift+Z</kbd></button>
+          <button id="btn-timing-diagram" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="timing">Timing diagram <kbd>Shift+K</kbd></button>
+          <button id="btn-present" type="button" role="menuitem" data-icon="play">Present <kbd>Shift+F5</kbd></button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" title="Delete the document file" disabled>Delete document…</button>
+          <button id="btn-delete-circuit" type="button" role="menuitem" data-icon="trash" class="danger-action" disabled>Delete document…</button>
         </div>
       </div>
     </div>
@@ -97,7 +97,7 @@
         <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings">Settings</button>
         <div id="settings-menu" class="toolbar-menu settings-menu" role="menu" aria-label="Settings" hidden>
           <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
-          <p class="toolbar-menu-note">Shows the width at which an exported figure set to full column or text width gets 8 pt text, the size of IEEE figure captions (subscripts are set smaller). Export pads the figure, or the exported selection, to this width, centered.</p>
+          <p class="toolbar-menu-note">The width at which a full-width figure has 8 pt text. Export pads to it.</p>
           <div role="group" aria-labelledby="settings-page-heading">
             <button type="button" role="menuitemradio" aria-checked="true" data-page-guide="">No page guide</button>
             <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-1col">IEEE single column (3.5 in)</button>
@@ -106,22 +106,22 @@
           </div>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Display</p>
-          <button id="btn-grid" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="grid" title="Grid (#)">Grid <kbd>#</kbd></button>
-          <button id="btn-guides" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="guides" title="Placement guides (Shift+G)">Placement guides <kbd>Shift+G</kbd></button>
-          <button id="btn-crosshair" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="crosshair" title="Crosshair (Shift+C)">Crosshair <kbd>Shift+C</kbd></button>
-          <button id="btn-theme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="moon" title="Dark theme (Shift+D)">Dark theme</button>
-          <button id="btn-reduce-motion" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="motion" title="Reduce motion">Reduce animations</button>
-          <button id="btn-net-beams" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="highlight" title="Net beams">Net beams</button>
+          <button id="btn-grid" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="grid">Grid <kbd>#</kbd></button>
+          <button id="btn-guides" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="guides">Placement guides <kbd>Shift+G</kbd></button>
+          <button id="btn-crosshair" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="crosshair">Crosshair <kbd>Shift+C</kbd></button>
+          <button id="btn-theme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="moon">Dark theme <kbd>Shift+D</kbd></button>
+          <button id="btn-reduce-motion" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="motion">Reduce motion</button>
+          <button id="btn-net-beams" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="highlight">Net beams</button>
           <p class="toolbar-menu-heading" id="settings-accent-heading">Accent color</p>
           <div id="settings-accent" class="settings-accent" role="group" aria-labelledby="settings-accent-heading"></div>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Input</p>
-          <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Trackpad: scroll pans, pinch zooms">Trackpad scrolling</button>
+          <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Scroll pans, pinch zooms">Trackpad scrolling</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Learning</p>
-          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb" title="Tips">Show tips</button>
+          <button id="btn-tips" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="lightbulb">Show tips</button>
           <span class="toolbar-menu-separator" role="separator"></span>
-          <button id="btn-github" type="button" role="menuitem" data-icon="external" data-href="https://github.com/ojarvin/mosfeteer" title="Mosfeteer on GitHub">Mosfeteer on GitHub</button>
+          <button id="btn-github" type="button" role="menuitem" data-icon="external" data-href="https://github.com/ojarvin/mosfeteer">Mosfeteer on GitHub</button>
         </div>
       </div>
     </div>
@@ -181,12 +181,12 @@
       <fieldset>
         <legend>Appearance</legend>
         <label><input type="checkbox" name="grid" /> Include grid</label>
-        <label><input type="checkbox" name="dark" /> Dark mode</label>
+        <label><input type="checkbox" name="dark" /> Dark theme</label>
       </fieldset>
       <fieldset>
         <legend>Content</legend>
         <p id="export-atlas-content" class="export-atlas-content" hidden></p>
-        <label class="export-selection-row" title="Only the selection"><input type="checkbox" name="selection" /> Only the selection <span id="export-selection-count" class="export-extensions"></span></label>
+        <label class="export-selection-row"><input type="checkbox" name="selection" /> Only the selection <span id="export-selection-count" class="export-selection-count"></span></label>
         <label id="export-beat-row" class="export-beat-row" hidden>Beats
           <select id="export-beat" name="beat" title="Beats to export"></select>
         </label>
@@ -240,7 +240,7 @@
         <div id="help-symbols" class="help-content help-symbols"></div>
       </section>
       <section id="help-panel-tips" class="help-panel" role="tabpanel" data-help-panel="tips" hidden>
-        <p class="help-panel-lead">Tips show up now and then in the corner, when there is a faster way to do what you are doing. Here are all of them.</p>
+        <p class="help-panel-lead">Tips appear in the corner when there is a faster way.</p>
         <ul id="help-tips" class="help-content help-tips"></ul>
       </section>
     </form>
@@ -254,13 +254,13 @@
     <header class="atlas-head glass" data-atlas-edge="top">
       <button type="button" id="atlas-mark" class="app-mark app-mark-button atlas-mark" aria-label="Back to the editor" title="Back to the editor (Shift+Backspace)"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -7.15 L 150 -5.53 L 184 0 L 150 5.53 L -56 7.15 Z" fill="var(--logo-blade)"/><path d="M -56 -7.15 L 150 -5.53 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></button>
       <span id="atlas-title" class="atlas-title">Workspace</span>
-      <input id="atlas-search" class="atlas-search" type="search" placeholder="Find parts, nets, text, #tags  (/ or Ctrl+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
+      <input id="atlas-search" class="atlas-search" type="search" placeholder="Find parts, nets, text, #tags" title="Find (/ or Ctrl/Cmd+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
       <span id="atlas-status" class="atlas-status" aria-live="polite"></span>
       <div class="atlas-group" role="group" aria-label="Workspace files">
         <button id="atlas-open-folder" type="button" data-icon="workspace" title="Workspace folder">Folder…</button>
         <button id="atlas-open-files" type="button" data-icon="folder-open" title="Add files (Ctrl/Cmd+O)" hidden>Open…</button>
-        <button id="atlas-new-circuit" type="button" data-icon="file-plus" title="Start a new schematic">New</button>
-        <button id="atlas-export" type="button" data-icon="download" title="Export the desk (Ctrl/Cmd+E)">Export</button>
+        <button id="atlas-new-circuit" type="button" data-icon="file-plus" title="New design">New</button>
+        <button id="atlas-export" type="button" data-icon="download" title="Export (Ctrl/Cmd+E)">Export</button>
       </div>
       <!-- The workspace check: broken links and unsaved changes (atlas.js). -->
       <div class="toolbar-popover atlas-check" hidden>
@@ -291,23 +291,23 @@
     <section class="canvas-pane">
       <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode" data-editor-edge="left">
         <span class="toolbar-group-label" id="mode-heading">Edit tools</span>
-        <button id="btn-mode-select" class="mode-control" data-icon="cursor" data-mode="select" aria-pressed="true" title="Select and edit objects (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
+        <button id="btn-mode-select" class="mode-control" data-icon="cursor" data-mode="select" aria-pressed="true" title="Select (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
         <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" data-doc-kind="schematic" aria-pressed="false" title="Place (i)" aria-label="Place a schematic component or label">Place <kbd>i</kbd></button>
         <button id="btn-mode-wire" class="mode-control rail-flyout-proxy" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="wire-flyout" title="Wire (w)" aria-label="Draw an electrical wire">Wire <kbd>w</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move (m)" aria-label="Move selected objects">Move <kbd>m</kbd></button>
-        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Detached move (Shift+M)" aria-label="Detach move">Detach move <kbd>Shift+M</kbd></button>
+        <button id="btn-mode-detach-move" class="mode-control" data-icon="detach" data-action="detach-move" aria-pressed="false" title="Detached move (Shift+M)" aria-label="Detached move">Detached move <kbd>Shift+M</kbd></button>
         <button id="btn-mode-copy" class="mode-control" data-icon="copy" data-action="copy" aria-pressed="false" title="Copy (c)" aria-label="Copy selected objects">Copy <kbd>c</kbd></button>
         <button id="btn-mode-align" class="mode-control" data-icon="align" data-action="align" aria-pressed="false" title="Align to (Shift+A)" aria-label="Align selection to another object">Align <kbd>Shift+A</kbd></button>
-        <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete (Delete)" aria-label="Delete selected objects">Delete <kbd>Delete</kbd></button>
+        <button id="btn-mode-delete" class="mode-control" data-icon="trash" data-action="delete" aria-pressed="false" title="Delete (Del)" aria-label="Delete selected objects">Delete <kbd>Del</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Net label (l)" aria-label="Place a label on a physical wire">Net label <kbd>l</kbd></button>
-        <button id="btn-mode-highlight" class="mode-control" data-icon="highlight" data-action="highlight" aria-pressed="false" aria-haspopup="menu" title="Highlight nets (9; 8 clears)" aria-label="Highlight nets">Highlight <kbd>9</kbd></button>
+        <button id="btn-mode-highlight" class="mode-control" data-icon="highlight" data-action="highlight" aria-pressed="false" aria-haspopup="menu" title="Highlight nets (9)" aria-label="Highlight nets">Highlight <kbd>9</kbd></button>
         <button id="btn-rail-annotate" class="mode-control annotation-control rail-flyout-proxy" data-icon="text" data-flyout-proxy="annotate" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="rail-flyout" title="Annotations" aria-label="Annotation tools">Annotate</button>
       </div>
       <div id="wire-flyout" class="rail-flyout glass" data-editor-edge="left" role="group" aria-label="Wire shape" hidden>
-        <button id="btn-route-orthogonal" class="mode-control" data-icon="wire" data-route-mode="orthogonal" aria-pressed="false" title="Draw orthogonal wires (F3 toggles)" aria-label="Orthogonal wire">Orthogonal <kbd>F3</kbd></button>
-        <button id="btn-route-diagonal" class="mode-control" data-icon="wire-diagonal" data-route-mode="diagonal" aria-pressed="false" title="Draw diagonal wires (F3 toggles)" aria-label="Diagonal wire">Diagonal <kbd>F3</kbd></button>
+        <button id="btn-route-orthogonal" class="mode-control" data-icon="wire" data-route-mode="orthogonal" aria-pressed="false" title="Orthogonal (F3)" aria-label="Orthogonal wire">Orthogonal <kbd>F3</kbd></button>
+        <button id="btn-route-diagonal" class="mode-control" data-icon="wire-diagonal" data-route-mode="diagonal" aria-pressed="false" title="Diagonal (F3)" aria-label="Diagonal wire">Diagonal <kbd>F3</kbd></button>
       </div>
       <div id="rail-flyout" class="rail-flyout glass" data-editor-edge="left" role="group" aria-label="Annotation tools" hidden>
         <button id="btn-mode-annotation" class="mode-control label-control annotation-control" data-icon="text" data-action="annotation" data-label-kind="annotation" aria-pressed="false" title="Text (n)" aria-label="Place annotation">Annotation <kbd>n</kbd></button>
@@ -345,7 +345,7 @@
       <nav id="beat-strip" class="beat-strip floating-window" data-editor-edge="bottom" aria-labelledby="beat-strip-title" hidden>
         <header class="floating-window-header">
           <h2 id="beat-strip-title" class="floating-window-title">Beats</h2>
-          <button type="button" id="beat-strip-close" class="floating-window-close" title="Close the beats (Shift+B)" aria-label="Close the beats">×</button>
+          <button type="button" id="beat-strip-close" class="floating-window-close" title="Close (Shift+B)" aria-label="Close the beats">×</button>
         </header>
         <p id="beat-hint" class="beat-hint"></p>
         <div class="beat-strip-row">
@@ -367,10 +367,10 @@
         <form id="analysis-form">
           <header class="floating-window-header">
             <h2 id="analysis-dialog-title" class="floating-window-title">Small-signal analysis</h2>
-            <button id="analysis-cancel" type="button" class="floating-window-close" aria-label="Close the analysis window" title="Close (Esc)">×</button>
+            <button id="analysis-cancel" type="button" class="floating-window-close" aria-label="Close the analysis window" title="Close (Shift+S)">×</button>
           </header>
           <div class="analysis-scroll">
-            <p class="analysis-intro">Pick the input and output nets, then derive the selected transfer functions and the impedances. Poles and zeros appear when reactive components matter.</p>
+            <p class="analysis-intro">Pick the input and output, then Derive.</p>
             <fieldset class="analysis-approximations analysis-signals">
             <legend>Signals</legend>
             <div class="analysis-grid">
@@ -389,12 +389,12 @@
                 </div>
               </div>
               <div class="analysis-node" id="analysis-ac-grounds-row">
-                <label id="analysis-ac-grounds-field" for="analysis-ac-grounds">More AC grounds (0&nbsp;V)</label>
+                <label id="analysis-ac-grounds-field" for="analysis-ac-grounds">AC grounds</label>
                 <div class="analysis-node-control">
                   <input id="analysis-ac-grounds" name="acGrounds" type="text" placeholder="VBN, VCASCN" autocomplete="off" spellcheck="false" aria-describedby="analysis-ac-grounds-hint" />
                   <button type="button" class="icon-button analysis-pick" data-icon="crosshair" data-analysis-pick="analysis-ac-grounds" aria-pressed="false" aria-label="Pick an AC-ground net on the canvas" title="Pick on the canvas">Pick</button>
                 </div>
-                <p class="field-hint" id="analysis-ac-grounds-hint">Supplies, grounds, and other DC rails already are. Add bias nets (named, by net ID, or as a pin like M5.g); every AC ground is the same 0&nbsp;V reference.</p>
+                <p class="field-hint" id="analysis-ac-grounds-hint">Supplies and grounds are already AC ground. Add bias nets by name, net ID, or pin (M5.g).</p>
               </div>
             </div>
             </fieldset>
@@ -482,8 +482,8 @@
 
       <div class="panel-filter" data-doc-kind="schematic">
         <div class="panel-filter-row">
-          <input id="panel-filter" type="search" placeholder="Find parts, nets, and text (/ or Ctrl+F)" aria-label="Find parts, nets, and text" aria-keyshortcuts="/ Control+F Meta+F" autocomplete="off" spellcheck="false" />
-          <button type="button" id="panel-replace-toggle" class="icon-button" data-icon="replace" aria-expanded="false" aria-controls="panel-replace" aria-keyshortcuts="Control+H Meta+H" aria-label="Replace text" title="Replace text in labels (Ctrl+H)">Replace</button>
+          <input id="panel-filter" type="search" placeholder="Find parts, nets, text" title="Find (/ or Ctrl/Cmd+F)" aria-label="Find parts, nets, and text" aria-keyshortcuts="/ Control+F Meta+F" autocomplete="off" spellcheck="false" />
+          <button type="button" id="panel-replace-toggle" class="icon-button" data-icon="replace" aria-expanded="false" aria-controls="panel-replace" aria-keyshortcuts="Control+H Meta+H" aria-label="Replace text" title="Replace (Ctrl/Cmd+H)">Replace</button>
           <!-- Where the canvas's panel button sits while the panel is hidden, so
                the same spot toggles it both ways. -->
           <button type="button" id="btn-side-panel-hide" class="icon-button panel-hide-toggle" data-icon="sidebar" aria-controls="side-panel" aria-expanded="true" aria-pressed="true" aria-label="Hide the panel" title="Side panel (Shift+P)">Hide panel</button>
@@ -652,7 +652,7 @@
       <ul id="cmd-suggestions" class="cmd-suggestions" role="listbox" aria-label="Command completions" hidden></ul>
       <div class="console-row">
         <span class="console-prompt" aria-hidden="true">:</span>
-        <input id="cmd-input" type="text" placeholder="Search any action or type a command (mirror, beats phase, move R1 120 80)" autocomplete="off" spellcheck="false" aria-label="Command" aria-autocomplete="list" aria-controls="cmd-suggestions" aria-expanded="false" />
+        <input id="cmd-input" type="text" placeholder="Search actions or type a command (move R1 120 80)" autocomplete="off" spellcheck="false" aria-label="Command" aria-autocomplete="list" aria-controls="cmd-suggestions" aria-expanded="false" />
       </div>
     </section>
   </footer>

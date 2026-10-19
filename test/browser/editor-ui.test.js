@@ -163,6 +163,32 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     assert.deepEqual(missing, []);
   });
 
+  test('the chrome speaks one language: menu keys as kbd with no repeated titles, short placeholders, type names, and one close title', async () => {
+    await h.open('amplifier');
+    // A menu item's text is its tooltip: no title repeats or explains it.
+    const titled = await h.evaluate(`[...document.querySelectorAll('#document-menu button, #settings-menu button')].filter((b) => b.textContent.trim() && b.title && !['Scroll pans, pinch zooms', 'The file stays on disk'].includes(b.title)).map((b) => b.textContent.trim())`);
+    assert.deepEqual(titled, []);
+    const open = await h.evaluate(`document.getElementById('btn-open-file').querySelector('kbd')?.textContent`);
+    assert.equal(open, 'Ctrl/Cmd+O');
+    // A search field's placeholder fits it; its key is in the title.
+    for (const id of ['panel-filter', 'atlas-search']) {
+      const field = await h.evaluate(`(() => { const f = document.getElementById(${JSON.stringify(id)}); return { placeholder: f.placeholder, title: f.title }; })()`);
+      assert.doesNotMatch(field.placeholder, /Ctrl|\(/, id);
+      assert.match(field.title, /^Find \(/, id);
+    }
+    // The side panel names a part's type as the insert menu does.
+    const types = await h.evaluate(`[...document.querySelectorAll('#components-list [data-type]')].map((row) => [row.dataset.type, row.textContent])`);
+    const mos = types.find(([type]) => type === 'nmos');
+    assert.ok(mos && /NMOS/.test(mos[1]) && !/nmos/.test(mos[1]), JSON.stringify(types));
+    // Every window's close × is titled Close, with its key when it has one.
+    for (const key of ['S', 'E', 'N', 'Z', 'K', 'B']) await h.key(key, { shiftKey: true });
+    await h.settle();
+    const closes = await h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden]) .floating-window-close')].map((b) => b.title)`);
+    assert.ok(closes.length >= 5, JSON.stringify(closes));
+    for (const title of closes) assert.match(title, /^Close( \(Shift\+[A-Z]\))?$/);
+    await h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden]) .floating-window-close')].forEach((b) => b.click())`);
+  });
+
   test('the footer is one status line with a log drawer over the drawing; live hints and check results stay out of the log', async () => {
     await h.open('edit');
     const bar = await h.evaluate(`(() => { const s = getComputedStyle(document.querySelector('footer.statusbar')); return { h: s.height, resize: s.resize }; })()`);

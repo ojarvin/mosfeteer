@@ -32,7 +32,7 @@ function row(entry) {
   const result = el('span', { class: `calculator-result${entry.error ? ' analysis-error' : ''}`, text: entry.error ? entry.result : `= ${entry.result}` });
   const item = el('li', { class: 'calculator-entry' }, [el('span', { class: 'calculator-input', text: entry.input }), result]);
   if (!entry.error) {
-    item.title = 'Click to put this value in the line';
+    item.title = 'Insert';
     item.addEventListener('click', () => insert(entry.result.split(' ')[0]));
   }
   return item;
@@ -117,9 +117,9 @@ function onKey(ev) {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the calculator', title: 'Close (Shift+E)', text: '×' });
-  const clear = el('button', { type: 'button', class: 'window-clear', title: 'Clear', text: 'Clear', onclick: clearCalculator });
+  const clear = el('button', { type: 'button', class: 'window-clear window-action', text: 'Clear', onclick: clearCalculator });
   const list = el('ol', { class: 'calculator-list', 'aria-live': 'polite' });
-  const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2. clear starts afresh.' });
+  const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
   const node = el('section', { class: 'floating-window calculator-window', 'aria-labelledby': 'calculator-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), clear, close]),

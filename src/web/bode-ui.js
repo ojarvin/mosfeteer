@@ -27,6 +27,7 @@ import { cornerNames } from '../core/bode-figure.js';
 import { axisName, bodeSpecs, responseSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { valueRow as sharedValueRow } from './value-row.js';
+import { buttonIcon } from './icons.js';
 import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
@@ -614,14 +615,14 @@ export function installBodeUi() {
     const card = el('div', { id: 'analysis-plots-card', class: 'signal-flow-plots', hidden: true }, [
       el('div', { class: 'card-heading', text: 'Plots' }),
       el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Bode plots of the gain, the impedances, and the loop gain; each Derive adds its gain to the graph.' }),
-        el('button', { type: 'button', class: 'analysis-show-plots', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, ['Show plots']),
+        el('span', { class: 'field-hint', text: 'Gain, impedances, and loop gain.' }),
+        el('button', { type: 'button', class: 'analysis-show-plots', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
       ]),
     ]);
     valuesEl = el('fieldset', { id: 'analysis-values', class: 'analysis-approximations bode-values', hidden: true }, [
       el('legend', { text: 'Values' }),
       el('div', { class: 'bode-value-rows' }),
-      el('p', { class: 'field-hint', text: 'The plots are drawn at these values, solved in numbers: the full model, exact (no Miller splitting or other approximation), at any size; the equations stay symbolic. Each gm starts at one unit g, each capacitor at one unit C (loads on the output at 10), each ro and resistor at gm·ro units; frequency is in g/C. Slide, or type any value.' }),
+      el('p', { class: 'field-hint', text: 'The plots use these values with the exact model; the equations stay symbolic. gm starts at one unit g, capacitors at one unit C (output loads at 10), ro and resistors at gm·ro; frequency is in g/C.' }),
       el('div', { class: 'bode-values-actions' }, [
         el('button', {
           type: 'button',
@@ -639,7 +640,7 @@ export function installBodeUi() {
     result.after(card, valuesEl);
   }
   plotsEl = el('div', { class: 'bode-plots-view' }, [
-    el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S), and each gain joins this graph: plot a supply\'s way to the output beside the signal\'s, or any two settings.' }),
+    el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S) to plot its gain here.' }),
     el('div', { class: 'signal-flow-graph-head bode-plots-head' }),
     el('div', { class: 'bode-plots-graph' }),
     el('div', { class: 'signal-flow-legend bode-legend' }),

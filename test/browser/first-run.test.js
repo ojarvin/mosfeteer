@@ -22,7 +22,7 @@ describe('first visit, browser-only', { skip: browserSkip() }, () => {
   test('the empty desk leads with one folder for every design, and hides what has nothing to act on', async () => {
     const card = await h.evaluate(`(() => { const c = document.querySelector('.atlas-empty'); return { heading: c.querySelector('h2').textContent, text: c.querySelector('p').textContent, buttons: [...c.querySelectorAll('.atlas-empty-actions button')].map((b) => b.textContent + (b.classList.contains('primary-action') ? '*' : '')) }; })()`);
     assert.equal(card.heading, 'Keep your designs in one folder');
-    assert.match(card.text, /new designs save straight into it/);
+    assert.match(card.text, /new designs save into it/);
     assert.deepEqual(card.buttons, ['Open folder…*', 'New design', 'Open design…']);
     assert.equal(await h.evaluate(`document.getElementById('atlas-title').textContent`), 'No folder yet');
     for (const id of ['#atlas-export', '#atlas-close', '#atlas-hint']) assert.equal(await shown(id), false, `${id} steps aside`);

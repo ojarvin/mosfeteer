@@ -202,7 +202,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.until(`!!document.querySelector('.plots-window .bode-plots-graph svg path')`, 60000);
     assert.deepEqual((await bode()).traces.map((t) => t.label), ['\\frac{OUT}{V_{DD}}']);
     assert.equal(await shown('#analysis-plots-card'), true);
-    assert.match(await h.evaluate(`document.querySelector('#analysis-values .field-hint').textContent`), /solved in numbers/);
+    assert.match(await h.evaluate(`document.querySelector('#analysis-values .field-hint').textContent`), /exact model/);
     // A value for every parameter the ports reach, a slider and a field each.
     const rows = await h.evaluate(`document.querySelectorAll('#analysis-values .bode-value').length`);
     assert.ok(rows > 10, `${rows} values`);

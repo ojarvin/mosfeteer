@@ -459,7 +459,7 @@ export function installSwitchedCapUi() {
   const select = (id, key) => el('select', { id, onchange: (ev) => { settings()[key] = ev.target.value; markSettingsChanged(); } });
   const row = (label, id, control) => el('div', { class: 'signal-flow-source' }, [el('label', { for: id, class: 'signal-flow-source-name', text: label }), control]);
   section = el('div', { id: 'analysis-switched-cap', class: 'signal-flow-section sc-section', hidden: true }, [
-    el('p', { class: 'analysis-intro', text: 'Each phase of the clock closes its switches; charge is kept from phase to phase. Op-amps are as their small-signal model says (ideal, or a finite gain), the input is held through each period, and the output is read at the end of the phase you pick: Derive gives its exact H(z), and its kT/C noise when asked.' }),
+    el('p', { class: 'analysis-intro', text: 'Derive gives the exact H(z) from the timing diagram\'s phases, and the kT/C noise when asked.' }),
     el('fieldset', { class: 'analysis-approximations' }, [
       el('legend', { text: 'Signals' }),
       row('Input', 'sc-input', select('sc-input', 'input')),
@@ -473,8 +473,8 @@ export function installSwitchedCapUi() {
     el('div', { class: 'signal-flow-plots' }, [
       el('div', { class: 'card-heading', text: 'Plots' }),
       el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Each Derive adds its result to the graph: magnitude and phase over f/f_s.' }),
-        el('button', { type: 'button', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
+        el('span', { class: 'field-hint', text: 'Magnitude and phase over f/f_s.' }),
+        el('button', { type: 'button', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
       ]),
     ]),
     el('fieldset', { class: 'analysis-approximations sc-noise' }, [
@@ -484,24 +484,24 @@ export function installSwitchedCapUi() {
         ' kT/C noise with each Derive',
       ]),
       el('div', { class: 'sc-noise-result' }),
-      el('p', { class: 'field-hint', text: 'Each phase leaves its switches\' thermal noise on the capacitors they touch as it ends: kT over the capacitance it sees, moved on by the op-amps as the signal is, here referred to the input. The op-amps\' own noise is not included.' }),
+      el('p', { class: 'field-hint', text: 'Switch noise, kT/C per phase, referred to the input. Op-amp noise is not included.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations sc-calc', hidden: true }, [
       el('legend', { text: 'Noise calculator' }),
       el('div', { class: 'sc-calc-fields' }),
       el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
-      el('p', { class: 'field-hint', text: 'Each capacitance in farads (1p), each gain, the temperature, and the sample rate f_s: the input-referred RMS over the band to f_s/2, and the density of the white noise with that RMS.' }),
+      el('p', { class: 'field-hint', text: 'Input-referred RMS over the band to f_s/2, and its white-noise density.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
       el('legend', { text: 'Values' }),
       el('div', { class: 'signal-flow-coefficient-rows sc-value-rows' }),
-      el('p', { class: 'field-hint', text: 'The capacitances, and the gain of each finite-gain op-amp (its small-signal model): the graph and the poles and zeros use these numbers; the equation stays symbolic. Slide, or type any value. A capacitor valued C_S (or 2*C_u) shares that symbol with every capacitor of the same value.' }),
+      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equation stays symbolic.' }),
     ]),
   ]);
-  annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Write the equation under the drawing', onclick: annotate });
+  annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Annotate the equation', onclick: annotate });
   const actions = [
     annotateButton,
-    el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive the transfer function (Enter)', onclick: derive }),
+    el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];
   // Enter in a field derives here.
   section.addEventListener('keydown', (ev) => {
@@ -520,7 +520,7 @@ export function installSwitchedCapUi() {
   registerAnalysisMode({
     mode: 'switched-cap',
     label: 'Switched-cap',
-    hint: 'The exact H(z) of a switched-capacitor circuit, phase by phase from its timing diagram',
+    hint: 'Switched-capacitor analysis',
     title: 'Switched-capacitor analysis',
     section,
     actions,

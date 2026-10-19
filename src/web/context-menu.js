@@ -22,6 +22,7 @@ import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hier
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
 import { copyAsImage } from './export-ui.js';
 import { openSwapPicker } from './insert-menu.js';
+import { shortPlacementLabel } from './toolbar.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
 import { busWidth, netNamesConnect } from '../core/bus.js';
@@ -608,7 +609,7 @@ export function openComponentContextMenu(target, x, y) {
   if (contextComponent) appendMarkupText(heading, componentDisplayName(contextComponent));
   else if (contextNetwork) appendMarkupText(heading, contextNetwork.name || '(unnamed net)');
   else heading.textContent = target.kind === 'label' ? 'Label' : 'Selection';
-  const headingMeta = contextComponent ? contextComponent.type : contextNetwork ? contextNetwork.id : '';
+  const headingMeta = contextComponent ? shortPlacementLabel(contextComponent.type) : contextNetwork ? contextNetwork.id : '';
   const meta = [headingMeta, scopeSuffix.trim()].filter(Boolean).join(' ');
   if (meta) heading.append(` · ${meta}`);
   menu.appendChild(heading);

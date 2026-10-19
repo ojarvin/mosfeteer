@@ -294,9 +294,19 @@ three files at a time on GitHub's small runner.
   `--accent-tint`; a highlighted menu item is a solid accent row; a dialog
   or window ends in a row of plain-word actions (`.dialog-actions`, no
   icons), the default one filled (`.primary-action` or `.confirm-action`).
+  A word button in a window's title bar (Clear, Edit, Checkpoint…) is
+  `.window-action`, and its close × is titled `Close (<its key>)`. A field
+  row is its name, then its control (`.analysis-node`,
+  `.signal-flow-source`). A part's type shows by its display name
+  (`shortPlacementLabel`), never its type id.
 - **Tooltips say what a control is**, then its key: `Notes (Shift+N)`,
   `Save (Ctrl/Cmd+S)`. Add only live information (`Saved · <path>`, a
-  value's numbers); how to use it belongs in Learn and the docs.
+  value's numbers); how to use it belongs in Learn and the docs. A menu
+  item shows its key as `<kbd>` and has no title repeating its text; an
+  item that toggles a window has no ellipsis. A placeholder names what
+  goes in the field and fits it; the key goes in the title.
+- **Hints in windows are one plain sentence**: what to do, not how it
+  works. A status-bar mode hint reads `MODE: action · action · Esc exits`.
 - **Don't fight `eval`.** It is the single source of truth for "is this
   drawing OK?". Add a new violation category there, don't paper over it in
   the renderer.

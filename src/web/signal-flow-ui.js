@@ -784,7 +784,7 @@ function renderCoefficients({ force = false } = {}) {
     label.innerHTML = texToMathML(symbolText(name));
     const slider = el('input', { type: 'range', min: String(-3 * PER_DECADE), max: String(3 * PER_DECADE), step: '1', 'aria-label': `${name}: slide to change` });
     slider.value = String(indexE24(Math.abs(value) || 1));
-    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'A number, a fraction m/n, or = another coefficient', value: linked ? `= ${links()[name]}` : coefficientText(name, value) });
+    const field = el('input', { type: 'text', class: 'signal-flow-coefficient-value', 'aria-label': `${name}: value`, title: 'Value, m/n, or = coefficient', value: linked ? `= ${links()[name]}` : coefficientText(name, value) });
     const row = el('div', { class: 'signal-flow-coefficient', 'data-name': name }, [label, slider, field]);
     slider.addEventListener('input', () => {
       // The slider sets the size; a value typed negative keeps its sign.
@@ -1481,19 +1481,19 @@ export function installSignalFlowUi() {
   const scroll = analysisDialog?.querySelector('.analysis-scroll');
   if (!scroll) return;
   modeBar = el('div', { class: 'segmented analysis-mode', role: 'group', 'aria-label': 'Analysis mode' }, [
-    el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis of a transistor circuit', onclick: () => setMode('circuit', { user: true }) }),
+    el('button', { type: 'button', 'data-mode': 'circuit', text: 'Circuit', title: 'Small-signal analysis', onclick: () => setMode('circuit', { user: true }) }),
     el('button', { type: 'button', 'data-mode': 'signal-flow', text: 'Signal flow', title: 'Signal-flow analysis', onclick: () => setMode('signal-flow', { user: true }) }),
   ]);
   const output = el('select', { id: 'signal-flow-output', onchange: (ev) => { flow().output = ev.target.value; markSettingsChanged(); } });
   section = el('div', { id: 'analysis-signal-flow', class: 'signal-flow-section', hidden: true }, [
-    el('p', { class: 'analysis-intro', text: 'Each wire is a signal. Pick the output and set each source (an input port, or a named wire nothing drives) to input, zero, or a constant: every input gets its transfer function to the output.' }),
+    el('p', { class: 'analysis-intro', text: 'Pick the output and set each source to input, zero, or a constant. Derive gives each input\'s transfer function to the output.' }),
     domainsGuide(),
     // One card for the signals: the output, then every source, row by row.
     el('fieldset', { class: 'analysis-approximations' }, [
       el('legend', { text: 'Signals' }),
       el('div', { class: 'signal-flow-source signal-flow-output-row' }, [el('label', { for: 'signal-flow-output', class: 'signal-flow-source-name', text: 'Output' }), output]),
       el('div', { class: 'signal-flow-sources' }),
-      el('p', { class: 'field-hint', text: 'A constant matters only where it multiplies a signal; elsewhere it adds no transfer function, the same as zero.' }),
+      el('p', { class: 'field-hint', text: 'A source is an input port or a named wire nothing drives.' }),
     ]),
     el('div', { class: 'signal-flow-issues', hidden: true }),
     el('p', { class: 'analysis-stale signal-flow-stale', hidden: true, text: 'The diagram changed since these equations were derived.' }),
@@ -1507,7 +1507,7 @@ export function installSignalFlowUi() {
       el('div', { class: 'signal-flow-band-host' }),
       el('div', { class: 'signal-flow-plots-open' }, [
         el('span', { class: 'field-hint', text: 'Responses, step, root locus, swing, loop gain, and the nets in time.' }),
-        el('button', { type: 'button', class: 'signal-flow-show-plots', title: 'Show the Plots window (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
+        el('button', { type: 'button', class: 'signal-flow-show-plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
       ]),
     ]),
     // The tuning comes after what it tunes: the coefficients' sliders, then
@@ -1515,7 +1515,7 @@ export function installSignalFlowUi() {
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients', hidden: true }, [
       el('legend', { text: 'Coefficients' }),
       el('div', { class: 'signal-flow-coefficient-rows' }),
-      el('p', { class: 'field-hint', text: 'The graph and the poles and zeros use these numbers; the equations stay symbolic. Slide, or type any value -- or = b_1 (= 2*b_1, = T/2) to make one follow others.' }),
+      el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equations stay symbolic. = b_1 makes one follow another.' }),
       pasteCoefficients(),
     ]),
     optimizeSection({

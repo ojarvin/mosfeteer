@@ -1,6 +1,6 @@
 /**
  * Reduced motion: the system's preference, or the app's own setting
- * (Settings → Reduce animations). While either asks for it the root element
+ * (Settings → Reduce motion). While either asks for it the root element
  * carries `data-reduce-motion`, which the stylesheet's reduced-motion rules
  * key on, and reducedMotion() is what scripted animations ask.
  */

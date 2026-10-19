@@ -9,7 +9,7 @@
  * The history is the file's, read from it whenever the window shows it,
  * and every change to it is written at once -- pinning or removing never
  * makes the design unsaved, and leaves unsaved drawing edits as they are.
- * More → History…, or `:history`, shows or hides it.
+ * More → History, or `:history`, shows or hides it.
  */
 
 import {
@@ -252,7 +252,7 @@ function renderList() {
   win.top.replaceChildren(...(form && form.id === null ? [pinForm(null)] : []));
   if (!file) {
     win.list.replaceChildren();
-    message('Save the design to start its history: every save is kept (the last ten), and any of them can be pinned as a named checkpoint that stays.');
+    message('Save the design to start its history. The last ten saves are kept; a checkpoint stays.');
     return;
   }
   if (file.error) {
@@ -262,7 +262,7 @@ function renderList() {
   }
   if (!file.entries) {
     message('This file\'s history does not fit its drawing (was the file edited outside Mosfeteer?), so it cannot be read. It stays in the file until you remove it.');
-    win.list.replaceChildren(el('li', {}, [el('button', { type: 'button', class: 'history-afresh', text: 'Remove it and start afresh', onclick: () => void startAfresh() })]));
+    win.list.replaceChildren(el('li', {}, [el('button', { type: 'button', class: 'history-afresh window-action', text: 'Remove it and start afresh', onclick: () => void startAfresh() })]));
     return;
   }
   message(file.entries.length ? '' : 'No save points yet: the next Save is the first.');
@@ -283,8 +283,8 @@ export function renderHistoryWindow() {
 
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the history', title: 'Close', text: '×' });
-  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint', title: 'Pin as a checkpoint', text: 'Checkpoint…' });
-  const clear = el('button', { type: 'button', class: 'history-clear', title: 'Remove save points', text: 'Remove save points', hidden: true });
+  const checkpoint = el('button', { type: 'button', class: 'history-checkpoint window-action', title: 'New checkpoint', text: 'Checkpoint…' });
+  const clear = el('button', { type: 'button', class: 'history-clear window-action', text: 'Remove save points', hidden: true });
   const top = el('div', { class: 'history-top' });
   const message = el('p', { class: 'field-hint history-message' });
   const list = el('ul', { class: 'history-list' });
@@ -326,7 +326,7 @@ function hide() {
   canvasEl.focus({ preventScroll: true });
 }
 
-/** More → History…: show or hide the design's history. */
+/** More → History: show or hide the design's history. */
 export function toggleHistory() {
   if (historyShown()) hide();
   else show();

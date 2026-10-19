@@ -205,7 +205,7 @@ function linkTargets() {
 export function toggleAllLinkBubbles() {
   const linked = [...editor.circuit.components.values()].filter((c) => c.link);
   if (!linked.length) {
-    hintLine('LINK: no part links to a design yet (right-click a part → Link to design)');
+    hintLine('LINK: no part links to a design yet · right-click a part → Link to design');
     return;
   }
   toggleLinkBubbles(linked);
@@ -216,7 +216,7 @@ export function toggleAllLinkBubbles() {
 export function toggleLinkBubbles(components = linkTargets()) {
   const linked = components.filter((c) => c.link);
   if (!linked.length) {
-    hintLine('LINK: select a part linked to a design (right-click → Link to design), then o shows it beside the drawing');
+    hintLine('LINK: select a linked part, then o shows its design');
     return;
   }
   followDocument();
@@ -570,7 +570,7 @@ function goUpToParent() {
   const parents = usedIn.parents;
   if (parents.length === 1) return openParentDesign(parents[0]);
   if (!parents.length) {
-    hintLine('LINK: no design links to this one; Alt+↓ on a linked part opens its design');
+    hintLine('LINK: no design links to this one');
     return false;
   }
   const chip = document.querySelector('#hierarchy-trail .hierarchy-used-in')?.getBoundingClientRect();

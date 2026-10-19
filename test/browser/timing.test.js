@@ -136,7 +136,7 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     assert.deepEqual((await notes()).marks, []);
     await gridKey('m');
     // A span by the button, its other end by the keys; its text from the field.
-    await h.click('.timing-notes button[title^="A time between"]');
+    await h.click('.timing-notes button[title="Span (s)"]');
     await gridKey('ArrowRight');
     await gridKey('ArrowRight');
     await gridKey('s');

@@ -2387,7 +2387,7 @@ function syncDocumentSurface() {
   // answers each one with a forced layout.
   const heading = document.getElementById('mode-heading');
   if (heading && heading.textContent !== 'Schematic tools') heading.textContent = 'Schematic tools';
-  const placeholder = 'Schematic command (e.g. add resistor, move R1 120 80, connect R1.a R2.a)';
+  const placeholder = 'Search actions or type a command (move R1 120 80)';
   if (cmdInput && cmdInput.placeholder !== placeholder) cmdInput.placeholder = placeholder;
   const netLabelButton = document.getElementById('btn-mode-net-label');
   if (netLabelButton && netLabelButton.title !== 'Net label (l)') {
@@ -3738,7 +3738,7 @@ function doWireClick(x, y, terminalHit) {
       wire.source = { refdes: hit.refdes, term: hit.term };
       wire.points = [];
       cursor = { x: hit.x ?? x, y: hit.y ?? y };
-      hintLine(`wire from ${hit.refdes}.${hit.term} — terminal clicks commit; other clicks guide; Enter commits elsewhere`);
+      hintLine(`WIRE: from ${hit.refdes}.${hit.term} · click a terminal to finish · Enter ends here`);
       noteWireToolStart();
     } else if (hit.refdes === wire.source.refdes && hit.term === wire.source.term) {
       logLine('same terminal — click the other terminal');
@@ -3842,7 +3842,7 @@ function startWireAt(w) {
     wire.source = { x: P.x, y: P.y, netId: wireHit.net.id };
     wire.points = [];
     cursor = { x: P.x, y: P.y };
-    hintLine(`wire from net ${wireHit.net.id} @ (${P.x},${P.y}) — click points, then click/Enter on a target`);
+    hintLine(`WIRE: from net ${wireHit.net.id} · click points, then a target · Enter ends here`);
   } else {
     wire.source = { x: snap(w.x), y: snap(w.y) };
     wire.points = [];
@@ -4143,7 +4143,7 @@ function beginPinWire(moveDrag, w) {
   drag = { mode: 'pinwire', startWorld: moveDrag.startWorld, startClient: moveDrag.startClient };
   noteTip('pin-drag');
   cursor = pinWireCursor(w);
-  hintLine(`wire from ${wire.source.refdes}.${wire.source.term} — drop on a pin or wire, or in space to add a part`);
+  hintLine(`WIRE: from ${wire.source.refdes}.${wire.source.term} · drop on a pin or wire, or in space to add a part`);
   render();
 }
 
@@ -4176,7 +4176,7 @@ function beginBranchWire(segDrag, w) {
   drag = { mode: 'pinwire', startWorld: segDrag.startWorld, startClient: segDrag.startClient };
   noteTip('pin-drag');
   cursor = pinWireCursor(w);
-  hintLine('branch wire — drop on a pin or wire, or in space to add a part');
+  hintLine('WIRE: branch · drop on a pin or wire, or in space to add a part');
   render();
 }
 
@@ -5860,7 +5860,7 @@ export function canvasMouseUp(ev) {
   const next = nextStackedSelection(click.candidates, click.pressKey);
   if (!next) return;
   selectStackedKey(next);
-  hintLine(`selected ${stackedKeyName(next)} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next object here`);
+  hintLine(`selected ${stackedKeyName(next)} (${click.candidates.indexOf(next) + 1}/${click.candidates.length}) · click again for the next`);
   render();
 }
 
@@ -6203,7 +6203,7 @@ function finishCanvasMouseUp(ev) {
       const [kind, ...rest] = pick.split(':');
       applyEditorSelection({ kind, id: rest.join(':') }, true);
       if (kind === 'wire') syncSelectedNetSolders();
-      hintLine('BOX: click more objects to add them; Enter or b boxes them; click paper for a free box');
+      hintLine('BOX: click objects to add them · Enter boxes them · click paper for a free box');
       render();
     } else if (drag.moved) {
       if (!annotationStart) annotationStart = { x: snap(drag.startWorld.x), y: snap(drag.startWorld.y) };
@@ -6490,7 +6490,7 @@ function onWireKey(key) {
     } else if (!wire.source) {
       wire.source = { refdes: comp.refdes, term: key };
       wire.points = [];
-      hintLine(`wire from ${comp.refdes}.${key} — click/type the target terminal`);
+      hintLine(`WIRE: from ${comp.refdes}.${key} · click or type the target terminal`);
     } else if (comp.refdes === wire.source.refdes && key === wire.source.term) {
       logLine('same terminal');
     } else {
@@ -6590,7 +6590,7 @@ export function editSelectionText() {
   if (pointed) return inlineEditLabel(pointed);
   const hovered = compUnderCursor();
   if (hovered) return editPart(hovered);
-  hintLine('t, =, or F2 edit the text of what is selected or pointed at; nothing is');
+  hintLine('nothing selected to edit');
 }
 
 /** Shift+T: re-lay the selection's nets fresh and move its crowded labels
@@ -6925,7 +6925,7 @@ function onNormalKey(key, shiftKey = false) {
   if (key === 'd') {
     if (pendingKey && pendingKey.key === 'd' && Date.now() - pendingKey.at < 800) {
       if (deleteSelection()) render();
-      else hintLine('dd deletes the selection; select something first, or press Delete for the delete tool');
+      else hintLine('nothing selected to delete');
       pendingKey = null;
     } else {
       pendingKey = { key: 'd', at: Date.now() };
@@ -6973,7 +6973,7 @@ function onNormalKey(key, shiftKey = false) {
     } else if (!hasWireSelection && selectedNets.size === 0 && multi.size === 0 && selLabels.size === 1 && labels.length === 1) {
       cycleLabelSelection(shiftKey ? -1 : 1);
     } else {
-      hintLine('Tab steps from one selected part or label to the next; select just one');
+      hintLine('select one part or label to step with Tab');
     }
     return;
   }
@@ -7346,7 +7346,7 @@ export function activateWire() {
   // never become direct/fixed nets.
   wire = newWireDraft();
   gestureWire = false;
-  hintLine(`wiring (${routeMode}): click a terminal or point to start; Alt snaps to the nearest terminal; terminal clicks commit, Enter commits elsewhere`);
+  hintLine(`WIRE (${routeMode}): click a terminal or point to start · Alt snaps`);
   render();
 }
 
@@ -7376,7 +7376,7 @@ export function activateCopy() {
   labelMode = null;
   annotationPoints = [];
   copyMode = true; // source click and placement are handled by the canvas
-  hintLine('COPY: click an object, or use the existing selection; move the copy, then click/Enter (Esc exits)');
+  hintLine('COPY: click an object, move the copy, then click · Esc exits');
   render();
 }
 

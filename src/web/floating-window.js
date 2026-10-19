@@ -166,7 +166,7 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
   resizer.className = 'floating-window-dock-resizer';
   resizer.setAttribute('role', 'separator');
   resizer.setAttribute('aria-orientation', 'horizontal');
-  resizer.title = 'Drag to resize; double-click to reset';
+  resizer.title = 'Resize';
   el.prepend(resizer);
   resizer.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 || !docked()) return;
