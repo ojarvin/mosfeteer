@@ -45,7 +45,7 @@ export function noiseRequest(value) {
 /** Components that can carry a noise generator, in drawing order. */
 export function noiseCandidates(circuit) {
   return [...circuit.components.values()]
-    .filter((component) => MOS_TYPES.has(component.type) || RESISTOR_TYPES.has(component.type))
+    .filter((component) => !component.drawingOnly && (MOS_TYPES.has(component.type) || RESISTOR_TYPES.has(component.type)))
     .map((component) => component.refdes);
 }
 

@@ -1,4 +1,5 @@
 import { MOS_TYPES, firstDefined } from './shared.js';
+import { analyzedCircuit } from '../model.js';
 import { feedbackParts, returnRatio } from './loop-gain.js';
 import { poleTimeConstants } from './time-constants.js';
 import { applyApproximations } from './approximation.js';
@@ -898,6 +899,7 @@ function floatValue(value, primitive, values) {
  */
 export function numericSmallSignal(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
+  circuit = analyzedCircuit(circuit);
   const { ops } = makeEngineOps({});
   const normalized = normalizeOptions(options, circuit, true, ops);
   const regions = modelRegions(options);
@@ -968,6 +970,7 @@ export function numericSmallSignal(circuit, options = {}) {
 
 export function analyzeSmallSignalV2(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
+  circuit = analyzedCircuit(circuit);
   const { ops, symbolic } = makeEngineOps(options);
   const normalized = normalizeOptions(options, circuit, symbolic, ops);
   const analysisOptions = { ...normalized, ...(ops.budget ? { budget: ops.budget } : {}) };

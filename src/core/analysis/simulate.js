@@ -23,7 +23,7 @@ import { blockTransferFunction, coefficientValue, delayTermsOf, denseCoefficient
 import { expm } from './sampling.js';
 import { evaluateExpression } from './bode.js';
 import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseDither, parseGain, parseLevels } from '../transfer-function.js';
-import { canonicalNetName } from '../model.js';
+import { analyzedCircuit, canonicalNetName } from '../model.js';
 import { seededRandom } from './cmaes.js';
 import { rationalMultiply } from './rational.js';
 
@@ -102,6 +102,7 @@ function matVec(M, x, out) {
  * the input frequency), overloaded }`.
  */
 export function prepareSimulation(circuit, options = {}) {
+  circuit = analyzedCircuit(circuit);
   const { signals, sources, issues } = signalFlowGraph(circuit);
   if (issues.length) return failure(issues[0].code, issues[0].message);
   const values = options.values || {};

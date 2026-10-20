@@ -705,6 +705,7 @@ function appendContextActions(menu, target) {
     }
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
     appendLinkContextItems(group, comp);
+    appendDrawingOnlyItem(group, comp);
     appendBeatContextItems(group, target);
   } else if (target.kind === 'label') {
     if (target.value.kind === 'label') appendContextItem(group, 'Edit text…', later(() => inlineEditLabel(target.value)), { shortcut: 't' });
@@ -732,6 +733,19 @@ function appendContextActions(menu, target) {
   }
   if (target.kind === 'net' || target.kind === 'wire') appendContextItem(group, 'Copy as image', copyAsImage, { shortcut: 'Ctrl/Cmd+Shift+C' });
   menu.appendChild(group);
+}
+
+/** Drawing only: the selected parts stay drawn and checked, and no
+ *  analysis reads them (a placed small-signal model). */
+function appendDrawingOnlyItem(group, comp) {
+  const parts = selectedComps().length ? selectedComps() : [comp];
+  const on = parts.filter((part) => part.drawingOnly).length;
+  appendContextItem(group, 'Drawing only', () => {
+    const next = on < parts.length;
+    commit(() => { for (const part of parts) part.drawingOnly = next; });
+    const names = parts.length === 1 ? parts[0].refdes : `${parts.length} parts`;
+    logLine(next ? `${names}: drawing only, no analysis reads ${parts.length === 1 ? 'it' : 'them'}` : `${names}: analyzed again`, 'status');
+  }, { active: on === parts.length, mixed: on > 0 && on < parts.length });
 }
 
 /** Delete, the destructive action, last and in a group of its own. */

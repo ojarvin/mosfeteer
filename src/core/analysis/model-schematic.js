@@ -20,13 +20,20 @@ const AC_GROUND_NODE = '@AC_GROUND';
 
 const AC_GROUND_NAMES = new Set([AC_GROUND_NODE, '0', 'AC_GROUND']);
 const SOURCE_KINDS = new Set(['vccs', 'current-source', 'voltage-source', 'opamp']);
-const MIN_PITCH = 240;
-const SLOT_PADDING = 240;
-const BUS_Y = 0;
-const SHUNT_Y = 240;
-const RAIL_Y = 480;
-const ROW_H = 240;
-const PORT_GAP = 240;
+// One row of the model per branch between a node and the AC ground.
+const LEVEL_H = 240;
+// The ground symbol's pin, under the row of the AC ground.
+const GROUND_DROP = 40;
+const PORT_GAP = 160;
+// The free cells between a symbol and the label of the branch after it.
+const ELEMENT_GAP = 80;
+
+/** The terminals marked at a node, by part type: the letters a textbook
+ * writes beside a small-signal model's nodes. */
+const TERMINAL_MARKS = new Map([
+  ...['nmos', 'pmos', 'nmosb', 'pmosb'].map((type) => [type, { d: 'D', g: 'G', s: 'S' }]),
+  ...['npn', 'pnp'].map((type) => [type, { c: 'C', b: 'B', e: 'E' }]),
+]);
 
 /** Elements whose branch is drawn with each symbol. */
 const ELEMENT_TYPES = new Map([
@@ -155,20 +162,6 @@ function elementLabel(element, symbol, options, nodeName) {
   return { text: rendered || element.id };
 }
 
-/**
- * A label's rendered width is only known in a browser, and the drawing has to
- * be laid out before that. Estimate it from the text the way `textWidth` does
- * -- the tight per-glyph model at the label font size -- so columns are spaced
- * for their own contents instead of a fixed guess.
- */
-function estimateLabelWidth(tex) {
-  const plain = String(tex)
-    .replace(/\\left|\\right|\\,|\\;|\\!/g, '')
-    .replace(/\\frac/g, '')
-    .replace(/[{}$]/g, '');
-  return Math.max(120, plain.length * 24);
-}
-
 /** Local offset that renders at a given world offset for a placed symbol. */
 function localOffset(dx, dy, rotation) {
   const turn = ((rotation % 360) + 360) % 360;
@@ -255,24 +248,51 @@ function portNode(report, role) {
   return context?.[role]?.node || null;
 }
 
-/**
- * Where to hang a node's name: the middle of its longest run, preferring a
- * horizontal one, and only where a label-sized box above the wire clears every
- * symbol. A node whose wires are all crowded keeps its name in the net list
- * rather than printing it over a component.
- */
-function netLabelAnchor(net, width, boxes) {
-  const segments = [];
-  for (const path of (net.paths ? net.paths() : [])) {
-    for (let index = 1; index < path.length; index += 1) segments.push([path[index - 1], path[index]]);
+/** A net's straight runs, longest first, horizontal ones before vertical:
+ * `{ horizontal, from, to, at }`, `at` the run's own y (or x). */
+function wireRuns(net) {
+  const runs = [];
+  for (const path of net.paths ? net.paths() : []) {
+    for (let index = 1; index < path.length; index += 1) {
+      const [a, b] = [path[index - 1], path[index]];
+      if (a.y === b.y && a.x !== b.x) runs.push({ horizontal: true, from: Math.min(a.x, b.x), to: Math.max(a.x, b.x), at: a.y });
+      else if (a.x === b.x && a.y !== b.y) runs.push({ horizontal: false, from: Math.min(a.y, b.y), to: Math.max(a.y, b.y), at: a.x });
+    }
   }
-  const span = ([a, b]) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-  const horizontal = segments.filter(([a, b]) => a.y === b.y);
-  const ordered = (horizontal.length ? horizontal : segments).sort((left, right) => span(right) - span(left));
-  for (const [a, b] of ordered) {
-    const point = { x: snapTo((a.x + b.x) / 2), y: snapTo((a.y + b.y) / 2) };
-    const box = { x: point.x - width / 2, y: point.y - 120, w: width, h: 120 };
-    if (!boxes.some((other) => rectsOverlap(box, other))) return point;
+  return runs.sort((left, right) => Number(right.horizontal) - Number(left.horizontal) || (right.to - right.from) - (left.to - left.from));
+}
+
+/** Grid points along a run, from its middle outward. */
+function alongRun({ from, to }) {
+  const middle = snapTo((from + to) / 2);
+  const points = [middle];
+  for (let step = 40; middle - step >= from || middle + step <= to; step += 40) points.push(middle - step, middle + step);
+  return points.filter((value) => value >= from && value <= to);
+}
+
+/**
+ * Hang a node's name on its wire: the middle of its longest run, above or
+ * below a horizontal one, else beside a vertical one, the first place it
+ * covers no symbol, label, or other wire. A node whose wires are all crowded
+ * keeps its name in the net list rather than printing it over a component.
+ */
+function placeNetName(circuit, net, boxes) {
+  for (const run of wireRuns(net)) {
+    const sides = run.horizontal ? ['above', 'below'] : ['right', 'left'];
+    for (const along of alongRun(run)) {
+      const anchor = run.horizontal ? { x: along, y: run.at } : { x: run.at, y: along };
+      for (const netSide of sides) {
+        let label;
+        try { label = circuit.addNetLabel(net, { anchor, netSide }); }
+        catch { continue; }
+        const box = label.bbox();
+        if (!boxes.some((other) => rectsOverlap(box, other))) {
+          boxes.push(box);
+          return label;
+        }
+        circuit.removeLabel(label.id);
+      }
+    }
   }
   return null;
 }
@@ -281,11 +301,88 @@ function snapTo(value) {
   return Math.round(value / 40) * 40;
 }
 
+/** The part letters meeting at each source net (`D_{1}, G_{2}`), keyed by
+ * net id and by net name, so a node found either way reads its marks. */
+function terminalMarks(circuit) {
+  const marks = new Map();
+  if (!circuit) return marks;
+  for (const net of circuit.nets.values()) {
+    const found = [];
+    for (const terminal of net.terminals || []) {
+      const component = circuit.components.get(terminal.comp);
+      const letter = TERMINAL_MARKS.get(component?.type)?.[terminal.term];
+      if (!letter || component.drawingOnly) continue;
+      const index = String(component.refdes).replace(/^[A-Za-z]/, '') || component.refdes;
+      found.push(`${letter}_{${index}}`);
+    }
+    if (!found.length) continue;
+    for (const key of [net.id, net.name ? `name:${net.name}` : null].filter(Boolean)) {
+      marks.set(key, [...new Set([...(marks.get(key) || []), ...found])]);
+    }
+  }
+  return marks;
+}
+
+/** Every wire segment of every net, as thin boxes a label must not cover. */
+function wireBoxes(circuit, except = null) {
+  const boxes = [];
+  for (const net of circuit.nets.values()) {
+    if (net === except) continue;
+    for (const path of net.paths ? net.paths() : []) {
+      for (let index = 1; index < path.length; index += 1) {
+        const [a, b] = [path[index - 1], path[index]];
+        boxes.push({ x: Math.min(a.x, b.x) - 1, y: Math.min(a.y, b.y) - 1, w: Math.abs(a.x - b.x) + 2, h: Math.abs(a.y - b.y) + 2 });
+      }
+    }
+  }
+  return boxes;
+}
+
+/**
+ * Hang a free label beside a node's wire: a cell above or below one of its
+ * horizontal runs, else a cell beside a vertical one, the first place it
+ * covers no symbol, label, or wire. Returns whether it found one; a node
+ * without room keeps the text off the drawing rather than printing it over
+ * something.
+ */
+function placeBesideNet(circuit, net, text, boxes) {
+  const label = circuit.addLabel({ text, x: 0, y: 0, align: 'center' });
+  const halfH = 40 * Math.ceil(label.bbox().h / 80);
+  const halfW = 40 * Math.ceil(label.bbox().w / 80);
+  for (const run of wireRuns(net)) {
+    for (const along of alongRun(run)) {
+      const spots = run.horizontal
+        ? [[along, run.at - 40 - halfH], [along, run.at + 40 + halfH]]
+        : [[run.at + 40 + halfW, along], [run.at - 40 - halfW, along]];
+      for (const [x, y] of spots) {
+        label.moveTo(x, y);
+        const box = label.bbox();
+        if (!boxes.some((other) => rectsOverlap(box, other))) {
+          boxes.push(box);
+          return true;
+        }
+      }
+    }
+  }
+  circuit.removeLabel(label.id);
+  return false;
+}
+
+/** A label's drawn width, measured the way the drawing measures it. */
+function labelWidth(text) {
+  const scratch = new Circuit();
+  return scratch.addLabel({ text, x: 0, y: 0, align: 'center' }).bbox().w;
+}
+
 /**
  * Build the drawn model.
  *
+ * `ports: false` leaves out the interface ports and names every node with a
+ * net label instead: the form placed into a design, whose own ports already
+ * carry those names.
+ *
  * @param {object} report a successful `analyzeSmallSignalV2` report
- * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map}} options
+ * @param {{circuit?: import('../model.js').Circuit, nodeNames?: Map, ports?: boolean}} options
  * @returns {{ok: boolean, circuit?: Circuit, correspondence?: Map, notes: string[], error?: string}}
  */
 export function smallSignalSchematic(report, options = {}) {
@@ -293,42 +390,117 @@ export function smallSignalSchematic(report, options = {}) {
   if (!Array.isArray(primitives) || !primitives.length) {
     return { ok: false, notes: [], error: 'this analysis produced no small-signal primitives to draw' };
   }
+  const withPorts = options.ports !== false;
   const elements = primitives.map(normalize).filter(Boolean);
   const names = nodeNames(report, options);
   // The node's own name, markup included: label text renders `_{...}`.
   const nodeName = (node) => (!node || node === AC_GROUND_NODE ? '' : String(names.get(node) || node));
   const plainName = (node) => nodeName(node).replace(/[_^]\{([^}]*)\}/g, '$1');
   const nodes = orderNodes(elements, report, options);
-  const shunts = new Map(nodes.map((node) => [node, []]));
-  const series = [];
-  for (const element of elements) {
-    const aGround = element.a === AC_GROUND_NODE;
-    const bGround = element.b === AC_GROUND_NODE;
-    if (aGround && bGround) continue;
-    // A controlled source across one node carries no current -- the body
-    // effect of a device whose source is the AC reference. Drawing it says
-    // nothing and costs a column.
-    if (element.control && element.control.a === element.control.b) continue;
-    if (aGround || bGround) shunts.get(bGround ? element.a : element.b).push(element);
-    else series.push(element);
+  // A controlled source across one node carries no current -- the body
+  // effect of a device whose source is the AC reference. Drawing it says
+  // nothing and costs a place.
+  const branches = elements.filter((element) => !(element.a === AC_GROUND_NODE && element.b === AC_GROUND_NODE)
+    && !(element.control && element.control.a === element.control.b));
+
+  // Rows: the AC ground at the bottom, and a transconductance's drain end
+  // above its source end, so a transistor stacked on another stands on it in
+  // the figure as it does in the schematic. Every other node stands on the
+  // first row; a resistor or capacitor spans whatever rows its ends are on.
+  const level = new Map([[AC_GROUND_NODE, 0]]);
+  for (const element of branches) {
+    for (const node of [element.a, element.b]) if (!level.has(node)) level.set(node, 1);
+  }
+  const above = branches.filter((element) => element.kind === 'vccs' && element.a !== AC_GROUND_NODE).map((element) => [element.a, element.b]);
+  for (let pass = 0, changed = true; changed; pass += 1) {
+    changed = false;
+    // Drains feeding back on their own sources leave no order to keep:
+    // every node then stands on the first row.
+    if (pass > level.size) {
+      for (const node of level.keys()) if (node !== AC_GROUND_NODE) level.set(node, 1);
+      break;
+    }
+    for (const [upper, lower] of above) {
+      if (level.get(upper) > level.get(lower)) continue;
+      level.set(upper, level.get(lower) + 1);
+      changed = true;
+    }
+  }
+  const top = Math.max(1, ...level.values());
+  const rowY = (row) => -row * LEVEL_H;
+
+  // A device's branches between the same two nodes -- g_m, g_mb, and r_o of
+  // one transistor -- stand side by side, sources first: one parallel unit.
+  // A branch whose ends share a row lies along it, a unit of its own.
+  const units = new Map();
+  for (const element of branches) {
+    const [upper, lower] = level.get(element.a) >= level.get(element.b) ? [element.a, element.b] : [element.b, element.a];
+    const flat = level.get(upper) === level.get(lower);
+    const key = flat ? element.id : `${upper}|${lower}|${element.metadata?.component || element.id}`;
+    if (!units.has(key)) units.set(key, { upper, lower, flat, elements: [], order: units.size, component: element.metadata?.component || null });
+    units.get(key).elements.push(element);
+  }
+  for (const unit of units.values()) {
+    unit.elements.sort((left, right) => Number(SOURCE_KINDS.has(right.kind)) - Number(SOURCE_KINDS.has(left.kind)));
+    unit.hi = level.get(unit.upper);
+    unit.lo = level.get(unit.lower);
   }
 
-  // Every element is drawn with its label above it, so a node's slot is as
-  // wide as its own branches need -- a Miller shunt beside a bare r_o should
-  // not push every other column apart.
   const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
   const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
-  // A shunt wears its label on its left, so its neighbor must clear it.
-  const widthOf = (element) => Math.max(MIN_PITCH, snapTo(estimateLabelWidth(labels.get(element).text) + 160));
-  const pitches = new Map(nodes.map((node) => [node, Math.max(MIN_PITCH, ...shunts.get(node).map(widthOf))]));
+  // The cells left of a branch its label takes: the label hangs a cell off
+  // the symbol, as `addElement` places it.
+  const reachOf = (width) => 40 * Math.ceil((40 + width / 2) / 40);
+  const leftRoom = (element) => {
+    const width = labelWidth(labels.get(element).text);
+    return reachOf(width) + width / 2;
+  };
 
-  const columns = new Map();
-  let x = 0;
-  for (const node of nodes) {
-    const count = Math.max(1, shunts.get(node).length);
-    const width = count * pitches.get(node) + 2 * SLOT_PADDING;
-    columns.set(node, snapTo(x + width / 2));
-    x += width;
+  // Columns follow the schematic: units of devices drawn at one x share a
+  // column, and a unit hanging from the node a column's stack ends at
+  // continues that stack (M1 over its source resistor), where their rows
+  // allow; the rest keep the order they appear in.
+  const sourceX = (unit) => {
+    try { return unit.component ? options.circuit?.getComponent(unit.component).transform.x ?? null : null; }
+    catch { return null; }
+  };
+  const ordered = [...units.values()].map((unit) => ({ unit, x: sourceX(unit) }))
+    .sort((left, right) => (left.x ?? Infinity) - (right.x ?? Infinity) || left.unit.order - right.unit.order);
+  const columns = [];
+  for (const { unit, x } of ordered) {
+    const chained = (column) => column.units.some((other) => (other.lower === unit.upper && other.lo === unit.hi)
+      || (other.upper === unit.lower && other.hi === unit.lo));
+    const fits = (column) => !unit.flat && ((x !== null && column.x === x) || chained(column))
+      && column.units.every((other) => !other.flat && (unit.hi <= other.lo || unit.lo >= other.hi));
+    const column = columns.find(fits) || columns[columns.push({ x, units: [] }) - 1];
+    column.units.push(unit);
+  }
+  const placed = new Map();
+  let cursor = 0;
+  for (const column of columns) {
+    // Each unit's branches left to right, then the units of a stack shifted
+    // so their first branches line up: one straight wire through the stack.
+    const rows = column.units.map((unit) => {
+      if (unit.flat) return [40 * Math.ceil((cursor + 80 + ELEMENT_GAP) / 40)];
+      const xs = [];
+      let at = cursor;
+      for (const element of unit.elements) {
+        xs.push(40 * Math.ceil((at + leftRoom(element)) / 40));
+        at = xs[xs.length - 1] + 40 + ELEMENT_GAP;
+      }
+      return xs;
+    });
+    const anchor = Math.max(...rows.map((xs) => xs[0]));
+    let right = cursor;
+    column.units.forEach((unit, index) => {
+      const shift = anchor - rows[index][0];
+      unit.elements.forEach((element, at) => {
+        const x = rows[index][at] + shift;
+        placed.set(element, { x, y: unit.flat ? rowY(unit.hi) : snapTo((rowY(unit.hi) + rowY(unit.lo)) / 2) });
+        right = Math.max(right, x + (unit.flat ? 80 : 40) + ELEMENT_GAP);
+      });
+    });
+    cursor = right;
   }
 
   const circuit = new Circuit();
@@ -338,6 +510,7 @@ export function smallSignalSchematic(report, options = {}) {
   const legend = [];
   const attachments = new Map(nodes.map((node) => [node, []]));
   const groundRefs = [];
+  const attach = (node, ref) => (node === AC_GROUND_NODE ? groundRefs : attachments.get(node)).push(ref);
 
   const addElement = (element, placement, upright = true) => {
     const type = symbols.get(element);
@@ -352,13 +525,11 @@ export function smallSignalSchematic(report, options = {}) {
     //
     // An upright branch wears its label on the left, where a textbook puts it;
     // a branch lying along a row wears it above, clear of its own wires. The
-    // offset comes from the label's own measured box rather than the estimate
-    // the columns are spaced by, so the text sits against its symbol instead
-    // of drifting into the gap towards the next one.
+    // offset comes from the label's own measured box, so the text sits
+    // against its symbol.
     const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
     const box = owned.bbox();
-    const reach = (extent) => 40 * Math.ceil((40 + extent / 2) / 40);
-    const world = upright ? { x: -reach(box.w), y: 0 } : { x: 0, y: -reach(box.h) };
+    const world = upright ? { x: -reachOf(box.w), y: 0 } : { x: 0, y: -reachOf(box.h) };
     owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
     owned.clearRenderedTextBounds();
     if (label.legend) legend.push(label.legend);
@@ -366,71 +537,66 @@ export function smallSignalSchematic(report, options = {}) {
     return component;
   };
 
-  // Shunt branches: node bus -> element -> ground rail.
-  for (const node of nodes) {
-    const list = shunts.get(node);
-    const centerX = columns.get(node);
-    const pitch = pitches.get(node);
-    list.forEach((element, index) => {
-      const shuntX = snapTo(centerX + (index - (list.length - 1) / 2) * pitch);
-      const vertical = SOURCE_KINDS.has(element.kind);
-      // A source symbol is already vertical; a passive is turned upright. The
-      // current of a controlled source flows from `a` into `b`, so a source
-      // whose ground end is `a` is turned around rather than redrawn.
-      const flipped = element.a === AC_GROUND_NODE;
-      const rotation = vertical ? (flipped ? 180 : 0) : (flipped ? 270 : 90);
-      const component = addElement(element, { x: shuntX, y: SHUNT_Y, rotation }, true);
-      const [top, bottom] = flipped ? ['b', 'a'] : ['a', 'b'];
-      attachments.get(node).push(`${component.refdes}.${top}`);
-      groundRefs.push(`${component.refdes}.${bottom}`);
-    });
+  // Every unit's branches upright between its two rows. A source symbol is
+  // already vertical; a passive is turned upright. The current of a
+  // controlled source flows from `a` into `b`, so a source whose lower end is
+  // `a` is turned around rather than redrawn.
+  for (const unit of units.values()) {
+    if (unit.flat) {
+      // Lying along its row: `a` toward the node drawn further left.
+      const [element] = unit.elements;
+      const at = placed.get(element);
+      const xs = (node) => branches.filter((other) => other !== element && placed.has(other) && (other.a === node || other.b === node)).map((other) => placed.get(other).x);
+      const mean = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : at.x);
+      const aLeft = mean(xs(element.a)) <= mean(xs(element.b));
+      const rotation = SOURCE_KINDS.has(element.kind) ? (aLeft ? 270 : 90) : (aLeft ? 0 : 180);
+      const component = addElement(element, { ...at, rotation }, false);
+      attach(element.a, `${component.refdes}.a`);
+      attach(element.b, `${component.refdes}.b`);
+      continue;
+    }
+    for (const element of unit.elements) {
+      const aUp = element.a === unit.upper;
+      const rotation = SOURCE_KINDS.has(element.kind) ? (aUp ? 0 : 180) : (aUp ? 90 : 270);
+      const component = addElement(element, { ...placed.get(element), rotation }, true);
+      attach(unit.upper, `${component.refdes}.${aUp ? 'a' : 'b'}`);
+      attach(unit.lower, `${component.refdes}.${aUp ? 'b' : 'a'}`);
+    }
   }
 
-  // Series branches stack in rows above the node line, lowest row first.
-  const rows = [];
-  for (const element of series) {
-    const left = Math.min(columns.get(element.a), columns.get(element.b));
-    const right = Math.max(columns.get(element.a), columns.get(element.b));
-    let row = rows.findIndex((spans) => spans.every(([from, to]) => right <= from || left >= to));
-    if (row < 0) row = rows.push([]) - 1;
-    rows[row].push([left, right]);
-    const y = BUS_Y - (row + 1) * ROW_H;
-    const rotation = SOURCE_KINDS.has(element.kind) ? 270 : 0;
-    const component = addElement(element, { x: snapTo((left + right) / 2), y, rotation }, false);
-    const aLeft = columns.get(element.a) <= columns.get(element.b);
-    attachments.get(element.a).push(`${component.refdes}.${aLeft ? 'a' : 'b'}`);
-    attachments.get(element.b).push(`${component.refdes}.${aLeft ? 'b' : 'a'}`);
-  }
-
-  // The interface ports read left to right on the node line itself, outside
-  // every column: the input node sorts first and the output node last, so
-  // neither stub crosses another node's bus.
+  // The interface ports, on their node's row just outside everything drawn:
+  // the input on the left, the output on the right. A node that only
+  // controls a source -- a bare gate -- has no row; its port stands on the
+  // top one.
   const portNodes = new Set();
-  // Outside everything drawn, and outside every column: a node that only
-  // controls a source has a column but nothing standing in it.
+  const stubs = new Map();
   const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
-  const spans = [...columns.values()];
-  const leftEdge = snapTo(Math.min(...drawn.map((box) => box.x), ...spans) - PORT_GAP);
-  const rightEdge = snapTo(Math.max(...drawn.map((box) => box.x + box.w), ...spans) + PORT_GAP);
+  const leftEdge = snapTo(Math.min(0, ...drawn.map((box) => box.x)) - PORT_GAP);
+  const rightEdge = snapTo(Math.max(cursor, ...drawn.map((box) => box.x + box.w)) + PORT_GAP);
   const portFor = (node, type, side) => {
-    if (!node || !columns.has(node)) return;
+    if (!withPorts || !node || !attachments.has(node)) return;
     const refdes = uniqueRefdes(plainName(node), used);
-    const port = circuit.addComponent(type, {
-      refdes, x: side === 'left' ? leftEdge : rightEdge, y: BUS_Y, noLabel: true,
-    });
+    const x = side === 'left' ? leftEdge : rightEdge;
+    const y = rowY(level.get(node) ?? top);
+    const port = circuit.addComponent(type, { refdes, x, y, noLabel: true });
     // Above the port, not beside it: an outward-facing port box already
     // occupies the side its own label offset points at.
     circuit.addLabel({ owner: refdes, text: nodeName(node), align: 'center', offset: { x: 0, y: -120 } });
     attachments.get(node).push(`${port.refdes}.p`);
+    stubs.set(node, { x: x + (side === 'left' ? PORT_GAP : -PORT_GAP), y });
     portNodes.add(node);
   };
   portFor(portNode(report, 'input'), 'input', 'left');
   portFor(portNode(report, 'output'), 'output', 'right');
 
-  // One AC-ground rail under the whole drawing.
-  const railX = snapTo(Math.min(...columns.values()) - SLOT_PADDING);
-  const ground = circuit.addComponent('ground', { refdes: 'GND', x: railX, y: RAIL_Y, noLabel: true });
-  groundRefs.push(`${ground.refdes}.gnd`);
+  // The AC ground a cell under the first branch that reaches it: the rail is
+  // no longer than the branches it joins.
+  const grounded = [...placed.entries()].filter(([element]) => element.a === AC_GROUND_NODE || element.b === AC_GROUND_NODE)
+    .map(([, at]) => at.x).sort((left, right) => left - right)[0];
+  if (grounded !== undefined) {
+    const ground = circuit.addComponent('ground', { refdes: uniqueRefdes('GND', used), x: grounded, y: rowY(0) + GROUND_DROP, noLabel: true });
+    groundRefs.push(`${ground.refdes}.gnd`);
+  }
 
   const failures = [];
   const wire = (refs, name, stub = null) => {
@@ -438,10 +604,7 @@ export function smallSignalSchematic(report, options = {}) {
       // A node that only controls a source -- a bare gate -- has no branch of
       // its own. Draw its port down to the node line anyway: the controlling
       // voltage needs somewhere to be read.
-      if (refs.length === 1 && stub) {
-        circuit.wireTo(refs[0], stub);
-        return null;
-      }
+      if (refs.length === 1 && stub) return circuit.wireTo(refs[0], stub) || null;
       if (refs.length < 2) return null;
       const net = circuit.connect(...refs);
       if (name && net) circuit.renameNet(net, name);
@@ -449,9 +612,27 @@ export function smallSignalSchematic(report, options = {}) {
     } catch (error) { failures.push(`${name || 'net'}: ${error.message}`); }
     return null;
   };
+  // A pin no other branch shares -- the input end of a resistor when no port
+  // is drawn -- gets a short lead of its own to carry the node's name.
+  const lead = (ref) => {
+    const [refdes, term] = ref.split('.');
+    const component = circuit.components.get(refdes);
+    const pin = component.terminalWorld(term);
+    const { x, y } = component.transform;
+    const dx = Math.sign(pin.x - x);
+    const dy = dx ? 0 : Math.sign(pin.y - y);
+    return { x: pin.x + dx * 2 * 40, y: pin.y + dy * 2 * 40 };
+  };
   const wired = new Map();
   for (const node of nodes) {
-    wired.set(node, wire(attachments.get(node), nodeName(node) || node, { x: columns.get(node), y: BUS_Y }));
+    const refs = attachments.get(node);
+    const stub = stubs.get(node) || (refs.length === 1 ? lead(refs[0]) : null);
+    const net = wire(refs, nodeName(node) || node, stub);
+    if (net && refs.length === 1 && !portNodes.has(node) && nodeName(node)) {
+      try { circuit.renameNet(net, nodeName(node)); }
+      catch (error) { failures.push(`${nodeName(node)}: ${error.message}`); }
+    }
+    wired.set(node, net);
   }
   wire(groundRefs, 'VSS');
 
@@ -465,11 +646,24 @@ export function smallSignalSchematic(report, options = {}) {
   ];
   for (const node of nodes) {
     const net = wired.get(node);
-    if (!net || portNodes.has(node) || !net.name) continue;
-    const anchor = netLabelAnchor(net, estimateLabelWidth(net.name), boxes);
-    if (!anchor) continue;
-    try { circuit.addNetLabel(net, { anchor, netSide: 'above' }); }
-    catch { /* a node whose wire the router shaped differently keeps its name in the net list */ }
+    if (!net?.name || portNodes.has(node)) continue;
+    // Its own wire it sits on; every other wire it keeps clear of.
+    const others = wireBoxes(circuit, net);
+    placeNetName(circuit, net, [...boxes, ...others]);
+    const placed = [...circuit.labels.values()].find((label) => label.netId === net.id);
+    if (placed) boxes.push(placed.bbox());
+  }
+
+  // Mark each node with the device terminals that meet there (`D_{1}`), the
+  // way a textbook letters a hybrid-pi figure, so the reader can find each
+  // node in the schematic it came from.
+  const marks = terminalMarks(options.circuit);
+  boxes.push(...wireBoxes(circuit));
+  for (const node of nodes) {
+    const net = wired.get(node);
+    const found = marks.get(node) || marks.get(`name:${names.get(node)}`);
+    if (!net || !found?.length) continue;
+    placeBesideNet(circuit, net, found.join(', '), boxes);
   }
   if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
 
@@ -479,4 +673,77 @@ export function smallSignalSchematic(report, options = {}) {
   if (omitted.length) notes.push(`r_o omitted for ${omitted.join(', ')}`);
 
   return { ok: true, circuit, correspondence, notes, legend, failures };
+}
+
+/**
+ * Place a drawn model (`smallSignalSchematic(report, { ports: false })`) into
+ * `circuit`, a band below its drawing and aligned with its left edge, as
+ * drawing-only parts: drawn and checked like the rest, read by no analysis.
+ * A part whose name the design already uses takes the next free one; the
+ * nets keep the node names, the virtual connection that ties each to the
+ * schematic node it models. Returns the added refdes and label ids.
+ */
+export function placeSmallSignalModel(circuit, model) {
+  const source = model.circuit;
+  const ink = circuit.components.size || circuit.labels.size ? circuit.bounds() : { x: 0, y: 0, w: 0, h: 0 };
+  const own = source.bounds();
+  const dx = snapTo(ink.x - own.x);
+  const dy = ink.h ? 40 * Math.ceil((ink.y + ink.h + 80 - own.y) / 40) : snapTo(-own.y);
+  const at = (point) => ({ x: point.x + dx, y: point.y + dy });
+
+  const used = new Set([...circuit.components.keys(), ...circuit.labels.keys()]);
+  const refs = new Map();
+  const added = { components: [], labels: [] };
+  const wasLoading = circuit._loading;
+  circuit._loading = true;
+  try {
+    for (const component of source.components.values()) {
+      // Junction dots are derived from the wires once they are in.
+      if (component.type === 'solder') continue;
+      const refdes = uniqueRefdes(component.refdes, used);
+      refs.set(component.refdes, refdes);
+      circuit.addComponent(component.type, {
+        refdes,
+        ...at(component.transform),
+        rotation: component.transform.rotation,
+        mirrorX: component.transform.mirrorX,
+        mirrorY: component.transform.mirrorY,
+        value: component.value,
+        drawingOnly: true,
+        noLabel: true,
+      });
+      added.components.push(refdes);
+    }
+    const nets = new Map();
+    for (const net of source.nets.values()) {
+      const copy = circuit.createWireNet({
+        name: net.name,
+        route: net.route?.map(at) || null,
+        branches: net.branches?.map((path) => path.map(at)) || null,
+        junctions: net.junctions.map(at),
+      });
+      for (const terminal of net.terminals) {
+        if (refs.has(terminal.comp)) copy.terminals.push({ comp: refs.get(terminal.comp), term: terminal.term });
+      }
+      nets.set(net.id, copy);
+    }
+    for (const label of source.labels.values()) {
+      let copy;
+      if (label.owner) {
+        if (!refs.has(label.owner)) continue;
+        copy = circuit.addLabel({ owner: refs.get(label.owner), text: label.text, align: label.align, offset: { ...label.offset } });
+      } else if (label.netId) {
+        const net = nets.get(label.netId);
+        if (!net?.name) continue;
+        copy = circuit.addNetLabel(net.id, { anchor: at(label.anchor), align: label.align, netSide: label.netSide });
+      } else {
+        copy = circuit.addLabel({ text: label.text, align: label.align, ...at(label.anchor) });
+      }
+      added.labels.push(copy.id);
+    }
+  } finally {
+    circuit._loading = wasLoading;
+  }
+  circuit.syncJunctionSolders();
+  return added;
 }

@@ -22,7 +22,7 @@ import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { renderExpression } from './present.js';
 import { bodeSketch, evaluateExpression, expressionSymbols, polynomialRoots } from './bode.js';
 import { TRANSFER_FUNCTION_TYPES, isBlockIn, parseGain, readTransferFunction } from '../transfer-function.js';
-import { canonicalNetName } from '../model.js';
+import { analyzedCircuit, canonicalNetName } from '../model.js';
 import { COLOR_PALETTE } from '../style.js';
 import { samplePath } from './sampling.js';
 import { chopperShortedNets } from './shared.js';
@@ -47,7 +47,7 @@ const quantizerErrorKey = (refdes) => `quantizer:${refdes}`;
 
 /** Whether a drawing has any signal-flow part (the analysis mode it opens in). */
 export function hasSignalFlow(circuit) {
-  return [...circuit.components.values()].some(isSignalPart);
+  return [...circuit.components.values()].some((component) => !component.drawingOnly && isSignalPart(component));
 }
 
 // ----- the signal graph ---------------------------------------------------------------
@@ -66,6 +66,7 @@ function signalKey(net) {
  * input port count.
  */
 export function signalFlowGraph(circuit) {
+  circuit = analyzedCircuit(circuit);
   const signals = new Map();
   const issues = [];
   // Keys a chopper joins go by one of them.
@@ -266,6 +267,7 @@ function failure(code, error, issues = []) {
  * (`sampledResult`), worked out again for each set of numbers.
  */
 export function analyzeSignalFlow(circuit, options = {}, graph = signalFlowGraph(circuit)) {
+  circuit = analyzedCircuit(circuit);
   const { signals, sources, issues } = graph;
   if (issues.length) return failure(issues[0].code, issues[0].message, issues);
   const parts = [...circuit.components.values()].filter(isSignalPart);

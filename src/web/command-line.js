@@ -121,6 +121,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'link', aliases: ['unlink'], help: 'link <refdes> [design] — link a part to another design; unlink <refdes>' },
   { name: 'rename', help: 'rename <refdes> <new>' },
   { name: 'waveform', aliases: ['sine', 'pulse-source', 'noise-source'], help: 'waveform <refdes> [sine|pulse|noise|none] (what a voltage source shows in its circle)' },
+  { name: 'drawing-only', aliases: ['drawingonly', 'no-analysis'], help: 'drawing-only <refdes>[,refdes...] [on|off] (drawn and checked, read by no analysis)' },
   { name: 'size', aliases: ['wl', 'transistor-size'], help: 'size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] (a transistor\'s W/L and its label; off removes it)' },
   { name: 'partstable', aliases: ['parts-table', 'size-table', 'sizing-table'], help: 'partstable [refdes ...] [--at X Y] (a table of sizes and values on the drawing, kept up to date)' },
   { name: 'renumber', aliases: ['number', 'renumber-parts'], help: 'renumber [--order right-down|up-right|...] [refdes ...] (along each row or column, then row by row)' },

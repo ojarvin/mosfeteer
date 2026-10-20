@@ -2033,6 +2033,9 @@ export class ComponentInstance {
     };
     this.style = { color: opts.style?.color || '#111', lineStyle: opts.style?.lineStyle || 'solid', width: opts.style?.width || 'normal' };
     this.drawOrder = Number.isFinite(opts.drawOrder) ? opts.drawOrder : 0;
+    // A drawing-only part is drawn and checked like any other, but no
+    // analysis reads it: a small-signal model placed beside its schematic.
+    this.drawingOnly = opts.drawingOnly === true;
     // A supply may draw its bar joined to aligned same-rail neighbors
     // (see supply-bars.js). Visual only: it never adds connectivity.
     this.joinBar = this.type === 'supply' && opts.joinBar === true;
@@ -2224,6 +2227,7 @@ export class ComponentInstance {
       ...(this.size ? { size: { ...this.size } } : {}),
       ...(this.valueLabel ? { valueLabel: this.valueLabel } : {}),
       ...(this.waveform ? { waveform: this.waveform } : {}),
+      ...(this.drawingOnly ? { drawingOnly: true } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -7071,6 +7075,7 @@ export class Circuit {
         style: c.style,
         analysis: c.analysis,
         drawOrder: c.drawOrder,
+        drawingOnly: c.drawingOnly,
         noLabel: true,
       });
     }
@@ -7184,4 +7189,27 @@ export class Circuit {
     circuit._loading = false;
     return circuit;
   }
+}
+
+/**
+ * The circuit every analysis reads: this one, or, when it has drawing-only
+ * parts, a copy without them and without the wires and labels that only
+ * they had. Physical net ids and refdes are kept, so a report still names
+ * the drawing's own nets and parts.
+ */
+export function analyzedCircuit(circuit) {
+  const skipped = new Set();
+  for (const component of circuit.components.values()) if (component.drawingOnly) skipped.add(component.refdes);
+  if (!skipped.size) return circuit;
+  const data = circuit.toJSON();
+  const nets = data.nets
+    .map((net) => ({ ...net, terminals: net.terminals.filter((terminal) => !skipped.has(terminal.comp)) }))
+    .filter((net, index) => net.terminals.length || !data.nets[index].terminals.length);
+  const kept = new Set(nets.map((net) => net.id));
+  return Circuit.fromJSON({
+    ...data,
+    components: data.components.filter((component) => !skipped.has(component.refdes)),
+    nets,
+    labels: data.labels.filter((label) => !skipped.has(label.owner) && (!label.netId || kept.has(label.netId))),
+  });
 }

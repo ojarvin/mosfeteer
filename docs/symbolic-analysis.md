@@ -402,6 +402,38 @@ are collected in its numerator, while proven parallel branches remain visible. F
 consistent units before final label placement and remains stable across zoom
 and reload.
 
+## The model figure
+
+The Model tab draws the small-signal circuit the solve used
+(`src/core/analysis/model-schematic.js`): the primitives after the pre-solve
+transforms, so Miller shunts and omitted `r_o` show as the equations treat
+them. It is an ordinary schematic on the grid, built from the editor's own
+symbols. The AC ground is the bottom row, and each transconductance's drain
+end stands a row above its source end, so a cascode stacks as it does in the
+schematic; every other node stands on the first row. A device's branches
+between the same two nodes (`g_m`, `g_mb`, `r_o`) stand side by side, sources
+first. Columns follow the schematic's left-to-right order, and a unit that
+hangs from the node a column's stack ends at continues that stack (M1 over
+its source resistor). A branch whose ends share a row lies along it. One AC
+ground sits a cell under the first branch that reaches it, and the input and
+output ports sit on their node's row, outside the drawing. Each node is
+marked with the device terminals that meet there (`D_{1}, S_{2}`) and,
+without a port, named with a net label.
+
+**Open in window** shows it in a floating window that pans and zooms like a
+reference window (`src/web/reference-window.js`). The window redraws on each
+Derive and is not saved with the design. **Place in drawing** (also **Place**
+in the window, and the `analyze model` command) adds the model below the
+drawing, aligned with its left edge, as one undo step. It is drawn without
+ports, and its parts are **drawing only**
+(`ComponentInstance#drawingOnly`): drawn, moved, and checked like any other
+part, but no analysis reads them (`analyzedCircuit`), so placing the model
+changes no result and leaves the equations current. A part whose name the
+design already uses gets the next free one (`RD` becomes `RD_2`). The node
+names stay as they are, so each model node shares its name with the
+schematic node it models. The context menu's **Drawing only** item (and the
+`drawing-only` command) sets or clears the flag on any part.
+
 ## Pipeline invariants
 
 The v2 pipeline builds one exact full-RLC MNA model for `Z_in(s)`, `Z_out(s)`,

@@ -39,7 +39,7 @@ import { coefficientValue, numericRootsOf, transferTex } from './signal-flow.js'
 import { parseGain } from '../transfer-function.js';
 import { timingStates } from '../timing-diagram.js';
 import { samePhase, switchGroupKey, switchState, switchStateAt } from '../beats.js';
-import { isReferenceMarker } from '../model.js';
+import { analyzedCircuit, isReferenceMarker } from '../model.js';
 import { opampModel } from './devices.js';
 import { switchedCapNoise } from './switched-cap-noise.js';
 
@@ -59,6 +59,7 @@ function failure(code, error, extra = {}) {
  * `{ ok, states: [{ name, closed: Set of refdes }], source }` or a failure.
  */
 export function switchedCapPhases(circuit) {
+  circuit = analyzedCircuit(circuit);
   const switches = [...circuit.components.values()].filter((component) => switchState(component));
   if (!switches.length) return failure('no-switches', 'There are no switches: a switched-capacitor circuit switches its capacitors.');
   const states = timingStates(circuit);
@@ -107,6 +108,7 @@ function joiner() {
  * capacitors }` or a failure `{ ok: false, code, error }`.
  */
 export function analyzeSwitchedCap(circuit, options = {}) {
+  circuit = analyzedCircuit(circuit);
   const phases = switchedCapPhases(circuit);
   if (!phases.ok) return phases;
   const { states } = phases;
@@ -377,6 +379,7 @@ const NOISE_POINTS = 1024;
  * failure.
  */
 export function switchedCapNoiseFigures(circuit, options = {}) {
+  circuit = analyzedCircuit(circuit);
   const { values = {}, celsius = 27, fs = 1 } = options;
   if (!(Number(fs) > 0)) return failure('noise', 'Give the sample rate f_s, above 0.');
   const kelvin = Number(celsius) + 273.15;

@@ -1,4 +1,5 @@
 import { firstDefined } from './shared.js';
+import { analyzedCircuit } from '../model.js';
 import { AC_GROUND, resolveAnalysisContext } from './context.js';
 import { convertCircuitToPrimitives } from './devices.js';
 import { coupledSubgraph, splitAtNode } from './graph.js';
@@ -578,6 +579,7 @@ function deviceOption(devices, refdes, name) {
 
 export function buildExactAnalysisPipeline(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
+  circuit = analyzedCircuit(circuit);
   const ops = validateMnaOps(options.ops || numberOps());
   const context = resolveAnalysisContext(circuit, options);
   if (!context.ok) return failure('context', context.error, { context, diagnostics: context.diagnostics.errors });

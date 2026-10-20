@@ -198,20 +198,6 @@
     </form>
   </dialog>
 
-  <dialog id="model-dialog" class="model-dialog" aria-labelledby="model-dialog-title">
-    <form method="dialog">
-      <div class="model-dialog-head">
-        <h2 id="model-dialog-title">Small-signal model</h2>
-        <p class="model-dialog-hint">Scroll to zoom · middle-drag to pan · right-drag a box · double-click to fit</p>
-        <button value="cancel" class="icon-button" data-icon="x-circle" aria-label="Close small-signal model" title="Close (Esc)">Close</button>
-      </div>
-      <div id="model-dialog-figure" class="model-dialog-figure">
-        <div id="model-dialog-rubber" class="model-dialog-rubber" hidden></div>
-      </div>
-      <ul id="model-dialog-notes" class="analysis-model-notes"></ul>
-    </form>
-  </dialog>
-
   <!-- Learn (?): the one place to learn the editor -- its keys, the
        tutorial, the symbols, and every tip. Settings holds preferences only. -->
   <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-dialog-title">
@@ -463,7 +449,8 @@
               <section id="analysis-panel-model" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-model" hidden>
                 <div id="analysis-model" class="analysis-model"></div>
                 <div class="dialog-actions analysis-model-actions">
-                  <button id="analysis-model-open" type="button" data-icon="analysis">Open full size</button>
+                  <button id="analysis-model-place" type="button" data-icon="plus" title="Place in the drawing">Place in drawing</button>
+                  <button id="analysis-model-open" type="button" data-icon="analysis" class="primary-action">Open in window</button>
                 </div>
               </section>
             </div>

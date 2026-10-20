@@ -203,6 +203,9 @@ size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide]
                                replace draws it in place of the name label, beside
                                under it, hide draws none; size <refdes> off removes it;
                                a comma list sizes several parts at once
+drawing-only <refdes>[,refdes...] [on|off]
+                               drawn and checked, but read by no analysis (a placed
+                               small-signal model); no on|off prints it
 partstable [refdes ...] [--at X Y]
                                a table of the sizes (W, L, m) and values (passives,
                                sources) on the drawing, right of it by default; it is
@@ -241,6 +244,8 @@ explain connect REF.TERM REF.TERM
 analyze output-impedance NET   derive symbolic Z_out (input is zeroed)
 analyze input-impedance NET    derive symbolic Z_in
 analyze transfer-function OUT  derive symbolic A_v (use --input IN)
+analyze model OUT              place the small-signal model below the drawing as
+                               drawing-only parts (use --input IN; docs/symbolic-analysis.md)
                                use --reference, --ac-ground, --mode,
                                --differential-side, --model, --context, or
                                the approximation flags as needed

@@ -92,6 +92,50 @@ test('analyze selects one requested quantity from the combined solve', () => {
   assert.doesNotMatch(result.text, /DC input impedance|DC output impedance/);
 });
 
+test('analyze model places the model below the drawing as drawing-only parts, leaving the analysis as it was', () => {
+  const circuit = analysisCircuit({ capacitor: true });
+  const before = runCommand(circuit, 'analyze transfer-function VOUT --input VIN').text;
+  const bottom = circuit.bounds().y + circuit.bounds().h;
+  const existing = new Set(circuit.components.keys());
+  const result = runCommand(circuit, 'analyze model VOUT --input VIN');
+  assert.equal(result.mutated, true);
+  assert.ok(result.json.components.length >= 3, result.text);
+  for (const refdes of result.json.components) {
+    assert.ok(!existing.has(refdes), `${refdes} is a new name`);
+    const part = circuit.components.get(refdes);
+    assert.equal(part.drawingOnly, true, refdes);
+    assert.ok(part.bboxWorld().y >= bottom, `${refdes} sits below the drawing`);
+  }
+  assert.equal(runCommand(circuit, 'analyze transfer-function VOUT --input VIN').text, before);
+  assert.equal(evaluate(circuit).ok, true, JSON.stringify(evaluate(circuit).issues));
+  // A second placement goes below the first, under names of its own.
+  const again = runCommand(circuit, 'analyze model VOUT --input VIN');
+  assert.ok(again.json.components.every((refdes) => !result.json.components.includes(refdes)));
+  assert.equal(runCommand(circuit, 'analyze transfer-function VOUT --input VIN').text, before);
+});
+
+test('analyze model reports an analysis that cannot run, and places nothing', () => {
+  const circuit = analysisCircuit();
+  const count = circuit.components.size;
+  assert.throws(() => runCommand(circuit, 'analyze model NOPE --input VIN'), /NOPE|output|port|net/i);
+  assert.equal(circuit.components.size, count);
+});
+
+test('drawing-only marks parts that no analysis reads, and clears it', () => {
+  const circuit = analysisCircuit();
+  const refs = [...circuit.components.values()].filter((c) => c.type === 'resistor').map((c) => c.refdes);
+  const on = runCommand(circuit, `drawing-only ${refs.join(',')} on`);
+  assert.equal(on.mutated, true);
+  assert.ok(on.json.every((entry) => entry.drawingOnly));
+  assert.equal(Circuit.fromJSON(circuit.toJSON()).components.get(refs[0]).drawingOnly, true, 'saved with the design');
+  assert.match(runCommand(circuit, `drawing-only ${refs[0]}`).text, /drawing only/);
+  runCommand(circuit, `drawing-only ${refs.join(',')} off`);
+  assert.equal(circuit.components.get(refs[0]).drawingOnly, false);
+  assert.equal('drawingOnly' in circuit.components.get(refs[0]).toJSON(), false);
+  assert.throws(() => runCommand(circuit, `drawing-only ${refs[0]} maybe`), /usage: drawing-only/);
+  assert.throws(() => runCommand(circuit, 'drawing-only NOPE on'), /NOPE/);
+});
+
 test('analyze derives a current-output transfer function on request', () => {
   const result = runCommand(analysisCircuit({ capacitor: true }), 'analyze transconductance VOUT --input VIN');
   assert.equal(result.json.ok, true, result.json.error);

@@ -204,6 +204,7 @@ export function copySelection({ quiet = false } = {}) {
       ...(c.type === 'block' ? { blockSize: { ...c.blockSize }, blockTerminals: c.blockTerminals.map((t) => ({ ...t })) } : {}),
       ...(c.type === 'chopper' ? { blockSize: { ...c.blockSize } } : {}),
       ...(c.waveform ? { waveform: c.waveform } : {}),
+      ...(c.drawingOnly ? { drawingOnly: true } : {}),
       style: { ...(c.style || {}) },
       // The value: a resistance, a switch's phase.
       value: c.value,
@@ -657,6 +658,7 @@ export function pasteClipboard({ recordHistory = true, connect = true } = {}) {
           blockSize: c.blockSize,
           blockTerminals: c.blockTerminals,
           waveform: c.waveform,
+          drawingOnly: c.drawingOnly,
           style: c.style,
           value: c.value,
         });

@@ -90,7 +90,10 @@ markers.
 `adaptCombinedReport(analyzeSmallSignalV2(...))`; every transfer function
 and noise column comes from the one MNA solve; ambiguous selections return a
 diagnostic, never a guess. Signal-flow and switched-capacitor
-analysis refuse rather than guess too. Analysis settings and slider values are document data
+analysis refuse rather than guess too. Every analysis reads
+`analyzedCircuit(circuit)`: a drawing-only part
+(`ComponentInstance#drawingOnly`, such as a placed small-signal model) is
+drawn and checked but never analyzed. Analysis settings and slider values are document data
 (`Circuit#analysisValues`): a change is `markSettingsChanged`, saved but never
 stale, one undo entry per finished adjustment.
 

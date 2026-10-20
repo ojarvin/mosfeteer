@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Circuit } from '../src/core/model.js';
+import { Circuit, analyzedCircuit } from '../src/core/model.js';
 import { analyzeSmallSignalV2 } from '../src/core/analysis/engine.js';
-import { smallSignalSchematic } from '../src/core/analysis/model-schematic.js';
+import { placeSmallSignalModel, smallSignalSchematic } from '../src/core/analysis/model-schematic.js';
+import { noiseCandidates } from '../src/core/analysis/noise.js';
+import { tableParts } from '../src/core/parts-table.js';
 import { evaluate } from '../src/core/commands.js';
 import { smallSignalGoldenCorpus } from './fixtures/small-signal-golden.js';
 
@@ -44,7 +46,7 @@ test('the drawn model carries one branch per solved primitive', () => {
   }
 });
 
-test('the model reads left to right: ports on the node line, nodes named', () => {
+test('the model reads left to right: ports outside the branches, nodes named', () => {
   const { circuit, report } = fixture('nmos-cascode');
   const model = smallSignalSchematic(report, { circuit });
   assert.equal(model.ok, true, model.error || '');
@@ -56,7 +58,6 @@ test('the model reads left to right: ports on the node line, nodes named', () =>
   const left = Math.min(...branches.map((component) => component.bboxWorld().x));
   const right = Math.max(...branches.map((component) => component.bboxWorld().x + component.bboxWorld().w));
   for (const port of ports) {
-    assert.equal(port.transform.y, 0, 'ports sit on the node line');
     const outside = port.transform.x < left || port.transform.x > right;
     assert.ok(outside, `${port.refdes} should stand outside the drawn branches`);
   }
@@ -157,4 +158,92 @@ test('an analysis without primitives has no model to draw', () => {
   const result = smallSignalSchematic({ ok: false }, {});
   assert.equal(result.ok, false);
   assert.match(result.error, /no small-signal primitives/);
+});
+
+test('each transistor\'s branches stand side by side, and a stacked transistor stands on the one below', () => {
+  const { circuit, report } = fixture('nmos-cascode');
+  const model = smallSignalSchematic(report, { circuit });
+  const at = (refdes) => model.circuit.components.get(refdes).transform;
+  // g_m and r_o of each device share a row, side by side.
+  for (const [gm, ro] of [['gm1', 'ro1'], ['gm2', 'ro2']]) {
+    assert.equal(at(gm).y, at(ro).y, `${gm} beside ${ro}`);
+    assert.ok(at(gm).x < at(ro).x, `${gm} left of ${ro}`);
+  }
+  // M2 (the cascode) stands on M1, in the same column.
+  assert.ok(at('gm2').y < at('gm1').y, 'M2 above M1');
+  assert.equal(at('gm2').x, at('gm1').x, 'one column');
+  // R_D runs from the output down to the ground, beside the stack.
+  assert.ok(at('RD').x > at('ro2').x);
+});
+
+test('each node is marked with the device terminals that meet there', () => {
+  const { circuit, report } = fixture('nmos-cascode');
+  const model = smallSignalSchematic(report, { circuit });
+  const free = [...model.circuit.labels.values()].filter((label) => !label.owner && !label.netId).map((label) => label.text);
+  // M1's drain meets M2's source at the internal node; the output is M2's
+  // drain; the input is M1's gate.
+  for (const mark of ['D_{1}, S_{2}', 'D_{2}', 'G_{1}']) assert.ok(free.includes(mark), `${mark} in ${free.join(' | ')}`);
+});
+
+test('the model is compact: the ground hangs under the first branch, the ports sit on their node\'s row', () => {
+  for (const id of ['nmos-common-source', 'nmos-cascode', 'cmos-inverter']) {
+    const { circuit, report } = fixture(id);
+    const model = smallSignalSchematic(report, { circuit });
+    const parts = [...model.circuit.components.values()];
+    const ground = parts.find((part) => part.type === 'ground');
+    const shunts = parts.filter((part) => !['input', 'output', 'ground', 'solder'].includes(part.type));
+    const pin = ground.terminalWorld('gnd');
+    const bottoms = shunts.flatMap((part) => part.worldTerminals()).filter((terminal) => terminal.x === pin.x);
+    assert.ok(bottoms.some((terminal) => terminal.y === pin.y - 80), `${id}: the ground is a cell under a branch`);
+    // Each port's wire runs straight along the node line to its node.
+    for (const port of parts.filter((part) => ['input', 'output'].includes(part.type))) {
+      const net = [...model.circuit.nets.values()].find((candidate) => candidate.terminals.some((terminal) => terminal.comp === port.refdes));
+      const y = port.terminalWorld('p').y;
+      const leg = net.paths().find((path) => path.some((point) => point.x === port.terminalWorld('p').x && point.y === y));
+      assert.ok(leg.slice(0, 2).every((point) => point.y === y), `${id}: ${port.refdes} leaves level`);
+    }
+  }
+});
+
+test('without ports, every named node carries its name as a net label', () => {
+  const { circuit, report } = fixture('nmos-common-source');
+  const model = smallSignalSchematic(report, { circuit, ports: false });
+  assert.equal(model.ok, true, model.error || '');
+  const types = [...model.circuit.components.values()].map((component) => component.type);
+  assert.ok(!types.includes('input') && !types.includes('output'));
+  const names = [...model.circuit.labels.values()].filter((label) => label.isNetLabel()).map((label) => label.text);
+  assert.ok(names.includes('VOUT'), names.join(' | '));
+  assert.equal(evaluate(model.circuit).ok, true);
+});
+
+test('a placed model is drawing only: the design analyzes as before, its names stay unique', () => {
+  const { circuit, report } = fixture('nmos-common-source');
+  const before = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT' });
+  const ink = circuit.bounds();
+  const names = new Set(circuit.components.keys());
+  const added = placeSmallSignalModel(circuit, smallSignalSchematic(report, { circuit, ports: false }));
+  assert.ok(added.components.length >= 4);
+  for (const refdes of added.components) {
+    const part = circuit.components.get(refdes);
+    assert.equal(part.drawingOnly, true);
+    assert.ok(!names.has(refdes), `${refdes} is a new name`);
+    assert.ok(part.bboxWorld().y >= ink.y + ink.h, `${refdes} is below the drawing`);
+  }
+  // Its nodes keep the schematic's names (VOUT), which no longer adds the
+  // model's branches to the schematic's node.
+  assert.ok([...circuit.nets.values()].filter((net) => net.name === 'VOUT').length >= 2);
+  const after = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT' });
+  assert.equal(after.ok, true, after.error || '');
+  assert.ok(before.smallSignalNetlist);
+  assert.equal(after.smallSignalNetlist, before.smallSignalNetlist);
+  assert.equal(analyzeSmallSignalV2(circuit, {}).ok, true, 'the ports are found as before');
+  assert.equal(evaluate(circuit).ok, true, JSON.stringify(evaluate(circuit).issues || []).slice(0, 300));
+  // The branch labels come along, and the design still loads as saved.
+  const texts = [...circuit.labels.values()].map((label) => label.text);
+  assert.ok(texts.includes('r_{o1}') && texts.includes('D_{1}'));
+  const reloaded = Circuit.fromJSON(circuit.toJSON());
+  assert.ok(added.components.every((refdes) => reloaded.components.get(refdes).drawingOnly));
+  assert.equal(analyzedCircuit(reloaded).components.size, names.size);
+  assert.ok(!noiseCandidates(reloaded).some((refdes) => added.components.includes(refdes)));
+  assert.ok(!tableParts(reloaded).some((part) => added.components.includes(part.refdes)));
 });

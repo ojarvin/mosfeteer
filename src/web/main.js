@@ -64,7 +64,6 @@ import { resetCheckState, clearCheckReport, clearDiagnosticFocus, renderCheckSum
 import { partialVertexPicks, selectAllNetIds } from '../core/selection.js';
 import { paneSize, viewFromCenter, resizeView, syncViewToPane, minViewW, maxViewW, followCursor, cancelViewAnimation, fitView, refitIfFitted, applyCanvasViewport, clientToWorld, worldToClient, worldRect, rectContained, zoomToWorldRect } from './canvas-view.js';
 import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, toggleAnalysisDock } from './analysis-ui.js';
-import { installModelFigure } from './model-figure.js';
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
 import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } from './beats-ui.js';
@@ -7431,7 +7430,6 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // above has been declared.
 installToolbarUi();
 installNetBeams();
-installModelFigure();
 
 // ----- narrow-window folding --------------------------------------------------
 

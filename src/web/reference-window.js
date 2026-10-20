@@ -295,14 +295,16 @@ function freeSlot() {
   return slot;
 }
 
-function createWindow(doc = null) {
+/** A window on a design, a pasted picture, or (`model`) the small-signal
+ *  model of the analysis, which follows each derive and is never saved. */
+function createWindow(doc = null, { model = false } = {}) {
   const pane = document.querySelector('.canvas-pane');
   if (!pane) return null;
   const slot = freeSlot();
   const el = document.createElement('section');
-  el.className = 'floating-window reference-window';
+  el.className = `floating-window reference-window${model ? ' model-window' : ''}`;
   el.dataset.editorEdge = 'right';
-  el.setAttribute('aria-label', 'Reference design');
+  el.setAttribute('aria-label', model ? 'Small-signal model' : 'Reference design');
   const header = document.createElement('header');
   header.className = 'floating-window-header';
   const title = document.createElement('button');
@@ -323,7 +325,18 @@ function createWindow(doc = null) {
   close.setAttribute('aria-label', 'Close the reference window');
   close.title = 'Close';
   close.textContent = '×';
-  header.append(title, fitButton, copy, swap, another, clear, close);
+  const place = document.createElement('button');
+  place.type = 'button';
+  place.className = 'model-place window-action';
+  place.textContent = 'Place';
+  place.title = 'Place in the drawing';
+  if (model) {
+    title.textContent = 'Small-signal model';
+    title.removeAttribute('title');
+    title.tabIndex = -1;
+    close.setAttribute('aria-label', 'Close the small-signal model');
+    header.append(title, fitButton, copy, place, close);
+  } else header.append(title, fitButton, copy, swap, another, clear, close);
   const viewport = document.createElement('div');
   viewport.className = 'reference-viewport';
   const image = document.createElement('img');
@@ -341,17 +354,18 @@ function createWindow(doc = null) {
   el.hidden = hidden;
   pane.appendChild(el);
 
-  const win = { el, slot, doc: null, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap, clear };
+  const win = { el, slot, doc: null, model, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap, clear, place };
   win.chrome = floatingWindow(el, {
     key: `reference-${slot}`,
     resizable: true,
     // The last one shown hides, keeping what it shows for Shift+V; another
     // goes.
-    onClose: () => (windows.length > 1 ? closeWindow(win) : setHidden(true)),
+    onClose: () => (model || windows.filter((other) => !other.model).length > 1 ? closeWindow(win) : setHidden(true)),
     // At the top left, each further window a step lower and to the right.
     place: () => ({ x: 8 + (slot - 1) * 36, y: 8 + (slot - 1) * 36 }),
   });
-  title.addEventListener('click', () => openPicker(win));
+  title.addEventListener('click', () => { if (!model) openPicker(win); });
+  place.addEventListener('click', () => win.onPlace?.());
   another.addEventListener('click', () => {
     const next = createWindow();
     if (next) openPicker(next);
@@ -381,7 +395,8 @@ function createWindow(doc = null) {
   el.addEventListener('pointerenter', () => { hovered = win; });
   el.addEventListener('pointerleave', () => { if (hovered === win) hovered = null; });
   windows.push(win);
-  setDocument(win, doc);
+  if (model) showMessage(win, 'Deriving…');
+  else setDocument(win, doc);
   win.chrome.place();
   ensurePolling();
   syncButton();
@@ -432,6 +447,47 @@ async function setState(win, title, state) {
   } catch (err) {
     showMessage(win, `${title} could not be drawn: ${err.message}`);
   }
+}
+
+// ----- the small-signal model ----------------------------------------------------------
+
+let modelWindow = null;
+
+async function setModel(win, circuit) {
+  if (!circuit) {
+    win.picture = null;
+    win.place.disabled = true;
+    showMessage(win, 'No small-signal model: derive the analysis again');
+    return;
+  }
+  const picture = await pictureOf(circuit);
+  if (!windows.includes(win)) return;
+  const first = !win.picture;
+  win.picture = picture;
+  win.place.disabled = !picture;
+  showMessage(win, picture ? '' : 'The model is empty');
+  if (!picture) return;
+  if (first || win.fitted) fit(win);
+  else draw(win);
+}
+
+/** Show the small-signal model drawing (a Circuit) in its own window,
+ *  opening it; `onPlace` runs from its Place button. */
+export function showModelWindow(circuit, { onPlace } = {}) {
+  if (hidden) setHidden(false);
+  if (!modelWindow) modelWindow = createWindow(null, { model: true });
+  if (!modelWindow) return false;
+  modelWindow.onPlace = onPlace;
+  void setModel(modelWindow, circuit);
+  modelWindow.el.focus({ preventScroll: true });
+  return true;
+}
+
+/** A new derive redraws an open model window; without a model it says so. */
+export function refreshModelWindow(circuit, { onPlace } = {}) {
+  if (!modelWindow) return;
+  modelWindow.onPlace = onPlace;
+  void setModel(modelWindow, circuit);
 }
 
 /** Open a reference window on `state` (a save point), titled `title`. */
@@ -506,7 +562,7 @@ function copyPicture(win) {
     logLine('This window shows nothing to copy yet.');
     return;
   }
-  const what = win.doc ? win.doc.name : 'the pasted picture';
+  const what = win.doc ? win.doc.name : win.model ? 'the small-signal model' : 'the pasted picture';
   let write;
   try {
     if (win.pasted) {
@@ -535,6 +591,7 @@ function closeWindow(win) {
   const index = windows.indexOf(win);
   if (index < 0) return;
   windows.splice(index, 1);
+  if (modelWindow === win) modelWindow = null;
   if (hovered === win) hovered = null;
   win.chrome.dispose();
   win.el.remove();
@@ -577,7 +634,7 @@ function ensurePolling() {
 
 function syncButton() {
   const button = document.getElementById('btn-window-reference');
-  button?.setAttribute('aria-pressed', String(windows.length > 0 && !hidden));
+  button?.setAttribute('aria-pressed', String(windows.some((win) => !win.model) && !hidden));
 }
 
 // The window under the pointer, which `f` fits instead of the drawing.
@@ -599,7 +656,7 @@ export function referenceWindowsShown() {
 /** Shift+V: show or hide the reference windows; with none, open one and
  *  its design picker. */
 export function toggleReferenceWindows() {
-  if (!windows.length) {
+  if (!windows.some((win) => !win.model)) {
     hidden = false;
     const win = createWindow();
     if (win) openPicker(win);

@@ -1,5 +1,5 @@
 /** The small-signal analysis window in a browser: its controls, a derive,
- *  annotating, the form saved per design, the full-size figure, and the
+ *  annotating, the form saved per design, the model window, and the
  *  context menu's per-device attributes. */
 
 import { describe, before, after, test } from 'node:test';
@@ -88,23 +88,49 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.click('#analysis-approx-body');
   });
 
-  test('the full-size figure closes on Escape, handing the keyboard back to the drawing', async () => {
+  test('the model opens in a window that zooms like a reference window, and Place puts it under the drawing', async () => {
     await derive();
     await h.click('#analysis-tab-model');
     await h.until(`!document.getElementById('analysis-model-open').disabled`);
     await h.click('#analysis-model-open');
-    await h.until(`document.getElementById('model-dialog').open`, 20000);
-    // A view over the one drawing: the wheel zooms it, a double-click fits it again.
-    const viewBox = () => h.evaluate(`document.querySelector('#model-dialog-figure svg').getAttribute('viewBox')`);
-    const fitted = await viewBox();
-    await h.evaluate(`(() => { const f = document.getElementById('model-dialog-figure'); const r = f.getBoundingClientRect(); f.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, bubbles: true, cancelable: true })); })()`);
-    assert.notEqual(await viewBox(), fitted);
-    await h.evaluate(`(() => { const f = document.getElementById('model-dialog-figure'); const r = f.getBoundingClientRect(); f.dispatchEvent(new MouseEvent('dblclick', { clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, bubbles: true })); })()`);
-    assert.equal(await viewBox(), fitted);
-    await h.evaluate(`document.getElementById('model-dialog').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-    await h.until(`!document.getElementById('model-dialog').open`);
-    assert.equal(await h.evaluate(`document.activeElement?.id`), 'canvas');
-    assert.equal(await h.evaluate(`document.getElementById('analysis-dialog').hidden`), false, 'the analysis window stays');
+    const win = `document.querySelector('.model-window')`;
+    const picture = () => h.evaluate(`${win}.querySelector('.reference-picture').style.cssText`);
+    await h.until(`${win} && !${win}.hidden && !${win}.querySelector('.reference-picture').hidden`, 20000);
+    assert.match(await h.evaluate(`${win}.querySelector('.reference-title').textContent`), /Small-signal model/);
+    // The reference window's view: the wheel zooms it, a double-click fits it again.
+    await h.settle();
+    const fitted = await picture();
+    const at = await h.evaluate(`(() => { const r = ${win}.querySelector('.reference-viewport').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await h.mouse('mouseMoved', at.x, at.y, { button: 'none', buttons: 0 });
+    await h.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: at.x, y: at.y, deltaX: 0, deltaY: -300 });
+    await h.until(`${win}.querySelector('.reference-picture').style.cssText !== ${JSON.stringify(fitted)}`);
+    await h.mouse('mousePressed', at.x, at.y, { clickCount: 2 });
+    await h.mouse('mouseReleased', at.x, at.y, { clickCount: 2 });
+    await h.until(`${win}.querySelector('.reference-picture').style.cssText === ${JSON.stringify(fitted)}`);
+    // Another derive redraws the same window; it is not saved with the design.
+    await derive();
+    assert.equal(await h.evaluate(`document.querySelectorAll('.model-window').length`), 1);
+    assert.equal(await h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`), false);
+
+    const parts = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.components.values()].filter((c) => c.type !== 'solder').map((c) => ({ refdes: c.refdes, drawingOnly: c.drawingOnly, y: c.bboxWorld().y })))`);
+    const before = await parts();
+    const bottom = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = m.editor.circuit.bounds(); return b.y + b.h; })`);
+    await h.evaluate(`${win}.querySelector('.model-place').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.components.values()].filter((c) => c.type !== 'solder').length > ${before.length})`);
+    const placed = (await parts()).filter((part) => !before.some((other) => other.refdes === part.refdes));
+    assert.ok(placed.length >= 3);
+    assert.ok(placed.every((part) => part.drawingOnly && part.y >= bottom), JSON.stringify(placed));
+    // Drawing-only parts change no equation: the result is not marked stale,
+    // and a derive reads the design as before.
+    await h.settle();
+    assert.equal(await h.evaluate(`document.getElementById('analysis-stale').hidden`), true);
+    await derive();
+    assert.equal(await h.evaluate(`document.getElementById('analysis-result').hidden`), false);
+    // One undo takes the whole model away.
+    await h.key('u');
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.components.values()].filter((c) => c.type !== 'solder').length === ${before.length})`);
+    await h.evaluate(`${win}.querySelector('.floating-window-close').click()`);
+    await h.until(`!document.querySelector('.model-window')`);
     await h.click('#analysis-tab-equations');
   });
 

@@ -12,6 +12,7 @@ import { hiddenSupplyBarLabels } from './supply-bars.js';
 import { MOS_SIZE_TYPES, formatMosSize, parseMosSize } from './mos-size.js';
 import { VALUE_TYPES, replacedNameLabels } from './part-value.js';
 import { analyzeSmallSignal } from './analysis/index.js';
+import { placeSmallSignalModel, smallSignalSchematic } from './analysis/model-schematic.js';
 import { joinLineAnnotations } from './line-join.js';
 import { addBeat, beatTitle, mergeBeats, moveBeat, phaseBeats, removeBeat, renameBeat, resolveBeat, setPresenceFrom, setSwitchFrom } from './beats.js';
 import { addTimingDiagram, existingTimingDiagram, timingBeatBands, timingPhaseNamed, timingPhases, timingStates } from './timing-diagram.js';
@@ -471,6 +472,7 @@ export function commandHelp() {
     '                                   tf([1], [1 -1], \'Variable\', \'z\') for descending powers of z)',
     '  link <refdes> [DESIGN]         - link a part to another design of the workspace (show it, or dive in, from the editor); unlink <refdes>',
     '  waveform <refdes> [sine|pulse|noise|none] - draw a voltage source with a sine, a pulse, or noise in its circle (drawing only)',
+    '  drawing-only <refdes>[,refdes...] [on|off] - drawn and checked, but read by no analysis (a placed small-signal model)',
     '  size <refdes>[,refdes...] [W/L] [xM] [replace|beside|hide] - a transistor\'s size and its label, W/L = M·W/L (2u/400n x4; bare numbers are μm);',
     '                                   replace puts the label in place of the name label, beside under it, hide draws none (a parts table shows it);',
     '                                   size <refdes> off removes the size; no size prints it; a comma list sets several parts at once',
@@ -515,6 +517,7 @@ export function commandHelp() {
     '  bounds                         - drawing extents',
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
     '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
+    '  analyze model NET [options]    - place the small-signal model, its output at NET, below the drawing as drawing-only parts',
     '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
     '                                   one per input port to the output; the other sources are zero or constant',
@@ -668,9 +671,10 @@ function dispatch(circuit, cmd, pos, flags, io) {
       transimpedance: 'transimpedance', zm: 'transimpedance',
       transconductance: 'transconductance', gm: 'transconductance',
       'current-gain': 'currentGain', ai: 'currentGain',
+      model: 'model',
     }[subject];
     const transferFunction = { transimpedance: 'Zm', transconductance: 'Gm', currentGain: 'Ai' }[quantity];
-    const usage = 'usage: analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
+    const usage = 'usage: analyze <model|input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
     if (!quantity) throw new Error(usage);
     const target = pos.shift();
     if (!target || pos.length) throw new Error(usage);
@@ -696,6 +700,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...(transferFunction ? { transferFunctions: [transferFunction] } : {}),
     };
     const combined = analyzeSmallSignal(circuit, analysisOptions);
+    if (quantity === 'model') {
+      if (!combined.ok) throw new Error(combined.diagnostics?.errors?.[0]?.detail || combined.error || 'the small-signal analysis failed');
+      const model = smallSignalSchematic(combined, { circuit, ports: false });
+      if (!model.ok) throw new Error(model.error);
+      const added = placeSmallSignalModel(circuit, model);
+      return result(`placed the small-signal model below the drawing: ${added.components.join(', ')}`, added, true);
+    }
     const report = combined.reports[quantity];
     const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
     const dc = quantity === 'input' ? combined.dcInputImpedance
@@ -847,6 +858,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (cmd === 'link' && !name) return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} links to no design`, { refdes: c.refdes, link: c.link });
     circuit.setLink(c.refdes, name);
     return result(c.link ? `${c.refdes} links to ${c.link}` : `${c.refdes} unlinked`, { refdes: c.refdes, link: c.link }, true);
+  }
+  if (cmd === 'drawing-only') {
+    if (!pos[0] || (pos[1] && !['on', 'off'].includes(pos[1]))) throw new Error('usage: drawing-only <refdes>[,refdes...] [on|off]');
+    // Every part is found before any is changed.
+    const parts = pos[0].split(',').filter(Boolean).map((ref) => circuit.getComponent(ref));
+    const state = (c) => `${c.refdes} is ${c.drawingOnly ? 'drawing only' : 'analyzed'}`;
+    if (!pos[1]) return result(parts.map(state).join('\n'), parts.map((c) => ({ refdes: c.refdes, drawingOnly: c.drawingOnly })));
+    for (const c of parts) c.drawingOnly = pos[1] === 'on';
+    return result(parts.map(state).join('\n'), parts.map((c) => ({ refdes: c.refdes, drawingOnly: c.drawingOnly })), true);
   }
   if (cmd === 'waveform') {
     if (!pos[0]) throw new Error('usage: waveform <refdes> [sine|pulse|noise|none]');

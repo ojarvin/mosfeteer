@@ -9,7 +9,7 @@ import { Circuit, INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } from '
 import { analyzeSmallSignalV2, numericSmallSignal } from '../core/analysis/engine.js';
 import { LOOP_ELEMENT_TYPES } from '../core/analysis/loop-gain.js';
 import { EQUATION_GROUPS, adaptCombinedReport } from '../core/analysis/report-adapter.js';
-import { smallSignalSchematic } from '../core/analysis/model-schematic.js';
+import { placeSmallSignalModel, smallSignalSchematic } from '../core/analysis/model-schematic.js';
 import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
@@ -18,12 +18,13 @@ import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
-import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
+import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisModelPlace, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
-import { beginSettingsEdit, commit, endSettingsEdit, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
+import { applyJson, beginSettingsEdit, commit, endSettingsEdit, setSelection, snapshot, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
+import { refreshModelWindow, showModelWindow } from './reference-window.js';
 import { arriving } from './motion.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
@@ -496,6 +497,50 @@ function clearEquationEmphasis() {
   setEquationEmphasis(null);
 }
 
+/** The report the shown model was drawn from, for placing it. */
+let latestModelReport = null;
+
+function openModelWindow() {
+  const model = editor.latestSmallSignalModel;
+  if (model?.ok) showModelWindow(model.circuit, { onPlace: placeModelInDrawing });
+}
+
+/**
+ * Place the model below the drawing as drawing-only parts: one undo step,
+ * names the design already uses moved to the next free ones.
+ */
+function placeModelInDrawing() {
+  const report = latestModelReport;
+  if (!report?.ok) return;
+  const model = smallSignalSchematic(report, { circuit: editor.circuit, ports: false });
+  if (!model.ok) {
+    logLine(`Could not place the model: ${model.error}`, 'error');
+    return;
+  }
+  const before = snapshot();
+  // Drawing-only parts change no equation: equations current before stay so.
+  const current = revisionCurrent(analysisReportRevision);
+  let added = null;
+  let failure = null;
+  commit(() => {
+    try { added = placeSmallSignalModel(editor.circuit, model); }
+    catch (error) {
+      failure = error;
+      applyJson(before);
+    }
+  });
+  if (failure || !added) {
+    logLine(`Could not place the model: ${failure?.message || 'nothing to place'}`, 'error');
+    render();
+    return;
+  }
+  if (current) analysisReportRevision = editor.modelRevision;
+  setSelection(added.components, undefined, true);
+  setLabelSelection(added.labels, undefined, true);
+  fitView({ animate: true });
+  logLine(`Placed the small-signal model below the drawing: ${added.components.length} drawing-only parts`, 'status');
+}
+
 /**
  * Draw the small-signal model beside its equations. The primitives come from
  * the pipeline after its pre-solve transforms, so the figure shows the circuit
@@ -504,12 +549,17 @@ function clearEquationEmphasis() {
  */
 function renderSmallSignalModel(report) {
   editor.latestSmallSignalModel = null;
+  latestModelReport = null;
   if (!analysisModelEl) return false;
   analysisModelEl.replaceChildren();
-  if (!report?.ok) return false;
+  if (!report?.ok) {
+    refreshModelWindow(null);
+    return false;
+  }
   let model;
   try { model = smallSignalSchematic(report, { circuit: editor.circuit }); }
   catch (error) { model = { ok: false, error: error.message }; }
+  refreshModelWindow(model?.ok ? model.circuit : null, { onPlace: placeModelInDrawing });
   if (!model?.ok) {
     const message = document.createElement('div');
     message.className = 'analysis-equation-unavailable';
@@ -518,6 +568,7 @@ function renderSmallSignalModel(report) {
     return false;
   }
   editor.latestSmallSignalModel = model;
+  latestModelReport = report;
   const figure = document.createElement('div');
   figure.className = 'analysis-model-figure';
   figure.innerHTML = svgString(model.circuit, {
@@ -550,7 +601,7 @@ function renderSmallSignalModel(report) {
   }
   const notes = [...(model.notes || [])];
   const count = model.correspondence?.size || 0;
-  if (count > 15) notes.unshift(`${count} branches: open it full size to read the figure.`);
+  if (count > 15) notes.unshift(`${count} branches: open it in a window to read the figure.`);
   if (notes.length) {
     const list = document.createElement('ul');
     list.className = 'analysis-model-notes';
@@ -792,6 +843,7 @@ function renderAnalysisResult(report) {
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
   if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
+  if (analysisModelPlace) analysisModelPlace.disabled = !drawn;
   renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
   const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
@@ -1306,6 +1358,8 @@ export function installAnalysisUi() {
   for (const control of [analysisNoiseThermal, analysisNoiseFlicker]) control?.addEventListener('change', syncNoiseSourcesVisibility);
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
+  analysisModelOpen?.addEventListener('click', openModelWindow);
+  analysisModelPlace?.addEventListener('click', placeModelInDrawing);
 
   if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true, toggleKey: 'S' });
 

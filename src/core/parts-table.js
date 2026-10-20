@@ -37,7 +37,7 @@ export function comparePartRows(a, b) {
 
 /** Every part the table can show, in table order. */
 export function tableParts(circuit) {
-  return [...circuit.components.values()].filter((component) => partKind(component)).sort(comparePartRows);
+  return [...circuit.components.values()].filter((component) => !component.drawingOnly && partKind(component)).sort(comparePartRows);
 }
 
 /** A table annotation's data as saved: the parts it lists, by name, or null
