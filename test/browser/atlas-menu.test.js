@@ -82,6 +82,9 @@ describe('Atlas design menu', { skip: browserSkip() }, () => {
 
   test('a new accent color shows on the desk at once, not only when it opens again', async () => {
     await openDesk();
+    // The desk reads its colors as it draws its first frame, which can
+    // follow its laid-out tiles on a slow machine.
+    await h.until(`${h.module('atlas.js')}.then((m) => !!m.atlasSnapshot()?.accent)`);
     const before = (await snapshot()).accent;
     await h.evaluate(`document.querySelector('#settings-accent [data-accent="orange"]').click()`);
     await h.until(`${h.module('atlas.js')}.then((m) => { const a = m.atlasSnapshot()?.accent; return !!a && a !== ${JSON.stringify(before)}; })`);
