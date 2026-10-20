@@ -447,15 +447,13 @@
               </section>
               <section id="analysis-panel-model" class="analysis-tab-panel" role="tabpanel" aria-labelledby="analysis-tab-model" hidden>
                 <div id="analysis-model" class="analysis-model"></div>
-                <div class="dialog-actions analysis-model-actions">
-                  <button id="analysis-model-place" type="button" data-icon="plus" title="Place in the drawing">Place in drawing</button>
-                  <button id="analysis-model-open" type="button" data-icon="analysis" class="primary-action">Open in window</button>
-                </div>
               </section>
             </div>
           </div>
           </div>
           <div class="dialog-actions">
+            <button id="analysis-model-open" type="button" data-icon="analysis" hidden title="Open the small-signal model in a window">Open model</button>
+            <button id="analysis-model-place" type="button" data-icon="plus" hidden title="Place the small-signal model in the drawing">Annotate model</button>
             <button id="analysis-annotate" type="button" data-icon="text" hidden title="Annotate the equations">Annotate equations</button>
             <button id="analysis-submit" type="submit" data-icon="check" class="primary-action" title="Derive (Enter)">Derive</button>
           </div>

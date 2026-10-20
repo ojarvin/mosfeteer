@@ -90,8 +90,9 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
 
   test('the model opens in a window that zooms like a reference window, and Place puts it under the drawing', async () => {
     await derive();
-    await h.click('#analysis-tab-model');
-    await h.until(`!document.getElementById('analysis-model-open').disabled`);
+    // Open model and Annotate model stand with Annotate equations.
+    await h.until(`!document.getElementById('analysis-model-open').hidden`);
+    assert.equal(await h.evaluate(`document.getElementById('analysis-model-place').parentElement === document.getElementById('analysis-annotate').parentElement`), true);
     await h.click('#analysis-model-open');
     const win = `document.querySelector('.model-window')`;
     const picture = () => h.evaluate(`${win}.querySelector('.reference-picture').style.cssText`);
@@ -196,7 +197,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   const shown = (selector) => h.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); return !!e && !e.hidden && !!e.offsetParent; })()`);
   const plotsButton = (text) => h.evaluate(`(() => { const b = [...document.querySelectorAll('.plots-window button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)})); if (!b) return false; b.click(); return true; })()`);
 
-  test('the analysis window reads as signal flow\'s: signals, folded options, results, plots, values; Annotate equations and Derive', async () => {
+  test('the analysis window reads as signal flow\'s: signals, folded options, results, plots, values; Open model, Annotate model, Annotate equations, and Derive', async () => {
     await h.open('amp');
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
     await h.until(`!document.getElementById('analysis-dialog').hidden`);
@@ -204,7 +205,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const at = (name) => order.findIndex((entry) => entry.includes(name));
     assert.ok(at('analysis-signals') < at('analysis-options') && at('analysis-options') < at('analysis-result') && at('analysis-result') < at('analysis-plots-card') && at('analysis-plots-card') < at('analysis-values'), order.join(' | '));
     assert.equal(await h.evaluate(`document.getElementById('analysis-options').open`), false, 'the options fold away');
-    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`), ['Annotate equations', 'Derive']);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`), ['Open model', 'Annotate model', 'Annotate equations', 'Derive']);
     // Folded, the options still say what is chosen that is not the default.
     const summary = () => h.evaluate(`document.getElementById('analysis-options-summary').textContent`);
     const before = await summary();

@@ -157,7 +157,7 @@ export function clearLatestAnalysisResult() {
     if (analysisNetlist) analysisNetlist.textContent = '';
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
   }
-  if (analysisAnnotate) analysisAnnotate.hidden = true;
+  for (const button of [analysisAnnotate, analysisModelOpen, analysisModelPlace]) if (button) button.hidden = true;
 }
 
 function analysisFormOptions() {
@@ -842,8 +842,7 @@ function renderAnalysisResult(report) {
   if (analysisModelPanel) analysisModelPanel.hidden = !drawn;
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
-  if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
-  if (analysisModelPlace) analysisModelPlace.disabled = !drawn;
+  for (const button of [analysisModelOpen, analysisModelPlace]) if (button) button.hidden = !drawn;
   renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
   const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);

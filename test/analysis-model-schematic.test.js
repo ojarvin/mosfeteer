@@ -152,6 +152,9 @@ test('every branch label sits against its own symbol', () => {
     if (!label.owner) continue;
     const body = model.circuit.getComponent(label.owner).bboxWorld();
     const box = label.bbox();
+    // The box hugs the text, without the spare cells an unmeasured math box
+    // keeps: what the browser measures sits where the box says.
+    assert.ok(box.w - label.textWidth() < 80, `${label.text}: a ${box.w} box for ${label.textWidth()} of text`);
     // One grid cell at most between the label box and the symbol it names, so
     // it can never read as belonging to the next branch along.
     const gapX = Math.max(body.x - (box.x + box.w), box.x - (body.x + body.w), 0);
@@ -210,10 +213,9 @@ test('nodes a chopper shorts take the name of the side with a port, else a named
   assert.ok(texts.includes('VIN'), `the input port reads VIN: ${texts.join(' | ')}`);
   assert.ok(texts.some((text) => text.includes('\\mathrm{VIN}')), 'g_m reads the input by name');
   assert.ok(!texts.some((text) => /\bN\d+/.test(text)), `no net id stands in for a name: ${texts.join(' | ')}`);
-  // Placed without ports, the bare gate still shows its name on a lead.
+  // Placed without ports, the bare gate draws nothing: g_m names it.
   const placed = smallSignalSchematic(report, { circuit, ports: false });
-  const names = [...placed.circuit.labels.values()].filter((label) => label.isNetLabel()).map((label) => label.text);
-  assert.ok(names.includes('VIN'), names.join(' | '));
+  assert.ok(![...placed.circuit.nets.values()].some((net) => net.name === 'VIN'));
   assert.equal(evaluate(placed.circuit).ok, true, JSON.stringify(evaluate(placed.circuit).issues || []).slice(0, 300));
 });
 
@@ -272,7 +274,7 @@ test('a placed model is drawing only: the design analyzes as before, its names s
   assert.equal(evaluate(circuit).ok, true, JSON.stringify(evaluate(circuit).issues || []).slice(0, 300));
   // The branch labels come along, and the design still loads as saved.
   const texts = [...circuit.labels.values()].map((label) => label.text);
-  assert.ok(texts.includes('r_{o1}') && texts.includes('VIN'));
+  assert.ok(texts.includes('r_{o1}') && texts.includes('g_{m1}\\,\\mathrm{VIN}'));
   const reloaded = Circuit.fromJSON(circuit.toJSON());
   assert.ok(added.components.every((refdes) => reloaded.components.get(refdes).drawingOnly));
   assert.equal(analyzedCircuit(reloaded).components.size, names.size);

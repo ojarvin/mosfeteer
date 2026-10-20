@@ -418,17 +418,18 @@ its source resistor). A branch whose ends share a row lies along it. One AC
 ground sits a cell under the first branch that reaches it, and the input and
 output ports sit on their node's row, outside the drawing; a node without a
 port is named with a net label. Branch labels are math, in the equations'
-font. A controlled source names the nodes it reads, a grounded side left out:
+font, right-aligned a cell left of their symbol; each saves its own
+estimated footprint (`mathBox`), so the layout holds until a browser
+measures it. A controlled source names the nodes it reads, a grounded side left out:
 `g_{m1}\,\mathrm{VIN}`, `-g_{m2}\,\mathrm{N4}`. Nets a chopper shorts are
 one node, named by the side with a port, else a named one.
 
-**Open in window** shows it in a floating window that pans and zooms like a
+**Open model** (beside Annotate equations) shows it in a floating window that pans and zooms like a
 reference window (`src/web/reference-window.js`). The window redraws on each
-Derive and is not saved with the design. **Place in drawing** (also **Place**
+Derive and is not saved with the design. **Annotate model** (also **Place**
 in the window, and the `analyze model` command) adds the model below the
 drawing, aligned with its left edge, as one undo step. It is drawn without
-ports (a bare input gate keeps its name on a short lead), and its parts are
-**drawing only**
+ports, and its parts are **drawing only**
 (`ComponentInstance#drawingOnly`): drawn, moved, and checked like any other
 part, but no analysis reads them (`analyzedCircuit`), so placing the model
 changes no result and leaves the equations current. A part whose name the

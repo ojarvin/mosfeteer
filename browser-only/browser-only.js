@@ -6003,10 +6003,16 @@ function wireBoxes(circuit, except = null) {
   return boxes;
 }
 
-/** A label's drawn width, measured the way the drawing measures it. */
-function labelWidth(text) {
-  const scratch = new Circuit();
-  return scratch.addLabel({ text, x: 0, y: 0, align: 'center', math: true }).bbox().w;
+/**
+ * A math label's footprint: its text's own estimated size in whole pairs of
+ * cells. Saved with the label (`mathBox`), it stands for the browser's
+ * measurement until there is one, so the label sits a cell off its symbol
+ * as drawn, not off the spare cells an unmeasured math box keeps.
+ */
+function mathFootprint(text) {
+  const probe = new Circuit().addLabel({ text, x: 0, y: 0, align: 'center', math: true });
+  const pair = (size) => Math.max(80, 80 * Math.ceil(size / 80));
+  return { w: pair(probe.textWidth()), h: pair(probe.textHeight()) };
 }
 
 /**
@@ -6083,12 +6089,12 @@ function smallSignalSchematic(report, options = {}) {
 
   const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
   const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
-  // The cells left of a branch its label takes: the label's box hangs a cell
-  // off the symbol, as `addElement` places it. Until a browser measures it,
-  // a math label's ink fills its box, so the cell is kept clear of it too.
+  // The cells left of a branch its label takes, as `addElement` places it:
+  // the box a cell clear of the symbol, since until a browser measures it a
+  // math label's ink is its whole box.
   const reachOf = (width) => 40 * Math.ceil((80 + width / 2) / 40);
   const leftRoom = (element) => {
-    const width = labelWidth(labels.get(element).text);
+    const { w: width } = mathFootprint(labels.get(element).text);
     return reachOf(width) + width / 2;
   };
 
@@ -6162,11 +6168,13 @@ function smallSignalSchematic(report, options = {}) {
     // a branch lying along a row wears it above, clear of its own wires. The
     // offset comes from the label's own measured box, so the text sits
     // against its symbol.
-    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', math: true, offset: { x: 0, y: 0 } });
+    // Right-aligned when it stands to the left: the measured text ends at
+    // the box's edge nearest the symbol, whatever the box rounds up to.
+    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: upright ? 'right' : 'center', math: true, mathBox: mathFootprint(label.text), offset: { x: 0, y: 0 } });
     const box = owned.bbox();
     const world = upright ? { x: -reachOf(box.w), y: 0 } : { x: 0, y: -reachOf(box.h) };
     owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
-    owned.clearRenderedTextBounds();
+    owned.clearMeasuredTextBounds();
     if (label.legend) legend.push(label.legend);
     correspondence.set(refdes, { primitive: element.id, component: element.metadata?.component || null, role: element.kind });
     return component;
@@ -6208,17 +6216,10 @@ function smallSignalSchematic(report, options = {}) {
   const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
   const leftEdge = snapTo(Math.min(0, ...drawn.map((box) => box.x)) - PORT_GAP);
   const rightEdge = snapTo(Math.max(cursor, ...drawn.map((box) => box.x + box.w)) + PORT_GAP);
-  // Without ports, a port node no branch reaches -- a bare gate -- still
-  // shows its name, on a lead of its own where the port would stand.
-  const leads = new Map();
   const portFor = (node, type, side) => {
-    if (!node || !attachments.has(node)) return;
+    if (!withPorts || !node || !attachments.has(node)) return;
     const x = side === 'left' ? leftEdge : rightEdge;
     const y = rowY(level.get(node) ?? top);
-    if (!withPorts) {
-      if (!attachments.get(node).length) leads.set(node, [{ x, y }, { x: x + (side === 'left' ? PORT_GAP : -PORT_GAP), y }]);
-      return;
-    }
     const refdes = uniqueRefdes(plainName(node), used);
     const port = circuit.addComponent(type, { refdes, x, y, noLabel: true });
     // Above the port, not beside it: an outward-facing port box already
@@ -6276,7 +6277,6 @@ function smallSignalSchematic(report, options = {}) {
     }
     wired.set(node, net);
   }
-  for (const [node, path] of leads) wired.set(node, circuit.createWireNet({ name: nodeName(node), route: path, branches: [path] }));
   wire(groundRefs, 'VSS');
 
   // Name the nodes on the drawing. A node with a port already reads its name
@@ -6363,7 +6363,7 @@ function placeSmallSignalModel(circuit, model) {
       let copy;
       if (label.owner) {
         if (!refs.has(label.owner)) continue;
-        copy = circuit.addLabel({ owner: refs.get(label.owner), text: label.text, align: label.align, math: label.math, offset: { ...label.offset } });
+        copy = circuit.addLabel({ owner: refs.get(label.owner), text: label.text, align: label.align, math: label.math, mathBox: label.toJSON().mathBox, offset: { ...label.offset } });
       } else if (label.netId) {
         const net = nets.get(label.netId);
         if (!net?.name) continue;
@@ -41882,7 +41882,7 @@ function clearLatestAnalysisResult() {
     if (analysisNetlist) analysisNetlist.textContent = '';
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
   }
-  if (analysisAnnotate) analysisAnnotate.hidden = true;
+  for (const button of [analysisAnnotate, analysisModelOpen, analysisModelPlace]) if (button) button.hidden = true;
 }
 
 function analysisFormOptions() {
@@ -42567,8 +42567,7 @@ function renderAnalysisResult(report) {
   if (analysisModelPanel) analysisModelPanel.hidden = !drawn;
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
-  if (analysisModelOpen) analysisModelOpen.disabled = !drawn;
-  if (analysisModelPlace) analysisModelPlace.disabled = !drawn;
+  for (const button of [analysisModelOpen, analysisModelPlace]) if (button) button.hidden = !drawn;
   renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
   const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
