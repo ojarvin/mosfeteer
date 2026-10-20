@@ -1374,7 +1374,7 @@ __exports.resolveMosBulk = resolveMosBulk;
 __exports.resolveAnalysisContext = resolveAnalysisContext;
 let plainName, railNameKey; __bind(() => { ({ plainName, railNameKey } = __require("src/core/rail-names.js")); });
 let asList, chopperShortedNets, MOS_TYPES; __bind(() => { ({ asList, chopperShortedNets, MOS_TYPES } = __require("src/core/analysis/shared.js")); });
-let canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal; __bind(() => { ({ canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js")); });
+let INTERFACE_PIN_TYPES, canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal; __bind(() => { ({ INTERFACE_PIN_TYPES, canonicalNetName, isReferenceMarker, isReferenceMarkerGlobalName, referenceMarkerInfo, referenceMarkerIsLocal } = __require("src/core/model.js")); });
 
 
 
@@ -1534,7 +1534,14 @@ function collectAcGrounds(circuit, values = []) {
  * returned map holds only the members that are not the representative. */
 function virtualNetAliases(circuit) {
   // Nets joined by name, or through a chopper (a short in every analysis),
-  // are one node, named by the first net of the group.
+  // are one node, named by its net with a port, else a named one, else the
+  // first of the group.
+  const ported = new Set();
+  for (const component of circuit.components.values()) {
+    if (!INTERFACE_PIN_TYPES.has(component.type)) continue;
+    for (const net of circuit.nets.values()) if (net.terminals.some((terminal) => terminal.comp === component.refdes)) ported.add(net.id);
+  }
+  const rank = (net) => (ported.has(net.id) ? 0 : canonicalNetName(net.name) ? 1 : 2);
   const parent = new Map();
   const find = (id) => {
     let root = id;
@@ -1550,7 +1557,10 @@ function virtualNetAliases(circuit) {
     else parent.set(x, y);
   };
   const byName = new Map();
-  for (const net of circuit.nets.values()) {
+  const nets = [...circuit.nets.values()].map((net, index) => ({ net, index }))
+    .sort((left, right) => rank(left.net) - rank(right.net) || left.index - right.index)
+    .map(({ net }) => net);
+  for (const net of nets) {
     parent.set(net.id, net.id);
     order.set(net.id, order.size);
     // A rail's spellings are one name, as in the model: VDD is V_{DD}.
@@ -5706,13 +5716,6 @@ const PORT_GAP = 160;
 // The free cells between a symbol and the label of the branch after it.
 const ELEMENT_GAP = 80;
 
-/** The terminals marked at a node, by part type: the letters a textbook
- * writes beside a small-signal model's nodes. */
-const TERMINAL_MARKS = new Map([
-  ...['nmos', 'pmos', 'nmosb', 'pmosb'].map((type) => [type, { d: 'D', g: 'G', s: 'S' }]),
-  ...['npn', 'pnp'].map((type) => [type, { c: 'C', b: 'B', e: 'E' }]),
-]);
-
 /** Elements whose branch is drawn with each symbol. */
 const ELEMENT_TYPES = new Map([
   ['resistor', 'resistor'],
@@ -5773,19 +5776,27 @@ function textbookSymbol(raw) {
   return name;
 }
 
+/** A node's name as math: a textbook name (`V_{OUT}`) as it is, a plain
+ * one (`VIN`, `N4`) upright. */
+function mathNode(name) {
+  return /[_^\\]/.test(name) ? name : `\\mathrm{${name}}`;
+}
+
 /**
  * A controlled source is labeled with its own transconductance times the
  * controlling voltage, the way a hybrid-pi figure is drawn: the control pair
  * is text, never a second pair of wires across the drawing. The pair names the
- * drawing's own nodes -- `g_{m1}(V_{IN} - 0)`, not `g_{m1} v_{gs1}` -- so the
+ * drawing's own nodes -- `g_{m1}\,\mathrm{VIN}`, not `g_{m1} v_{gs1}` -- so the
  * reader can follow the control back to a node without decoding a subscript.
+ * A grounded side drops out: `g_{m1}\,\mathrm{VIN}`, `-g_{m2}\,\mathrm{N4}`.
  */
-function controlledSourceLabel(element, nodeName) {
-  const gain = textbookSymbol(element.parameter) || 'g_m';
-  if (!element.control) return gain;
-  const plus = nodeName(element.control.a) || '0';
-  const minus = nodeName(element.control.b) || '0';
-  return `${gain}(${plus} - ${minus})`;
+function controlTimes(gain, control, nodeName) {
+  const plus = nodeName(control?.a);
+  const minus = nodeName(control?.b);
+  if (plus && minus) return `${gain}\\,(${mathNode(plus)} - ${mathNode(minus)})`;
+  if (plus) return `${gain}\\,${mathNode(plus)}`;
+  if (minus) return `-${gain}\\,${mathNode(minus)}`;
+  return gain;
 }
 
 /**
@@ -5812,15 +5823,13 @@ function perFrequency(value, options) {
 }
 
 function elementLabel(element, symbol, options, nodeName) {
-  if (element.kind === 'vccs') return { text: controlledSourceLabel(element, nodeName) };
+  if (element.kind === 'vccs') return { text: element.control ? controlTimes(textbookSymbol(element.parameter) || 'g_m', element.control, nodeName) : textbookSymbol(element.parameter) || 'g_m' };
   if (element.kind === 'opamp') {
     // Its gain times its inputs' difference: infinite when ideal.
     const parameter = textbookSymbol(element.metadata.opampParameter || '');
     const model = element.metadata.opampModel;
     const gain = model === 'finite-gain' ? parameter : model === 'gbw' ? `\\frac{${parameter}}{s}` : '\\infty';
-    const plus = nodeName(element.control?.a) || '0';
-    const minus = nodeName(element.control?.b) || '0';
-    return { text: `${gain}(${plus} - ${minus})` };
+    return { text: controlTimes(gain, element.control, nodeName) };
   }
   if (element.parameter) return { text: textbookSymbol(element.parameter) };
   let rendered = '';
@@ -5979,28 +5988,6 @@ function snapTo(value) {
   return Math.round(value / 40) * 40;
 }
 
-/** The part letters meeting at each source net (`D_{1}, G_{2}`), keyed by
- * net id and by net name, so a node found either way reads its marks. */
-function terminalMarks(circuit) {
-  const marks = new Map();
-  if (!circuit) return marks;
-  for (const net of circuit.nets.values()) {
-    const found = [];
-    for (const terminal of net.terminals || []) {
-      const component = circuit.components.get(terminal.comp);
-      const letter = TERMINAL_MARKS.get(component?.type)?.[terminal.term];
-      if (!letter || component.drawingOnly) continue;
-      const index = String(component.refdes).replace(/^[A-Za-z]/, '') || component.refdes;
-      found.push(`${letter}_{${index}}`);
-    }
-    if (!found.length) continue;
-    for (const key of [net.id, net.name ? `name:${net.name}` : null].filter(Boolean)) {
-      marks.set(key, [...new Set([...(marks.get(key) || []), ...found])]);
-    }
-  }
-  return marks;
-}
-
 /** Every wire segment of every net, as thin boxes a label must not cover. */
 function wireBoxes(circuit, except = null) {
   const boxes = [];
@@ -6016,40 +6003,10 @@ function wireBoxes(circuit, except = null) {
   return boxes;
 }
 
-/**
- * Hang a free label beside a node's wire: a cell above or below one of its
- * horizontal runs, else a cell beside a vertical one, the first place it
- * covers no symbol, label, or wire. Returns whether it found one; a node
- * without room keeps the text off the drawing rather than printing it over
- * something.
- */
-function placeBesideNet(circuit, net, text, boxes) {
-  const label = circuit.addLabel({ text, x: 0, y: 0, align: 'center' });
-  const halfH = 40 * Math.ceil(label.bbox().h / 80);
-  const halfW = 40 * Math.ceil(label.bbox().w / 80);
-  for (const run of wireRuns(net)) {
-    for (const along of alongRun(run)) {
-      const spots = run.horizontal
-        ? [[along, run.at - 40 - halfH], [along, run.at + 40 + halfH]]
-        : [[run.at + 40 + halfW, along], [run.at - 40 - halfW, along]];
-      for (const [x, y] of spots) {
-        label.moveTo(x, y);
-        const box = label.bbox();
-        if (!boxes.some((other) => rectsOverlap(box, other))) {
-          boxes.push(box);
-          return true;
-        }
-      }
-    }
-  }
-  circuit.removeLabel(label.id);
-  return false;
-}
-
 /** A label's drawn width, measured the way the drawing measures it. */
 function labelWidth(text) {
   const scratch = new Circuit();
-  return scratch.addLabel({ text, x: 0, y: 0, align: 'center' }).bbox().w;
+  return scratch.addLabel({ text, x: 0, y: 0, align: 'center', math: true }).bbox().w;
 }
 
 /**
@@ -6126,9 +6083,10 @@ function smallSignalSchematic(report, options = {}) {
 
   const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
   const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
-  // The cells left of a branch its label takes: the label hangs a cell off
-  // the symbol, as `addElement` places it.
-  const reachOf = (width) => 40 * Math.ceil((40 + width / 2) / 40);
+  // The cells left of a branch its label takes: the label's box hangs a cell
+  // off the symbol, as `addElement` places it. Until a browser measures it,
+  // a math label's ink fills its box, so the cell is kept clear of it too.
+  const reachOf = (width) => 40 * Math.ceil((80 + width / 2) / 40);
   const leftRoom = (element) => {
     const width = labelWidth(labels.get(element).text);
     return reachOf(width) + width / 2;
@@ -6195,17 +6153,16 @@ function smallSignalSchematic(report, options = {}) {
     const refdes = uniqueRefdes(element.parameter || element.id.replace(/\W/g, ''), used);
     const component = circuit.addComponent(type, { ...placement, refdes, noLabel: true });
     const label = labels.get(element);
-    // Plain `_{...}` markup, not a math label: every symbol in the drawing is
-    // a name with a subscript, and a markup label needs no browser
-    // measurement, so the figure lays out the same in a test, an export, and
-    // the dock. The one thing that needs real math -- a Miller admittance --
-    // is named here and stated in the legend instead.
+    // A math label, set in the equations' own font. Laid out from the
+    // model's estimate of its box, never a browser measurement, so the figure
+    // lays out the same in a test, an export, and the dock. A Miller
+    // admittance, a whole fraction, is named here and stated in the legend.
     //
     // An upright branch wears its label on the left, where a textbook puts it;
     // a branch lying along a row wears it above, clear of its own wires. The
     // offset comes from the label's own measured box, so the text sits
     // against its symbol.
-    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', offset: { x: 0, y: 0 } });
+    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: 'center', math: true, offset: { x: 0, y: 0 } });
     const box = owned.bbox();
     const world = upright ? { x: -reachOf(box.w), y: 0 } : { x: 0, y: -reachOf(box.h) };
     owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
@@ -6251,11 +6208,18 @@ function smallSignalSchematic(report, options = {}) {
   const drawn = [...circuit.components.values()].map((component) => component.bboxWorld());
   const leftEdge = snapTo(Math.min(0, ...drawn.map((box) => box.x)) - PORT_GAP);
   const rightEdge = snapTo(Math.max(cursor, ...drawn.map((box) => box.x + box.w)) + PORT_GAP);
+  // Without ports, a port node no branch reaches -- a bare gate -- still
+  // shows its name, on a lead of its own where the port would stand.
+  const leads = new Map();
   const portFor = (node, type, side) => {
-    if (!withPorts || !node || !attachments.has(node)) return;
-    const refdes = uniqueRefdes(plainName(node), used);
+    if (!node || !attachments.has(node)) return;
     const x = side === 'left' ? leftEdge : rightEdge;
     const y = rowY(level.get(node) ?? top);
+    if (!withPorts) {
+      if (!attachments.get(node).length) leads.set(node, [{ x, y }, { x: x + (side === 'left' ? PORT_GAP : -PORT_GAP), y }]);
+      return;
+    }
+    const refdes = uniqueRefdes(plainName(node), used);
     const port = circuit.addComponent(type, { refdes, x, y, noLabel: true });
     // Above the port, not beside it: an outward-facing port box already
     // occupies the side its own label offset points at.
@@ -6312,6 +6276,7 @@ function smallSignalSchematic(report, options = {}) {
     }
     wired.set(node, net);
   }
+  for (const [node, path] of leads) wired.set(node, circuit.createWireNet({ name: nodeName(node), route: path, branches: [path] }));
   wire(groundRefs, 'VSS');
 
   // Name the nodes on the drawing. A node with a port already reads its name
@@ -6332,17 +6297,6 @@ function smallSignalSchematic(report, options = {}) {
     if (placed) boxes.push(placed.bbox());
   }
 
-  // Mark each node with the device terminals that meet there (`D_{1}`), the
-  // way a textbook letters a hybrid-pi figure, so the reader can find each
-  // node in the schematic it came from.
-  const marks = terminalMarks(options.circuit);
-  boxes.push(...wireBoxes(circuit));
-  for (const node of nodes) {
-    const net = wired.get(node);
-    const found = marks.get(node) || marks.get(`name:${names.get(node)}`);
-    if (!net || !found?.length) continue;
-    placeBesideNet(circuit, net, found.join(', '), boxes);
-  }
   if (failures.length) notes.push(`${failures.length} connection${failures.length === 1 ? '' : 's'} could not be routed automatically`);
 
   const miller = (report?.details?.pipeline?.millerSubstitutions || []).map(({ device }) => device).filter(Boolean);
@@ -6409,13 +6363,13 @@ function placeSmallSignalModel(circuit, model) {
       let copy;
       if (label.owner) {
         if (!refs.has(label.owner)) continue;
-        copy = circuit.addLabel({ owner: refs.get(label.owner), text: label.text, align: label.align, offset: { ...label.offset } });
+        copy = circuit.addLabel({ owner: refs.get(label.owner), text: label.text, align: label.align, math: label.math, offset: { ...label.offset } });
       } else if (label.netId) {
         const net = nets.get(label.netId);
         if (!net?.name) continue;
         copy = circuit.addNetLabel(net.id, { anchor: at(label.anchor), align: label.align, netSide: label.netSide });
       } else {
-        copy = circuit.addLabel({ text: label.text, align: label.align, ...at(label.anchor) });
+        copy = circuit.addLabel({ text: label.text, align: label.align, math: label.math, ...at(label.anchor) });
       }
       added.labels.push(copy.id);
     }
@@ -74673,6 +74627,7 @@ __exports.installSidePanel = installSidePanel;
 let INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup; __bind(() => { ({ INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup } = __require("src/core/model.js")); });
 let switchPhase; __bind(() => { ({ switchPhase } = __require("src/core/beats.js")); });
 let resolveColor; __bind(() => { ({ resolveColor } = __require("src/core/style.js")); });
+let texToLabelMarkup; __bind(() => { ({ texToLabelMarkup } = __require("src/core/render.js")); });
 let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
 let componentPaletteItems, shortPlacementLabel; __bind(() => { ({ componentPaletteItems, shortPlacementLabel } = __require("src/web/toolbar.js")); });
 let canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl; __bind(() => { ({ canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl } = __require("src/web/elements.js")); });
@@ -74709,6 +74664,7 @@ let commit, isTransientCopyGhostRef, namedGroupNets, rangeValues, render, select
 
 
 
+
 let panelFilter = '';
 
 let lastRevealedRow = '';
@@ -74727,7 +74683,11 @@ function componentDisplayName(comp) {
   if (isReferenceMarker(comp)) return comp.refdes;
   // A switch's label is its phase; the panel names the switch itself.
   if (switchPhase(comp)) return componentLabelText(comp.refdes);
-  return editor.circuit.labelOf(comp.refdes)?.text || componentLabelText(comp.refdes);
+  const label = editor.circuit.labelOf(comp.refdes);
+  // A math name (a placed small-signal model's g_{m1}\,\mathrm{VIN}) reads
+  // as its markup: g_{m1} VIN.
+  if (label?.math) return texToLabelMarkup(`$${label.text}$`);
+  return label?.text || componentLabelText(comp.refdes);
 }
 
 /** Render `_{…}`/`^{…}` label markup as sub/superscript DOM text. */

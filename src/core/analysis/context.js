@@ -1,6 +1,7 @@
 import { plainName, railNameKey } from '../rail-names.js';
 import { asList, chopperShortedNets, MOS_TYPES } from './shared.js';
 import {
+  INTERFACE_PIN_TYPES,
   canonicalNetName,
   isReferenceMarker,
   isReferenceMarkerGlobalName,
@@ -163,7 +164,14 @@ export function collectAcGrounds(circuit, values = []) {
  * returned map holds only the members that are not the representative. */
 function virtualNetAliases(circuit) {
   // Nets joined by name, or through a chopper (a short in every analysis),
-  // are one node, named by the first net of the group.
+  // are one node, named by its net with a port, else a named one, else the
+  // first of the group.
+  const ported = new Set();
+  for (const component of circuit.components.values()) {
+    if (!INTERFACE_PIN_TYPES.has(component.type)) continue;
+    for (const net of circuit.nets.values()) if (net.terminals.some((terminal) => terminal.comp === component.refdes)) ported.add(net.id);
+  }
+  const rank = (net) => (ported.has(net.id) ? 0 : canonicalNetName(net.name) ? 1 : 2);
   const parent = new Map();
   const find = (id) => {
     let root = id;
@@ -179,7 +187,10 @@ function virtualNetAliases(circuit) {
     else parent.set(x, y);
   };
   const byName = new Map();
-  for (const net of circuit.nets.values()) {
+  const nets = [...circuit.nets.values()].map((net, index) => ({ net, index }))
+    .sort((left, right) => rank(left.net) - rank(right.net) || left.index - right.index)
+    .map(({ net }) => net);
+  for (const net of nets) {
     parent.set(net.id, net.id);
     order.set(net.id, order.size);
     // A rail's spellings are one name, as in the model: VDD is V_{DD}.

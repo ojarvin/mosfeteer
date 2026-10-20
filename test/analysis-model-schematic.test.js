@@ -5,8 +5,12 @@ import { analyzeSmallSignalV2 } from '../src/core/analysis/engine.js';
 import { placeSmallSignalModel, smallSignalSchematic } from '../src/core/analysis/model-schematic.js';
 import { noiseCandidates } from '../src/core/analysis/noise.js';
 import { tableParts } from '../src/core/parts-table.js';
-import { evaluate } from '../src/core/commands.js';
+import { evaluate, runCommand } from '../src/core/commands.js';
 import { smallSignalGoldenCorpus } from './fixtures/small-signal-golden.js';
+
+function correspondenceHas(model, refdes) {
+  return model.correspondence.has(refdes);
+}
 
 function fixture(id) {
   const entry = smallSignalGoldenCorpus.find((candidate) => candidate.id === id);
@@ -41,9 +45,11 @@ test('the drawn model carries one branch per solved primitive', () => {
   // Every drawn branch is labeled with the symbol the equations use, and a
   // controlled source names the nodes it reads.
   const labels = [...model.circuit.labels.values()].map((label) => label.text);
-  for (const text of ['r_{o1}', 'R_{D}', 'g_{m1}(VIN - 0)']) {
+  for (const text of ['r_{o1}', 'R_{D}', 'g_{m1}\\,\\mathrm{VIN}']) {
     assert.ok(labels.includes(text), `${text} should label a branch`);
   }
+  // Set in the equations' math font.
+  assert.ok([...model.circuit.labels.values()].filter((label) => label.owner && correspondenceHas(model, label.owner)).every((label) => label.math));
 });
 
 test('the model reads left to right: ports outside the branches, nodes named', () => {
@@ -176,13 +182,39 @@ test('each transistor\'s branches stand side by side, and a stacked transistor s
   assert.ok(at('RD').x > at('ro2').x);
 });
 
-test('each node is marked with the device terminals that meet there', () => {
+test('a controlled source names the nodes it reads, a grounded side left out', () => {
   const { circuit, report } = fixture('nmos-cascode');
+  const labels = [...smallSignalSchematic(report, { circuit }).circuit.labels.values()].map((label) => label.text);
+  // M1's gate is the input; M2's gate is grounded, its source the internal node.
+  assert.ok(labels.includes('g_{m1}\\,\\mathrm{VIN}'), labels.join(' | '));
+  assert.ok(labels.some((text) => /^-g_\{m2\}\\,\\mathrm\{N\d+\}$/.test(text)), labels.join(' | '));
+});
+
+test('nodes a chopper shorts take the name of the side with a port, else a named one', () => {
+  const drawing = (lines) => {
+    const circuit = new Circuit();
+    for (const line of lines) runCommand(circuit, line);
+    return circuit;
+  };
+  // The input's port is on one side of the chopper, a bare wire on the other.
+  const circuit = drawing([
+    'add input VIN --at -600 -280', 'add chopper CH1 --at 0 0', 'add nmos M1 --at 400 120',
+    'add resistor RD --at 560 -200 --rot 90', 'add ground G1 --at 560 400', 'add output VOUT --at 800 0',
+    // The bare wire is drawn first, so it does not win by coming first.
+    'connect CH1.op M1.g', 'connect VIN.p CH1.ip', 'connect M1.d RD.a VOUT.p', 'connect M1.s G1.gnd', 'connect RD.b G1.gnd',
+  ]);
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT' });
+  assert.equal(report.ok, true, report.error || '');
   const model = smallSignalSchematic(report, { circuit });
-  const free = [...model.circuit.labels.values()].filter((label) => !label.owner && !label.netId).map((label) => label.text);
-  // M1's drain meets M2's source at the internal node; the output is M2's
-  // drain; the input is M1's gate.
-  for (const mark of ['D_{1}, S_{2}', 'D_{2}', 'G_{1}']) assert.ok(free.includes(mark), `${mark} in ${free.join(' | ')}`);
+  const texts = [...model.circuit.labels.values()].map((label) => label.text);
+  assert.ok(texts.includes('VIN'), `the input port reads VIN: ${texts.join(' | ')}`);
+  assert.ok(texts.some((text) => text.includes('\\mathrm{VIN}')), 'g_m reads the input by name');
+  assert.ok(!texts.some((text) => /\bN\d+/.test(text)), `no net id stands in for a name: ${texts.join(' | ')}`);
+  // Placed without ports, the bare gate still shows its name on a lead.
+  const placed = smallSignalSchematic(report, { circuit, ports: false });
+  const names = [...placed.circuit.labels.values()].filter((label) => label.isNetLabel()).map((label) => label.text);
+  assert.ok(names.includes('VIN'), names.join(' | '));
+  assert.equal(evaluate(placed.circuit).ok, true, JSON.stringify(evaluate(placed.circuit).issues || []).slice(0, 300));
 });
 
 test('the model is compact: the ground hangs under the first branch, the ports sit on their node\'s row', () => {
@@ -240,7 +272,7 @@ test('a placed model is drawing only: the design analyzes as before, its names s
   assert.equal(evaluate(circuit).ok, true, JSON.stringify(evaluate(circuit).issues || []).slice(0, 300));
   // The branch labels come along, and the design still loads as saved.
   const texts = [...circuit.labels.values()].map((label) => label.text);
-  assert.ok(texts.includes('r_{o1}') && texts.includes('D_{1}'));
+  assert.ok(texts.includes('r_{o1}') && texts.includes('VIN'));
   const reloaded = Circuit.fromJSON(circuit.toJSON());
   assert.ok(added.components.every((refdes) => reloaded.components.get(refdes).drawingOnly));
   assert.equal(analyzedCircuit(reloaded).components.size, names.size);

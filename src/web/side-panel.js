@@ -7,6 +7,7 @@
 import { INTERFACE_PIN_TYPES, componentLabelText, isReferenceMarker, componentNameIdentity, parseLabelRuns, applyMarkup } from '../core/model.js';
 import { switchPhase } from '../core/beats.js';
 import { resolveColor } from '../core/style.js';
+import { texToLabelMarkup } from '../core/render.js';
 import { GRID } from '../core/grid.js';
 import { componentPaletteItems, shortPlacementLabel } from './toolbar.js';
 import { canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl } from './elements.js';
@@ -39,7 +40,11 @@ export function componentDisplayName(comp) {
   if (isReferenceMarker(comp)) return comp.refdes;
   // A switch's label is its phase; the panel names the switch itself.
   if (switchPhase(comp)) return componentLabelText(comp.refdes);
-  return editor.circuit.labelOf(comp.refdes)?.text || componentLabelText(comp.refdes);
+  const label = editor.circuit.labelOf(comp.refdes);
+  // A math name (a placed small-signal model's g_{m1}\,\mathrm{VIN}) reads
+  // as its markup: g_{m1} VIN.
+  if (label?.math) return texToLabelMarkup(`$${label.text}$`);
+  return label?.text || componentLabelText(comp.refdes);
 }
 
 /** Render `_{…}`/`^{…}` label markup as sub/superscript DOM text. */

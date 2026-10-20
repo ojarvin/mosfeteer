@@ -416,16 +416,19 @@ first. Columns follow the schematic's left-to-right order, and a unit that
 hangs from the node a column's stack ends at continues that stack (M1 over
 its source resistor). A branch whose ends share a row lies along it. One AC
 ground sits a cell under the first branch that reaches it, and the input and
-output ports sit on their node's row, outside the drawing. Each node is
-marked with the device terminals that meet there (`D_{1}, S_{2}`) and,
-without a port, named with a net label.
+output ports sit on their node's row, outside the drawing; a node without a
+port is named with a net label. Branch labels are math, in the equations'
+font. A controlled source names the nodes it reads, a grounded side left out:
+`g_{m1}\,\mathrm{VIN}`, `-g_{m2}\,\mathrm{N4}`. Nets a chopper shorts are
+one node, named by the side with a port, else a named one.
 
 **Open in window** shows it in a floating window that pans and zooms like a
 reference window (`src/web/reference-window.js`). The window redraws on each
 Derive and is not saved with the design. **Place in drawing** (also **Place**
 in the window, and the `analyze model` command) adds the model below the
 drawing, aligned with its left edge, as one undo step. It is drawn without
-ports, and its parts are **drawing only**
+ports (a bare input gate keeps its name on a short lead), and its parts are
+**drawing only**
 (`ComponentInstance#drawingOnly`): drawn, moved, and checked like any other
 part, but no analysis reads them (`analyzedCircuit`), so placing the model
 changes no result and leaves the equations current. A part whose name the
