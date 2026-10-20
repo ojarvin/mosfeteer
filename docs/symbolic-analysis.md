@@ -206,8 +206,21 @@ networks that open at DC, such as a capacitor or series RC bridge, are split
 into input/output shunts using the bridge-open DC gain. Conducting feedback
 networks remain in the solved model, preserving resistor loading and direct
 feedthrough. Exact Miller identities can still simplify their presentation.
-The netlist identifies each transformed feedback network and both `Y`
-admittance shunts; applied Miller assumptions are included in annotations.
+A shunt that is a capacitance enters the solve as its own symbol, named as
+the model figure names it: `C_{M1,in}` at the gate, `C_{M1,out}` at the
+drain. The equations then read in the figure's terms, and "Where" defines
+each one as a textbook writes it, `C_{M1,in} = C_{GD} (1 + g_{m1} (r_{o1}
+\parallel R_{D}))`, `C_{M1,out} = C_{GD} (1 + 1/(g_{m1} (r_{o1} \parallel
+R_{D})))`, under the equations' own approximations. Substituting the
+definitions back gives the exact result unchanged, since each shunt is linear
+in its capacitance (`analysis.derivedSymbols`: the exact `value`, the shown
+`selected`). A number for one is its definition's at the other values: the
+Bode plots set the parameters it is made of, never the symbol itself
+(`withDerivedValues`, `baseSymbols` in `bode.js`). A shunt that is not a
+capacitance (a series RC bridge) keeps its admittance inline. The netlist
+identifies each transformed feedback network, both `Y` admittance shunts, and
+each Miller capacitance's value; applied Miller assumptions are included in
+annotations.
 
 ## DC, poles, and zeros
 
@@ -407,7 +420,8 @@ and reload.
 The Model tab draws the small-signal circuit the solve used
 (`src/core/analysis/model-schematic.js`): the primitives after the pre-solve
 transforms, so Miller shunts and omitted `r_o` show as the equations treat
-them. It is an ordinary schematic on the grid, built from the editor's own
+them: a Miller capacitance carries the equations' symbol, and the legend
+under the figure states its definition as "Where" does. It is an ordinary schematic on the grid, built from the editor's own
 symbols. The AC ground is the bottom row, and each transconductance's drain
 end stands a row above its source end, so a cascode stacks as it does in the
 schematic; every other node stands on the first row. A device's branches

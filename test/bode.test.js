@@ -171,3 +171,26 @@ test('a curve leaving the frame ends at its edge instead of running along it', a
     assert.ok(onEdge.length <= 1, `${path.role} runs along the bottom edge`);
   }
 });
+
+test('a Miller capacitance gets its number from its definition, and the plots set what it is made of', async () => {
+  const { analyzeSmallSignalV2 } = await import('../src/core/analysis/engine.js');
+  const { baseSymbols, withDerivedValues, evaluateExpression } = await import('../src/core/analysis/bode.js');
+  const circuit = new Circuit();
+  for (const line of [
+    'add input VIN --at -240 0', 'add output VOUT --at 240 -80', 'add nmos M1 --at 0 0', 'add resistor RD --at 0 -160',
+    'add capacitor CGD --at -80 -80', 'add ground GND --at 160 160', 'add supply VDD --at 160 -240',
+    'connect VIN.p M1.g CGD.a', 'connect M1.d RD.a VOUT.p CGD.b', 'connect M1.s GND.gnd', 'connect RD.b VDD.p',
+  ]) runCommand(circuit, line);
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT' });
+  assert.equal(report.ok, true, report.error || '');
+  const names = report.derivedSymbols.map(({ name }) => name).sort();
+  assert.deepEqual(names, ['C_{M1,in}', 'C_{M1,out}']);
+  // The sliders: C_GD, g_m, r_o, R_D, never the Miller capacitances.
+  const base = baseSymbols(new Set(['C_{M1,out}', 'RD']), report.derivedSymbols);
+  assert.ok(!base.has('C_{M1,out}') && base.has('CGD') && base.has('gm1') && base.has('RD'), [...base].join(' '));
+  const values = withDerivedValues({ gm1: 0.002, ro1: 5e4, RD: 5e3, CGD: 2e-12, gmb1: 0 }, report.derivedSymbols);
+  const load = 1 / (1 / 5e4 + 1 / 5e3);
+  assert.ok(Math.abs(values['C_{M1,in}'] - 2e-12 * (1 + 0.002 * load)) < 1e-24);
+  assert.ok(Math.abs(values['C_{M1,out}'] - 2e-12 * (1 + 1 / (0.002 * load))) < 1e-24);
+  assert.ok(Number.isFinite(evaluateExpression(report.exact.Av.expression.denominator, { ...values, s: 1e6 })));
+});

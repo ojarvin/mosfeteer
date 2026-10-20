@@ -124,6 +124,36 @@ function localGain(primitives, bridge, gate, drain, context, options, ops) {
   } catch { return null; }
 }
 
+/** Whether `value` mentions the symbol `name`. */
+function mentions(value, name) {
+  if (!value || typeof value !== 'object') return false;
+  if (value.kind === 'symbol') return value.name === name;
+  return ['terms', 'factors'].some((key) => (value[key] || []).some((item) => mentions(item, name)))
+    || ['base', 'numerator', 'denominator'].some((key) => mentions(value[key], name));
+}
+
+/**
+ * One Miller shunt to AC ground. A shunt that is a capacitance (its
+ * admittance over s leaves no s) enters the solve as `s C_{M1,in}`, the
+ * symbol the model figure names it by, with its value kept beside it
+ * (`metadata.millerCapacitance`): the equations then read in the figure's
+ * terms, and substituting the value back gives the same result exactly,
+ * since the shunt is linear in it. Any other shunt keeps its admittance.
+ */
+function millerShunt(id, node, admittance, metadata, ops) {
+  const shunt = { kind: 'admittance', id, terminals: { a: node, b: AC_GROUND }, value: admittance, metadata };
+  let capacitance;
+  try { capacitance = compactRational(ops.div(admittance, ops.s()), ops); }
+  catch { return shunt; }
+  if (ops.isZero(capacitance) || mentions(capacitance, ops.variable || 's')) return shunt;
+  const name = `C_{${metadata.component || 'M'},${metadata.millerSide === 'output' ? 'out' : 'in'}}`;
+  return {
+    ...shunt,
+    value: ops.mul(ops.s(), ops.symbol(name)),
+    metadata: { ...metadata, millerSymbol: name, millerCapacitance: capacitance },
+  };
+}
+
 /**
  * Detect and substitute every gate/drain Miller bridge in `primitives`.
  * Returns `{ primitives, applied, retained }`: a (possibly unchanged) primitive list
@@ -183,16 +213,8 @@ export function applyMillerApproximation(primitives, context, options, ops) {
 
     const withoutBridge = current.filter((primitive) => !bridge.includes(primitive));
     const metadata = { component: device, millerBridge: true, feedbackComponents, feedbackKinds, gate, drain, gain, feedbackImpedance: reduced.impedance };
-    const gateShunt = {
-      kind: 'admittance', id: `${device}.miller-gate`,
-      terminals: { a: gate, b: AC_GROUND }, value: gateAdmittance,
-      metadata: { ...metadata, millerSide: 'input' },
-    };
-    const drainShunt = {
-      kind: 'admittance', id: `${device}.miller-drain`,
-      terminals: { a: drain, b: AC_GROUND }, value: drainAdmittance,
-      metadata: { ...metadata, millerSide: 'output' },
-    };
+    const gateShunt = millerShunt(`${device}.miller-gate`, gate, gateAdmittance, { ...metadata, millerSide: 'input' }, ops);
+    const drainShunt = millerShunt(`${device}.miller-drain`, drain, drainAdmittance, { ...metadata, millerSide: 'output' }, ops);
     current = [...withoutBridge, gateShunt, drainShunt];
     applied.push({ device, gate, drain, ...local, feedbackComponents, feedbackImpedance: reduced.impedance });
   }

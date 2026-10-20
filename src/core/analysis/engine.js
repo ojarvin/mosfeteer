@@ -968,6 +968,74 @@ export function numericSmallSignal(circuit, options = {}) {
   return { ok: true, provenance, reached, outputComponents, at };
 }
 
+/** The model's derived symbols: `{ name, value, component, device, side }`
+ *  per Miller capacitance, in the order the model has them. */
+function derivedSymbols(pipeline) {
+  return (pipeline.exactPrimitives || []).filter((primitive) => primitive.metadata?.millerSymbol).map(({ id, metadata }) => ({
+    name: metadata.millerSymbol,
+    value: metadata.millerCapacitance,
+    component: metadata.feedbackComponents?.[0] || metadata.component,
+    device: metadata.component,
+    side: metadata.millerSide,
+    primitive: id,
+  }));
+}
+
+/**
+ * Each derived symbol's definition, as a textbook writes a Miller
+ * capacitance: the feedback capacitance times (1 - A), or (1 - 1/A) at the
+ * output, A the stage's gain with the bridge open -- `C_{GD}(1 + g_{m1}
+ * (r_{o1} || R_D))`, not the expanded fraction. The form is proven equal to
+ * the value the solve used before it is shown; `tex` is rendered with the
+ * engine's identities, which the report adapter does not have.
+ */
+function derivedDefinitions(pipeline, equivalences, renderOptions, approximationOptions) {
+  const ops = createRationalOps({ variable: renderOptions.variable || 's', maxOperations: 12000 });
+  return derivedSymbols(pipeline).map((symbol) => {
+    const table = new Map(equivalences);
+    const prove = (proofs) => { for (const [key, proof] of equivalenceTable(proofs)) table.set(key, proof); };
+    let value = symbol.value;
+    let shown = value;
+    let assumptions = [];
+    const stage = (pipeline.millerSubstitutions || []).find((entry) => entry.device === symbol.device);
+    try {
+      if (stage) {
+        const positiveGain = ops.neg(stage.gain);
+        const term = symbol.side === 'output' ? ops.div(ops.one, positiveGain) : positiveGain;
+        const factor = ops.add(ops.one, term);
+        const feedback = compactRational(ops.div(ops.one, ops.mul(ops.s(), stage.feedbackImpedance)), ops);
+        const product = ops.mul(feedback, factor);
+        if (ops.isZero(compactRational(ops.sub(product, symbol.value), ops))) {
+          value = product;
+          prove([provenProduct(product, feedback, factor), provenSum(factor, ops.one, term)]);
+          shown = product;
+          // Shown under the equations' own approximations (g_m r_o >> 1
+          // drops the same terms here as there), applied to the gain term
+          // so the form stays C_fb (1 + term); the exact value stays for
+          // exact results.
+          const approximated = applyApproximations(term, approximationOptions);
+          if (approximated.changed) {
+            const selectedFactor = ops.add(ops.one, approximated.selected);
+            shown = ops.mul(feedback, selectedFactor);
+            assumptions = approximated.assumptions;
+            prove([provenProduct(shown, feedback, selectedFactor), provenSum(selectedFactor, ops.one, approximated.selected)]);
+          }
+        }
+      }
+    } catch { /* the plain value is shown */ }
+    const options = { ...renderOptions, equivalences: table };
+    return { ...symbol, value, selected: shown, assumptions, tex: renderExpression(shown, options), equivalences: table };
+  });
+}
+
+/** A derived symbol comes from its feedback part: hovering it lights that. */
+function withDerivedProvenance(table, derived) {
+  for (const symbol of derived) {
+    table[symbol.name] = { component: symbol.component, role: 'capacitor', kind: 'capacitor', primitives: [symbol.primitive], derived: true };
+  }
+  return table;
+}
+
 export function analyzeSmallSignalV2(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   circuit = analyzedCircuit(circuit);
@@ -1091,6 +1159,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
   for (const [key, proof] of equivalenceTable(buildMillerEquivalenceProofs(pipeline, topology, approximations, approximationOptions))) {
     equivalences.set(key, proof);
   }
+  const derived = derivedDefinitions(pipeline, equivalences, withEquivalences(responseOptions(analysisOptions)), approximationOptions);
   const displayed = {
     transfer: displayResponse('Av', exact.Av.expression, approximations.Av, withEquivalences(responseOptions(analysisOptions)), approximationOptions),
     input: displayResponse('Zin', exact.Zin.expression, approximations.Zin, withEquivalences({
@@ -1133,6 +1202,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     ...bodyEffectAssumptions,
     ...outputResistanceAssumptions,
     ...shown.flatMap((name) => approximations[name].assumptions),
+    ...derived.flatMap((symbol) => symbol.assumptions),
     ...transferFunctions.map((name) => displayed[name === 'Av' ? 'transfer' : DERIVED_TRANSFERS[name]])
       .flatMap(({ poles = [], zeros = [] }) => [...poles, ...zeros])
       .flatMap((root) => root.assumptions || []),
@@ -1214,8 +1284,12 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
     // in symbols whose own primitive left the model but whose name survived
     // into an equation — a Miller-absorbed feedback capacitor, or an r_o the
     // engine had to keep. See `provenance.js`.
-    symbolProvenance: symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives,
-      noiseProvenancePrimitives(pipeline.noiseSources)),
+    symbolProvenance: withDerivedProvenance(symbolProvenance(pipeline.exactPrimitives, pipeline.conversion?.primitives,
+      noiseProvenancePrimitives(pipeline.noiseSources)), derivedSymbols(pipeline)),
+    // Symbols the model stands in for an expression with: a Miller
+    // capacitance, `C_{M1,in}`, as the model figure names it. Listed under
+    // "Where"; a number for one is its value's at the others'.
+    derivedSymbols: derived,
     diagnostics,
     log: [
       diagnostics.logText,

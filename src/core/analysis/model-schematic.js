@@ -148,6 +148,10 @@ function elementLabel(element, symbol, options, nodeName) {
   try { rendered = renderExpression(element.value, options.renderOptions || {}); }
   catch { rendered = ''; }
   if (element.kind === 'admittance') {
+    // A Miller capacitance the solve used as a symbol: the same name, and its
+    // definition as the equations' "Where" states it.
+    const derived = element.metadata?.millerSymbol && (options.derived || []).find((entry) => entry.name === element.metadata.millerSymbol);
+    if (derived) return { text: derived.name, legend: { symbol: derived.name, value: derived.tex } };
     const name = millerSymbol(element, symbol);
     // A shunt drawn as a capacitor is named as one, so state a capacitance:
     // the primitive carries the admittance Y = sC, and C = Y/s is the
@@ -400,7 +404,7 @@ export function smallSignalSchematic(report, options = {}) {
   }
 
   const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
-  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), options, nodeName)]));
+  const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), { ...options, derived: report.derivedSymbols }, nodeName)]));
   // The cells left of a branch its label takes, as `addElement` places it:
   // the box a cell clear of the symbol, since until a browser measures it a
   // math label's ink is its whole box.

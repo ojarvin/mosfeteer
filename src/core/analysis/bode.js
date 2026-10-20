@@ -95,6 +95,26 @@ export function evaluateExpression(value, values) {
   }
 }
 
+/** `values` with a number for each derived symbol (`report.derivedSymbols`:
+ *  a Miller capacitance), its definition's value at the others'. */
+export function withDerivedValues(values, derived = []) {
+  const out = { ...values };
+  for (const { name, value } of derived || []) out[name] = evaluateExpression(value, out);
+  return out;
+}
+
+/** `symbols` with each derived one replaced by the symbols its definition
+ *  reads: the parameters a value is set for, never the symbol made of them. */
+export function baseSymbols(symbols, derived = []) {
+  const byName = new Map((derived || []).map((symbol) => [symbol.name, symbol]));
+  const out = new Set();
+  for (const name of symbols) {
+    if (byName.has(name)) expressionSymbols(byName.get(name).value, 's', out);
+    else out.add(name);
+  }
+  return out;
+}
+
 /** Dense coefficients [c0, c1, ...] of a coefficient list `[{power, coefficient}]`. */
 export function numericCoefficients(list, values) {
   const out = [];

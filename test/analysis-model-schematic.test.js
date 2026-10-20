@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit, analyzedCircuit } from '../src/core/model.js';
 import { analyzeSmallSignalV2 } from '../src/core/analysis/engine.js';
+import { adaptCombinedReport } from '../src/core/analysis/report-adapter.js';
 import { placeSmallSignalModel, smallSignalSchematic } from '../src/core/analysis/model-schematic.js';
 import { noiseCandidates } from '../src/core/analysis/noise.js';
 import { tableParts } from '../src/core/parts-table.js';
@@ -122,6 +123,27 @@ test('a Miller-approximated bridge is drawn as its two shunt capacitances', () =
   assert.equal(model.legend.length, 2);
   for (const entry of model.legend) assert.match(entry.value, /C_\{GD\}/);
   assert.ok(model.notes.some((note) => note.includes('Miller approximation')));
+});
+
+test('the equations read in the drawn model\'s Miller capacitances, defined as the legend defines them', () => {
+  const circuit = millerCommonSource();
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT' });
+  const gui = adaptCombinedReport(report);
+  const model = smallSignalSchematic(report, { circuit });
+  const equations = gui.equationEntries.filter(({ group }) => group !== 'definitions').map(({ result }) => result.equation).join('\n');
+  // The symbols the figure draws are the ones the equations use.
+  for (const name of ['C_{M1,in}', 'C_{M1,out}']) {
+    assert.ok([...model.circuit.labels.values()].some((label) => label.text === name), `${name} is drawn`);
+    assert.ok(equations.includes(name), `${name} is in the equations`);
+  }
+  assert.doesNotMatch(equations, /C_\{GD\}/, 'the feedback capacitor is in the definitions, not the equations');
+  // "Where" defines each the textbook way, and the legend says the same.
+  const where = gui.equationEntries.find(({ group }) => group === 'definitions').result.lines;
+  const input = where.find((line) => line.startsWith('C_{M1,in} = '));
+  assert.match(input, /^C_\{M1,in\} = C_\{GD\} \\, \\left\(1 \+ g_\{m1\}/);
+  for (const entry of model.legend) assert.ok(where.includes(`${entry.symbol} = ${entry.value}`), `${entry.symbol}: ${entry.value}`);
+  // Pointing at C_{M1,in} lights the capacitor it is made of.
+  assert.equal(report.symbolProvenance['C_{M1,in}'].component, 'CGD');
 });
 
 test('an ignored body effect leaves no branch in the model', () => {

@@ -28,9 +28,10 @@ function roleOf(primitive) {
  * Several lists are needed because a symbol can survive into a displayed
  * equation after its own primitive has left the solved set:
  *
- *  - A Miller shunt carries an expression, not a parameter name, so it mints no
- *    symbol of its own — but that expression still contains the feedback
- *    capacitor's `C_{GD}`, while the capacitor's primitive is gone.
+ *  - A Miller capacitance (`C_{M1,in}`) is a symbol the engine adds itself
+ *    (`analysis.derivedSymbols`, from its feedback part); its definition
+ *    under "Where" still contains the feedback capacitor's `C_{GD}`, while
+ *    the capacitor's primitive is gone.
  *  - `r_o -> infinity` drops a device's output resistance before the solve, yet
  *    the engine puts `r_o` back when removing it would make the solve singular.
  *

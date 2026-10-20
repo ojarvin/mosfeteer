@@ -6,6 +6,7 @@ import { formatExpression } from '../src/core/analysis/rational.js';
 import { smallSignalGoldenCorpus } from './fixtures/small-signal-golden.js';
 import { adaptCombinedReport } from '../src/core/analysis/report-adapter.js';
 import { texToMathML } from '../src/core/render.js';
+import { withDerivedValues } from '../src/core/analysis/bode.js';
 
 function renameNetAt(circuit, terminal, name) {
   const physicalNet = circuit.netOfTerminal(terminal);
@@ -116,7 +117,10 @@ test('netlist identifies the reactive feedback element and both supported Miller
   assert.match(report.smallSignalNetlist, /Y_M1\.miller-gate V_\{IN\} 0/);
   assert.match(report.smallSignalNetlist, /Y_M1\.miller-drain V_\{OUT\} 0/);
   assert.doesNotMatch(report.smallSignalNetlist, /UNSUPPORTED/);
-  const values = { gm1: 0.002, ro1: 5e4, RD: 5e3, CGD: 2e-12, s: 1e6, gmb1: 0 };
+  // Each shunt is its Miller capacitance, named as the model figure names it.
+  assert.match(report.smallSignalNetlist, /Y_M1\.miller-gate V_\{IN\} 0 s \\, C_\{M1,in\}/);
+  assert.match(report.smallSignalNetlist, /\* C_\{M1,in\} = /);
+  const values = withDerivedValues({ gm1: 0.002, ro1: 5e4, RD: 5e3, CGD: 2e-12, s: 1e6, gmb1: 0 }, report.derivedSymbols);
   const gain = -values.gm1 * values.ro1 * values.RD / (values.ro1 + values.RD);
   const shunts = report.details.pipeline.selected.filter((primitive) => primitive.kind === 'admittance');
   close(evaluate(shunts.find((primitive) => primitive.id.endsWith('miller-gate')).value, values), values.s * values.CGD * (1 - gain), 'Miller input admittance');
@@ -125,7 +129,8 @@ test('netlist identifies the reactive feedback element and both supported Miller
 
 function transferAt(report, values, s) {
   const expression = report.exact.Av.expression;
-  return evaluate(expression.numerator, { ...values, s }) / evaluate(expression.denominator, { ...values, s });
+  const at = withDerivedValues({ ...values, s }, report.derivedSymbols);
+  return evaluate(expression.numerator, at) / evaluate(expression.denominator, at);
 }
 
 test('detects and lists a Miller substitution for a gate-drain feedback capacitor', () => {
@@ -142,11 +147,16 @@ test('preserves the finite parallel load and Miller correction without assuming 
   const report = analyzeSmallSignalV2(commonSourceWithFeedback(), { input: 'VIN.p', output: 'VOUT.p' });
   assert.equal(report.ok, true, report.error);
   assert.match(report.transfer.ac.equation, /-g_\{m1\}.*r_\{o1\} \\parallel R_\{D\}/);
-  assert.match(report.transfer.ac.equation, /g_\{m1\} \\, R_\{D\} \+ 1/);
-  const values = { gm1: 0.001, ro1: 1e6, RD: 100, CGD: 2e-12, s: 1e8 };
+  // The gain reads in the model's output Miller capacitance; its definition
+  // carries the correction, 1 + 1/(g_m1 (r_o1 || R_D)), never assuming g_m R_D large.
+  assert.match(report.transfer.ac.equation, /C_\{M1,out\}/);
+  const output = report.derivedSymbols.find(({ name }) => name === 'C_{M1,out}');
+  assert.match(output.tex, /^C_\{GD\} \\, \\left\(1 \+ \\frac\{1\}\{g_\{m1\} \\, \\left\(r_\{o1\} \\parallel R_\{D\}\\right\)\}\\right\)$/);
+  const values = withDerivedValues({ gm1: 0.001, ro1: 1e6, RD: 100, CGD: 2e-12, s: 1e8 }, report.derivedSymbols);
   const selected = report.transfer.expression;
   const actual = evaluate(selected.numerator, values) / evaluate(selected.denominator, values);
-  const admittance = 1 / values.ro1 + 1 / values.RD + values.s * values.CGD * (1 + 1 / (values.gm1 * values.RD));
+  const load = 1 / (1 / values.ro1 + 1 / values.RD);
+  const admittance = 1 / load + values.s * values.CGD * (1 + 1 / (values.gm1 * load));
   assert.ok(Math.abs(actual + values.gm1 / admittance) < 1e-12);
 });
 
@@ -166,7 +176,7 @@ test('loaded Miller stage GUI equations have no stacked fractions and its pole h
     assert.equal(depth, 0);
   }
   const pole = gui.equationEntries.find(({ result }) => result.equation.startsWith('p_{0}')).result.equation;
-  assert.match(pole, /^p_\{0\} = -\\frac\{g_\{m1\} \\, \\left\(R_\{D\} \+ r_\{o1\}/);
+  assert.match(pole, /^p_\{0\} = -\\frac\{R_\{D\} \+ r_\{o1\}\}\{C_\{M1,out\}/);
   assert.match(gui.reports.transfer.equation, /\\parallel/);
 });
 

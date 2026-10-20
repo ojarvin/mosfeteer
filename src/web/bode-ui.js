@@ -17,8 +17,8 @@
 
 import { PER_DECADE } from './e-series.js';
 import {
-  DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
-  responseAt, sketchParameters, sketchValues,
+  DEFAULT_INTRINSIC_GAIN, DEFAULT_PARASITIC_RATIO, baseSymbols, bodeSketch, evaluateExpression, expressionSymbols, numericCoefficients,
+  responseAt, sketchParameters, sketchValues, withDerivedValues,
 } from '../core/analysis/bode.js';
 import { TRACE_COLORS } from '../core/analysis/signal-flow.js';
 import { renderExpression } from '../core/analysis/present.js';
@@ -122,8 +122,9 @@ function parametersOf(trace) {
   }
   const exact = exactOf(report, key);
   if (!exact) return null;
-  const symbols = new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
-    .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]));
+  // A Miller capacitance (C_{M1,in}) is set by the values it is made of.
+  const symbols = baseSymbols(new Set([...exact.numeratorCoefficients, ...exact.denominatorCoefficients]
+    .flatMap(({ coefficient }) => [...expressionSymbols(coefficient)])), report.derivedSymbols);
   const all = sketchParameters(symbols, report.symbolProvenance || {}, { outputComponents: outputComponents(report) });
   return { all, reached: all };
 }
@@ -151,7 +152,7 @@ function numericAt(model, values) {
 function sketchOf(trace) {
   const parameters = parametersOf(trace);
   if (!parameters) return null;
-  const values = sketchValues(parameters.all, ratios);
+  const values = withDerivedValues(sketchValues(parameters.all, ratios), trace.report.derivedSymbols);
   let sketch;
   let response;
   if (NUMERIC_KEYS.has(trace.key)) {

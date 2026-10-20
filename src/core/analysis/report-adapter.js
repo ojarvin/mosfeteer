@@ -706,24 +706,33 @@ function equationEntries(reports, report, presentation = {}) {
     if (result.table) entries.push({ title, group: 'noise', result });
     else add(title, result, 'noise');
   }
-  const where = definitionEntry(presentation);
+  const where = definitionEntry(presentation, report);
   if (where) entries.push(where);
   return entries;
 }
 
 /**
- * The "where" block: each named sub-expression once, rendered with the other
- * names (never its own), so a definition may use a smaller one.
+ * The "where" block: the model's derived symbols (a Miller capacitance,
+ * `C_{M1,in}`, as the model figure draws it), then each named sub-expression
+ * once, rendered with the other names (never its own), so a definition may
+ * use a smaller one.
  */
-function definitionEntry(presentation) {
+function definitionEntry(presentation, report = {}) {
   const named = presentation.named || [];
-  if (!named.length) return null;
-  const rendered = named.map(({ keys, value, name }) => {
+  const derived = report.derivedSymbols || [];
+  if (!named.length && !derived.length) return null;
+  const rendered = [...derived.map(({ name, value, selected, tex: shown, equivalences }) => {
+    // The engine's identities write it as a textbook does; the provenance
+    // render takes them too, so its nodes are the shown line's.
+    const options = equivalences ? { ...presentation, equivalences } : presentation;
+    const { tex, nodes } = renderExpressionWithProvenance(selected || value, options);
+    return { line: `${name} = ${shown || render(selected || value, options)}`, provenance: { tex: `${name} = ${tex}`, nodes } };
+  }), ...named.map(({ keys, value, name }) => {
     const definitions = new Map(presentation.definitions);
     for (const key of keys) definitions.delete(key);
     const { tex, nodes } = renderExpressionWithProvenance(value, { ...presentation, definitions });
     return { line: `${name} = ${render(value, { ...presentation, definitions })}`, provenance: { tex: `${name} = ${tex}`, nodes } };
-  });
+  })];
   const lines = rendered.map(({ line }) => line);
   return {
     title: 'Where',

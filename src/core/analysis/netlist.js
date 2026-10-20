@@ -235,6 +235,7 @@ function describePrimitive(primitive, resolveNode, options = {}) {
     const notes = metadata.millerBridge ? [
       `* Miller bridge ${(metadata.feedbackComponents || [name]).join(', ')} replaced by two shunts: ${resolveNode(metadata.gate)} -> ${resolveNode(metadata.drain)}; Z_fb = ${format(metadata.feedbackImpedance)}; A_v0 = ${format(metadata.gain)} (bridge removed)`,
       `* ${primitiveId(primitive)}: ${metadata.millerSide} shunt admittance from the Miller approximation`,
+      ...(metadata.millerSymbol ? [`* ${metadata.millerSymbol} = ${format(metadata.millerCapacitance)}`] : []),
     ] : [];
     return { kind, id: primitiveId(primitive), line: `Y_${primitiveId(primitive)} ${a} ${b} ${format(primitive.value)}`, notes };
   }
