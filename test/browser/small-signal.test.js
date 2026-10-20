@@ -111,7 +111,13 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   test('a device attribute set from the context menu applies to every selected transistor and shows as chosen', async () => {
     await h.evaluate(`window.__run('add nmos M2 --at 800 0')`);
     await h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection(['M1', 'M2']); m.render(); })`);
-    const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(-20, 0))`);
+    // The view shifts to take in M2 after the add: aim once it holds still,
+    // or the click lands on what moved under it (M1's label, say).
+    const view = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify(m.editor.view))`);
+    for (let last = null, now = await view(); now !== last; last = now, now = (await h.settle(), await view()));
+    // A grid point inside M1's body: the pick snaps to the grid, and a point
+    // midway between two grid lines can round onto M1's label box.
+    const p = await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.worldToClient(-80, -40))`);
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
     await h.tap(p.x, p.y, { button: 'right' });
     await h.until(`!document.querySelector('.component-context-menu').hidden`);
