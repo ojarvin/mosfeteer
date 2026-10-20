@@ -6098,16 +6098,19 @@ function smallSignalSchematic(report, options = {}) {
     return reachOf(width) + width / 2;
   };
 
-  // Columns follow the schematic: units of devices drawn at one x share a
-  // column, and a unit hanging from the node a column's stack ends at
-  // continues that stack (M1 over its source resistor), where their rows
-  // allow; the rest keep the order they appear in.
+  // Columns read from input to output: each unit by its upper node's place
+  // in that order (the input first), and a branch lying between two nodes
+  // (a gate-drain capacitance) between their columns. Units of devices
+  // drawn at one x share a column, and a unit hanging from the node a
+  // column's stack ends at continues that stack (M1 over its source
+  // resistor), where their rows allow.
   const sourceX = (unit) => {
     try { return unit.component ? options.circuit?.getComponent(unit.component).transform.x ?? null : null; }
     catch { return null; }
   };
-  const ordered = [...units.values()].map((unit) => ({ unit, x: sourceX(unit) }))
-    .sort((left, right) => (left.x ?? Infinity) - (right.x ?? Infinity) || left.unit.order - right.unit.order);
+  const rank = (unit) => (unit.flat ? (nodes.indexOf(unit.upper) + nodes.indexOf(unit.lower)) / 2 : nodes.indexOf(unit.upper));
+  const ordered = [...units.values()].map((unit) => ({ unit, x: sourceX(unit), rank: rank(unit) }))
+    .sort((left, right) => left.rank - right.rank || (left.x ?? Infinity) - (right.x ?? Infinity) || left.unit.order - right.unit.order);
   const columns = [];
   for (const { unit, x } of ordered) {
     const chained = (column) => column.units.some((other) => (other.lower === unit.upper && other.lo === unit.hi)
@@ -41715,13 +41718,14 @@ let snap, GRID; __bind(() => { ({ snap, GRID } = __require("src/core/grid.js"));
 let analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } = __require("src/web/analysis-options.js")); });
 let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
 let installHintFolding; __bind(() => { ({ installHintFolding } = __require("src/web/hints.js")); });
-let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisModelPlace, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisModelPlace, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
+let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let applyJson, beginSettingsEdit, commit, endSettingsEdit, setSelection, snapshot, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets; __bind(() => { ({ applyJson, beginSettingsEdit, commit, endSettingsEdit, setSelection, snapshot, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } = __require("src/web/main.js")); });
 let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floating-window.js")); });
 let refreshModelWindow, showModelWindow; __bind(() => { ({ refreshModelWindow, showModelWindow } = __require("src/web/reference-window.js")); });
+let showPlots; __bind(() => { ({ showPlots } = __require("src/web/plots-window.js")); });
 let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); });
 /**
  * The small-signal analysis dock: its form and remembered settings, running
@@ -41729,6 +41733,7 @@ let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); })
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -41882,7 +41887,7 @@ function clearLatestAnalysisResult() {
     if (analysisNetlist) analysisNetlist.textContent = '';
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
   }
-  for (const button of [analysisAnnotate, analysisModelOpen, analysisModelPlace]) if (button) button.hidden = true;
+  for (const button of [analysisAnnotate, analysisModelOpen]) if (button) button.hidden = true;
 }
 
 function analysisFormOptions() {
@@ -42567,7 +42572,7 @@ function renderAnalysisResult(report) {
   if (analysisModelPanel) analysisModelPanel.hidden = !drawn;
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
-  for (const button of [analysisModelOpen, analysisModelPlace]) if (button) button.hidden = !drawn;
+  if (analysisModelOpen) analysisModelOpen.hidden = !drawn;
   renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
   const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
@@ -43083,7 +43088,8 @@ function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
   analysisModelOpen?.addEventListener('click', openModelWindow);
-  analysisModelPlace?.addEventListener('click', placeModelInDrawing);
+  // Plots is every mode's: the window shows the current mode's view.
+  document.getElementById('analysis-show-plots')?.addEventListener('click', () => showPlots());
 
   if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true, toggleKey: 'S' });
 
@@ -49455,7 +49461,6 @@ let cornerNames; __bind(() => { ({ cornerNames } = __require("src/core/bode-figu
 let axisName, bodeSpecs, responseSpec; __bind(() => { ({ axisName, bodeSpecs, responseSpec } = __require("src/core/plot-spec.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let sharedValueRow; __bind(() => { ({ valueRow: sharedValueRow } = __require("src/web/value-row.js")); });
-let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let normalizePlot; __bind(() => { ({ normalizePlot } = __require("src/core/model.js")); });
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
@@ -49463,7 +49468,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let commit, markSettingsChanged, onDocumentShown, render, selectedLabel, setLabelSelection, setSelection; __bind(() => { ({ commit, markSettingsChanged, onDocumentShown, render, selectedLabel, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let installPlotsWindow, offerPlots, plotsShown, showPlots; __bind(() => { ({ installPlotsWindow, offerPlots, plotsShown, showPlots } = __require("src/web/plots-window.js")); });
+let installPlotsWindow, offerPlots, plotsShown; __bind(() => { ({ installPlotsWindow, offerPlots, plotsShown } = __require("src/web/plots-window.js")); });
 let placeResponsePlot; __bind(() => { ({ placeResponsePlot } = __require("src/web/signal-flow-ui.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 /**
@@ -49482,7 +49487,6 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
  * on the symbolic solve, fail with it, or take its approximations. The
  * loop gain is drawn from its derived coefficients.
  */
-
 
 
 
@@ -50050,8 +50054,6 @@ function renderBode(report) {
     latest = null;
     renderPlots();
   }
-  const card = document.getElementById('analysis-plots-card');
-  if (card) card.hidden = !traces.length;
   return traces.length > 0;
 }
 
@@ -50068,22 +50070,13 @@ function clearBode() {
   latest = null;
   renderValues({ force: true });
   renderPlots();
-  const card = document.getElementById('analysis-plots-card');
-  if (card) card.hidden = true;
 }
 
-/** The Plots card and the Values in the analysis window, and the circuit's
- *  view in the Plots window. */
+/** The Values in the analysis window, and the circuit's view in the Plots
+ *  window. */
 function installBodeUi() {
   const result = document.getElementById('analysis-result');
-  if (result && !document.getElementById('analysis-plots-card')) {
-    const card = el('div', { id: 'analysis-plots-card', class: 'signal-flow-plots', hidden: true }, [
-      el('div', { class: 'card-heading', text: 'Plots' }),
-      el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Gain, impedances, and loop gain.' }),
-        el('button', { type: 'button', class: 'analysis-show-plots', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
-      ]),
-    ]);
+  if (result && !document.getElementById('analysis-values')) {
     valuesEl = el('fieldset', { id: 'analysis-values', class: 'analysis-approximations bode-values', hidden: true }, [
       el('legend', { text: 'Values' }),
       el('div', { class: 'bode-value-rows' }),
@@ -50102,7 +50095,7 @@ function installBodeUi() {
         }),
       ]),
     ]);
-    result.after(card, valuesEl);
+    result.after(valuesEl);
   }
   plotsEl = el('div', { class: 'bode-plots-view' }, [
     el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S) to plot its gain here.' }),
@@ -55615,7 +55608,6 @@ const analysisNetlist = document.getElementById('analysis-netlist');
 const analysisModelPanel = document.getElementById('analysis-panel-model');
 const analysisModelEl = document.getElementById('analysis-model');
 const analysisModelOpen = document.getElementById('analysis-model-open');
-const analysisModelPlace = document.getElementById('analysis-model-place');
 const analysisCancel = document.getElementById('analysis-cancel');
 const analysisAnnotate = document.getElementById('analysis-annotate');
 const tipCardEl = document.getElementById('tip-card');
@@ -55719,7 +55711,6 @@ __exports.analysisNetlist = analysisNetlist;
 __exports.analysisModelPanel = analysisModelPanel;
 __exports.analysisModelEl = analysisModelEl;
 __exports.analysisModelOpen = analysisModelOpen;
-__exports.analysisModelPlace = analysisModelPlace;
 __exports.analysisCancel = analysisCancel;
 __exports.analysisAnnotate = analysisAnnotate;
 __exports.tipCardEl = tipCardEl;
@@ -73177,7 +73168,7 @@ let floatingWindow; __bind(() => { ({ floatingWindow } = __require("src/web/floa
  * root locus, swing, loop gain, and the time domain: signal-flow-ui.js's,
  * the time domain time-plot.js's) or a circuit's Bode plots (bode-ui.js's);
  * this module is the window around them. It belongs to the analysis window:
- * its Show plots opens it, and Derive does unless it was closed since;
+ * its footer's Plots opens it, and Derive does unless it was closed since;
  * `Shift+W` shows or hides it.
  */
 
@@ -75578,8 +75569,9 @@ function setMode(next, { user = false } = {}) {
   const extra = extraModes.find((spec) => spec.mode === mode) || null;
   const circuit = !flow && !extra;
   for (const child of circuitChildren()) child.classList.toggle('analysis-mode-hidden', !circuit);
-  // One footer: the circuit's buttons there, or this mode's.
-  for (const id of ['analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', !circuit);
+  // One footer: Plots, every mode's, then the circuit's buttons there, or
+  // this mode's.
+  for (const id of ['analysis-model-open', 'analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', !circuit);
   for (const button of actions) button.classList.toggle('analysis-mode-hidden', !flow);
   section.hidden = !flow;
   for (const spec of extraModes) {
@@ -76930,10 +76922,6 @@ function installSignalFlowUi() {
     el('div', { class: 'signal-flow-plots' }, [
       el('div', { class: 'card-heading', text: 'Plots' }),
       el('div', { class: 'signal-flow-band-host' }),
-      el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Responses, step, root locus, swing, loop gain, and the nets in time.' }),
-        el('button', { type: 'button', class: 'signal-flow-show-plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
-      ]),
     ]),
     // The tuning comes after what it tunes: the coefficients' sliders, then
     // the optimizer (folded until opened).
@@ -78616,14 +78604,13 @@ let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js"));
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
-let installPlotsWindow, offerPlots, showPlots; __bind(() => { ({ installPlotsWindow, offerPlots, showPlots } = __require("src/web/plots-window.js")); });
+let installPlotsWindow, offerPlots; __bind(() => { ({ installPlotsWindow, offerPlots } = __require("src/web/plots-window.js")); });
 let placeResponsePlot, registerAnalysisMode; __bind(() => { ({ placeResponsePlot, registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
 let valueRow; __bind(() => { ({ valueRow } = __require("src/web/value-row.js")); });
 let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection; __bind(() => { ({ commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 /**
  * The analysis window's switched-capacitor mode: a drawn SC circuit's exact
@@ -78637,7 +78624,6 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * or phase over f/f_s, a legend to show or take off each, Annotate graph to
  * put it on the drawing.
  */
-
 
 
 
@@ -79097,13 +79083,6 @@ function installSwitchedCapUi() {
     el('fieldset', { class: 'analysis-approximations' }, [el('legend', { text: 'Phases' }), el('div', { class: 'sc-phases' })]),
     el('p', { class: 'analysis-stale sc-stale', hidden: true, text: 'The circuit changed since this was derived.' }),
     el('div', { class: 'sc-results', 'aria-live': 'polite' }),
-    el('div', { class: 'signal-flow-plots' }, [
-      el('div', { class: 'card-heading', text: 'Plots' }),
-      el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Magnitude and phase over f/f_s.' }),
-        el('button', { type: 'button', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
-      ]),
-    ]),
     el('fieldset', { class: 'analysis-approximations sc-noise' }, [
       el('legend', { text: 'Noise' }),
       el('label', { class: 'sc-noise-toggle' }, [

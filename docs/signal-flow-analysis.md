@@ -131,8 +131,8 @@ The plots are in a window of their own, **Plots** (`Shift+W`;
 `src/web/plots-window.js`), which belongs to the analysis window and has
 no toolbar button of its own, a tab per view:
 Magnitude, Phase, Step, Locus, Swing, Loop, and Time. Derive opens it,
-unless it was closed since it was last shown; **Show plots** in the
-analysis window's Plots card (which holds the signal band) opens it too. A
+unless it was closed since it was last shown; **Plots**, first in the
+analysis window's footer in every mode, opens it too. A
 circuit's Bode plots share the window, shown in the analysis window's
 circuit mode (symbolic-analysis.md, Bode plots).
 The Loop tab is offered only for a diagram with feedback

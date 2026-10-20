@@ -7460,17 +7460,6 @@ body.chrome-away [data-editor-edge="right"] {
   min-width: 0;
 }
 
-.signal-flow-plots-open {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.signal-flow-plots-open .field-hint {
-  margin: 0;
-}
-
 .signal-flow-plots-empty[hidden],
 .signal-flow-plots-head[hidden] {
   display: none;

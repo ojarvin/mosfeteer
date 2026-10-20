@@ -281,3 +281,24 @@ test('a placed model is drawing only: the design analyzes as before, its names s
   assert.ok(!noiseCandidates(reloaded).some((refdes) => added.components.includes(refdes)));
   assert.ok(!tableParts(reloaded).some((part) => added.components.includes(part.refdes)));
 });
+
+test('the input comes first: its shunt capacitance, then the gate-drain capacitance across to the output', () => {
+  const circuit = new Circuit();
+  for (const line of [
+    'add input VIN --at -600 0', 'add nmos M1 --at 0 0', 'add pmos M2 --at 0 -480', 'add output VOUT --at 600 -240',
+    'add capacitor CGS1 --at -320 240 --rot 90', 'add capacitor CGD1 --at -120 -240', 'add capacitor CGD2 --at 400 0 --rot 90',
+    'add ground G1 --at 0 480', 'add supply VDD --at 0 -800', 'add ground G2 --at -600 -480',
+    'connect VIN.p M1.g CGS1.a CGD1.a', 'connect M1.d M2.d VOUT.p CGD1.b CGD2.a', 'connect M1.s G1.gnd CGS1.b CGD2.b',
+    'connect M2.s VDD.p', 'connect M2.g G2.gnd',
+  ]) runCommand(circuit, line);
+  // Without the Miller approximation, C_gd stays the bridge it is.
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true, millerApproximation: false });
+  assert.equal(report.ok, true, report.error || '');
+  const model = smallSignalSchematic(report, { circuit });
+  const at = (refdes) => model.circuit.components.get(refdes).transform;
+  assert.ok(at('CGS1').x < at('CGD1').x && at('CGD1').x < at('gm1').x, 'VIN, then across, then VOUT');
+  // C_gd lies along the node row, between the two nodes it joins.
+  assert.equal(at('CGD1').rotation % 180, 0);
+  assert.ok(at('CGD1').y < at('CGS1').y);
+  assert.equal(evaluate(model.circuit).ok, true);
+});

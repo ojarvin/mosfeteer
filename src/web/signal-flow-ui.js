@@ -153,8 +153,9 @@ function setMode(next, { user = false } = {}) {
   const extra = extraModes.find((spec) => spec.mode === mode) || null;
   const circuit = !flow && !extra;
   for (const child of circuitChildren()) child.classList.toggle('analysis-mode-hidden', !circuit);
-  // One footer: the circuit's buttons there, or this mode's.
-  for (const id of ['analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', !circuit);
+  // One footer: Plots, every mode's, then the circuit's buttons there, or
+  // this mode's.
+  for (const id of ['analysis-model-open', 'analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', !circuit);
   for (const button of actions) button.classList.toggle('analysis-mode-hidden', !flow);
   section.hidden = !flow;
   for (const spec of extraModes) {
@@ -1505,10 +1506,6 @@ export function installSignalFlowUi() {
     el('div', { class: 'signal-flow-plots' }, [
       el('div', { class: 'card-heading', text: 'Plots' }),
       el('div', { class: 'signal-flow-band-host' }),
-      el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Responses, step, root locus, swing, loop gain, and the nets in time.' }),
-        el('button', { type: 'button', class: 'signal-flow-show-plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
-      ]),
     ]),
     // The tuning comes after what it tunes: the coefficients' sliders, then
     // the optimizer (folded until opened).

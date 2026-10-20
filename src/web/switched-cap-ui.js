@@ -21,14 +21,13 @@ import { GRID, snap } from '../core/grid.js';
 import { switchState } from '../core/beats.js';
 import { canonicalNetName } from '../core/model.js';
 import { createPlotView, linkPlots } from './plot-view.js';
-import { installPlotsWindow, offerPlots, showPlots } from './plots-window.js';
+import { installPlotsWindow, offerPlots } from './plots-window.js';
 import { placeResponsePlot, registerAnalysisMode } from './signal-flow-ui.js';
 import { valueRow } from './value-row.js';
 import { PER_DECADE } from './e-series.js';
 import { editor } from './editor-state.js';
 import { commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } from './main.js';
 import { logLine } from './status-bar-ui.js';
-import { buttonIcon } from './icons.js';
 import { element as el } from './dom.js';
 
 const settings = () => (editor.circuit.analysisValues.sc ||= { input: '', output: '', readout: '', values: {} });
@@ -470,13 +469,6 @@ export function installSwitchedCapUi() {
     el('fieldset', { class: 'analysis-approximations' }, [el('legend', { text: 'Phases' }), el('div', { class: 'sc-phases' })]),
     el('p', { class: 'analysis-stale sc-stale', hidden: true, text: 'The circuit changed since this was derived.' }),
     el('div', { class: 'sc-results', 'aria-live': 'polite' }),
-    el('div', { class: 'signal-flow-plots' }, [
-      el('div', { class: 'card-heading', text: 'Plots' }),
-      el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Magnitude and phase over f/f_s.' }),
-        el('button', { type: 'button', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
-      ]),
-    ]),
     el('fieldset', { class: 'analysis-approximations sc-noise' }, [
       el('legend', { text: 'Noise' }),
       el('label', { class: 'sc-noise-toggle' }, [

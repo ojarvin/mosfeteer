@@ -424,10 +424,10 @@ measures it. A controlled source names the nodes it reads, a grounded side left 
 `g_{m1}\,\mathrm{VIN}`, `-g_{m2}\,\mathrm{N4}`. Nets a chopper shorts are
 one node, named by the side with a port, else a named one.
 
-**Open model** (beside Annotate equations) shows it in a floating window that pans and zooms like a
-reference window (`src/web/reference-window.js`). The window redraws on each
-Derive and is not saved with the design. **Annotate model** (also **Place**
-in the window, and the `analyze model` command) adds the model below the
+**Model**, in the analysis window's footer, shows it in a floating window
+that pans and zooms like a reference window (`src/web/reference-window.js`).
+The window redraws on each Derive and is not saved with the design. Its
+**Place** (and the `analyze model` command) adds the model below the
 drawing, aligned with its left edge, as one undo step. It is drawn without
 ports, and its parts are **drawing only**
 (`ComponentInstance#drawingOnly`): drawn, moved, and checked like any other

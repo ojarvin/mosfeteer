@@ -5,7 +5,7 @@
  * root locus, swing, loop gain, and the time domain: signal-flow-ui.js's,
  * the time domain time-plot.js's) or a circuit's Bode plots (bode-ui.js's);
  * this module is the window around them. It belongs to the analysis window:
- * its Show plots opens it, and Derive does unless it was closed since;
+ * its footer's Plots opens it, and Derive does unless it was closed since;
  * `Shift+W` shows or hides it.
  */
 

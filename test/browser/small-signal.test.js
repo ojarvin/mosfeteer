@@ -90,9 +90,9 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
 
   test('the model opens in a window that zooms like a reference window, and Place puts it under the drawing', async () => {
     await derive();
-    // Open model and Annotate model stand with Annotate equations.
+    // Model stands in the footer with Annotate equations.
     await h.until(`!document.getElementById('analysis-model-open').hidden`);
-    assert.equal(await h.evaluate(`document.getElementById('analysis-model-place').parentElement === document.getElementById('analysis-annotate').parentElement`), true);
+    assert.equal(await h.evaluate(`document.getElementById('analysis-model-open').parentElement === document.getElementById('analysis-annotate').parentElement`), true);
     await h.click('#analysis-model-open');
     const win = `document.querySelector('.model-window')`;
     const picture = () => h.evaluate(`${win}.querySelector('.reference-picture').style.cssText`);
@@ -197,15 +197,25 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   const shown = (selector) => h.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); return !!e && !e.hidden && !!e.offsetParent; })()`);
   const plotsButton = (text) => h.evaluate(`(() => { const b = [...document.querySelectorAll('.plots-window button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)})); if (!b) return false; b.click(); return true; })()`);
 
-  test('the analysis window reads as signal flow\'s: signals, folded options, results, plots, values; Open model, Annotate model, Annotate equations, and Derive', async () => {
+  test('the analysis window reads as signal flow\'s: signals, folded options, results, plots, values; Plots, Model, Annotate equations, and Derive', async () => {
     await h.open('amp');
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
     await h.until(`!document.getElementById('analysis-dialog').hidden`);
     const order = await h.evaluate(`[...document.querySelector('#analysis-dialog .analysis-scroll').children].filter((e) => !e.classList.contains('analysis-mode-hidden') && !e.classList.contains('signal-flow-section')).map((e) => e.id || e.className.split(' ')[0])`);
     const at = (name) => order.findIndex((entry) => entry.includes(name));
-    assert.ok(at('analysis-signals') < at('analysis-options') && at('analysis-options') < at('analysis-result') && at('analysis-result') < at('analysis-plots-card') && at('analysis-plots-card') < at('analysis-values'), order.join(' | '));
+    assert.ok(at('analysis-signals') < at('analysis-options') && at('analysis-options') < at('analysis-result') && at('analysis-result') < at('analysis-values'), order.join(' | '));
     assert.equal(await h.evaluate(`document.getElementById('analysis-options').open`), false, 'the options fold away');
-    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`), ['Open model', 'Annotate model', 'Annotate equations', 'Derive']);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`), ['Plots', 'Model', 'Annotate equations', 'Derive']);
+    // Every mode's footer is the same: Plots first, Derive last.
+    const footer = () => h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`);
+    for (const mode of ['signal-flow', 'switched-cap']) {
+      await h.evaluate(`document.querySelector('#analysis-dialog [data-mode="${mode}"]').click()`);
+      const buttons = await footer();
+      assert.equal(buttons[0], 'Plots', `${mode}: ${buttons.join(' | ')}`);
+      assert.equal(buttons.at(-1), 'Derive', `${mode}: ${buttons.join(' | ')}`);
+      assert.ok(!buttons.includes('Model'), `${mode}: ${buttons.join(' | ')}`);
+    }
+    await h.evaluate(`document.querySelector('#analysis-dialog [data-mode="circuit"]').click()`);
     // Folded, the options still say what is chosen that is not the default.
     const summary = () => h.evaluate(`document.getElementById('analysis-options-summary').textContent`);
     const before = await summary();
@@ -234,7 +244,6 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.match(await h.evaluate(`document.getElementById('analysis-equation').textContent`), /budget|too large/i);
     await h.until(`!!document.querySelector('.plots-window .bode-plots-graph svg path')`, 60000);
     assert.deepEqual((await bode()).traces.map((t) => t.label), ['\\frac{OUT}{V_{DD}}']);
-    assert.equal(await shown('#analysis-plots-card'), true);
     assert.match(await h.evaluate(`document.querySelector('#analysis-values .field-hint').textContent`), /exact model/);
     // A value for every parameter the ports reach, a slider and a field each.
     const rows = await h.evaluate(`document.querySelectorAll('#analysis-values .bode-value').length`);

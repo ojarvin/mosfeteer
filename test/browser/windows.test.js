@@ -39,7 +39,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
 
   test('the toolbar groups the windows, and More lists them too, even when the toolbar folds them away', async () => {
     const group = await h.evaluate(`[...document.querySelectorAll('.window-cluster > button')].map((b) => b.id)`);
-    // Plots is the analysis window's own (its Show plots), not the toolbar's.
+    // Plots is the analysis window's own (its footer's Plots), not the toolbar's.
     assert.deepEqual(group, ['btn-window-beats', 'btn-window-timing', 'btn-analysis', 'btn-window-reference', 'btn-window-calculator', 'btn-window-notes', 'btn-window-sizing']);
     const more = await h.evaluate(`[...document.querySelectorAll('#document-menu [data-proxy-for]')].map((b) => b.dataset.proxyFor)`);
     for (const id of ['btn-analysis', 'btn-window-reference', 'btn-window-calculator', 'btn-window-notes', 'btn-window-sizing']) assert.ok(more.includes(id), id);

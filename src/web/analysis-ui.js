@@ -18,13 +18,14 @@ import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
-import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisModelPlace, analysisCancel, analysisAnnotate } from './elements.js';
+import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { editor } from './editor-state.js';
 import { applyJson, beginSettingsEdit, commit, endSettingsEdit, setSelection, snapshot, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
 import { refreshModelWindow, showModelWindow } from './reference-window.js';
+import { showPlots } from './plots-window.js';
 import { arriving } from './motion.js';
 
 const analysisTransferInputs = [...document.querySelectorAll('[data-transfer-function]')];
@@ -157,7 +158,7 @@ export function clearLatestAnalysisResult() {
     if (analysisNetlist) analysisNetlist.textContent = '';
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
   }
-  for (const button of [analysisAnnotate, analysisModelOpen, analysisModelPlace]) if (button) button.hidden = true;
+  for (const button of [analysisAnnotate, analysisModelOpen]) if (button) button.hidden = true;
 }
 
 function analysisFormOptions() {
@@ -842,7 +843,7 @@ function renderAnalysisResult(report) {
   if (analysisModelPanel) analysisModelPanel.hidden = !drawn;
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
-  for (const button of [analysisModelOpen, analysisModelPlace]) if (button) button.hidden = !drawn;
+  if (analysisModelOpen) analysisModelOpen.hidden = !drawn;
   renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
   const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
@@ -1358,7 +1359,8 @@ export function installAnalysisUi() {
 
   analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
   analysisModelOpen?.addEventListener('click', openModelWindow);
-  analysisModelPlace?.addEventListener('click', placeModelInDrawing);
+  // Plots is every mode's: the window shows the current mode's view.
+  document.getElementById('analysis-show-plots')?.addEventListener('click', () => showPlots());
 
   if (analysisDialog) analysisWindow = floatingWindow(analysisDialog, { key: 'analysis', resizable: true, toggleKey: 'S' });
 

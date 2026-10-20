@@ -410,16 +410,19 @@ export function smallSignalSchematic(report, options = {}) {
     return reachOf(width) + width / 2;
   };
 
-  // Columns follow the schematic: units of devices drawn at one x share a
-  // column, and a unit hanging from the node a column's stack ends at
-  // continues that stack (M1 over its source resistor), where their rows
-  // allow; the rest keep the order they appear in.
+  // Columns read from input to output: each unit by its upper node's place
+  // in that order (the input first), and a branch lying between two nodes
+  // (a gate-drain capacitance) between their columns. Units of devices
+  // drawn at one x share a column, and a unit hanging from the node a
+  // column's stack ends at continues that stack (M1 over its source
+  // resistor), where their rows allow.
   const sourceX = (unit) => {
     try { return unit.component ? options.circuit?.getComponent(unit.component).transform.x ?? null : null; }
     catch { return null; }
   };
-  const ordered = [...units.values()].map((unit) => ({ unit, x: sourceX(unit) }))
-    .sort((left, right) => (left.x ?? Infinity) - (right.x ?? Infinity) || left.unit.order - right.unit.order);
+  const rank = (unit) => (unit.flat ? (nodes.indexOf(unit.upper) + nodes.indexOf(unit.lower)) / 2 : nodes.indexOf(unit.upper));
+  const ordered = [...units.values()].map((unit) => ({ unit, x: sourceX(unit), rank: rank(unit) }))
+    .sort((left, right) => left.rank - right.rank || (left.x ?? Infinity) - (right.x ?? Infinity) || left.unit.order - right.unit.order);
   const columns = [];
   for (const { unit, x } of ordered) {
     const chained = (column) => column.units.some((other) => (other.lower === unit.upper && other.lo === unit.hi)

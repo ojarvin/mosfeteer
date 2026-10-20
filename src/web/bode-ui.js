@@ -27,7 +27,6 @@ import { cornerNames } from '../core/bode-figure.js';
 import { axisName, bodeSpecs, responseSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { valueRow as sharedValueRow } from './value-row.js';
-import { buttonIcon } from './icons.js';
 import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
@@ -35,7 +34,7 @@ import { editor } from './editor-state.js';
 import { commit, markSettingsChanged, onDocumentShown, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
 import { fitView } from './canvas-view.js';
 import { logLine } from './status-bar-ui.js';
-import { installPlotsWindow, offerPlots, plotsShown, showPlots } from './plots-window.js';
+import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
 import { placeResponsePlot } from './signal-flow-ui.js';
 import { GRID, snap } from '../core/grid.js';
 
@@ -585,8 +584,6 @@ export function renderBode(report) {
     latest = null;
     renderPlots();
   }
-  const card = document.getElementById('analysis-plots-card');
-  if (card) card.hidden = !traces.length;
   return traces.length > 0;
 }
 
@@ -603,22 +600,13 @@ function clearBode() {
   latest = null;
   renderValues({ force: true });
   renderPlots();
-  const card = document.getElementById('analysis-plots-card');
-  if (card) card.hidden = true;
 }
 
-/** The Plots card and the Values in the analysis window, and the circuit's
- *  view in the Plots window. */
+/** The Values in the analysis window, and the circuit's view in the Plots
+ *  window. */
 export function installBodeUi() {
   const result = document.getElementById('analysis-result');
-  if (result && !document.getElementById('analysis-plots-card')) {
-    const card = el('div', { id: 'analysis-plots-card', class: 'signal-flow-plots', hidden: true }, [
-      el('div', { class: 'card-heading', text: 'Plots' }),
-      el('div', { class: 'signal-flow-plots-open' }, [
-        el('span', { class: 'field-hint', text: 'Gain, impedances, and loop gain.' }),
-        el('button', { type: 'button', class: 'analysis-show-plots', 'data-icon': 'plots', title: 'Plots (Shift+W)', onclick: () => showPlots() }, [buttonIcon('plots'), 'Show plots']),
-      ]),
-    ]);
+  if (result && !document.getElementById('analysis-values')) {
     valuesEl = el('fieldset', { id: 'analysis-values', class: 'analysis-approximations bode-values', hidden: true }, [
       el('legend', { text: 'Values' }),
       el('div', { class: 'bode-value-rows' }),
@@ -637,7 +625,7 @@ export function installBodeUi() {
         }),
       ]),
     ]);
-    result.after(card, valuesEl);
+    result.after(valuesEl);
   }
   plotsEl = el('div', { class: 'bode-plots-view' }, [
     el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S) to plot its gain here.' }),
