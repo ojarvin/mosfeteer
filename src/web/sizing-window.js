@@ -20,7 +20,8 @@
  */
 
 import { MOS_SIZE_TYPES, parseLength, parseMosSize, parseMultiplier } from '../core/mos-size.js';
-import { addPartsTable, partKind, tableParts } from '../core/parts-table.js';
+import { addPartsTable, partKind, partsTableFigure, tableParts } from '../core/parts-table.js';
+import { chooseFigure } from '../core/figures.js';
 import { setPartValue } from '../core/part-moves.js';
 import { parseLabelRuns } from '../core/model.js';
 import { canvasEl } from './elements.js';
@@ -600,6 +601,14 @@ function onMouseOver(ev) {
 function annotate() {
   const parts = rangeParts();
   const listed = parts.length > 1 ? parts.map((c) => c.refdes) : null;
+  // A table of the same parts is there already, and always current: shown.
+  const there = chooseFigure(editor.circuit, partsTableFigure(listed))?.labels.find((label) => label.table);
+  if (there) {
+    setLabelSelection([there.id]);
+    render();
+    logLine('The parts table is on the drawing already; it follows the sizes as they change.');
+    return;
+  }
   const box = commit(() => addPartsTable(editor.circuit, { parts: listed }));
   if (!box) return;
   setLabelSelection([box.id]);

@@ -33,6 +33,8 @@ import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js
 import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
+import { chooseFigure, figureSpot, newFigureId, plotKey } from '../core/figures.js';
+import { annotateMathFigure } from './figure-annotate.js';
 import { editor } from './editor-state.js';
 import { analysisDialog } from './elements.js';
 import { alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } from './main.js';
@@ -1153,8 +1155,8 @@ const PLOT_LEGEND_ROLE = 'plot-legend';
 /** A response plot (signal-flow.js `responsePlot`'s shape) on the drawing,
  *  as Annotate graph puts this graph there: `shown` names its traces
  *  ({ label, color }). The small-signal Bode graph's annotation. */
-export function placeResponsePlot(plot, shown) {
-  placePlot(plot, shown, []);
+export function placeResponsePlot(plot, shown, { source = 'signal-flow' } = {}) {
+  placePlot(plot, shown, [], { source });
 }
 
 /**
@@ -1165,15 +1167,14 @@ export function placeResponsePlot(plot, shown) {
  * numbers under them) are swapped, the legend staying where it was. With
  * none to update, a new plot goes under the drawing at its left edge.
  */
-function placePlot(plot, shown, used) {
+function placePlot(plot, shown, used, { source = 'signal-flow' } = {}) {
   const circuit = editor.circuit;
-  // The same kind of plot (a response graph also of the same quantity).
-  const plots = [...circuit.labels.values()].filter((label) => label.kind === 'box' && label.plot?.kind === plot.kind
-    && (label.plot.quantity || '') === (plot.quantity || '') && (label.plot.role || '') === (plot.role || ''));
-  const chosen = selectedLabels().map((label) => (plots.includes(label) ? label : circuit.labels.get(label.parent))).find((label) => plots.includes(label));
-  const target = chosen || (plots.length === 1 ? plots[0] : null);
+  // The same tool's plot of the same kind (a response graph also of the
+  // same quantity): figures.js chooseFigure.
+  const identity = { kind: 'plot', source, key: plotKey(plot) };
+  const target = chooseFigure(circuit, identity, selectedLabels().map((label) => label.id))?.labels.find((label) => label.plot) || null;
   let written = null;
-  commit(() => { written = writePlot(target, plot, shown, used); });
+  commit(() => { written = writePlot(target, plot, shown, used, { identity }); });
   if (!written?.box) return;
   // Their sizes are estimates until the browser measures them: stack them
   // then, edge to edge (each box is rounded to the grid already).
@@ -1194,7 +1195,7 @@ const legendOf = (box) => [...editor.circuit.labels.values()].filter((label) => 
  * same already (`values: true/false` decides instead). Returns `{ box, ids,
  * left, top }` for the legend's column.
  */
-function writePlot(target, plot, shown, used, { values: withValues } = {}) {
+function writePlot(target, plot, shown, used, { values: withValues, identity = null } = {}) {
   const circuit = editor.circuit;
   const numbers = resolved();
   const linkTex = (name) => {
@@ -1226,21 +1227,21 @@ function writePlot(target, plot, shown, used, { values: withValues } = {}) {
     left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w + GRID;
     top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
   } else {
-    // Under the drawing, at its left edge.
-    const bounds = circuit.bounds();
-    const empty = !circuit.components.size && !circuit.labels.size;
-    const x = empty ? 0 : snap(bounds.x);
-    const y = empty ? 0 : snap(bounds.y + bounds.h + 2 * GRID);
-    left = x + 18 * GRID + GRID;
-    top = y;
+    // Below the circuit and what is under it already (figures.js).
+    const spot = figureSpot(circuit, 'plot');
+    left = spot.x + 18 * GRID + GRID;
+    top = spot.y;
   }
   const ids = [];
+  const figure = identity && { ...identity, id: target?.figure?.id || newFigureId(circuit) };
   if (target) {
     target.plot = normalizePlot(plot);
+    // A plot from before figures is this tool's from now on.
+    if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
   } else {
     const x = left - 19 * GRID;
-    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' } });
+    box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' }, ...(figure ? { figure } : {}) });
   }
   let y = top;
   const add = (text, style) => {
@@ -1448,27 +1449,18 @@ function derive() {
   else logLine(`Signal-flow analysis: ${latest.error}`, 'error');
 }
 
-/** The equations under the drawing, as math labels, one per input. */
+/** The equations on the drawing as the signal-flow table
+ *  (figure-annotate.js): a row per input, its name then its transfer
+ *  function. Annotating again rewrites the table there. */
 function annotate() {
   if (!latest?.ok) return;
-  const bounds = editor.circuit.bounds();
-  const left = bounds.w > 0 ? bounds.x : editor.cursor.x;
-  let top = (bounds.h > 0 ? bounds.y + bounds.h : editor.cursor.y) + 2 * GRID;
-  const ids = [];
-  commit(() => {
-    for (const entry of latest.entries) {
-      // A sampled result is written at the numbers it is shown with.
-      const equation = entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation;
-      const label = editor.circuit.addLabel({ text: `$${equation}$`, x: 0, y: 0, align: 'left', math: true });
-      const box = label.bbox();
-      label.moveTo(snap(left + box.w / 2), snap(top + box.h / 2));
-      top = label.bbox().y + label.bbox().h + GRID;
-      ids.push(label.id);
-    }
+  const rows = latest.entries.map((entry) => {
+    // A sampled result is written at the numbers it is shown with.
+    const equation = entry.sampled ? sampledEquation(entry, valuesFor(entry.value, latest.variable)).equation : entry.equation;
+    return `\\text{From } ${entry.inputName || entry.input} & ${equation}`;
   });
-  setSelection([]);
-  setLabelSelection(ids);
-  render();
+  const { updated } = annotateMathFigure({ kind: 'equations', source: 'signal-flow', text: rows.join('\n'), columns: 'll' });
+  logLine(updated ? 'updated the equation table' : 'annotated the equation table');
 }
 
 // ----- install --------------------------------------------------------------------------

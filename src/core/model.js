@@ -17,6 +17,7 @@ import { curvedArrowGeometry, defaultArrowhead, normalizeArrowhead, polylineArro
 import { SWITCH_TYPES, beatsFromJSON, beatsToJSON, renameBeatHighlightKey, renameBeatObject, carryBeatSwitchKey, isTexSource, switchGroupKey, switchKeyFor, switchState, switchesOf, complementSwitches, invertBeatSwitchKey } from './beats.js';
 import { TRANSFER_FUNCTION_ROLE, TRANSFER_FUNCTION_TYPES, ditherValueText, gainDisplay, gainFitsInside, isCoefficientBlock, parseDither, parseGain, parseLevels, readTransferFunction, transferFunctionDisplay, transferFunctionLines } from './transfer-function.js';
 import { normalizePartsTable, partsTableLayout } from './parts-table.js';
+import { normalizeFigure } from './figures.js';
 import { PART_VALUE_ROLE, VALUE_LABEL_MODES, VALUE_TYPES, valueLabelTex } from './part-value.js';
 import { MOS_SIZE_OFFSET, MOS_SIZE_ROLE, MOS_SIZE_TYPES, mosSizeTex, normalizeMosSize, parseMosSize, sizeSubscript } from './mos-size.js';
 
@@ -1332,6 +1333,10 @@ export class LabelInstance {
     this.table = this.kind === 'box' && opts.table ? normalizePartsTable(opts.table) : null;
     // A timing diagram's name or wave (timing-diagram.js) remembers its row.
     this.timing = normalizeTiming(opts.timing);
+    // What a tool annotated is a figure (figures.js): its identity.
+    this.figure = normalizeFigure(opts.figure);
+    // A math table's column alignment (render.js mathTableHtml): l, c, r each.
+    this.columns = this.math && typeof opts.columns === 'string' && /^[lcr]{1,16}$/.test(opts.columns) ? opts.columns : null;
     const net = this.netId ? circuit.nets.get(this.netId) : null;
     this.netSide = this.netId && ['above', 'below', 'left', 'right'].includes(opts.netSide)
       ? opts.netSide
@@ -1942,6 +1947,8 @@ export class LabelInstance {
       ...(this.image ? { image: { ...this.image } } : {}),
       ...(this.table ? { table: normalizePartsTable(this.table) } : {}),
       ...(this.timing ? { timing: { ...this.timing } } : {}),
+      ...(this.figure ? { figure: { ...this.figure } } : {}),
+      ...(this.columns ? { columns: this.columns } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -2056,6 +2063,8 @@ export class ComponentInstance {
     // A drawing-only part is drawn and checked like any other, but no
     // analysis reads it: a small-signal model placed beside its schematic.
     this.drawingOnly = opts.drawingOnly === true;
+    // A part of a figure a tool drew (figures.js): a placed model's.
+    this.figure = normalizeFigure(opts.figure);
     // A supply may draw its bar joined to aligned same-rail neighbors
     // (see supply-bars.js). Visual only: it never adds connectivity.
     this.joinBar = this.type === 'supply' && opts.joinBar === true;
@@ -2248,6 +2257,7 @@ export class ComponentInstance {
       ...(this.valueLabel ? { valueLabel: this.valueLabel } : {}),
       ...(this.waveform ? { waveform: this.waveform } : {}),
       ...(this.drawingOnly ? { drawingOnly: true } : {}),
+      ...(this.figure ? { figure: { ...this.figure } } : {}),
       style: { ...this.style },
       drawOrder: this.drawOrder,
     };
@@ -7101,6 +7111,7 @@ export class Circuit {
         analysis: c.analysis,
         drawOrder: c.drawOrder,
         drawingOnly: c.drawingOnly,
+        figure: c.figure,
         noLabel: true,
       });
     }
@@ -7177,6 +7188,8 @@ export class Circuit {
           image: l.image || null,
           table: l.table || null,
           timing: l.timing || null,
+          figure: l.figure || null,
+          columns: l.columns || null,
           style: l.style || null,
           drawOrder: l.drawOrder,
         });

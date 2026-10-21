@@ -324,3 +324,29 @@ test('the input comes first: its shunt capacitance, then the gate-drain capacita
   assert.ok(at('CGD1').y < at('CGS1').y);
   assert.equal(evaluate(model.circuit).ok, true);
 });
+
+test('a stack in the model is wired, not only drawn at one x: r_o of the bottom device under its cascode\'s r_o', () => {
+  // A folded cascode: the input device M5 to the left, then one column of
+  // M4 and M3 (PMOS) over M2 and M1 (NMOS). M4 shares the column's x but no
+  // node with M2; M1 hangs from M2.
+  const circuit = new Circuit();
+  const lines = [
+    'add nmos M5 --at -800 720', 'add nmos M1 --at 0 720', 'add nmos M2 --at 0 480', 'add pmos M3 --at 0 240', 'add pmos M4 --at 0 0',
+    'add ground G1 --at 40 880', 'add ground G5 --at -760 880', 'add supply VDD --at 40 -160', 'add input VIN --at -1120 720', 'add output VOUT --at 320 360',
+    'add port B1 --at -320 720', 'add port B2 --at -320 480', 'add port B3 --at -320 240', 'add port B4 --at -320 0',
+    'connect M1.s G1.gnd', 'connect M5.s G5.gnd', 'connect M4.s VDD.p', 'connect M5.g VIN.p --name VIN', 'connect M1.d M2.s --name VY',
+    'connect M2.d M3.d VOUT.p --name VOUT', 'connect M3.s M4.d M5.d --name VX',
+    'connect M1.g B1.p --name VB1', 'connect M2.g B2.p --name VB2', 'connect M3.g B3.p --name VB3', 'connect M4.g B4.p --name VB4',
+  ];
+  for (const line of lines) runCommand(circuit, line);
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT', acGrounds: ['VB_{1}', 'VB_{2}', 'VB_{3}', 'VB_{4}'], neglectBodyEffect: true });
+  assert.equal(report.ok, true, report.error || '');
+  const model = smallSignalSchematic(report, { circuit, ports: false });
+  assert.equal(model.ok, true, model.error || '');
+  const at = (name) => model.circuit.components.get(name)?.transform;
+  assert.ok(at('ro1') && at('ro2') && at('ro4'), [...model.circuit.components.keys()].join(' '));
+  assert.equal(at('ro1').x, at('ro2').x, 'r_o1 under r_o2');
+  assert.ok(at('ro1').y > at('ro2').y);
+  assert.notEqual(at('ro4').x, at('ro2').x, 'r_o4 not in M2\'s stack');
+  assert.equal(evaluate(model.circuit).ok, true, JSON.stringify(evaluate(model.circuit).issues || []).slice(0, 300));
+});

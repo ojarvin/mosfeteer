@@ -23,6 +23,7 @@ import { RENUMBER_ORDERS, renumberParts } from './renumber.js';
 import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
+import { arrangeFigures, figureBounds, listFigures } from './figures.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
 import { normalizeNotes } from './notes.js';
 
@@ -102,6 +103,7 @@ const FLAG_ARITY = {
   span: 1,
   break: 1,
   clear: 1,
+  arrange: 0,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -491,6 +493,8 @@ export function commandHelp() {
     '  notes | notes set TEXT | notes append TEXT | notes clear - the design\'s notes (Markdown, $math$, @M1 or @V_{out} mention',
     '                                   a part or net, [[design]] links another design); append adds TEXT as a new line',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
+    '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
+    '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
     '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
     '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
@@ -705,7 +709,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
       const model = smallSignalSchematic(combined, { circuit, ports: false });
       if (!model.ok) throw new Error(model.error);
       const added = placeSmallSignalModel(circuit, model);
-      return result(`placed the small-signal model below the drawing: ${added.components.join(', ')}`, added, true);
+      return result(`${added.updated ? 'replaced the small-signal model in place' : 'placed the small-signal model below the drawing'}: ${added.components.join(', ')}`, added, true);
     }
     const report = combined.reports[quantity];
     const lines = [report.ok ? report.equation : `unsupported: ${report.error}`];
@@ -1040,6 +1044,15 @@ function dispatch(circuit, cmd, pos, flags, io) {
     for (const refdes of pos) circuit.getComponent(refdes);
     const { rerouted, moved } = tidySelection(circuit, { refs: pos });
     return result(`rerouted ${rerouted.length} net${rerouted.length === 1 ? '' : 's'}, moved ${moved.length} label${moved.length === 1 ? '' : 's'}`, { rerouted, moved }, rerouted.length + moved.length > 0);
+  }
+  if (cmd === 'figures') {
+    if (flags.arrange) {
+      const moved = arrangeFigures(circuit);
+      return result(`arranged the figures: ${moved} moved`, { moved }, moved > 0);
+    }
+    const figures = listFigures(circuit).map((figure) => ({ id: figure.id, kind: figure.kind, source: figure.source, ...(figure.key ? { key: figure.key } : {}), bounds: figureBounds(circuit, figure) }));
+    const text = figures.length ? figures.map((f) => `${f.id} ${f.kind}${f.source ? ` (${f.source})` : ''} at ${f.bounds.x},${f.bounds.y} ${f.bounds.w}x${f.bounds.h}`).join('\n') : '(no figures)';
+    return result(text, figures, false);
   }
   if (cmd === 'fix') {
     const fixed = fixAllIssues(circuit, evaluate);

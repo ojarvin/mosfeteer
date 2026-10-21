@@ -14,6 +14,7 @@
 import { GRID, ceilGrid } from './grid.js';
 import { MOS_SIZE_TYPES } from './mos-size.js';
 import { parseLabelRuns } from './model.js';
+import { figureSpot, newFigureId } from './figures.js';
 import { labelFontSize } from './style.js';
 import { THIN_SPACE, VALUE_TYPES, valueText } from './part-value.js';
 
@@ -188,14 +189,15 @@ export function partsTableLayout(circuit, table, { width = 'normal' } = {}) {
   return { w: ceilGrid(tableWidth), h: ceilGrid(row * ROW_PITCH), items };
 }
 
-/** The gap a new table keeps from what is drawn, as a timing diagram does. */
-const CLEARANCE = 3 * GRID;
+/** A parts table's figure identity (figures.js): which parts it lists. */
+export const partsTableFigure = (parts) => ({ kind: 'table', source: 'sizing', ...(parts?.length ? { key: [...parts].sort().join(',') } : {}) });
 
 /**
  * Put a parts table on the drawing: `parts` (names; null or empty for every
- * sized or valued part) at `at` ({ x, y }, its top-left corner), or right
- * of the drawing, level with its top. Every listed name must be a part the table
- * shows; a bad one changes nothing. Returns the table's box annotation.
+ * sized or valued part) at `at` ({ x, y }, its top-left corner), or where a
+ * table goes (figures.js: right of the circuit, under the tables there).
+ * Every listed name must be a part the table shows; a bad one changes
+ * nothing. Returns the table's box annotation.
  */
 export function addPartsTable(circuit, { parts = null, at = null } = {}) {
   const list = parts?.length ? parts.map((refdes) => {
@@ -203,15 +205,11 @@ export function addPartsTable(circuit, { parts = null, at = null } = {}) {
     if (!partKind(component)) throw new Error(`${component.refdes} is a ${component.type}; a parts table lists transistors, passives, and sources`);
     return component.refdes;
   }) : null;
-  let corner = at;
-  if (!corner) {
-    // Right of the drawing, level with its top.
-    const drawn = circuit.inkBounds(0);
-    corner = drawn.w || drawn.h ? { x: ceilGrid(drawn.x + drawn.w) + CLEARANCE, y: drawn.y } : { x: 0, y: 0 };
-  }
+  const corner = at || figureSpot(circuit, 'table');
   const x = ceilGrid(corner.x);
   const y = Math.floor(corner.y / GRID) * GRID;
-  const box = circuit.addAnnotation('box', { x, y, end: { x: x + GRID, y: y + GRID }, table: { parts: list }, style: { lineStyle: 'solid' } });
+  const figure = { id: newFigureId(circuit), ...partsTableFigure(list) };
+  const box = circuit.addAnnotation('box', { x, y, end: { x: x + GRID, y: y + GRID }, table: { parts: list }, style: { lineStyle: 'solid' }, figure });
   box.syncTableBox();
   return box;
 }

@@ -14,13 +14,13 @@ import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
 import { installBodeUi, renderBode, syncBodePlace } from './bode-ui.js';
-import { snap, GRID } from '../core/grid.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
+import { annotateMathFigure, selectedFigureMembers } from './figure-annotate.js';
 import { editor } from './editor-state.js';
 import { applyJson, beginSettingsEdit, commit, endSettingsEdit, setSelection, snapshot, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
@@ -507,8 +507,9 @@ function openModelWindow() {
 }
 
 /**
- * Place the model below the drawing as drawing-only parts: one undo step,
- * names the design already uses moved to the next free ones.
+ * Place the model as drawing-only parts, or replace the one there where it
+ * stands (placeSmallSignalModel): one undo step, names the design already
+ * uses moved to the next free ones.
  */
 function placeModelInDrawing() {
   const report = latestModelReport;
@@ -524,7 +525,7 @@ function placeModelInDrawing() {
   let added = null;
   let failure = null;
   commit(() => {
-    try { added = placeSmallSignalModel(editor.circuit, model); }
+    try { added = placeSmallSignalModel(editor.circuit, model, { selected: selectedFigureMembers() }); }
     catch (error) {
       failure = error;
       applyJson(before);
@@ -538,8 +539,8 @@ function placeModelInDrawing() {
   if (current) analysisReportRevision = editor.modelRevision;
   setSelection(added.components, undefined, true);
   setLabelSelection(added.labels, undefined, true);
-  fitView({ animate: true });
-  logLine(`Placed the small-signal model below the drawing: ${added.components.length} drawing-only parts`, 'status');
+  if (!added.updated) fitView({ animate: true });
+  logLine(added.updated ? 'Updated the small-signal model on the drawing in place' : `Placed the small-signal model below the drawing: ${added.components.length} drawing-only parts`, 'status');
 }
 
 /**
@@ -1027,70 +1028,30 @@ function equationForLabel(equation) {
     : normalized;
 }
 
+/**
+ * The chosen equations on the drawing as the small-signal analysis's table
+ * (figure-annotate.js): a row each, its name then its equation; the
+ * definitions they use under their heading, and the assumptions under a
+ * rule. Annotating again rewrites the table there, where it stands.
+ */
 function annotateAnalysisResult() {
   const report = latestAnalysisReport;
   if (!report?.ok) return;
   const entries = analysisAnnotationEntries(report);
   if (!entries.length) return;
-  // Keep generated equations below the figure. Label boxes are centered on
-  // their anchors, so place each center from the figure's left and bottom
-  // edges after learning its model dimensions.
-  const circuitBounds = editor.circuit.bounds();
-  const leftEdge = circuitBounds.w > 0 ? circuitBounds.x : editor.cursor.x;
-  const bottomEdge = circuitBounds.h > 0 ? circuitBounds.y + circuitBounds.h : editor.cursor.y;
-  const topGap = 2 * GRID;
-  let nextTop = bottomEdge + topGap;
-  const labels = [];
-  const equationLabels = [];
-  let assumptionsLabel = null;
-  commit(() => {
-    for (const entry of entries) {
-      const label = editor.circuit.addLabel({
-        text: entry.lines
-          ? [`\\text{${entry.title}:}`, ...entry.lines.map(equationForLabel)].join('\n')
-          : equationForLabel(`\\text{${entry.title}: }\\;${entry.equation}`),
-        x: 0,
-        y: 0,
-        align: 'left',
-        math: true,
-      });
-      const box = label.bbox();
-      const left = snap(leftEdge);
-      const x = snap(left + box.w / 2);
-      const y = snap(nextTop + box.h / 2);
-      label.moveTo(x, y);
-      nextTop = label.bbox().y + label.bbox().h + GRID;
-      labels.push(label);
-      equationLabels.push(label);
-    }
-    const assumptions = annotationAssumptions(report);
-    if (assumptions.length) {
-      const label = editor.circuit.addLabel({
-        text: ['\\text{Assumptions\\:}', ...assumptions].join('\n'),
-        x: 0,
-        y: 0,
-        align: 'left',
-        math: true,
-      });
-      const box = label.bbox();
-      const left = snap(leftEdge);
-      label.moveTo(snap(left + box.w / 2), snap(nextTop + box.h / 2));
-      labels.push(label);
-      assumptionsLabel = label;
-    }
-  });
-  editor.equationAnnotationLayout = {
-    equationIds: equationLabels.map((label) => label.id),
-    assumptionsId: assumptionsLabel?.id || null,
-    leftEdge,
-    bottomEdge,
-    topGap,
-    signature: null,
-  };
-  setLabelSelection(labels.map((label) => label.id), labels[0]?.id);
-  const equationCount = entries.length;
-  logLine(`annotated schematic with ${equationCount} equation${equationCount === 1 ? '' : 's'}${labels.length > equationCount ? ' and assumptions' : ''}`, 'status');
-  fitView();
+  const rows = [];
+  const title = (text) => `\\text{${text}}`;
+  for (const entry of entries) {
+    if (entry.lines) entry.lines.forEach((line, index) => rows.push(`${index ? '' : title(entry.title)} & ${equationForLabel(line)}`));
+    else rows.push(`${title(entry.title)} & ${equationForLabel(entry.equation)}`);
+  }
+  const assumptions = annotationAssumptions(report);
+  if (assumptions.length) {
+    rows.push('\\hline');
+    assumptions.forEach((line, index) => rows.push(`${index ? '' : title('Assumptions')} & ${line}`));
+  }
+  const { updated } = annotateMathFigure({ kind: 'equations', source: 'small-signal', text: rows.join('\n'), columns: 'll' });
+  logLine(`${updated ? 'updated the equation table with' : 'annotated a table of'} ${entries.length} equation${entries.length === 1 ? '' : 's'}${assumptions.length ? ' and the assumptions' : ''}`, 'status');
 }
 
 /** An explicit selection hints the output; otherwise the form defaults decide. */

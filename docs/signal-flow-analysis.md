@@ -181,7 +181,7 @@ puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
 traces' names as math labels in their colors beside it, children of its
 box, lined up once the browser has measured them (main.js
-`alignLabelColumn`), and the coefficients' numbers under them one a line; **Annotate equations** writes the equations under the drawing.
+`alignLabelColumn`), and the coefficients' numbers under them one a line; **Annotate equations** puts the equations on the drawing as the mode's table, a row per input, right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
 
 ## Sampled loops
 
@@ -374,7 +374,8 @@ under the legend if it had them.
 Annotating a graph or a swing again updates the plot of that kind already
 on the drawing -- the selected one, else the only one -- keeping its place,
 size, and style and swapping its data and legend (labels of role
-`plot-legend`) in place; with none, a new plot goes under the drawing. The
+`plot-legend`) in place; with none, a new plot goes under the circuit and
+what is under it already ([`figures.md`](figures.md)). The
 mode's settings (the output, the sources, the swing's source and
 frequency) are saved with the document (`analysisValues.flow`), as are the
 band and the coefficients.

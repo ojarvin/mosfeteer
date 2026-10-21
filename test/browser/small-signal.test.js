@@ -61,16 +61,30 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.click('#analysis-tab-equations');
   });
 
-  test('annotating writes the equations under the drawing, left-aligned, its assumptions with them', async () => {
-    const before = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = m.editor.circuit.bounds(); return { bottom: b.y + b.h, labels: m.editor.circuit.labels.size }; })`);
+  test('annotating writes the equations as a table right of the circuit, its assumptions under a rule; again, it is rewritten in place', async () => {
+    const tables = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.figure?.kind === 'equations').map((l) => ({ text: l.text, x: l.bbox().x, y: l.bbox().y, source: l.figure.source, columns: l.columns })))`);
+    const right = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = m.editor.circuit.bounds(); return b.x + b.w; })`);
+    await h.click('#analysis-annotate');
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
+    const [table] = await tables();
+    assert.equal(table.source, 'small-signal');
+    assert.equal(table.columns, 'll');
+    assert.ok(table.x >= right, `right of the circuit: ${table.x} >= ${right}`);
+    assert.match(table.text, /\\text\{[^}]+\} & /);
+    assert.match(table.text, /\\hline\n\\text\{Assumptions\} & g_\{m\}r_\{o\}/);
+    // Drawn as a table: its cells in a grid.
+    await h.until(`document.querySelectorAll('#canvas .schematic-math-table').length === 1`);
+    // Settled where it was put, then annotated again: the one table, where it stands.
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations' && l.textMeasured()))`);
+    await h.settle();
+    const [placed] = await tables();
     await h.click('#analysis-annotate');
     await h.settle();
-    const added = await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].slice(${before.labels}).map((l) => ({ text: l.text, align: l.align, y: l.bbox().y })))`);
-    assert.ok(added.length >= 2);
-    assert.ok(added.every((label) => label.align === 'left' && label.y >= before.bottom), JSON.stringify(added));
-    const assumptions = added.find((label) => /Assumptions/.test(label.text));
-    assert.ok(assumptions && /g_\{m\}r_\{o\}/.test(assumptions.text), JSON.stringify(added.map((l) => l.text)));
+    const again = await tables();
+    assert.equal(again.length, 1);
+    assert.deepEqual([again[0].x, again[0].y], [placed.x, placed.y]);
     await h.key('u');
+    await h.until(`${h.module('editor-state.js')}.then((m) => ![...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
   });
 
   test('the form is the design\'s own: another design shows its own, this one comes back as left, and neither is unsaved by it', async () => {
@@ -88,7 +102,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.click('#analysis-approx-body');
   });
 
-  test('the model opens in a window that zooms like a reference window, and Place puts it under the drawing', async () => {
+  test('the model opens in a window that zooms like a reference window, Place puts it under the drawing, and placing again replaces it', async () => {
     await derive();
     // Model stands in the footer with Annotate equations.
     await h.until(`!document.getElementById('analysis-model-open').hidden`);
@@ -127,7 +141,14 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.getElementById('analysis-stale').hidden`), true);
     await derive();
     assert.equal(await h.evaluate(`document.getElementById('analysis-result').hidden`), false);
-    // One undo takes the whole model away.
+    // Placed again, it replaces the one there: no more parts.
+    const count = (await parts()).length;
+    await h.evaluate(`${win}.querySelector('.model-place').click()`);
+    await h.settle();
+    assert.equal((await parts()).length, count);
+    // An undo each takes the replacement, then the model, away.
+    await h.key('u');
+    await h.settle();
     await h.key('u');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.components.values()].filter((c) => c.type !== 'solder').length === ${before.length})`);
     await h.evaluate(`${win}.querySelector('.floating-window-close').click()`);

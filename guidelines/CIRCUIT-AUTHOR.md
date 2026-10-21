@@ -258,6 +258,10 @@ beat show|dim|hide N ID ...    show, dim, or hide parts/labels from beat N on
 beat switch N REF|PHASE open|closed
                                set a switch (its whole phase) from beat N on
 beat phases [--after N|--replace]  add a beat per switch phase (--replace: instead of the existing beats): what still works shown, open switches and cut-off parts dimmed
+figures [--arrange]            list what the tools annotated -- parts tables, equation and noise tables,
+                               plots, small-signal models, the timing diagram -- each one figure;
+                               --arrange puts every one where a new one goes: tables right of the
+                               circuit, the timing diagram, models and plots below it
 timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...]
                                set the design's timing and draw it (or redraw it in place) under the
                                drawing, one wave per switch phase; WAVE: one character per slot, 1 high, 0 low; waves

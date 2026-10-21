@@ -17,7 +17,6 @@ import { TRACE_COLORS, complexText, transferTex, numericRootsOf, responsePlot, r
 import { symbolText } from '../core/analysis/present.js';
 import { responseSpec } from '../core/plot-spec.js';
 import { plainTexText, texToMathML } from '../core/render.js';
-import { GRID, snap } from '../core/grid.js';
 import { switchState } from '../core/beats.js';
 import { canonicalNetName } from '../core/model.js';
 import { setPartValue } from '../core/part-moves.js';
@@ -27,9 +26,10 @@ import { placeResponsePlot, registerAnalysisMode } from './signal-flow-ui.js';
 import { valueRow } from './value-row.js';
 import { PER_DECADE } from './e-series.js';
 import { editor } from './editor-state.js';
-import { commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } from './main.js';
+import { commit, markSettingsChanged, onDocumentShown, render } from './main.js';
 import { logLine } from './status-bar-ui.js';
 import { element as el, onFieldCommit } from './dom.js';
+import { annotateMathFigure } from './figure-annotate.js';
 
 const settings = () => (editor.circuit.analysisValues.sc ||= { input: '', output: '', readout: '', values: {} });
 
@@ -416,18 +416,55 @@ function runCalculator() {
 function calculatorResult() {
   const host = section?.querySelector('.sc-calc-result');
   if (!host) return;
+  const numbers = calculatorNumbers();
+  section.querySelector('.sc-calc-annotate').disabled = !numbers?.figures.ok;
+  if (!numbers) { host.replaceChildren(); return; }
+  const { figures } = numbers;
+  if (!figures.ok) { host.replaceChildren(el('p', { class: 'field-hint', role: 'status', text: figures.error })); return; }
+  host.replaceChildren(noiseTable(['RMS', 'Density'], figures.contributors, figures.total, (row) => [volts(row.rms, 'V'), volts(row.density, 'V/√Hz')]));
+}
+
+/** The calculator's figures at its numbers: { figures, values, celsius,
+ *  fs }, or null with the noise off or nothing derived. */
+function calculatorNumbers() {
   const result = latest?.result;
-  if (!settings().noise || !result?.ok) { host.replaceChildren(); return; }
+  if (!settings().noise || !result?.ok) return null;
   const gains = new Set(result.gains || []);
   const values = Object.fromEntries(result.symbols.map((name) => [name, fieldNumber(calc().values[name] || (gains.has(name) ? CALC_DEFAULTS.gain : CALC_DEFAULTS.capacitance))]));
   const s = settings();
+  const celsius = fieldNumber(calc().celsius || CALC_DEFAULTS.celsius);
+  const fs = fieldNumber(calc().fs || CALC_DEFAULTS.fs);
   const figures = switchedCapNoiseFigures(editor.circuit, {
     input: s.input || undefined, output: s.output || undefined, readout: s.readout || undefined,
-    symbols: result.symbols, gains: result.gains,
-    values, celsius: fieldNumber(calc().celsius || CALC_DEFAULTS.celsius), fs: fieldNumber(calc().fs || CALC_DEFAULTS.fs),
+    symbols: result.symbols, gains: result.gains, values, celsius, fs,
   });
-  if (!figures.ok) { host.replaceChildren(el('p', { class: 'field-hint', role: 'status', text: figures.error })); return; }
-  host.replaceChildren(noiseTable(['RMS', 'Density'], figures.contributors, figures.total, (row) => [volts(row.rms, 'V'), volts(row.density, 'V/√Hz')]));
+  return { figures, values, gains, celsius, fs };
+}
+
+/**
+ * The calculator's numbers on the drawing as the kT/C noise table
+ * (figure-annotate.js): a row per contributor -- its switches, capacitors,
+ * phase, RMS and density -- the total under a rule, and the numbers they
+ * were worked out at. Annotating again rewrites the table there.
+ */
+function annotateNoise() {
+  const numbers = calculatorNumbers();
+  if (!numbers?.figures.ok) return;
+  const { figures, values, gains, celsius, fs } = numbers;
+  const words = (text) => `\\text{${text}}`;
+  const phase = (name) => (/^\$.*\$$/.test(name) ? name.replace(/^\$+|\$+$/g, '') : words(name));
+  const cells = (row) => [words(volts(row.rms, 'V')), `${words(volts(row.density, 'V'))}/\\sqrt{\\mathrm{Hz}}`];
+  const rows = [
+    [words('Switches'), words('Capacitors'), words('Phase'), words('RMS'), words('Density')].join(' & '),
+    '\\hline',
+    ...figures.contributors.map((row) => [words(row.switches.join(', ')), words(row.capacitors.join(', ')), phase(row.phaseName), ...cells(row)].join(' & ')),
+    '\\hline',
+    [words('Total'), '', '', ...cells(figures.total)].join(' & '),
+  ];
+  const at = Object.entries(values).map(([name, value]) => `${symbolText(name)} = ${gains.has(name) ? Number(value.toPrecision(4)) : words(volts(value, 'F'))}`);
+  rows.push(`${words('At ')} T = ${words(`${Number(celsius.toPrecision(4))} °C`)},\\ f_{s} = ${words(volts(fs, 'Hz'))}${at.length ? `,\\ ${at.join(',\\ ')}` : ''}`);
+  const { updated } = annotateMathFigure({ kind: 'noise', source: 'switched-cap', text: rows.join('\n'), columns: 'lllrr' });
+  logLine(updated ? 'updated the kT/C noise table' : 'annotated the kT/C noise table');
 }
 
 // ----- the graph -------------------------------------------------------------------------
@@ -486,30 +523,27 @@ function renderPlots() {
   actions.hidden = !traces.length;
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces()); } }),
+    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces(), { source: 'switched-cap' }); } }),
   );
 }
 
 // ----- the drawing -----------------------------------------------------------------------
 
-/** Write the equation under the drawing, as the signal-flow mode writes its. */
+/** The equation on the drawing as the switched-cap table
+ *  (figure-annotate.js): the transfer function and the phase it is read
+ *  at, and with the noise worked out, the input-referred kT/C noise.
+ *  Annotating again rewrites the table there. */
 function annotate() {
   const result = latest?.result;
   if (!result?.ok) return;
-  const bounds = editor.circuit.bounds();
-  const left = bounds.w > 0 ? bounds.x : editor.cursor.x;
-  const top = (bounds.h > 0 ? bounds.y + bounds.h : editor.cursor.y) + 2 * GRID;
-  let id = null;
-  commit(() => {
-    const label = editor.circuit.addLabel({ text: `$${result.equation}$`, x: 0, y: 0, align: 'left', math: true });
-    const box = label.bbox();
-    label.moveTo(snap(left + box.w / 2), snap(top + box.h / 2));
-    id = label.id;
-  });
-  setSelection([]);
-  setLabelSelection([id]);
-  render();
-  logLine('equation written under the drawing');
+  const tex = (name) => (/^\$.*\$$/.test(name) ? name.replace(/^\$+|\$+$/g, '') : `\\text{${name}}`);
+  const rows = [
+    `\\text{Transfer function} & ${result.equation}`,
+    `\\text{Read at the end of} & ${tex(result.states[result.readout].name)}`,
+  ];
+  if (result.noise?.ok) rows.push(`\\text{kT/C noise} & \\frac{\\overline{v^2_{n,in}}}{kT} = ${transferTex(result.noise.total.input, 'z', { symbolicLead: true })}`);
+  const { updated } = annotateMathFigure({ kind: 'equations', source: 'switched-cap', text: rows.join('\n'), columns: 'll' });
+  logLine(updated ? 'updated the equation table' : 'annotated the equation table');
 }
 
 // ----- install ---------------------------------------------------------------------------
@@ -546,6 +580,9 @@ export function installSwitchedCapUi() {
         el('button', { type: 'button', class: 'sc-calc-write', text: 'To sizing', title: 'Write the capacitances to the sizing table', onclick: writeSizing }),
       ]),
       el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
+      el('div', { class: 'signal-flow-graph-actions' }, [
+        el('button', { type: 'button', class: 'sc-calc-annotate', text: 'Annotate table', title: 'Annotate the noise table', disabled: true, onclick: annotateNoise }),
+      ]),
       el('p', { class: 'field-hint', text: 'Input-referred RMS over the band to f_s/2, and its white-noise density.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [

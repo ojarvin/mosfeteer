@@ -393,12 +393,16 @@ found. The loop gain is still drawn from its derived coefficients.
 **Place sketch** puts a textbook sketch on the canvas: a box annotation
 carrying the sampled curve, asymptote, and named corners (`plot` in the
 document), drawn without numbers by `src/core/bode-figure.js`. With a
-sketch selected the button updates it in place.
+sketch there (the selected one, else the only one) the button updates it
+in place ([`figures.md`](figures.md)).
 
 ## Schematic annotations
 
-**Annotate equations** places the displayed equations below the figure,
-left-aligned with its edge and separated by two grid cells. Each row, and
+**Annotate equations** puts the displayed equations on the drawing as the
+analysis's table ([`figures.md`](figures.md)), right of the circuit: a row
+each, its name then its equation, the definitions under their heading, and
+the assumptions under a rule. Annotating again rewrites that table where it
+stands. Each row, and
 each group, has a checkbox that keeps it out of the annotation; the choice is
 remembered with the form. The definitions the annotated rows use, directly
 or through another definition, are always added after them. AC equations,
@@ -442,7 +446,9 @@ one node, named by the side with a port, else a named one.
 that pans and zooms like a reference window (`src/web/reference-window.js`).
 The window redraws on each Derive and is not saved with the design. Its
 **Place** (and the `analyze model` command) adds the model below the
-drawing, aligned with its left edge, as one undo step. It is drawn without
+circuit, aligned with its left edge, as one undo step; placed again, it
+replaces the model there from the same top-left corner (a figure,
+[`figures.md`](figures.md)). It is drawn without
 ports, and its parts are **drawing only**
 (`ComponentInstance#drawingOnly`): drawn, moved, and checked like any other
 part, but no analysis reads them (`analyzedCircuit`), so placing the model

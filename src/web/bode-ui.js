@@ -31,12 +31,13 @@ import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
 import { editor } from './editor-state.js';
-import { commit, markSettingsChanged, onDocumentShown, render, selectedLabel, setLabelSelection, setSelection } from './main.js';
+import { commit, markSettingsChanged, onDocumentShown, render, selectedLabels, setLabelSelection, setSelection } from './main.js';
 import { fitView } from './canvas-view.js';
 import { logLine } from './status-bar-ui.js';
 import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
 import { placeResponsePlot } from './signal-flow-ui.js';
-import { GRID, snap } from '../core/grid.js';
+import { GRID } from '../core/grid.js';
+import { chooseFigure, figureSpot, newFigureId, plotKey } from '../core/figures.js';
 
 const QUANTITIES = {
   transfer: { name: 'Voltage gain', tex: 'A_{v}' },
@@ -372,7 +373,7 @@ function renderLegend() {
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
     el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: annotateGraph }),
-    el('button', { type: 'button', class: 'bode-place', text: selectedSketch() ? 'Update sketch' : 'Place sketch', title: 'Annotate a Bode sketch', disabled: !one, onclick: () => placeSketch(selectedSketch()) }),
+    el('button', { type: 'button', class: 'bode-place', text: sketchFigure() ? 'Update sketch' : 'Place sketch', title: 'Annotate a Bode sketch', disabled: !one, onclick: () => placeSketch() }),
     el('label', { class: 'bode-phase-toggle' }, [
       Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Sketch with its phase' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
       ' with phase',
@@ -423,17 +424,16 @@ function appendCorners(list, { trace, sketch, corners }, named) {
 function annotateGraph() {
   const sketches = shownSketches();
   const plot = responsePlotOf(sketches);
-  if (plot) placeResponsePlot(plot, sketches.map(({ trace }) => trace));
+  if (plot) placeResponsePlot(plot, sketches.map(({ trace }) => trace), { source: 'small-signal' });
 }
 
-const selectedSketch = () => (selectedLabel()?.plot && selectedLabel().plot.kind !== 'response' && selectedLabel().plot.points ? selectedLabel() : null);
 
-/** Name the place button for what a press does now: update the selected
- *  sketch, or place a new one. The selection changes without a new report. */
+/** Name the place button for what a press does now: update the sketch
+ *  there, or place a new one. The selection changes without a new report. */
 export function syncBodePlace() {
   const place = plotsEl?.querySelector('.bode-place');
   if (!place) return;
-  const text = selectedSketch() ? 'Update sketch' : 'Place sketch';
+  const text = sketchFigure() ? 'Update sketch' : 'Place sketch';
   if (place.textContent !== text) place.textContent = text;
 }
 
@@ -455,25 +455,34 @@ function sketchPlotData() {
   };
 }
 
-/** Put the sketch on the drawing, right of what is there -- or, with a
- *  sketch selected, redraw that one in place. One undo entry. */
-function placeSketch(existing) {
+/** The sketch the place button updates: the selected one, else the only
+ *  one (figures.js chooseFigure); null places a new one. */
+function sketchFigure() {
+  const plot = sketchPlotData();
+  if (!plot) return null;
+  const figure = chooseFigure(editor.circuit, { kind: 'plot', source: 'small-signal', key: plotKey(normalizePlot(plot)) }, selectedLabels().map((label) => label.id));
+  return figure?.labels.find((label) => label.plot) || null;
+}
+
+/** Put the sketch on the drawing, below the circuit -- or redraw the one
+ *  there in place (sketchFigure). One undo entry. */
+function placeSketch() {
   const plot = sketchPlotData();
   if (!plot) return;
+  const existing = sketchFigure();
   let placed = existing;
   commit(() => {
+    const figure = { id: existing?.figure?.id || newFigureId(editor.circuit), kind: 'plot', source: 'small-signal', key: plotKey(normalizePlot(plot)) };
     if (existing) {
       existing.plot = normalizePlot(plot);
+      existing.figure = figure;
       editor.circuit.invalidateRoutingCache();
       return;
     }
-    const bounds = editor.circuit.inkBounds();
-    const empty = !editor.circuit.components.size && !editor.circuit.labels.size;
-    const x = empty ? 0 : snap(bounds.x + bounds.w + 2 * GRID);
-    const y = empty ? 0 : snap(bounds.y);
+    const { x, y } = figureSpot(editor.circuit, 'plot');
     const w = 16 * GRID;
     const h = (plot.phase ? 14 : 10) * GRID;
-    placed = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' } });
+    placed = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' }, figure });
   });
   if (!placed) return;
   setSelection([]);

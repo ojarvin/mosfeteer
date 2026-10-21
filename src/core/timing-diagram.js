@@ -52,6 +52,7 @@ import { GRID, ceilGrid, floorGrid, snap } from './grid.js';
 import { complementKey, isComplementPhase, isTexSource, phaseKey, samePhase, switchPhases, switchStateAt, switchesOf } from './beats.js';
 import { plainTexText } from './render.js';
 import { LabelInstance, normalizeTimingSpec } from './model.js';
+import { coreBounds } from './figures.js';
 
 const WAVE_HEIGHT = 2 * GRID;
 /** Between one row and the next. */
@@ -305,9 +306,10 @@ function normalizeEdgeShift(shift) {
   return { fall: cells(shift?.fall), rise: cells(shift?.rise) };
 }
 
-/** The top of the highest spot, from the drawing's top down, where a diagram
- *  `area` wide ({ x, w, h }) clears everything drawn by CLEARANCE; below the
- *  drawing when nothing higher is free. */
+/** The top of the highest spot, from the circuit's top down, where a
+ *  diagram `area` wide ({ x, w, h }) clears everything drawn by CLEARANCE:
+ *  in an empty part of the circuit, else under it -- under any figure there
+ *  too (figures.js). */
 function timingSpot(circuit, area, drawn) {
   const obstacles = [];
   for (const c of circuit.components.values()) obstacles.push(c.bboxWorld());
@@ -324,6 +326,7 @@ function timingSpot(circuit, area, drawn) {
     || r.y + r.h + CLEARANCE <= top || top + area.h + CLEARANCE <= r.y);
   const below = ceilGrid(drawn.y + drawn.h) + CLEARANCE;
   for (let top = ceilGrid(drawn.y); top < below; top += GRID) if (clear(top)) return top;
+  for (let top = below; top < below + 1000 * GRID; top += GRID) if (clear(top)) return top;
   return below;
 }
 
@@ -933,7 +936,8 @@ function timingDiagram(circuit, { bits: given = {}, fromBeats = false, slot = nu
 
   const drawnBefore = drawnTimingDiagram(circuit);
   for (const id of drawnBefore?.ids || []) circuit.removeLabel(id);
-  const drawn = circuit.inkBounds(0, { labels: (label) => !label.timing });
+  // The circuit, not what was put under it: the diagram is centered on it.
+  const drawn = coreBounds(circuit) || { x: 0, y: 0, w: 0, h: 0 };
   const labels = rows.map((row, index) => circuit.addLabel({
     text: row.source,
     math: isTexSource(row.source),

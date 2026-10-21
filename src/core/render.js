@@ -617,6 +617,34 @@ export function texToMathML(source) {
   return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" style="font-family:${MATH_FONT_FAMILY};color:inherit"><mrow>${parseSequence()}</mrow></math>`;
 }
 
+/** A math label's line split into its columns at TeX's `&` (not `\&`). */
+export const mathCells = (line) => line.split(/(?<!\\)&/);
+
+/** Whether a math label's lines are a table: a line with columns, or a rule. */
+export const isMathTable = (rows) => rows.some((line) => line.trim() === '\\hline' || mathCells(line).length > 1);
+
+/**
+ * A math label's lines as a table, as TeX's align and array set them: each
+ * line's cells (split at `&`) in columns as wide as their widest cell,
+ * aligned as `columns` says (l, c, r each; without it right then left in
+ * turn, so `A_v &= ...` lines up at its equals signs), `\hline` a rule,
+ * and a line without `&` across every column. Spaced columns (`columns`
+ * given) are a table's, apart, its rows half an em apart so tall fractions
+ * never touch; aligned ones touch.
+ */
+function mathTableHtml(rows, columns, justify) {
+  const cells = rows.map((line) => (line.trim() === '\\hline' ? null : mathCells(line)));
+  const count = Math.max(1, ...cells.map((row) => row?.length || 0));
+  const alignOf = (index) => ({ l: 'flex-start', c: 'center', r: 'flex-end' }[(columns || 'rl'.repeat(count))[index]] || 'flex-start');
+  const cell = (style, tex) => `<div class="schematic-math-line" style="display:flex;align-items:center;${style}">${tex.trim() ? texToMathML(tex) : ''}</div>`;
+  const body = cells.map((row) => {
+    if (!row) return '<div class="schematic-math-rule" style="grid-column:1 / -1;border-top:0.09em solid currentColor;margin:0.2em 0;"></div>';
+    if (row.length === 1) return cell(`grid-column:1 / -1;justify-content:${justify};`, row[0]);
+    return Array.from({ length: count }, (_, index) => cell(`justify-content:${alignOf(index)};`, row[index] ?? '')).join('');
+  }).join('');
+  return `<div class="schematic-math-table" style="display:grid;grid-template-columns:repeat(${count},max-content);grid-auto-rows:minmax(1.2em,auto);column-gap:${columns ? '1.2em' : '0'};row-gap:${columns ? '0.55em' : '0.3em'};align-items:center;justify-content:${justify};">${body}</div>`;
+}
+
 function mathLabelSvg(label, opacity = '', ink = null) {
   const box = label.bbox();
   const color = ink || resolveColor(label.style?.color || '#111');
@@ -643,9 +671,9 @@ function mathLabelSvg(label, opacity = '', ink = null) {
   // and bold labels; a thin outline in the text color thickens every glyph.
   const style = `width:100%;height:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:center;box-sizing:border-box;padding:${padding};overflow:visible;white-space:nowrap;color:${escapeSvg(colorCss)};font-family:${MATH_FONT_FAMILY};font-size:${fontSize}px;line-height:1.2;font-weight:normal;-webkit-text-stroke:${MATH_LABEL_STROKE} currentColor;pointer-events:none;`;
   const lineStyle = `display:flex;flex-shrink:0;align-items:center;justify-content:${justify};width:100%;min-height:1.2em;`;
-  const lines = stripMathDelimiters(label.text).split(/\r?\n/)
-    .map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`)
-    .join('');
+  const rows = stripMathDelimiters(label.text).split(/\r?\n/);
+  const lines = isMathTable(rows) ? mathTableHtml(rows, label.columns, justify)
+    : rows.map((line) => `<div class="schematic-math-line" style="${lineStyle}">${texToMathML(line)}</div>`).join('');
   return `<foreignObject x="${fmt(box.x)}" y="${fmt(box.y)}" width="${fmt(box.w)}" height="${fmt(box.h)}" pointer-events="none"${opacity}><div xmlns="http://www.w3.org/1999/xhtml" class="schematic-math-label" style="${style}" aria-label="${aria}">${lines}</div></foreignObject>`;
 }
 

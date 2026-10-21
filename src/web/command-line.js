@@ -132,6 +132,7 @@ export const DOCUMENT_COMMANDS = [
   { name: 'notes', help: 'notes set|append TEXT, notes clear (the design\'s notes, Markdown)' },
   { name: 'tag', aliases: ['tags', 'label-design'], help: 'tag add|rm|set NAME ... (the document\'s tags, searched in the Atlas)' },
   { name: 'fix', aliases: ['autofix', 'repair'], help: 'fix (apply every safe Design Check repair)' },
+  { name: 'figures', aliases: ['annotations'], help: 'figures [--arrange] (what the tools annotated; --arrange puts each where a new one goes)' },
   { name: 'rail', help: 'rail REF.TERM ground|supply (a rail wired to a pin)' },
   { name: 'supplybar', help: 'supplybar on|off <refdes> ...' },
   { name: 'net', help: 'net <id> add|drop|name|label|rm ...' },

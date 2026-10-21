@@ -108,9 +108,15 @@ test('analyze model places the model below the drawing as drawing-only parts, le
   }
   assert.equal(runCommand(circuit, 'analyze transfer-function VOUT --input VIN').text, before);
   assert.equal(evaluate(circuit).ok, true, JSON.stringify(evaluate(circuit).issues));
-  // A second placement goes below the first, under names of its own.
+  // Placed again, it replaces the model there, where it stood, under the same names.
+  const corner = (refs) => ({ x: Math.min(...refs.map((r) => circuit.components.get(r).bboxWorld().x)), y: Math.min(...refs.map((r) => circuit.components.get(r).bboxWorld().y)) });
+  const at = corner(result.json.components);
+  const count = circuit.components.size;
   const again = runCommand(circuit, 'analyze model VOUT --input VIN');
-  assert.ok(again.json.components.every((refdes) => !result.json.components.includes(refdes)));
+  assert.match(again.text, /replaced the small-signal model in place/);
+  assert.deepEqual([...again.json.components].sort(), [...result.json.components].sort());
+  assert.equal(circuit.components.size, count);
+  assert.deepEqual(corner(again.json.components), at);
   assert.equal(runCommand(circuit, 'analyze transfer-function VOUT --input VIN').text, before);
 });
 

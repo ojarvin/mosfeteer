@@ -27,6 +27,7 @@ read the one for the area you change before changing it.
 | Wiring internals | [`docs/wiring-architecture.md`](docs/wiring-architecture.md) |
 | Beats, linked designs, Atlas | [`docs/beats.md`](docs/beats.md), [`docs/hierarchy.md`](docs/hierarchy.md), [`docs/atlas.md`](docs/atlas.md) |
 | Notes, save history | [`docs/notes-and-history.md`](docs/notes-and-history.md) |
+| Annotated figures, their placement | [`docs/figures.md`](docs/figures.md) |
 
 ## Repository map
 
@@ -94,8 +95,11 @@ analysis refuse rather than guess too. Every analysis reads
 `analyzedCircuit(circuit)`: a drawing-only part
 (`ComponentInstance#drawingOnly`, such as a placed small-signal model) is
 drawn and checked but never analyzed. A window never draws on its own: a
-plot, an equation, or the timing diagram goes on the drawing only by its
-Annotate (a timing diagram, once drawn, then follows its editor); the timing is document data
+plot, an equation table, the model, or the timing diagram goes on the
+drawing only by its Annotate (a timing diagram, once drawn, then follows
+its editor). What a tool draws is one figure (`figure` identity,
+`src/core/figures.js`): annotating again updates it in place, never adds a
+second. The timing is document data
 (`Circuit#timing`) that the analyses and beats read. Analysis settings and slider values are document data
 (`Circuit#analysisValues`): a change is `markSettingsChanged`, saved but never
 stale, one undo entry per finished adjustment.

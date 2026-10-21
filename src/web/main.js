@@ -82,6 +82,7 @@ import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncMod
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
+import { installArrangeFigures } from './figure-annotate.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
 import { historyDocumentShown, installHistory, renderHistoryWindow } from './history-window.js';
@@ -136,7 +137,6 @@ Object.defineProperties(editor, {
   draftRestored: { get: () => draftRestored, set: (value) => { draftRestored = value; } },
   draftTimer: { get: () => draftTimer, set: (value) => { draftTimer = value; } },
   drag: { get: () => drag, set: (value) => { drag = value; } },
-  equationAnnotationLayout: { get: () => equationAnnotationLayout, set: (value) => { equationAnnotationLayout = value; } },
   equationEmphasis: { get: () => equationEmphasis, set: (value) => { equationEmphasis = value; } },
   future: { get: () => future, set: (value) => { future = value; } },
   guidesVisible: { get: () => guidesVisible, set: (value) => { guidesVisible = value; } },
@@ -2638,9 +2638,6 @@ function renderedLabelTextBounds(group) {
   } catch { return null; }
 }
 
-// Equation annotations are initially positioned with the model estimate. Once
-// MathML dimensions are available, the layout is recalculated below the figure.
-let equationAnnotationLayout = null;
 
 // Columns of left-aligned math labels placed from the model's estimate (a
 // graph's legend): once every label is measured, each is moved so their left
@@ -2679,66 +2676,6 @@ function reflowLabelColumns() {
   return moved;
 }
 
-function reflowEquationAnnotations() {
-  const layout = equationAnnotationLayout;
-  if (!layout) return false;
-  const equations = layout.equationIds
-    .map((id) => circuit.labels.get(id))
-    .filter(Boolean);
-  if (equations.length !== layout.equationIds.length) {
-    equationAnnotationLayout = null;
-    return false;
-  }
-  // Do not reflow until every equation has a real browser measurement. The
-  // model fallback is intentionally conservative, but mixing fallback and
-  // measured heights would make the centerline pitch unstable.
-  if (!equations.every((label) => label._renderedTextBounds?.w > 0 && label._renderedTextBounds?.h > 0)) return false;
-
-  const assumptions = layout.assumptionsId ? circuit.labels.get(layout.assumptionsId) : null;
-  const signature = [
-    ...equations.map((label) => {
-      const box = label.bbox();
-      return `${box.w}x${box.h}`;
-    }),
-    assumptions ? (() => {
-      const box = assumptions.bbox();
-      return `${box.w}x${box.h}`;
-    })() : '',
-  ].join('|');
-  if (signature === layout.signature) return false;
-  layout.signature = signature;
-
-  // Equal centerline spacing with the smallest possible bbox gap is governed
-  // by the largest adjacent half-sum, not simply by the tallest equation. A
-  // pair touching at that pitch has a zero gap; any narrower neighboring pair
-  // naturally leaves more room.
-  const heights = equations.map((label) => label.bbox().h);
-  const pitch = heights.length < 2
-    ? heights[0]
-    : Math.max(...heights.slice(1).map((height, index) => (heights[index] + height) / 2));
-  const left = snap(layout.leftEdge);
-  const top = snap(layout.bottomEdge + layout.topGap);
-  let moved = false;
-  equations.forEach((label, index) => {
-    const box = label.bbox();
-    const x = snap(left + box.w / 2);
-    const y = snap(top + pitch / 2 + index * pitch);
-    const anchor = label.anchorWorld();
-    if (anchor.x !== x || anchor.y !== y) moved = true;
-    label.moveTo(x, y);
-  });
-
-  if (assumptions) {
-    const box = assumptions.bbox();
-    const x = snap(left + box.w / 2);
-    const y = snap(top + pitch * equations.length + GRID + box.h / 2);
-    const anchor = assumptions.anchorWorld();
-    if (anchor.x !== x || anchor.y !== y) moved = true;
-    assumptions.moveTo(x, y);
-  }
-  if (moved) markModelChanged();
-  return moved;
-}
 
 // A math label is measured once per text, and its size comes from the math
 // font's metrics — so measuring before that webfont arrives locks in a box
@@ -2836,7 +2773,7 @@ export function syncRenderedLabelMetrics() {
     keepAlignedEdge(label, before);
     changed = true;
   }
-  return reflowLabelColumns() || reflowEquationAnnotations() || changed;
+  return reflowLabelColumns() || changed;
 }
 
 function scheduleMeasuredLabelRender() {
@@ -6347,6 +6284,7 @@ onDocumentShown(sizingDocumentShown);
 installHistory();
 onDocumentShown(historyDocumentShown);
 installRenumberUi();
+installArrangeFigures();
 canvasEl.addEventListener('dragstart', (ev) => ev.preventDefault());
 window.addEventListener('mouseup', canvasMouseUp);
 // Releasing Alt drops the mirrored ghost or terminal-snap aid; so does losing the window, since no

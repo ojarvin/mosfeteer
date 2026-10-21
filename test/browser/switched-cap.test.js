@@ -125,6 +125,29 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     assert.deepEqual(JSON.parse(saved), { noise: true, calc: { values: { CS: '4p' } } });
   });
 
+  test('the equation and the noise are tables on the drawing, each rewritten in place when annotated again', async () => {
+    const figures = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.figure).map((l) => ({ kind: l.figure.kind, source: l.figure.source, text: l.text, x: l.bbox().x, y: l.bbox().y })))`);
+    await h.evaluate(`document.querySelector('.sc-annotate').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
+    await h.until(`!document.querySelector('.sc-calc-annotate').disabled`);
+    await h.evaluate(`document.querySelector('.sc-calc-annotate').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'noise'))`);
+    const [equations, noise] = await figures();
+    assert.equal(equations.source, 'switched-cap');
+    assert.match(equations.text, /\\text\{Transfer function\} & /);
+    assert.match(equations.text, /\\text\{kT\/C noise\} & /);
+    assert.match(noise.text, /\\text\{Switches\} & \\text\{Capacitors\} & \\text\{Phase\} & \\text\{RMS\} & \\text\{Density\}/);
+    assert.match(noise.text, /\\text\{Total\} &\s+&\s+& \\text\{45\.52 µV\}/);
+    assert.equal(noise.x, equations.x, 'one column, right of the circuit');
+    assert.ok(noise.y > equations.y);
+    // A new number, annotated again: the same table, rewritten.
+    await h.evaluate(`(() => { const i = document.querySelectorAll('.sc-calc-field')[2]; i.value = '127'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`document.querySelector('.sc-calc-result tbody tr .sc-noise-value')?.textContent !== '32.19 µV'`, 10000);
+    await h.evaluate(`document.querySelector('.sc-calc-annotate').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'noise' && l.text.includes('127 °C')))`);
+    assert.equal((await figures()).length, 2);
+  });
+
   test('the calculator\'s capacitances go to the sizing table and come back from it', async () => {
     const part = (refdes) => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get(${JSON.stringify(refdes)}).value ?? null)`);
     assert.equal(await h.evaluate(`document.querySelector('.sc-calc-sizing').hidden`), false);

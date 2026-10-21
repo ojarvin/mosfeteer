@@ -140,7 +140,12 @@ gives each row's RMS and density and their total. A capacitor that is its
 own symbol (its refdes) has its value in the sizing table too: **From
 sizing** reads those values into the fields, **To sizing** writes the
 fields into the parts' values (one undo step).
-**Annotate equation** writes the equation under the drawing. The choices and
+**Annotate equation** puts the mode's table on the drawing, right of the
+circuit: the transfer function, the phase it is read at, and the kT/C noise
+when worked out. The calculator's **Annotate table** puts its numbers there
+as the noise table -- a row per contributor, the total under a rule, and the
+values they were worked out at. Each is rewritten in place when annotated
+again ([`figures.md`](figures.md)). The choices and
 numbers -- the noise switch and the calculator's fields too, as typed -- are
 the design's (`Circuit#analysisValues.sc`): saved with it, one undo step a
 finished adjustment, never making it unsaved.

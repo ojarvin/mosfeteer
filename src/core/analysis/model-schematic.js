@@ -13,6 +13,7 @@
  */
 import { Circuit } from '../model.js';
 import { rectsOverlap } from '../geometry.js';
+import { chooseFigure, figureBounds, figureSpot, newFigureId, removeFigure } from '../figures.js';
 import { createRationalOps } from './algebra-ops.js';
 import { renderExpression } from './present.js';
 
@@ -431,9 +432,13 @@ export function smallSignalSchematic(report, options = {}) {
   for (const { unit, x } of ordered) {
     const chained = (column) => column.units.some((other) => (other.lower === unit.upper && other.lo === unit.hi)
       || (other.upper === unit.lower && other.hi === unit.lo));
-    const fits = (column) => !unit.flat && ((x !== null && column.x === x) || chained(column))
-      && column.units.every((other) => !other.flat && (unit.hi <= other.lo || unit.lo >= other.hi));
-    const column = columns.find(fits) || columns[columns.push({ x, units: [] }) - 1];
+    const free = (column) => !unit.flat && column.units.every((other) => !other.flat && (unit.hi <= other.lo || unit.lo >= other.hi));
+    // A stack it continues first: a device only drawn at the same x (M11
+    // above M10 above M9 in one schematic column) takes a place another,
+    // wired to that stack, needs (M8 under M9).
+    const column = columns.find((other) => free(other) && chained(other))
+      || columns.find((other) => free(other) && x !== null && other.x === x)
+      || columns[columns.push({ x, units: [] }) - 1];
     column.units.push(unit);
   }
   const placed = new Map();
@@ -452,9 +457,17 @@ export function smallSignalSchematic(report, options = {}) {
       return xs;
     });
     const anchor = Math.max(...rows.map((xs) => xs[0]));
+    // A unit of passives alone (r_o8) stands under the stack's own passive
+    // (r_o9 beside g_m9), as r_o under r_o; the rest line up their sources.
+    const sourced = (unit) => SOURCE_KINDS.has(unit.elements[0]?.kind);
+    const passiveAt = column.units.map((unit, index) => {
+      const at = unit.elements.findIndex((element) => !SOURCE_KINDS.has(element.kind));
+      return sourced(unit) && at > 0 ? rows[index][at] + anchor - rows[index][0] : null;
+    }).find((x) => x !== null) ?? null;
     let right = cursor;
     column.units.forEach((unit, index) => {
-      const shift = anchor - rows[index][0];
+      const lineUp = !unit.flat && !sourced(unit) && passiveAt !== null && passiveAt >= rows[index][0];
+      const shift = (lineUp ? passiveAt : anchor) - rows[index][0];
       unit.elements.forEach((element, at) => {
         const x = rows[index][at] + shift;
         placed.set(element, { x, y: unit.flat ? rowY(unit.hi) : snapTo((rowY(unit.hi) + rowY(unit.lo)) / 2) });
@@ -628,18 +641,31 @@ export function smallSignalSchematic(report, options = {}) {
 
 /**
  * Place a drawn model (`smallSignalSchematic(report, { ports: false })`) into
- * `circuit`, a band below its drawing and aligned with its left edge, as
- * drawing-only parts: drawn and checked like the rest, read by no analysis.
- * A part whose name the design already uses takes the next free one; the
- * nets keep the node names, the virtual connection that ties each to the
- * schematic node it models. Returns the added refdes and label ids.
+ * `circuit` as drawing-only parts: drawn and checked like the rest, read by
+ * no analysis. It is a figure (figures.js): placed again, it replaces the
+ * model there -- the selected one (`selected`: label ids and part names),
+ * else the only one -- from the same top-left corner; a first one goes
+ * below the circuit. A part whose name the design already uses takes the
+ * next free one; the nets keep the node names, the virtual connection that
+ * ties each to the schematic node it models. Returns the added refdes and
+ * label ids, and whether it replaced one (`updated`).
  */
-export function placeSmallSignalModel(circuit, model) {
+export function placeSmallSignalModel(circuit, model, { selected = [] } = {}) {
   const source = model.circuit;
-  const ink = circuit.components.size || circuit.labels.size ? circuit.bounds() : { x: 0, y: 0, w: 0, h: 0 };
+  const identity = { kind: 'model', source: 'small-signal' };
+  const existing = chooseFigure(circuit, identity, selected);
+  let corner;
+  if (existing) {
+    const box = figureBounds(circuit, existing);
+    corner = { x: box.x, y: box.y };
+    removeFigure(circuit, existing);
+  } else {
+    corner = figureSpot(circuit, 'model');
+  }
+  const figure = { id: existing?.id || newFigureId(circuit), ...identity };
   const own = source.bounds();
-  const dx = snapTo(ink.x - own.x);
-  const dy = ink.h ? 40 * Math.ceil((ink.y + ink.h + 80 - own.y) / 40) : snapTo(-own.y);
+  const dx = snapTo(corner.x - own.x);
+  const dy = snapTo(corner.y - own.y);
   const at = (point) => ({ x: point.x + dx, y: point.y + dy });
 
   const used = new Set([...circuit.components.keys(), ...circuit.labels.keys()]);
@@ -661,6 +687,7 @@ export function placeSmallSignalModel(circuit, model) {
         mirrorY: component.transform.mirrorY,
         value: component.value,
         drawingOnly: true,
+        figure,
         noLabel: true,
       });
       added.components.push(refdes);
@@ -688,7 +715,7 @@ export function placeSmallSignalModel(circuit, model) {
         if (!net?.name) continue;
         copy = circuit.addNetLabel(net.id, { anchor: at(label.anchor), align: label.align, netSide: label.netSide });
       } else {
-        copy = circuit.addLabel({ text: label.text, align: label.align, math: label.math, ...at(label.anchor) });
+        copy = circuit.addLabel({ text: label.text, align: label.align, math: label.math, figure, ...at(label.anchor) });
       }
       added.labels.push(copy.id);
     }
@@ -696,5 +723,5 @@ export function placeSmallSignalModel(circuit, model) {
     circuit._loading = wasLoading;
   }
   circuit.syncJunctionSolders();
-  return added;
+  return { ...added, updated: !!existing };
 }
