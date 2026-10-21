@@ -80,7 +80,7 @@ rotated out.
   editor) stays unreadable rather than guessed at, until the history window's
   **Remove it and start afresh** takes it out.
 - **Save points.** Only the editor's Save (`savePoint`) adds one, and only
-  when the drawing differs from the newest; scripted commands, window-state
+  when the history does not hold the drawing already; scripted commands, window-state
   writes, and tag or relink rewrites carry the history over without one.
   The oldest unpinned entries beyond ten go; pinned ones stay.
 - **Not drawing.** `Circuit#history` is stored as read and never makes the
@@ -93,7 +93,10 @@ More → History, or `:history`, shows the history window
 time it shows it or the file changes, and writes every change straight to
 the file -- unsaved drawing edits stay unsaved. Per entry: **View** shows it
 in a reference window (read-only, not remembered with the windows);
-**Restore** puts the drawing back as it was (one undo step; Save keeps it);
+**Restore** puts the drawing back as it was and writes it to the file with
+no save point of its own, so the entry is marked as the file's and nothing
+is left to save (one undo step; a drawing the file had that is in no entry
+becomes a save point first);
 the ⋯ menu pins it as a checkpoint (named, with a comment), renames or
 unpins one, or starts a **new design from it** (unsaved, no history of its
 own); × removes it (a checkpoint after asking). **Checkpoint…** pins the

@@ -2,8 +2,8 @@
  * The history window: the open design's save points and checkpoints, kept
  * in its file (core/save-history.js). Every Save adds a save point (the
  * last ten are kept); a pinned one is a named checkpoint that is never
- * rotated out. Each can be viewed in a reference window, restored into the
- * drawing (one undo step; saving keeps it), or started afresh as a new
+ * rotated out. Each can be viewed in a reference window, restored (the
+ * drawing and its file both, one undo step), or started afresh as a new
  * design; save points and checkpoints are removed with their ×.
  *
  * The history is the file's, read from it whenever the window shows it,
@@ -13,7 +13,7 @@
  */
 
 import {
-  checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, textHash, unpinHistoryEntry,
+  checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, textHash, unpinHistoryEntry,
 } from '../core/save-history.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
@@ -21,7 +21,7 @@ import { floatingWindow } from './floating-window.js';
 import { confirmChoice } from './file-dialog.js';
 import { formatModifiedTime } from './modified-time.js';
 import { appendContextItem, openMenuAt } from './context-menu.js';
-import { hasUnsavedChanges, openStateAsNewDesign, persistence, saveCircuit } from './document-session.js';
+import { hasUnsavedChanges, openStateAsNewDesign, persistence, saveCircuit, writeDrawingAsSaved } from './document-session.js';
 import { showStateInReference } from './reference-window.js';
 import { logLine } from './status-bar-ui.js';
 import { applyJson, recordHistoryEntry, render, snapshot } from './main.js';
@@ -106,8 +106,11 @@ function view(entry) {
   showStateInReference(titleOf(entry), historyEntryState(entry));
 }
 
-/** The drawing as it was at `entry`: one undo step, unsaved until saved. */
-function restore(entry) {
+/** The drawing as it was at `entry`, and the file's from now on: it is
+ *  saved as it is, with no save point of its own (the entry is one). One
+ *  undo step takes it back. */
+async function restore(entry) {
+  if (busy || !file?.state) return;
   const state = historyEntryState(entry);
   const current = editor.circuit;
   const restored = {
@@ -118,13 +121,22 @@ function restore(entry) {
   };
   const before = snapshot();
   applyJson(JSON.stringify(restored));
-  if (snapshot() === before) {
-    logLine('The drawing is already as it was then.');
-    return;
-  }
-  recordHistoryEntry(before, true, 'none');
+  if (snapshot() !== before) recordHistoryEntry(before, true, 'none');
   render();
-  logLine(`Restored "${label(entry)}" from ${when(entry)}. Undo (u) takes it back; Save keeps it.`);
+  // The drawing the file had stays in its history: a save point, when it
+  // is none yet (written by a script since the last Save).
+  const history = settledHistory(file.state, { previous: file.state, savePoint: true });
+  busy = true;
+  let written = false;
+  try {
+    written = await writeDrawingAsSaved({ history, base: file.base });
+  } finally {
+    busy = false;
+  }
+  logLine(written
+    ? `Restored "${label(entry)}" from ${when(entry)}; the file has it now. Undo (u) takes it back.`
+    : `Restored "${label(entry)}" from ${when(entry)}. Save keeps it.`);
+  await refresh();
 }
 
 async function startNewDesign(entry) {

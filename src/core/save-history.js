@@ -245,7 +245,7 @@ function newId() {
  * it), and `baseText` any other text the writer's history may be stored
  * against (a design saved under a new name: the file it was opened from).
  * With `savePoint` (the editor's Save) the written drawing becomes the
- * newest save point unless it already is; the oldest unpinned ones beyond
+ * newest save point unless the history holds it already; the oldest unpinned ones beyond
  * SAVE_POINTS_KEPT go.
  *
  * When the writer's history fits none of those texts, the file's own is
@@ -271,7 +271,9 @@ export function settledHistory(next, { previous = null, sent = null, baseText = 
     if (own || theirs) return own || theirs;
     entries = [];
   }
-  if (savePoint && (!entries.length || drawingKey(entries[0].text) !== drawingKey(nextText))) entries.unshift({ id: newId(), time: now.toISOString(), text: nextText });
+  // A drawing the history holds already (a restored save point) is that
+  // entry, the file's now: no second one.
+  if (savePoint && !entries.some((entry) => drawingKey(entry.text) === drawingKey(nextText))) entries.unshift({ id: newId(), time: now.toISOString(), text: nextText });
   entries = rotate(entries, keep);
   if (!entries.length && !own && !theirs) return null;
   return encodeHistory(entries, nextText);

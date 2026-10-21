@@ -574,6 +574,38 @@ export async function saveWindowState() {
   }
 }
 
+/**
+ * Write the drawing as it is into its file as the saved version, with no
+ * save point of its own: a restored save point is in the history already.
+ * `history`, stored against `base` (the file's drawing as read), goes in
+ * place of the design's. Resolves to whether it was written.
+ */
+export async function writeDrawingAsSaved({ history = null, base = historyBase } = {}) {
+  const path = editor.currentDocumentPath;
+  if (!path || editor.saveInFlight) return false;
+  const text = snapshot();
+  editor.syncGeneration += 1;
+  editor.saveInFlight += 1;
+  try {
+    const sent = { ...JSON.parse(text), ...(history ? { history } : {}) };
+    const data = await persistence.save({ path }, sent, { overwrite: true, historyBase: base });
+    if (path !== editor.currentDocumentPath) return false;
+    adoptWrittenHistory(sent, data);
+    editor.lastSavedSnapshot = text;
+    editor.lastSeenRevision = data.revision || null;
+    editor.lastCircuitTag = data.etag || null;
+    persistDraft();
+    return true;
+  } catch (err) {
+    logLine(`Could not write ${displayPath(path)}: ${err.message}`, 'error');
+    return false;
+  } finally {
+    editor.saveInFlight -= 1;
+    editor.syncGeneration += 1;
+    renderSaveState();
+  }
+}
+
 // The toolbar's dirty dot asks on every frame; serializing the document each
 // time cost most of a frame on a large drawing. The answer only changes with
 // the model (its revision, or a preview's), the document, or a save.

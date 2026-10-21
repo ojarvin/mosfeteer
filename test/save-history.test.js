@@ -77,6 +77,18 @@ test('each save adds a save point; an unchanged drawing adds none', () => {
   assert.deepEqual(historyEntryState(list[1]).components, first.components);
 });
 
+test('a restored save point written back is that entry, the file\'s: saving it adds none', () => {
+  let disk = write(null, design(), { savePoint: true });
+  const first = disk;
+  disk = write(disk, moved(disk), { savePoint: true });
+  const restored = { ...historyEntryState(entries(disk)[1]), history: disk.history };
+  disk = write(disk, restored);
+  assert.equal(entries(disk).length, 2);
+  assert.equal(historyText(disk), historyText(first));
+  disk = write(disk, disk, { savePoint: true });
+  assert.equal(entries(disk).length, 2, 'the history holds the drawing already');
+});
+
 test('only the newest save points are kept; pinned checkpoints stay', () => {
   const drawn = design();
   let disk = write(null, drawn, { savePoint: true });

@@ -1,5 +1,5 @@
 /** The history window in a browser: save points from each Save, viewing
- *  and restoring one (one undo step), pinning checkpoints, removing
+ *  and restoring one (the file's, saved, one undo step), pinning checkpoints, removing
  *  entries, and starting a new design from one -- all kept in the file. */
 
 import { describe, before, after, test } from 'node:test';
@@ -43,15 +43,27 @@ describe('save history', { skip: browserSkip() }, () => {
     assert.deepEqual(await rows(), [{ label: 'Saved', pinned: false, file: true }, { label: 'Saved', pinned: false, file: false }]);
   });
 
-  test('View shows a save point beside the drawing; Restore brings it back as one undo step', async () => {
+  test('View shows a save point beside the drawing; Restore makes it the file\'s, saved, one undo step', async () => {
     await rowButton(1, 'View');
     await h.until(`[...document.querySelectorAll('.reference-window:not([hidden]) .reference-title')].some((t) => t.textContent.includes('amp @'))`);
     await h.until(`!!document.querySelector('.reference-window:not([hidden]) .reference-picture:not([hidden])')`);
     await rowButton(1, 'Restore');
     await h.until(`window.__circuit().comps.find((c) => c.refdes === 'M1').x === 40`);
-    assert.equal(await session('m.hasUnsavedChanges()'), true);
+    // The file holds it now, and nothing is left to save.
+    await h.until(`(() => { const rows = document.querySelectorAll('.history-entry'); return rows.length === 2 && !!rows[1].querySelector('.history-current'); })()`);
+    assert.equal(await session('m.hasUnsavedChanges()'), false);
+    const list = await onDisk();
+    assert.equal(list.length, 2, 'no save point of its own');
+    assert.equal(historyText(JSON.parse(await readFile(join(h.workspace, 'amp.json'), 'utf8'))), list[1].text);
+    // A Save of it adds none either: the history has it.
+    await h.key('s', { ctrlKey: true });
+    await h.until(`${h.module('editor-state.js')}.then((m) => !m.editor.saveInFlight)`);
+    assert.equal((await onDisk()).length, 2);
     await h.key('u');
     await h.until(`window.__circuit().comps.find((c) => c.refdes === 'M1').x === 80`);
+    assert.equal(await session('m.hasUnsavedChanges()'), true);
+    await h.key('U', { shiftKey: true });
+    await h.until(`window.__circuit().comps.find((c) => c.refdes === 'M1').x === 40`);
     assert.equal(await session('m.hasUnsavedChanges()'), false);
   });
 
