@@ -55513,6 +55513,7 @@ __exports.persistence = persistence;
 
 __modules["src/web/dom.js"] = function (__require, __exports) {
 __exports.element = element;
+__exports.onFieldCommit = onFieldCommit;
 /**
  * A DOM element in one call: `props` sets `class`, `text`, `html`, `on…`
  * listeners, and attributes (true as a bare attribute; false, null, and
@@ -55529,6 +55530,27 @@ function element(tag, props = {}, children = []) {
   }
   node.append(...children);
   return node;
+}
+
+/**
+ * Apply a text field when it is done with: Enter, or focus leaving it
+ * changed -- never while it is being typed in. `apply(text)` hears each
+ * new value once; Enter applies the field only, so it stops there.
+ */
+function onFieldCommit(input, apply) {
+  let applied = input.value;
+  const commit = () => {
+    if (input.value === applied) return;
+    applied = input.value;
+    apply(input.value);
+  };
+  input.addEventListener('change', commit);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    commit();
+  });
 }
 
 };
@@ -75546,7 +75568,7 @@ let optimizeSection, renderOptimize, resetOptimize; __bind(() => { ({ optimizeSe
 let swingTestFrequency; __bind(() => { ({ swingTestFrequency } = __require("src/core/analysis/optimize.js")); });
 let fractionText; __bind(() => { ({ fractionText } = __require("src/core/analysis/rounding.js")); });
 let normalizeBand; __bind(() => { ({ normalizeBand } = __require("src/core/analysis/optimize-setup.js")); });
-let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
 let netPicker; __bind(() => { ({ netPicker } = __require("src/web/net-picker.js")); });
 /**
  * The analysis window's signal-flow mode (core/analysis/signal-flow.js): for a
@@ -75800,7 +75822,7 @@ function fillForm() {
       markSettingsChanged();
     };
     select.addEventListener('change', save);
-    constant.addEventListener('input', save);
+    onFieldCommit(constant, save);
     const name = el('span', { class: 'signal-flow-source-name', text: source.name });
     // A quantizer's error source: E_{QZ1}, as math.
     if (source.quantizer) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s quantization error (its linear model: a gain of 1 plus this)`; }
@@ -76076,7 +76098,8 @@ const SWING_TONE = '\u0000tone';
 
 function swingSection() {
   const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above' });
+  onFieldCommit(frequency, (text) => { flow().swingFrequency = text.trim(); markSettingsChanged(); });
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
     el('p', { class: 'field-hint', text: 'Simulates a sine into one source at the coefficients above, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots each net\'s peak as the amplitude sweeps to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -76310,9 +76333,9 @@ function coefficientsChanged() {
 let settleTimer = 0;
 /** The numbers settled (a slider let go, a value typed, numbers pasted):
  *  what simulates long -- the spectrum -- runs again, not on every tick. */
-function coefficientsSettled({ delay = 0 } = {}) {
+function coefficientsSettled() {
   clearTimeout(settleTimer);
-  settleTimer = setTimeout(() => { if (flow().spectrum?.on) runSpectrum(); }, delay);
+  settleTimer = setTimeout(() => { if (flow().spectrum?.on) runSpectrum(); });
 }
 
 let shownSymbols = '';
@@ -76347,7 +76370,7 @@ function renderCoefficients({ force = false } = {}) {
       coefficientsChanged();
     });
     slider.addEventListener('change', () => coefficientsSettled());
-    field.addEventListener('input', () => {
+    onFieldCommit(field, () => {
       const text = field.value.trim();
       field.classList.remove('invalid');
       field.title = '';
@@ -76375,7 +76398,7 @@ function renderCoefficients({ force = false } = {}) {
       }
       refreshLinkedRows();
       coefficientsChanged();
-      coefficientsSettled({ delay: 400 });
+      coefficientsSettled();
     });
     rows.append(row);
   }
@@ -76445,7 +76468,6 @@ const graphPlot = (list, view = graphView(), detail = null) => {
 // ----- the simulated output's spectrum, behind the curves --------------------------------
 
 let spectrum = null; // { points (plotted), raw, frequency, amplitude } or { error }
-let spectrumTimer = 0;
 
 /** The checkbox and amplitude for the spectrum, and what it measured in band. */
 function spectrumControls() {
@@ -76460,10 +76482,8 @@ function spectrumControls() {
     runSpectrum();
   };
   check.addEventListener('change', save);
-  amplitude.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
-  amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
-  frequency.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
-  frequency.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  onFieldCommit(amplitude, save);
+  onFieldCommit(frequency, save);
   const fallback = testFrequency('');
   frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
@@ -76550,8 +76570,7 @@ function bandControls() {
   const field = (key, label, title) => {
     // A fraction shows as typed (1/256), a number as its digits.
     const input = el('input', { type: 'text', class: 'signal-flow-band-field', value: band?.text?.[key] ?? (band?.[key] ? String(Number(band[key].toPrecision(6))) : ''), placeholder: key === 'f0' ? '0' : '-', 'aria-label': label, title });
-    // Applied as typed; only the plot redraws, so the field keeps its focus.
-    input.addEventListener('input', () => {
+    onFieldCommit(input, () => {
       const f0 = fraction(row.querySelector('[data-key=f0]').value || '0');
       const bwText = row.querySelector('[data-key=bw]').value.trim();
       const bw = fraction(bwText);
@@ -76566,8 +76585,6 @@ function bandControls() {
       refreshTestFrequencies();
       renderOptimize();
     });
-    // Enter applies the field, not a derive.
-    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
     input.dataset.key = key;
     return input;
   };
@@ -78737,6 +78754,7 @@ let plainTexText, texToMathML; __bind(() => { ({ plainTexText, texToMathML } = _
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let switchState; __bind(() => { ({ switchState } = __require("src/core/beats.js")); });
 let canonicalNetName; __bind(() => { ({ canonicalNetName } = __require("src/core/model.js")); });
+let setPartValue; __bind(() => { ({ setPartValue } = __require("src/core/part-moves.js")); });
 let createPlotView, linkPlots; __bind(() => { ({ createPlotView, linkPlots } = __require("src/web/plot-view.js")); });
 let installPlotsWindow, offerPlots; __bind(() => { ({ installPlotsWindow, offerPlots } = __require("src/web/plots-window.js")); });
 let placeResponsePlot, registerAnalysisMode; __bind(() => { ({ placeResponsePlot, registerAnalysisMode } = __require("src/web/signal-flow-ui.js")); });
@@ -78745,7 +78763,7 @@ let PER_DECADE; __bind(() => { ({ PER_DECADE } = __require("src/web/e-series.js"
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection; __bind(() => { ({ commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } = __require("src/web/main.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
-let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
 /**
  * The analysis window's switched-capacitor mode: a drawn SC circuit's exact
  * H(z) (core/analysis/switched-cap.js), beside the circuit and signal-flow
@@ -78758,6 +78776,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * or phase over f/f_s, a legend to show or take off each, Annotate graph to
  * put it on the drawing.
  */
+
 
 
 
@@ -79062,7 +79081,6 @@ function renderNoise() {
 
 // The calculator's defaults: a capacitance 1 pF, a gain 60 dB, 27 °C, 1 MHz.
 const CALC_DEFAULTS = { capacitance: '1p', gain: '1000', celsius: '27', fs: '1M' };
-let calcTimer = 0;
 
 const calc = () => (settings().calc ||= { values: {} });
 
@@ -79081,7 +79099,8 @@ function renderCalculatorFields() {
   const gains = new Set(result?.gains || []);
   const field = (label, value, placeholder, onInput, unit) => {
     const input = el('input', { type: 'text', class: 'sc-calc-field', value: value ?? '', placeholder, 'aria-label': plainTexText(label) });
-    input.addEventListener('input', () => { onInput(input.value.trim()); clearTimeout(calcTimer); calcTimer = setTimeout(() => { markSettingsChanged(); runCalculator(); }, 300); });
+    // Applied once entered; the fields stay as they are, focus too.
+    onFieldCommit(input, (text) => { onInput(text.trim()); markSettingsChanged(); calculatorResult(); });
     return el('div', { class: 'sc-calc-row' }, [el('span', { class: 'signal-flow-source-name' }, [math(label)]), input, el('span', { class: 'sc-calc-unit', text: unit })]);
   };
   host.replaceChildren(
@@ -79089,6 +79108,59 @@ function renderCalculatorFields() {
     field('T', calc().celsius, CALC_DEFAULTS.celsius, (text) => { calc().celsius = text; }, '°C'),
     field('f_s', calc().fs, CALC_DEFAULTS.fs, (text) => { calc().fs = text; }, 'Hz'),
   );
+  const linked = sizedCapacitors();
+  section.querySelector('.sc-calc-sizing').hidden = !linked.length;
+}
+
+// ----- the sizing table ------------------------------------------------------------------
+
+/** The calculator's symbols that are a capacitor's own (its refdes, its
+ *  value a number or none), each with its part: what the sizing table's
+ *  Value column holds. A shared symbol (C_S) is no one part's value. */
+function sizedCapacitors() {
+  const result = latest?.result;
+  if (!result?.ok) return [];
+  const gains = new Set(result.gains || []);
+  return result.symbols.flatMap((name) => {
+    const part = editor.circuit.components.get(name);
+    return !gains.has(name) && result.capacitors.includes(name) && part ? [{ name, part }] : [];
+  });
+}
+
+/** A part's value as the calculator takes it (1 pF as 1p), or null when it
+ *  is not a number. */
+function calculatorText(value) {
+  const text = String(value ?? '').replace(/\s+/g, '').replace(/F$/, '');
+  return text && fieldNumber(text) > 0 ? text : null;
+}
+
+/** Each capacitor's value from the sizing table into its field. */
+function readSizing() {
+  const read = [];
+  for (const { name, part } of sizedCapacitors()) {
+    const text = calculatorText(part.value);
+    if (!text) continue;
+    calc().values[name] = text;
+    read.push(name);
+  }
+  if (!read.length) { logLine('the sizing table has no number for these capacitors', 'error'); return; }
+  markSettingsChanged();
+  runCalculator();
+  logLine(`read ${read.join(', ')} from the sizing table`);
+}
+
+/** Each capacitor's field into the sizing table: one undo step. */
+function writeSizing() {
+  const values = sizedCapacitors().map(({ name }) => ({ name, farads: fieldNumber(calc().values[name] || CALC_DEFAULTS.capacitance) }));
+  const bad = values.find(({ farads }) => !(farads > 0));
+  if (bad) { logLine(`${bad.name}: ${calc().values[bad.name]} is not a capacitance`, 'error'); return; }
+  if (!values.length) return;
+  // A bare number would read as a coefficient; a unit keeps it a value.
+  const done = commit(() => {
+    for (const { name, farads } of values) setPartValue(editor.circuit, name, siResult(farads) || `${farads}F`);
+    return true;
+  });
+  if (done) logLine(`wrote ${values.map(({ name }) => name).join(', ')} to the sizing table`);
 }
 
 /** A value with its unit, prefixed: 64.37 µV, 91.04 nV/√Hz. */
@@ -79101,9 +79173,15 @@ function volts(value, unit) {
 /** The numbers: each contributor's input-referred RMS and density, and
  *  their total, at the calculator's values. */
 function runCalculator() {
+  if (!section) return;
+  renderCalculatorFields();
+  calculatorResult();
+}
+
+/** The calculator's table, its fields left as they are. */
+function calculatorResult() {
   const host = section?.querySelector('.sc-calc-result');
   if (!host) return;
-  renderCalculatorFields();
   const result = latest?.result;
   if (!settings().noise || !result?.ok) { host.replaceChildren(); return; }
   const gains = new Set(result.gains || []);
@@ -79229,6 +79307,10 @@ function installSwitchedCapUi() {
     el('fieldset', { class: 'analysis-approximations sc-calc', hidden: true }, [
       el('legend', { text: 'Noise calculator' }),
       el('div', { class: 'sc-calc-fields' }),
+      el('div', { class: 'signal-flow-graph-actions sc-calc-sizing', hidden: true }, [
+        el('button', { type: 'button', class: 'sc-calc-read', text: 'From sizing', title: 'Read the capacitances from the sizing table', onclick: readSizing }),
+        el('button', { type: 'button', class: 'sc-calc-write', text: 'To sizing', title: 'Write the capacitances to the sizing table', onclick: writeSizing }),
+      ]),
       el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
       el('p', { class: 'field-hint', text: 'Input-referred RMS over the band to f_s/2, and its white-noise density.' }),
     ]),
@@ -81493,7 +81575,7 @@ __modules["src/web/value-row.js"] = function (__require, __exports) {
 __exports.valueRow = valueRow;
 let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
 let indexE24, stepE24; __bind(() => { ({ indexE24, stepE24 } = __require("src/web/e-series.js")); });
-let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
 /**
  * A value as the analysis windows set one: its symbol, a slider stepping
  * through E24 values (log scale), and a field to type any positive number.
@@ -81507,8 +81589,9 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 
 
 /**
- * `onValue(number)` hears every change, sliding or typed; `onSlide(true)`
- * and `onSlide(false)` the slider taken and let go. `min`/`max` are the
+ * `onValue(number)` hears every change: the slider as it slides, a typed
+ * value once entered (Enter, or leaving the field). `onSlide(true)` and
+ * `onSlide(false)` the slider taken and let go. `min`/`max` are the
  * slider's E24 steps (e-series.js PER_DECADE a decade).
  */
 function valueRow({ name, tex, value, min, max, onValue, onSlide = () => {}, title = '', className = '' }) {
@@ -81526,9 +81609,9 @@ function valueRow({ name, tex, value, min, max, onValue, onSlide = () => {}, tit
     onValue(next);
   });
   slider.addEventListener('change', () => onSlide(false));
-  field.addEventListener('input', () => {
-    const number = Number(field.value.trim());
-    const valid = field.value.trim() !== '' && Number.isFinite(number) && number > 0;
+  onFieldCommit(field, (text) => {
+    const number = Number(text.trim());
+    const valid = text.trim() !== '' && Number.isFinite(number) && number > 0;
     field.classList.toggle('invalid', !valid);
     if (!valid) return;
     slider.value = String(indexE24(number));

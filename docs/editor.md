@@ -67,7 +67,10 @@ pending key, then the selection, and with nothing left the window at the
 front (the one last opened or pressed; `closeFrontWindow` in
 `floating-window.js`), so pressing it again and again closes every window,
 the beats that open themselves with Alt+→ included. Inside a window,
-Escape is the window's own first (a field being typed, a pick).
+Escape is the window's own first (a field being typed, a pick). A value
+typed into a window's field (an analysis value, a calculator's number)
+applies on Enter or when the focus leaves the field changed, never while it
+is typed (`onFieldCommit`, `dom.js`); Enter there applies the field only.
 
 View toggles are handled before mode-specific keys, except printable insert
 query text before a ghost exists. Any tool can be picked straight from another

@@ -251,7 +251,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const corners = () => h.evaluate(`document.querySelector('.plots-window .bode-corners').textContent`);
     const before = await corners();
     // Typed: C_C twice as large.
-    await h.evaluate(`(() => { const f = document.querySelector('#analysis-values .bode-value[data-name="CC"] .signal-flow-coefficient-value'); f.value = '2'; f.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await h.evaluate(`(() => { const f = document.querySelector('#analysis-values .bode-value[data-name="CC"] .signal-flow-coefficient-value'); f.value = '2'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     assert.notEqual(await corners(), before, 'a typed value moves the corners');
     assert.equal((await bode()).values.multipliers.CC, 2);
     // Its slider follows the field.

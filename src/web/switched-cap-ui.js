@@ -20,6 +20,7 @@ import { plainTexText, texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
 import { switchState } from '../core/beats.js';
 import { canonicalNetName } from '../core/model.js';
+import { setPartValue } from '../core/part-moves.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { installPlotsWindow, offerPlots } from './plots-window.js';
 import { placeResponsePlot, registerAnalysisMode } from './signal-flow-ui.js';
@@ -28,7 +29,7 @@ import { PER_DECADE } from './e-series.js';
 import { editor } from './editor-state.js';
 import { commit, markSettingsChanged, onDocumentShown, render, setLabelSelection, setSelection } from './main.js';
 import { logLine } from './status-bar-ui.js';
-import { element as el } from './dom.js';
+import { element as el, onFieldCommit } from './dom.js';
 
 const settings = () => (editor.circuit.analysisValues.sc ||= { input: '', output: '', readout: '', values: {} });
 
@@ -314,7 +315,6 @@ function renderNoise() {
 
 // The calculator's defaults: a capacitance 1 pF, a gain 60 dB, 27 °C, 1 MHz.
 const CALC_DEFAULTS = { capacitance: '1p', gain: '1000', celsius: '27', fs: '1M' };
-let calcTimer = 0;
 
 const calc = () => (settings().calc ||= { values: {} });
 
@@ -333,7 +333,8 @@ function renderCalculatorFields() {
   const gains = new Set(result?.gains || []);
   const field = (label, value, placeholder, onInput, unit) => {
     const input = el('input', { type: 'text', class: 'sc-calc-field', value: value ?? '', placeholder, 'aria-label': plainTexText(label) });
-    input.addEventListener('input', () => { onInput(input.value.trim()); clearTimeout(calcTimer); calcTimer = setTimeout(() => { markSettingsChanged(); runCalculator(); }, 300); });
+    // Applied once entered; the fields stay as they are, focus too.
+    onFieldCommit(input, (text) => { onInput(text.trim()); markSettingsChanged(); calculatorResult(); });
     return el('div', { class: 'sc-calc-row' }, [el('span', { class: 'signal-flow-source-name' }, [math(label)]), input, el('span', { class: 'sc-calc-unit', text: unit })]);
   };
   host.replaceChildren(
@@ -341,6 +342,59 @@ function renderCalculatorFields() {
     field('T', calc().celsius, CALC_DEFAULTS.celsius, (text) => { calc().celsius = text; }, '°C'),
     field('f_s', calc().fs, CALC_DEFAULTS.fs, (text) => { calc().fs = text; }, 'Hz'),
   );
+  const linked = sizedCapacitors();
+  section.querySelector('.sc-calc-sizing').hidden = !linked.length;
+}
+
+// ----- the sizing table ------------------------------------------------------------------
+
+/** The calculator's symbols that are a capacitor's own (its refdes, its
+ *  value a number or none), each with its part: what the sizing table's
+ *  Value column holds. A shared symbol (C_S) is no one part's value. */
+function sizedCapacitors() {
+  const result = latest?.result;
+  if (!result?.ok) return [];
+  const gains = new Set(result.gains || []);
+  return result.symbols.flatMap((name) => {
+    const part = editor.circuit.components.get(name);
+    return !gains.has(name) && result.capacitors.includes(name) && part ? [{ name, part }] : [];
+  });
+}
+
+/** A part's value as the calculator takes it (1 pF as 1p), or null when it
+ *  is not a number. */
+function calculatorText(value) {
+  const text = String(value ?? '').replace(/\s+/g, '').replace(/F$/, '');
+  return text && fieldNumber(text) > 0 ? text : null;
+}
+
+/** Each capacitor's value from the sizing table into its field. */
+function readSizing() {
+  const read = [];
+  for (const { name, part } of sizedCapacitors()) {
+    const text = calculatorText(part.value);
+    if (!text) continue;
+    calc().values[name] = text;
+    read.push(name);
+  }
+  if (!read.length) { logLine('the sizing table has no number for these capacitors', 'error'); return; }
+  markSettingsChanged();
+  runCalculator();
+  logLine(`read ${read.join(', ')} from the sizing table`);
+}
+
+/** Each capacitor's field into the sizing table: one undo step. */
+function writeSizing() {
+  const values = sizedCapacitors().map(({ name }) => ({ name, farads: fieldNumber(calc().values[name] || CALC_DEFAULTS.capacitance) }));
+  const bad = values.find(({ farads }) => !(farads > 0));
+  if (bad) { logLine(`${bad.name}: ${calc().values[bad.name]} is not a capacitance`, 'error'); return; }
+  if (!values.length) return;
+  // A bare number would read as a coefficient; a unit keeps it a value.
+  const done = commit(() => {
+    for (const { name, farads } of values) setPartValue(editor.circuit, name, siResult(farads) || `${farads}F`);
+    return true;
+  });
+  if (done) logLine(`wrote ${values.map(({ name }) => name).join(', ')} to the sizing table`);
 }
 
 /** A value with its unit, prefixed: 64.37 µV, 91.04 nV/√Hz. */
@@ -353,9 +407,15 @@ function volts(value, unit) {
 /** The numbers: each contributor's input-referred RMS and density, and
  *  their total, at the calculator's values. */
 function runCalculator() {
+  if (!section) return;
+  renderCalculatorFields();
+  calculatorResult();
+}
+
+/** The calculator's table, its fields left as they are. */
+function calculatorResult() {
   const host = section?.querySelector('.sc-calc-result');
   if (!host) return;
-  renderCalculatorFields();
   const result = latest?.result;
   if (!settings().noise || !result?.ok) { host.replaceChildren(); return; }
   const gains = new Set(result.gains || []);
@@ -481,6 +541,10 @@ export function installSwitchedCapUi() {
     el('fieldset', { class: 'analysis-approximations sc-calc', hidden: true }, [
       el('legend', { text: 'Noise calculator' }),
       el('div', { class: 'sc-calc-fields' }),
+      el('div', { class: 'signal-flow-graph-actions sc-calc-sizing', hidden: true }, [
+        el('button', { type: 'button', class: 'sc-calc-read', text: 'From sizing', title: 'Read the capacitances from the sizing table', onclick: readSizing }),
+        el('button', { type: 'button', class: 'sc-calc-write', text: 'To sizing', title: 'Write the capacitances to the sizing table', onclick: writeSizing }),
+      ]),
       el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
       el('p', { class: 'field-hint', text: 'Input-referred RMS over the band to f_s/2, and its white-noise density.' }),
     ]),

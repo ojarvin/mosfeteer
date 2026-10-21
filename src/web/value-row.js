@@ -8,11 +8,12 @@
 
 import { texToMathML } from '../core/render.js';
 import { indexE24, stepE24 } from './e-series.js';
-import { element as el } from './dom.js';
+import { element as el, onFieldCommit } from './dom.js';
 
 /**
- * `onValue(number)` hears every change, sliding or typed; `onSlide(true)`
- * and `onSlide(false)` the slider taken and let go. `min`/`max` are the
+ * `onValue(number)` hears every change: the slider as it slides, a typed
+ * value once entered (Enter, or leaving the field). `onSlide(true)` and
+ * `onSlide(false)` the slider taken and let go. `min`/`max` are the
  * slider's E24 steps (e-series.js PER_DECADE a decade).
  */
 export function valueRow({ name, tex, value, min, max, onValue, onSlide = () => {}, title = '', className = '' }) {
@@ -30,9 +31,9 @@ export function valueRow({ name, tex, value, min, max, onValue, onSlide = () => 
     onValue(next);
   });
   slider.addEventListener('change', () => onSlide(false));
-  field.addEventListener('input', () => {
-    const number = Number(field.value.trim());
-    const valid = field.value.trim() !== '' && Number.isFinite(number) && number > 0;
+  onFieldCommit(field, (text) => {
+    const number = Number(text.trim());
+    const valid = text.trim() !== '' && Number.isFinite(number) && number > 0;
     field.classList.toggle('invalid', !valid);
     if (!valid) return;
     slider.value = String(indexE24(number));

@@ -15,3 +15,24 @@ export function element(tag, props = {}, children = []) {
   node.append(...children);
   return node;
 }
+
+/**
+ * Apply a text field when it is done with: Enter, or focus leaving it
+ * changed -- never while it is being typed in. `apply(text)` hears each
+ * new value once; Enter applies the field only, so it stops there.
+ */
+export function onFieldCommit(input, apply) {
+  let applied = input.value;
+  const commit = () => {
+    if (input.value === applied) return;
+    applied = input.value;
+    apply(input.value);
+  };
+  input.addEventListener('change', commit);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    commit();
+  });
+}

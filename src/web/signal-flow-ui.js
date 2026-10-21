@@ -42,7 +42,7 @@ import { optimizeSection, renderOptimize, resetOptimize } from './optimize-ui.js
 import { swingTestFrequency } from '../core/analysis/optimize.js';
 import { fractionText } from '../core/analysis/rounding.js';
 import { normalizeBand } from '../core/analysis/optimize-setup.js';
-import { element as el } from './dom.js';
+import { element as el, onFieldCommit } from './dom.js';
 import { netPicker } from './net-picker.js';
 
 // Devices the small-signal analysis models: a drawing with any opens in it.
@@ -250,7 +250,7 @@ function fillForm() {
       markSettingsChanged();
     };
     select.addEventListener('change', save);
-    constant.addEventListener('input', save);
+    onFieldCommit(constant, save);
     const name = el('span', { class: 'signal-flow-source-name', text: source.name });
     // A quantizer's error source: E_{QZ1}, as math.
     if (source.quantizer) { name.innerHTML = texToMathML(source.name); name.title = `${source.id}'s quantization error (its linear model: a gain of 1 plus this)`; }
@@ -526,7 +526,8 @@ const SWING_TONE = '\u0000tone';
 
 function swingSection() {
   const source = el('select', { class: 'signal-flow-swing-source', 'aria-label': 'Source the sine drives', onchange: (ev) => { flow().swingInput = ev.target.value; markSettingsChanged(); } });
-  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above', oninput: (ev) => { flow().swingFrequency = ev.target.value.trim(); markSettingsChanged(); } });
+  const frequency = el('input', { type: 'text', class: 'signal-flow-swing-frequency signal-flow-test-frequency', value: '', 'aria-label': 'Sine frequency, f/fs', title: 'The sine\'s frequency as f/fs (1/256, 0.004), made a whole number of cycles in the window; blank: inside the signal band set above' });
+  onFieldCommit(frequency, (text) => { flow().swingFrequency = text.trim(); markSettingsChanged(); });
   return el('div', { class: 'signal-flow-swing', hidden: true }, [
     el('p', { class: 'field-hint', text: 'Simulates a sine into one source at the coefficients above, rounding at each quantizer (Schreier\'s levels, full scale N - 1), and plots each net\'s peak as the amplitude sweeps to overload.' }),
     el('div', { class: 'signal-flow-swing-controls' }, [
@@ -760,9 +761,9 @@ function coefficientsChanged() {
 let settleTimer = 0;
 /** The numbers settled (a slider let go, a value typed, numbers pasted):
  *  what simulates long -- the spectrum -- runs again, not on every tick. */
-function coefficientsSettled({ delay = 0 } = {}) {
+function coefficientsSettled() {
   clearTimeout(settleTimer);
-  settleTimer = setTimeout(() => { if (flow().spectrum?.on) runSpectrum(); }, delay);
+  settleTimer = setTimeout(() => { if (flow().spectrum?.on) runSpectrum(); });
 }
 
 let shownSymbols = '';
@@ -797,7 +798,7 @@ function renderCoefficients({ force = false } = {}) {
       coefficientsChanged();
     });
     slider.addEventListener('change', () => coefficientsSettled());
-    field.addEventListener('input', () => {
+    onFieldCommit(field, () => {
       const text = field.value.trim();
       field.classList.remove('invalid');
       field.title = '';
@@ -825,7 +826,7 @@ function renderCoefficients({ force = false } = {}) {
       }
       refreshLinkedRows();
       coefficientsChanged();
-      coefficientsSettled({ delay: 400 });
+      coefficientsSettled();
     });
     rows.append(row);
   }
@@ -895,7 +896,6 @@ const graphPlot = (list, view = graphView(), detail = null) => {
 // ----- the simulated output's spectrum, behind the curves --------------------------------
 
 let spectrum = null; // { points (plotted), raw, frequency, amplitude } or { error }
-let spectrumTimer = 0;
 
 /** The checkbox and amplitude for the spectrum, and what it measured in band. */
 function spectrumControls() {
@@ -910,10 +910,8 @@ function spectrumControls() {
     runSpectrum();
   };
   check.addEventListener('change', save);
-  amplitude.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
-  amplitude.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
-  frequency.addEventListener('input', () => { clearTimeout(spectrumTimer); spectrumTimer = setTimeout(save, 400); });
-  frequency.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); save(); } });
+  onFieldCommit(amplitude, save);
+  onFieldCommit(frequency, save);
   const fallback = testFrequency('');
   frequency.placeholder = `${Number(fallback.toPrecision(3))}`;
   return el('div', { class: 'signal-flow-band signal-flow-spectrum' }, [
@@ -1000,8 +998,7 @@ function bandControls() {
   const field = (key, label, title) => {
     // A fraction shows as typed (1/256), a number as its digits.
     const input = el('input', { type: 'text', class: 'signal-flow-band-field', value: band?.text?.[key] ?? (band?.[key] ? String(Number(band[key].toPrecision(6))) : ''), placeholder: key === 'f0' ? '0' : '-', 'aria-label': label, title });
-    // Applied as typed; only the plot redraws, so the field keeps its focus.
-    input.addEventListener('input', () => {
+    onFieldCommit(input, () => {
       const f0 = fraction(row.querySelector('[data-key=f0]').value || '0');
       const bwText = row.querySelector('[data-key=bw]').value.trim();
       const bw = fraction(bwText);
@@ -1016,8 +1013,6 @@ function bandControls() {
       refreshTestFrequencies();
       renderOptimize();
     });
-    // Enter applies the field, not a derive.
-    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.stopPropagation(); ev.preventDefault(); input.blur(); } });
     input.dataset.key = key;
     return input;
   };

@@ -135,7 +135,10 @@ to 10^6).
 the small-signal noise table, a row per contributor (pointing at one lights
 its switches and capacitors on the drawing). The **Noise calculator** under
 it takes each symbol's value (1p unless set), T (27 °C) and f_s (1M), and
-gives each row's RMS and density and their total.
+gives each row's RMS and density and their total. A capacitor that is its
+own symbol (its refdes) has its value in the sizing table too: **From
+sizing** reads those values into the fields, **To sizing** writes the
+fields into the parts' values (one undo step).
 **Annotate equation** writes the equation under the drawing. The choices and
 numbers -- the noise switch and the calculator's fields too, as typed -- are
 the design's (`Circuit#analysisValues.sc`): saved with it, one undo step a

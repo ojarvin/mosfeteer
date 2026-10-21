@@ -47,7 +47,7 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     // A capacitance is a Values row: a slider and a field. Its number moves
     // the plots, not the equation, and is the design's.
     assert.equal(await h.evaluate(`document.querySelectorAll('.sc-values .signal-flow-coefficient input[type="range"]').length`), 2);
-    await h.evaluate(`(() => { const i = document.querySelector('.sc-values .signal-flow-coefficient-value[aria-label="CS: value"]'); i.value = '4'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await h.evaluate(`(() => { const i = document.querySelector('.sc-values .signal-flow-coefficient-value[aria-label="CS: value"]'); i.value = '4'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.values.CS === 4)`);
     assert.equal(await text('.sc-equation'), 'VOUTVIN=CSCFz−11−z−1');
     // Annotate graph puts the graph on the drawing.
@@ -111,11 +111,34 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.until(`!!document.querySelector('.sc-calc-result table')`, 10000);
     const cells = () => h.evaluate(`[...document.querySelectorAll('.sc-calc-result tbody tr')].map((tr) => [...tr.querySelectorAll('.sc-noise-value')].map((td) => td.textContent).join(' | '))`);
     assert.deepEqual(await cells(), ['64.37 µV | 91.04 nV/√Hz', '64.37 µV | 91.04 nV/√Hz', '91.04 µV | 128.7 nV/√Hz']);
-    // A value typed in moves the numbers, and is the design's.
-    await h.evaluate(`(() => { const i = document.querySelector('.sc-calc-field[aria-label="C_S"]') || document.querySelectorAll('.sc-calc-field')[1]; i.value = '4p'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    // A value typed in applies on Enter, not while it is typed; the field
+    // keeps its focus. It moves the numbers, and is the design's.
+    const field = `document.querySelectorAll('.sc-calc-field')[1]`;
+    await h.evaluate(`(() => { const i = ${field}; i.focus(); i.value = '4p'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await h.settle();
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.calc.values.CS ?? null)`), null, 'not while typing');
+    await h.evaluate(`${field}.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`);
     await h.until(`document.querySelector('.sc-calc-result tbody tr .sc-noise-value')?.textContent === '32.19 µV'`, 10000);
+    assert.equal(await h.evaluate(`document.activeElement === ${field}`), true);
+    assert.equal(await h.evaluate(`!!document.querySelector('.sc-equation')`), true, 'Enter in a field applies it, no Derive');
     const saved = await h.evaluate(`${h.module('editor-state.js')}.then((m) => JSON.stringify({ noise: m.editor.circuit.analysisValues.sc.noise, calc: m.editor.circuit.analysisValues.sc.calc }))`);
     assert.deepEqual(JSON.parse(saved), { noise: true, calc: { values: { CS: '4p' } } });
+  });
+
+  test('the calculator\'s capacitances go to the sizing table and come back from it', async () => {
+    const part = (refdes) => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get(${JSON.stringify(refdes)}).value ?? null)`);
+    assert.equal(await h.evaluate(`document.querySelector('.sc-calc-sizing').hidden`), false);
+    await h.evaluate(`document.querySelector('.sc-calc-write').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('CS').value === '4p')`);
+    assert.equal(await part('CF'), '1p', 'an empty field is its default');
+    // Still each part's own symbol: the equation reads the same.
+    await h.evaluate(`document.querySelector('.sc-derive').click()`);
+    await h.until(`document.querySelector('.sc-equation')?.textContent === 'VOUTVIN=CSCF1−z−1'`);
+    // A value set in the sizing table comes back into the field.
+    await h.evaluate(`window.__run('value CF 2.2pF')`);
+    await h.evaluate(`document.querySelector('.sc-calc-read').click()`);
+    await h.until(`document.querySelectorAll('.sc-calc-field')[0].value === '2.2p'`);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.calc.values.CF)`), '2.2p');
   });
 
   test('without a timing diagram or beats it says what is missing', async () => {
