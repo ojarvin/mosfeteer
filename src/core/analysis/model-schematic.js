@@ -11,7 +11,8 @@
  * any other document, which is what makes it checkable -- analyzing the model
  * must reproduce the source schematic's equations.
  */
-import { Circuit } from '../model.js';
+import { Circuit, MATH_LABEL_PAD } from '../model.js';
+import { GRID, floorGrid } from '../grid.js';
 import { rectsOverlap } from '../geometry.js';
 import { chooseFigure, figureBounds, newFigureId, packed, placeFigure, removeFigure, repackFigures, settlePlaced } from '../figures.js';
 import { createRationalOps } from './algebra-ops.js';
@@ -329,14 +330,15 @@ function wireBoxes(circuit, except = null) {
 function mathFootprint(text) {
   const probe = new Circuit().addLabel({ text, x: 0, y: 0, align: 'center', math: true });
   const pair = (size) => Math.max(80, 80 * Math.ceil(size / 80));
-  // The estimate runs short where TeX spaces a sum's sign and sets names
-  // upright (g_{m1}(VIN - N2) is drawn a third wider): room for that, so a
-  // label never reaches its symbol once the browser measures it.
-  return { w: pair(probe.textWidth() * MATH_WIDTH_MARGIN), h: pair(probe.textHeight()) };
+  // The estimate runs a fifth or so short (TeX's space about a sum's sign,
+  // its upright names): the box is the one the browser's measurement makes,
+  // as a measured label's box is, so the label stands where it will be drawn.
+  probe.setRenderedTextBounds(probe.textWidth() * MATH_WIDTH_DRAWN + 2 * MATH_LABEL_PAD, probe.textHeight());
+  return { w: probe.bbox().w, h: pair(probe.textHeight()) };
 }
 
-/** How much wider than its estimate a label may be drawn. */
-const MATH_WIDTH_MARGIN = 1.35;
+/** How much wider than its estimate a label is drawn (measured in Chromium). */
+const MATH_WIDTH_DRAWN = 1.25;
 
 /**
  * Build the drawn model.
@@ -412,14 +414,11 @@ export function smallSignalSchematic(report, options = {}) {
 
   const symbols = new Map(elements.map((element) => [element, elementSymbol(element)]));
   const labels = new Map(elements.map((element) => [element, elementLabel(element, symbols.get(element), { ...options, derived: report.derivedSymbols }, nodeName)]));
-  // The cells left of a branch its label takes, as `addElement` places it:
-  // the box a cell clear of the symbol, since until a browser measures it a
-  // math label's ink is its whole box.
-  const reachOf = (width) => 40 * Math.ceil((80 + width / 2) / 40);
-  const leftRoom = (element) => {
-    const { w: width } = mathFootprint(labels.get(element).text);
-    return reachOf(width) + width / 2;
-  };
+  // The cells left of a branch its label takes, as `addElement` places it.
+  // Beside a symbol, the box stands against its body and reaches left as
+  // wide as it will be drawn. Above, a cell clear.
+  const reachAbove = (height) => 40 * Math.ceil((80 + height / 2) / 40);
+  const leftRoom = (element) => 40 + mathFootprint(labels.get(element).text).w;
 
   // Columns read from input to output: each unit by its upper node's place
   // in that order (the input first), and a branch lying between two nodes
@@ -502,15 +501,16 @@ export function smallSignalSchematic(report, options = {}) {
     // lays out the same in a test, an export, and the dock. A Miller
     // admittance, a whole fraction, is named here and stated in the legend.
     //
-    // An upright branch wears its label on the left, where a textbook puts it;
-    // a branch lying along a row wears it above, clear of its own wires. The
-    // offset comes from the label's own measured box, so the text sits
-    // against its symbol.
-    // Right-aligned when it stands to the left: the measured text ends at
-    // the box's edge nearest the symbol, whatever the box rounds up to.
-    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: upright ? 'right' : 'center', math: true, mathBox: mathFootprint(label.text), offset: { x: 0, y: 0 } });
+    // An upright branch wears its label on the left, where a textbook puts it,
+    // facing its part (align 'parent'): the box's right edge stands against
+    // the symbol's own box, the text half a cell inside it, and a label drawn
+    // longer than estimated grows to the left, never onto the symbol. A
+    // branch lying along a row wears it above, clear of its own wires.
+    const owned = circuit.addLabel({ owner: refdes, text: label.text, align: upright ? 'parent' : 'center', math: true, mathBox: mathFootprint(label.text), offset: { x: 0, y: 0 } });
     const box = owned.bbox();
-    const world = upright ? { x: -reachOf(box.w), y: 0 } : { x: 0, y: -reachOf(box.h) };
+    // A 'parent' label's box ends a cell right of its anchor (model.js bbox).
+    const body = component.bboxWorld();
+    const world = upright ? { x: floorGrid(body.x) - GRID - component.transform.x, y: 0 } : { x: 0, y: -reachAbove(box.h) };
     owned.offset = localOffset(world.x, world.y, placement.rotation || 0);
     owned.clearMeasuredTextBounds();
     if (label.legend) legend.push(label.legend);

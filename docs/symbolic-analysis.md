@@ -19,7 +19,7 @@ results; a **Plots** card that opens the Plots window; and **Values**, the
 numbers the plots are drawn at. Its footer is **Plots**, **Annotate…** and
 **Derive** (Enter). **Annotate…** is the one place to put the analysis on
 the drawing, in every mode ([`figures.md`](figures.md)): here the equations,
-the small-signal model, and the Bode graph, each marked ✓ when it is there
+the small-signal model, and the Bode magnitude and phase, each marked ✓ when it is there
 already (choosing it updates it), and **Everything**.
 Nets marked AC ground from their context menu (DC bias) are listed in the
 field; the field is the one list, so taking a net out clears its mark when
@@ -363,7 +363,8 @@ trace shown is drawn as a
 textbook sketch, its asymptote and corners marked, several as their curves
 together over the range they span. **Annotate graph** puts the graph on the
 drawing as a signal-flow graph is (`plot.kind: 'response'`, its traces
-named beside it, against its box). Each shown trace's corners are listed under the graph.
+named beside it, against its box), and **with phase** checked its phase as
+a plot of its own. Each shown trace's corners are listed under the graph.
 
 The plots are drawn in relative units, so they sketch shapes, not a
 design's numbers. Every `g_m`

@@ -1689,7 +1689,13 @@ export class LabelInstance {
     const align = this.textAlign();
     if (this.math) {
       const measured = this._renderedTextBounds;
-      if (!measured) return b;
+      // Unmeasured, the content may fill the box but for the aligned side's
+      // inset, which mathLabelSvg always keeps.
+      if (!measured) {
+        if (align === 'left') return { x: b.x + LABEL_ALIGN_INSET, y: b.y, w: b.w - LABEL_ALIGN_INSET, h: b.h };
+        if (align === 'right') return { x: b.x, y: b.y, w: b.w - LABEL_ALIGN_INSET, h: b.h };
+        return b;
+      }
       // Where mathLabelSvg's padded flex box puts the content.
       const side = Math.max(MATH_LABEL_PAD, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - MATH_LABEL_PAD));
       const x = align === 'left' ? b.x + side

@@ -367,7 +367,11 @@ function renderLegend() {
   actions.hidden = !traces.length;
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: annotateGraph }),
+    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: () => annotateGraph() }),
+    el('label', { class: 'bode-phase-toggle' }, [
+      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Annotate the phase too' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
+      ' with phase',
+    ]),
   );
 }
 
@@ -411,10 +415,17 @@ function appendCorners(list, { trace, sketch, corners }, named) {
   }
 }
 
-function annotateGraph() {
+// Annotate graph puts the phase on the drawing too, as a plot of its own.
+let withPhase = false;
+
+/** The graph on the drawing: its magnitude, and with `phase` its phase. */
+function annotateGraph({ phase = withPhase, magnitude = true } = {}) {
   const sketches = shownSketches();
-  const plot = responsePlotOf(sketches);
-  if (plot) placeResponsePlot(plot, sketches.map(({ trace }) => trace), { source: 'small-signal' });
+  const traces = sketches.map(({ trace }) => trace);
+  for (const quantity of [...(magnitude ? ['magnitude'] : []), ...(phase ? ['phase'] : [])]) {
+    const plot = responsePlotOf(sketches, quantity);
+    if (plot) placeResponsePlot(plot, traces, { source: 'small-signal' });
+  }
 }
 
 
@@ -542,7 +553,8 @@ function clearBode() {
 export function installBodeUi() {
   // The graph, in the analysis window's Annotate menu.
   registerAnnotations('circuit', () => [
-    { label: 'Bode graph', identity: { kind: 'plot', source: 'small-signal', key: /^response:/ }, available: shownTraces().length > 0, run: annotateGraph },
+    { label: 'Bode magnitude', identity: { kind: 'plot', source: 'small-signal', key: /^response::/ }, available: shownTraces().length > 0, run: () => annotateGraph({ phase: false }) },
+    { label: 'Bode phase', identity: { kind: 'plot', source: 'small-signal', key: /^response:phase:/ }, available: shownTraces().length > 0, run: () => annotateGraph({ phase: true, magnitude: false }) },
   ]);
   const result = document.getElementById('analysis-result');
   if (result && !document.getElementById('analysis-values')) {

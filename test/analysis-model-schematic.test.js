@@ -174,10 +174,9 @@ test('every branch label sits against its own symbol', () => {
     if (!label.owner) continue;
     const body = model.circuit.getComponent(label.owner).bboxWorld();
     const box = label.bbox();
-    // The box holds the text with room for the browser drawing it up to a
-    // third wider than estimated, and no more: the text, set against the
-    // symbol's side, never reaches the symbol once measured.
-    if (label.math) assert.ok(box.w >= label.textWidth() * 1.3 && box.w - label.textWidth() * 1.35 < 80, `${label.text}: a ${box.w} box for ${label.textWidth()} of text`);
+    // The box is the one the browser's measurement makes (the text drawn a
+    // quarter wider than estimated), no larger.
+    if (label.math) assert.ok(box.w >= label.textWidth() * 1.25 && box.w - label.textWidth() * 1.25 < 120, `${label.text}: a ${box.w} box for ${label.textWidth()} of text`);
     // One grid cell at most between the label box and the symbol it names, so
     // it can never read as belonging to the next branch along.
     const gapX = Math.max(body.x - (box.x + box.w), box.x - (body.x + body.w), 0);
@@ -352,8 +351,8 @@ test('a stack in the model is wired, not only drawn at one x: r_o of the bottom 
   assert.equal(evaluate(model.circuit).ok, true, JSON.stringify(evaluate(model.circuit).issues || []).slice(0, 300));
 });
 
-test('a long branch label keeps clear of its symbol when drawn wider than estimated', () => {
-  // g_m1 (VIN - N2): the browser draws it a third wider than the estimate.
+test('a long branch label stands against its symbol as drawn, never on it', () => {
+  // g_m1 (V_IN - N2): the browser draws it a quarter wider than the estimate.
   const circuit = new Circuit();
   const lines = ['add nmos M1 --at 0 0', 'add inductor L1 --at 0 240 --rot 90', 'add inductor L2 --at 0 -320 --rot 90', 'add ground G1 --at 0 480', 'add supply VDD --at 0 -560',
     'add input VIN --at -400 0', 'add output VOUT --at 400 -160', 'connect VIN.p M1.g', 'connect M1.s L1.a', 'connect L1.b G1.gnd', 'connect M1.d L2.b', 'connect L2.a VDD.p', 'connect M1.d VOUT.p'];
@@ -364,9 +363,10 @@ test('a long branch label keeps clear of its symbol when drawn wider than estima
   const label = [...model.circuit.labels.values()].find((candidate) => candidate.owner === 'gm1');
   assert.match(label.text, /N2/);
   const body = model.circuit.getComponent('gm1').bboxWorld();
-  // Measured 1.3 times the estimate, as the browser draws it: its box,
-  // grown about where it stands, keeps off the symbol.
-  label.setRenderedTextBounds(label.textWidth() * 1.3, label.textHeight());
+  // Measured as Chromium draws it (300 for 240 estimated, padding included):
+  // its box stands against the symbol, the text half a cell inside it.
+  label.setRenderedTextBounds(300, label.textHeight());
   const box = label.bbox();
-  assert.ok(box.x + box.w <= body.x - 20, `${box.x + box.w} reaches ${body.x}`);
+  assert.ok(box.x + box.w <= body.x, `${box.x + box.w} reaches ${body.x}`);
+  assert.ok(box.x + box.w >= body.x - 40, `${box.x + box.w} is more than a cell off ${body.x}`);
 });

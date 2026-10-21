@@ -6078,6 +6078,14 @@ details.analysis-options > * + * {
   gap: 6px;
 }
 
+.bode-plots-view .bode-phase-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
 .bode-plots-view .bode-corners-trace {
   margin-top: 6px;
   list-style: none;
