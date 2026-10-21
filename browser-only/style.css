@@ -6533,6 +6533,10 @@ details.analysis-options > * + * {
   gap: 8px;
 }
 
+.timing-draw-actions {
+  margin-bottom: 12px;
+}
+
 .timing-beats-spacer {
   flex: 1 1 auto;
 }

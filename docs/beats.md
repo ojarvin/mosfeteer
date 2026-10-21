@@ -95,7 +95,7 @@ under the waves; the non-overlap gaps between states stay unshaded
 (`timingBeatBands` in `src/core/timing-diagram.js`). A beat edited out of
 step shades nothing.
 
-**Timing diagram** (More menu or `Shift+K`, which also closes it; `timing`) draws one row per phase under the
+**Timing diagram** (More menu or `Shift+K`, which also closes it; `timing`) is one row per phase, drawn under the
 drawing, in the phases' order with each complement right after its phase:
 its wave, two cells tall with vertical edges, the waves centered on the
 drawing's width, and the phase's name as a free label, right-aligned in a
@@ -128,8 +128,14 @@ its rising edges (or the **Fall** and **Rise** buttons) -- a bottom plate's
 switch opening a cell before its top plate's is its phase's wave with the
 fall a cell early. The row shows its shift (`↓−1`). A complement following
 its phase takes the phase's shifts the other way round: the phase falling
-early, it rises early. Every change redraws the diagram in place, and an
-editing session is one undo entry. A complement follows its phase inverted until one of its own
+early, it rises early. Every change is the design's timing at once
+(`Circuit#timing`, set by `setTimingDiagram`): the clock the switched-cap
+analysis and Make beats read, saved with the design. An editing session is
+one undo entry. The drawing changes only when asked, as a plot is
+annotated: **Annotate diagram** draws it, and once drawn **Update diagram**
+redraws it in place (`annotateTimingDiagram`; one undo step each). Opening
+the editor changes nothing. A design saved before keeps only its drawn
+diagram, which is its timing until the editor first changes it. A complement follows its phase inverted until one of its own
 slots is changed; any other phase with no wave is low.
 
 A signal row may be **analog** (a supply ramp, a sampled input): a value
@@ -170,8 +176,8 @@ named keep their waves, `--beats` retakes them from the beats,
 A new diagram is placed with its waves centered on the drawing's width, as
 high as the drawing leaves room for it -- floating up into an empty part of
 the drawing -- else below everything. After that it stays where it stands:
-drag it anywhere, and redraws keep it there. It does not move out of the way
-of later drawing; **Move under drawing** (`timing --place`) puts it where the drawing
+drag it anywhere, and updates keep it there. It does not move out of the way
+of later drawing; **Move under drawing** (`timing --place`) redraws it where the drawing
 has room again. Rows move up and down with Alt+↑/↓ (or the **Move** buttons;
 `timing --order φ2,φ1`), and keep that order.
 

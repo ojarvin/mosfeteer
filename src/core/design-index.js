@@ -68,9 +68,9 @@ export function designIndex(circuit) {
   }
   const links = [...new Set([...circuit.components.values()].map((component) => component.link).filter(Boolean))];
   // What else the design holds, for the Atlas's listing: beats, and a
-  // timing diagram (its annotations carry `timing`).
+  // timing diagram (the design's, or drawn: its annotations carry `timing`).
   const beats = circuit.beats.length;
-  const timing = [...circuit.labels.values()].some((label) => label.timing);
+  const timing = circuit.timing ? circuit.timing.rows.length > 0 : [...circuit.labels.values()].some((label) => label.timing);
   // The notes are searched as one text, drawn nowhere (notes.js).
   const notes = circuit.notes ? searchKey(circuit.notes) : '';
   return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(notes ? { notes } : {}), items };

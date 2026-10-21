@@ -259,8 +259,8 @@ beat switch N REF|PHASE open|closed
                                set a switch (its whole phase) from beat N on
 beat phases [--after N|--replace]  add a beat per switch phase (--replace: instead of the existing beats): what still works shown, open switches and cut-off parts dimmed
 timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...]
-                               draw (or redraw in place) a timing diagram under the drawing, one wave
-                               per switch phase; WAVE: one character per slot, 1 high, 0 low; waves
+                               set the design's timing and draw it (or redraw it in place) under the
+                               drawing, one wave per switch phase; WAVE: one character per slot, 1 high, 0 low; waves
                                repeat past both ends; --gaps sets which phase pairs never overlap
                                (default: any two never high together); unset rows keep their wave, a
                                complement is its phase inverted, else one slot per beat, else low;

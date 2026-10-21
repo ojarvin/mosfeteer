@@ -924,6 +924,26 @@ export function normalizeImage(image) {
   return { src, aspect };
 }
 
+/**
+ * The timing diagram as the design keeps it (`Circuit#timing`,
+ * timing-diagram.js): the settings a drawn diagram's labels carry (slot,
+ * gaps, arrows, marks, spans, breaks), once, and its rows in order, each a
+ * drawn name label's `timing` with its name (`source`). No rows: the design
+ * has none. Null when it is not kept (a design from before: the drawn
+ * diagram is read instead).
+ */
+export function normalizeTimingSpec(spec) {
+  if (!spec || typeof spec !== 'object' || !Array.isArray(spec.rows)) return null;
+  const { phase, bits, values, hold, height, analog, shift, signal, part, item, ...settings } = normalizeTiming({ ...spec, phase: '-' });
+  const rows = spec.rows.slice(0, 64).flatMap((row) => {
+    const timing = normalizeTiming(row);
+    if (!timing || typeof row.source !== 'string' || !row.source.trim()) return [];
+    const { slot, gaps, arrows, marks, spans, breaks, analog: curve, part: kind, item: index, ...own } = timing;
+    return [{ source: row.source.slice(0, 200), ...own }];
+  });
+  return { ...settings, rows };
+}
+
 /** A timing diagram row's data, as saved: its phase, its own wave (1s and
  * 0s), the slot width in cells, which phases are kept from overlapping
  * (`gaps`), its edge shift, and whether it is a signal of the diagram's own
@@ -2593,6 +2613,9 @@ export class Circuit {
     // Its save points and checkpoints, as stored (save-history.js): not
     // drawing, written and read by whoever writes the file.
     this.history = null;
+    // Its timing diagram (normalizeTimingSpec): the clock the analyses and
+    // beats read, drawn only when annotated.
+    this.timing = null;
     this._routingEnvCache = new Map();
   }
 
@@ -7025,6 +7048,7 @@ export class Circuit {
       suppressedJunctions: [...this.suppressedJunctions],
       ...this._netHighlightsJSON(),
       ...(this.beats.length ? { beats: beatsToJSON(this) } : {}),
+      ...(this.timing ? { timing: JSON.parse(JSON.stringify(this.timing)) } : {}),
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
       ...(this.savedNames?.length ? { names: [...this.savedNames] } : {}),
       ...analysisValuesJSON(this.analysisValues),
@@ -7045,6 +7069,7 @@ export class Circuit {
     const circuit = new Circuit();
     circuit.suppressedJunctions = new Set(data.suppressedJunctions || []);
     circuit.beats = beatsFromJSON(data.beats);
+    circuit.timing = normalizeTimingSpec(data.timing);
     circuit.tags = normalizeTags(data.tags);
     circuit.savedNames = normalizeSavedNames(data.names);
     circuit.analysisValues = normalizeAnalysisValues(data.analysisValues);

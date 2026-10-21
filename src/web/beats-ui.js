@@ -5,7 +5,7 @@
  */
 
 import { element } from './dom.js';
-import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, addTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, existingTimingDiagram, removeTimingDiagram, timingBeatBands, timingPhases, timingRowSources } from '../core/timing-diagram.js';
+import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
 import { DRAWING_EXPORT_OPTIONS } from '../core/selection-drawing.js';
@@ -505,8 +505,10 @@ async function addPhaseBeats() {
 /** The timing diagram editor: a grid of slots, one row per phase, beside
  * the drawing. A cursor moves over it: 1, 0 and x set a slot, Space flips
  * one, + repeats the cursor's slot in every row (a state held one slot
- * longer), * the whole sequence, Delete removes it. Every change redraws the diagram in place, and
- * the whole session is one undo entry (core/timing-diagram.js). */
+ * longer), * the whole sequence, Delete removes it. Every change is the
+ * design's timing at once, the whole session one undo entry
+ * (core/timing-diagram.js); Annotate diagram draws it on the drawing, and
+ * Update diagram redraws it there in place, as a plot is annotated. */
 let timingEditor = null;
 // Slots a first signal starts with, in a diagram with no rows yet.
 const EMPTY_SIGNAL_SLOTS = 4;
@@ -545,14 +547,12 @@ function openTimingDialog() {
     return;
   }
   // With no switch phases it opens empty: signals are added by name.
-  const before = existingTimingDiagram(editor.circuit);
   const rows = [];
   const state = {
     cursor: { row: 0, slot: 0 },
     slot: DEFAULT_SLOT_CELLS,
     gaps: 'none',
     session: null,
-    place: false,
     // Arrows, marks and spans on the edges (edge: { row: phase key, at:
     // slot boundary }), breaks in slots ({ at, rows }), and an arrow or span
     // begun at an edge, waiting for its other end.
@@ -563,11 +563,11 @@ function openTimingDialog() {
     // The model revision the editor's rows were read at or last wrote.
     seen: null,
   };
-  // The rows and settings as the drawing has them: when the editor opens,
-  // and again whenever the drawing changed under it (an undo, a redo, a
-  // script), so its next edit starts from what is drawn, not from what the
-  // editor held before.
-  const readDrawing = (found = timingRowSources(editor.circuit)) => {
+  // The rows and settings as the design has them: when the editor opens,
+  // and again whenever the design changed under it (an undo, a redo, a
+  // script), so its next edit starts from the design's timing, not from
+  // what the editor held before.
+  const readDesign = (found = timingRowSources(editor.circuit)) => {
     const drawn = existingTimingDiagram(editor.circuit);
     // The rows' own waves; a complement with none follows its phase inverted.
     // An older diagram's don't-care slots read as low.
@@ -593,7 +593,7 @@ function openTimingDialog() {
     state.cursor.row = Math.max(0, Math.min(state.cursor.row, rows.length - 1));
     state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
   };
-  readDrawing(sources);
+  readDesign(sources);
   const length = () => Math.max(1, ...rows.map((row) => row.wave.length));
   const at = (row, slot) => (row.wave.length ? row.wave[Math.min(slot, row.wave.length - 1)] : '0');
   const baseOf = (row) => rows.find((other) => other.key === row.baseKey);
@@ -638,7 +638,9 @@ function openTimingDialog() {
   const pairsBox = element('div', { class: 'timing-section timing-pairs' });
   const status = element('p', { class: 'timing-dialog-status', role: 'status' });
 
-  const redraw = () => {
+  // The design's timing as the editor has it: set at every change, drawn
+  // only by Annotate.
+  const timingOptions = () => {
     const bits = {};
     const hold = {};
     const heights = {};
@@ -649,32 +651,56 @@ function openTimingDialog() {
     }
     const shifts = Object.fromEntries(rows.map((row) => [row.key, row.shift]));
     const order = rows.map((row) => row.key);
-    const place = state.place;
-    state.place = false;
-    // Signals added or removed here since the diagram was last drawn.
-    const drawnRows = timingPhases(editor.circuit);
-    const add = rows.filter((row) => row.signal && !drawnRows.some((phase) => samePhase(phase.key, row.key))).map((row) => row.source);
-    const remove = drawnRows.filter((phase) => phase.signal && !rows.some((row) => samePhase(row.key, phase.key))).map((phase) => phase.source);
+    // Signals added or removed here since the design's rows were read.
+    const known = timingPhases(editor.circuit);
+    const add = rows.filter((row) => row.signal && !known.some((phase) => samePhase(phase.key, row.key))).map((row) => row.source);
+    const remove = known.filter((phase) => phase.signal && !rows.some((row) => samePhase(row.key, phase.key))).map((phase) => phase.source);
+    return { bits, hold, heights, slot: state.slot, gaps: state.gaps, shifts, order, fromBeats: true, add, remove, ...state.notes };
+  };
+  const redraw = () => {
     const start = snapshot();
     try {
-      if (rows.length) addTimingDiagram(editor.circuit, { bits, hold, heights, slot: state.slot, gaps: state.gaps, shifts, order, place, fromBeats: true, add, remove, ...state.notes });
-      else removeTimingDiagram(editor.circuit);
+      if (rows.length) setTimingDiagram(editor.circuit, timingOptions());
+      else removeTimingDiagram(editor.circuit, { drawing: false });
     } catch (err) {
       status.textContent = err.message;
       return;
     }
     status.textContent = '';
     renderNotes();
+    syncAnnotate();
     if (snapshot() === start) return;
     // One undo entry for the session, unless something else was edited since.
-    const first = !state.session;
     if (!state.session || state.session.revision !== editor.modelRevision) recordHistoryEntry(start, true, 'none');
     markModelChanged();
     if (!state.session) noteTip('timing-drawn');
     state.session = { revision: editor.modelRevision };
     state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
-    if (first && !before) fitView({ animate: true });
     render();
+  };
+  // The diagram on the drawing: drawn as the editor has it, or redrawn in
+  // place (`place`: under the drawing again). One undo step of its own.
+  const annotate = (place = false) => {
+    const first = !drawnTimingDiagram(editor.circuit);
+    const start = snapshot();
+    try {
+      if (rows.length) setTimingDiagram(editor.circuit, timingOptions());
+      annotateTimingDiagram(editor.circuit, { place });
+    } catch (err) {
+      status.textContent = err.message;
+      return;
+    }
+    status.textContent = '';
+    renderNotes();
+    syncAnnotate();
+    if (snapshot() === start) return;
+    recordHistoryEntry(start, true, 'none');
+    markModelChanged();
+    state.session = null;
+    state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
+    if (first && drawnTimingDiagram(editor.circuit)) fitView({ animate: true });
+    render();
+    logLine(first ? 'drew the timing diagram on the drawing' : place ? 'moved the timing diagram under the drawing' : 'updated the timing diagram on the drawing');
   };
 
   // Which pairs (of phase keys) are kept apart now: the explicit list, or
@@ -907,7 +933,8 @@ function openTimingDialog() {
   const notesBox = element('div', { class: 'timing-section timing-notes' });
   function renderNotes() {
     notesBox.replaceChildren();
-    const missing = existingTimingDiagram(editor.circuit)?.missing || [];
+    let missing = [];
+    try { missing = timingMissing(editor.circuit); } catch { /* the status says why */ }
     const list = element('div', { class: 'timing-note-list' });
     const item = (kind, index, text, extra = []) => {
       const gone = missing.some((m) => m.kind === kind && m.index === index);
@@ -1163,14 +1190,22 @@ function openTimingDialog() {
     change();
   });
   if (!editor.circuit.beats.length) fromBeats.disabled = true;
-  // The diagram stays where it stands; Re-place puts it where the drawing
-  // has room again (after the drawing grew into it, say).
-  const replace = button('Move under drawing', 'Move under the drawing', () => {
-    state.place = true;
-    redraw();
-  });
+  // Annotate draws the diagram; once drawn it stays where it stands, and
+  // Move under drawing puts it where the drawing has room again (after the
+  // drawing grew into it, say).
+  const annotateButton = button('Annotate diagram', 'Annotate the timing diagram', () => annotate(), { className: 'timing-annotate' });
+  const replace = button('Move under drawing', 'Move under the drawing', () => annotate(true), { className: 'timing-place' });
+  const syncAnnotate = () => {
+    const drawn = !!drawnTimingDiagram(editor.circuit);
+    annotateButton.textContent = drawn ? 'Update diagram' : 'Annotate diagram';
+    annotateButton.title = drawn ? 'Update the timing diagram' : 'Annotate the timing diagram';
+    annotateButton.disabled = !rows.length && !drawn;
+    replace.disabled = !drawn;
+  };
   // The timing is where the beats come from: one beat per state.
   const makeBeats = button('Make beats', 'Make beats from the timing', () => {
+    // The beats follow the timing as the editor shows it.
+    if (!editor.circuit.timing && rows.length) redraw();
     addPhaseBeats();
   }, { icon: null, className: 'confirm-action' });
   const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
@@ -1277,11 +1312,12 @@ function openTimingDialog() {
       pairsBox,
       notesBox,
       status,
-      // The two ways between the timing and the beats, and where the
-      // diagram sits, each said once.
+      // The diagram on the drawing, then the two ways between the timing
+      // and the beats, each said once.
       element('div', { class: 'timing-beats' }, [
+        element('div', { class: 'timing-beats-actions timing-draw-actions' }, [annotateButton, replace]),
         element('p', { class: 'timing-beats-note', text: 'Each beat closes the switches whose phase is high.' }),
-        element('div', { class: 'timing-beats-actions' }, [replace, element('span', { class: 'timing-beats-spacer' }), fromBeats, makeBeats]),
+        element('div', { class: 'timing-beats-actions' }, [element('span', { class: 'timing-beats-spacer' }), fromBeats, makeBeats]),
       ]),
     ]),
   ]);
@@ -1311,7 +1347,7 @@ function openTimingDialog() {
   const follow = () => {
     if (state.seen?.circuit === editor.circuit && state.seen.revision === editor.modelRevision) return;
     try {
-      readDrawing();
+      readDesign();
     } catch (err) {
       status.textContent = err.message;
       state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
@@ -1321,13 +1357,13 @@ function openTimingDialog() {
     renderGrid();
     renderPairs();
     renderNotes();
+    syncAnnotate();
   };
   timingEditor = { dialog, grid, close, follow, window: floatingWindow(dialog, { key: 'timing', onClose: close }) };
   timingEditor.window.place();
   syncTimingToggle();
+  syncAnnotate();
   grid.focus();
-  // Opening it draws the diagram, so what the grid shows is on the page.
-  redraw();
 }
 
 /** Context-menu items for beats: show/hide, switch position. */

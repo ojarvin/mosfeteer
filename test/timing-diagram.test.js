@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { plainTexText, svgString } from '../src/core/render.js';
 import { addBeat, setSwitchFrom, switchStateAt } from '../src/core/beats.js';
-import { addTimingDiagram, defaultTimingPairs, existingTimingDiagram, parseTimingBits, timingBeatBands, timingBeatStates, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
+import { addTimingDiagram, annotateTimingDiagram, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingMissing, parseTimingBits, timingBeatBands, timingBeatStates, timingColumns, timingPairs, timingRowEdges, timingRowGeometry, timingRowSources, timingStates } from '../src/core/timing-diagram.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -541,6 +541,53 @@ test('an arrow may carry text: just after the edge it points at, in that row, ke
   run(circuit, 'timing Q=0000');
   assert.equal([...circuit.labels.values()].filter((l) => l.timing?.part === 'arrow-note').length, 0);
   assert.deepEqual(existingTimingDiagram(circuit).missing, [{ kind: 'arrow', index: 0 }]);
+});
+
+test('the design keeps its timing; set, it is not drawn until annotated, and Annotate redraws it in place', () => {
+  const circuit = clocked();
+  // Set: the design's, read by the analyses and beats, nothing drawn.
+  setTimingDiagram(circuit, { bits: { φ1: '10', φ2: '01' }, gaps: [['φ1', 'φ2']] });
+  assert.equal(wavesOf(circuit).length, 0);
+  assert.deepEqual(circuit.timing.rows.map((row) => [row.source, row.bits ?? '']), [['$\\varphi_1$', '10'], ['$\\overline{\\varphi_1}$', ''], ['$\\varphi_2$', '01']]);
+  assert.deepEqual(circuit.timing.gaps, [['$\\varphi_{1}$', '$\\varphi_{2}$']]);
+  assert.equal(timingStates(circuit).length, 2);
+  assert.equal(existingTimingDiagram(circuit).drawn, false);
+  // Saved and loaded with the design.
+  assert.deepEqual(Circuit.fromJSON(circuit.toJSON()).timing, circuit.timing);
+  // Annotated, drawn as it is; set again, the drawing waits.
+  annotateTimingDiagram(circuit);
+  const drawnBits = () => [...circuit.labels.values()].filter((l) => l.kind === 'label' && l.timing).map((l) => l.timing.bits ?? '');
+  assert.deepEqual(drawnBits(), ['10', '', '01']);
+  const at = drawnTimingDiagram(circuit);
+  setTimingDiagram(circuit, { bits: { φ1: '110', φ2: '001' } });
+  assert.deepEqual(drawnBits(), ['10', '', '01']);
+  assert.deepEqual(drawnTimingDiagram(circuit).bits.get('$\\varphi_{1}$'), '10');
+  assert.deepEqual(existingTimingDiagram(circuit).bits.get('$\\varphi_{1}$'), '110');
+  annotateTimingDiagram(circuit);
+  assert.deepEqual(drawnBits(), ['110', '', '001']);
+  assert.deepEqual([drawnTimingDiagram(circuit).x, drawnTimingDiagram(circuit).y], [at.x, at.y], 'redrawn where it stood');
+  // No rows left: the design has none, the drawing stays until annotated.
+  removeTimingDiagram(circuit, { drawing: false });
+  assert.equal(existingTimingDiagram(circuit), null);
+  assert.equal(timingStates(circuit), null);
+  assert.ok(drawnTimingDiagram(circuit));
+  annotateTimingDiagram(circuit);
+  assert.equal(drawnTimingDiagram(circuit), null);
+});
+
+test('a design from before, with only a drawn diagram, has that as its timing', () => {
+  const circuit = clocked();
+  runCommand(circuit, 'timing φ1=10 φ2=01');
+  const state = circuit.toJSON();
+  delete state.timing;
+  const loaded = Circuit.fromJSON(state);
+  assert.equal(loaded.timing, null);
+  assert.deepEqual(existingTimingDiagram(loaded).bits.get('$\\varphi_{1}$'), '10');
+  assert.equal(timingStates(loaded).length, 2);
+  // Its first edit makes it the design's.
+  setTimingDiagram(loaded, { bits: { φ1: '01', φ2: '10' } });
+  assert.equal(loaded.timing.rows[0].bits, '01');
+  assert.deepEqual(timingMissing(loaded), []);
 });
 
 test('beats made from the diagram are in step with it; each shades its state\'s slots', () => {

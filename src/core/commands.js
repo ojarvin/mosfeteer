@@ -538,7 +538,7 @@ export function commandHelp() {
     '                                   or without one a beat per switch phase: what works shown, the rest dimmed',
     '  timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--gaps auto|none|A:B,...] [--fall|--rise ROW=N,...] [--order A,B,...] [--place]',
     '                                  rows are the switch phases plus signals of the diagram\'s own (--add CLK; --rm removes one); a diagram needs no switches',
-    '                                 - draw (or redraw in place) a timing diagram, one wave per switch phase; WAVE is',
+    '                                 - set the design\'s timing and draw it (or redraw it in place), a wave per switch phase; WAVE is',
     '                                   one character per slot: 1 high, 0 low. PHASE is its name (φ1,',
     '                                   $\\varphi_1$), row number, or ~PHASE for its complement. Unset rows keep their wave,',
     '                                   a complement is its phase inverted, else one slot per beat, else low; --beats',

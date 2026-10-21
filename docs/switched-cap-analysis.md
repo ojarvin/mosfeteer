@@ -12,7 +12,8 @@ by `registerAnalysisMode` in `src/web/signal-flow-ui.js`); tests:
 
 ## The clock
 
-The clock is the timing diagram (`timing`, [`beats.md`](beats.md)): one
+The clock is the design's timing diagram (`Circuit#timing`, as the timing
+editor sets it, drawn or not; `timing`, [`beats.md`](beats.md)): one
 period steps through its states -- each run of slots in which the same
 phases are high (`timingStates`) -- and in each a switch is closed while its
 phase is high. Without a diagram the beats are the states, one a beat, each

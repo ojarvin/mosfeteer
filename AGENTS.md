@@ -93,7 +93,10 @@ diagnostic, never a guess. Signal-flow and switched-capacitor
 analysis refuse rather than guess too. Every analysis reads
 `analyzedCircuit(circuit)`: a drawing-only part
 (`ComponentInstance#drawingOnly`, such as a placed small-signal model) is
-drawn and checked but never analyzed. Analysis settings and slider values are document data
+drawn and checked but never analyzed. A window never draws on its own: a
+plot, an equation, or the timing diagram goes on the drawing only by its
+Annotate (or Update, in place); the timing is document data
+(`Circuit#timing`) that the analyses and beats read. Analysis settings and slider values are document data
 (`Circuit#analysisValues`): a change is `markSettingsChanged`, saved but never
 stale, one undo entry per finished adjustment.
 

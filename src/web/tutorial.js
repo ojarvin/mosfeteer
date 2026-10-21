@@ -11,7 +11,7 @@
 import { Circuit, INTERFACE_PIN_TYPES } from '../core/model.js';
 import { runCommand } from '../core/commands.js';
 import { samePhase, switchGroupKey, switchPhase } from '../core/beats.js';
-import { existingTimingDiagram, timingPairs, timingRowSources, timingStates } from '../core/timing-diagram.js';
+import { drawnTimingDiagram, existingTimingDiagram, timingPairs, timingRowSources, timingStates } from '../core/timing-diagram.js';
 
 const NMOS = new Set(['nmos', 'nmosb']);
 const PMOS = new Set(['pmos', 'pmosb']);
@@ -197,8 +197,8 @@ function scPhases(circuit) {
   return a && b && c && d && a === b && c === d && a !== c ? { sample: a, transfer: c } : null;
 }
 
-/** Whether the drawn timing diagram keeps phases `a` and `b` (keys) apart
- *  with a gap. */
+/** Whether the timing diagram keeps phases `a` and `b` (keys) apart with a
+ *  gap. */
 function keptApart(circuit, a, b) {
   const rows = timingRowSources(circuit);
   const [x, y] = [a, b].map((key) => rows.findIndex((row) => samePhase(row.key, key)));
@@ -215,20 +215,20 @@ const SC_STEPS = Object.freeze([
   {
     id: 'clock',
     title: 'Draw the clock',
-    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. Then under **Non-overlap** tick φ1 against φ2: a one-cell gap opens between them, as a non-overlapping clock has.',
+    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. Then under **Non-overlap** tick φ1 against φ2, and press **Annotate diagram**: the clock goes under the drawing, a one-cell gap between the phases, as a non-overlapping clock has.',
     done: (circuit) => {
       const phases = scPhases(circuit);
       const states = phases && timingStates(circuit);
       return !!states && states.some((state) => state.closed.has(phases.sample)) && states.some((state) => state.closed.has(phases.transfer))
         && !states.some((state) => state.closed.has(phases.sample) && state.closed.has(phases.transfer))
-        && keptApart(circuit, phases.sample, phases.transfer);
+        && keptApart(circuit, phases.sample, phases.transfer) && !!drawnTimingDiagram(circuit);
     },
   },
   {
     id: 'span',
     title: 'Mark the non-overlap',
-    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges, drawn under the diagram. Type **$t_{nov}$** into its field in the editor\'s list.',
-    done: (circuit) => (existingTimingDiagram(circuit)?.spans.length || 0) > 0,
+    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges. Type **$t_{nov}$** into its field in the editor\'s list, and press **Update diagram** to draw it under the diagram.',
+    done: (circuit) => (drawnTimingDiagram(circuit)?.spans.length || 0) > 0,
   },
   {
     id: 'beats',
