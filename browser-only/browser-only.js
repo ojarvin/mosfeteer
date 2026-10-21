@@ -6136,8 +6136,14 @@ function wireBoxes(circuit, except = null) {
 function mathFootprint(text) {
   const probe = new Circuit().addLabel({ text, x: 0, y: 0, align: 'center', math: true });
   const pair = (size) => Math.max(80, 80 * Math.ceil(size / 80));
-  return { w: pair(probe.textWidth()), h: pair(probe.textHeight()) };
+  // The estimate runs short where TeX spaces a sum's sign and sets names
+  // upright (g_{m1}(VIN - N2) is drawn a third wider): room for that, so a
+  // label never reaches its symbol once the browser measures it.
+  return { w: pair(probe.textWidth() * MATH_WIDTH_MARGIN), h: pair(probe.textHeight()) };
 }
+
+/** How much wider than its estimate a label may be drawn. */
+const MATH_WIDTH_MARGIN = 1.35;
 
 /**
  * Build the drawn model.

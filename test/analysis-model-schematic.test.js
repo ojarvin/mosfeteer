@@ -174,9 +174,10 @@ test('every branch label sits against its own symbol', () => {
     if (!label.owner) continue;
     const body = model.circuit.getComponent(label.owner).bboxWorld();
     const box = label.bbox();
-    // The box hugs the text, without the spare cells an unmeasured math box
-    // keeps: what the browser measures sits where the box says.
-    assert.ok(box.w - label.textWidth() < 80, `${label.text}: a ${box.w} box for ${label.textWidth()} of text`);
+    // The box holds the text with room for the browser drawing it up to a
+    // third wider than estimated, and no more: the text, set against the
+    // symbol's side, never reaches the symbol once measured.
+    if (label.math) assert.ok(box.w >= label.textWidth() * 1.3 && box.w - label.textWidth() * 1.35 < 80, `${label.text}: a ${box.w} box for ${label.textWidth()} of text`);
     // One grid cell at most between the label box and the symbol it names, so
     // it can never read as belonging to the next branch along.
     const gapX = Math.max(body.x - (box.x + box.w), box.x - (body.x + body.w), 0);
@@ -349,4 +350,23 @@ test('a stack in the model is wired, not only drawn at one x: r_o of the bottom 
   assert.ok(at('ro1').y > at('ro2').y);
   assert.notEqual(at('ro4').x, at('ro2').x, 'r_o4 not in M2\'s stack');
   assert.equal(evaluate(model.circuit).ok, true, JSON.stringify(evaluate(model.circuit).issues || []).slice(0, 300));
+});
+
+test('a long branch label keeps clear of its symbol when drawn wider than estimated', () => {
+  // g_m1 (VIN - N2): the browser draws it a third wider than the estimate.
+  const circuit = new Circuit();
+  const lines = ['add nmos M1 --at 0 0', 'add inductor L1 --at 0 240 --rot 90', 'add inductor L2 --at 0 -320 --rot 90', 'add ground G1 --at 0 480', 'add supply VDD --at 0 -560',
+    'add input VIN --at -400 0', 'add output VOUT --at 400 -160', 'connect VIN.p M1.g', 'connect M1.s L1.a', 'connect L1.b G1.gnd', 'connect M1.d L2.b', 'connect L2.a VDD.p', 'connect M1.d VOUT.p'];
+  for (const line of lines) runCommand(circuit, line);
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT' });
+  assert.equal(report.ok, true, report.error || '');
+  const model = smallSignalSchematic(report, { circuit });
+  const label = [...model.circuit.labels.values()].find((candidate) => candidate.owner === 'gm1');
+  assert.match(label.text, /N2/);
+  const body = model.circuit.getComponent('gm1').bboxWorld();
+  // Measured 1.3 times the estimate, as the browser draws it: its box,
+  // grown about where it stands, keeps off the symbol.
+  label.setRenderedTextBounds(label.textWidth() * 1.3, label.textHeight());
+  const box = label.bbox();
+  assert.ok(box.x + box.w <= body.x - 20, `${box.x + box.w} reaches ${body.x}`);
 });
