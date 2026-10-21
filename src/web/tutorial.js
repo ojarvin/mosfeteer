@@ -227,7 +227,7 @@ const SC_STEPS = Object.freeze([
   {
     id: 'span',
     title: 'Mark the non-overlap',
-    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges. Type **$t_{nov}$** into its field in the editor\'s list, and press **Update diagram** to draw it under the diagram.',
+    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges. Type **$t_{nov}$** into its field in the editor\'s list.',
     done: (circuit) => (drawnTimingDiagram(circuit)?.spans.length || 0) > 0,
   },
   {

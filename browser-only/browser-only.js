@@ -48743,8 +48743,8 @@ async function addPhaseBeats() {
  * one, + repeats the cursor's slot in every row (a state held one slot
  * longer), * the whole sequence, Delete removes it. Every change is the
  * design's timing at once, the whole session one undo entry
- * (core/timing-diagram.js); Annotate diagram draws it on the drawing, and
- * Update diagram redraws it there in place, as a plot is annotated. */
+ * (core/timing-diagram.js). Annotate diagram draws it on the drawing, as a
+ * plot is annotated; once drawn, every change redraws it in place. */
 let timingEditor = null;
 // Slots a first signal starts with, in a diagram with no rows yet.
 const EMPTY_SIGNAL_SLOTS = 4;
@@ -48874,8 +48874,8 @@ function openTimingDialog() {
   const pairsBox = element('div', { class: 'timing-section timing-pairs' });
   const status = element('p', { class: 'timing-dialog-status', role: 'status' });
 
-  // The design's timing as the editor has it: set at every change, drawn
-  // only by Annotate.
+  // The design's timing as the editor has it: set at every change, and
+  // redrawn when it is on the drawing (Annotate puts it there).
   const timingOptions = () => {
     const bits = {};
     const hold = {};
@@ -48895,9 +48895,11 @@ function openTimingDialog() {
   };
   const redraw = () => {
     const start = snapshot();
+    const drawn = !!drawnTimingDiagram(editor.circuit);
     try {
       if (rows.length) setTimingDiagram(editor.circuit, timingOptions());
-      else removeTimingDiagram(editor.circuit, { drawing: false });
+      else removeTimingDiagram(editor.circuit, { drawing: drawn });
+      if (drawn && rows.length) annotateTimingDiagram(editor.circuit);
     } catch (err) {
       status.textContent = err.message;
       return;
@@ -48914,8 +48916,8 @@ function openTimingDialog() {
     state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
     render();
   };
-  // The diagram on the drawing: drawn as the editor has it, or redrawn in
-  // place (`place`: under the drawing again). One undo step of its own.
+  // The diagram on the drawing: drawn as the editor has it, or (`place`)
+  // redrawn under the drawing again. One undo step of its own.
   const annotate = (place = false) => {
     const first = !drawnTimingDiagram(editor.circuit);
     const start = snapshot();
@@ -48936,7 +48938,7 @@ function openTimingDialog() {
     state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
     if (first && drawnTimingDiagram(editor.circuit)) fitView({ animate: true });
     render();
-    logLine(first ? 'drew the timing diagram on the drawing' : place ? 'moved the timing diagram under the drawing' : 'updated the timing diagram on the drawing');
+    logLine(first ? 'drew the timing diagram on the drawing; it follows every change from now on' : 'moved the timing diagram under the drawing');
   };
 
   // Which pairs (of phase keys) are kept apart now: the explicit list, or
@@ -49426,16 +49428,15 @@ function openTimingDialog() {
     change();
   });
   if (!editor.circuit.beats.length) fromBeats.disabled = true;
-  // Annotate draws the diagram; once drawn it stays where it stands, and
-  // Move under drawing puts it where the drawing has room again (after the
-  // drawing grew into it, say).
+  // Annotate draws the diagram; once drawn it follows every change where it
+  // stands, and Move under drawing puts it where the drawing has room again
+  // (after the drawing grew into it, say).
   const annotateButton = button('Annotate diagram', 'Annotate the timing diagram', () => annotate(), { className: 'timing-annotate' });
   const replace = button('Move under drawing', 'Move under the drawing', () => annotate(true), { className: 'timing-place' });
   const syncAnnotate = () => {
     const drawn = !!drawnTimingDiagram(editor.circuit);
-    annotateButton.textContent = drawn ? 'Update diagram' : 'Annotate diagram';
-    annotateButton.title = drawn ? 'Update the timing diagram' : 'Annotate the timing diagram';
-    annotateButton.disabled = !rows.length && !drawn;
+    annotateButton.hidden = drawn;
+    annotateButton.disabled = !rows.length;
     replace.disabled = !drawn;
   };
   // The timing is where the beats come from: one beat per state.
@@ -81601,7 +81602,7 @@ const SC_STEPS = Object.freeze([
   {
     id: 'span',
     title: 'Mark the non-overlap',
-    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges. Type **$t_{nov}$** into its field in the editor\'s list, and press **Update diagram** to draw it under the diagram.',
+    text: 'Click the bar where φ1 falls (between its slots), press **s**, then click where φ2 rises: a span between the two edges. Type **$t_{nov}$** into its field in the editor\'s list.',
     done: (circuit) => (drawnTimingDiagram(circuit)?.spans.length || 0) > 0,
   },
   {
