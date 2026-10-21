@@ -40,19 +40,24 @@ timing once annotated.
 
 ## Placement
 
-A new figure goes by its kind (`figureSpot`), measured from the circuit
-itself (`coreBounds`: everything in no figure):
+A new figure is packed among what is drawn (`figureSpot`, given its size):
+it keeps clear of the circuit (`coreBounds`: everything in no figure) by
+three cells and of every figure by two. The spots tried are the kind's own
+place -- a table, equation or noise table right of the circuit at its top;
+the timing diagram centered under it; a model or plot under it at its left
+edge -- and every edge of what is there, never left of or above the
+circuit. The spot that grows the whole drawing least wins, and of those the
+one nearest the kind's place. So a table taller than the circuit pushes a
+wide model under it, while a narrow plot still fits under the circuit
+beside the table.
 
-- **Right:** parts tables, equation tables, noise tables -- a column right
-  of the circuit, from its top, each under the one before.
-- **Below:** the timing diagram (centered, `timing-diagram.js`), the model
-  and plots -- under the circuit and whatever is under it already, at its
-  left edge.
+A table is placed from its estimated size; once the browser has measured
+it, a new one that no longer fits where it was put is packed again.
 
 Nothing moves a figure once placed, except **More → Arrange annotations**
-(`figures --arrange`, `arrangeFigures`): every figure where a new one would
-go, in order (tables, equations, noise; timing, model, plots), one undo
-step. `figures` lists them.
+(`figures --arrange`, `arrangeFigures`): every figure packed again, in order
+(parts tables, equation tables, noise tables, timing, models, plots), each
+clear of those before it, one undo step. `figures` lists them.
 
 ## Tables
 

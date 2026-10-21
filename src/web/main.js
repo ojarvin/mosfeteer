@@ -2645,9 +2645,11 @@ function renderedLabelTextBounds(group) {
 // column settles once and is forgotten, so moving its labels later sticks.
 let labelColumns = [];
 
-/** Line up `ids` (math labels) at `left`, stacking down from `top`, once measured. */
-export function alignLabelColumn(ids, { left, top, gap = 0 }) {
-  labelColumns.push({ ids: [...ids], left, top, gap });
+/** Line up `ids` (math labels) at `left`, stacking down from `top`, once
+ *  measured -- or where `place(labels)` says then ({ x, y }: a figure
+ *  packed again at its measured size). */
+export function alignLabelColumn(ids, { left, top, gap = 0, place = null }) {
+  labelColumns.push({ ids: [...ids], left, top, gap, place });
 }
 
 function reflowLabelColumns() {
@@ -2657,10 +2659,11 @@ function reflowLabelColumns() {
     const labels = column.ids.map((id) => circuit.labels.get(id));
     if (labels.some((label) => !label)) return false;
     if (!labels.every((label) => label._renderedTextBounds?.w > 0)) return true;
-    let top = column.top;
+    const corner = column.place?.(labels) || { x: column.left, y: column.top };
+    let top = corner.y;
     for (const label of labels) {
       const box = label.bbox();
-      const x = snap(column.left + box.w / 2);
+      const x = snap(corner.x + box.w / 2);
       const y = snap(top + box.h / 2);
       const anchor = label.anchorWorld();
       if (anchor.x !== x || anchor.y !== y) {

@@ -205,7 +205,7 @@ export function addPartsTable(circuit, { parts = null, at = null } = {}) {
     if (!partKind(component)) throw new Error(`${component.refdes} is a ${component.type}; a parts table lists transistors, passives, and sources`);
     return component.refdes;
   }) : null;
-  const corner = at || figureSpot(circuit, 'table');
+  const corner = at || figureSpot(circuit, 'table', { size: partsTableLayout(circuit, { parts: list }) });
   const x = ceilGrid(corner.x);
   const y = Math.floor(corner.y / GRID) * GRID;
   const figure = { id: newFigureId(circuit), ...partsTableFigure(list) };

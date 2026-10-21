@@ -654,16 +654,16 @@ export function placeSmallSignalModel(circuit, model, { selected = [] } = {}) {
   const source = model.circuit;
   const identity = { kind: 'model', source: 'small-signal' };
   const existing = chooseFigure(circuit, identity, selected);
+  const own = source.bounds();
   let corner;
   if (existing) {
     const box = figureBounds(circuit, existing);
     corner = { x: box.x, y: box.y };
     removeFigure(circuit, existing);
   } else {
-    corner = figureSpot(circuit, 'model');
+    corner = figureSpot(circuit, 'model', { size: own });
   }
   const figure = { id: existing?.id || newFigureId(circuit), ...identity };
-  const own = source.bounds();
   const dx = snapTo(corner.x - own.x);
   const dy = snapTo(corner.y - own.y);
   const at = (point) => ({ x: point.x + dx, y: point.y + dy });

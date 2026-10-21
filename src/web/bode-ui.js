@@ -479,9 +479,9 @@ function placeSketch() {
       editor.circuit.invalidateRoutingCache();
       return;
     }
-    const { x, y } = figureSpot(editor.circuit, 'plot');
     const w = 16 * GRID;
     const h = (plot.phase ? 14 : 10) * GRID;
+    const { x, y } = figureSpot(editor.circuit, 'plot', { size: { w, h } });
     placed = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' }, figure });
   });
   if (!placed) return;

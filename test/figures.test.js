@@ -68,15 +68,21 @@ test('tables go right of the circuit, one under another; plots and models below 
   assert.ok(right.x > core.x + core.w);
   assert.equal(right.y, Math.floor(core.y / 40) * 40);
   const first = table(circuit);
-  const next = figureSpot(circuit, 'noise');
+  const box = first.bbox();
+  const next = figureSpot(circuit, 'noise', { size: { w: box.w, h: 200 } });
   assert.equal(next.x, right.x);
-  assert.ok(next.y >= first.bbox().y + first.bbox().h, 'under the first');
+  assert.ok(next.y >= box.y + box.h, 'under the first');
   // The tables are not the circuit: a plot still goes under the circuit.
-  const below = figureSpot(circuit, 'plot');
+  const size = { w: 400, h: 400 };
+  const below = figureSpot(circuit, 'plot', { size });
   assert.equal(below.x, Math.floor(core.x / 40) * 40);
   assert.equal(below.y, Math.ceil((core.y + core.h) / 40) * 40 + 120);
-  const plot = circuit.addAnnotation('box', { x: below.x, y: below.y, end: { x: below.x + 400, y: below.y + 400 }, plot: RESPONSE, figure: { id: newFigureId(circuit), kind: 'plot', source: 'signal-flow' } });
-  assert.ok(figureSpot(circuit, 'model').y >= plot.bbox().y + plot.bbox().h, 'under the plot');
+  circuit.addAnnotation('box', { x: below.x, y: below.y, end: { x: below.x + 400, y: below.y + 400 }, plot: RESPONSE, figure: { id: newFigureId(circuit), kind: 'plot', source: 'signal-flow' } });
+  const model = { ...figureSpot(circuit, 'model', { size }), ...size };
+  for (const figure of listFigures(circuit)) {
+    const r = figureBounds(circuit, figure);
+    assert.ok(model.x + model.w <= r.x || r.x + r.w <= model.x || model.y + model.h <= r.y || r.y + r.h <= model.y, `clear of ${figure.kind}`);
+  }
 });
 
 test('a figure moves and goes as one; Arrange puts each where a new one would go', () => {
@@ -112,4 +118,25 @@ test('a math label with & is drawn as a table: columns, rules, and lines across 
   assert.match(svg, /grid-template-columns:repeat\(2,max-content\)/);
   assert.match(svg, /schematic-math-rule/);
   assert.match(svg, /grid-column:1 \/ -1/);
+});
+
+test('a new figure is packed clear of what is there: a tall table pushes a wide model under it', () => {
+  const circuit = amplifier();
+  const core = coreBounds(circuit);
+  // A table much taller than the circuit, right of it.
+  const tall = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 800, y: 2000 }, plot: RESPONSE, figure: { id: newFigureId(circuit), kind: 'equations', source: 'small-signal' } });
+  const right = figureSpot(circuit, 'equations', { size: { w: 800, h: 2000 }, except: tall.figure.id });
+  tall.moveTo(right.x, right.y);
+  const table = figureBounds(circuit, listFigures(circuit)[0]);
+  assert.ok(table.y + table.h > core.y + core.h + 400, 'it reaches far below the circuit');
+  // A model wider than the circuit: under the circuit it would run into the table.
+  const size = { w: core.w + 1200, h: 400 };
+  const spot = figureSpot(circuit, 'model', { size });
+  const model = { ...spot, ...size };
+  const apart = (a, b) => a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+  assert.ok(apart(model, table), JSON.stringify({ model, table }));
+  assert.ok(apart(model, core));
+  // One narrow enough fits under the circuit, beside the table.
+  const small = figureSpot(circuit, 'plot', { size: { w: 200, h: 200 } });
+  assert.ok(small.y < table.y + table.h && small.y > core.y + core.h, JSON.stringify(small));
 });

@@ -1404,13 +1404,38 @@ export class LabelInstance {
    *  render smaller (0.62 em) so they contribute less width to the box. */
   textWidth() {
     if (this._renderedTextBounds?.w > 0) return this._renderedTextBounds.w;
-    const source = this.math ? mathTextForMetrics(this.text) : this.text;
     // A monospace glyph is 0.6 em, whatever the character.
     const glyph = this.style?.mono ? () => 0.6 * labelFontSize(this.style.width) : charWidth;
-    return Math.max(...labelRunLines(source).map((line) => line.reduce((width, r) => {
+    const widths = (source) => labelRunLines(source).map((line) => line.reduce((width, r) => {
       const scale = r.sub || r.super ? 0.62 : 1;
       return width + [...r.text].reduce((sum, ch) => sum + glyph(ch) * scale, 0);
-    }, 0)), 0);
+    }, 0));
+    const rows = this.mathTableRows();
+    if (rows) {
+      // A table (render.js mathTableHtml): its columns side by side, each as
+      // wide as its widest cell, apart as the table sets them.
+      const columns = [];
+      let across = 0;
+      for (const cells of rows) {
+        if (!cells) continue;
+        const each = cells.map((cell) => Math.max(0, ...widths(mathTextForMetrics(cell))));
+        if (each.length === 1) across = Math.max(across, each[0]);
+        else each.forEach((width, index) => { columns[index] = Math.max(columns[index] || 0, width); });
+      }
+      const gap = (this.columns ? 1.2 : 0) * labelFontSize(this.style?.width);
+      return Math.max(across, columns.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, columns.length - 1));
+    }
+    return Math.max(...widths(this.math ? mathTextForMetrics(this.text) : this.text), 0);
+  }
+
+  /** A math table's rows (render.js mathTableHtml): each its cells, a rule
+   *  null; null when the label is no table. */
+  mathTableRows() {
+    if (!this.math) return null;
+    const lines = stripMathDelimiters(this.text).split(/\r?\n/);
+    const cells = (line) => line.split(/(?<!\\)&/);
+    if (!lines.some((line) => line.trim() === '\\hline' || cells(line).length > 1)) return null;
+    return lines.map((line) => (line.trim() === '\\hline' ? null : cells(line)));
   }
 
   /** Rich-text runs of this label's explicit source text. */
@@ -1438,6 +1463,10 @@ export class LabelInstance {
         if (/\\(?:sqrt|sum|int)|[_^]/.test(line)) return LABEL_CAP_H * 2.2;
         return LABEL_CAP_H * 1.7;
       };
+      const rows = this.mathTableRows();
+      // A table's rows are apart (render.js mathTableHtml); a rule is thin.
+      if (rows) return rows.reduce((height, cells) => height + (cells ? lineHeight(cells.join(' ')) : LABEL_CAP_H * 0.6), 0)
+        + (rows.length - 1) * (this.columns ? 0.55 : 0.3) * labelFontSize(this.style?.width);
       return source.split(/\r?\n/).reduce((height, line) => height + lineHeight(line), 0);
     }
     return Math.max(1, this.text.split('\n').length) * LABEL_CAP_H;

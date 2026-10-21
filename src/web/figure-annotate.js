@@ -8,7 +8,7 @@
  * table are these.
  */
 
-import { arrangeFigures, chooseFigure, figureSpot, newFigureId } from '../core/figures.js';
+import { arrangeFigures, chooseFigure, coreBounds, figureBounds, figureSpot, listFigures, newFigureId } from '../core/figures.js';
 import { snap } from '../core/grid.js';
 import { editor } from './editor-state.js';
 import { alignLabelColumn, commit, render, selectedComps, selectedLabels, setLabelSelection, setSelection } from './main.js';
@@ -53,15 +53,26 @@ export function annotateMathFigure({ kind, source, key = null, text, columns = n
       target.columns = columns;
       label = target;
     } else {
-      corner = figureSpot(circuit, kind);
       label = circuit.addLabel({ text, math: true, align: 'left', columns, x: 0, y: 0, figure: { id: newFigureId(circuit), ...identity } });
+      corner = figureSpot(circuit, kind, { size: label.bbox(), except: label.figure.id });
     }
     const box = label.bbox();
     label.moveTo(snap(corner.x + box.w / 2), snap(corner.y + box.h / 2));
   });
   if (!label) return { label: null, updated: false };
-  // Its size is an estimate until the browser measures it: its corner stays.
-  alignLabelColumn([label.id], { left: corner.x, top: corner.y });
+  // Its size is an estimate until the browser measures it: an updated table
+  // keeps its corner; a new one is packed again at its measured size if
+  // that no longer fits where it was put.
+  const id = label.figure.id;
+  const place = target ? null : ([measured]) => {
+    const box = measured.bbox();
+    const others = listFigures(editor.circuit).filter((figure) => figure.id !== id).map((figure) => figureBounds(editor.circuit, figure));
+    const core = coreBounds(editor.circuit);
+    const at = { x: corner.x, y: corner.y, w: box.w, h: box.h };
+    const overlaps = (r) => r && at.x < r.x + r.w && r.x < at.x + at.w && at.y < r.y + r.h && r.y < at.y + at.h;
+    return [core, ...others].some(overlaps) ? figureSpot(editor.circuit, kind, { size: box, except: id }) : corner;
+  };
+  alignLabelColumn([label.id], { left: corner.x, top: corner.y, place });
   setSelection([]);
   setLabelSelection([label.id]);
   render();

@@ -1227,8 +1227,9 @@ function writePlot(target, plot, shown, used, { values: withValues, identity = n
     left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w + GRID;
     top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
   } else {
-    // Below the circuit and what is under it already (figures.js).
-    const spot = figureSpot(circuit, 'plot');
+    // Packed clear of what is there (figures.js): the box, and its legend
+    // beside it about as wide as a third of the box.
+    const spot = figureSpot(circuit, 'plot', { size: { w: 25 * GRID, h: 11 * GRID } });
     left = spot.x + 18 * GRID + GRID;
     top = spot.y;
   }

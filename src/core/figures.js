@@ -9,9 +9,10 @@
  *
  * A tool annotating again updates the figure it made rather than adding
  * one (chooseFigure): the selected one of that identity, else the only one,
- * else a new one, placed by its zone (figureSpot) -- tables and equations in
- * a column right of the circuit, the timing diagram, plots and models
- * below it. An updated figure keeps its place. Figures drawn before they
+ * else a new one, packed where it fits (figureSpot): clear of the circuit
+ * and of every figure there, tables and equations by preference right of
+ * the circuit, the timing diagram, plots and models under it. An updated
+ * figure keeps its place. Figures drawn before they
  * had an identity are known by what they carry: a box with a plot or a
  * parts table, the timing diagram's labels.
  */
@@ -20,7 +21,7 @@ import { GRID, ceilGrid, floorGrid } from './grid.js';
 
 export const FIGURE_KINDS = Object.freeze(['plot', 'equations', 'noise', 'model', 'timing', 'table']);
 
-/** Where each kind goes when first placed. */
+/** Where each kind would rather go: right of the circuit, or under it. */
 const ZONES = { table: 'right', equations: 'right', noise: 'right', timing: 'below', plot: 'below', model: 'below' };
 
 /** In a zone, figures go in this order (arrangeFigures). */
@@ -158,25 +159,60 @@ export function coreBounds(circuit, figures = listFigures(circuit)) {
 /** The zone a kind of figure goes in: 'right' or 'below'. */
 export const figureZone = (kind) => ZONES[kind] || 'below';
 
+/** Two rects closer than `gap` on both axes. */
+const crowds = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
+
 /**
- * Where a new figure `size` ({ w, h }) of `kind` goes, its top-left corner:
- * right of the circuit, level with its top and under the figures already
- * there; or below the circuit and the figures already below it, at its
- * left edge. `figures` are those to keep clear of (all, by default).
+ * Where a new figure of `kind` and `size` ({ w, h }) goes, its top-left
+ * corner: packed among what is drawn, never on it. The circuit and every
+ * figure there (`figures`, all but `except` by default) are kept clear --
+ * the circuit by CLEARANCE, a figure by GAP. The spots tried are the kind's
+ * own place (a table right of the circuit at its top, the rest under it at
+ * its left edge) and every edge of what is there, never left of or above
+ * the circuit; the one that grows the whole drawing least wins, and of
+ * those, the one nearest the kind's place. So a table taller than the
+ * circuit pushes a plot under it rather than letting it run in, and a plot
+ * narrower than the circuit fits beside a table instead of under it.
  */
-export function figureSpot(circuit, kind, { figures = listFigures(circuit) } = {}) {
-  const core = coreBounds(circuit, listFigures(circuit)) || { x: 0, y: 0, w: 0, h: 0 };
-  const zone = figureZone(kind);
-  const placed = figures.filter((figure) => figureZone(figure.kind) === zone).map((figure) => figureBounds(circuit, figure)).filter(Boolean);
-  if (zone === 'right') {
-    const x = ceilGrid(core.x + core.w) + CLEARANCE;
-    const column = placed.filter((r) => r.x + r.w > core.x + core.w);
-    const y = column.length ? ceilGrid(Math.max(...column.map((r) => r.y + r.h))) + GAP : floorGrid(core.y);
-    return { x, y };
+export function figureSpot(circuit, kind, { size = { w: 0, h: 0 }, figures = listFigures(circuit), except = null } = {}) {
+  const all = listFigures(circuit);
+  const core = coreBounds(circuit, all);
+  const rects = figures.filter((figure) => figure.id !== except).map((figure) => figureBounds(circuit, figure)).filter(Boolean);
+  if (!core && !rects.length) return { x: 0, y: 0 };
+  const base = core || rects[0];
+  const w = Math.max(GRID, size.w || 0);
+  const h = Math.max(GRID, size.h || 0);
+  // A timing diagram is centered under the circuit.
+  const anchor = figureZone(kind) === 'right' ? { x: ceilGrid(base.x + base.w) + CLEARANCE, y: floorGrid(base.y) }
+    : { x: kind === 'timing' ? Math.max(floorGrid(base.x), Math.round((base.x + base.w / 2 - w / 2) / GRID) * GRID) : floorGrid(base.x), y: ceilGrid(base.y + base.h) + CLEARANCE };
+  const xs = new Set([anchor.x]);
+  const ys = new Set([anchor.y]);
+  for (const r of rects) {
+    xs.add(floorGrid(r.x)).add(ceilGrid(r.x + r.w) + GAP);
+    ys.add(floorGrid(r.y)).add(ceilGrid(r.y + r.h) + GAP);
   }
-  const below = placed.filter((r) => r.y + r.h > core.y + core.h);
-  const y = below.length ? ceilGrid(Math.max(...below.map((r) => r.y + r.h))) + GAP : ceilGrid(core.y + core.h) + CLEARANCE;
-  return { x: floorGrid(core.x), y };
+  if (core) {
+    xs.add(ceilGrid(core.x + core.w) + CLEARANCE);
+    ys.add(ceilGrid(core.y + core.h) + CLEARANCE);
+  }
+  const free = (spot) => (!core || !crowds(spot, core, CLEARANCE - 1)) && rects.every((r) => !crowds(spot, r, GAP - 1));
+  const extent = (list) => union(list);
+  const before = extent([...(core ? [core] : []), ...rects]);
+  let best = null;
+  for (const x of xs) {
+    if (core && x < floorGrid(core.x)) continue;
+    for (const y of ys) {
+      if (core && y < floorGrid(core.y)) continue;
+      const spot = { x, y, w, h };
+      if (!free(spot)) continue;
+      const after = extent([before, spot]);
+      const growth = (after.w + after.h) - (before.w + before.h);
+      const cost = growth + 0.5 * (Math.abs(x - anchor.x) + Math.abs(y - anchor.y));
+      if (!best || cost < best.cost || (cost === best.cost && (y < best.y || (y === best.y && x < best.x)))) best = { x, y, cost };
+    }
+  }
+  // Below everything there is always room.
+  return best ? { x: best.x, y: best.y } : { x: anchor.x, y: ceilGrid(before.y + before.h) + GAP };
 }
 
 /** Take a figure off the drawing: its labels, its parts, and the wires
@@ -220,10 +256,10 @@ export function moveFigure(circuit, figure, dx, dy) {
 }
 
 /**
- * Every figure put where it would go if placed now, in order: the right
- * column (parts tables, equation tables, noise tables) and the rows below
- * (the timing diagram, models, plots), each kind in drawing order. Returns
- * how many moved.
+ * Every figure packed again as if placed now, one after another in order --
+ * parts tables, equation tables, noise tables, the timing diagram, models,
+ * plots -- each clear of the circuit and of those packed before it.
+ * Returns how many moved.
  */
 export function arrangeFigures(circuit) {
   const figures = listFigures(circuit).sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
@@ -232,10 +268,8 @@ export function arrangeFigures(circuit) {
   for (const figure of figures) {
     const box = figureBounds(circuit, figure);
     if (!box) continue;
-    const spot = figureSpot(circuit, figure.kind, { figures: done });
-    // A timing diagram's waves are centered on the circuit, its names left of them.
-    const x = figure.kind === 'timing' ? box.x + snapCenter(circuit, box) : spot.x;
-    const dx = x - box.x;
+    const spot = figureSpot(circuit, figure.kind, { size: box, figures: done });
+    const dx = spot.x - box.x;
     const dy = spot.y - box.y;
     if (dx || dy) {
       moveFigure(circuit, figure, dx, dy);
@@ -244,10 +278,4 @@ export function arrangeFigures(circuit) {
     done.push(figure);
   }
   return moved;
-}
-
-/** How far a figure moves so it is centered under the circuit, on the grid. */
-function snapCenter(circuit, box) {
-  const core = coreBounds(circuit) || box;
-  return Math.round((core.x + core.w / 2 - (box.x + box.w / 2)) / GRID) * GRID;
 }
