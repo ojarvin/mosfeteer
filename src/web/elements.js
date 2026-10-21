@@ -68,7 +68,6 @@ export const analysisNetlistPanel = document.getElementById('analysis-panel-netl
 export const analysisNetlist = document.getElementById('analysis-netlist');
 export const analysisModelPanel = document.getElementById('analysis-panel-model');
 export const analysisModelEl = document.getElementById('analysis-model');
-export const analysisModelOpen = document.getElementById('analysis-model-open');
 export const analysisCancel = document.getElementById('analysis-cancel');
 export const analysisAnnotate = document.getElementById('analysis-annotate');
 export const tipCardEl = document.getElementById('tip-card');

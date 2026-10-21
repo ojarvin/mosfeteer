@@ -4,11 +4,11 @@
  * by its figure identity (core/figures.js). Annotating again rewrites the
  * table there -- the selected one of that identity, else the only one --
  * keeping its top-left corner; with none, a new one goes where its kind
- * goes (figureSpot). The analyses' equation tables and the kT/C noise
+ * goes, packed with the rest (placeFigure). The analyses' equation tables and the kT/C noise
  * table are these.
  */
 
-import { arrangeFigures, chooseFigure, coreBounds, figureBounds, figureSpot, listFigures, newFigureId } from '../core/figures.js';
+import { arrangeFigures, chooseFigure, newFigureId, packed, placeFigure, settlePlaced } from '../core/figures.js';
 import { snap } from '../core/grid.js';
 import { editor } from './editor-state.js';
 import { alignLabelColumn, commit, render, selectedComps, selectedLabels, setLabelSelection, setSelection } from './main.js';
@@ -44,6 +44,9 @@ export function annotateMathFigure({ kind, source, key = null, text, columns = n
   const target = chooseFigure(circuit, identity, selectedFigureMembers())?.labels.find((label) => label.math && !label.parent) || null;
   let label = null;
   let corner = null;
+  // Placed by packing (new, or never moved by hand): packed again once its
+  // size is known.
+  const repack = !target || packed(circuit, chooseFigure(circuit, identity, selectedFigureMembers()));
   commit(() => {
     if (target) {
       const box = target.bbox();
@@ -54,25 +57,20 @@ export function annotateMathFigure({ kind, source, key = null, text, columns = n
       label = target;
     } else {
       label = circuit.addLabel({ text, math: true, align: 'left', columns, x: 0, y: 0, figure: { id: newFigureId(circuit), ...identity } });
-      corner = figureSpot(circuit, kind, { size: label.bbox(), except: label.figure.id });
+      corner = placeFigure(circuit, kind, { size: label.bbox(), except: label.figure.id });
     }
     const box = label.bbox();
     label.moveTo(snap(corner.x + box.w / 2), snap(corner.y + box.h / 2));
+    if (repack) settlePlaced(circuit, label.figure.id);
   });
   if (!label) return { label: null, updated: false };
-  // Its size is an estimate until the browser measures it: an updated table
-  // keeps its corner; a new one is packed again at its measured size if
-  // that no longer fits where it was put.
+  // Its size is an estimate until the browser measures it. Moved by hand,
+  // it keeps its corner; else it and the figures packing placed are packed
+  // again at its measured size.
   const id = label.figure.id;
-  const place = target ? null : ([measured]) => {
-    const box = measured.bbox();
-    const others = listFigures(editor.circuit).filter((figure) => figure.id !== id).map((figure) => figureBounds(editor.circuit, figure));
-    const core = coreBounds(editor.circuit);
-    const at = { x: corner.x, y: corner.y, w: box.w, h: box.h };
-    const overlaps = (r) => r && at.x < r.x + r.w && r.x < at.x + at.w && at.y < r.y + r.h && r.y < at.y + at.h;
-    return [core, ...others].some(overlaps) ? figureSpot(editor.circuit, kind, { size: box, except: id }) : corner;
-  };
-  alignLabelColumn([label.id], { left: corner.x, top: corner.y, place });
+  const place = repack ? ([measured]) => placeFigure(editor.circuit, kind, { size: measured.bbox(), except: id }) : null;
+  const settled = repack ? () => settlePlaced(editor.circuit, id) : null;
+  alignLabelColumn([label.id], { left: corner.x, top: corner.y, place, settled });
   setSelection([]);
   setLabelSelection([label.id]);
   render();

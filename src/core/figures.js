@@ -9,10 +9,12 @@
  *
  * A tool annotating again updates the figure it made rather than adding
  * one (chooseFigure): the selected one of that identity, else the only one,
- * else a new one, packed where it fits (figureSpot): clear of the circuit
- * and of every figure there, tables and equations by preference right of
- * the circuit, the timing diagram, plots and models under it. An updated
- * figure keeps its place. Figures drawn before they
+ * else a new one. A new one is packed with the figures packing placed
+ * before (placeFigure): the layout of them all whose drawing is smallest,
+ * clear of the circuit and of every figure, tables and equations by
+ * preference right of the circuit, the timing diagram, plots and models
+ * under it. A figure moved by hand stays where it was put; an updated one
+ * keeps its place. Figures drawn before they
  * had an identity are known by what they carry: a box with a plot or a
  * parts table, the timing diagram's labels.
  */
@@ -41,7 +43,9 @@ export function normalizeFigure(value) {
   const source = text(value.source);
   if (!id || !kind || !source) return null;
   const key = text(value.key, 400);
-  return { id, kind, source, ...(key ? { key } : {}) };
+  // Where packing put it: a figure still there is packing's to move.
+  const placed = Number.isFinite(value.placed?.x) && Number.isFinite(value.placed?.y) ? { x: value.placed.x, y: value.placed.y } : null;
+  return { id, kind, source, ...(key ? { key } : {}), ...(placed ? { placed } : {}) };
 }
 
 /** A figure id not used in `circuit` yet. */
@@ -144,13 +148,15 @@ export function coreBounds(circuit, figures = listFigures(circuit)) {
     if (!parts.has(component) && !component.drawingOnly && component.type !== 'solder') rects.push(component.inkRectWorld());
   }
   const refs = new Set([...circuit.components.values()].filter((c) => !parts.has(c) && !c.drawingOnly).map((c) => c.refdes));
+  // A figure's own wires (a model's), and their names, are not the circuit.
+  const theirs = new Set();
   for (const net of circuit.nets.values()) {
-    if (net.terminals.length && !net.terminals.some((terminal) => refs.has(terminal.comp))) continue;
+    if (net.terminals.length && !net.terminals.some((terminal) => refs.has(terminal.comp))) { theirs.add(net.id); continue; }
     const points = net.pathPoints();
     if (points.length) rects.push(rectOf(points));
   }
   for (const label of circuit.labels.values()) {
-    if (labels.has(label) || (label.owner && !refs.has(label.owner))) continue;
+    if (labels.has(label) || (label.owner && !refs.has(label.owner)) || theirs.has(label.netId)) continue;
     rects.push(label.inkRect());
   }
   return union(rects);
@@ -162,29 +168,59 @@ export const figureZone = (kind) => ZONES[kind] || 'below';
 /** Two rects closer than `gap` on both axes. */
 const crowds = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 
+/** A figure's top-left corner as drawn. */
+function cornerOf(circuit, figure) {
+  const box = figureBounds(circuit, figure);
+  return box && { x: box.x, y: box.y };
+}
+
+/** Where a figure stands, by a point a label measured again never moves:
+ *  its first part's origin, its box's corner, else its label's corner. */
+function standOf(circuit, figure) {
+  const [part] = [...figure.components].sort((a, b) => a.refdes.localeCompare(b.refdes));
+  if (part) return { x: part.transform.x, y: part.transform.y };
+  const shape = figure.labels.find((label) => label.kind !== 'label');
+  if (shape) return { x: shape.anchor.x, y: shape.anchor.y };
+  return cornerOf(circuit, figure);
+}
+
+/** Whether packing placed a figure where it is: moved by hand, it stays. */
+export function packed(circuit, figure) {
+  const at = figure.placed;
+  const stand = standOf(circuit, figure);
+  return !!at && !!stand && at.x === stand.x && at.y === stand.y;
+}
+
+/** Remember where figure `id` is now as packing's place for it. */
+export function settlePlaced(circuit, id) {
+  const figure = listFigures(circuit).find((candidate) => candidate.id === id);
+  const corner = figure && standOf(circuit, figure);
+  if (!corner) return;
+  for (const member of [...figure.labels, ...figure.components]) {
+    if (member.figure?.id === id) member.figure = { ...member.figure, placed: corner };
+  }
+}
+
+/** The kind's own place, for a figure `w` wide: a table right of the
+ *  circuit at its top, the timing diagram centered under it, the rest under
+ *  it at its left edge. */
+function anchorFor(kind, base, w) {
+  if (figureZone(kind) === 'right') return { x: ceilGrid(base.x + base.w) + CLEARANCE, y: floorGrid(base.y) };
+  const x = kind === 'timing' ? Math.max(floorGrid(base.x), Math.round((base.x + base.w / 2 - w / 2) / GRID) * GRID) : floorGrid(base.x);
+  return { x, y: ceilGrid(base.y + base.h) + CLEARANCE };
+}
+
 /**
- * Where a new figure of `kind` and `size` ({ w, h }) goes, its top-left
- * corner: packed among what is drawn, never on it. The circuit and every
- * figure there (`figures`, all but `except` by default) are kept clear --
- * the circuit by CLEARANCE, a figure by GAP. The spots tried are the kind's
- * own place (a table right of the circuit at its top, the rest under it at
- * its left edge) and every edge of what is there, never left of or above
- * the circuit; the one that grows the whole drawing least wins, and of
- * those, the one nearest the kind's place. So a table taller than the
- * circuit pushes a plot under it rather than letting it run in, and a plot
- * narrower than the circuit fits beside a table instead of under it.
+ * The best spot for one figure among `rects` (figures already placed) and
+ * the circuit `core`: clear of the circuit by CLEARANCE and of each figure
+ * by GAP, never left of or above the circuit; of the kind's own place and
+ * every edge of what is there, the cheapest (layoutCost).
  */
-export function figureSpot(circuit, kind, { size = { w: 0, h: 0 }, figures = listFigures(circuit), except = null } = {}) {
-  const all = listFigures(circuit);
-  const core = coreBounds(circuit, all);
-  const rects = figures.filter((figure) => figure.id !== except).map((figure) => figureBounds(circuit, figure)).filter(Boolean);
-  if (!core && !rects.length) return { x: 0, y: 0 };
-  const base = core || rects[0];
+function bestSpot(core, rects, kind, size) {
   const w = Math.max(GRID, size.w || 0);
   const h = Math.max(GRID, size.h || 0);
-  // A timing diagram is centered under the circuit.
-  const anchor = figureZone(kind) === 'right' ? { x: ceilGrid(base.x + base.w) + CLEARANCE, y: floorGrid(base.y) }
-    : { x: kind === 'timing' ? Math.max(floorGrid(base.x), Math.round((base.x + base.w / 2 - w / 2) / GRID) * GRID) : floorGrid(base.x), y: ceilGrid(base.y + base.h) + CLEARANCE };
+  const base = core || rects[0] || { x: 0, y: 0, w: 0, h: 0 };
+  const anchor = anchorFor(kind, base, w);
   const xs = new Set([anchor.x]);
   const ys = new Set([anchor.y]);
   for (const r of rects) {
@@ -192,12 +228,11 @@ export function figureSpot(circuit, kind, { size = { w: 0, h: 0 }, figures = lis
     ys.add(floorGrid(r.y)).add(ceilGrid(r.y + r.h) + GAP);
   }
   if (core) {
-    xs.add(ceilGrid(core.x + core.w) + CLEARANCE);
-    ys.add(ceilGrid(core.y + core.h) + CLEARANCE);
+    xs.add(floorGrid(core.x)).add(ceilGrid(core.x + core.w) + CLEARANCE);
+    ys.add(floorGrid(core.y)).add(ceilGrid(core.y + core.h) + CLEARANCE);
   }
+  const before = union([...(core ? [core] : []), ...rects]);
   const free = (spot) => (!core || !crowds(spot, core, CLEARANCE - 1)) && rects.every((r) => !crowds(spot, r, GAP - 1));
-  const extent = (list) => union(list);
-  const before = extent([...(core ? [core] : []), ...rects]);
   let best = null;
   for (const x of xs) {
     if (core && x < floorGrid(core.x)) continue;
@@ -205,15 +240,91 @@ export function figureSpot(circuit, kind, { size = { w: 0, h: 0 }, figures = lis
       if (core && y < floorGrid(core.y)) continue;
       const spot = { x, y, w, h };
       if (!free(spot)) continue;
-      const after = extent([before, spot]);
-      const growth = (after.w + after.h) - (before.w + before.h);
-      const cost = growth + 0.5 * (Math.abs(x - anchor.x) + Math.abs(y - anchor.y));
-      if (!best || cost < best.cost || (cost === best.cost && (y < best.y || (y === best.y && x < best.x)))) best = { x, y, cost };
+      const after = before ? union([before, spot]) : spot;
+      const cost = layoutCost(after, Math.abs(x - anchor.x) + Math.abs(y - anchor.y), base);
+      if (!best || cost < best.cost) best = { ...spot, cost };
     }
   }
   // Below everything there is always room.
-  return best ? { x: best.x, y: best.y } : { x: anchor.x, y: ceilGrid(before.y + before.h) + GAP };
+  return best || { x: anchor.x, y: before ? ceilGrid(before.y + before.h) + GAP : anchor.y, w, h };
 }
+
+/**
+ * What a layout costs: the drawing's area, a little more for each figure
+ * away from its kind's own place -- a third more for one a circuit's size
+ * away -- so a table goes right of the circuit and a model under it unless
+ * elsewhere the drawing is clearly smaller.
+ */
+function layoutCost(box, distance, base) {
+  return box.w * box.h * (1 + (0.3 * distance) / Math.max(4 * GRID, base.w + base.h));
+}
+
+/** The orders to try packing `items` in: every one for a few, else some
+ *  that tend to pack well (the kinds' own order, largest first, tallest,
+ *  widest). */
+function packingOrders(items) {
+  if (items.length <= 5) {
+    const all = [];
+    const permute = (rest, done) => {
+      if (!rest.length) { all.push(done); return; }
+      rest.forEach((item, index) => permute([...rest.slice(0, index), ...rest.slice(index + 1)], [...done, item]));
+    };
+    permute(items, []);
+    return all;
+  }
+  const by = (score) => [...items].sort((a, b) => score(b) - score(a));
+  return [
+    [...items].sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind)),
+    by((item) => item.size.w * item.size.h), by((item) => item.size.h), by((item) => item.size.w),
+  ];
+}
+
+/**
+ * Pack figures as one: the circuit and the figures moved by hand (or given
+ * no place by packing) stay; the figures packing placed, and a new one
+ * (`kind`, `size`), are packed again around them, trying several orders,
+ * keeping the layout whose drawing is smallest. So what is placed first
+ * never leaves the next nowhere good to go. The figures packing moves are
+ * moved here; returns the new one's top-left corner (or null without one).
+ * `except` names a figure to leave out (the new one, drawn already);
+ * `all` packs every figure, those moved by hand too (Arrange).
+ */
+export function placeFigure(circuit, kind = null, { size = { w: 0, h: 0 }, except = null, all = false } = {}) {
+  const figures = listFigures(circuit).filter((figure) => figure.id !== except);
+  const core = coreBounds(circuit, listFigures(circuit));
+  const movable = figures.filter((figure) => all || packed(circuit, figure));
+  const fixed = figures.filter((figure) => !movable.includes(figure)).map((figure) => figureBounds(circuit, figure)).filter(Boolean);
+  const items = movable.map((figure) => ({ id: figure.id, kind: figure.kind, figure, size: figureBounds(circuit, figure) })).filter((item) => item.size);
+  if (kind) items.push({ id: null, kind, size });
+  if (!items.length) return null;
+  let best = null;
+  for (const order of packingOrders(items)) {
+    const rects = [...fixed];
+    const spots = new Map();
+    let distance = 0;
+    for (const item of order) {
+      const spot = bestSpot(core, rects, item.kind, item.size);
+      rects.push(spot);
+      spots.set(item, spot);
+      const anchor = anchorFor(item.kind, core || spot, spot.w);
+      distance += Math.abs(spot.x - anchor.x) + Math.abs(spot.y - anchor.y);
+    }
+    const box = union([...(core ? [core] : []), ...rects]);
+    const cost = layoutCost(box, distance, core || box);
+    if (!best || cost < best.cost) best = { cost, spots };
+  }
+  let corner = null;
+  for (const [item, spot] of best.spots) {
+    if (!item.figure) { corner = { x: spot.x, y: spot.y }; continue; }
+    const box = figureBounds(circuit, item.figure);
+    moveFigure(circuit, item.figure, spot.x - box.x, spot.y - box.y);
+    settlePlaced(circuit, item.id);
+  }
+  return corner;
+}
+
+/** The figures packing placed, packed again (a figure grew or went). */
+export const repackFigures = (circuit, { except = null } = {}) => placeFigure(circuit, null, { except });
 
 /** Take a figure off the drawing: its labels, its parts, and the wires
  *  between its parts alone. */
@@ -256,26 +367,16 @@ export function moveFigure(circuit, figure, dx, dy) {
 }
 
 /**
- * Every figure packed again as if placed now, one after another in order --
- * parts tables, equation tables, noise tables, the timing diagram, models,
- * plots -- each clear of the circuit and of those packed before it.
+ * Every figure packed again as if placed now -- those moved by hand too --
+ * as one: the layout of them all whose drawing is smallest (placeFigure).
  * Returns how many moved.
  */
 export function arrangeFigures(circuit) {
-  const figures = listFigures(circuit).sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
-  const done = [];
-  let moved = 0;
-  for (const figure of figures) {
-    const box = figureBounds(circuit, figure);
-    if (!box) continue;
-    const spot = figureSpot(circuit, figure.kind, { size: box, figures: done });
-    const dx = spot.x - box.x;
-    const dy = spot.y - box.y;
-    if (dx || dy) {
-      moveFigure(circuit, figure, dx, dy);
-      moved += 1;
-    }
-    done.push(figure);
-  }
-  return moved;
+  const before = new Map(listFigures(circuit).map((figure) => [figure.id, cornerOf(circuit, figure)]));
+  placeFigure(circuit, null, { all: true });
+  return listFigures(circuit).filter((figure) => {
+    const was = before.get(figure.id);
+    const now = cornerOf(circuit, figure);
+    return was && now && (was.x !== now.x || was.y !== now.y);
+  }).length;
 }

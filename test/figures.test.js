@@ -5,7 +5,7 @@ import { runCommand } from '../src/core/commands.js';
 import { svgString } from '../src/core/render.js';
 import { addPartsTable } from '../src/core/parts-table.js';
 import {
-  arrangeFigures, chooseFigure, coreBounds, figureBounds, figureSpot, listFigures, moveFigure, newFigureId, normalizeFigure, removeFigure,
+  arrangeFigures, chooseFigure, coreBounds, figureBounds, listFigures, moveFigure, newFigureId, normalizeFigure, packed, placeFigure, removeFigure, settlePlaced,
 } from '../src/core/figures.js';
 
 const RESPONSE = { kind: 'response', range: { low: -2, high: 2 }, traces: [{ label: 'A', points: [{ f: 0.1, db: 0 }, { f: 10, db: -20 }] }] };
@@ -18,11 +18,38 @@ function amplifier() {
 }
 
 /** A math table label a tool put down, as figure-annotate.js does. */
-function table(circuit, { kind = 'equations', source = 'small-signal', at = figureSpot(circuit, kind) } = {}) {
+function table(circuit, { kind = 'equations', source = 'small-signal' } = {}) {
   const label = circuit.addLabel({ text: '\\text{Gain} & A_v = -g_m R_D', math: true, align: 'left', columns: 'll', x: 0, y: 0, figure: { id: newFigureId(circuit), kind, source } });
   const box = label.bbox();
+  const at = placeFigure(circuit, kind, { size: box, except: label.figure.id });
   label.moveTo(at.x + box.w / 2, at.y + box.h / 2);
+  settlePlaced(circuit, label.figure.id);
   return label;
+}
+
+/** A box figure of `size` placed by packing, as a plot or model would be. */
+function block(circuit, kind, size) {
+  const figure = { id: newFigureId(circuit), kind, source: 'test' };
+  const at = placeFigure(circuit, kind, { size });
+  const box = circuit.addAnnotation('box', { x: at.x, y: at.y, end: { x: at.x + size.w, y: at.y + size.h }, figure });
+  settlePlaced(circuit, figure.id);
+  return box;
+}
+
+const apart = (a, b) => a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+
+/** Every figure clear of the circuit and of each other. */
+function assertClear(circuit) {
+  const rects = [coreBounds(circuit), ...listFigures(circuit).map((figure) => figureBounds(circuit, figure))];
+  rects.forEach((a, i) => rects.slice(i + 1).forEach((b) => assert.ok(apart(a, b), JSON.stringify({ a, b }))));
+}
+
+/** The whole drawing's extent. */
+function extent(circuit) {
+  const rects = [coreBounds(circuit), ...listFigures(circuit).map((figure) => figureBounds(circuit, figure))];
+  const x = Math.min(...rects.map((r) => r.x));
+  const y = Math.min(...rects.map((r) => r.y));
+  return { w: Math.max(...rects.map((r) => r.x + r.w)) - x, h: Math.max(...rects.map((r) => r.y + r.h)) - y };
 }
 
 test('a figure identity is kept with the design, on labels and parts alike', () => {
@@ -61,28 +88,42 @@ test('the figure annotating updates: the selected one, else the only one, else n
   assert.equal(chooseFigure(circuit, identity, [second.id])?.id, second.figure.id);
 });
 
-test('tables go right of the circuit, one under another; plots and models below it', () => {
+test('a first table goes right of the circuit at its top, a first plot under it at its left edge', () => {
   const circuit = amplifier();
   const core = coreBounds(circuit);
-  const right = figureSpot(circuit, 'equations');
-  assert.ok(right.x > core.x + core.w);
-  assert.equal(right.y, Math.floor(core.y / 40) * 40);
-  const first = table(circuit);
-  const box = first.bbox();
-  const next = figureSpot(circuit, 'noise', { size: { w: box.w, h: 200 } });
-  assert.equal(next.x, right.x);
-  assert.ok(next.y >= box.y + box.h, 'under the first');
-  // The tables are not the circuit: a plot still goes under the circuit.
-  const size = { w: 400, h: 400 };
-  const below = figureSpot(circuit, 'plot', { size });
-  assert.equal(below.x, Math.floor(core.x / 40) * 40);
-  assert.equal(below.y, Math.ceil((core.y + core.h) / 40) * 40 + 120);
-  circuit.addAnnotation('box', { x: below.x, y: below.y, end: { x: below.x + 400, y: below.y + 400 }, plot: RESPONSE, figure: { id: newFigureId(circuit), kind: 'plot', source: 'signal-flow' } });
-  const model = { ...figureSpot(circuit, 'model', { size }), ...size };
-  for (const figure of listFigures(circuit)) {
-    const r = figureBounds(circuit, figure);
-    assert.ok(model.x + model.w <= r.x || r.x + r.w <= model.x || model.y + model.h <= r.y || r.y + r.h <= model.y, `clear of ${figure.kind}`);
+  const first = table(circuit).bbox();
+  assert.ok(first.x > core.x + core.w);
+  assert.equal(first.y, Math.floor(core.y / 40) * 40);
+  const other = amplifier();
+  const plot = block(other, 'plot', { w: 200, h: 200 }).bbox();
+  assert.equal(plot.x, Math.floor(core.x / 40) * 40);
+  assert.equal(plot.y, Math.ceil((core.y + core.h) / 40) * 40 + 120);
+});
+
+test('figures are packed as one: whatever the order, the drawing is as small, and nothing overlaps', () => {
+  const sizes = [['equations', { w: 1200, h: 2400 }], ['model', { w: 2400, h: 600 }], ['plot', { w: 800, h: 480 }]];
+  const areas = [];
+  for (const order of [[0, 1, 2], [1, 0, 2], [2, 1, 0]]) {
+    const circuit = amplifier();
+    for (const index of order) block(circuit, ...sizes[index]);
+    assertClear(circuit);
+    const { w, h } = extent(circuit);
+    areas.push(w * h);
   }
+  assert.equal(new Set(areas).size, 1, areas.join(', '));
+});
+
+test('a figure moved by hand stays where it was put; packing works around it', () => {
+  const circuit = amplifier();
+  const moved = block(circuit, 'plot', { w: 400, h: 400 });
+  moved.moveTo(moved.anchor.x + 2000, moved.anchor.y);
+  const [figure] = listFigures(circuit);
+  assert.equal(packed(circuit, figure), false);
+  const at = moved.bbox();
+  block(circuit, 'model', { w: 1200, h: 400 });
+  block(circuit, 'equations', { w: 800, h: 1200 });
+  assert.deepEqual(moved.bbox(), at);
+  assertClear(circuit);
 });
 
 test('a figure moves and goes as one; Arrange puts each where a new one would go', () => {
@@ -120,23 +161,11 @@ test('a math label with & is drawn as a table: columns, rules, and lines across 
   assert.match(svg, /grid-column:1 \/ -1/);
 });
 
-test('a new figure is packed clear of what is there: a tall table pushes a wide model under it', () => {
+test('a tall table and a wide model are packed clear of each other, the model under the circuit', () => {
   const circuit = amplifier();
   const core = coreBounds(circuit);
-  // A table much taller than the circuit, right of it.
-  const tall = circuit.addAnnotation('box', { x: 0, y: 0, end: { x: 800, y: 2000 }, plot: RESPONSE, figure: { id: newFigureId(circuit), kind: 'equations', source: 'small-signal' } });
-  const right = figureSpot(circuit, 'equations', { size: { w: 800, h: 2000 }, except: tall.figure.id });
-  tall.moveTo(right.x, right.y);
-  const table = figureBounds(circuit, listFigures(circuit)[0]);
-  assert.ok(table.y + table.h > core.y + core.h + 400, 'it reaches far below the circuit');
-  // A model wider than the circuit: under the circuit it would run into the table.
-  const size = { w: core.w + 1200, h: 400 };
-  const spot = figureSpot(circuit, 'model', { size });
-  const model = { ...spot, ...size };
-  const apart = (a, b) => a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
-  assert.ok(apart(model, table), JSON.stringify({ model, table }));
-  assert.ok(apart(model, core));
-  // One narrow enough fits under the circuit, beside the table.
-  const small = figureSpot(circuit, 'plot', { size: { w: 200, h: 200 } });
-  assert.ok(small.y < table.y + table.h && small.y > core.y + core.h, JSON.stringify(small));
+  block(circuit, 'equations', { w: 800, h: 2000 });
+  const model = block(circuit, 'model', { w: core.w + 1200, h: 400 }).bbox();
+  assertClear(circuit);
+  assert.ok(model.y > core.y + core.h);
 });

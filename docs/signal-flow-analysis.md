@@ -179,9 +179,9 @@ outputs can be compared; each can be hidden or removed, and each result's
 **On the graph** switch takes its response off the graph or puts it back. **Annotate graph**
 puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
-traces' names as math labels in their colors beside it, children of its
+traces' names as math labels in their colors against its right edge, children of its
 box, lined up once the browser has measured them (main.js
-`alignLabelColumn`), and the coefficients' numbers under them one a line; **Annotate equations** puts the equations on the drawing as the mode's table, a row per input, right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
+`alignLabelColumn`), and the coefficients' numbers under them one a line; **Annotate… → Equations** puts the equations on the drawing as the mode's table, a row per input, right of the circuit and rewritten in place when annotated again ([`figures.md`](figures.md)).
 
 ## Sampled loops
 
@@ -363,7 +363,7 @@ them all alike, each from its own corner; a plot below (or right of)
 another selected one moves on by its growth, so a column of plots keeps its
 spacing.
 
-**Update plots** (in the analysis window's footer, beside Derive) redraws every plot on the
+**Annotate… → Update every plot** redraws every plot on the
 drawing at the coefficients' numbers now, in one undo step: a graph or step
 plot from the traces of the same names (one naming a trace no longer on the
 graph is left as it is), a loop plot at the signal it was broken at, a root

@@ -325,17 +325,12 @@ function createWindow(doc = null, { model = false } = {}) {
   close.setAttribute('aria-label', 'Close the reference window');
   close.title = 'Close';
   close.textContent = '×';
-  const place = document.createElement('button');
-  place.type = 'button';
-  place.className = 'model-place window-action';
-  place.textContent = 'Place';
-  place.title = 'Place in the drawing';
   if (model) {
     title.textContent = 'Small-signal model';
     title.removeAttribute('title');
     title.tabIndex = -1;
     close.setAttribute('aria-label', 'Close the small-signal model');
-    header.append(title, fitButton, copy, place, close);
+    header.append(title, fitButton, copy, close);
   } else header.append(title, fitButton, copy, swap, another, clear, close);
   const viewport = document.createElement('div');
   viewport.className = 'reference-viewport';
@@ -354,7 +349,7 @@ function createWindow(doc = null, { model = false } = {}) {
   el.hidden = hidden;
   pane.appendChild(el);
 
-  const win = { el, slot, doc: null, model, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap, clear, place };
+  const win = { el, slot, doc: null, model, picture: null, view: null, fitted: true, etag: null, revision: null, title, viewport, image, message, zoomBox, swap, clear };
   win.chrome = floatingWindow(el, {
     key: `reference-${slot}`,
     resizable: true,
@@ -365,7 +360,6 @@ function createWindow(doc = null, { model = false } = {}) {
     place: () => ({ x: 8 + (slot - 1) * 36, y: 8 + (slot - 1) * 36 }),
   });
   title.addEventListener('click', () => { if (!model) openPicker(win); });
-  place.addEventListener('click', () => win.onPlace?.());
   another.addEventListener('click', () => {
     const next = createWindow();
     if (next) openPicker(next);
@@ -456,7 +450,6 @@ let modelWindow = null;
 async function setModel(win, circuit) {
   if (!circuit) {
     win.picture = null;
-    win.place.disabled = true;
     showMessage(win, 'No small-signal model: derive the analysis again');
     return;
   }
@@ -464,7 +457,6 @@ async function setModel(win, circuit) {
   if (!windows.includes(win)) return;
   const first = !win.picture;
   win.picture = picture;
-  win.place.disabled = !picture;
   showMessage(win, picture ? '' : 'The model is empty');
   if (!picture) return;
   if (first || win.fitted) fit(win);
@@ -472,21 +464,19 @@ async function setModel(win, circuit) {
 }
 
 /** Show the small-signal model drawing (a Circuit) in its own window,
- *  opening it; `onPlace` runs from its Place button. */
-export function showModelWindow(circuit, { onPlace } = {}) {
+ *  opening it. The analysis window's Annotate places it. */
+export function showModelWindow(circuit) {
   if (hidden) setHidden(false);
   if (!modelWindow) modelWindow = createWindow(null, { model: true });
   if (!modelWindow) return false;
-  modelWindow.onPlace = onPlace;
   void setModel(modelWindow, circuit);
   modelWindow.el.focus({ preventScroll: true });
   return true;
 }
 
 /** A new derive redraws an open model window; without a model it says so. */
-export function refreshModelWindow(circuit, { onPlace } = {}) {
+export function refreshModelWindow(circuit) {
   if (!modelWindow) return;
-  modelWindow.onPlace = onPlace;
   void setModel(modelWindow, circuit);
 }
 

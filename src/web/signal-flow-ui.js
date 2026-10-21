@@ -33,8 +33,9 @@ import { prepareSimulation, sweepAmplitudes } from '../core/analysis/simulate.js
 import { normalizePlot, parseLabelRuns } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { GRID, snap } from '../core/grid.js';
-import { chooseFigure, figureSpot, newFigureId, plotKey } from '../core/figures.js';
+import { chooseFigure, newFigureId, placeFigure, plotKey, settlePlaced } from '../core/figures.js';
 import { annotateMathFigure } from './figure-annotate.js';
+import { registerAnnotations, setAnnotationMode } from './annotate-menu.js';
 import { editor } from './editor-state.js';
 import { analysisDialog } from './elements.js';
 import { alignLabelColumn, commit, markSettingsChanged, onDocumentShown, render, revisionCurrent, selectedLabels, setLabelSelection, setSelection } from './main.js';
@@ -157,7 +158,7 @@ function setMode(next, { user = false } = {}) {
   for (const child of circuitChildren()) child.classList.toggle('analysis-mode-hidden', !circuit);
   // One footer: Plots, every mode's, then the circuit's buttons there, or
   // this mode's.
-  for (const id of ['analysis-model-open', 'analysis-annotate', 'analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', !circuit);
+  for (const id of ['analysis-submit']) document.getElementById(id)?.classList.toggle('analysis-mode-hidden', !circuit);
   for (const button of actions) button.classList.toggle('analysis-mode-hidden', !flow);
   section.hidden = !flow;
   for (const spec of extraModes) {
@@ -1224,13 +1225,14 @@ function writePlot(target, plot, shown, used, { values: withValues, identity = n
   if (target) {
     const old = legendOf(target).map((label) => label.bbox());
     const frame = target.bbox();
-    left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w + GRID;
+    left = old.length ? Math.min(...old.map((r) => r.x)) : frame.x + frame.w;
     top = old.length ? Math.min(...old.map((r) => r.y)) : frame.y;
   } else {
     // Packed clear of what is there (figures.js): the box, and its legend
     // beside it about as wide as a third of the box.
-    const spot = figureSpot(circuit, 'plot', { size: { w: 25 * GRID, h: 11 * GRID } });
-    left = spot.x + 18 * GRID + GRID;
+    const spot = placeFigure(circuit, 'plot', { size: { w: 24 * GRID, h: 11 * GRID } });
+    // The legend against the box: its labels keep their own inset.
+    left = spot.x + 18 * GRID;
     top = spot.y;
   }
   const ids = [];
@@ -1241,8 +1243,9 @@ function writePlot(target, plot, shown, used, { values: withValues, identity = n
     if (figure && !target.figure) target.figure = figure;
     for (const label of legendOf(target)) circuit.removeLabel(label.id);
   } else {
-    const x = left - 19 * GRID;
+    const x = left - 18 * GRID;
     box = circuit.addAnnotation('box', { x, y: top, end: { x: x + 18 * GRID, y: top + 11 * GRID }, plot, style: { lineStyle: 'solid' }, ...(figure ? { figure } : {}) });
+    if (figure) settlePlaced(circuit, figure.id);
   }
   let y = top;
   const add = (text, style) => {
@@ -1343,7 +1346,6 @@ function plotUpdate(plot) {
 function renderResults() {
   const host = section.querySelector('.signal-flow-results');
   host.replaceChildren();
-  actions[0].hidden = !latest?.ok;
   if (!latest) return;
   if (!latest.ok) {
     host.append(el('p', { class: 'analysis-error', text: latest.error }));
@@ -1535,10 +1537,15 @@ export function installSignalFlowUi() {
       },
     }),
   ]);
+  // The window's Annotate menu reads the mode; this mode's offers.
+  setAnnotationMode(() => mode || 'circuit');
+  registerAnnotations('signal-flow', () => [
+    { label: 'Equations', identity: { kind: 'equations', source: 'signal-flow' }, available: !!latest?.ok, run: annotate },
+    { label: 'Graph', identity: { kind: 'plot', source: 'signal-flow' }, available: !!graphPlot(shownTraces()), run: annotateGraph },
+    // Not a figure of its own: every plot on the drawing at the numbers now.
+    { label: 'Update every plot', identity: null, available: [...editor.circuit.labels.values()].some((label) => label.plot), run: () => updatePlots() },
+  ]);
   actions = [
-    // Beside Derive, at hand whatever the window shows: redraw the drawing's plots.
-    el('button', { type: 'button', class: 'signal-flow-update-plots', text: 'Update plots', title: 'Update plots', onclick: () => updatePlots() }),
-    el('button', { type: 'button', class: 'signal-flow-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equations', title: 'Annotate the equations', onclick: annotate }),
     el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];
   for (const button of actions) if (button.dataset.icon && !button.querySelector('.button-icon')) button.prepend(buttonIcon(button.dataset.icon));

@@ -13,7 +13,7 @@
  */
 import { Circuit } from '../model.js';
 import { rectsOverlap } from '../geometry.js';
-import { chooseFigure, figureBounds, figureSpot, newFigureId, removeFigure } from '../figures.js';
+import { chooseFigure, figureBounds, newFigureId, packed, placeFigure, removeFigure, repackFigures, settlePlaced } from '../figures.js';
 import { createRationalOps } from './algebra-ops.js';
 import { renderExpression } from './present.js';
 
@@ -656,12 +656,14 @@ export function placeSmallSignalModel(circuit, model, { selected = [] } = {}) {
   const existing = chooseFigure(circuit, identity, selected);
   const own = source.bounds();
   let corner;
+  // Placed by packing, it is packed again with the rest once replaced.
+  const repack = !existing || packed(circuit, existing);
   if (existing) {
     const box = figureBounds(circuit, existing);
     corner = { x: box.x, y: box.y };
     removeFigure(circuit, existing);
   } else {
-    corner = figureSpot(circuit, 'model', { size: own });
+    corner = placeFigure(circuit, 'model', { size: own });
   }
   const figure = { id: existing?.id || newFigureId(circuit), ...identity };
   const dx = snapTo(corner.x - own.x);
@@ -723,5 +725,9 @@ export function placeSmallSignalModel(circuit, model, { selected = [] } = {}) {
     circuit._loading = wasLoading;
   }
   circuit.syncJunctionSolders();
+  if (repack) {
+    settlePlaced(circuit, figure.id);
+    if (existing) repackFigures(circuit);
+  }
   return { ...added, updated: !!existing };
 }

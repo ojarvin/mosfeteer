@@ -13,14 +13,15 @@ import { placeSmallSignalModel, smallSignalSchematic } from '../core/analysis/mo
 import { svgString, texToMathML } from '../core/render.js';
 import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
-import { installBodeUi, renderBode, syncBodePlace } from './bode-ui.js';
+import { installBodeUi, renderBode } from './bode-ui.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
-import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisModelOpen, analysisCancel, analysisAnnotate } from './elements.js';
+import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
 import { annotateMathFigure, selectedFigureMembers } from './figure-annotate.js';
+import { openAnnotateMenu, registerAnnotations } from './annotate-menu.js';
 import { editor } from './editor-state.js';
 import { applyJson, beginSettingsEdit, commit, endSettingsEdit, setSelection, snapshot, markSettingsChanged, namedGroupNets, onDocumentShown, nearestTerminal, pickWire, render, selectedComps, setLabelSelection, sortedComps, revisionCurrent, visibleNets } from './main.js';
 import { floatingWindow } from './floating-window.js';
@@ -158,7 +159,6 @@ export function clearLatestAnalysisResult() {
     if (analysisNetlist) analysisNetlist.textContent = '';
     if (analysisNetlistPanel) analysisNetlistPanel.hidden = true;
   }
-  for (const button of [analysisAnnotate, analysisModelOpen]) if (button) button.hidden = true;
 }
 
 function analysisFormOptions() {
@@ -503,7 +503,7 @@ let latestModelReport = null;
 
 function openModelWindow() {
   const model = editor.latestSmallSignalModel;
-  if (model?.ok) showModelWindow(model.circuit, { onPlace: placeModelInDrawing });
+  if (model?.ok) showModelWindow(model.circuit);
 }
 
 /**
@@ -561,7 +561,7 @@ function renderSmallSignalModel(report) {
   let model;
   try { model = smallSignalSchematic(report, { circuit: editor.circuit }); }
   catch (error) { model = { ok: false, error: error.message }; }
-  refreshModelWindow(model?.ok ? model.circuit : null, { onPlace: placeModelInDrawing });
+  refreshModelWindow(model?.ok ? model.circuit : null);
   if (!model?.ok) {
     const message = document.createElement('div');
     message.className = 'analysis-equation-unavailable';
@@ -571,6 +571,13 @@ function renderSmallSignalModel(report) {
   }
   editor.latestSmallSignalModel = model;
   latestModelReport = report;
+  // Larger, in a window of its own that pans and zooms; Annotate places it.
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'analysis-model-window';
+  open.textContent = 'Open in window';
+  open.addEventListener('click', openModelWindow);
+  analysisModelEl.appendChild(open);
   const figure = document.createElement('div');
   figure.className = 'analysis-model-figure';
   figure.innerHTML = svgString(model.circuit, {
@@ -844,7 +851,6 @@ function renderAnalysisResult(report) {
   if (analysisModelPanel) analysisModelPanel.hidden = !drawn;
   const modelTab = document.getElementById('analysis-tab-model');
   if (modelTab) modelTab.disabled = !drawn;
-  if (analysisModelOpen) analysisModelOpen.hidden = !drawn;
   renderBode(report);
   const selectedTab = analysisTabButtons.find((button) => button.getAttribute('aria-selected') === 'true')?.dataset.analysisTab || 'equations';
   const stillAvailable = (selectedTab === 'netlist' && !netlist) || (selectedTab === 'model' && !drawn);
@@ -871,7 +877,6 @@ function openAnalysisDialog(targetNetId, { focus = true } = {}) {
   analysisInputPrevious = analysisInput?.value || '';
   if (!restored && targetNetId && analysisTarget && [...analysisTarget.options].some((option) => option.value === targetNetId)) analysisTarget.value = targetNetId;
   renderAnalysisResult(latestAnalysisReport);
-  if (analysisAnnotate) analysisAnnotate.hidden = !latestAnalysisReport?.ok;
   const context = document.getElementById('analysis-bias-context');
   if (context && (analysisAcGrounds?.value || analysisDeviceRegions?.value)) context.open = true;
   analysisDockRevision = editor.modelRevision;
@@ -935,7 +940,6 @@ let analysisReportRevision = null;
 
 /** Keep dock selects in step with model edits while it stays open. */
 export function syncAnalysisDock() {
-  syncBodePlace();
   if (!isAnalysisDockOpen() || analysisDockRevision === editor.modelRevision) return;
   // A settings change alone (a Bode slider moving) changes no net: rebuilding
   // the form on every tick would shift the window under the slider.
@@ -1250,7 +1254,6 @@ export function installAnalysisUi() {
         : 'Select an input node before deriving equations.';
       latestAnalysisReport = { query: 'combined', ok: false, complete: false, error, reports: {} };
       renderAnalysisResult(latestAnalysisReport);
-      if (analysisAnnotate) analysisAnnotate.hidden = true;
       logLine(error, 'error');
       return;
     }
@@ -1297,7 +1300,6 @@ export function installAnalysisUi() {
     if (stale) stale.hidden = true;
     renderAnalysisResult(report);
     arriving(analysisEquation);
-    if (analysisAnnotate) analysisAnnotate.hidden = !report.ok;
     requestAnimationFrame(() => analysisResult?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
     logLine(report.complete ? 'derived the selected transfer functions and the input and output impedances' : 'some requested analyses are unavailable', report.complete ? 'status' : 'error');
     for (const { title, result } of report.equationEntries || []) logLine(`${title}: ${result.equation}`, 'status');
@@ -1318,8 +1320,12 @@ export function installAnalysisUi() {
   analysisNoiseSources?.addEventListener('change', persistAnalysisForm);
   for (const control of [analysisNoiseThermal, analysisNoiseFlicker]) control?.addEventListener('change', syncNoiseSourcesVisibility);
 
-  analysisAnnotate?.addEventListener('click', annotateAnalysisResult);
-  analysisModelOpen?.addEventListener('click', openModelWindow);
+  analysisAnnotate?.addEventListener('click', () => openAnnotateMenu(analysisAnnotate));
+  // What the small-signal analysis puts on the drawing (annotate-menu.js).
+  registerAnnotations('circuit', () => [
+    { label: 'Equations', identity: { kind: 'equations', source: 'small-signal' }, available: !!latestAnalysisReport?.ok && analysisAnnotationEntries(latestAnalysisReport).length > 0, run: annotateAnalysisResult },
+    { label: 'Small-signal model', identity: { kind: 'model', source: 'small-signal' }, available: !!latestModelReport?.ok, run: placeModelInDrawing },
+  ]);
   // Plots is every mode's: the window shows the current mode's view.
   document.getElementById('analysis-show-plots')?.addEventListener('click', () => showPlots());
 

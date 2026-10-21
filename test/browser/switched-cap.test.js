@@ -13,6 +13,12 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     h = await start({ docs: { integrator: scIntegrator(), unclocked: scIntegrator({ timing: false }) } });
   });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+  // The analysis window's Annotate menu: open it, choose `label`.
+  const annotate = async (label) => {
+    await h.click('#analysis-annotate');
+    await h.until(`[...document.querySelectorAll('#component-context-menu button')].some((b) => b.textContent.startsWith(${JSON.stringify(label)}) && !b.disabled)`);
+    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent.startsWith(${JSON.stringify(label)})).click()`);
+  };
 
   const text = (selector) => h.evaluate(`document.querySelector(${JSON.stringify(selector)})?.textContent ?? null`);
   const openWindow = async () => {
@@ -127,7 +133,7 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
 
   test('the equation and the noise are tables on the drawing, each rewritten in place when annotated again', async () => {
     const figures = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.figure).map((l) => ({ kind: l.figure.kind, source: l.figure.source, text: l.text, x: l.bbox().x, y: l.bbox().y })))`);
-    await h.evaluate(`document.querySelector('.sc-annotate').click()`);
+    await annotate('Equations');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
     await h.until(`!document.querySelector('.sc-calc-annotate').disabled`);
     await h.evaluate(`document.querySelector('.sc-calc-annotate').click()`);
@@ -138,8 +144,12 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     assert.match(equations.text, /\\text\{kT\/C noise\} & /);
     assert.match(noise.text, /\\text\{Switches\} & \\text\{Capacitors\} & \\text\{Phase\} & \\text\{RMS\} & \\text\{Density\}/);
     assert.match(noise.text, /\\text\{Total\} &\s+&\s+& \\text\{45\.52 µV\}/);
-    assert.equal(noise.x, equations.x, 'one column, right of the circuit');
-    assert.ok(noise.y > equations.y);
+    // Packed with the rest: clear of the circuit and of each other.
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.figure).every((l) => l.textMeasured()))`);
+    await h.settle();
+    const rects = await h.evaluate(`import(new URL('../core/figures.js', document.querySelector('script[src="main.js"]').src).href).then(async (f) => { const m = await ${h.module('editor-state.js')}; const c = m.editor.circuit; return [f.coreBounds(c), ...f.listFigures(c).map((g) => f.figureBounds(c, g))]; })`);
+    const apart = (a, b) => a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+    rects.forEach((a, i) => rects.slice(i + 1).forEach((b) => assert.ok(apart(a, b), JSON.stringify({ a, b }))));
     // A new number, annotated again: the same table, rewritten.
     await h.evaluate(`(() => { const i = document.querySelectorAll('.sc-calc-field')[2]; i.value = '127'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await h.until(`document.querySelector('.sc-calc-result tbody tr .sc-noise-value')?.textContent !== '32.19 µV'`, 10000);

@@ -20,6 +20,12 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   let h;
   before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+  // The analysis window's Annotate menu: open it, choose `label`.
+  const annotate = async (label) => {
+    await h.click('#analysis-annotate');
+    await h.until(`[...document.querySelectorAll('#component-context-menu button')].some((b) => b.textContent.startsWith(${JSON.stringify(label)}) && !b.disabled)`);
+    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent.startsWith(${JSON.stringify(label)})).click()`);
+  };
 
   const value = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).value`);
   const checked = (id) => h.evaluate(`document.getElementById(${JSON.stringify(id)}).checked`);
@@ -64,7 +70,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   test('annotating writes the equations as a table right of the circuit, its assumptions under a rule; again, it is rewritten in place', async () => {
     const tables = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.figure?.kind === 'equations').map((l) => ({ text: l.text, x: l.bbox().x, y: l.bbox().y, source: l.figure.source, columns: l.columns })))`);
     const right = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = m.editor.circuit.bounds(); return b.x + b.w; })`);
-    await h.click('#analysis-annotate');
+    await annotate('Equations');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
     const [table] = await tables();
     assert.equal(table.source, 'small-signal');
@@ -78,7 +84,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations' && l.textMeasured()))`);
     await h.settle();
     const [placed] = await tables();
-    await h.click('#analysis-annotate');
+    await annotate('Equations');
     await h.settle();
     const again = await tables();
     assert.equal(again.length, 1);
@@ -104,10 +110,9 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
 
   test('the model opens in a window that zooms like a reference window, Place puts it under the drawing, and placing again replaces it', async () => {
     await derive();
-    // Model stands in the footer with Annotate equations.
-    await h.until(`!document.getElementById('analysis-model-open').hidden`);
-    assert.equal(await h.evaluate(`document.getElementById('analysis-model-open').parentElement === document.getElementById('analysis-annotate').parentElement`), true);
-    await h.click('#analysis-model-open');
+    // The Model tab opens it in a window; the Annotate menu places it.
+    await h.until(`!!document.querySelector('#analysis-model .analysis-model-window')`);
+    await h.evaluate(`document.querySelector('#analysis-model .analysis-model-window').click()`);
     const win = `document.querySelector('.model-window')`;
     const picture = () => h.evaluate(`${win}.querySelector('.reference-picture').style.cssText`);
     await h.until(`${win} && !${win}.hidden && !${win}.querySelector('.reference-picture').hidden`, 20000);
@@ -130,7 +135,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const parts = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.components.values()].filter((c) => c.type !== 'solder').map((c) => ({ refdes: c.refdes, drawingOnly: c.drawingOnly, y: c.bboxWorld().y })))`);
     const before = await parts();
     const bottom = await h.evaluate(`${h.module('editor-state.js')}.then((m) => { const b = m.editor.circuit.bounds(); return b.y + b.h; })`);
-    await h.evaluate(`${win}.querySelector('.model-place').click()`);
+    await annotate('Small-signal model');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.components.values()].filter((c) => c.type !== 'solder').length > ${before.length})`);
     const placed = (await parts()).filter((part) => !before.some((other) => other.refdes === part.refdes));
     assert.ok(placed.length >= 3);
@@ -143,7 +148,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.getElementById('analysis-result').hidden`), false);
     // Placed again, it replaces the one there: no more parts.
     const count = (await parts()).length;
-    await h.evaluate(`${win}.querySelector('.model-place').click()`);
+    await annotate('Small-signal model');
     await h.settle();
     assert.equal((await parts()).length, count);
     // An undo each takes the replacement, then the model, away.
@@ -218,7 +223,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
   const shown = (selector) => h.evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)}); return !!e && !e.hidden && !!e.offsetParent; })()`);
   const plotsButton = (text) => h.evaluate(`(() => { const b = [...document.querySelectorAll('.plots-window button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(text)})); if (!b) return false; b.click(); return true; })()`);
 
-  test('the analysis window reads as signal flow\'s: signals, folded options, results, plots, values; Plots, Model, Annotate equations, and Derive', async () => {
+  test('the analysis window reads as signal flow\'s: signals, folded options, results, plots, values; Plots, Annotate, and Derive', async () => {
     await h.open('amp');
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
     await h.until(`!document.getElementById('analysis-dialog').hidden`);
@@ -226,7 +231,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     const at = (name) => order.findIndex((entry) => entry.includes(name));
     assert.ok(at('analysis-signals') < at('analysis-options') && at('analysis-options') < at('analysis-result') && at('analysis-result') < at('analysis-values'), order.join(' | '));
     assert.equal(await h.evaluate(`document.getElementById('analysis-options').open`), false, 'the options fold away');
-    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`), ['Plots', 'Model', 'Annotate equations', 'Derive']);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`), ['Plots', 'Annotate…', 'Derive']);
     // Every mode's footer is the same: Plots first, Derive last.
     const footer = () => h.evaluate(`[...document.querySelectorAll('#analysis-form > .dialog-actions > button:not(.analysis-mode-hidden)')].map((b) => b.textContent.trim())`);
     for (const mode of ['signal-flow', 'switched-cap']) {
@@ -321,14 +326,11 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await pressed('Output impedance'), 'false');
     await plotsButton('Output impedance');
     assert.deepEqual((await bode()).traces.map((t) => t.key), ['transfer', 'transfer', 'output']);
-    // One trace removed, one hidden: Place sketch draws the one left shown.
+    // One trace removed, one hidden, then shown again: Annotate graph puts
+    // the two curves on the drawing, named. There is no plain sketch to place.
     await h.evaluate(`document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-remove')[2].click()`);
     await h.evaluate(`(() => { const c = document.querySelectorAll('.plots-window .bode-legend input[type=checkbox]')[1]; c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    const boxes = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.plot).map((l) => l.plot.kind || 'sketch'))`);
-    const placed = (await boxes()).length;
-    assert.equal(await plotsButton('Place sketch'), true);
-    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.plot).length === ${placed + 1})`);
-    // Both shown: Annotate graph puts the two curves on the drawing, named.
+    assert.equal(await h.evaluate(`[...document.querySelectorAll('.plots-window button')].some((b) => /sketch/i.test(b.textContent))`), false);
     await h.evaluate(`(() => { const c = document.querySelectorAll('.plots-window .bode-legend input[type=checkbox]')[1]; c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     assert.equal(await plotsButton('Annotate graph'), true);
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.plot?.kind === 'response' && l.plot.traces.length === 2))`);

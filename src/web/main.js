@@ -2648,8 +2648,8 @@ let labelColumns = [];
 /** Line up `ids` (math labels) at `left`, stacking down from `top`, once
  *  measured -- or where `place(labels)` says then ({ x, y }: a figure
  *  packed again at its measured size). */
-export function alignLabelColumn(ids, { left, top, gap = 0, place = null }) {
-  labelColumns.push({ ids: [...ids], left, top, gap, place });
+export function alignLabelColumn(ids, { left, top, gap = 0, place = null, settled = null }) {
+  labelColumns.push({ ids: [...ids], left, top, gap, place, settled });
 }
 
 function reflowLabelColumns() {
@@ -2659,7 +2659,9 @@ function reflowLabelColumns() {
     const labels = column.ids.map((id) => circuit.labels.get(id));
     if (labels.some((label) => !label)) return false;
     if (!labels.every((label) => label._renderedTextBounds?.w > 0)) return true;
+    // Placing it may move other figures to make room (figures.js).
     const corner = column.place?.(labels) || { x: column.left, y: column.top };
+    if (column.place) moved = true;
     let top = corner.y;
     for (const label of labels) {
       const box = label.bbox();
@@ -2672,6 +2674,7 @@ function reflowLabelColumns() {
       }
       top = label.bbox().y + label.bbox().h + column.gap;
     }
+    column.settled?.();
     return false;
   });
   // A layout correction, not an edit: the annotate it finishes is the undo entry.

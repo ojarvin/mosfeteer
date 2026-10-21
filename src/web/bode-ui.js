@@ -27,17 +27,14 @@ import { cornerNames } from '../core/bode-figure.js';
 import { axisName, bodeSpecs, responseSpec } from '../core/plot-spec.js';
 import { createPlotView, linkPlots } from './plot-view.js';
 import { valueRow as sharedValueRow } from './value-row.js';
-import { normalizePlot } from '../core/model.js';
 import { texToMathML } from '../core/render.js';
 import { element as el } from './dom.js';
 import { editor } from './editor-state.js';
-import { commit, markSettingsChanged, onDocumentShown, render, selectedLabels, setLabelSelection, setSelection } from './main.js';
-import { fitView } from './canvas-view.js';
+import { markSettingsChanged, onDocumentShown, render } from './main.js';
 import { logLine } from './status-bar-ui.js';
 import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
 import { placeResponsePlot } from './signal-flow-ui.js';
-import { GRID } from '../core/grid.js';
-import { chooseFigure, figureSpot, newFigureId, plotKey } from '../core/figures.js';
+import { registerAnnotations } from './annotate-menu.js';
 
 const QUANTITIES = {
   transfer: { name: 'Voltage gain', tex: 'A_{v}' },
@@ -55,7 +52,6 @@ const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance
  */
 let traces = [];
 let latest = null;
-let withPhase = false;
 
 /** The values the plots are drawn at (Circuit#analysisValues.bode). */
 const ratios = { intrinsicGain: DEFAULT_INTRINSIC_GAIN, parasiticRatio: DEFAULT_PARASITIC_RATIO, multipliers: {} };
@@ -368,16 +364,10 @@ function renderLegend() {
     legend.append(el('div', { class: 'signal-flow-legend-row' }, [check, el('span', { class: 'signal-flow-swatch', style: `background:${trace.color}` }), math, remove]));
   }
   const actions = plotsEl.querySelector('.bode-plots-actions');
-  const one = shownSketches().length === 1;
   actions.hidden = !traces.length;
   actions.replaceChildren(
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
     el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: annotateGraph }),
-    el('button', { type: 'button', class: 'bode-place', text: sketchFigure() ? 'Update sketch' : 'Place sketch', title: 'Annotate a Bode sketch', disabled: !one, onclick: () => placeSketch() }),
-    el('label', { class: 'bode-phase-toggle' }, [
-      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Sketch with its phase' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
-      ' with phase',
-    ]),
   );
 }
 
@@ -427,71 +417,6 @@ function annotateGraph() {
   if (plot) placeResponsePlot(plot, sketches.map(({ trace }) => trace), { source: 'small-signal' });
 }
 
-
-/** Name the place button for what a press does now: update the sketch
- *  there, or place a new one. The selection changes without a new report. */
-export function syncBodePlace() {
-  const place = plotsEl?.querySelector('.bode-place');
-  if (!place) return;
-  const text = sketchFigure() ? 'Update sketch' : 'Place sketch';
-  if (place.textContent !== text) place.textContent = text;
-}
-
-/** The one trace shown, as a textbook sketch's data (model.js normalizePlot). */
-function sketchPlotData() {
-  const sketches = shownSketches();
-  if (sketches.length !== 1) return null;
-  const [{ trace, sketch, corners }] = sketches;
-  // Twenty samples a decade are plenty on paper.
-  const points = sketch.points.filter((_, index) => index % 2 === 0 || index === sketch.points.length - 1);
-  return {
-    range: sketch.range,
-    points,
-    asymptote: sketch.asymptote,
-    corners: corners.map((corner) => ({ w: corner.w, text: corner.text })),
-    unityGain: trace.key === 'transfer' || trace.key === 'loop' ? sketch.unityGain : null,
-    quantity: QUANTITIES[trace.key].tex,
-    phase: withPhase,
-  };
-}
-
-/** The sketch the place button updates: the selected one, else the only
- *  one (figures.js chooseFigure); null places a new one. */
-function sketchFigure() {
-  const plot = sketchPlotData();
-  if (!plot) return null;
-  const figure = chooseFigure(editor.circuit, { kind: 'plot', source: 'small-signal', key: plotKey(normalizePlot(plot)) }, selectedLabels().map((label) => label.id));
-  return figure?.labels.find((label) => label.plot) || null;
-}
-
-/** Put the sketch on the drawing, below the circuit -- or redraw the one
- *  there in place (sketchFigure). One undo entry. */
-function placeSketch() {
-  const plot = sketchPlotData();
-  if (!plot) return;
-  const existing = sketchFigure();
-  let placed = existing;
-  commit(() => {
-    const figure = { id: existing?.figure?.id || newFigureId(editor.circuit), kind: 'plot', source: 'small-signal', key: plotKey(normalizePlot(plot)) };
-    if (existing) {
-      existing.plot = normalizePlot(plot);
-      existing.figure = figure;
-      editor.circuit.invalidateRoutingCache();
-      return;
-    }
-    const w = 16 * GRID;
-    const h = (plot.phase ? 14 : 10) * GRID;
-    const { x, y } = figureSpot(editor.circuit, 'plot', { size: { w, h } });
-    placed = editor.circuit.addAnnotation('box', { x, y, end: { x: x + w, y: y + h }, plot, style: { lineStyle: 'solid' }, figure });
-  });
-  if (!placed) return;
-  setSelection([]);
-  setLabelSelection([placed.id]);
-  if (!existing) fitView({ animate: true });
-  logLine(existing ? 'updated the Bode sketch' : 'placed a Bode sketch on the drawing; drag to move it, its corners to resize');
-  renderPlots();
-  render();
-}
 
 // ----- Values, in the analysis window ------------------------------------------------------
 
@@ -615,6 +540,10 @@ function clearBode() {
 /** The Values in the analysis window, and the circuit's view in the Plots
  *  window. */
 export function installBodeUi() {
+  // The graph, in the analysis window's Annotate menu.
+  registerAnnotations('circuit', () => [
+    { label: 'Bode graph', identity: { kind: 'plot', source: 'small-signal', key: /^response:/ }, available: shownTraces().length > 0, run: annotateGraph },
+  ]);
   const result = document.getElementById('analysis-result');
   if (result && !document.getElementById('analysis-values')) {
     valuesEl = el('fieldset', { id: 'analysis-values', class: 'analysis-approximations bode-values', hidden: true }, [

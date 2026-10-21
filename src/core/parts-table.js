@@ -14,7 +14,7 @@
 import { GRID, ceilGrid } from './grid.js';
 import { MOS_SIZE_TYPES } from './mos-size.js';
 import { parseLabelRuns } from './model.js';
-import { figureSpot, newFigureId } from './figures.js';
+import { newFigureId, placeFigure, settlePlaced } from './figures.js';
 import { labelFontSize } from './style.js';
 import { THIN_SPACE, VALUE_TYPES, valueText } from './part-value.js';
 
@@ -205,11 +205,12 @@ export function addPartsTable(circuit, { parts = null, at = null } = {}) {
     if (!partKind(component)) throw new Error(`${component.refdes} is a ${component.type}; a parts table lists transistors, passives, and sources`);
     return component.refdes;
   }) : null;
-  const corner = at || figureSpot(circuit, 'table', { size: partsTableLayout(circuit, { parts: list }) });
+  const corner = at || placeFigure(circuit, 'table', { size: partsTableLayout(circuit, { parts: list }) });
   const x = ceilGrid(corner.x);
   const y = Math.floor(corner.y / GRID) * GRID;
   const figure = { id: newFigureId(circuit), ...partsTableFigure(list) };
   const box = circuit.addAnnotation('box', { x, y, end: { x: x + GRID, y: y + GRID }, table: { parts: list }, style: { lineStyle: 'solid' }, figure });
   box.syncTableBox();
+  if (!at) settlePlaced(circuit, figure.id);
   return box;
 }

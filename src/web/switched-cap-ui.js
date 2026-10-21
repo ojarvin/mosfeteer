@@ -30,11 +30,11 @@ import { commit, markSettingsChanged, onDocumentShown, render } from './main.js'
 import { logLine } from './status-bar-ui.js';
 import { element as el, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
+import { registerAnnotations } from './annotate-menu.js';
 
 const settings = () => (editor.circuit.analysisValues.sc ||= { input: '', output: '', readout: '', values: {} });
 
 let section = null;
-let annotateButton = null; // in the window's footer, shown with a result
 let latest = null; // { revision, result }
 // The graph's traces, as the Bode graph keeps them: each Derive's result,
 // { id, label, color, value, on }.
@@ -230,7 +230,6 @@ function addTrace(result) {
 function renderResult() {
   const host = section.querySelector('.sc-results');
   section.querySelector('.sc-stale').hidden = !latest || latest.revision === editor.modelRevision;
-  if (annotateButton) annotateButton.hidden = !latest?.result.ok;
   renderNoise();
   if (!latest) { host.replaceChildren(); renderValues(); return; }
   const { result } = latest;
@@ -591,9 +590,13 @@ export function installSwitchedCapUi() {
       el('p', { class: 'field-hint', text: 'The plots and the poles and zeros use these numbers; the equation stays symbolic.' }),
     ]),
   ]);
-  annotateButton = el('button', { type: 'button', class: 'sc-annotate', 'data-icon': 'text', hidden: true, text: 'Annotate equation', title: 'Annotate the equation', onclick: annotate });
+  // What this mode puts on the drawing, in the window's Annotate menu.
+  registerAnnotations('switched-cap', () => [
+    { label: 'Equations', identity: { kind: 'equations', source: 'switched-cap' }, available: !!latest?.result.ok, run: annotate },
+    { label: 'kT/C noise table', identity: { kind: 'noise', source: 'switched-cap' }, available: !!calculatorNumbers()?.figures.ok, run: annotateNoise },
+    { label: 'Graph', identity: { kind: 'plot', source: 'switched-cap' }, available: !!graphPlot(), run: () => placeResponsePlot(graphPlot(), shownTraces(), { source: 'switched-cap' }) },
+  ]);
   const actions = [
-    annotateButton,
     el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),
   ];
   // Enter in a field derives here.

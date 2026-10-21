@@ -40,24 +40,36 @@ timing once annotated.
 
 ## Placement
 
-A new figure is packed among what is drawn (`figureSpot`, given its size):
-it keeps clear of the circuit (`coreBounds`: everything in no figure) by
-three cells and of every figure by two. The spots tried are the kind's own
-place -- a table, equation or noise table right of the circuit at its top;
-the timing diagram centered under it; a model or plot under it at its left
-edge -- and every edge of what is there, never left of or above the
-circuit. The spot that grows the whole drawing least wins, and of those the
-one nearest the kind's place. So a table taller than the circuit pushes a
-wide model under it, while a narrow plot still fits under the circuit
-beside the table.
+Figures are packed as one (`placeFigure`, given a new figure's size). The
+circuit (`coreBounds`: everything in no figure) and the figures moved by
+hand stay; the figures packing placed -- each remembers where
+(`figure.placed`), and one still there is packing's to move -- and the new
+one are packed again around them. Each keeps three cells from the circuit
+and two from every figure, never left of or above the circuit. Several
+orders are tried (every one for up to five figures), each figure taking the
+spot, among its kind's own place and the edges of what is there, that
+leaves the drawing smallest; the layout whose drawing is smallest wins, a
+little more costly for each figure away from its kind's place (a table right
+of the circuit at its top, the timing diagram centered under it, a model or
+plot under it at its left edge). So the order things are annotated in makes
+no difference, and a figure dragged somewhere stays there.
 
 A table is placed from its estimated size; once the browser has measured
-it, a new one that no longer fits where it was put is packed again.
+it, it and the packed figures are packed again.
 
-Nothing moves a figure once placed, except **More → Arrange annotations**
-(`figures --arrange`, `arrangeFigures`): every figure packed again, in order
-(parts tables, equation tables, noise tables, timing, models, plots), each
-clear of those before it, one undo step. `figures` lists them.
+**More → Arrange annotations** (`figures --arrange`, `arrangeFigures`)
+packs every figure, those moved by hand too, one undo step. `figures`
+lists them.
+
+## Annotating
+
+The analysis window's **Annotate…** (`src/web/annotate-menu.js`) lists
+what the mode on screen can put on the drawing -- its equations, the
+small-signal model, its graph, the kT/C noise table -- each marked ✓ when
+it is there already, choosing it updates it; **Everything** puts every one
+there. Each mode registers its items (`registerAnnotations`). The Plots
+window's and the noise calculator's own Annotate buttons do the same for
+what they show.
 
 ## Tables
 

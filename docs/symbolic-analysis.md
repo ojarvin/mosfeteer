@@ -16,8 +16,11 @@ The window reads as the signal-flow analysis's does (`signal-flow-ui.js`):
 chosen that is not the default (transfer functions, loop gain, model
 simplifications, equation approximations, noise, triode devices); the
 results; a **Plots** card that opens the Plots window; and **Values**, the
-numbers the plots are drawn at. Its footer is **Annotate equations** and
-**Derive** (Enter).
+numbers the plots are drawn at. Its footer is **Plots**, **Annotate…** and
+**Derive** (Enter). **Annotate…** is the one place to put the analysis on
+the drawing, in every mode ([`figures.md`](figures.md)): here the equations,
+the small-signal model, and the Bode graph, each marked ✓ when it is there
+already (choosing it updates it), and **Everything**.
 Nets marked AC ground from their context menu (DC bias) are listed in the
 field; the field is the one list, so taking a net out clears its mark when
 the equations are next derived.
@@ -360,8 +363,7 @@ trace shown is drawn as a
 textbook sketch, its asymptote and corners marked, several as their curves
 together over the range they span. **Annotate graph** puts the graph on the
 drawing as a signal-flow graph is (`plot.kind: 'response'`, its traces
-named beside it); **Place sketch** puts the one trace shown there as a
-textbook sketch. Each shown trace's corners are listed under the graph.
+named beside it, against its box). Each shown trace's corners are listed under the graph.
 
 The plots are drawn in relative units, so they sketch shapes, not a
 design's numbers. Every `g_m`
@@ -390,15 +392,14 @@ are eigenvalues. Each Derive builds the model from the drawing as it is;
 the values re-solve it. The Values hint says which way the curves are
 found. The loop gain is still drawn from its derived coefficients.
 
-**Place sketch** puts a textbook sketch on the canvas: a box annotation
-carrying the sampled curve, asymptote, and named corners (`plot` in the
-document), drawn without numbers by `src/core/bode-figure.js`. With a
-sketch there (the selected one, else the only one) the button updates it
-in place ([`figures.md`](figures.md)).
+A textbook sketch on the drawing (a box annotation carrying the sampled
+curve, asymptote, and named corners, drawn without numbers by
+`src/core/bode-figure.js`) is no longer placed; one in a design from before
+is still drawn.
 
 ## Schematic annotations
 
-**Annotate equations** puts the displayed equations on the drawing as the
+**Annotate… → Equations** puts the displayed equations on the drawing as the
 analysis's table ([`figures.md`](figures.md)), right of the circuit: a row
 each, its name then its equation, the definitions under their heading, and
 the assumptions under a rule. Annotating again rewrites that table where it
@@ -442,13 +443,13 @@ measures it. A controlled source names the nodes it reads, a grounded side left 
 `g_{m1}\,\mathrm{VIN}`, `-g_{m2}\,\mathrm{N4}`. Nets a chopper shorts are
 one node, named by the side with a port, else a named one.
 
-**Model**, in the analysis window's footer, shows it in a floating window
-that pans and zooms like a reference window (`src/web/reference-window.js`).
-The window redraws on each Derive and is not saved with the design. Its
-**Place** (and the `analyze model` command) adds the model below the
-circuit, aligned with its left edge, as one undo step; placed again, it
-replaces the model there from the same top-left corner (a figure,
-[`figures.md`](figures.md)). It is drawn without
+The **Model** tab shows it; its **Open in window** shows it in a floating
+window that pans and zooms like a reference window
+(`src/web/reference-window.js`), redrawn on each Derive and not saved with
+the design. **Annotate… → Small-signal model** (and the `analyze model`
+command) adds it to the drawing as one undo step, packed with the other
+figures; placed again, it replaces the model there from the same top-left
+corner (a figure, [`figures.md`](figures.md)). It is drawn without
 ports, and its parts are **drawing only**
 (`ComponentInstance#drawingOnly`): drawn, moved, and checked like any other
 part, but no analysis reads them (`analyzedCircuit`), so placing the model
