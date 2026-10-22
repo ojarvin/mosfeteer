@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { loadDocument, relinkDocumentState } from '../src/core/document.js';
 import { designIndex, searchDesign } from '../src/core/design-index.js';
-import { findMentions, mentionToken, noteDesignLinks, normalizeNotes, notesMarkdown, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
+import { findMentions, mentionToken, noteDesignLinks, normalizeNotes, noteCompletion, notesMarkdown, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
@@ -175,4 +175,39 @@ test('lists nest by indentation, and indented lines continue their item', () => 
   assert.equal(html, '<ul><li>bias<ul><li>tail<ol><li>size</li><li>check</li></ol></li><li class="note-task done"><span class="note-check" aria-hidden="true"></span>mirror<br>ratio 1:4</li></ul></li><li>output</li></ul>\n<p>after</p>');
   // A tab counts as two spaces.
   assert.equal(renderNotes('- a\n\t- b'), '<ul><li>a<ul><li>b</li></ul></li></ul>');
+});
+
+test('completion offers designs after [[ and parts and nets after @, best matches first', () => {
+  const names = {
+    designs: ['amp', 'bias-gen', 'Opamp 2'],
+    parts: [{ name: 'M12', type: 'nmos' }, { name: 'M1', type: 'nmos' }, { name: 'VDD', type: 'vdd' }],
+    nets: ['V_{out}', 'V_{DD}', 'tail node', 'V_{out}'],
+  };
+  const at = (text, caret = text.length) => noteCompletion(text, caret, names);
+  const shown = (found) => found?.items.map((item) => item.insert);
+
+  // Designs: a match at the start first, then anywhere; [[ alone lists all.
+  assert.deepEqual(shown(at('see [[amp')), ['[[amp]]', '[[Opamp 2]]']);
+  assert.deepEqual({ ...at('see [[b'), items: undefined }, { kind: 'design', start: 4, end: 7, items: undefined });
+  assert.deepEqual(shown(at('see [[')), ['[[amp]]', '[[bias-gen]]', '[[Opamp 2]]']);
+  // A link closed after the caret is replaced to its close.
+  assert.equal(at('see [[b]] then', 7).end, 9);
+
+  // Mentions: parts and nets compared as mentions are; a net a part's name
+  // would win over (V_{DD}, VDD) is not offered; spaces get braces.
+  assert.deepEqual(shown(at('gain @M')), ['@M1', '@M12']);
+  assert.deepEqual(shown(at('gain @vo')), ['@V_{out}']);
+  assert.deepEqual(shown(at('gain @vd')), ['@VDD']);
+  assert.deepEqual(shown(at('gain @{tai')), ['@{tail node}']);
+  assert.deepEqual(at('gain @M1 x', 7), { kind: 'mention', start: 5, end: 8, items: at('gain @M1 x', 7).items });
+  assert.equal(at('gain @').items.length, 5);
+  assert.deepEqual(at('gain @M')?.items[0], { name: 'M1', kind: 'part', detail: 'nmos', insert: '@M1' });
+
+  // Nothing: an address, code, no match, or only what is written there.
+  assert.equal(at('mail a@b'), null);
+  assert.equal(at('`@M`', 3), null);
+  assert.equal(at('```\n[[a'), null);
+  assert.equal(at('@zz'), null);
+  assert.equal(at('[[bias-gen]]', 10), null);
+  assert.equal(at('@M12'), null);
 });

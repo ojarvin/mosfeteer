@@ -98,6 +98,38 @@ describe('design notes', { skip: browserSkip() }, () => {
     assert.equal(await editor('editor.circuit.notes'), 'Gain from @M1 into @V_{SS}, see [[child]]');
   });
 
+  test('[[ completes design names and @ parts and nets, at the caret; Esc closes only the list', async () => {
+    await h.click('.notes-edit');
+    const key = (name) => h.evaluate(`document.querySelector('.notes-source').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(name)}, bubbles: true, cancelable: true }))`);
+    const options = () => h.evaluate(`[...document.querySelectorAll('#notes-suggestions:not([hidden]) li')].map((li) => li.querySelector('.notes-suggestion-name').textContent + (li.getAttribute('aria-selected') === 'true' ? '*' : ''))`);
+    const value = () => h.evaluate(`document.querySelector('.notes-source').value`);
+
+    await typeNotes('See [[');
+    assert.equal(await h.evaluate(`document.querySelector('.notes-copy').disabled`), false, 'Copy follows the typing');
+    assert.deepEqual(await options(), ['child*'], 'the other designs, not this one');
+    await key('Enter');
+    assert.equal(await value(), 'See [[child]]');
+    assert.deepEqual(await options(), []);
+
+    await typeNotes('See [[child]] and @V');
+    assert.deepEqual(await options(), ['V_{SS}*', 'VDD', 'VIN', 'VOUT'], 'the net V_{DD} is left out: @VDD finds the part');
+    // The list sits at the caret, inside the window.
+    const box = await h.evaluate(`(() => { const l = document.getElementById('notes-suggestions').getBoundingClientRect(); const f = document.querySelector('.notes-source').getBoundingClientRect(); return { inside: l.left >= f.left && l.top > f.top && l.top < f.bottom }; })()`);
+    assert.deepEqual(box, { inside: true });
+    await key('ArrowDown');
+    assert.deepEqual(await options(), ['V_{SS}', 'VDD*', 'VIN', 'VOUT']);
+    await key('Tab');
+    assert.equal(await value(), 'See [[child]] and @VDD');
+    assert.equal(await editor('editor.circuit.notes'), 'See [[child]] and @VDD');
+
+    await typeNotes('See [[child]] and @VDD into @V_{S');
+    assert.deepEqual(await options(), ['V_{SS}*']);
+    await key('Escape');
+    assert.deepEqual(await options(), []);
+    assert.equal(await h.evaluate(`document.querySelector('.notes-source').hidden`), false, 'still editing');
+    await finish();
+  });
+
   test('Tab indents the lines under the caret into a sublist, Shift+Tab takes them back', async () => {
     await h.click('.notes-edit');
     await typeNotes('- bias\n- tail\n- mirror');

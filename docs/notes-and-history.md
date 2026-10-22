@@ -13,7 +13,12 @@ double-click, Enter -- their source, until Esc or Ctrl/Cmd+Enter, which
 leave the window the keyboard (Esc again closes it). Empty
 notes open ready to write. In the source, Tab indents the lines under the
 caret or selection by two spaces and Shift+Tab takes up to two away (the
-field's own Ctrl+Z undoes either). **Copy** puts the notes on the
+field's own Ctrl+Z undoes either). Typing `[[` lists the workspace's other
+designs, and `@` the design's parts and named nets (`noteCompletion`,
+`src/web/notes-completion.js`): matches at the start of a name first,
+narrowed as you type; a net is left out when a part of its name would win
+the mention. Up/Down choose, Enter or Tab puts the choice in, Esc closes
+the list only. **Copy** puts the notes on the
 clipboard as plain Markdown (`notesMarkdown`): a mention as its name, in
 `$...$` when it has a subscript or superscript, a design link as the
 design's name; code is left as written.

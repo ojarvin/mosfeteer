@@ -25,6 +25,7 @@ import { openDocumentPath } from './document-session.js';
 import { logLine } from './status-bar-ui.js';
 import { beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection } from './main.js';
 import { element as el } from './dom.js';
+import { attachNoteCompletion } from './notes-completion.js';
 
 /** A pause this long ends one edit (one undo step). */
 const EDIT_PAUSE_MS = 1000;
@@ -39,6 +40,18 @@ const notes = () => editor.circuit.notes || '';
 function designNamed(name) {
   const key = String(name).trim().toLowerCase();
   return workspaceDesigns().find((doc) => doc.name.toLowerCase() === key) || null;
+}
+
+/** What the source completes: the other designs, the parts (not those an
+ *  analysis drew), and the named nets. */
+function completionNames() {
+  const current = String(editor.currentCircuitName || '').toLowerCase();
+  const components = [...editor.circuit.components.values()].filter((c) => c.type !== 'solder' && !c.figure);
+  return {
+    designs: workspaceDesigns().map((doc) => doc.name).filter((name) => name.toLowerCase() !== current),
+    parts: components.map((c) => ({ name: c.refdes, type: c.type })),
+    nets: [...editor.circuit.nets.values()].map((net) => net.name).filter(Boolean),
+  };
 }
 
 function mentionTarget(name) {
@@ -87,6 +100,7 @@ function onInput() {
     editor.circuit.notes = next;
     markSettingsChanged();
   }
+  win.copy.disabled = !next;
   clearTimeout(pauseTimer);
   pauseTimer = setTimeout(finishEditStep, EDIT_PAUSE_MS);
 }
@@ -221,6 +235,8 @@ function build() {
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);
   source.addEventListener('input', onInput);
+  // Before the field's own keys: an open list takes Tab and Esc.
+  attachNoteCompletion(source, completionNames);
   source.addEventListener('keydown', onSourceKey);
   source.addEventListener('blur', finishEditStep);
   view.addEventListener('mouseover', onViewOver);

@@ -126,6 +126,69 @@ function codeRanges(text) {
   return ranges;
 }
 
+// ----- completion ----------------------------------------------------------------
+
+/** Completions shown at most. */
+const COMPLETIONS = 8;
+
+/** Whether `name` matches what was typed, and how well: 0 the start of its
+ *  name, 1 anywhere in it, null not at all (compared as mentions are). */
+function matchRank(name, typed) {
+  const key = searchKey(typed);
+  const own = searchKey(name);
+  if (own.startsWith(key)) return 0;
+  return own.includes(key) ? 1 : null;
+}
+
+/**
+ * What to offer while `text` is typed with the caret at `caret`: after
+ * `[[`, the designs; after `@`, the parts and nets (those a mention of that
+ * name would find: a net is left out when a part of its name wins).
+ * `names`: `{ designs: [name], parts: [{ name, type }], nets: [name] }`.
+ * Returns `{ kind: 'design'|'mention', start, end, items: [{ name, kind,
+ * detail, insert }] }`, the text from `start` to `end` replaced by an
+ * item's `insert`; null when there is nothing to complete (inside code too).
+ */
+export function noteCompletion(text, caret, { designs = [], parts = [], nets = [] } = {}) {
+  const source = String(text ?? '');
+  const before = source.slice(0, caret);
+  // A sentinel after the text: code left open runs past the caret.
+  if (codeRanges(`${source}\n\u0000`).some(([a, b]) => caret > a && caret < b)) return null;
+  const ranked = (candidates, typed) => candidates
+    .map((item) => ({ item, rank: matchRank(item.name, typed) }))
+    .filter(({ rank }) => rank !== null)
+    .sort((a, b) => a.rank - b.rank || a.item.name.localeCompare(b.item.name, undefined, { numeric: true }))
+    .slice(0, COMPLETIONS)
+    .map(({ item }) => item);
+  const link = before.match(/\[\[([^[\]\n|]*)$/);
+  if (link) {
+    // A link already closed after the caret is replaced with its close.
+    const close = source.slice(caret).match(/^[^[\]\n|]*\]\]/);
+    const end = close ? caret + close[0].length : caret;
+    const items = ranked(designs.map((name) => ({ name, kind: 'design', detail: 'design', insert: `[[${name}]]` })), link[1]);
+    return offered({ kind: 'design', start: caret - link[0].length, end, items });
+  }
+  const mention = before.match(/(^|[^\w@\\])@(\{[^{}\n]*|[A-Za-z0-9_{}^]*)$/);
+  if (!mention) return null;
+  const typed = mention[2].replace(/^\{/, '');
+  const start = caret - mention[2].length - 1;
+  const rest = source.slice(caret).match(mention[2].startsWith('{') ? /^[^{}\n]*\}/ : /^[A-Za-z0-9_{}^]*/);
+  const end = caret + (rest ? rest[0].length : 0);
+  const partKeys = new Set(parts.map((part) => searchKey(part.name)));
+  const candidates = [
+    ...parts.map((part) => ({ name: part.name, kind: 'part', detail: part.type || 'part', insert: mentionToken(part.name) })),
+    ...[...new Set(nets)].filter((name) => !partKeys.has(searchKey(name))).map((name) => ({ name, kind: 'net', detail: 'net', insert: mentionToken(name) })),
+  ];
+  return offered({ kind: 'mention', start, end, items: ranked(candidates, typed) });
+
+  // Nothing to offer, or only what is written there already.
+  function offered(found) {
+    const written = source.slice(found.start, found.end);
+    if (!found.items.length || (found.items.length === 1 && found.items[0].insert === written)) return null;
+    return found;
+  }
+}
+
 // ----- design links --------------------------------------------------------------
 
 export const DESIGN_LINK = /\[\[([^[\]\n|]+)\]\]/g;
