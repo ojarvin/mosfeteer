@@ -59,7 +59,7 @@ A design is one `.json` file in a folder.
   reference window (`Shift+V`).
 
 <p align="center">
-  <img src="docs/images/beats.webp" alt="A switched-capacitor integrator stepped to its second beat: the switches open in that phase are drawn open and the parts they cut off are dimmed. In the timing diagram below, a shaded band marks the slots of the phase on screen, and the beats window lists the three phases.">
+  <img src="docs/images/beats.webp" alt="A switched-capacitor integrator stepped to its second beat: the switches open in that phase are drawn open and the parts they cut off are dimmed. In the timing diagram below, a shaded band marks the slots of the phase on screen, and the beats window lists the three phases. On the right, the timing diagram editor shows each phase's slots as a grid, the non-overlap pairs, and the arrows and spans drawn on the diagram.">
 </p>
 
 ## The workspace
