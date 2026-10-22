@@ -46790,7 +46790,7 @@ function checkMenuItems({ links, unsaved, unreadable }) {
     items.push(heading('Could not be read'));
     items.push(note(`${unreadable.join(', ')}: not a drawing this version can open (the log says why).`));
   }
-  if (!items.length) items.push(note('Nothing to fix: every link finds its design, every file reads, and nothing is unsaved.'));
+  if (!items.length) items.push(note('No broken links, no unsupported files, no unsaved changes.'));
   return items;
 }
 
@@ -70174,7 +70174,7 @@ function runLine(line) {
   // The history lives in the file, and the drawing here may be ahead of it:
   // the History window changes it in the file.
   if (/^history\s+\S/i.test(trimmed)) {
-    const message = 'In the editor, the History window (:history) lists and changes the save history; history commands are for the CLI and HTTP';
+    const message = 'History commands run from the CLI; in the editor, use the History window (:history)';
     logLine(message);
     return message;
   }

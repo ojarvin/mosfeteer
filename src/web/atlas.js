@@ -1219,7 +1219,7 @@ function checkMenuItems({ links, unsaved, unreadable }) {
     items.push(heading('Could not be read'));
     items.push(note(`${unreadable.join(', ')}: not a drawing this version can open (the log says why).`));
   }
-  if (!items.length) items.push(note('Nothing to fix: every link finds its design, every file reads, and nothing is unsaved.'));
+  if (!items.length) items.push(note('No broken links, no unsupported files, no unsaved changes.'));
   return items;
 }
 
