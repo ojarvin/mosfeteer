@@ -32,8 +32,24 @@ describe('loop gain where the drawing says', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.windows?.analysis?.loopElement)`), 'M2.g', 'kept with the design');
   });
 
+  test('a loop gain solved at numbers keeps the sliders of the values it was solved at', async () => {
+    // Too large to keep its symbols (a budget of five operations): T solved
+    // at the sliders' values, so they must still be there to set.
+    const names = await h.evaluate(`(async () => {
+      const base = document.querySelector('script[src="main.js"]').src;
+      const [engine, adapter, bode, state] = await Promise.all(['../core/analysis/engine.js', '../core/analysis/report-adapter.js', 'bode-ui.js', 'editor-state.js'].map((path) => import(new URL(path, base).href)));
+      const report = adapter.adaptCombinedReport(engine.analyzeSmallSignalV2(state.editor.circuit, { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true, loopGain: { at: 'M2.g' }, loopGainOperations: 5 }));
+      if (!report.reports.loop?.numeric) return 'not numeric';
+      bode.renderBode(report);
+      return [...document.querySelectorAll('#analysis-values .bode-value')].map((row) => row.textContent.replace(/\\s+/g, ''));
+    })()`);
+    assert.notEqual(names, 'not numeric');
+    for (const name of ['gm1', 'gm2', 'gm3', 'gm4', 'ro1', 'ro2', 'ro3', 'ro4']) assert.ok(names.some((row) => row.startsWith(name)), `${name} in ${names}`);
+    assert.ok(!names.some((row) => row.startsWith('gmb')), 'the body effect left out has no slider');
+  });
+
   test('the net that closes the loop gives the same loop; a transistor alone says to name a terminal', async () => {
-    const loopRows = (text) => text.slice(text.indexOf('Loop gain')).replace(/at \S+/, '');
+    const loopRows = (text) => text.slice(text.indexOf('Loop gain')).replace(/at \S+/g, '');
     const atTerminal = loopRows(await rows());
     await breakAt('VOUT');
     await derive();

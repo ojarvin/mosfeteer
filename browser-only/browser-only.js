@@ -3291,7 +3291,7 @@ let applyApproximations; __bind(() => { ({ applyApproximations } = __require("sr
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
 let createRationalOps; __bind(() => { ({ createRationalOps } = __require("src/core/analysis/algebra-ops.js")); });
 let symbolProvenance; __bind(() => { ({ symbolProvenance } = __require("src/core/analysis/provenance.js")); });
-let evaluateExpression, sketchParameters, sketchValues; __bind(() => { ({ evaluateExpression, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
+let evaluateExpression, expressionSymbols, sketchParameters, sketchValues; __bind(() => { ({ evaluateExpression, expressionSymbols, sketchParameters, sketchValues } = __require("src/core/analysis/bode.js")); });
 let numericQuantities; __bind(() => { ({ numericQuantities } = __require("src/core/analysis/numeric-response.js")); });
 let buildExactAnalysisPipeline, transferFunctionList; __bind(() => { ({ buildExactAnalysisPipeline, transferFunctionList } = __require("src/core/analysis/pipeline.js")); });
 let presentDiagnostics; __bind(() => { ({ presentDiagnostics } = __require("src/core/analysis/diagnostics.js")); });
@@ -3759,7 +3759,16 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, request, mainOps, m
     const numericOptions = { ...mainOptions, budget: numericOps.budget };
     const numericApproximation = { ...mainApproximationOptions, budget: numericOps.budget, rational: { ...(mainApproximationOptions.rational || {}), budget: numericOps.budget } };
     const numeric = loopGainReport(numericPipelineOptions, numericOps, numericOptions, numericApproximation);
-    return numeric.ok ? { ...numeric, numeric: true, values } : exact;
+    // What it was solved at, so the Values sliders can set it again: the
+    // symbols the model stamps (not those a simplification left out).
+    // A merged branch (r_o9 || r_o10) carries its symbols in an expression.
+    const stamped = new Set();
+    for (const { value } of model.primitives) {
+      if (typeof value === 'string') stamped.add(value);
+      else expressionSymbols(value, mainApproximationOptions.variable || 's', stamped);
+    }
+    const parameters = Object.keys(values).filter((name) => stamped.has(name));
+    return numeric.ok ? { ...numeric, numeric: true, values, parameters, provenance, outputComponents: [...outputComponents] } : exact;
   } catch {
     return exact;
   }
@@ -12387,7 +12396,8 @@ function buildAdapted(report, presentation = {}) {
   const reports = { ...cleaned };
   // The loop gain, for the Bode tab: its exact coefficients and roots.
   if (report.loop?.ok) {
-    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, at: report.loop.at, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
+    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, at: report.loop.at, infinite: report.loop.infinite, numeric: !!report.loop.numeric,
+      ...(report.loop.numeric ? { parameters: report.loop.parameters || Object.keys(report.loop.values || {}), provenance: report.loop.provenance || {}, outputComponents: report.loop.outputComponents || [] } : {}) };
   }
   const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
@@ -51046,6 +51056,12 @@ function parametersOf(trace) {
     if (!model?.ok) return null;
     const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
     return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)) };
+  }
+  // A loop gain solved at numbers: the parameters it was solved at.
+  const loop = key === 'loop' ? report.reports?.loop : null;
+  if (loop?.numeric && loop.parameters) {
+    const all = sketchParameters(new Set(loop.parameters), loop.provenance || {}, { outputComponents: new Set(loop.outputComponents || []) });
+    return { all, reached: all };
   }
   const exact = exactOf(report, key);
   if (!exact) return null;

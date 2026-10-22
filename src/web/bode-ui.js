@@ -132,6 +132,12 @@ function parametersOf(trace) {
     const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
     return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)) };
   }
+  // A loop gain solved at numbers: the parameters it was solved at.
+  const loop = key === 'loop' ? report.reports?.loop : null;
+  if (loop?.numeric && loop.parameters) {
+    const all = sketchParameters(new Set(loop.parameters), loop.provenance || {}, { outputComponents: new Set(loop.outputComponents || []) });
+    return { all, reached: all };
+  }
   const exact = exactOf(report, key);
   if (!exact) return null;
   // A Miller capacitance (C_{M1,in}) is set by the values it is made of.

@@ -6,7 +6,7 @@ import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
 import { createRationalOps } from './algebra-ops.js';
 import { symbolProvenance } from './provenance.js';
-import { evaluateExpression, sketchParameters, sketchValues } from './bode.js';
+import { evaluateExpression, expressionSymbols, sketchParameters, sketchValues } from './bode.js';
 import { numericQuantities } from './numeric-response.js';
 import { buildExactAnalysisPipeline, transferFunctionList } from './pipeline.js';
 import { presentDiagnostics } from './diagnostics.js';
@@ -471,7 +471,16 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, request, mainOps, m
     const numericOptions = { ...mainOptions, budget: numericOps.budget };
     const numericApproximation = { ...mainApproximationOptions, budget: numericOps.budget, rational: { ...(mainApproximationOptions.rational || {}), budget: numericOps.budget } };
     const numeric = loopGainReport(numericPipelineOptions, numericOps, numericOptions, numericApproximation);
-    return numeric.ok ? { ...numeric, numeric: true, values } : exact;
+    // What it was solved at, so the Values sliders can set it again: the
+    // symbols the model stamps (not those a simplification left out).
+    // A merged branch (r_o9 || r_o10) carries its symbols in an expression.
+    const stamped = new Set();
+    for (const { value } of model.primitives) {
+      if (typeof value === 'string') stamped.add(value);
+      else expressionSymbols(value, mainApproximationOptions.variable || 's', stamped);
+    }
+    const parameters = Object.keys(values).filter((name) => stamped.has(name));
+    return numeric.ok ? { ...numeric, numeric: true, values, parameters, provenance, outputComponents: [...outputComponents] } : exact;
   } catch {
     return exact;
   }

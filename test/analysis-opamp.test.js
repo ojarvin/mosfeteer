@@ -166,6 +166,9 @@ test('a loop gain too large to keep its symbols is solved at the Bode sketch\'s 
   const adapted = adaptCombinedReport(report);
   assert.equal(adapted.reports.loop.numeric, true);
   assert.ok(adapted.equationEntries.some((entry) => entry.group === 'loop' && /numeric/.test(entry.title || entry.label || JSON.stringify(entry))));
+  // What it was solved at, for the Values sliders: every symbol, with where it comes from.
+  assert.deepEqual([...adapted.reports.loop.parameters].sort(), ['R1', 'R2', '\\omega_{t1}'].sort());
+  assert.equal(adapted.reports.loop.provenance.R1.component, 'R1');
 });
 
 test('the closed loop splits at the loop\'s element: A_v = A_v_inf T/(1+T) + A_v0/(1+T)', async () => {

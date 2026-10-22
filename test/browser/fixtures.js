@@ -136,7 +136,8 @@ export function scIntegrator({ timing = true } = {}) {
   return circuit.toJSON();
 }
 
-/** A 5T OTA in unity feedback: M2's gate wired to the output. */
+/** A 5T OTA in unity feedback, M2's gate wired to the output, with a load
+ *  capacitor. */
 export function unityOta() {
   return build([
     'add nmos M1 --at 0 0', 'add nmos M2 --at 480 0', 'add pmos M3 --at 0 -320', 'add pmos M4 --at 480 -320',
@@ -144,5 +145,6 @@ export function unityOta() {
     'add input VIN --at -400 0', 'add output VOUT --at 880 -160',
     'connect VIN.p M1.g', 'connect M1.d M3.d', 'connect M3.d M3.g', 'connect M3.g M4.g', 'connect M2.d M4.d', 'connect M4.d VOUT.p',
     'connect M2.g VOUT.p', 'connect M1.s M2.s', 'connect M1.s I1.a', 'connect I1.b GND.gnd', 'connect M3.s VDD.p', 'connect M4.s VDD.p',
+    'add capacitor CL --at 880 200', 'add ground GND2 --at 880 440', 'connect CL.a VOUT.p', 'connect CL.b GND2.gnd',
   ]);
 }

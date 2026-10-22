@@ -846,7 +846,8 @@ function buildAdapted(report, presentation = {}) {
   const reports = { ...cleaned };
   // The loop gain, for the Bode tab: its exact coefficients and roots.
   if (report.loop?.ok) {
-    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, at: report.loop.at, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
+    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, at: report.loop.at, infinite: report.loop.infinite, numeric: !!report.loop.numeric,
+      ...(report.loop.numeric ? { parameters: report.loop.parameters || Object.keys(report.loop.values || {}), provenance: report.loop.provenance || {}, outputComponents: report.loop.outputComponents || [] } : {}) };
   }
   const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
