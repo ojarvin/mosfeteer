@@ -142,7 +142,8 @@ test('a figure moves and goes as one; Arrange puts each where a new one would go
   const moved = runCommand(circuit, 'figures --arrange');
   assert.equal(moved.json.moved, 1);
   const placed = figureBounds(circuit, listFigures(circuit)[0]);
-  assert.equal(placed.x, Math.floor(core.x / 40) * 40);
+  // Moved by whole cells: its ink within half a cell of the circuit's left edge.
+  assert.ok(Math.abs(placed.x - Math.floor(core.x / 40) * 40) <= 20, `${placed.x} vs ${core.x}`);
   assert.ok(placed.y > core.y + core.h);
   assert.equal(arrangeFigures(circuit), 0, 'arranged already');
   removeFigure(circuit, listFigures(circuit)[0]);

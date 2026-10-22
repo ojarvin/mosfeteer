@@ -245,13 +245,18 @@ export function responseFigure(plot, { width = 480, height = 260, fontSize = 11 
     const samples = trace.points.filter((p) => Math.log10(p.f) >= low - 1e-9 && Math.log10(p.f) <= high + 1e-9).map((p) => ({ f: p.f, value: p.db }));
     for (const path of clippedPaths(samples, (s) => x(s.f), y, dbLow, dbHigh, trace.background ? 'spectrum' : 'curve')) items.push({ ...path, color: trace.color, trace: index });
   });
-  // Marked frequencies (a loop's crossover), labeled at the top.
-  for (const marker of plot.markers || []) {
+  // Marked frequencies (a loop's crossover, a Bode graph's corners), labeled
+  // at the top; a label close to the one before goes a line lower.
+  let previous = null;
+  let row = 0;
+  for (const marker of [...(plot.markers || [])].sort((a, b) => a.f - b.f)) {
     if (!(marker.f > 0) || Math.log10(marker.f) <= low || Math.log10(marker.f) >= high) continue;
     items.push({ type: 'line', x1: x(marker.f), y1: pane.y, x2: x(marker.f), y2: pane.y + pane.h, role: 'marker' });
     if (marker.label) {
       const right = x(marker.f) > pane.x + pane.w / 2;
-      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + 2.1 * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
+      row = previous !== null && x(marker.f) - previous < 3 * em ? row + 1 : 0;
+      previous = x(marker.f);
+      items.push({ type: 'text', x: x(marker.f) + (right ? -0.35 : 0.35) * em, y: pane.y + (2.1 + 1.2 * row) * em, text: marker.label, anchor: right ? 'end' : 'start', role: 'marker' });
     }
   }
   // The signal band's edges.

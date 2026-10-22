@@ -4,7 +4,8 @@ import { Circuit } from '../src/core/model.js';
 import { analyzeSmallSignalV2, numericSmallSignal } from '../src/core/analysis/engine.js';
 import { adaptCombinedReport } from '../src/core/analysis/report-adapter.js';
 import { eigenvalues, pencilRoots } from '../src/core/analysis/eigen.js';
-import { numericCoefficients, responseAt, sketchParameters, sketchValues } from '../src/core/analysis/bode.js';
+import { bodeSketch, numericCoefficients, responseAt, sketchParameters, sketchValues } from '../src/core/analysis/bode.js';
+import { atOrigin } from '../src/core/analysis/numeric-response.js';
 import { smallSignalGoldenCorpus } from './fixtures/small-signal-golden.js';
 
 const near = (actual, expected, tolerance = 1e-9) => assert.ok(Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected)), `${actual} != ${expected}`);
@@ -165,4 +166,46 @@ test('a two-stage amplifier with its capacitances plots in numbers, supply rejec
   for (const w of [1e-4, 1e-2, 1, 10]) near(db(responseAt(supply.numerator, supply.denominator, w)), db(supply.response(w)), 1e-4);
   // The symbolic solve of the same request runs out of budget: the plot does not depend on it.
   assert.equal(analyzeSmallSignalV2(circuit, { input: 'VDD', output: 'OUT', acGrounds: ['VB'], parasitics: true }).ok, false);
+});
+
+test('the numeric model gives the transimpedance and the transconductance as the exact solve does', () => {
+  let checked = 0;
+  for (const entry of smallSignalGoldenCorpus) {
+    const circuit = entry.build();
+    const options = { ...entry.ports, transferFunctions: ['Av', 'Zm', 'Gm'] };
+    const raw = analyzeSmallSignalV2(circuit, options);
+    if (!raw.ok) continue;
+    const report = adaptCombinedReport(raw);
+    const model = numericSmallSignal(circuit, options);
+    if (!model.ok) continue;
+    const values = valuesFor(model);
+    const numeric = model.at(values);
+    if (!numeric.ok) continue;
+    for (const key of ['transimpedance', 'transconductance']) {
+      const exact = report.reports?.[key]?.exact;
+      if (!exact?.numeratorCoefficients) continue;
+      const num = numericCoefficients(exact.numeratorCoefficients, values);
+      const den = numericCoefficients(exact.denominatorCoefficients, values);
+      const quantity = numeric.quantities[key];
+      if (num.every((value) => value === 0)) continue;
+      assert.ok(quantity && !quantity.zero, `${entry.id} ${key}`);
+      for (let e = -3; e <= 3; e += 1) {
+        const w = 10 ** e;
+        const expected = db(responseAt(num, den, w));
+        near(db(quantity.response(w)), expected, 1e-6);
+        near(db(responseAt(quantity.numerator, quantity.denominator, w)), expected, 1e-4);
+      }
+      checked += 1;
+    }
+  }
+  assert.ok(checked >= 20, `checked ${checked}`);
+});
+
+test('a root next to nothing beside the others is at the origin, not a corner decades below', () => {
+  const [zeros, poles] = atOrigin([{ re: 1e-17, im: 0 }, { re: -2, im: 0 }], [{ re: -1, im: 0 }]);
+  assert.deepEqual(zeros, [{ re: 0, im: 0 }, { re: -2, im: 0 }]);
+  assert.deepEqual(poles, [{ re: -1, im: 0 }]);
+  // The plot then spans the corners that are there, not sixteen decades.
+  const sketch = bodeSketch([0, 1, 1e-17], [1, 1], { roots: { zeros: [{ re: -1e-17, im: 0 }], poles: [{ re: -1, im: 0 }] }, response: (w) => ({ re: 0, im: w }) });
+  assert.ok(sketch.range.high - sketch.range.low <= 4, JSON.stringify(sketch.range));
 });

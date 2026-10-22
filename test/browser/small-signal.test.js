@@ -16,9 +16,22 @@ function loadedAmplifier() {
   return circuit.toJSON();
 }
 
+/** A common-gate stage, loaded: the input at M1's source, so a current goes in. */
+function commonGate() {
+  const circuit = new Circuit();
+  for (const line of [
+    'add nmos M1 --at 0 0', 'add resistor RD --at 0 -320 --rot 90', 'add supply VDD --at 0 -560', 'add resistor RS --at 0 320 --rot 90', 'add ground GND --at 0 560',
+    'add input VIN --at -400 160', 'add output VOUT --at 400 -160', 'add port VB --at -400 0',
+    'connect M1.g VB.p', 'connect M1.s RS.a VIN.p', 'connect RS.b GND.gnd', 'connect M1.d RD.b VOUT.p', 'connect RD.a VDD.p',
+    // A load, so the responses roll off.
+    'add capacitor CL --at 400 160 --rot 90', 'connect CL.a VOUT.p', 'connect CL.b GND.gnd',
+  ]) runCommand(circuit, line);
+  return circuit.toJSON();
+}
+
 describe('small-signal analysis', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier(), cg: commonGate() }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   // The analysis window's Annotate menu: open it, choose `label`.
   const annotate = async (label) => {
@@ -337,6 +350,31 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await plotsButton('Clear graph');
     assert.deepEqual((await bode()).traces, []);
     assert.equal(await shown('#analysis-values'), false);
+  });
+
+  test('the graph takes the transfer functions asked for: transimpedance on its own, the voltage gain beside it; annotated, its corners are marked', async () => {
+    await h.open('cg');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    await h.evaluate(`document.getElementById('analysis-options').open = true`);
+    await h.evaluate(`(() => { const f = document.getElementById('analysis-ac-grounds'); f.value = 'VB'; f.dispatchEvent(new Event('input', { bubbles: true })); f.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const tick = (id, on) => h.evaluate(`(() => { const c = document.getElementById(${JSON.stringify(id)}); if (c.checked !== ${on}) c.click(); })()`);
+    await tick('analysis-tf-zm', true);
+    await tick('analysis-tf-av', false);
+    await h.click('#analysis-submit');
+    await h.until(`${h.module('bode-ui.js')}.then((m) => m.bodeSnapshot().traces[0]?.key === 'transimpedance')`, 60000);
+    const pressed = (text) => h.evaluate(`[...document.querySelectorAll('.plots-window .bode-add button')].find((b) => b.textContent.trim() === ${JSON.stringify(text)})?.getAttribute('aria-pressed') ?? null`);
+    assert.equal(await pressed('Transimpedance'), 'true');
+    assert.equal(await pressed('Voltage gain'), 'false');
+    assert.equal((await bode()).traces[0].label, 'Z_{m}');
+    // One trace annotated: its corners marked on the drawing's graph.
+    assert.equal(await plotsButton('Annotate graph'), true);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.plot?.markers?.length))`);
+    const markers = await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.plot?.markers).plot.markers.map((x) => x.label))`);
+    assert.ok(markers.includes('ω_{p1}'), JSON.stringify(markers));
+    await plotsButton('Clear graph');
+    await tick('analysis-tf-av', true);
+    await tick('analysis-tf-zm', false);
   });
 
   test('a value slider dragged stays under the pointer while the plots follow, and the form is not rebuilt', async () => {

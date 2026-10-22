@@ -374,6 +374,9 @@ export const LABEL_ALIGN_INSET = GRID / 2;
 
 /** Padding a math label keeps on the sides its alignment does not set. */
 export const MATH_LABEL_PAD = 6;
+/** How much wider than the metric estimate the browser draws math text
+ *  (measured in Chromium): an unmeasured label's ink is taken so. */
+export const MATH_WIDTH_DRAWN = 1.25;
 
 const symbolInk = new WeakMap();
 const symbolInkPieces = new WeakMap();
@@ -1689,12 +1692,13 @@ export class LabelInstance {
     const align = this.textAlign();
     if (this.math) {
       const measured = this._renderedTextBounds;
-      // Unmeasured, the content may fill the box but for the aligned side's
-      // inset, which mathLabelSvg always keeps.
+      // Unmeasured, the text is about as wide as the browser draws its
+      // estimate (a quarter over it), against the aligned side's inset, which
+      // mathLabelSvg always keeps.
       if (!measured) {
-        if (align === 'left') return { x: b.x + LABEL_ALIGN_INSET, y: b.y, w: b.w - LABEL_ALIGN_INSET, h: b.h };
-        if (align === 'right') return { x: b.x, y: b.y, w: b.w - LABEL_ALIGN_INSET, h: b.h };
-        return b;
+        if (align !== 'left' && align !== 'right') return b;
+        const w = Math.min(b.w - LABEL_ALIGN_INSET, this.textWidth() * MATH_WIDTH_DRAWN + 2 * MATH_LABEL_PAD);
+        return { x: align === 'left' ? b.x + LABEL_ALIGN_INSET : b.x + b.w - LABEL_ALIGN_INSET - w, y: b.y, w, h: b.h };
       }
       // Where mathLabelSvg's padded flex box puts the content.
       const side = Math.max(MATH_LABEL_PAD, Math.min(LABEL_ALIGN_INSET, b.w - measured.w - MATH_LABEL_PAD));

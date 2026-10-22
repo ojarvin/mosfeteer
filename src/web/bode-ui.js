@@ -38,11 +38,25 @@ import { registerAnnotations } from './annotate-menu.js';
 
 const QUANTITIES = {
   transfer: { name: 'Voltage gain', tex: 'A_{v}' },
+  transimpedance: { name: 'Transimpedance', tex: 'Z_{m}' },
+  transconductance: { name: 'Transconductance', tex: 'G_{m}' },
+  currentGain: { name: 'Current gain', tex: 'A_{i}' },
   output: { name: 'Output impedance', tex: 'Z_{out}' },
   input: { name: 'Input impedance', tex: 'Z_{in}' },
   loop: { name: 'Loop gain', tex: 'T' },
 };
-const NUMERIC_KEYS = new Set(['transfer', 'input', 'output']);
+// Solved in numbers from the exact model; the rest from their equations.
+const NUMERIC_KEYS = new Set(['transfer', 'transimpedance', 'transconductance', 'input', 'output']);
+// The form's transfer functions (A_v, Z_m, G_m, A_i) as the graph's quantities.
+const TRANSFER_KEYS = { Av: 'transfer', Zm: 'transimpedance', Gm: 'transconductance', Ai: 'currentGain' };
+
+/** The transfer functions a derive asked for, as quantities, in the form's
+ *  order; the voltage gain when it asked for none. */
+function requestedKeys(report) {
+  const names = Array.isArray(report?.transferFunctions) ? report.transferFunctions : ['Av'];
+  const keys = names.map((name) => TRANSFER_KEYS[name]).filter(Boolean);
+  return keys.length ? keys : ['transfer'];
+}
 const KIND_ORDER = ['transconductance', 'resistance', 'capacitance', 'inductance', 'other'];
 
 /**
@@ -204,7 +218,8 @@ function traceOf(report, key) {
   const label = key === 'transfer' ? `\\frac{${output}}{${input}}`
     : key === 'output' ? `Z_{out}(${output})`
       : key === 'input' ? `Z_{in}(${input})`
-        : report.reports?.loop?.infinite ? `\\beta_{${element}}` : `T_{${element}}`;
+        : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : `T_{${element}}`)
+          : QUANTITIES[key].tex;
   // One trace per quantity between the same nets: a newer derive replaces it.
   return { id: `${key}\n${input}\n${output}\n${key === 'loop' ? element : ''}`, key, label, report, on: true };
 }
@@ -257,10 +272,16 @@ function responsePlotOf(sketches, quantity = 'magnitude') {
   const low = Math.min(...sketches.map(({ sketch }) => sketch.range.low));
   const high = Math.max(low + 1, ...sketches.map(({ sketch }) => sketch.range.high));
   const grid = Array.from({ length: (high - low) * POINTS_PER_DECADE + 1 }, (_, i) => 10 ** (low + i / POINTS_PER_DECADE));
+  // One trace: its corners marked, named as the window names them (four at
+  // most, as a plot keeps); several traces' corners would be anyone's.
+  const markers = sketches.length === 1
+    ? sketches[0].corners.filter((corner) => corner.w >= 10 ** low && corner.w <= 10 ** high).slice(0, 4).map((corner) => ({ f: corner.w, label: corner.text }))
+    : [];
   return {
     kind: 'response',
     axis: 'omega',
     range: { low, high },
+    ...(markers.length ? { markers } : {}),
     ...(quantity === 'phase' ? { quantity: 'phase' } : {}),
     traces: sketches.map(({ trace, response }) => {
       let previous = null;
@@ -329,7 +350,9 @@ function renderPlots() {
 function addButtons() {
   const row = el('div', { class: 'bode-add', role: 'group', 'aria-label': 'On the graph' });
   if (!latest) return row;
-  for (const key of ['transfer', 'output', 'input', 'loop']) {
+  // The transfer functions asked for, the voltage gain (always solved), the
+  // ports' impedances, the loop gain.
+  for (const key of [...new Set([...requestedKeys(latest), 'transfer', 'output', 'input', 'loop'])]) {
     if (!plottable(latest, key)) continue;
     const id = traceOf(latest, key).id;
     const on = traces.some((trace) => trace.id === id);
@@ -522,7 +545,10 @@ export function renderBode(report) {
   if (report && report !== latest) {
     latest = report;
     loadRatios();
-    for (const key of ['transfer', 'loop']) if (plottable(report, key)) addTrace(report, key);
+    // The first transfer function asked for goes on the graph (the voltage
+    // gain when none can be plotted: a current into a gate), with the loop gain.
+    const first = [...requestedKeys(report), 'transfer'].find((key) => plottable(report, key));
+    for (const key of [first, 'loop']) if (key && plottable(report, key)) addTrace(report, key);
     renderValues({ force: true });
     renderPlots();
     if (traces.length) offerPlots();

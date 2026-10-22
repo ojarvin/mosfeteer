@@ -87,6 +87,16 @@ function evaluateRoots(roots, s) {
  * roots, and dense real `numerator`/`denominator` coefficients built from
  * them with the gain that matches the response.
  */
+/** A root a billion times smaller than the largest (or than 1, the plots'
+ *  values being relative) is at the origin: the eigenvalue solve leaves
+ *  s = 0 at about 1e-16. Exactly there, the curve rises from DC rather than
+ *  bending at a corner far below. */
+export function atOrigin(zeros, poles) {
+  const scale = Math.max(1, ...[...zeros, ...poles].map(cabs));
+  const snap = (root) => (cabs(root) < 1e-9 * scale ? c(0) : root);
+  return [zeros.map(snap), poles.map(snap)];
+}
+
 function quantityOf(system, { num, den = null, sign = 1 }) {
   const { A0, A1, B } = system;
   const pick = (solution, ref) => (ref.index === null ? c(0) : solution[ref.index][ref.column]);
@@ -101,9 +111,9 @@ function quantityOf(system, { num, den = null, sign = 1 }) {
   const rootsOf = (ref) => (ref ? (ref.index === null ? null : pencilRoots(...Object.values(cramerPencil(A0, A1, B, ref.index, ref.column))))
     : pencilRoots(A0, A1));
   if (num.index === null) return { zero: true };
-  const zeros = rootsOf(num);
-  const poles = rootsOf(den);
-  if (!zeros || !poles) return null;
+  const found = [rootsOf(num), rootsOf(den)];
+  if (!found[0] || !found[1]) return null;
+  const [zeros, poles] = atOrigin(...found);
   // The gain: the exact value at a frequency clear of every root, divided
   // by the roots' product there.
   const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0);
@@ -154,5 +164,32 @@ export function numericQuantities({ A0, A1, B, unknowns, aliases = new Map(), in
   if (vin && vout) out.transfer = quantityOf(system, { num: vout, den: vin });
   if (vin && iin) out.input = quantityOf(system, { num: vin, den: iin, sign: -1 });
   if (vtest) out.output = quantityOf(system, { num: vtest });
+  // Z_m: V(out) per the current into the input, the output open.
+  if (vout && iin) out.transimpedance = quantityOf(system, { num: vout, den: iin, sign: -1 });
+  // G_m: the output current with the output shorted, per V(in): -A_v / Z_out.
+  if (out.transfer?.zeros && out.output?.zeros) out.transconductance = quotientOf(out.transfer, out.output, -1);
   return out;
+}
+
+/**
+ * `sign` a / b of two quantities: its zeros a's zeros and b's poles, its
+ * poles a's poles and b's zeros, a pole on a zero canceled (they share the
+ * system's determinant), its gain from the exact value away from them all.
+ */
+function quotientOf(a, b, sign = 1) {
+  const left = [[...a.zeros, ...b.poles], [...a.poles, ...b.zeros]];
+  const zeros = [];
+  const poles = [...left[1]];
+  for (const zero of left[0]) {
+    const at = poles.findIndex((pole) => cabs({ re: pole.re - zero.re, im: pole.im - zero.im }) <= 1e-6 * Math.max(1e-300, cabs(zero)));
+    if (at >= 0) poles.splice(at, 1);
+    else zeros.push(zero);
+  }
+  const response = (omega) => cmul(c(sign), cdiv(a.response(omega), b.response(omega)));
+  const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0);
+  const probe = corners.length ? Math.sqrt(Math.min(...corners) * Math.max(...corners)) * 1.37 : 1;
+  const value = response(probe);
+  if (!Number.isFinite(value.re) || cabs(value) === 0) return { zero: true };
+  const gain = cdiv(cmul(value, evaluateRoots(poles, c(0, probe))), evaluateRoots(zeros, c(0, probe)));
+  return { zeros, poles, numerator: polynomialOf(zeros).map((coefficient) => coefficient * gain.re), denominator: polynomialOf(poles), response };
 }

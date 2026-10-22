@@ -229,9 +229,15 @@ export function bodeSketch(numerator, denominator, { pointsPerDecade = 40, roots
   // function itself. Leave such pairs out of the corners and the asymptote;
   // the curve, evaluated from the coefficients, is the same either way.
   // Eigenvalues meet only to about a part in 10^6.
-  const { zeros, poles, canceled } = roots
+  const left = roots
     ? cancelCommonRoots(roots.zeros, roots.poles, 1e-6)
     : cancelCommonRoots(polynomialRoots(num), polynomialRoots(den));
+  const { canceled } = left;
+  // A root next to nothing beside the rest is at the origin: no corner.
+  const scale = Math.max(1, ...[...left.zeros, ...left.poles].map(cabs));
+  const snap = (root) => (cabs(root) < 1e-9 * scale ? { re: 0, im: 0 } : root);
+  const zeros = left.zeros.map(snap);
+  const poles = left.poles.map(snap);
   const corners = [...zeros, ...poles].map(cabs).filter((w) => w > 0 && Number.isFinite(w));
   const low = corners.length ? Math.floor(log10(Math.min(...corners))) - 1 : -2;
   let high = corners.length ? Math.ceil(log10(Math.max(...corners))) + 1 : 2;

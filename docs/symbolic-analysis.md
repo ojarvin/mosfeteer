@@ -350,20 +350,28 @@ whose share is negligible is best left out rather than approximated away.
 The Bode plots are in the **Plots** window (`Shift+W`), as a signal-flow
 diagram's responses are, its view picked by the analysis window's mode (or,
 that window shut, by what the drawing is; `plots-window.js`). Each Derive
-adds its `A_v` (and its loop gain, if one is asked for) to the graph beside
-what is there -- a supply's way to the output beside the signal's, or one
-setting beside another; the same quantity between the same nets replaces
-itself. **Voltage gain**, **Output impedance**, **Input impedance**, and
-**Loop gain** above the graph are switches for the last Derive's
-quantities: pressed while one is on the graph, pressed again to take it
-off. Each trace can be hidden or removed;
+adds the first transfer function the form asks for (`A_v`, `Z_m`, `G_m`,
+or `A_i`; the voltage gain when none can be plotted, a current into a gate)
+and its loop gain, if one is asked for, to the graph beside what is there --
+a supply's way to the output beside the signal's, or one setting beside
+another; the same quantity between the same nets replaces itself. The
+transfer functions asked for, **Voltage gain** (always solved), **Output
+impedance**, **Input impedance**, and **Loop gain** above the graph are
+switches for the last Derive's quantities: pressed while one is on the
+graph, pressed again to take it off. The transimpedance and the
+transconductance are solved in numbers from the exact model, as the voltage
+gain is (`numericQuantities`); the current gain from its equation. A root
+of the numeric solve a billion times smaller than the rest is at the
+origin (`atOrigin`), so a zero at s = 0 does not stretch the axis decades
+down. Each trace can be hidden or removed;
 the magnitude is drawn over the phase, the two on one frequency axis
 (they pan and zoom along it together, and only the phase numbers it); one
 trace shown is drawn as a
 textbook sketch, its asymptote and corners marked, several as their curves
 together over the range they span. **Annotate graph** puts the graph on the
 drawing as a signal-flow graph is (`plot.kind: 'response'`, its traces
-named beside it, against its box), and **with phase** checked its phase as
+named beside it, against its box; one trace's corners marked, `ω_{p1}`, a
+label close to the one before a line lower), and **with phase** checked its phase as
 a plot of its own. Each shown trace's corners are listed under the graph.
 
 The plots are drawn in relative units, so they sketch shapes, not a

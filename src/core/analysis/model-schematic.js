@@ -11,7 +11,7 @@
  * any other document, which is what makes it checkable -- analyzing the model
  * must reproduce the source schematic's equations.
  */
-import { Circuit, MATH_LABEL_PAD } from '../model.js';
+import { Circuit, LABEL_ALIGN_INSET, MATH_LABEL_PAD, MATH_WIDTH_DRAWN } from '../model.js';
 import { GRID, floorGrid } from '../grid.js';
 import { rectsOverlap } from '../geometry.js';
 import { chooseFigure, figureBounds, newFigureId, packed, placeFigure, removeFigure, repackFigures, settlePlaced } from '../figures.js';
@@ -337,8 +337,6 @@ function mathFootprint(text) {
   return { w: probe.bbox().w, h: pair(probe.textHeight()) };
 }
 
-/** How much wider than its estimate a label is drawn (measured in Chromium). */
-const MATH_WIDTH_DRAWN = 1.25;
 
 /**
  * Build the drawn model.
@@ -418,7 +416,12 @@ export function smallSignalSchematic(report, options = {}) {
   // Beside a symbol, the box stands against its body and reaches left as
   // wide as it will be drawn. Above, a cell clear.
   const reachAbove = (height) => 40 * Math.ceil((80 + height / 2) / 40);
-  const leftRoom = (element) => 40 + mathFootprint(labels.get(element).text).w;
+  // Spaced by ink: the symbol's half, the label's inset, and its text as
+  // the browser draws it -- not the box it rounds up to.
+  const leftRoom = (element) => {
+    const probe = new Circuit().addLabel({ text: labels.get(element).text, x: 0, y: 0, math: true });
+    return 40 + LABEL_ALIGN_INSET + probe.textWidth() * MATH_WIDTH_DRAWN + 2 * MATH_LABEL_PAD;
+  };
 
   // Columns read from input to output: each unit by its upper node's place
   // in that order (the input first), and a branch lying between two nodes
@@ -446,6 +449,7 @@ export function smallSignalSchematic(report, options = {}) {
       || columns[columns.push({ x, units: [] }) - 1];
     column.units.push(unit);
   }
+  untangleColumns(columns, level);
   const placed = new Map();
   let cursor = 0;
   for (const column of columns) {
@@ -646,6 +650,73 @@ export function smallSignalSchematic(report, options = {}) {
 }
 
 /**
+ * Wires a column order draws across: each node runs along its row from its
+ * first column to its last, and a branch standing in a column between them
+ * that passes through that row (R3 from V_OUTP down to ground, between
+ * V_INP's two ends), or lies along it, cuts or overlaps that run; so do
+ * two nodes' runs overlapping on one row. `level` gives each node's row.
+ */
+function crossings(columns, level) {
+  const touches = (unit, node) => unit.upper === node || unit.lower === node;
+  const spans = new Map();
+  columns.forEach((column, index) => {
+    for (const unit of column.units) {
+      for (const node of [unit.upper, unit.lower]) {
+        const span = spans.get(node) || { first: index, last: index };
+        span.first = Math.min(span.first, index);
+        span.last = Math.max(span.last, index);
+        spans.set(node, span);
+      }
+    }
+  });
+  let count = 0;
+  for (const [node, span] of spans) {
+    const row = level.get(node);
+    if (!row) continue; // the AC ground runs along the bottom, under everything
+    for (let index = span.first + 1; index < span.last; index += 1) {
+      for (const unit of columns[index].units) {
+        if (touches(unit, node)) continue;
+        if (unit.flat ? unit.hi === row : unit.hi > row && unit.lo < row) count += 1;
+      }
+    }
+  }
+  // Two nodes on one row whose runs overlap: one is routed around the other.
+  const runs = [...spans].filter(([node]) => level.get(node));
+  runs.forEach(([node, a], i) => {
+    for (const [other, b] of runs.slice(i + 1)) {
+      if (level.get(node) === level.get(other) && a.first < b.last && b.first < a.last) count += 1;
+    }
+  });
+  return count;
+}
+
+/**
+ * Reorder the columns, in place, so as few wires as can be are cut
+ * (crossings): each column in turn moved to the place that cuts fewest,
+ * until no move helps. The reading order stands where nothing is gained.
+ */
+function untangleColumns(columns, level) {
+  let best = crossings(columns, level);
+  for (let pass = 0; best > 0 && pass < columns.length; pass += 1) {
+    let improved = false;
+    for (let from = 0; from < columns.length; from += 1) {
+      for (let to = 0; to < columns.length; to += 1) {
+        if (to === from) continue;
+        const trial = [...columns];
+        trial.splice(to, 0, ...trial.splice(from, 1));
+        const count = crossings(trial, level);
+        if (count < best) {
+          columns.splice(0, columns.length, ...trial);
+          best = count;
+          improved = true;
+        }
+      }
+    }
+    if (!improved) break;
+  }
+}
+
+/**
  * Place a drawn model (`smallSignalSchematic(report, { ports: false })`) into
  * `circuit` as drawing-only parts: drawn and checked like the rest, read by
  * no analysis. It is a figure (figures.js): placed again, it replaces the
@@ -660,7 +731,8 @@ export function placeSmallSignalModel(circuit, model, { selected = [] } = {}) {
   const source = model.circuit;
   const identity = { kind: 'model', source: 'small-signal' };
   const existing = chooseFigure(circuit, identity, selected);
-  const own = source.bounds();
+  // By its ink, as the figures it is packed with are measured.
+  const own = source.inkBounds();
   let corner;
   // Placed by packing, it is packed again with the rest once replaced.
   const repack = !existing || packed(circuit, existing);

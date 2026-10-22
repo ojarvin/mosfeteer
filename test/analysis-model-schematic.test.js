@@ -370,3 +370,31 @@ test('a long branch label stands against its symbol as drawn, never on it', () =
   assert.ok(box.x + box.w <= body.x, `${box.x + box.w} reaches ${body.x}`);
   assert.ok(box.x + box.w >= body.x - 40, `${box.x + box.w} is more than a cell off ${body.x}`);
 });
+
+test('no branch of the model stands across another node\'s wire: a load from the output down to ground goes clear of the input\'s run', () => {
+  // A common-gate input (M1, its source the input, R1 to ground) coupled by
+  // C1 to a common-source stage (M2, the output): M1's load R_D runs from its
+  // drain down to ground, and must not stand between V_IN's ends.
+  const circuit = new Circuit();
+  const lines = [
+    'add nmos M1 --at 0 0', 'add resistor RD --at 0 -320 --rot 90', 'add supply VDD --at 0 -560', 'add resistor R1 --at 0 320 --rot 90', 'add ground G1 --at 0 560',
+    'add input VIN --at -400 160', 'add output VOUT --at 1200 -160', 'add port B1 --at -400 0',
+    'add capacitor C1 --at 400 240', 'add nmos M2 --at 800 240', 'add resistor RG --at 640 480 --rot 90', 'add ground G2 --at 640 720',
+    'add resistor RD2 --at 800 0 --rot 90', 'add supply VDD2 --at 800 -240', 'add ground G3 --at 800 480',
+    'connect M1.g B1.p --name VB', 'connect M1.s R1.a VIN.p --name VIN', 'connect R1.b G1.gnd', 'connect M1.d RD.b --name VD', 'connect RD.a VDD.p',
+    'connect C1.a VIN.p', 'connect C1.b M2.g RG.a --name VG', 'connect RG.b G2.gnd', 'connect M2.s G3.gnd', 'connect M2.d RD2.b VOUT.p --name VOUT', 'connect RD2.a VDD2.p',
+  ];
+  for (const line of lines) runCommand(circuit, line);
+  const report = analyzeSmallSignalV2(circuit, { input: 'VIN', output: 'VOUT', acGrounds: ['VB'], neglectBodyEffect: true, neglectChannelLengthModulation: true });
+  assert.equal(report.ok, true, report.error || '');
+  const model = smallSignalSchematic(report, { circuit });
+  assert.equal(model.ok, true, model.error || '');
+  const x = (refdes) => model.circuit.components.get(refdes).transform.x;
+  const names = [...model.circuit.components.keys()];
+  // V_IN's branches: g_m1, R1, and C1 across to V_G.
+  const vin = ['gm1', 'R1', 'C1'].map(x);
+  const load = names.find((refdes) => /^RD$/.test(refdes));
+  assert.ok(load, names.join(' '));
+  assert.ok(x(load) < Math.min(...vin) || x(load) > Math.max(...vin), `R_D at ${x(load)} stands between V_IN's ends ${vin}`);
+  assert.equal(evaluate(model.circuit).ok, true, JSON.stringify(evaluate(model.circuit).issues || []).slice(0, 300));
+});

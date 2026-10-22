@@ -108,9 +108,10 @@ export function chooseFigure(circuit, identity, selected = []) {
   return chosen || (candidates.length === 1 ? candidates[0] : null);
 }
 
-/** A figure's members' extent, { x, y, w, h }. */
+/** A figure's ink, { x, y, w, h }: what it draws, not the boxes its labels
+ *  take, so figures are spaced as they look. */
 export function figureBounds(circuit, figure) {
-  const rects = [...figure.labels.map((label) => label.bbox()), ...figure.components.map((component) => component.bboxWorld())];
+  const rects = [...figure.labels.map((label) => label.inkRect()), ...figure.components.map((component) => component.inkRectWorld())];
   const refs = new Set(figure.components.map((component) => component.refdes));
   if (!refs.size) return union(rects);
   // Its parts' own labels and its wires' labels too.
@@ -121,7 +122,7 @@ export function figureBounds(circuit, figure) {
     const points = net.pathPoints();
     if (points.length) rects.push(rectOf(points));
   }
-  for (const label of circuit.labels.values()) if (refs.has(label.owner) || nets.has(label.netId)) rects.push(label.bbox());
+  for (const label of circuit.labels.values()) if (refs.has(label.owner) || nets.has(label.netId)) rects.push(label.inkRect());
   return union(rects);
 }
 
@@ -201,11 +202,18 @@ export function settlePlaced(circuit, id) {
   }
 }
 
-/** The kind's own place, for a figure `w` wide: a table right of the
- *  circuit at its top, the timing diagram centered under it, the rest under
- *  it at its left edge. */
-function anchorFor(kind, base, w) {
-  if (figureZone(kind) === 'right') return { x: ceilGrid(base.x + base.w) + CLEARANCE, y: floorGrid(base.y) };
+/**
+ * The kind's own place, for a figure `w` wide, among `rects` (the figures
+ * placed): the column right of the circuit, under what is in it already --
+ * a table's always, a model's or a plot's when that column has begun and
+ * still reaches beside the circuit; else under the circuit at its left edge (the timing
+ * diagram centered there).
+ */
+function anchorFor(kind, base, w, rects = []) {
+  const right = ceilGrid(base.x + base.w) + CLEARANCE;
+  const column = rects.filter((r) => r.x >= base.x + base.w);
+  const next = column.length ? ceilGrid(Math.max(...column.map((r) => r.y + r.h))) + GAP : floorGrid(base.y);
+  if (figureZone(kind) === 'right' || (kind !== 'timing' && column.length && next < base.y + base.h)) return { x: right, y: next };
   const x = kind === 'timing' ? Math.max(floorGrid(base.x), Math.round((base.x + base.w / 2 - w / 2) / GRID) * GRID) : floorGrid(base.x);
   return { x, y: ceilGrid(base.y + base.h) + CLEARANCE };
 }
@@ -220,7 +228,7 @@ function bestSpot(core, rects, kind, size) {
   const w = Math.max(GRID, size.w || 0);
   const h = Math.max(GRID, size.h || 0);
   const base = core || rects[0] || { x: 0, y: 0, w: 0, h: 0 };
-  const anchor = anchorFor(kind, base, w);
+  const anchor = anchorFor(kind, base, w, rects);
   const xs = new Set([anchor.x]);
   const ys = new Set([anchor.y]);
   for (const r of rects) {
@@ -251,12 +259,12 @@ function bestSpot(core, rects, kind, size) {
 
 /**
  * What a layout costs: the drawing's area, a little more for each figure
- * away from its kind's own place -- a third more for one a circuit's size
- * away -- so a table goes right of the circuit and a model under it unless
- * elsewhere the drawing is clearly smaller.
+ * away from its kind's own place (anchorFor) -- a sixth more for one a
+ * circuit's size away -- so each goes there unless elsewhere the drawing
+ * is clearly smaller.
  */
 function layoutCost(box, distance, base) {
-  return box.w * box.h * (1 + (0.3 * distance) / Math.max(4 * GRID, base.w + base.h));
+  return box.w * box.h * (1 + (0.15 * distance) / Math.max(4 * GRID, base.w + base.h));
 }
 
 /** The orders to try packing `items` in: every one for a few, else some
@@ -303,10 +311,10 @@ export function placeFigure(circuit, kind = null, { size = { w: 0, h: 0 }, excep
     const spots = new Map();
     let distance = 0;
     for (const item of order) {
+      const anchor = anchorFor(item.kind, core || rects[0] || { x: 0, y: 0, w: 0, h: 0 }, item.size.w, rects);
       const spot = bestSpot(core, rects, item.kind, item.size);
       rects.push(spot);
       spots.set(item, spot);
-      const anchor = anchorFor(item.kind, core || spot, spot.w);
       distance += Math.abs(spot.x - anchor.x) + Math.abs(spot.y - anchor.y);
     }
     const box = union([...(core ? [core] : []), ...rects]);
@@ -337,9 +345,12 @@ export function removeFigure(circuit, figure) {
   for (const label of figure.labels) if (circuit.labels.has(label.id)) circuit.removeLabel(label.id);
 }
 
-/** Move a figure's every member by (dx, dy): labels, parts, and the wires
- *  between its parts alone. */
+/** Move a figure's every member by (dx, dy), to the nearest whole cells:
+ *  labels, parts, and the wires between its parts alone. */
 export function moveFigure(circuit, figure, dx, dy) {
+  // Whole cells: parts and anchors stay on the grid, whatever the ink.
+  dx = Math.round(dx / GRID) * GRID;
+  dy = Math.round(dy / GRID) * GRID;
   if (!dx && !dy) return;
   const refs = new Set(figure.components.map((component) => component.refdes));
   for (const component of figure.components) {
