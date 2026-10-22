@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
-import { analyzeSmallSignalV2 } from '../src/core/analysis/engine.js';
+import { analyzeSmallSignalV2, numericLoopGain, numericSmallSignal } from '../src/core/analysis/engine.js';
 import { resolveLoopBreak } from '../src/core/analysis/loop-gain.js';
 
 function net(circuit, name, ...refs) {
@@ -101,4 +101,29 @@ test('analyze loop-gain: the rows, or why not', () => {
   assert.match(report.text, /^AC loop gain at M2\.g: |^DC loop gain at M2\.g: /m);
   assert.equal(report.json.at, 'M2.g');
   assert.throws(() => runCommand(circuit, 'analyze loop-gain M2 --output VOUT --input VIN'), /M2 is a transistor/);
+});
+
+test('in numbers, a broken loop gives the same T, at any size, and an open loop\'s gain plots too', () => {
+  const values = { gm1: 1, gm2: 1, gm3: 1, gm4: 1, ro1: 100, ro2: 100, ro3: 100, ro4: 100, CL: 10 };
+  const withLoad = (closing) => {
+    const circuit = ota(closing);
+    circuit.addComponent('capacitor', { refdes: 'CL', x: 4000, y: 0 });
+    circuit.nets.get([...circuit.nets.values()].find((n) => n.terminals.some((t) => t.comp === 'VOUT')).id).terminals.push({ comp: 'CL', term: 'a' });
+    circuit.nets.get([...circuit.nets.values()].find((n) => n.name === 'VSS').id).terminals.push({ comp: 'CL', term: 'b' });
+    return circuit;
+  };
+  for (const [closing, at] of [['wire', 'M2.g'], ['name', 'VOUT'], ['open', 'VOUT to VINN']]) {
+    const model = numericLoopGain(withLoad(closing), { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true, loopGain: { at } });
+    assert.equal(model.ok, true, model.error);
+    const loop = model.at(values).quantities.loop;
+    // DC: 5025/101, as the exact T(0); one pole from C_L.
+    assert.ok(Math.abs(loop.response(1e-9).re - 5025 / 101) < 1e-6, `${closing} ${at}: ${loop.response(1e-9).re}`);
+    assert.equal(loop.poles.length, 1);
+  }
+  // The open loop's own gain, its input held at AC ground, plots as well.
+  const open = numericSmallSignal(withLoad('open'), { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true, loopGain: { at: 'VOUT to VINN' } });
+  assert.equal(open.ok, true, open.error);
+  assert.equal(open.at(values).ok, true);
+  // An opamp's break is a return ratio: not in numbers here.
+  assert.equal(numericLoopGain(withLoad('wire'), { input: 'VIN', output: 'VOUT', loopGain: { at: 'M2' } }).ok, false);
 });

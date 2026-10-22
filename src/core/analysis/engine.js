@@ -969,7 +969,8 @@ export function numericSmallSignal(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   circuit = analyzedCircuit(circuit);
   const { ops } = makeEngineOps({});
-  const normalized = normalizeOptions(options, circuit, true, ops);
+  const openInput = openLoopInput(circuit, options);
+  const normalized = normalizeOptions(openInput ? { ...options, acGrounds: [...asList(options.acGrounds), openInput] } : options, circuit, true, ops);
   const regions = modelRegions(options);
   const base = {
     ...normalized,
@@ -1034,6 +1035,38 @@ export function numericSmallSignal(circuit, options = {}) {
     }
   };
   return { ok: true, provenance, reached, outputComponents, at };
+}
+
+/**
+ * A loop broken at a terminal or a net (`loopGain: { at }`, loop-gain.js) in
+ * numbers, as numericSmallSignal: the lifted copy driven at the drive net
+ * and read at the return, `at(values)` giving `quantities.loop`, T =
+ * -v(return)/v(drive), at any size. So a loop gain too large to keep its
+ * symbols still follows the Values sliders. An opamp's break is a return
+ * ratio, not a transfer: `{ ok: false }`.
+ */
+export function numericLoopGain(circuit, options = {}) {
+  circuit = analyzedCircuit(circuit);
+  const parasitics = options.parasitics === true || options.deviceCapacitances === true || options.includeParasitics === true;
+  const target = resolveLoopBreak(circuit, options.loopGain?.at, { parasitics });
+  if (!target.ok) return { ok: false, error: target.error };
+  if (target.kind !== 'break') return { ok: false, error: 'an opamp\'s loop gain is a return ratio' };
+  const { loopGain, ...rest } = options;
+  const acGrounds = [...asList(options.acGrounds), ...(options.input ? [options.input] : [])];
+  const model = numericSmallSignal(target.circuit, { ...rest, input: target.drive, output: target.ret, acGrounds });
+  if (!model.ok) return model;
+  const negated = (quantity) => (!quantity || quantity.zero ? quantity : {
+    ...quantity,
+    numerator: quantity.numerator.map((coefficient) => -coefficient),
+    response: (omega) => { const value = quantity.response(omega); return { re: -value.re, im: -value.im }; },
+  });
+  return {
+    ...model,
+    at: (values) => {
+      const result = model.at(values);
+      return result.ok ? { ok: true, quantities: { loop: negated(result.quantities.transfer) } } : result;
+    },
+  };
 }
 
 /** The model's derived symbols: `{ name, value, component, device, side }`
@@ -1104,6 +1137,12 @@ function withDerivedProvenance(table, derived) {
   return table;
 }
 
+/** A loop not drawn closed (`V_fb to V_inn`) leaves its input open: held
+ *  at AC ground for the open-loop analysis, as the loop's open input. */
+function openLoopInput(circuit, options) {
+  return options.loopGain?.at ? resolveLoopBreak(circuit, options.loopGain.at).openInput || null : null;
+}
+
 export function analyzeSmallSignalV2(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   circuit = analyzedCircuit(circuit);
@@ -1121,9 +1160,7 @@ export function analyzeSmallSignalV2(circuit, options = {}) {
       ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
       : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
   };
-  // A loop not drawn closed (`V_fb to V_inn`) leaves its input open: held
-  // at AC ground for the open-loop analysis, as the loop's open input.
-  const openInput = options.loopGain?.at ? resolveLoopBreak(circuit, options.loopGain.at).openInput : null;
+  const openInput = openLoopInput(circuit, options);
   if (openInput) pipelineOptions.acGrounds = [...asList(pipelineOptions.acGrounds), openInput];
   const openInputAssumptions = openInput ? [`${openInput} at AC ground: the loop's open input`] : [];
   let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);

@@ -183,8 +183,12 @@ never takes the port quantities down with it. Past that budget (a two-stage
 Miller OTA, whose plain A_v is already too large), it is solved again with
 the Bode sketch's relative values for every symbol (`sketchRatios`, the
 sliders as they were), leaving only s: a numeric T(s), titled so, still with
-its crossover and phase margin, and re-solved by the next Analyze after a
-slider moves.
+its crossover and phase margin. The Values list the symbols that model
+stamps. A loop broken at a terminal or a net is also built in numbers
+(`numericLoopGain`, as `numericSmallSignal` for the port quantities: the
+lifted copy solved at each frequency), so its curve, crossover, and phase
+margin follow the sliders; the equations stay at the values of the Derive.
+An opamp's numeric T is re-solved by the next Derive.
 
 ## Exact and displayed results
 

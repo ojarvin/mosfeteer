@@ -38,14 +38,24 @@ describe('loop gain where the drawing says', { skip: browserSkip() }, () => {
     const names = await h.evaluate(`(async () => {
       const base = document.querySelector('script[src="main.js"]').src;
       const [engine, adapter, bode, state] = await Promise.all(['../core/analysis/engine.js', '../core/analysis/report-adapter.js', 'bode-ui.js', 'editor-state.js'].map((path) => import(new URL(path, base).href)));
-      const report = adapter.adaptCombinedReport(engine.analyzeSmallSignalV2(state.editor.circuit, { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true, loopGain: { at: 'M2.g' }, loopGainOperations: 5 }));
+      const request = { input: 'VIN', output: 'VOUT', ignoreBodyEffect: true, loopGain: { at: 'M2.g' }, loopGainOperations: 5 };
+      const report = adapter.adaptCombinedReport(engine.analyzeSmallSignalV2(state.editor.circuit, request));
       if (!report.reports.loop?.numeric) return 'not numeric';
+      // As Derive does: the loop in numbers too, for the curve to follow.
+      report.loopNumericModel = engine.numericLoopGain(state.editor.circuit, request);
       bode.renderBode(report);
       return [...document.querySelectorAll('#analysis-values .bode-value')].map((row) => row.textContent.replace(/\\s+/g, ''));
     })()`);
     assert.notEqual(names, 'not numeric');
     for (const name of ['gm1', 'gm2', 'gm3', 'gm4', 'ro1', 'ro2', 'ro3', 'ro4']) assert.ok(names.some((row) => row.startsWith(name)), `${name} in ${names}`);
     assert.ok(!names.some((row) => row.startsWith('gmb')), 'the body effect left out has no slider');
+    // The curve follows a slider: the crossover moves with g_m1.
+    const notes = () => h.evaluate(`[...document.querySelectorAll('.plots-window li')].map((li) => li.textContent.replace(/\\s+/g, ' ')).join(' | ')`);
+    const before = await notes();
+    assert.match(before, /the curve follows the values/);
+    assert.match(before, /phase margin/);
+    await h.evaluate(`(() => { const row = [...document.querySelectorAll('#analysis-values .bode-value')].find((r) => r.textContent.replace(/\\s+/g, '').startsWith('gm1')); const input = row.querySelector('input[type=range]'); input.value = input.max; input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await h.until(`[...document.querySelectorAll('.plots-window li')].map((li) => li.textContent.replace(/\\s+/g, ' ')).join(' | ') !== ${JSON.stringify(before)}`, 10000);
   });
 
   test('the net that closes the loop gives the same loop; a transistor alone says to name a terminal', async () => {

@@ -124,10 +124,18 @@ function exactOf(report, key) {
 
 /** A trace's parameters: every one its model stamps (each needs a value),
  *  and those the ports reach (the ones worth a slider). */
+/** The numbers model a trace is solved with, if any: the port quantities',
+ *  or a loop gain's too large to keep its symbols. */
+function numericModelOf(report, key) {
+  if (NUMERIC_KEYS.has(key)) return report.numericModel;
+  if (key === 'loop' && report.loopNumericModel?.ok) return report.loopNumericModel;
+  return null;
+}
+
 function parametersOf(trace) {
   const { report, key } = trace;
-  if (NUMERIC_KEYS.has(key)) {
-    const model = report.numericModel;
+  if (NUMERIC_KEYS.has(key) || numericModelOf(report, key)) {
+    const model = numericModelOf(report, key);
     if (!model?.ok) return null;
     const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
     return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)) };
@@ -173,8 +181,9 @@ function sketchOf(trace) {
   const values = withDerivedValues(sketchValues(parameters.all, ratios), trace.report.derivedSymbols);
   let sketch;
   let response;
-  if (NUMERIC_KEYS.has(trace.key)) {
-    const result = numericAt(trace.report.numericModel, values);
+  const model = numericModelOf(trace.report, trace.key);
+  if (NUMERIC_KEYS.has(trace.key) || model) {
+    const result = numericAt(model, values);
     const quantity = result.ok ? result.quantities[trace.key] : null;
     if (!quantity || quantity.zero || !(quantity.zeros.length || quantity.poles.length)) return null;
     sketch = bodeSketch(quantity.numerator, quantity.denominator, { roots: { zeros: quantity.zeros, poles: quantity.poles }, response: quantity.response });
@@ -438,7 +447,11 @@ function appendCorners(list, { trace, sketch, corners }, named) {
     }
     list.append(item);
     // Too large for every symbol, the loop was solved at these values' numbers.
-    if (trace.report.reports?.loop?.numeric) list.append(el('li', { class: 'bode-canceled', text: 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
+    if (trace.report.reports?.loop?.numeric) {
+      list.append(el('li', { class: 'bode-canceled', text: trace.report.loopNumericModel?.ok
+        ? 'Too large to solve with every symbol: the equations are at the values of its Derive; the curve follows the values.'
+        : 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
+    }
   }
   if (sketch.unityGain && trace.key === 'transfer') {
     list.append(el('li', {}, [mathElement(`\\omega_{u} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase there } ${Math.round(sketch.unityGain.phase)}\\text{°}`)]));

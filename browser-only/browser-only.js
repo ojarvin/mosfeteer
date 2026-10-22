@@ -3282,6 +3282,7 @@ function pencilRoots(A0, A1) {
 
 __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
 __exports.numericSmallSignal = numericSmallSignal;
+__exports.numericLoopGain = numericLoopGain;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 let MOS_TYPES, asList, firstDefined; __bind(() => { ({ MOS_TYPES, asList, firstDefined } = __require("src/core/analysis/shared.js")); });
 let analyzedCircuit; __bind(() => { ({ analyzedCircuit } = __require("src/core/model.js")); });
@@ -4257,7 +4258,8 @@ function numericSmallSignal(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   circuit = analyzedCircuit(circuit);
   const { ops } = makeEngineOps({});
-  const normalized = normalizeOptions(options, circuit, true, ops);
+  const openInput = openLoopInput(circuit, options);
+  const normalized = normalizeOptions(openInput ? { ...options, acGrounds: [...asList(options.acGrounds), openInput] } : options, circuit, true, ops);
   const regions = modelRegions(options);
   const base = {
     ...normalized,
@@ -4322,6 +4324,38 @@ function numericSmallSignal(circuit, options = {}) {
     }
   };
   return { ok: true, provenance, reached, outputComponents, at };
+}
+
+/**
+ * A loop broken at a terminal or a net (`loopGain: { at }`, loop-gain.js) in
+ * numbers, as numericSmallSignal: the lifted copy driven at the drive net
+ * and read at the return, `at(values)` giving `quantities.loop`, T =
+ * -v(return)/v(drive), at any size. So a loop gain too large to keep its
+ * symbols still follows the Values sliders. An opamp's break is a return
+ * ratio, not a transfer: `{ ok: false }`.
+ */
+function numericLoopGain(circuit, options = {}) {
+  circuit = analyzedCircuit(circuit);
+  const parasitics = options.parasitics === true || options.deviceCapacitances === true || options.includeParasitics === true;
+  const target = resolveLoopBreak(circuit, options.loopGain?.at, { parasitics });
+  if (!target.ok) return { ok: false, error: target.error };
+  if (target.kind !== 'break') return { ok: false, error: 'an opamp\'s loop gain is a return ratio' };
+  const { loopGain, ...rest } = options;
+  const acGrounds = [...asList(options.acGrounds), ...(options.input ? [options.input] : [])];
+  const model = numericSmallSignal(target.circuit, { ...rest, input: target.drive, output: target.ret, acGrounds });
+  if (!model.ok) return model;
+  const negated = (quantity) => (!quantity || quantity.zero ? quantity : {
+    ...quantity,
+    numerator: quantity.numerator.map((coefficient) => -coefficient),
+    response: (omega) => { const value = quantity.response(omega); return { re: -value.re, im: -value.im }; },
+  });
+  return {
+    ...model,
+    at: (values) => {
+      const result = model.at(values);
+      return result.ok ? { ok: true, quantities: { loop: negated(result.quantities.transfer) } } : result;
+    },
+  };
 }
 
 /** The model's derived symbols: `{ name, value, component, device, side }`
@@ -4392,6 +4426,12 @@ function withDerivedProvenance(table, derived) {
   return table;
 }
 
+/** A loop not drawn closed (`V_fb to V_inn`) leaves its input open: held
+ *  at AC ground for the open-loop analysis, as the loop's open input. */
+function openLoopInput(circuit, options) {
+  return options.loopGain?.at ? resolveLoopBreak(circuit, options.loopGain.at).openInput || null : null;
+}
+
 function analyzeSmallSignalV2(circuit, options = {}) {
   if (!circuit) throw new TypeError('circuit is required');
   circuit = analyzedCircuit(circuit);
@@ -4409,9 +4449,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
       : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
   };
-  // A loop not drawn closed (`V_fb to V_inn`) leaves its input open: held
-  // at AC ground for the open-loop analysis, as the loop's open input.
-  const openInput = options.loopGain?.at ? resolveLoopBreak(circuit, options.loopGain.at).openInput : null;
+  const openInput = openLoopInput(circuit, options);
   if (openInput) pipelineOptions.acGrounds = [...asList(pipelineOptions.acGrounds), openInput];
   const openInputAssumptions = openInput ? [`${openInput} at AC ground: the loop's open input`] : [];
   let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
@@ -43044,7 +43082,7 @@ __exports.applyComponentAnalysis = applyComponentAnalysis;
 __exports.applyNetAnalysis = applyNetAnalysis;
 __exports.installAnalysisUi = installAnalysisUi;
 let Circuit, INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns; __bind(() => { ({ Circuit, INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } = __require("src/core/model.js")); });
-let analyzeSmallSignalV2, numericSmallSignal; __bind(() => { ({ analyzeSmallSignalV2, numericSmallSignal } = __require("src/core/analysis/engine.js")); });
+let analyzeSmallSignalV2, numericLoopGain, numericSmallSignal; __bind(() => { ({ analyzeSmallSignalV2, numericLoopGain, numericSmallSignal } = __require("src/core/analysis/engine.js")); });
 let LOOP_ELEMENT_TYPES; __bind(() => { ({ LOOP_ELEMENT_TYPES } = __require("src/core/analysis/loop-gain.js")); });
 let EQUATION_GROUPS, adaptCombinedReport; __bind(() => { ({ EQUATION_GROUPS, adaptCombinedReport } = __require("src/core/analysis/report-adapter.js")); });
 let placeSmallSignalModel, smallSignalSchematic; __bind(() => { ({ placeSmallSignalModel, smallSignalSchematic } = __require("src/core/analysis/model-schematic.js")); });
@@ -44363,6 +44401,15 @@ function installAnalysisUi() {
       report.numericModel = numericSmallSignal(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
     } catch (error) {
       report.numericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    // A loop gain too large to keep its symbols, broken at a terminal or a
+    // net: in numbers too, so its curve follows the sliders.
+    if (report.reports?.loop?.numeric && request.loopGain?.at) {
+      try {
+        report.loopNumericModel = numericLoopGain(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+      } catch (error) {
+        report.loopNumericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }
     latestAnalysisReport = report;
     analysisReportRevision = editor.modelRevision;
@@ -51049,10 +51096,18 @@ function exactOf(report, key) {
 
 /** A trace's parameters: every one its model stamps (each needs a value),
  *  and those the ports reach (the ones worth a slider). */
+/** The numbers model a trace is solved with, if any: the port quantities',
+ *  or a loop gain's too large to keep its symbols. */
+function numericModelOf(report, key) {
+  if (NUMERIC_KEYS.has(key)) return report.numericModel;
+  if (key === 'loop' && report.loopNumericModel?.ok) return report.loopNumericModel;
+  return null;
+}
+
 function parametersOf(trace) {
   const { report, key } = trace;
-  if (NUMERIC_KEYS.has(key)) {
-    const model = report.numericModel;
+  if (NUMERIC_KEYS.has(key) || numericModelOf(report, key)) {
+    const model = numericModelOf(report, key);
     if (!model?.ok) return null;
     const all = sketchParameters(new Set(Object.keys(model.provenance)), model.provenance, { outputComponents: model.outputComponents });
     return { all, reached: all.filter((parameter) => model.reached.has(parameter.name)) };
@@ -51098,8 +51153,9 @@ function sketchOf(trace) {
   const values = withDerivedValues(sketchValues(parameters.all, ratios), trace.report.derivedSymbols);
   let sketch;
   let response;
-  if (NUMERIC_KEYS.has(trace.key)) {
-    const result = numericAt(trace.report.numericModel, values);
+  const model = numericModelOf(trace.report, trace.key);
+  if (NUMERIC_KEYS.has(trace.key) || model) {
+    const result = numericAt(model, values);
     const quantity = result.ok ? result.quantities[trace.key] : null;
     if (!quantity || quantity.zero || !(quantity.zeros.length || quantity.poles.length)) return null;
     sketch = bodeSketch(quantity.numerator, quantity.denominator, { roots: { zeros: quantity.zeros, poles: quantity.poles }, response: quantity.response });
@@ -51363,7 +51419,11 @@ function appendCorners(list, { trace, sketch, corners }, named) {
     }
     list.append(item);
     // Too large for every symbol, the loop was solved at these values' numbers.
-    if (trace.report.reports?.loop?.numeric) list.append(el('li', { class: 'bode-canceled', text: 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
+    if (trace.report.reports?.loop?.numeric) {
+      list.append(el('li', { class: 'bode-canceled', text: trace.report.loopNumericModel?.ok
+        ? 'Too large to solve with every symbol: the equations are at the values of its Derive; the curve follows the values.'
+        : 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
+    }
   }
   if (sketch.unityGain && trace.key === 'transfer') {
     list.append(el('li', {}, [mathElement(`\\omega_{u} \\approx ${formatNumber(sketch.unityGain.w)}\\,g/C,\\ \\text{phase there } ${Math.round(sketch.unityGain.phase)}\\text{°}`)]));

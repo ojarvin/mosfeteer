@@ -6,7 +6,7 @@
  */
 
 import { Circuit, INTERFACE_PIN_TYPES, canonicalNetName, parseLabelRuns } from '../core/model.js';
-import { analyzeSmallSignalV2, numericSmallSignal } from '../core/analysis/engine.js';
+import { analyzeSmallSignalV2, numericLoopGain, numericSmallSignal } from '../core/analysis/engine.js';
 import { LOOP_ELEMENT_TYPES } from '../core/analysis/loop-gain.js';
 import { EQUATION_GROUPS, adaptCombinedReport } from '../core/analysis/report-adapter.js';
 import { placeSmallSignalModel, smallSignalSchematic } from '../core/analysis/model-schematic.js';
@@ -1295,6 +1295,15 @@ export function installAnalysisUi() {
       report.numericModel = numericSmallSignal(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
     } catch (error) {
       report.numericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    // A loop gain too large to keep its symbols, broken at a terminal or a
+    // net: in numbers too, so its curve follows the sliders.
+    if (report.reports?.loop?.numeric && request.loopGain?.at) {
+      try {
+        report.loopNumericModel = numericLoopGain(Circuit.fromJSON(JSON.parse(JSON.stringify(editor.circuit.toJSON()))), request);
+      } catch (error) {
+        report.loopNumericModel = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }
     latestAnalysisReport = report;
     analysisReportRevision = editor.modelRevision;
