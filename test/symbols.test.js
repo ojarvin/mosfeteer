@@ -167,13 +167,18 @@ test('independent source circles use the compact 35-unit body and adjacent label
     assert.ok(def.graphics.some((g) => g.kind === 'path' && g.d === 'M 0 35 L 0 80'));
   }
 });
-test('current source arrow is smaller than the compact circle body', () => {
+test('current source arrow is smaller than the compact circle body, centered, and the controlled source has the same', () => {
   const arrow = getSymbol('current_source').graphics[2];
   assert.deepEqual(arrow.points, [
-    { x: 0, y: 24 },
-    { x: -16, y: -8 },
-    { x: 16, y: -8 },
+    { x: 0, y: 18 },
+    { x: -11, y: -4 },
+    { x: 11, y: -4 },
   ]);
+  // The stem runs into the head; stem top to tip spans -18..18.
+  assert.equal(getSymbol('current_source').graphics[1].d, 'M 0 -18 L 0 2');
+  const vccs = getSymbol('vccs').graphics;
+  assert.ok(vccs.some((item) => item.d === 'M 0 -18 L 0 2'));
+  assert.ok(vccs.some((item) => JSON.stringify(item.points) === JSON.stringify(arrow.points)));
 });
 
 
@@ -660,4 +665,34 @@ test('the fully differential op-amp and Gm cell come with a CMFB input below the
     assert.equal(def.graphics[0].terminalLead, true, 'its lead joins the wire');
     assert.match(def.graphics[0].d, new RegExp(`^M ${x} 120 L ${x} `));
   }
+});
+
+test('no stroked line ends on the edge of a filled shape: it runs into it, or keeps clear', () => {
+  // A butt end that only touches a filled head or bar leaves an
+  // anti-aliased seam between them (a current source's arrow, a MOS bar).
+  const ends = (d) => {
+    const numbers = d.match(/-?\d+(?:\.\d+)?/g).map(Number);
+    return [{ x: numbers[0], y: numbers[1] }, { x: numbers.at(-2), y: numbers.at(-1) }];
+  };
+  const distance = (p, a, b) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
+    return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+  };
+  const seams = [];
+  for (const type of symbolTypeNames) {
+    const graphics = getSymbol(type).graphics || [];
+    const filled = graphics.filter((item) => item.kind === 'polygon' && item.fill === 'foreground');
+    for (const item of graphics) {
+      if (item.kind !== 'path' || !item.d) continue;
+      for (const end of ends(item.d)) {
+        for (const shape of filled) {
+          const edge = Math.min(...shape.points.map((a, i) => distance(end, a, shape.points[(i + 1) % shape.points.length])));
+          if (edge < 1) seams.push(`${type}: ${item.d} ends ${edge.toFixed(2)} from a filled shape's edge`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(seams, []);
 });

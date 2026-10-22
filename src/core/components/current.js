@@ -20,10 +20,16 @@ function source(type, description, refPrefix, graphics) {
   });
 }
 
+/** A current source's arrow, centered: the stem runs into the head, so its
+ *  butt end never meets the head's base and leaves an anti-aliased seam. */
+export const CURRENT_ARROW = Object.freeze([
+  { kind: 'path', d: 'M 0 -18 L 0 2', style: 'symbol' },
+  { kind: 'polygon', points: [{ x: 0, y: 18 }, { x: -11, y: -4 }, { x: 11, y: -4 }], fill: 'foreground' },
+]);
+
 export const current_source = source('current_source', 'Current Source', 'I', [
     { kind: 'circle', cx: 0, cy: 0, r: 35, style: 'symbol' },
-    { kind: 'path', d: 'M 0 -24 L 0 -8', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: 0, y: 24 }, { x: -16, y: -8 }, { x: 16, y: -8 }], fill: 'foreground' },
+    ...CURRENT_ARROW.map((item) => ({ ...item, ...(item.points ? { points: item.points.map((p) => ({ ...p })) } : {}) })),
     { kind: 'path', d: 'M 0 -35 L 0 -80', style: 'symbol' },
     { kind: 'path', d: 'M 0 35 L 0 80', style: 'symbol' },
 ]);

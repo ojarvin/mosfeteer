@@ -1,4 +1,5 @@
 import { defineSymbol } from './defineSymbol.js';
+import { CURRENT_ARROW } from './current.js';
 
 // An 80x80 diamond: the same visual weight as the round sources beside it.
 const DIAMOND = { kind: 'path', d: 'M 0 -40 L 40 0 L 0 40 L -40 0 Z', style: 'symbol' };
@@ -27,8 +28,7 @@ export const vccs = defineSymbol({
   bbox: { x: -40, y: -80, w: 80, h: 160 },
   graphics: [
     DIAMOND,
-    { kind: 'path', d: 'M 0 -26 L 0 -8', style: 'symbol' },
-    { kind: 'polygon', points: [{ x: 0, y: 26 }, { x: -16, y: -8 }, { x: 16, y: -8 }], fill: 'foreground' },
+    ...CURRENT_ARROW.map((item) => ({ ...item, ...(item.points ? { points: item.points.map((p) => ({ ...p })) } : {}) })),
     ...LEADS,
   ],
   textPos: { x: 0, y: -52, anchor: 'middle' },

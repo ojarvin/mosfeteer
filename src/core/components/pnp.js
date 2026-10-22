@@ -19,7 +19,9 @@ export const pnp = defineSymbol({
   graphics: [
     { kind: 'path', d: 'M -160 0 L -67.48 0', style: 'symbol' },
     { kind: 'path', d: 'M -67.48 -53.33 L -67.48 53.37', style: 'emph' },
-    { kind: 'path', d: 'M -34.3 -38.78 L 0 -53.52 L 0 -120', style: 'symbol' },
+    // The emitter starts inside its arrowhead, not on the head's base, so no
+    // anti-aliased seam shows between them.
+    { kind: 'path', d: 'M -37.98 -37.2 L 0 -53.52 L 0 -120', style: 'symbol' },
     { kind: 'path', d: 'M -67.48 25.61 L 0 53.51 L 0 120', style: 'symbol' },
     { kind: 'polygon', points: [{ x: -40.94, y: -51.95 }, { x: -27.66, y: -25.61 }, { x: -67.48, y: -25.61 }], fill: 'foreground' },
   ],
