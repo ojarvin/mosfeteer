@@ -383,11 +383,18 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     // The plots aside: the analysis window is in reach.
     if (await shown('.plots-window')) await h.key('W', { shiftKey: true });
     const sliders = `[...document.querySelectorAll('#analysis-values .bode-value input[type=range]')]`;
-    await h.evaluate(`${sliders}.at(-1).scrollIntoView({ block: 'center' })`);
-    await h.settle();
-    // A slider the pointer can reach (the log covers the window's foot).
-    const hit = await h.evaluate(`(() => { for (const [i, input] of ${sliders}.entries()) { const r = input.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; if (document.elementFromPoint(x, y) === input) return { i, x, y }; } return null; })()`);
-    assert.ok(hit, 'a slider in reach');
+    // The sliders follow the plots: wait for them, then for one the pointer
+    // can reach (the log covers the window's foot).
+    await h.until(`${sliders}.length > 0`, 10000);
+    const reach = `(() => { ${sliders}.at(-1).scrollIntoView({ block: 'center' }); for (const [i, input] of ${sliders}.entries()) { const r = input.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; if (document.elementFromPoint(x, y) === input) return { i, x, y }; } return null; })()`;
+    let hit = null;
+    try {
+      await h.until(`!!${reach}`, 10000);
+      await h.settle();
+      hit = await h.evaluate(reach);
+    } catch { /* reported below */ }
+    const cover = `(() => { const r = ${sliders}.at(-1)?.getBoundingClientRect(); const e = r && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return e ? (e.id || e.className || e.tagName) : 'no slider'; })()`;
+    assert.ok(hit, `a slider in reach (covered by ${hit ? '' : await h.evaluate(cover)})`);
     const scrolls = `[...document.querySelectorAll('#analysis-dialog, #analysis-dialog *')].filter((e) => e.scrollHeight > e.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(e).overflowY)).map((e) => Math.round(e.scrollTop)).join(',')`;
     const where = () => h.evaluate(`({ scrolls: ${scrolls}, y: Math.round(${sliders}[${hit.i}].getBoundingClientRect().y) })`);
     await h.evaluate(`window.__option = document.getElementById('analysis-input').options[1]`);
