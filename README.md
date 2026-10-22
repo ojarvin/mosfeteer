@@ -79,8 +79,9 @@ The analysis window (`Shift+S`) picks its mode from what is drawn.
 **Small-signal.** Solves a transistor circuit exactly and writes the result
 as you would by hand: Z<sub>in</sub>, Z<sub>out</sub>, the gain, poles and
 zeros, and input-referred noise. Each symbol links back to the device it
-came from. Optional: the loop gain at an op-amp or transistor, the closed
-loop split into its ideal gain and direct feedthrough, and the poles' time
+came from. Optional: the loop gain, broken at an op-amp, a terminal, a net,
+or between two nets when the loop is not drawn closed; an op-amp's closed
+loop split into its ideal gain and direct feedthrough; and the poles' time
 constants, one per capacitor. Pick the input and output on the drawing; an
 ambiguous pick gets an explanation, not a guess.
 

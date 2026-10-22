@@ -124,21 +124,49 @@ drawing as a VCVS diamond.
 
 ## Loop gain
 
-**Loop gain at** (the transfer-functions fieldset) picks an opamp or a
-transistor and derives the loop's return ratio there (`loop-gain.js`, Bode
-and Rosenstark): the element's output driven from a unit test source, the
-input shorted (every independent source at zero), and what returns to its
-control read. An opamp gives its feedback factor beta = -v_d/v_t and T = A
-beta -- A_1 beta for finite gain, omega_t1 beta / s for one pole, and beta
-alone for an ideal opamp, whose T is infinite; a transistor gives T =
--g_m v_gs / i_t at its g_m. It is exact in the analysis's own model, with no
-loading to approximate, and solved without Miller splitting, which would
-remove the feedback being measured. T and its DC value, and an opamp's
-beta, list under Loop gain; the Bode plots sketch T (or beta) with its
-crossover omega_c and the phase margin there, at the sliders' relative
-values -- a phase margin needs no design values.
+**Loop gain at** (the transfer-functions fieldset; `analyze loop-gain AT`)
+says where the loop breaks (`resolveLoopBreak` in `loop-gain.js`):
 
-The closed loop is also split at the same element (`feedbackParts` in
+| written | the loop | broken |
+| --- | --- | --- |
+| `U1` | through an opamp | at the opamp as a whole: T = A beta |
+| `M2.g` | drawn closed (a wire or a name) | the terminal lifted off its net |
+| `V_{out}` | drawn closed | the gates and amplifier inputs on that net (every net of its name) lifted off it |
+| `V_{fb} to V_{inn}` (or `->`) | not drawn closed | between the two nets as drawn |
+
+The field offers the opamps, the transistors' gates, and the named nets. A
+transistor's name alone is refused with the terminal to write instead
+(`M2.g`); so is a net that feeds no gate or amplifier input, a rail (AC
+ground is no part of a loop), and a terminal that is the only connection
+of its net.
+
+A break by terminal or net is solved on a copy of the circuit with the
+lifted terminals on a drive net of their own; the net they were on is the
+return. A test voltage drives the drive net, every input at zero, and T =
+-v(return)/v(drive), from the same pipeline as the port quantities. It is
+exact when the lifted side draws no current: a MOS gate (without its gate
+capacitances) or an amplifier input. Otherwise its loading of the return
+side is not in T, and **Left out of T** names the terminals. With the loop
+not drawn closed, the drive net is the loop's open input: when nothing
+else drives it (gates and amplifier inputs only), the open-loop analysis
+holds it at AC ground and says so among the assumptions.
+
+An opamp's break is a return ratio (Bode, Rosenstark): the opamp's output
+driven from a unit test source, every independent source at zero, and what
+returns to its inputs read: its feedback factor beta = -v_d/v_t and T = A
+beta -- A_1 beta for finite gain, omega_t1 beta / s for one pole, and beta
+alone for an ideal opamp, whose T is infinite. (`returnRatio` also breaks
+at a transistor's g_m, T = -g_m v_gs / i_t, for scripted use; the window
+offers its terminals instead, since one transistor of a differential pair
+is not where its loop breaks.)
+
+Every break is solved without Miller splitting, which would remove the
+feedback being measured. T and its DC value, and an opamp's beta, list
+under Loop gain; the Bode plots sketch T (or beta) with its crossover
+omega_c and the phase margin there, at the sliders' relative values -- a
+phase margin needs no design values.
+
+An opamp's closed loop is also split at the same element (`feedbackParts` in
 `loop-gain.js`; Middlebrook's general feedback theorem, the asymptotic gain
 model): A_v = A_{v\infty} T/(1 + T) + A_{v0}/(1 + T), exactly. The ideal
 gain A_{v\infty} is A_v with the element's gain infinite -- its control held
@@ -487,9 +515,9 @@ selected generator to that same solve. The main implementation is in
 - Opamps are VCVSs, ideal (a nullor, folded out of the system before the
   solve, `reduceNullors`) unless a part's model is finite gain `A` or a single
   pole `omega_t/s`; MNA stamps the inverse gain. A `gm` cell is a VCCS.
-- Loop gain is a return ratio at a picked opamp or transistor
-  (`loop-gain.js`): one more solve of the selected model, the element's
-  output from a unit test source and the input shorted, never Miller-split.
+- Loop gain is broken where the user says (`loop-gain.js`): at an opamp
+  (a return ratio, T = A beta), a terminal, a net, or between two nets;
+  one more solve, every input at zero, never Miller-split.
 - Three-terminal MOS bulk is implicitly tied to VSS/VDD; four-terminal MOS
   uses its actual bulk. Body effect may be omitted without reconnecting the
   bulk. `r_o → infinity` and infinite resistor attributes remove branches

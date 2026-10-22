@@ -3283,9 +3283,9 @@ function pencilRoots(A0, A1) {
 __modules["src/core/analysis/engine.js"] = function (__require, __exports) {
 __exports.numericSmallSignal = numericSmallSignal;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
-let MOS_TYPES, firstDefined; __bind(() => { ({ MOS_TYPES, firstDefined } = __require("src/core/analysis/shared.js")); });
+let MOS_TYPES, asList, firstDefined; __bind(() => { ({ MOS_TYPES, asList, firstDefined } = __require("src/core/analysis/shared.js")); });
 let analyzedCircuit; __bind(() => { ({ analyzedCircuit } = __require("src/core/model.js")); });
-let feedbackParts, returnRatio; __bind(() => { ({ feedbackParts, returnRatio } = __require("src/core/analysis/loop-gain.js")); });
+let feedbackParts, resolveLoopBreak, returnRatio; __bind(() => { ({ feedbackParts, resolveLoopBreak, returnRatio } = __require("src/core/analysis/loop-gain.js")); });
 let poleTimeConstants; __bind(() => { ({ poleTimeConstants } = __require("src/core/analysis/time-constants.js")); });
 let applyApproximations; __bind(() => { ({ applyApproximations } = __require("src/core/analysis/approximation.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
@@ -3698,12 +3698,35 @@ function withCanceledRoots(response, value, options, approximationOptions) {
 }
 
 /**
- * The loop gain at `element` (loop-gain.js), presented as the port
+ * The loop gain asked for (`request`: `{ element }`, or `{ at }` where the
+ * drawing says, loop-gain.js resolveLoopBreak), presented as the port
  * quantities are: T(s) and its DC value, or for an ideal opamp its feedback
  * factor beta (T = A beta, A infinite). Solved without Miller splitting,
  * which would remove the feedback being measured.
  */
-function analyzeLoopGain(circuit, pipeline, pipelineOptions, element, mainOps, mainOptions, mainApproximationOptions, rawOptions = {}) {
+function analyzeLoopGain(circuit, pipeline, pipelineOptions, request, mainOps, mainOptions, mainApproximationOptions, rawOptions = {}) {
+  let target = { kind: 'element', element: request.element };
+  if (request.at !== undefined) {
+    const parasitics = pipelineOptions.parasitics === true || pipelineOptions.deviceCapacitances === true || pipelineOptions.includeParasitics === true;
+    target = resolveLoopBreak(circuit, request.at, { parasitics });
+    if (!target.ok) return { ok: false, at: String(request.at), error: target.error };
+    // A rail is no part of a loop: naming it as a port would lift it off AC ground.
+    const grounds = pipeline?.context?.acGroundIds;
+    // (The open input of a loop not drawn closed is held there on purpose.)
+    const rail = target.kind === 'break' && [target.ret, ...(target.openInput ? [] : [target.drive])].find((id) => grounds?.has(id));
+    if (rail) return { ok: false, at: target.label, error: `${circuit.nets.get(rail)?.name || rail} is AC ground: nothing comes back around a loop through it` };
+  }
+  const element = target.kind === 'element' ? target.element : null;
+  const where = element || target.label;
+  // The circuit and ports a break is solved with: the lifted copy, driven at
+  // the drive net and read at the return.
+  const solved = target.kind === 'break' ? target.circuit : circuit;
+  const ports = target.kind === 'break'
+    ? { input: target.drive, output: target.ret, acGrounds: [...asList(pipelineOptions.acGrounds), ...(pipelineOptions.input ? [pipelineOptions.input] : [])] }
+    : {};
+  const loopGainReport = (opts, ops, options, approximation) => (target.kind === 'element'
+    ? elementLoopReport(circuit, pipeline, opts, element, ops, options, approximation)
+    : brokenLoopReport(target, { ...opts, ...ports }, ops, options, approximation));
   // A budget of its own: a loop gain too large to solve must not take the
   // port quantities down with it.
   const ops = createRationalOps({ variable: mainApproximationOptions.variable || 's', maxOperations: rawOptions.loopGainOperations || LOOP_GAIN_OPERATIONS });
@@ -3713,9 +3736,9 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, element, mainOps, m
   try {
     // Its own algebra too: the model rebuilt with it, symbols and all.
     const loopPipelineOptions = { ...pipelineOptions, ops, s: ops.s(), valueOf: (value, primitive) => symbolicValue(value, primitive, rawOptions, ops) };
-    exact = loopGainReport(circuit, pipeline, loopPipelineOptions, element, ops, options, approximationOptions);
+    exact = loopGainReport(loopPipelineOptions, ops, options, approximationOptions);
   } catch (error) {
-    exact = { ok: false, element, tooLarge: /budget/i.test(error.message), error: `the loop gain at ${element} did not solve: ${error.message}` };
+    exact = { ok: false, element, tooLarge: /budget/i.test(error.message), error: `the loop gain at ${where} did not solve: ${error.message}` };
   }
   if (exact.ok || !exact.tooLarge) return exact;
   // Too large to keep every symbol: solve it again with numbers for them --
@@ -3726,16 +3749,16 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, element, mainOps, m
   try {
     const numericOps = createRationalOps({ variable: mainApproximationOptions.variable || 's', maxOperations: LOOP_GAIN_OPERATIONS });
     const symbolicOptions = { ...pipelineOptions, ops: numericOps, s: numericOps.s(), valueOf: (value, primitive) => symbolicValue(value, primitive, rawOptions, numericOps) };
-    const model = buildExactAnalysisPipeline(circuit, { ...symbolicOptions, millerApproximation: false, solve: false });
+    const model = buildExactAnalysisPipeline(solved, { ...symbolicOptions, ...ports, millerApproximation: false, solve: false });
     if (!model.ok) return exact;
     const provenance = symbolProvenance(model.primitives, model.conversion?.primitives, []);
     const outputNode = model.context.output?.node;
-    const outputComponents = new Set([...circuit.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
+    const outputComponents = new Set([...solved.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
     const values = sketchValues(sketchParameters(new Set(Object.keys(provenance)), provenance, { outputComponents }), rawOptions.sketchRatios || {});
     const numericPipelineOptions = { ...symbolicOptions, valueOf: (value, primitive) => symbolicValue(value, primitive, { ...rawOptions, values }, numericOps) };
     const numericOptions = { ...mainOptions, budget: numericOps.budget };
     const numericApproximation = { ...mainApproximationOptions, budget: numericOps.budget, rational: { ...(mainApproximationOptions.rational || {}), budget: numericOps.budget } };
-    const numeric = loopGainReport(circuit, pipeline, numericPipelineOptions, element, numericOps, numericOptions, numericApproximation);
+    const numeric = loopGainReport(numericPipelineOptions, numericOps, numericOptions, numericApproximation);
     return numeric.ok ? { ...numeric, numeric: true, values } : exact;
   } catch {
     return exact;
@@ -3804,7 +3827,43 @@ function analyzeTimeConstants(circuit, pipelineOptions, options, rawOptions = {}
 
 const TIME_CONSTANT_OPERATIONS = 400000;
 
-function loopGainReport(circuit, pipeline, pipelineOptions, element, ops, options, approximationOptions) {
+/** T solved from the loop broken where the drawing says: -v(return) /
+ *  v(drive), the drive net driven and every input at zero. */
+function brokenLoopReport(target, pipelineOptions, ops, options, approximationOptions) {
+  const at = target.label;
+  const tooLarge = () => ({ ok: false, at, tooLarge: true, error: `the loop gain at ${at} is too large to solve exactly; simplify the model (r_o -> infinity on bias devices, fewer capacitances)` });
+  const model = buildExactAnalysisPipeline(target.circuit, { ...pipelineOptions, millerApproximation: false });
+  if (!model.ok) {
+    if (/budget/i.test(model.error || '')) return tooLarge();
+    return { ok: false, at, error: `the loop broken at ${at} does not solve: ${model.error}` };
+  }
+  const gain = model.queries?.transfer?.value;
+  if (ops.budget?.exceeded) return tooLarge();
+  if (!gain) return { ok: false, at, error: `the loop broken at ${at} does not solve` };
+  if (ops.isZero(gain)) return { ok: false, at, error: `nothing comes back around a loop broken at ${at}: its loop gain is zero` };
+  const tidy = (value) => {
+    const cleanupOps = createRationalOps({ variable: approximationOptions.variable || 's', maxOperations: 12000 });
+    const compact = compactRational(value, cleanupOps);
+    return cancelCommonPolynomialFactor(cleanupOps.budget.exceeded ? value : compact, { variable: approximationOptions.variable || 's', maxWork: EXACT_CANCELLATION_WORK });
+  };
+  const exact = canonicalResponseValue(tidy(ops.neg(gain)), options);
+  const approximation = applyApproximations(exact.expression, approximationOptions);
+  const displayed = displayResponse('T', exact.expression, approximation, options, approximationOptions);
+  if (ops.budget?.exceeded) return tooLarge();
+  return {
+    ok: true,
+    at,
+    element: null,
+    kind: 'break',
+    model: null,
+    infinite: false,
+    ...displayed,
+    ...(target.loading.length ? { loading: target.loading } : {}),
+    equations: displayed.equations,
+  };
+}
+
+function elementLoopReport(circuit, pipeline, pipelineOptions, element, ops, options, approximationOptions) {
   // The model without Miller splitting (it removes the feedback being
   // measured), unsolved: only the broken loop is solved.
   let loopPipeline = pipeline;
@@ -4341,6 +4400,11 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       ? (symbolic ? ops.s() : (typeof ops.s === 'function' ? ops.s() : ops.one))
       : (symbolic ? symbolicValue(options.s, {}, options, ops) : options.s),
   };
+  // A loop not drawn closed (`V_fb to V_inn`) leaves its input open: held
+  // at AC ground for the open-loop analysis, as the loop's open input.
+  const openInput = options.loopGain?.at ? resolveLoopBreak(circuit, options.loopGain.at).openInput : null;
+  if (openInput) pipelineOptions.acGrounds = [...asList(pipelineOptions.acGrounds), openInput];
+  const openInputAssumptions = openInput ? [`${openInput} at AC ground: the loop's open input`] : [];
   let pipeline = buildExactAnalysisPipeline(circuit, pipelineOptions);
   let retainedOutputResistance = false;
   // Leaving r_o out can float a node driven only by current sources (an
@@ -4357,9 +4421,9 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     // A loop gain asked for still gets its own solve: the closed loop may be
     // too large where the broken one is not.
     const report = failureReport(pipeline, normalized);
-    if (options.loopGain?.element && pipeline.selectedMna) {
+    if ((options.loopGain?.at || (options.loopGain?.element && pipeline.selectedMna))) {
       const loopOptions = { ...analysisOptions, parameters: analysisOptions.parameters || {}, rational: { maxOperations: options.maxOperations } };
-      report.loop = analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain.element, ops, responseOptions(loopOptions), loopOptions, options);
+      report.loop = analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain, ops, responseOptions(loopOptions), loopOptions, options);
     }
     return report;
   }
@@ -4478,13 +4542,14 @@ function analyzeSmallSignalV2(circuit, options = {}) {
     ? (analysisOptions.assumptions?.gmb0 ? ['g_mb = 0'] : omittedBody.map((device) => `g_mb = 0 (${device})`))
     : [];
   const noise = analyzeNoise(queries, values.Av, noiseRequest(options.noise), approximationOptions);
-  const loop = options.loopGain?.element
-    ? analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain.element, ops, withEquivalences(responseOptions(analysisOptions)), approximationOptions, options)
+  const loop = options.loopGain?.element || options.loopGain?.at
+    ? analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain, ops, withEquivalences(responseOptions(analysisOptions)), approximationOptions, options)
     : null;
   const timeConstants = options.timeConstants
     ? analyzeTimeConstants(circuit, pipelineOptions, responseOptions(analysisOptions), options)
     : null;
   const assumptions = unique([
+    ...openInputAssumptions,
     ...millerAssumptions,
     ...(noise?.assumptions || []),
     ...bodyEffectAssumptions,
@@ -4822,7 +4887,7 @@ const PASSTHROUGH_OPTIONS = Object.freeze([
   'input', 'output', 'ports', 'reference', 'acGrounds', 'deviceRegions',
   'values', 'parameters', 'params', 's', 'variable', 'ops', 'maxOperations',
   'budget', 'valueOf', 'resolveValue',
-  'topologicalSolve', 'topologicalPresentation', 'transferFunctions',
+  'topologicalSolve', 'topologicalPresentation', 'transferFunctions', 'loopGain',
 ]);
 
 function engineOptions(options) {
@@ -4993,9 +5058,11 @@ function locusPlot(locus, { parameter, label, color = COLOR_PALETTE.cobalt } = {
 __modules["src/core/analysis/loop-gain.js"] = function (__require, __exports) {
 __exports.returnRatio = returnRatio;
 __exports.feedbackParts = feedbackParts;
+__exports.resolveLoopBreak = resolveLoopBreak;
 let buildMNA; __bind(() => { ({ buildMNA } = __require("src/core/analysis/mna.js")); });
 let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
 let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/context.js")); });
+let Circuit, canonicalNetName; __bind(() => { ({ Circuit, canonicalNetName } = __require("src/core/model.js")); });
 /**
  * Loop gain of a circuit as a return ratio (Bode, Rosenstark): break the
  * loop at its active element -- an opamp, or a transistor's g_m -- by
@@ -5010,7 +5077,14 @@ let AC_GROUND; __bind(() => { ({ AC_GROUND } = __require("src/core/analysis/cont
  *
  * Exact, in the analysis's own model, with no loading to approximate. An
  * ideal opamp's T is infinite: its feedback factor stands in, T = A beta.
+ *
+ * Or the loop is broken where the drawing says (`resolveLoopBreak`): at a
+ * terminal lifted off its net, at a net whose inputs are lifted off it, or
+ * between two nets when the loop is not drawn closed. Then a test voltage
+ * drives the lifted side (the drive net), every input at zero, and T =
+ * -v(return)/v(drive).
  */
+
 
 
 
@@ -5113,7 +5187,121 @@ function feedbackParts(pipeline, element, ops) {
   }
 }
 
+// ----- breaking the loop where the drawing says ----------------------------------
+
+const MOS_TYPES = new Set(['nmos', 'pmos', 'nmosb', 'pmosb']);
+const AMPLIFIER_TYPES = new Set(['opamp', 'opamp_diff', 'opamp_diff_cmfb', 'gm', 'gm_cmfb']);
+/** The amplifiers a loop is broken at as a whole: T = A beta. */
+const ELEMENT_TYPES = new Set(['opamp', 'opamp_diff', 'opamp_diff_cmfb']);
+
+/** Whether `terminal` of `component` draws no current: a MOS gate (without
+ *  its gate capacitances), an amplifier's input. */
+function drawsNoCurrent(component, terminal, parasitics) {
+  if (MOS_TYPES.has(component.type)) {
+    if (terminal !== 'g') return false;
+    const own = component.analysis?.parasitics;
+    return own === 'omit' || (own !== 'include' && !parasitics);
+  }
+  return AMPLIFIER_TYPES.has(component.type) && (terminal === 'ip' || terminal === 'im');
+}
+
+/** The physical nets `name` is: by id, or every net of that name (a
+ *  virtual connection is one node). */
+function netsNamed(circuit, name) {
+  const byId = circuit.nets.get(name);
+  if (byId) return [byId];
+  const key = canonicalNetName(name);
+  return key ? [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === key) : [];
+}
+
+/** How a break point is written: `U1`, `M2.g`, `V_{out}`, `V_{fb} to V_{inn}`. */
+const LOOP_BREAK_HINT = 'an opamp (U1), a terminal (M2.g), the net that closes the loop (V_{out}), or two nets when it is not drawn closed (V_{fb} to V_{inn})';
+
+/**
+ * Where to break the loop, from what the user wrote (LOOP_BREAK_HINT):
+ *
+ * - an opamp: `{ ok, kind: 'element', element }` (returnRatio);
+ * - a terminal: lifted off its net onto a drive net of its own; the net
+ *   it was on is the return;
+ * - a net: the inputs it feeds (MOS gates, amplifier inputs; every net of
+ *   its name) lifted onto the drive net; it is the return;
+ * - two nets, `return to drive` (the loop not drawn): as they are.
+ *
+ * A break is `{ ok, kind: 'break', circuit, drive, ret, label, loading }`:
+ * the circuit to solve (a copy when something was lifted), the drive and
+ * return nets' ids, and the parts on the drive side that draw current
+ * (their loading of the return side is not in T). A failure says why.
+ */
+function resolveLoopBreak(circuit, text, { parasitics = false } = {}) {
+  const label = String(text ?? '').trim();
+  const fail = (error) => ({ ok: false, error });
+  if (!label) return fail(`say where to break the loop: ${LOOP_BREAK_HINT}`);
+  const pair = label.match(/^(.+?)(?:\s*(?:->|→)\s*|\s+to\s+)(.+)$/);
+  if (pair) {
+    const [ret, drive] = [pair[1], pair[2]].map((name) => netsNamed(circuit, name.trim()));
+    if (!ret.length) return fail(`no net named ${pair[1].trim()}`);
+    if (!drive.length) return fail(`no net named ${pair[2].trim()}`);
+    if (ret.some((net) => drive.includes(net))) return fail(`${pair[1].trim()} and ${pair[2].trim()} are one net: name the net once to break the loop there`);
+    const loading = [];
+    for (const net of drive) {
+      for (const t of net.terminals) {
+        const component = circuit.components.get(t.comp);
+        if (component && !drawsNoCurrent(component, t.term, parasitics)) loading.push(`${t.comp}.${t.term}`);
+      }
+    }
+    // Nothing else drives it (gates and amplifier inputs only): the loop's
+    // open input, held at AC ground in the open-loop analysis.
+    return { ok: true, kind: 'break', circuit, drive: drive[0].id, ret: ret[0].id, label, loading, openInput: loading.length ? null : pair[2].trim() };
+  }
+  const component = circuit.components.get(label);
+  if (component && ELEMENT_TYPES.has(component.type)) return { ok: true, kind: 'element', element: label };
+  if (component && MOS_TYPES.has(component.type)) return fail(`${label} is a transistor: break the loop at one of its terminals, such as ${label}.g`);
+  const dot = label.match(/^([^.\s]+)\.([A-Za-z0-9_]+)$/);
+  const terminalPart = dot && circuit.components.get(dot[1]);
+  if (terminalPart) {
+    if (!terminalPart.def?.terminals?.some((t) => t.name === dot[2])) return fail(`${dot[1]} has no terminal ${dot[2]}`);
+    const net = circuit.netOfTerminal({ comp: dot[1], term: dot[2] });
+    if (!net) return fail(`${label} is not connected`);
+    // Its net and every net of the same name: one node.
+    const group = net.name ? netsNamed(circuit, net.name) : [net];
+    return lift(circuit, group, [{ comp: dot[1], term: dot[2] }], label, parasitics);
+  }
+  const nets = netsNamed(circuit, label);
+  if (!nets.length) return fail(component ? `${label} is a part: break the loop at ${LOOP_BREAK_HINT}` : `nothing named ${label}: break the loop at ${LOOP_BREAK_HINT}`);
+  const lifted = [];
+  for (const net of nets) {
+    for (const t of net.terminals) {
+      const part = circuit.components.get(t.comp);
+      if (part && drawsNoCurrent(part, t.term, false)) lifted.push({ comp: t.comp, term: t.term });
+    }
+  }
+  if (!lifted.length) {
+    const first = nets.flatMap((net) => net.terminals)[0];
+    return fail(`${label} feeds no gate or amplifier input to break at: name the terminal to break at${first ? `, such as ${first.comp}.${first.term}` : ''}`);
+  }
+  return lift(circuit, nets, lifted, label, parasitics);
+}
+
+/** `circuit` with `lifted` terminals moved off `nets` onto a drive net of
+ *  their own. */
+function lift(circuit, nets, lifted, label, parasitics) {
+  const data = circuit.toJSON();
+  const key = (t) => `${t.comp}.${t.term}`;
+  const moved = new Set(lifted.map(key));
+  const from = new Set(nets.map((net) => net.id));
+  const ids = new Set(data.nets.map((net) => net.id));
+  let drive = 'N_loop';
+  for (let i = 2; ids.has(drive); i += 1) drive = `N_loop${i}`;
+  data.nets = data.nets.map((net) => (from.has(net.id) ? { ...net, terminals: net.terminals.filter((t) => !moved.has(key(t))) } : net));
+  data.nets.push({ id: drive, name: '', terminals: lifted.map((t) => ({ comp: t.comp, term: t.term })), route: [], junctions: [], branches: null });
+  const ret = data.nets.find((net) => from.has(net.id) && net.terminals.length);
+  if (!ret) return { ok: false, error: `${label} is the only connection of its net: nothing comes back to it` };
+  const loading = lifted.filter((t) => !drawsNoCurrent(circuit.components.get(t.comp), t.term, parasitics)).map(key);
+  return { ok: true, kind: 'break', circuit: Circuit.fromJSON(data), drive, ret: ret.id, label, loading };
+}
+
 __exports.LOOP_ELEMENT_TYPES = LOOP_ELEMENT_TYPES;
+__exports.LOOP_BREAK_HINT = LOOP_BREAK_HINT;
 };
 
 __modules["src/core/analysis/miller.js"] = function (__require, __exports) {
@@ -12021,16 +12209,18 @@ function equationEntries(reports, report, presentation = {}) {
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
   }
-  // The loop gain at the element picked (loop-gain.js): T, its DC value, an
-  // opamp's feedback factor; or why the loop would not break there.
+  // The loop gain where it was broken (loop-gain.js): T, its DC value, an
+  // opamp's feedback factor, what the break leaves out; or why the loop
+  // would not break there.
   const loop = report.loop;
   if (loop?.ok) {
     // Too large for every symbol: at the Bode sketch's relative values.
-    const at = ` at ${loop.element}${loop.numeric ? ' (numeric, at the Bode sketch\'s ratios)' : ''}`;
+    const at = ` at ${loop.element || loop.at}${loop.numeric ? ' (numeric, at the Bode sketch\'s ratios)' : ''}`;
     if (loop.ac?.equation) add(`AC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.ac.equation }, 'loop');
     if (loop.dc?.equation) add(`DC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.dc.equation }, 'loop');
     if (loop.infinite) add('Loop gain', { ok: true, equation: 'T = A \\beta \\to \\infty' }, 'loop');
     if (loop.beta) add(`Feedback factor${at}`, { ok: true, equation: loop.beta.equation }, 'loop');
+    if (loop.loading?.length) add('Left out of T', { ok: true, equation: `\\text{the loading of ${loop.loading.join(', ')}: ${loop.loading.length === 1 ? 'it draws' : 'they draw'} current}` }, 'loop');
     // The closed loop split at the same element (the asymptotic gain model):
     // its ideal gain, with the element's control nulled, and what gets
     // through with its gain at zero.
@@ -12197,7 +12387,7 @@ function buildAdapted(report, presentation = {}) {
   const reports = { ...cleaned };
   // The loop gain, for the Bode tab: its exact coefficients and roots.
   if (report.loop?.ok) {
-    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
+    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, at: report.loop.at, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
   }
   const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
@@ -12229,6 +12419,7 @@ function buildAdapted(report, presentation = {}) {
     ...details,
     equationEntries: entries,
     equationOrder: entries.map(({ title }) => title),
+    ...(report.loop && !report.loop.ok ? { loopError: report.loop.error } : {}),
     smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
   };
   if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;
@@ -20116,6 +20307,8 @@ function commandHelp() {
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
     '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
     '  analyze model NET [options]    - place the small-signal model, its output at NET, below the drawing as drawing-only parts',
+    '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
+    '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
     '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
     '                                   one per input port to the output; the other sources are zero or constant',
@@ -20269,10 +20462,11 @@ function dispatch(circuit, cmd, pos, flags, io) {
       transimpedance: 'transimpedance', zm: 'transimpedance',
       transconductance: 'transconductance', gm: 'transconductance',
       'current-gain': 'currentGain', ai: 'currentGain',
+      'loop-gain': 'loop', loop: 'loop',
       model: 'model',
     }[subject];
     const transferFunction = { transimpedance: 'Zm', transconductance: 'Gm', currentGain: 'Ai' }[quantity];
-    const usage = 'usage: analyze <model|input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
+    const usage = 'usage: analyze <model|input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET | analyze loop-gain AT [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
     if (!quantity) throw new Error(usage);
     const target = pos.shift();
     if (!target || pos.length) throw new Error(usage);
@@ -20287,7 +20481,8 @@ function dispatch(circuit, cmd, pos, flags, io) {
     }
     const analysisOptions = {
       input: quantity === 'input' ? target : flags.input?.[0],
-      output: quantity === 'input' ? flags.output?.[0] : target,
+      output: quantity === 'input' || quantity === 'loop' ? flags.output?.[0] : target,
+      ...(quantity === 'loop' ? { loopGain: { at: target } } : {}),
       ...(flags.reference ? { reference: flags.reference[0] } : {}),
       ...(flags['ac-ground'] ? { acGrounds: list(flags['ac-ground']) } : {}),
       ...(Object.keys(deviceRegions).length ? { deviceRegions } : {}),
@@ -20298,6 +20493,11 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...(transferFunction ? { transferFunctions: [transferFunction] } : {}),
     };
     const combined = analyzeSmallSignal(circuit, analysisOptions);
+    if (quantity === 'loop') {
+      if (!combined.reports?.loop?.ok) throw new Error(combined.loopError || combined.error || 'the loop gain did not solve');
+      const rows = (combined.equationEntries || []).filter((entry) => entry.group === 'loop').map(({ title, result: row }) => ({ title, equation: row.equation }));
+      return result(rows.map((row) => `${row.title}: ${row.equation}`).join('\n'), { at: target, rows });
+    }
     if (quantity === 'model') {
       if (!combined.ok) throw new Error(combined.diagnostics?.errors?.[0]?.detail || combined.error || 'the small-signal analysis failed');
       const model = smallSignalSchematic(combined, { circuit, ports: false });
@@ -42988,16 +43188,18 @@ function fillAnalysisDialog(targetNetId) {
   return defaults;
 }
 
-/** The opamps and transistors a loop can be broken at. */
+/** Where a loop can be broken, offered as it is typed: the opamps, the
+ *  transistors' gates, and the named nets. */
 function fillLoopElements() {
-  if (!analysisLoopElement) return;
-  const kept = analysisLoopElement.value;
-  const parts = sortedComps().filter((component) => LOOP_ELEMENT_TYPES.has(component.type));
-  analysisLoopElement.replaceChildren(
-    Object.assign(document.createElement('option'), { value: '', textContent: 'no loop gain' }),
-    ...parts.map((component) => Object.assign(document.createElement('option'), { value: component.refdes, textContent: `${component.refdes} (${component.type.startsWith('opamp') ? 'opamp' : 'g_m'})` })),
-  );
-  if (parts.some((component) => component.refdes === kept)) analysisLoopElement.value = kept;
+  const list = document.getElementById('analysis-loop-points');
+  if (!list) return;
+  const parts = sortedComps();
+  const points = [
+    ...parts.filter((component) => component.type.startsWith('opamp')).map((component) => [component.refdes, 'opamp']),
+    ...parts.filter((component) => LOOP_ELEMENT_TYPES.has(component.type) && !component.type.startsWith('opamp')).map((component) => [`${component.refdes}.g`, 'gate']),
+    ...visibleNets().filter((net) => net.name).map((net) => [net.name, 'net']),
+  ];
+  list.replaceChildren(...points.map(([value, label]) => Object.assign(document.createElement('option'), { value, label })));
 }
 
 function parseAnalysisList(value) {
@@ -43044,7 +43246,7 @@ function analysisFormValues() {
     input: analysisInput?.value || '',
     output: analysisTarget?.value || '',
     acGrounds: analysisAcGrounds?.value || '',
-    loopElement: analysisLoopElement?.value || '',
+    loopElement: analysisLoopElement?.value.trim() || '',
     deviceRegions,
     options,
     annotationExcluded: [...annotationExcluded],
@@ -43139,7 +43341,7 @@ function restoreAnalysisForm(defaults = {}) {
   };
   setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
   setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
-  setSelect(analysisLoopElement, typeof saved.loopElement === 'string' ? saved.loopElement : '');
+  if (analysisLoopElement) analysisLoopElement.value = typeof saved.loopElement === 'string' ? saved.loopElement : '';
   if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
   if (analysisDeviceRegions) {
     analysisDeviceRegions.value = formatAnalysisDeviceRegions(pruneAnalysisDeviceRegions(
@@ -44011,7 +44213,7 @@ function installOptionsSummary() {
     const chosen = [
       ...analysisTransferInputs.filter((input) => input.checked && input.dataset.transferFunction !== 'Av').map((input) => input.dataset.transferFunction.replace(/^(.)(.)$/, '$1_$2')),
       ...(analysisTransferInputs.some((input) => input.dataset.transferFunction === 'Av' && !input.checked) ? ['no A_v'] : []),
-      ...(analysisLoopElement?.value ? [`loop gain at ${analysisLoopElement.value}`] : []),
+      ...(analysisLoopElement?.value.trim() ? [`loop gain at ${analysisLoopElement.value.trim()}`] : []),
       ...(!on('analysis-approx-body') ? ['body effect'] : []),
       ...(on('analysis-approx-ro') ? ['r_o → ∞'] : []),
       ...(!on('analysis-approx-miller') ? ['no Miller'] : []),
@@ -44120,11 +44322,11 @@ function installAnalysisUi() {
     const formOptions = analysisFormOptions();
     const devices = analysisDeviceOptions();
     const noise = analysisNoiseRequest(formOptions);
-    const loopElement = analysisLoopElement?.value;
+    const loopElement = analysisLoopElement?.value.trim();
     const request = {
       ...formOptions,
       ...(noise ? { noise } : {}),
-      ...(loopElement ? { loopGain: { element: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
+      ...(loopElement ? { loopGain: { at: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
       ...(Object.keys(devices).length ? { devices } : {}),
       input,
       output,
@@ -50928,14 +51130,16 @@ const nameOf = (port) => String(port?.name || port?.netId || '?');
 function traceOf(report, key) {
   const input = nameOf(report.inputPort);
   const output = nameOf(report.outputPort);
-  const element = report.reports?.loop?.element || report.analysisOptions?.loopElement || '';
+  // An opamp names its T and beta; a loop broken where the drawing says is T.
+  const element = report.reports?.loop?.element || '';
+  const at = report.reports?.loop?.at || element || report.analysisOptions?.loopElement || '';
   const label = key === 'transfer' ? `\\frac{${output}}{${input}}`
     : key === 'output' ? `Z_{out}(${output})`
       : key === 'input' ? `Z_{in}(${input})`
-        : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : `T_{${element}}`)
+        : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : element ? `T_{${element}}` : 'T')
           : QUANTITIES[key].tex;
   // One trace per quantity between the same nets: a newer derive replaces it.
-  return { id: `${key}\n${input}\n${output}\n${key === 'loop' ? element : ''}`, key, label, report, on: true };
+  return { id: `${key}\n${input}\n${output}\n${key === 'loop' ? at : ''}`, key, label, report, on: true };
 }
 
 function addTrace(report, key) {

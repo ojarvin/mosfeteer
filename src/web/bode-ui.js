@@ -215,14 +215,16 @@ const nameOf = (port) => String(port?.name || port?.netId || '?');
 function traceOf(report, key) {
   const input = nameOf(report.inputPort);
   const output = nameOf(report.outputPort);
-  const element = report.reports?.loop?.element || report.analysisOptions?.loopElement || '';
+  // An opamp names its T and beta; a loop broken where the drawing says is T.
+  const element = report.reports?.loop?.element || '';
+  const at = report.reports?.loop?.at || element || report.analysisOptions?.loopElement || '';
   const label = key === 'transfer' ? `\\frac{${output}}{${input}}`
     : key === 'output' ? `Z_{out}(${output})`
       : key === 'input' ? `Z_{in}(${input})`
-        : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : `T_{${element}}`)
+        : key === 'loop' ? (report.reports?.loop?.infinite ? `\\beta_{${element}}` : element ? `T_{${element}}` : 'T')
           : QUANTITIES[key].tex;
   // One trace per quantity between the same nets: a newer derive replaces it.
-  return { id: `${key}\n${input}\n${output}\n${key === 'loop' ? element : ''}`, key, label, report, on: true };
+  return { id: `${key}\n${input}\n${output}\n${key === 'loop' ? at : ''}`, key, label, report, on: true };
 }
 
 function addTrace(report, key) {

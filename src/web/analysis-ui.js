@@ -130,16 +130,18 @@ function fillAnalysisDialog(targetNetId) {
   return defaults;
 }
 
-/** The opamps and transistors a loop can be broken at. */
+/** Where a loop can be broken, offered as it is typed: the opamps, the
+ *  transistors' gates, and the named nets. */
 function fillLoopElements() {
-  if (!analysisLoopElement) return;
-  const kept = analysisLoopElement.value;
-  const parts = sortedComps().filter((component) => LOOP_ELEMENT_TYPES.has(component.type));
-  analysisLoopElement.replaceChildren(
-    Object.assign(document.createElement('option'), { value: '', textContent: 'no loop gain' }),
-    ...parts.map((component) => Object.assign(document.createElement('option'), { value: component.refdes, textContent: `${component.refdes} (${component.type.startsWith('opamp') ? 'opamp' : 'g_m'})` })),
-  );
-  if (parts.some((component) => component.refdes === kept)) analysisLoopElement.value = kept;
+  const list = document.getElementById('analysis-loop-points');
+  if (!list) return;
+  const parts = sortedComps();
+  const points = [
+    ...parts.filter((component) => component.type.startsWith('opamp')).map((component) => [component.refdes, 'opamp']),
+    ...parts.filter((component) => LOOP_ELEMENT_TYPES.has(component.type) && !component.type.startsWith('opamp')).map((component) => [`${component.refdes}.g`, 'gate']),
+    ...visibleNets().filter((net) => net.name).map((net) => [net.name, 'net']),
+  ];
+  list.replaceChildren(...points.map(([value, label]) => Object.assign(document.createElement('option'), { value, label })));
 }
 
 function parseAnalysisList(value) {
@@ -186,7 +188,7 @@ function analysisFormValues() {
     input: analysisInput?.value || '',
     output: analysisTarget?.value || '',
     acGrounds: analysisAcGrounds?.value || '',
-    loopElement: analysisLoopElement?.value || '',
+    loopElement: analysisLoopElement?.value.trim() || '',
     deviceRegions,
     options,
     annotationExcluded: [...annotationExcluded],
@@ -281,7 +283,7 @@ function restoreAnalysisForm(defaults = {}) {
   };
   setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
   setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
-  setSelect(analysisLoopElement, typeof saved.loopElement === 'string' ? saved.loopElement : '');
+  if (analysisLoopElement) analysisLoopElement.value = typeof saved.loopElement === 'string' ? saved.loopElement : '';
   if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
   if (analysisDeviceRegions) {
     analysisDeviceRegions.value = formatAnalysisDeviceRegions(pruneAnalysisDeviceRegions(
@@ -1153,7 +1155,7 @@ function installOptionsSummary() {
     const chosen = [
       ...analysisTransferInputs.filter((input) => input.checked && input.dataset.transferFunction !== 'Av').map((input) => input.dataset.transferFunction.replace(/^(.)(.)$/, '$1_$2')),
       ...(analysisTransferInputs.some((input) => input.dataset.transferFunction === 'Av' && !input.checked) ? ['no A_v'] : []),
-      ...(analysisLoopElement?.value ? [`loop gain at ${analysisLoopElement.value}`] : []),
+      ...(analysisLoopElement?.value.trim() ? [`loop gain at ${analysisLoopElement.value.trim()}`] : []),
       ...(!on('analysis-approx-body') ? ['body effect'] : []),
       ...(on('analysis-approx-ro') ? ['r_o → ∞'] : []),
       ...(!on('analysis-approx-miller') ? ['no Miller'] : []),
@@ -1262,11 +1264,11 @@ export function installAnalysisUi() {
     const formOptions = analysisFormOptions();
     const devices = analysisDeviceOptions();
     const noise = analysisNoiseRequest(formOptions);
-    const loopElement = analysisLoopElement?.value;
+    const loopElement = analysisLoopElement?.value.trim();
     const request = {
       ...formOptions,
       ...(noise ? { noise } : {}),
-      ...(loopElement ? { loopGain: { element: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
+      ...(loopElement ? { loopGain: { at: loopElement }, sketchRatios: editor.circuit.analysisValues?.bode || {} } : {}),
       ...(Object.keys(devices).length ? { devices } : {}),
       input,
       output,

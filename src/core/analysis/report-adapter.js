@@ -668,16 +668,18 @@ function equationEntries(reports, report, presentation = {}) {
     if (frequency?.poles?.length) add(`Poles${suffix}`, rootRow(frequency.poles), 'roots');
     if (frequency?.zeros?.length) add(`Zeros${suffix}`, rootRow(frequency.zeros), 'roots');
   }
-  // The loop gain at the element picked (loop-gain.js): T, its DC value, an
-  // opamp's feedback factor; or why the loop would not break there.
+  // The loop gain where it was broken (loop-gain.js): T, its DC value, an
+  // opamp's feedback factor, what the break leaves out; or why the loop
+  // would not break there.
   const loop = report.loop;
   if (loop?.ok) {
     // Too large for every symbol: at the Bode sketch's relative values.
-    const at = ` at ${loop.element}${loop.numeric ? ' (numeric, at the Bode sketch\'s ratios)' : ''}`;
+    const at = ` at ${loop.element || loop.at}${loop.numeric ? ' (numeric, at the Bode sketch\'s ratios)' : ''}`;
     if (loop.ac?.equation) add(`AC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.ac.equation }, 'loop');
     if (loop.dc?.equation) add(`DC ${loop.infinite ? 'feedback factor' : 'loop gain'}${at}`, { ok: true, equation: loop.dc.equation }, 'loop');
     if (loop.infinite) add('Loop gain', { ok: true, equation: 'T = A \\beta \\to \\infty' }, 'loop');
     if (loop.beta) add(`Feedback factor${at}`, { ok: true, equation: loop.beta.equation }, 'loop');
+    if (loop.loading?.length) add('Left out of T', { ok: true, equation: `\\text{the loading of ${loop.loading.join(', ')}: ${loop.loading.length === 1 ? 'it draws' : 'they draw'} current}` }, 'loop');
     // The closed loop split at the same element (the asymptotic gain model):
     // its ideal gain, with the element's control nulled, and what gets
     // through with its gain at zero.
@@ -844,7 +846,7 @@ function buildAdapted(report, presentation = {}) {
   const reports = { ...cleaned };
   // The loop gain, for the Bode tab: its exact coefficients and roots.
   if (report.loop?.ok) {
-    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
+    reports.loop = { ok: true, query: 'loop-gain', exact: report.loop.exact, poles: report.loop.poles || [], zeros: report.loop.zeros || [], element: report.loop.element, at: report.loop.at, infinite: report.loop.infinite, numeric: !!report.loop.numeric };
   }
   const entries = equationEntries(reports, report, presentation);
   const successful = Object.values(reports).filter((child) => child.ok);
@@ -876,6 +878,7 @@ function buildAdapted(report, presentation = {}) {
     ...details,
     equationEntries: entries,
     equationOrder: entries.map(({ title }) => title),
+    ...(report.loop && !report.loop.ok ? { loopError: report.loop.error } : {}),
     smallSignalNetlist: firstDefined(report.smallSignalNetlist, reports.transfer.smallSignalNetlist, reports.output.smallSignalNetlist, reports.input.smallSignalNetlist),
   };
   if (reports.transfer.frequencyResponse) base.frequencyResponse = reports.transfer.frequencyResponse;

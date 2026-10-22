@@ -529,6 +529,8 @@ export function commandHelp() {
     '  eval                           - quality report (connectivity, overlaps, routing, labels, grid)',
     '  analyze <input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [options]',
     '  analyze model NET [options]    - place the small-signal model, its output at NET, below the drawing as drawing-only parts',
+    '  analyze loop-gain AT [options] - the loop gain broken at AT: an opamp (U1), a terminal (M2.g), the net that closes',
+    '                                   the loop (V_{out}), or "V_{fb} to V_{inn}" when the loop is not drawn closed',
     '  analyze signal-flow --output NET --input PORT,... [--zero PORT,...] [--const PORT=VALUE,...]',
     '                                 - transfer functions of a block diagram (tf_s/tf_z blocks, sum and multiply junctions):',
     '                                   one per input port to the output; the other sources are zero or constant',
@@ -682,10 +684,11 @@ function dispatch(circuit, cmd, pos, flags, io) {
       transimpedance: 'transimpedance', zm: 'transimpedance',
       transconductance: 'transconductance', gm: 'transconductance',
       'current-gain': 'currentGain', ai: 'currentGain',
+      'loop-gain': 'loop', loop: 'loop',
       model: 'model',
     }[subject];
     const transferFunction = { transimpedance: 'Zm', transconductance: 'Gm', currentGain: 'Ai' }[quantity];
-    const usage = 'usage: analyze <model|input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
+    const usage = 'usage: analyze <model|input-impedance|output-impedance|transfer-function|transimpedance|transconductance|current-gain> NET | analyze loop-gain AT [--input NET] [--output NET] [--reference NET] [--ac-ground NET,...] [--device-region REF=triode,...] [--ignore-channel-length-modulation] [--ignore-body-effect] [--gmro-large] [--dominant-pole]';
     if (!quantity) throw new Error(usage);
     const target = pos.shift();
     if (!target || pos.length) throw new Error(usage);
@@ -700,7 +703,8 @@ function dispatch(circuit, cmd, pos, flags, io) {
     }
     const analysisOptions = {
       input: quantity === 'input' ? target : flags.input?.[0],
-      output: quantity === 'input' ? flags.output?.[0] : target,
+      output: quantity === 'input' || quantity === 'loop' ? flags.output?.[0] : target,
+      ...(quantity === 'loop' ? { loopGain: { at: target } } : {}),
       ...(flags.reference ? { reference: flags.reference[0] } : {}),
       ...(flags['ac-ground'] ? { acGrounds: list(flags['ac-ground']) } : {}),
       ...(Object.keys(deviceRegions).length ? { deviceRegions } : {}),
@@ -711,6 +715,11 @@ function dispatch(circuit, cmd, pos, flags, io) {
       ...(transferFunction ? { transferFunctions: [transferFunction] } : {}),
     };
     const combined = analyzeSmallSignal(circuit, analysisOptions);
+    if (quantity === 'loop') {
+      if (!combined.reports?.loop?.ok) throw new Error(combined.loopError || combined.error || 'the loop gain did not solve');
+      const rows = (combined.equationEntries || []).filter((entry) => entry.group === 'loop').map(({ title, result: row }) => ({ title, equation: row.equation }));
+      return result(rows.map((row) => `${row.title}: ${row.equation}`).join('\n'), { at: target, rows });
+    }
     if (quantity === 'model') {
       if (!combined.ok) throw new Error(combined.diagnostics?.errors?.[0]?.detail || combined.error || 'the small-signal analysis failed');
       const model = smallSignalSchematic(combined, { circuit, ports: false });
