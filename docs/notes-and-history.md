@@ -53,7 +53,9 @@ References (`src/core/notes.js`):
   they rename in the same undo step -- a net's once no other net keeps the
   old name -- except inside code.
 - **Design links.** `[[amp]]` names another design of the workspace; a
-  click opens it. Renaming a design relinks them like part links
+  click opens it, and its right-click menu also shows it in a reference
+  window (the one showing it already, else an empty one, else a new one;
+  `showDesignInReference`). Renaming a design relinks them like part links
   (`relinkDocumentState`); one to no design is struck through, and Design
   Check and the Atlas's Check list it with the broken links
   ([`hierarchy.md`](hierarchy.md)).

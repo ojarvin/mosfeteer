@@ -10,7 +10,8 @@
  *
  * A mention (`@M1`, `@V_{out}`) glows its part or net on the canvas while
  * the pointer is over it and selects it on a click; a `[[design]]` link
- * opens that design. Copy puts them on the clipboard as plain Markdown
+ * opens that design, and its right-click menu also shows it in a
+ * reference window. Copy puts them on the clipboard as plain Markdown
  * (`notesMarkdown`).
  */
 
@@ -26,6 +27,8 @@ import { logLine } from './status-bar-ui.js';
 import { beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection } from './main.js';
 import { element as el } from './dom.js';
 import { attachNoteCompletion } from './notes-completion.js';
+import { appendContextItem, openMenuAt } from './context-menu.js';
+import { showDesignInReference } from './reference-window.js';
 
 /** A pause this long ends one edit (one undo step). */
 const EDIT_PAUSE_MS = 1000;
@@ -191,16 +194,37 @@ function onViewOut(ev) {
   if (mentionAt(ev.target) && !mentionAt(ev.relatedTarget) && editor.hoverFromPanel) setHoverTarget(null);
 }
 
+function openLinkedDesign(name) {
+  const doc = designNamed(name);
+  if (!doc) logLine(`No design named "${name}" in the workspace.`, 'error');
+  else if (doc.path !== editor.currentDocumentPath) void openDocumentPath(doc.path);
+}
+
+/** A design link's menu: open the design, or show it in a reference window. */
+function onViewContextMenu(ev) {
+  const link = ev.target?.closest?.('.note-design');
+  if (!link) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const name = link.dataset.design;
+  const doc = designNamed(name);
+  const menu = openMenuAt(ev.clientX, ev.clientY, doc ? name : `${name} · no design of this name`);
+  if (!menu) return;
+  const group = el('div', { class: 'context-menu-group' });
+  const own = doc?.path === editor.currentDocumentPath;
+  appendContextItem(group, `Open ${name}`, () => openLinkedDesign(name), { disabled: !doc || own });
+  appendContextItem(group, 'Show in a reference window', () => showDesignInReference(doc), { disabled: !doc });
+  menu.appendChild(group);
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
 function onViewClick(ev) {
   const mention = mentionAt(ev.target);
   const design = ev.target?.closest?.('.note-design');
   if (!mention && !design) return;
   ev.preventDefault();
   if (design) {
-    const name = design.dataset.design;
-    const doc = designNamed(name);
-    if (!doc) logLine(`No design named "${name}" in the workspace.`, 'error');
-    else if (doc.path !== editor.currentDocumentPath) void openDocumentPath(doc.path);
+    openLinkedDesign(design.dataset.design);
     return;
   }
   const found = mentionTarget(mention.dataset.mention);
@@ -242,6 +266,7 @@ function build() {
   view.addEventListener('mouseover', onViewOver);
   view.addEventListener('mouseout', onViewOut);
   view.addEventListener('click', onViewClick);
+  view.addEventListener('contextmenu', onViewContextMenu);
   view.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target === view) { ev.preventDefault(); startEditing(); }
   });

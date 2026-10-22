@@ -481,6 +481,26 @@ export function refreshModelWindow(circuit) {
 }
 
 /** Open a reference window on `state` (a save point), titled `title`. */
+/** A window on design `doc` ({ path, name }): the one showing it already,
+ *  else an empty one, else a new one. */
+export function showDesignInReference(doc) {
+  if (hidden) setHidden(false);
+  const designs = windows.filter((win) => !win.model);
+  let win = designs.find((other) => other.doc?.path === doc.path)
+    || designs.find((other) => !other.doc && !other.picture && !other.pasted);
+  if (win) {
+    if (win.doc?.path !== doc.path) setDocument(win, doc);
+  } else {
+    win = createWindow(doc);
+  }
+  if (!win) return false;
+  win.el.hidden = false;
+  win.el.focus?.({ preventScroll: true });
+  remember();
+  syncButton();
+  return true;
+}
+
 export function showStateInReference(title, state) {
   if (hidden) toggleReferenceWindows();
   const win = createWindow();

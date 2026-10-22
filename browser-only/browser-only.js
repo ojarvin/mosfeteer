@@ -71690,6 +71690,8 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection; __bind(() => { ({ beginSettingsEdit, endSettingsEdit, markSettingsChanged, render, setSelection } = __require("src/web/main.js")); });
 let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 let attachNoteCompletion; __bind(() => { ({ attachNoteCompletion } = __require("src/web/notes-completion.js")); });
+let appendContextItem, openMenuAt; __bind(() => { ({ appendContextItem, openMenuAt } = __require("src/web/context-menu.js")); });
+let showDesignInReference; __bind(() => { ({ showDesignInReference } = __require("src/web/reference-window.js")); });
 /**
  * The notes window: a design's notes (`Circuit#notes`, core/notes.js) shown
  * rendered (core/notes-markdown.js) and edited as Markdown source. Shift+N (or
@@ -71702,9 +71704,12 @@ let attachNoteCompletion; __bind(() => { ({ attachNoteCompletion } = __require("
  *
  * A mention (`@M1`, `@V_{out}`) glows its part or net on the canvas while
  * the pointer is over it and selects it on a click; a `[[design]]` link
- * opens that design. Copy puts them on the clipboard as plain Markdown
+ * opens that design, and its right-click menu also shows it in a
+ * reference window. Copy puts them on the clipboard as plain Markdown
  * (`notesMarkdown`).
  */
+
+
 
 
 
@@ -71883,16 +71888,37 @@ function onViewOut(ev) {
   if (mentionAt(ev.target) && !mentionAt(ev.relatedTarget) && editor.hoverFromPanel) setHoverTarget(null);
 }
 
+function openLinkedDesign(name) {
+  const doc = designNamed(name);
+  if (!doc) logLine(`No design named "${name}" in the workspace.`, 'error');
+  else if (doc.path !== editor.currentDocumentPath) void openDocumentPath(doc.path);
+}
+
+/** A design link's menu: open the design, or show it in a reference window. */
+function onViewContextMenu(ev) {
+  const link = ev.target?.closest?.('.note-design');
+  if (!link) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const name = link.dataset.design;
+  const doc = designNamed(name);
+  const menu = openMenuAt(ev.clientX, ev.clientY, doc ? name : `${name} · no design of this name`);
+  if (!menu) return;
+  const group = el('div', { class: 'context-menu-group' });
+  const own = doc?.path === editor.currentDocumentPath;
+  appendContextItem(group, `Open ${name}`, () => openLinkedDesign(name), { disabled: !doc || own });
+  appendContextItem(group, 'Show in a reference window', () => showDesignInReference(doc), { disabled: !doc });
+  menu.appendChild(group);
+  menu.querySelector('button:not(:disabled)')?.focus();
+}
+
 function onViewClick(ev) {
   const mention = mentionAt(ev.target);
   const design = ev.target?.closest?.('.note-design');
   if (!mention && !design) return;
   ev.preventDefault();
   if (design) {
-    const name = design.dataset.design;
-    const doc = designNamed(name);
-    if (!doc) logLine(`No design named "${name}" in the workspace.`, 'error');
-    else if (doc.path !== editor.currentDocumentPath) void openDocumentPath(doc.path);
+    openLinkedDesign(design.dataset.design);
     return;
   }
   const found = mentionTarget(mention.dataset.mention);
@@ -71934,6 +71960,7 @@ function build() {
   view.addEventListener('mouseover', onViewOver);
   view.addEventListener('mouseout', onViewOut);
   view.addEventListener('click', onViewClick);
+  view.addEventListener('contextmenu', onViewContextMenu);
   view.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target === view) { ev.preventDefault(); startEditing(); }
   });
@@ -75151,6 +75178,7 @@ function finishRadialMenu(radial, client) {
 __modules["src/web/reference-window.js"] = function (__require, __exports) {
 __exports.showModelWindow = showModelWindow;
 __exports.refreshModelWindow = refreshModelWindow;
+__exports.showDesignInReference = showDesignInReference;
 __exports.showStateInReference = showStateInReference;
 __exports.copyHoveredReference = copyHoveredReference;
 __exports.fitHoveredReference = fitHoveredReference;
@@ -75656,6 +75684,26 @@ function refreshModelWindow(circuit) {
 }
 
 /** Open a reference window on `state` (a save point), titled `title`. */
+/** A window on design `doc` ({ path, name }): the one showing it already,
+ *  else an empty one, else a new one. */
+function showDesignInReference(doc) {
+  if (hidden) setHidden(false);
+  const designs = windows.filter((win) => !win.model);
+  let win = designs.find((other) => other.doc?.path === doc.path)
+    || designs.find((other) => !other.doc && !other.picture && !other.pasted);
+  if (win) {
+    if (win.doc?.path !== doc.path) setDocument(win, doc);
+  } else {
+    win = createWindow(doc);
+  }
+  if (!win) return false;
+  win.el.hidden = false;
+  win.el.focus?.({ preventScroll: true });
+  remember();
+  syncButton();
+  return true;
+}
+
 function showStateInReference(title, state) {
   if (hidden) toggleReferenceWindows();
   const win = createWindow();

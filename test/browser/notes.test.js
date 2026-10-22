@@ -152,6 +152,27 @@ describe('design notes', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.querySelector('.notes-view ul ul li').textContent`), 'tail');
   });
 
+  test('a design link\'s right-click menu opens it or shows it in a reference window', async () => {
+    await h.click('.notes-edit');
+    await typeNotes('See [[child]] and [[gone]]');
+    await finish();
+    await h.until(`!!document.querySelector('.notes-view .note-design.broken')`);
+    const menuFor = async (selector) => {
+      await h.evaluate(`(() => { const a = document.querySelector(${JSON.stringify(selector)}); const r = a.getBoundingClientRect(); a.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 2, clientY: r.top + 2 })); })()`);
+      return h.evaluate(`[...document.querySelectorAll('#component-context-menu:not([hidden]) button')].map((b) => b.textContent + (b.disabled ? ' (off)' : ''))`);
+    };
+    assert.deepEqual(await menuFor('.note-design.broken'), ['Open gone (off)', 'Show in a reference window (off)']);
+    assert.deepEqual(await menuFor('.note-design:not(.broken)'), ['Open child', 'Show in a reference window']);
+    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent === 'Show in a reference window').click()`);
+    await h.until(`[...document.querySelectorAll('.reference-window:not([hidden]) .reference-title')].some((t) => t.textContent.startsWith('child'))`);
+    assert.equal(await editor('editor.currentCircuitName'), 'amp', 'the editor stays on its design');
+    // Again: the window already showing it, not a second one.
+    await menuFor('.note-design:not(.broken)');
+    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent === 'Show in a reference window').click()`);
+    assert.equal(await h.evaluate(`document.querySelectorAll('.reference-window:not(.model-window)').length`), 1);
+    await h.evaluate(`document.querySelector('.reference-window .floating-window-close')?.click()`);
+  });
+
   test('another design shows its own notes, and n closes the window', async () => {
     await h.open('child');
     await h.until(`!document.querySelector('.notes-view h3') && document.querySelector('.notes-source')?.hidden === false || !!document.querySelector('.notes-empty:not([hidden])')`);
