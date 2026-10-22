@@ -23,9 +23,15 @@ missing name, that is the design the link meant. Two or more (a copy made
 outside the editor) are never guessed between, and a name no design is or
 was called stays broken.
 
+The notes' `[[design]]` links count too, compared in any case as the notes
+compare them ([`notes-and-history.md`](notes-and-history.md)); a part and
+the notes linking to the same missing name are one finding
+(`R1, notes → amp`).
+
 **Design Check** in the editor lists the open design's broken links under
 **Broken links**, with **Relink to ...** where one design was saved under the
-name (one undo step); **Fix safe issues** leaves them alone. The Atlas's
+name (one undo step, the parts and the notes together); **Fix safe issues**
+leaves them alone. Choosing a finding in the notes shows the notes. The Atlas's
 **Check** checks every design on the desk ([`atlas.md`](atlas.md)).
 
 Code: `src/web/hierarchy.js` (editor), `src/core/link-bubble.js` (bubble

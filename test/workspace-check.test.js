@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Circuit, nextSavedNames, normalizeSavedNames } from '../src/core/model.js';
-import { brokenLinks, formerlyNamed } from '../src/core/workspace-check.js';
+import { brokenLinkPlaces, brokenLinks, formerlyNamed } from '../src/core/workspace-check.js';
 
 test('a document remembers the names it was saved under, its own first', () => {
   assert.deepEqual(nextSavedNames([], 'amp'), ['amp']);
@@ -40,4 +40,19 @@ test('a broken link finds the one design that was saved under its name, and neve
   // remembers it too (a copy made under a new name).
   assert.deepEqual(brokenLinks([{ id: 'a', name: 'amp' }, { id: 'b', name: 'amp copy', names: ['amp'] }, { id: 'c', name: 'c', parts: [{ id: 'U1', link: 'amp' }] }]), []);
   assert.deepEqual(formerlyNamed(designs, 'opamp'), { to: 'ota-v2', candidates: ['ota-v2'] });
+});
+
+test('a link in the notes is broken when no design has its name in any case, and joins a part link to the same name', () => {
+  const designs = [
+    { id: 'sys', name: 'system', parts: [{ id: 'X1', link: 'gone' }], noteLinks: ['Gone', 'Bias', 'OpAmp', 'nowhere'] },
+    { id: 'ota', name: 'ota-v2', names: ['opamp'] },
+    { id: 'bias', name: 'bias' },
+  ];
+  assert.deepEqual(brokenLinks(designs), [
+    { design: 'sys', name: 'system', link: 'gone', parts: ['X1'], notes: true, to: null, candidates: [] },
+    { design: 'sys', name: 'system', link: 'OpAmp', parts: [], notes: true, to: 'ota-v2', candidates: ['ota-v2'] },
+    { design: 'sys', name: 'system', link: 'nowhere', parts: [], notes: true, to: null, candidates: [] },
+  ]);
+  assert.equal(brokenLinkPlaces(brokenLinks(designs)[0]), 'X1, notes');
+  assert.equal(brokenLinkPlaces(brokenLinks(designs)[1]), 'notes');
 });

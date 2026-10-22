@@ -9,6 +9,7 @@
  */
 
 import { isReferenceMarker, normalizeTags } from './model.js';
+import { noteDesignLinks } from './notes.js';
 
 export { normalizeTags };
 
@@ -35,8 +36,8 @@ function segmentBox(a, b, pad = 10) {
 }
 
 /**
- * The index of one circuit: `{ tags, notes?, items }` (`notes` as one
- * search key), each item
+ * The index of one circuit: `{ tags, notes?, noteLinks?, items }` (`notes`
+ * as one search key, `noteLinks` the designs they link to), each item
  * `{ kind: 'part'|'net'|'text', id, text, type?, boxes }` in drawing units.
  */
 export function designIndex(circuit) {
@@ -73,7 +74,8 @@ export function designIndex(circuit) {
   const timing = circuit.timing ? circuit.timing.rows.length > 0 : [...circuit.labels.values()].some((label) => label.timing);
   // The notes are searched as one text, drawn nowhere (notes.js).
   const notes = circuit.notes ? searchKey(circuit.notes) : '';
-  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(notes ? { notes } : {}), items };
+  const noteLinks = noteDesignLinks(circuit.notes);
+  return { tags: normalizeTags(circuit.tags), ...(links.length ? { links } : {}), ...(beats ? { beats } : {}), ...(timing ? { timing: true } : {}), ...(notes ? { notes } : {}), ...(noteLinks.length ? { noteLinks } : {}), items };
 }
 
 /**

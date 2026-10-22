@@ -196,3 +196,56 @@ test('the history is saved with the circuit and survives a reload unchanged', ()
   const circuit = loadDocument(disk);
   assert.deepEqual(circuit.toJSON().history, disk.history);
 });
+
+test('history command: list, checkpoint, pin, unpin, remove, and restore, with usage errors', () => {
+  const first = write(null, design(), { savePoint: true, now: new Date('2026-10-01T10:00:00Z') });
+  const second = write(first, moved(first), { savePoint: true, now: new Date('2026-10-02T10:00:00Z') });
+  // A script moved M2 since the last save: the history follows the drawing.
+  const circuit = loadDocument(write(second, moved(second, 'M2')));
+  circuit.tags = ['ota'];
+  const text = () => historyText(circuit.toJSON());
+  const list = runCommand(circuit, 'history');
+  assert.equal(list.mutated, false);
+  assert.equal(list.json.length, 2);
+  assert.match(list.text, /^\w{8}  2026-10-02T10:00:00.000Z\n\w{8}  2026-10-01T10:00:00.000Z$/);
+  const [newest, oldest] = list.json;
+
+  const checkpoint = runCommand(circuit, 'history checkpoint "M2 moved" --comment "before the cascode"');
+  assert.equal(checkpoint.mutated, true);
+  assert.deepEqual({ ...checkpoint.json, id: undefined, time: undefined }, { id: undefined, time: undefined, pinned: true, name: 'M2 moved', comment: 'before the cascode' });
+  let all = historyEntries(circuit.history, text());
+  assert.equal(all.length, 3);
+  assert.equal(all[0].text, text(), 'the checkpoint is the drawing as it is');
+
+  // Pin by id, rename by name; the comment stays unless given.
+  runCommand(circuit, `history pin ${oldest.id} first`);
+  runCommand(circuit, 'history pin "M2 moved" second try');
+  all = historyEntries(circuit.history, text());
+  assert.deepEqual(all.map((entry) => [entry.name, entry.comment]), [['second try', 'before the cascode'], [undefined, undefined], ['first', undefined]]);
+  runCommand(circuit, 'history unpin first');
+  assert.equal(historyEntries(circuit.history, text())[2].pinned, undefined);
+  runCommand(circuit, `history remove ${newest.id}`);
+  assert.equal(historyEntries(circuit.history, text()).length, 2);
+
+  // Restore: the drawing comes back, the one replaced is in the history (as
+  // the checkpoint it already was), and the tags stay.
+  const replaced = text();
+  const restored = runCommand(circuit, `history restore ${oldest.id}`);
+  assert.equal(restored.mutated, true);
+  assert.equal(text(), historyText(first));
+  assert.deepEqual(circuit.tags, ['ota']);
+  const after = historyEntries(circuit.history, text());
+  assert.ok(after.some((entry) => entry.text === replaced));
+  assert.equal(after.length, 2);
+
+  assert.throws(() => runCommand(circuit, 'history restore nope'), /no history entry "nope"/);
+  assert.throws(() => runCommand(circuit, `history unpin ${oldest.id}`), /is no checkpoint/);
+  assert.throws(() => runCommand(circuit, 'history bogus x'), /no history entry|usage: history/);
+  assert.throws(() => runCommand(circuit, 'history pin'), /usage: history/);
+  // A history that fits no drawing is refused, never guessed at.
+  circuit.history = { base: 'x', entries: [] };
+  assert.throws(() => runCommand(circuit, 'history'), /does not fit this drawing/);
+  // No history: nothing listed.
+  circuit.history = null;
+  assert.equal(runCommand(circuit, 'history list').text, '(no save points)');
+});

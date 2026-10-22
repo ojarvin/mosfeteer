@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { loadDocument, relinkDocumentState } from '../src/core/document.js';
 import { designIndex, searchDesign } from '../src/core/design-index.js';
-import { findMentions, mentionToken, noteDesignLinks, normalizeNotes, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
+import { findMentions, mentionToken, noteDesignLinks, normalizeNotes, notesMarkdown, relinkNotes, renameMentions, resolveMention } from '../src/core/notes.js';
 import { renderNotes } from '../src/core/notes-markdown.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
@@ -86,6 +86,13 @@ test('the Atlas search finds a design by its notes', () => {
   assert.equal(searchDesign(index, 'amp', 'thermal'), null);
 });
 
+test('the design index lists the designs the notes link to', () => {
+  const circuit = amp();
+  assert.equal('noteLinks' in designIndex(circuit), false);
+  circuit.notes = 'Biased by [[bias-gen]], see [[bias-gen]] and [[ota]]';
+  assert.deepEqual(designIndex(circuit).noteLinks, ['bias-gen', 'ota']);
+});
+
 test('rendered notes escape HTML and keep only safe links', () => {
   const html = renderNotes('<img src=x onerror=alert(1)> [x](javascript:alert(1)) [ok](https://example.com) **b** *i*');
   assert.ok(!html.includes('<img'));
@@ -148,6 +155,19 @@ test('notes command: print, set, append, clear, and a usage error', () => {
   assert.equal(runCommand(circuit, 'notes clear').mutated, true);
   assert.equal(circuit.notes, '');
   assert.throws(() => runCommand(circuit, 'notes bogus'), /usage: notes/);
+});
+
+test('the notes as plain Markdown: mentions and design links as their names, code untouched', () => {
+  const text = 'Gain from @M1 into @V_{out} and @{tail mirror}; see [[bias-gen]], a@b.c\n`@M2 [[x]]` then @M3\n```\n@M4 [[y]]\n```\n[[z]]';
+  assert.equal(notesMarkdown(text), 'Gain from M1 into $V_{out}$ and tail mirror; see bias-gen, a@b.c\n`@M2 [[x]]` then M3\n```\n@M4 [[y]]\n```\nz');
+  const circuit = amp();
+  assert.equal(runCommand(circuit, 'notes markdown').text, '(no notes)');
+  circuit.notes = 'See @V_{out} in [[amp]]';
+  const result = runCommand(circuit, 'notes markdown');
+  assert.equal(result.text, 'See $V_{out}$ in amp');
+  assert.deepEqual(result.json, { markdown: 'See $V_{out}$ in amp' });
+  assert.equal(result.mutated, false);
+  assert.equal(circuit.notes, 'See @V_{out} in [[amp]]');
 });
 
 test('lists nest by indentation, and indented lines continue their item', () => {

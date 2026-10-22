@@ -10,10 +10,11 @@
  *
  * A mention (`@M1`, `@V_{out}`) glows its part or net on the canvas while
  * the pointer is over it and selects it on a click; a `[[design]]` link
- * opens that design.
+ * opens that design. Copy puts them on the clipboard as plain Markdown
+ * (`notesMarkdown`).
  */
 
-import { normalizeNotes, resolveMention } from '../core/notes.js';
+import { normalizeNotes, notesMarkdown, resolveMention } from '../core/notes.js';
 import { renderNotes } from '../core/notes-markdown.js';
 import { canvasEl } from './elements.js';
 import { editor } from './editor-state.js';
@@ -28,7 +29,7 @@ import { element as el } from './dom.js';
 /** A pause this long ends one edit (one undo step). */
 const EDIT_PAUSE_MS = 1000;
 
-let win = null; // { el, view, source, edit, empty, chrome }
+let win = null; // { el, view, source, edit, copy, empty, chrome }
 let editing = false;
 let pauseTimer = null;
 let shownKey = null; // what the rendered view was drawn from
@@ -48,6 +49,7 @@ function mentionTarget(name) {
 function renderView() {
   if (!win) return;
   const key = { text: notes(), circuit: editor.circuit, revision: editor.modelRevision, designs: workspaceDesigns().length };
+  win.copy.disabled = !key.text;
   if (shownKey && Object.keys(key).every((field) => shownKey[field] === key[field])) return;
   shownKey = key;
   const html = renderNotes(key.text, {
@@ -208,14 +210,16 @@ function onViewClick(ev) {
 function build() {
   const close = el('button', { type: 'button', class: 'floating-window-close', 'aria-label': 'Close the notes', title: 'Close (Shift+N)', text: '×' });
   const edit = el('button', { type: 'button', class: 'notes-edit window-action', title: 'Edit (double-click)', text: 'Edit' });
+  const copy = el('button', { type: 'button', class: 'notes-copy window-action', title: 'Copy as Markdown', text: 'Copy' });
   const view = el('div', { class: 'notes-view', tabindex: '0', 'aria-label': 'Notes' });
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: '# Bias\nM1 sets the tail current: see @M1, [[bias-gen]], $I_D = \\frac{1}{2}\\mu C_{ox} V_{ov}^2$' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), edit, close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), copy, edit, close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
+  copy.addEventListener('click', copyMarkdown);
   source.addEventListener('input', onInput);
   source.addEventListener('keydown', onSourceKey);
   source.addEventListener('blur', finishEditStep);
@@ -231,7 +235,18 @@ function build() {
   });
   canvasEl.closest('.canvas-pane').append(node);
   const chrome = floatingWindow(node, { key: 'notes', onClose: hide, resizable: true, toggleKey: 'N' });
-  win = { el: node, view, source, edit, empty, chrome };
+  win = { el: node, view, source, edit, copy, empty, chrome };
+}
+
+/** The notes on the clipboard as plain Markdown. */
+async function copyMarkdown() {
+  if (!notes()) return;
+  try {
+    await navigator.clipboard.writeText(notesMarkdown(notes()));
+    logLine('Notes copied as Markdown');
+  } catch (err) {
+    logLine(`Could not copy the notes: ${err.message || err}`, 'error');
+  }
 }
 
 function syncButton() {
@@ -260,6 +275,11 @@ function hide() {
   win.el.hidden = true;
   syncButton();
   canvasEl.focus({ preventScroll: true });
+}
+
+/** Show the notes, if they are not shown already. */
+export function showNotes() {
+  if (!notesShown()) show();
 }
 
 /** Shift+N: show or hide the notes. */

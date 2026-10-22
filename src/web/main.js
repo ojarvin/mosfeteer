@@ -7016,6 +7016,14 @@ export function runLine(line) {
 
   logCommand(trimmed);
 
+  // The history lives in the file, and the drawing here may be ahead of it:
+  // the History window changes it in the file.
+  if (/^history\s+\S/i.test(trimmed)) {
+    const message = 'In the editor, the History window (:history) lists and changes the save history; history commands are for the CLI and HTTP';
+    logLine(message);
+    return message;
+  }
+
   const before = snapshot();
   let result;
   try {

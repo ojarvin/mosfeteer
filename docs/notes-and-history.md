@@ -13,7 +13,10 @@ double-click, Enter -- their source, until Esc or Ctrl/Cmd+Enter, which
 leave the window the keyboard (Esc again closes it). Empty
 notes open ready to write. In the source, Tab indents the lines under the
 caret or selection by two spaces and Shift+Tab takes up to two away (the
-field's own Ctrl+Z undoes either).
+field's own Ctrl+Z undoes either). **Copy** puts the notes on the
+clipboard as plain Markdown (`notesMarkdown`): a mention as its name, in
+`$...$` when it has a subscript or superscript, a design link as the
+design's name; code is left as written.
 
 The notes are document data that never go stale, like the analysis
 settings: typing marks the design unsaved (`markSettingsChanged`, and
@@ -22,7 +25,7 @@ change), each finished edit -- a one-second pause or leaving the field --
 is one undo step, and an undo of anything restores the notes of its
 snapshot. Scripted: `notes`, `notes set TEXT`, `notes append TEXT` (a new
 line; the rest of the command line is taken as written, so TeX keeps its
-backslashes), `notes clear`.
+backslashes), `notes clear`, `notes markdown` (what Copy copies).
 
 Rendering (`src/core/notes-markdown.js`, pure): `#` headings, paragraphs,
 `-`/`*`/`1.` lists and `- [ ]` task lists (an item indented two spaces
@@ -46,7 +49,9 @@ References (`src/core/notes.js`):
   old name -- except inside code.
 - **Design links.** `[[amp]]` names another design of the workspace; a
   click opens it. Renaming a design relinks them like part links
-  (`relinkDocumentState`); one to no design is struck through.
+  (`relinkDocumentState`); one to no design is struck through, and Design
+  Check and the Atlas's Check list it with the broken links
+  ([`hierarchy.md`](hierarchy.md)).
 
 The Atlas search reads the notes (`designIndex` keeps them as one search
 key, `searchDesign` matches a word found there).
@@ -102,6 +107,15 @@ unpins one, or starts a **new design from it** (unsaved, no history of its
 own); × removes it (a checkpoint after asking). **Checkpoint…** pins the
 drawing as it is now, saving it first when it has unsaved changes;
 **Remove save points** removes every unpinned entry.
+
+Scripted (`history`, `src/core/commands.js`; the CLI and HTTP, run on the
+file): `history [list]`; `history checkpoint [NAME] [--comment TEXT]` pins
+the drawing; `history pin ENTRY [NAME] [--comment TEXT]` pins or renames
+one, `history unpin`, `remove`, and `restore ENTRY` -- ENTRY an id or a
+checkpoint's name. A restore keeps the drawing it replaces as a save point
+when it is none yet, as the window's does. A history that fits no drawing
+is refused. In the editor, where the drawing may be ahead of its file, a
+`history` command with arguments points to the window instead.
 
 Tests: `test/notes.test.js`, `test/save-history.test.js`, the history test
 in `test/server-documents.test.js` and `test/browser-persistence.test.js`,

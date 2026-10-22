@@ -86,6 +86,18 @@ describe('design notes', { skip: browserSkip() }, () => {
     assert.equal(saved.notes, 'First line\nSecond');
   });
 
+  test('Copy puts the notes on the clipboard as plain Markdown', async () => {
+    await h.click('.notes-edit');
+    await typeNotes('Gain from @M1 into @V_{SS}, see [[child]]');
+    await finish();
+    await h.until(`document.querySelector('.notes-copy')?.disabled === false`);
+    await h.evaluate(`(() => { window.__copied = null; navigator.clipboard.writeText = async (text) => { window.__copied = text; }; })()`);
+    await h.click('.notes-copy');
+    await h.until(`window.__copied !== null`);
+    assert.equal(await h.evaluate(`window.__copied`), 'Gain from M1 into $V_{SS}$, see child');
+    assert.equal(await editor('editor.circuit.notes'), 'Gain from @M1 into @V_{SS}, see [[child]]');
+  });
+
   test('Tab indents the lines under the caret into a sublist, Shift+Tab takes them back', async () => {
     await h.click('.notes-edit');
     await typeNotes('- bias\n- tail\n- mirror');

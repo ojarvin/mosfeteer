@@ -611,6 +611,56 @@ describe('the workspace check', { skip: browserSkip() }, () => {
   });
 });
 
+describe('the workspace check reads the notes\' links', { skip: browserSkip() }, () => {
+  // The notes link to OpAmp (saved as opamp, renamed to ota-v2) and to
+  // nowhere, which R1 links to as well.
+  const system = () => {
+    const circuit = new Circuit();
+    for (const line of ['add resistor R1 --at -600 -40', 'link R1 nowhere']) runCommand(circuit, line);
+    circuit.notes = 'Built on [[OpAmp]]; R1 is [[nowhere]] yet.';
+    return circuit.toJSON();
+  };
+  let h;
+  before(async () => {
+    h = await start({ docs: { system: system(), 'ota-v2': { ...wideAmplifier(), names: ['opamp'] } }, width: 1400, height: 900 });
+  });
+  after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
+  const notes = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.notes)`);
+  const menuItems = () => h.evaluate(`[...document.querySelectorAll('#atlas-check-menu [role="menuitem"]')].map((b) => b.textContent)`);
+
+  test('Design Check lists them, relinks the one it can in the notes, and shows the notes for the rest', async () => {
+    await h.open('system');
+    await h.evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-mark').click(); })()`);
+    await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+    const report = await h.evaluate(`${h.module('design-check-ui.js')}.then((m) => m.runCheck().brokenLinks)`);
+    assert.deepEqual(report, ['R1, notes → nowhere', 'notes → OpAmp']);
+    await h.evaluate(`[...document.querySelectorAll('#check-summary .check-fix')].find((b) => b.textContent === 'Relink to ota-v2').click()`);
+    assert.equal(await notes(), 'Built on [[ota-v2]]; R1 is [[nowhere]] yet.');
+    await h.key('z', { ctrlKey: true });
+    assert.equal(await notes(), 'Built on [[OpAmp]]; R1 is [[nowhere]] yet.');
+    await h.evaluate(`${h.module('design-check-ui.js')}.then((m) => m.runCheck())`);
+    await h.evaluate(`[...document.querySelectorAll('#check-summary .check-issue')].find((b) => b.textContent.includes('notes → nowhere')).click()`);
+    await h.until(`!!document.querySelector('.notes-window:not([hidden])')`);
+    assert.deepEqual(await h.evaluate(`${h.module('main.js')}.then((m) => m.selectedComps().map((c) => c.refdes))`), ['R1']);
+    await h.key('N', { shiftKey: true });
+  });
+
+  test('the Atlas Check relinks the notes in the file', async () => {
+    await h.open('ota-v2');
+    await h.click('#app-mark');
+    await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy; })`, 10000);
+    assert.equal(await h.evaluate(`document.getElementById('atlas-check').dataset.findings`), '2');
+    await h.click('#atlas-check');
+    assert.deepEqual(await menuItems(), ['Open system: R1, notes → nowhere', 'Relink system: notes → OpAmp to ota-v2']);
+    await h.evaluate(`[...document.querySelectorAll('#atlas-check-menu [role="menuitem"]')][1].click()`);
+    await h.until(`document.getElementById('atlas-check').dataset.findings === '1'`, 5000);
+    const { readFile } = await import('node:fs/promises');
+    const saved = JSON.parse(await readFile(join(h.workspace, 'system.json'), 'utf8'));
+    assert.equal(saved.notes, 'Built on [[ota-v2]]; R1 is [[nowhere]] yet.');
+    assert.deepEqual(await menuItems(), ['Open system: R1, notes → nowhere']);
+  });
+});
+
 describe('a design keeps its place on the desk whether or not it is open', { skip: browserSkip() }, () => {
   // The browser measures an open design's math, tighter than the size the
   // file saves: the desk must not size (and so move) a design by that.

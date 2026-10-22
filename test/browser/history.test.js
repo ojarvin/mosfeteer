@@ -113,6 +113,14 @@ describe('save history', { skip: browserSkip() }, () => {
     assert.deepEqual((await onDisk()).map((entry) => entry.pinned === true), [true]);
   });
 
+  test('a history command in the editor points to the window and changes nothing', async () => {
+    const before = JSON.stringify(await onDisk());
+    await h.evaluate(`window.__run('history checkpoint late')`);
+    await h.until(`(document.querySelector('#log')?.textContent || '').includes('the History window (:history)')`);
+    assert.equal(await session('m.hasUnsavedChanges()'), false);
+    assert.equal(JSON.stringify(await onDisk()), before);
+  });
+
   test('a checkpoint starts a new design, unsaved, with no history of its own', async () => {
     await rowButton(0, '⋯');
     await menuItem('New design from this');

@@ -12,7 +12,9 @@
  */
 
 import { loadDocument, relinkDocumentState } from '../core/document.js';
-import { brokenLinks } from '../core/workspace-check.js';
+import { relinkNotes } from '../core/notes.js';
+import { showNotes } from './notes-window.js';
+import { brokenLinkPlaces, brokenLinks } from '../core/workspace-check.js';
 import { element as el } from './dom.js';
 import { svgString } from '../core/render.js';
 import { designIndex, parseTags, searchDesign, tagsText } from '../core/design-index.js';
@@ -1153,6 +1155,7 @@ function workspaceFindings() {
   const designs = [...state.entries.values()].map((entry) => ({
     id: entry.id, name: entry.name, names: entry.names || [],
     parts: (entry.index?.items || []).filter((item) => item.kind === 'part' && item.link).map((item) => ({ id: item.id, link: item.link })),
+    noteLinks: entry.index?.noteLinks || [],
   }));
   return {
     links: brokenLinks(designs),
@@ -1193,14 +1196,15 @@ function checkMenuItems({ links, unsaved, unreadable }) {
   if (links.length) {
     items.push(heading('Broken links'));
     for (const broken of links) {
-      const where = `${broken.name}: ${parts(broken.parts)} → ${broken.link}`;
+      const where = `${broken.name}: ${brokenLinkPlaces(broken)} → ${broken.link}`;
       if (broken.to) {
         items.push(item(`Relink ${where} to ${broken.to}`, `No design is called ${broken.link} now; ${broken.to} was saved under that name`, () => void relinkOnDesk([broken])));
       } else {
         const why = broken.candidates.length
           ? `No design is called ${broken.link} now; ${broken.candidates.join(' and ')} were all saved under that name, so pick one`
           : `No design in the workspace is or was called ${broken.link}`;
-        items.push(item(`Open ${where}`, `${why}: opens ${broken.name} with ${parts(broken.parts)} selected (right-click, Link to design)`, () => void openAtParts(broken)));
+        const how = broken.parts.length ? `with ${parts(broken.parts)} selected (right-click, Link to design)` : '(edit the link in its notes)';
+        items.push(item(`Open ${where}`, `${why}: opens ${broken.name} ${how}`, () => void openAtParts(broken)));
       }
     }
     const fixable = links.filter((broken) => broken.to);
@@ -1231,6 +1235,7 @@ async function relinkOnDesk(findings) {
       if (entry.current) {
         commit(() => {
           for (const ref of broken.parts) if (editor.circuit.components.get(ref)?.link === broken.link) editor.circuit.setLink(ref, broken.to);
+          if (broken.notes) editor.circuit.notes = relinkNotes(editor.circuit.notes, broken.link, broken.to).text;
         });
         render();
       } else {
@@ -1244,7 +1249,11 @@ async function relinkOnDesk(findings) {
     if (!state) return;
     for (const item of entry.index?.items || []) if (item.kind === 'part' && item.link === broken.link) item.link = broken.to;
     if (entry.index) entry.index.links = [...new Set(entry.index.items.map((item) => item.link).filter(Boolean))];
-    done.push(`${entry.name} (${parts(broken.parts)} → ${broken.to})`);
+    if (entry.index?.noteLinks && broken.notes) {
+      const old = broken.link.toLowerCase();
+      entry.index.noteLinks = [...new Set(entry.index.noteLinks.map((link) => (link.toLowerCase() === old ? broken.to : link)))];
+    }
+    done.push(`${entry.name} (${brokenLinkPlaces(broken)} → ${broken.to})`);
   }
   if (done.length) logLine(`Relinked ${done.join(', ')}.`);
   if (!state) return;
@@ -1255,7 +1264,10 @@ async function relinkOnDesk(findings) {
 /** Open a broken link's design with its parts selected, to relink by hand. */
 async function openAtParts(broken) {
   const tile = tileById(broken.design);
-  if (tile) await openTile(tile, { select: broken.parts });
+  if (!tile) return;
+  await openTile(tile, { select: broken.parts });
+  // A link in the notes is mended there.
+  if (broken.notes && editor.currentCircuitName === broken.name) showNotes();
 }
 
 async function saveFromDesk() {

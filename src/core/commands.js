@@ -25,7 +25,8 @@ import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
 import { arrangeFigures, figureBounds, listFigures } from './figures.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
-import { normalizeNotes } from './notes.js';
+import { normalizeNotes, notesMarkdown } from './notes.js';
+import { checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } from './save-history.js';
 
 /** Materialize a net's route with the pin-escaped outside bends: two-terminal
   *  nets route via smartRoute; larger nets get the balanced T-junction; nets
@@ -60,6 +61,7 @@ const FLAG_ARITY = {
   value: 1,
   label: 1,
   name: 1,
+  comment: 1,
   reference: 1,
   'device-region': 1,
   'ac-ground': 1,
@@ -492,6 +494,11 @@ export function commandHelp() {
     '  tag [list] | tag add|rm|set NAME ... - the document\'s tags, for finding it in the Atlas (#NAME searches them)',
     '  notes | notes set TEXT | notes append TEXT | notes clear - the design\'s notes (Markdown, $math$, @M1 or @V_{out} mention',
     '                                   a part or net, [[design]] links another design); append adds TEXT as a new line',
+    '  notes markdown                 - the notes as plain Markdown: mentions and design links as their names',
+    '  history [list]                 - the save history: the last ten saves and the pinned checkpoints, newest first',
+    '  history checkpoint [NAME] [--comment TEXT] - pin the drawing as it is as a checkpoint',
+    '  history pin|unpin|remove|restore ENTRY [NAME] [--comment TEXT] - change an entry (its id, or a checkpoint\'s name);',
+    '                                   pin also renames one, restore brings its drawing back (the one replaced stays a save point)',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
@@ -1025,8 +1032,13 @@ function dispatch(circuit, cmd, pos, flags, io) {
       circuit.notes = '';
       return result('(no notes)', { notes: '' }, changed);
     }
-    throw new Error('usage: notes | notes set TEXT | notes append TEXT | notes clear');
+    if (pos.length === 1 && pos[0] === 'markdown') {
+      const markdown = notesMarkdown(circuit.notes);
+      return result(markdown || '(no notes)', { markdown });
+    }
+    throw new Error('usage: notes | notes set TEXT | notes append TEXT | notes clear | notes markdown');
   }
+  if (cmd === 'history') return historyCommand(circuit, pos, flags, result);
   if (cmd === 'tag' || cmd === 'tags') {
     const [action, ...names] = pos;
     if (!action || action === 'list') return result(circuit.tags.length ? circuit.tags.map((tag) => `#${tag}`).join(' ') : '(no tags)', [...circuit.tags]);
@@ -1250,6 +1262,69 @@ function dispatch(circuit, cmd, pos, flags, io) {
   }
 
   throw new Error(`unknown command "${cmd}" (try: help)`);
+}
+
+const HISTORY_USAGE = 'usage: history [list] | history checkpoint [NAME] [--comment TEXT] | history pin ENTRY [NAME] [--comment TEXT] | history unpin ENTRY | history remove ENTRY | history restore ENTRY';
+
+/**
+ * The design's save history (core/save-history.js), read against the
+ * drawing as it is: the file's, for a command run on a file. ENTRY is an
+ * entry's id or a checkpoint's name. The edits store the history again
+ * against the drawing; the writer settles it into the file.
+ */
+function historyCommand(circuit, pos, flags, result) {
+  const op = (pos.shift() || 'list').toLowerCase();
+  const state = circuit.toJSON();
+  const base = historyText(state);
+  const entries = historyEntries(circuit.history, base);
+  if (!entries) throw new Error('the history does not fit this drawing (the file was edited outside the editor); the editor\'s History window can remove it');
+  const named = (key) => {
+    if (!key) throw new Error(HISTORY_USAGE);
+    const lower = key.toLowerCase();
+    const found = entries.filter((entry) => entry.id === key || entry.name?.toLowerCase() === lower);
+    if (found.length !== 1) throw new Error(found.length ? `${found.length} checkpoints are named "${key}": use the id` : `no history entry "${key}" (history list shows them)`);
+    return found[0];
+  };
+  const describe = (entry) => `${entry.id}  ${entry.time}${entry.pinned ? `  checkpoint${entry.name ? ` "${entry.name}"` : ''}` : ''}${entry.comment ? `  -- ${entry.comment}` : ''}`;
+  const listed = (entry) => ({ id: entry.id, time: entry.time, ...(entry.pinned ? { pinned: true } : {}), ...(entry.name ? { name: entry.name } : {}), ...(entry.comment ? { comment: entry.comment } : {}) });
+  const comment = flags.comment ? flags.comment[0] : '';
+  const store = (history, text, entry) => {
+    circuit.history = history;
+    return result(text, entry ? listed(entry) : null, true);
+  };
+  if (op === 'list') {
+    if (pos.length) throw new Error(HISTORY_USAGE);
+    return result(entries.map(describe).join('\n') || '(no save points)', entries.map(listed));
+  }
+  if (op === 'checkpoint') {
+    const name = pos.join(' ');
+    const { history, id } = checkpointHistory(circuit.history, base, { name, comment });
+    const entry = historyEntries(history, base).find((item) => item.id === id);
+    return store(history, `checkpoint ${describe(entry)}`, entry);
+  }
+  const entry = named(pos.shift());
+  if (op === 'pin') {
+    const history = pinHistoryEntry(circuit.history, base, entry.id, { name: pos.join(' ') || entry.name || '', comment: flags.comment ? comment : entry.comment || '' });
+    const pinned = historyEntries(history, base).find((item) => item.id === entry.id);
+    return store(history, `pinned ${describe(pinned)}`, pinned);
+  }
+  if (pos.length) throw new Error(HISTORY_USAGE);
+  if (op === 'unpin') {
+    if (!entry.pinned) throw new Error(`${entry.id} is no checkpoint`);
+    return store(unpinHistoryEntry(circuit.history, base, entry.id), `${entry.id} is a save point again`);
+  }
+  if (op === 'remove') return store(removeHistoryEntry(circuit.history, base, entry.id), `removed ${entry.id}`);
+  if (op === 'restore') {
+    // The drawing replaced stays in the history: a save point, when it is
+    // none yet. The design's own tags, names, and windows stay as they are.
+    const kept = settledHistory(state, { previous: state, savePoint: true });
+    const restored = Circuit.fromJSON({ ...historyEntryState(entry), tags: circuit.tags, names: circuit.savedNames, windows: circuit.windows });
+    for (const key of Object.keys(circuit)) if (!(key in restored)) delete circuit[key];
+    Object.assign(circuit, restored);
+    circuit.history = settledHistory(circuit.toJSON(), { previous: { ...state, history: kept } });
+    return result(`restored ${describe(entry)}`, listed(entry), true);
+  }
+  throw new Error(HISTORY_USAGE);
 }
 
 function netList(circuit, result) {

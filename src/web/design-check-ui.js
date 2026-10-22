@@ -14,6 +14,9 @@ import { setPanelCollapsed, setSidePanelVisible, sidePanelVisible } from './side
 import { commit, render, setLabelSelection, setSelection } from './main.js';
 import { fixAllIssues, issueFix } from '../core/tidy.js';
 import { openDesignBrokenLinks } from './hierarchy.js';
+import { showNotes } from './notes-window.js';
+import { relinkNotes } from '../core/notes.js';
+import { brokenLinkPlaces } from '../core/workspace-check.js';
 
 export function resetCheckState() {
   editor.lastCheckReport = null;
@@ -71,8 +74,9 @@ const CHECK_ISSUE_KINDS = {
 };
 
 /**
- * The open design's broken links, as Design Check issues: parts naming a
- * design no file of the workspace is called (hierarchy.js). When exactly one
+ * The open design's broken links, as Design Check issues: parts or notes'
+ * `[[design]]` links naming a design no file of the workspace is called
+ * (hierarchy.js). When exactly one
  * design was saved under that name -- renamed outside the editor -- the
  * issue offers to relink to it; never when several were.
  */
@@ -80,15 +84,21 @@ function brokenLinkIssues() {
   return openDesignBrokenLinks().map((broken) => ({
     kind: 'broken-link',
     refs: broken.parts,
+    notes: !!broken.notes,
     link: broken.link,
     to: broken.to,
-    message: `${broken.parts.join(', ')} → ${broken.link}`,
+    message: `${brokenLinkPlaces(broken)} → ${broken.link}`,
     hint: broken.to
       ? `No design is called ${broken.link} now; ${broken.to} was saved under that name (renamed outside the editor?)`
       : broken.candidates.length
-        ? `No design is called ${broken.link} now; ${broken.candidates.join(' and ')} were all saved under that name, so pick one: right-click a part, Link to design`
-        : `No design in the workspace is or was called ${broken.link}: right-click a part, Link to design`,
+        ? `No design is called ${broken.link} now; ${broken.candidates.join(' and ')} were all saved under that name, so pick one: ${mend(broken)}`
+        : `No design in the workspace is or was called ${broken.link}: ${mend(broken)}`,
   }));
+}
+
+/** How to relink a broken link by hand. */
+function mend(broken) {
+  return [broken.parts.length && 'right-click a part, Link to design', broken.notes && 'edit the link in the notes'].filter(Boolean).join('; ');
 }
 
 /** The repair an issue offers: a broken link's relink, else tidy.js's. */
@@ -103,6 +113,11 @@ function fixFor(detail) {
         if (circuit.components.get(ref)?.link !== detail.link) continue;
         circuit.setLink(ref, detail.to);
         changed = true;
+      }
+      if (detail.notes) {
+        const relinked = relinkNotes(circuit.notes, detail.link, detail.to);
+        circuit.notes = relinked.text;
+        if (relinked.count) changed = true;
       }
       return changed;
     },
@@ -198,6 +213,8 @@ function focusCheckIssue(issue) {
   setSelection([...issue.components]);
   setLabelSelection([...issue.labels], undefined, true);
   editor.selectedNets = new Set(issue.nets);
+  // A broken link in the notes is mended there.
+  if (issue.detail?.notes) showNotes();
   if (!points.length) { render(); return; }
   const x0 = Math.min(...points.map((p) => p.x));
   const y0 = Math.min(...points.map((p) => p.y));

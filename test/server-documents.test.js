@@ -413,3 +413,38 @@ serverTest('the editor\'s Save adds a save point, a scripted edit carries the hi
   assert.equal(list.length, 2);
   assert.notEqual(list[0].text, historyText(state));
 });
+
+serverTest('history commands read and change the file\'s history, and a restore writes the drawing', async (t) => {
+  const { historyEntries, historyText } = await import('../src/core/save-history.js');
+  const app = await startServer();
+  t.after(() => app.stop());
+  const path = app.file('amp');
+  const onDisk = async () => JSON.parse(await readFile(path, 'utf8'));
+  const entriesOf = (state) => historyEntries(state.history, historyText(state));
+
+  const circuit = new Circuit();
+  circuit.addComponent('nmos', { refdes: 'M1', x: 240, y: 240 });
+  await app.request('/api/document', { method: 'PUT', body: { name: 'amp', state: circuit.toJSON(), savePoint: true } });
+  const saved = historyText(await onDisk());
+  await command(app, 'amp', 'add resistor R1 --at 600 240');
+
+  const listed = await command(app, 'amp', 'history list');
+  assert.equal(listed.mutated, false);
+  assert.equal(listed.results[0].json.length, 1);
+  const { id } = listed.results[0].json[0];
+
+  const pinned = await command(app, 'amp', 'history checkpoint "with R1" --comment "load added"');
+  assert.equal(pinned.mutated, true);
+  let state = await onDisk();
+  assert.deepEqual(entriesOf(state).map((entry) => [entry.name ?? null, entry.comment ?? null]), [['with R1', 'load added'], [null, null]]);
+
+  const restored = await command(app, 'amp', `history restore ${id}`);
+  assert.equal(restored.results[0].ok, true);
+  state = await onDisk();
+  assert.equal(historyText(state), saved, 'the file has the save point\'s drawing');
+  assert.deepEqual(entriesOf(state).map((entry) => entry.name ?? null), ['with R1', null], 'the checkpoint is kept');
+
+  const missing = await command(app, 'amp', 'history restore nope');
+  assert.equal(missing.results[0].ok, false);
+  assert.match(missing.results[0].error, /no history entry/);
+});

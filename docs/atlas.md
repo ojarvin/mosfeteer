@@ -121,10 +121,11 @@ is hidden in the Symbols view.
 
 **Check** checks the whole workspace; its button turns amber while
 something needs a look (the count in its tooltip); its menu says what and acts on it. **Broken links**:
-a part linking to a name no design has (`src/core/workspace-check.js`,
-[`hierarchy.md`](hierarchy.md)) is relinked, in its file, to the one
-design saved under that name, or, when none or several were, its design
-opens with those parts selected to relink by hand; **Relink all** when
+a part or a notes' link naming a design no design is called
+(`src/core/workspace-check.js`, [`hierarchy.md`](hierarchy.md)) is
+relinked, in its file, to the one design saved under that name, or, when
+none or several were, its design opens with those parts selected (and its
+notes shown, for a link there) to relink by hand; **Relink all** when
 several can be. **Unsaved changes**: the editor's design, saved from here.
 **Could not be read**: files the desk could not draw. It is checked afresh
 each time the menu opens; it is hidden on an empty desk and in the Symbols

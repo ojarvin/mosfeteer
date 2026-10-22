@@ -94,6 +94,27 @@ export function renameMentions(text, from, to) {
   return last ? out + source.slice(last) : source;
 }
 
+/**
+ * The notes as plain Markdown, to read outside the editor: a mention as its
+ * name (`$...$` math when it has a subscript or superscript, as it is
+ * drawn), a design link as the design's name. Code is left as it is.
+ */
+export function notesMarkdown(text) {
+  // `lead`: the characters a match takes before its reference.
+  const outsideCode = (source, pattern, replace, lead = () => 0) => {
+    const code = codeRanges(source);
+    return source.replace(pattern, (...match) => {
+      const offset = match.at(-2) + lead(match);
+      return code.some(([a, b]) => offset >= a && offset < b) ? match[0] : replace(...match);
+    });
+  };
+  const mentions = outsideCode(String(text ?? ''), MENTION, (whole, before, token) => {
+    const name = tokenName(token);
+    return before + (/[_^]\{/.test(name) ? `$${name}$` : name);
+  }, (match) => match[1].length);
+  return outsideCode(mentions, DESIGN_LINK, (whole, name) => name.trim());
+}
+
 /** Where code is (fenced blocks and inline spans), as [start, end) ranges. */
 function codeRanges(text) {
   const ranges = [];
