@@ -170,14 +170,14 @@ test('independent source circles use the compact 35-unit body and adjacent label
 test('current source arrow is smaller than the compact circle body, centered, and the controlled source has the same', () => {
   const arrow = getSymbol('current_source').graphics[2];
   assert.deepEqual(arrow.points, [
-    { x: 0, y: 18 },
-    { x: -11, y: -4 },
-    { x: 11, y: -4 },
+    { x: 0, y: 22 },
+    { x: -11, y: 0 },
+    { x: 11, y: 0 },
   ]);
-  // The stem runs into the head; stem top to tip spans -18..18.
-  assert.equal(getSymbol('current_source').graphics[1].d, 'M 0 -18 L 0 2');
+  // The stem runs into the head; stem top to tip spans -22..22.
+  assert.equal(getSymbol('current_source').graphics[1].d, 'M 0 -22 L 0 6');
   const vccs = getSymbol('vccs').graphics;
-  assert.ok(vccs.some((item) => item.d === 'M 0 -18 L 0 2'));
+  assert.ok(vccs.some((item) => item.d === 'M 0 -22 L 0 6'));
   assert.ok(vccs.some((item) => JSON.stringify(item.points) === JSON.stringify(arrow.points)));
 });
 

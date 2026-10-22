@@ -23,8 +23,8 @@ function source(type, description, refPrefix, graphics) {
 /** A current source's arrow, centered: the stem runs into the head, so its
  *  butt end never meets the head's base and leaves an anti-aliased seam. */
 export const CURRENT_ARROW = Object.freeze([
-  { kind: 'path', d: 'M 0 -18 L 0 2', style: 'symbol' },
-  { kind: 'polygon', points: [{ x: 0, y: 18 }, { x: -11, y: -4 }, { x: 11, y: -4 }], fill: 'foreground' },
+  { kind: 'path', d: 'M 0 -22 L 0 6', style: 'symbol' },
+  { kind: 'polygon', points: [{ x: 0, y: 22 }, { x: -11, y: 0 }, { x: 11, y: 0 }], fill: 'foreground' },
 ]);
 
 export const current_source = source('current_source', 'Current Source', 'I', [
