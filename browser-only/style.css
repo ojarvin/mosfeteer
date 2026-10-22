@@ -6078,7 +6078,7 @@ details.analysis-options > * + * {
   gap: 6px;
 }
 
-.bode-plots-view .bode-phase-toggle {
+.bode-phase-toggle {
   display: inline-flex;
   flex-direction: row;
   align-items: center;

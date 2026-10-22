@@ -50460,6 +50460,37 @@ __exports.plainMarkup = plainMarkup;
 __exports.beatLabel = beatLabel;
 };
 
+__modules["src/web/bode-actions.js"] = function (__require, __exports) {
+__exports.bodeGraphActions = bodeGraphActions;
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+/**
+ * The actions under a Bode graph -- magnitude over phase -- in the Plots
+ * window, one row for every mode that draws one (the small-signal and the
+ * switched-capacitor modes): Clear graph, Annotate graph, and with phase,
+ * which puts the phase on the drawing too, as a plot of its own.
+ */
+
+
+
+/**
+ * The row's controls. `clear()` empties the graph; `annotate({ magnitude,
+ * phase })` puts the shown quantities on the drawing; `ready` whether
+ * there is a graph to annotate; `state` the mode's own { phase } choice,
+ * kept across redraws.
+ */
+function bodeGraphActions({ clear, annotate, ready, state }) {
+  return [
+    el('button', { type: 'button', text: 'Clear graph', onclick: clear }),
+    el('button', { type: 'button', class: 'bode-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !ready, onclick: () => annotate({ magnitude: true, phase: state.phase }) }),
+    el('label', { class: 'bode-phase-toggle' }, [
+      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Annotate the phase too' }), { checked: state.phase, onchange: (ev) => { state.phase = ev.target.checked; } }),
+      ' with phase',
+    ]),
+  ];
+}
+
+};
+
 __modules["src/web/bode-ui.js"] = function (__require, __exports) {
 __exports.renderBode = renderBode;
 __exports.bodeSettingsRestored = bodeSettingsRestored;
@@ -50482,6 +50513,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let installPlotsWindow, offerPlots, plotsShown; __bind(() => { ({ installPlotsWindow, offerPlots, plotsShown } = __require("src/web/plots-window.js")); });
 let placeResponsePlot; __bind(() => { ({ placeResponsePlot } = __require("src/web/signal-flow-ui.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
+let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
 /**
  * The small-signal analysis's Bode plots, laid out as the signal-flow
  * analysis lays out its own: the graph in the Plots window (plots-window.js,
@@ -50498,6 +50530,7 @@ let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("sr
  * on the symbolic solve, fail with it, or take its approximations. The
  * loop gain is drawn from its derived coefficients.
  */
+
 
 
 
@@ -50869,14 +50902,12 @@ function renderLegend() {
   }
   const actions = plotsEl.querySelector('.bode-plots-actions');
   actions.hidden = !traces.length;
-  actions.replaceChildren(
-    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: () => annotateGraph() }),
-    el('label', { class: 'bode-phase-toggle' }, [
-      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Annotate the phase too' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
-      ' with phase',
-    ]),
-  );
+  actions.replaceChildren(...bodeGraphActions({
+    clear: () => { traces = []; renderValues(); renderPlots(); },
+    annotate: annotateGraph,
+    ready: shownTraces().length > 0,
+    state: graphChoice,
+  }));
 }
 
 /** A trace's corners, its unity-gain or crossover, and what it was solved by. */
@@ -50920,10 +50951,10 @@ function appendCorners(list, { trace, sketch, corners }, named) {
 }
 
 // Annotate graph puts the phase on the drawing too, as a plot of its own.
-let withPhase = false;
+const graphChoice = { phase: false };
 
 /** The graph on the drawing: its magnitude, and with `phase` its phase. */
-function annotateGraph({ phase = withPhase, magnitude = true } = {}) {
+function annotateGraph({ phase = graphChoice.phase, magnitude = true } = {}) {
   const sketches = shownSketches();
   const traces = sketches.map(({ trace }) => trace);
   for (const quantity of [...(magnitude ? ['magnitude'] : []), ...(phase ? ['phase'] : [])]) {
@@ -79713,6 +79744,7 @@ let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")
 let el, onFieldCommit; __bind(() => { ({ element: el, onFieldCommit } = __require("src/web/dom.js")); });
 let annotateMathFigure; __bind(() => { ({ annotateMathFigure } = __require("src/web/figure-annotate.js")); });
 let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("src/web/annotate-menu.js")); });
+let bodeGraphActions; __bind(() => { ({ bodeGraphActions } = __require("src/web/bode-actions.js")); });
 /**
  * The analysis window's switched-capacitor mode: a drawn SC circuit's exact
  * H(z) (core/analysis/switched-cap.js), beside the circuit and signal-flow
@@ -79725,6 +79757,7 @@ let registerAnnotations; __bind(() => { ({ registerAnnotations } = __require("sr
  * or phase over f/f_s, a legend to show or take off each, Annotate graph to
  * put it on the drawing.
  */
+
 
 
 
@@ -80235,10 +80268,24 @@ function renderPlots() {
   }));
   const actions = plotsEl.querySelector('.sc-plots-actions');
   actions.hidden = !traces.length;
-  actions.replaceChildren(
-    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces(), { source: 'switched-cap' }); } }),
-  );
+  actions.replaceChildren(...bodeGraphActions({
+    clear: () => { traces = []; renderValues(); renderPlots(); },
+    annotate: annotateGraph,
+    ready: !!plot,
+    state: graphChoice,
+  }));
+}
+
+// Annotate graph puts the phase on the drawing too, as a plot of its own.
+const graphChoice = { phase: false };
+
+/** The graph on the drawing, as the Bode graph's: its magnitude, and with
+ *  `phase` its phase. */
+function annotateGraph({ magnitude = true, phase = graphChoice.phase } = {}) {
+  for (const quantity of [...(magnitude ? ['magnitude'] : []), ...(phase ? ['phase'] : [])]) {
+    const plot = graphPlot(quantity);
+    if (plot) placeResponsePlot(plot, shownTraces(), { source: 'switched-cap' });
+  }
 }
 
 // ----- the drawing -----------------------------------------------------------------------
@@ -80309,7 +80356,8 @@ function installSwitchedCapUi() {
   registerAnnotations('switched-cap', () => [
     { label: 'Equations', identity: { kind: 'equations', source: 'switched-cap' }, available: !!latest?.result.ok, run: annotate },
     { label: 'kT/C noise table', identity: { kind: 'noise', source: 'switched-cap' }, available: !!calculatorNumbers()?.figures.ok, run: annotateNoise },
-    { label: 'Graph', identity: { kind: 'plot', source: 'switched-cap' }, available: !!graphPlot(), run: () => placeResponsePlot(graphPlot(), shownTraces(), { source: 'switched-cap' }) },
+    { label: 'Bode magnitude', identity: { kind: 'plot', source: 'switched-cap', key: /^response::/ }, available: !!graphPlot(), run: () => annotateGraph({ phase: false }) },
+    { label: 'Bode phase', identity: { kind: 'plot', source: 'switched-cap', key: /^response:phase:/ }, available: !!graphPlot(), run: () => annotateGraph({ magnitude: false, phase: true }) },
   ]);
   const actions = [
     el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),

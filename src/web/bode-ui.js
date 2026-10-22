@@ -35,6 +35,7 @@ import { logLine } from './status-bar-ui.js';
 import { installPlotsWindow, offerPlots, plotsShown } from './plots-window.js';
 import { placeResponsePlot } from './signal-flow-ui.js';
 import { registerAnnotations } from './annotate-menu.js';
+import { bodeGraphActions } from './bode-actions.js';
 
 const QUANTITIES = {
   transfer: { name: 'Voltage gain', tex: 'A_{v}' },
@@ -388,14 +389,12 @@ function renderLegend() {
   }
   const actions = plotsEl.querySelector('.bode-plots-actions');
   actions.hidden = !traces.length;
-  actions.replaceChildren(
-    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !shownTraces().length, onclick: () => annotateGraph() }),
-    el('label', { class: 'bode-phase-toggle' }, [
-      Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Annotate the phase too' }), { checked: withPhase, onchange: (ev) => { withPhase = ev.target.checked; } }),
-      ' with phase',
-    ]),
-  );
+  actions.replaceChildren(...bodeGraphActions({
+    clear: () => { traces = []; renderValues(); renderPlots(); },
+    annotate: annotateGraph,
+    ready: shownTraces().length > 0,
+    state: graphChoice,
+  }));
 }
 
 /** A trace's corners, its unity-gain or crossover, and what it was solved by. */
@@ -439,10 +438,10 @@ function appendCorners(list, { trace, sketch, corners }, named) {
 }
 
 // Annotate graph puts the phase on the drawing too, as a plot of its own.
-let withPhase = false;
+const graphChoice = { phase: false };
 
 /** The graph on the drawing: its magnitude, and with `phase` its phase. */
-function annotateGraph({ phase = withPhase, magnitude = true } = {}) {
+function annotateGraph({ phase = graphChoice.phase, magnitude = true } = {}) {
   const sketches = shownSketches();
   const traces = sketches.map(({ trace }) => trace);
   for (const quantity of [...(magnitude ? ['magnitude'] : []), ...(phase ? ['phase'] : [])]) {

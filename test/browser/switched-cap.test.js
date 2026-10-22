@@ -56,12 +56,17 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { const i = document.querySelector('.sc-values .signal-flow-coefficient-value[aria-label="CS: value"]'); i.value = '4'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.values.CS === 4)`);
     assert.equal(await text('.sc-equation'), 'VOUTVIN=CSCFz−11−z−1');
-    // Annotate graph puts the graph on the drawing.
-    const plots = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'box' && l.plot).length)`);
-    const before = await plots();
-    await h.evaluate(`document.querySelector('.sc-annotate-graph').click()`);
-    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'box' && l.plot).length === ${before + 1})`);
+    // The Bode graph's own actions: Annotate graph puts the graph on the
+    // drawing, and with phase its phase as a plot of its own.
+    const plots = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'box' && l.plot).map((l) => l.plot.quantity || 'magnitude').sort())`);
+    const before = (await plots()).length;
+    await h.evaluate(`document.querySelector('.sc-plots-view .bode-phase-toggle input').click()`);
+    await h.evaluate(`document.querySelector('.sc-plots-view .bode-annotate-graph').click()`);
+    await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'box' && l.plot).length === ${before + 2})`);
+    assert.deepEqual(await plots(), ['magnitude', 'phase']);
     await h.key('z', { ctrlKey: true });
+    await h.key('z', { ctrlKey: true });
+    await h.evaluate(`document.querySelector('.sc-plots-view .bode-phase-toggle input').click()`);
   });
 
   test('a port of any kind, or any net, can be the input or the output', async () => {

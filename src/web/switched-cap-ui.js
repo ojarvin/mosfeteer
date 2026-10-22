@@ -31,6 +31,7 @@ import { logLine } from './status-bar-ui.js';
 import { element as el, onFieldCommit } from './dom.js';
 import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
+import { bodeGraphActions } from './bode-actions.js';
 
 const settings = () => (editor.circuit.analysisValues.sc ||= { input: '', output: '', readout: '', values: {} });
 
@@ -520,10 +521,24 @@ function renderPlots() {
   }));
   const actions = plotsEl.querySelector('.sc-plots-actions');
   actions.hidden = !traces.length;
-  actions.replaceChildren(
-    el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderValues(); renderPlots(); } }),
-    el('button', { type: 'button', class: 'sc-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: () => { if (plot) placeResponsePlot(plot, shownTraces(), { source: 'switched-cap' }); } }),
-  );
+  actions.replaceChildren(...bodeGraphActions({
+    clear: () => { traces = []; renderValues(); renderPlots(); },
+    annotate: annotateGraph,
+    ready: !!plot,
+    state: graphChoice,
+  }));
+}
+
+// Annotate graph puts the phase on the drawing too, as a plot of its own.
+const graphChoice = { phase: false };
+
+/** The graph on the drawing, as the Bode graph's: its magnitude, and with
+ *  `phase` its phase. */
+function annotateGraph({ magnitude = true, phase = graphChoice.phase } = {}) {
+  for (const quantity of [...(magnitude ? ['magnitude'] : []), ...(phase ? ['phase'] : [])]) {
+    const plot = graphPlot(quantity);
+    if (plot) placeResponsePlot(plot, shownTraces(), { source: 'switched-cap' });
+  }
 }
 
 // ----- the drawing -----------------------------------------------------------------------
@@ -594,7 +609,8 @@ export function installSwitchedCapUi() {
   registerAnnotations('switched-cap', () => [
     { label: 'Equations', identity: { kind: 'equations', source: 'switched-cap' }, available: !!latest?.result.ok, run: annotate },
     { label: 'kT/C noise table', identity: { kind: 'noise', source: 'switched-cap' }, available: !!calculatorNumbers()?.figures.ok, run: annotateNoise },
-    { label: 'Graph', identity: { kind: 'plot', source: 'switched-cap' }, available: !!graphPlot(), run: () => placeResponsePlot(graphPlot(), shownTraces(), { source: 'switched-cap' }) },
+    { label: 'Bode magnitude', identity: { kind: 'plot', source: 'switched-cap', key: /^response::/ }, available: !!graphPlot(), run: () => annotateGraph({ phase: false }) },
+    { label: 'Bode phase', identity: { kind: 'plot', source: 'switched-cap', key: /^response:phase:/ }, available: !!graphPlot(), run: () => annotateGraph({ magnitude: false, phase: true }) },
   ]);
   const actions = [
     el('button', { type: 'button', class: 'primary-action sc-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),

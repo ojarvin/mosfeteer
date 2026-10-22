@@ -127,7 +127,10 @@ the capacitances' numbers, and adds it to the Plots window's graph (`Shift+W`)
 as each Derive adds its gain to the Bode graph: magnitude over phase on one
 f/f_s axis, a legend naming each trace by its ratio (V_OUT/V_IN, as the
 signal-flow graph's) to show or take off, **Clear graph**, and
-**Annotate graph** to put it on the drawing (`placeResponsePlot`).
+**Annotate graph** to put it on the drawing (`placeResponsePlot`), and
+**with phase** its phase too, as a plot of its own -- the Bode graph's own
+row of actions (`bode-actions.js`). The Annotate menu offers Bode magnitude
+and Bode phase.
 **Values** are rows (`src/web/value-row.js`, shared with the small-signal
 Values): a slider over E24 steps and a field -- each capacitance (1 unless
 set, three decades either way) and each finite gain (60 dB unless set, from 1
