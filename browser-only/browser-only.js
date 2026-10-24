@@ -17698,7 +17698,8 @@ const p = (x, y) => ({ x, y });
 
 /** Each cell: its name, the commands that draw it, and `{ cell, wires }`:
  *  the parts that make the cell (what is looked for in a larger selection;
- *  rails and a tail source go with it when there), and wires drawn as given
+ *  rails and a tail source go with it when there; none for the cascode, two
+ *  stacked parts being too common to be a cell of their own), and wires drawn as given
  *  where the router would draw them otherwise (a net named by a pin on it).
  *  Rails stand one cell out from their pins, as g and v place them. */
 const CELLS = [
@@ -17728,7 +17729,7 @@ const CELLS = [
     'add nmos M1 --at 0 0', 'add nmos M2 --at 0 -240',
     'add ground --at 0 120',
     'connect M1.d M2.s', 'connect M1.s GROUND1.gnd',
-  ], { cell: ['M1', 'M2'] }],
+  ], {}],
   ['Five-transistor OTA', [
     'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0 --mirrorX',
     'add pmos M3 --at 0 -320 --mirrorX', 'add pmos M4 --at 400 -320',
@@ -17757,7 +17758,7 @@ let drawings = null;
 /** The built-in drawings, as `arrangementCandidates` sources. */
 function builtInDrawings() {
   if (!drawings) {
-    drawings = CELLS.map(([name, lines, { cell, wires = {} }]) => {
+    drawings = CELLS.map(([name, lines, { cell = null, wires = {} }]) => {
       const circuit = new Circuit();
       for (const line of lines) runCommand(circuit, line);
       for (const [pin, paths] of Object.entries(wires)) {
@@ -17777,6 +17778,7 @@ function builtInDrawings() {
 function cellPatterns() {
   return builtInDrawings()
     .map(({ circuit, name, cell }, index) => ({ name, circuit, refs: cell, index }))
+    .filter((pattern) => pattern.refs)
     .sort((a, b) => b.refs.length - a.refs.length || a.index - b.index);
 }
 
@@ -17790,8 +17792,9 @@ __exports.cellsIn = cellsIn;
 let applyTransform, rectsOverlap, segmentCrossesRect; __bind(() => { ({ applyTransform, rectsOverlap, segmentCrossesRect } = __require("src/core/geometry.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
+let crossNetOverlaps; __bind(() => { ({ crossNetOverlaps } = __require("src/core/wiring.js")); });
 let captureComponentTerminalPositions, componentTerminalMoves; __bind(() => { ({ captureComponentTerminalPositions, componentTerminalMoves } = __require("src/core/part-moves.js")); });
-let isReferenceMarker; __bind(() => { ({ isReferenceMarker } = __require("src/core/model.js")); });
+let isReferenceMarker, transformComponentWorld; __bind(() => { ({ isReferenceMarker, transformComponentWorld } = __require("src/core/model.js")); });
 let findTopology, wiresJoining; __bind(() => { ({ findTopology, wiresJoining } = __require("src/core/topology-match.js")); });
 /**
  * Arrange parts like an earlier drawing of their topology. The topology
@@ -17808,6 +17811,7 @@ let findTopology, wiresJoining; __bind(() => { ({ findTopology, wiresJoining } =
  * designs themselves, the open one first and then the others by when they
  * were last saved, so a drawing changed by hand is the next one offered.
  */
+
 
 
 
@@ -18175,6 +18179,8 @@ function applyArrangement(circuit, refs, candidate) {
   if (!offset) throw new Error('no clear place for the parts drawn this way');
   const restore = checkpoint(circuit, parts);
   const topology = circuit._snapshotNetTopology();
+  const overlaps = () => crossNetOverlaps([...circuit.nets.values()].map((n) => ({ id: n.id, paths: n.paths() }))).length;
+  const overlapsBefore = overlaps();
   try {
     const before = captureComponentTerminalPositions(circuit, parts);
     for (const ref of parts) {
@@ -18245,6 +18251,7 @@ function applyArrangement(circuit, refs, candidate) {
     circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
     circuit.invalidateRoutingCache();
+    if (overlaps() > overlapsBefore) throw new Error('a wire would run along another net\'s');
   } catch (error) {
     restore();
     throw error;
@@ -18265,8 +18272,11 @@ function cellsIn(circuit, refs, patterns) {
   const used = new Set();
   const cells = [];
   for (const pattern of patterns) {
-    const matches = findTopology(pattern.circuit, pattern.refs, circuit, { exclude: [...outside, ...used], alone: false });
+    // Drawn as a unit: a cell with other parts drawn among its own (a mirror
+    // whose legs are far apart, across the drawing) is left to itself.
+    const matches = findTopology(pattern.circuit, pattern.refs, circuit, { exclude: [...outside, ...used] });
     for (const match of matches) {
+      if (!railsAgree(pattern, match, circuit)) continue;
       const map = new Map([...match.parts].map(([from, to]) => [from, to.refdes]));
       const found = [...map.values()];
       if (found.some((ref) => used.has(ref))) continue;
@@ -18289,19 +18299,25 @@ function cellsIn(circuit, refs, patterns) {
   return cells;
 }
 
-/** How much two placements of `refs` differ in shape, spacing aside: the
- *  parts in the same order along each axis and turned the same way. */
+/** Whether two placements of `refs` have one shape, spacing aside: the
+ *  parts in the same order along each axis and turned the same way, or the
+ *  mirror image of that (the left half of a symmetric drawing is drawn like
+ *  the right). */
 function sameShape(refs, a, b) {
   const sign = (n) => Math.sign(n);
-  for (const ref of refs) if (orientation(a(ref)) !== orientation(b(ref))) return false;
-  for (const u of refs) {
-    for (const v of refs) {
-      if (u >= v) continue;
-      const [pu, pv, qu, qv] = [a(u), a(v), b(u), b(v)];
-      if (sign(pv.x - pu.x) !== sign(qv.x - qu.x) || sign(pv.y - pu.y) !== sign(qv.y - qu.y)) return false;
+  const alike = (flip) => {
+    const turned = (ref) => (flip ? transformComponentWorld(b(ref), { x: 0, y: 0 }, 'mirrorX') : b(ref));
+    for (const ref of refs) if (orientation(a(ref)) !== orientation(turned(ref))) return false;
+    for (const u of refs) {
+      for (const v of refs) {
+        if (u >= v) continue;
+        const [pu, pv, qu, qv] = [a(u), a(v), turned(u), turned(v)];
+        if (sign(pv.x - pu.x) !== sign(qv.x - qu.x) || sign(pv.y - pu.y) !== sign(qv.y - qu.y)) return false;
+      }
     }
-  }
-  return true;
+    return true;
+  };
+  return alike(false) || alike(true);
 }
 
 /** The electrical nets of `circuit` a rail symbol is on. */
@@ -18311,6 +18327,26 @@ function railGroups(circuit) {
     if (net.terminals.some((t) => isReferenceMarker(circuit.components.get(t.comp)))) rails.add(circuit.netGroupKey(net));
   }
   return rails;
+}
+
+/** Whether a match of a cell `pattern` puts on rails exactly the pins the
+ *  pattern has on rails (a pair's sources meet at a tail, never a rail; a
+ *  mirror's meet at one). The pattern's unconnected pins say nothing. */
+function railsAgree(pattern, match, circuit) {
+  const patternNets = pinNets(pattern.circuit);
+  const patternRails = railGroups(pattern.circuit);
+  const nets = pinNets(circuit);
+  const rails = railGroups(circuit);
+  for (const ref of pattern.refs) {
+    const to = match.parts.get(ref);
+    for (const t of pattern.circuit.components.get(ref).terminalDefs) {
+      const own = patternNets.get(`${ref}.${t.name}`);
+      if (!own) continue;
+      const there = nets.get(`${to.refdes}.${t.name}`);
+      if (patternRails.has(pattern.circuit.netGroupKey(own)) !== (!!there && rails.has(circuit.netGroupKey(there)))) return false;
+    }
+  }
+  return true;
 }
 
 /** Of a cell's pins, the pairs on one net, as `a|b` keys, by `netOf`. */
@@ -18351,6 +18387,7 @@ function cellDrawing(circuit, cell, sources) {
     const sourceNets = pinNets(source.circuit);
     const sourceRails = railGroups(source.circuit);
     for (const match of findTopology(cell.pattern.circuit, cell.pattern.refs, source.circuit, { exclude })) {
+      if (!railsAgree(cell.pattern, match, source.circuit)) continue;
       const parts = new Map([...cell.map].map(([from, to]) => [to, match.parts.get(from)]));
       const there = (pin) => {
         const [ref, term] = pin.split('.');

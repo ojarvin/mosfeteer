@@ -304,3 +304,29 @@ test('arrange lists arranging by cells, and draws it as one step', () => {
   assert.equal(done.mutated, true);
   assert.match(done.text, /by cells/);
 });
+
+test('a cell has its kind\'s rails: two transistors whose sources meet at a rail are no pair', () => {
+  const circuit = new Circuit();
+  run(circuit, 'add pmos M7 --at 0 0', 'add pmos M11 --at 400 0 --mirrorX', 'add supply --at 0 -120', 'add supply --at 400 -120',
+    'connect M7.s SUPPLY1.p', 'connect M11.s SUPPLY2.p', 'connect M7.g M11.g');
+  assert.deepEqual(cellsIn(circuit, ['M7', 'M11', 'SUPPLY1', 'SUPPLY2'], cellPatterns()), []);
+});
+
+test('a cell drawn spread out, with other parts among its own, is left to itself', () => {
+  const circuit = messyBuffer();
+  // A part drawn between the mirror's legs.
+  run(circuit, 'add resistor RX --at 260 -560 --rot 90');
+  assert.deepEqual(cellsIn(circuit, BUFFER, cellPatterns()).map((c) => c.name), ['NMOS differential pair']);
+});
+
+test('by cells takes the mirror image of a cell\'s drawing for its shape: symmetric halves are left as they are', () => {
+  const circuit = new Circuit();
+  // Two mirrors, the left one drawn as the mirror image of the right one.
+  run(circuit, 'add pmos M4 --at 0 0', 'add pmos M6 --at -400 0 --mirrorX', 'add supply --at 0 -120', 'add supply --at -400 -120',
+    'connect M4.g M6.g', 'connect M4.d M4.g', 'connect M4.s SUPPLY1.p', 'connect M6.s SUPPLY2.p',
+    'add pmos M5 --at 800 0 --mirrorX', 'add pmos M7 --at 1200 0', 'add supply --at 800 -120', 'add supply --at 1200 -120',
+    'connect M5.g M7.g', 'connect M5.d M5.g', 'connect M5.s SUPPLY3.p', 'connect M7.s SUPPLY4.p');
+  const refs = [...circuit.components.keys()].filter((ref) => !ref.startsWith('J'));
+  const found = arrangementCandidates(circuit, refs, [{ circuit, name: 'this design' }], { patterns: cellPatterns() });
+  assert.deepEqual(found.candidates.filter((c) => c.cells), []);
+});

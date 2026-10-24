@@ -12,7 +12,8 @@ const p = (x, y) => ({ x, y });
 
 /** Each cell: its name, the commands that draw it, and `{ cell, wires }`:
  *  the parts that make the cell (what is looked for in a larger selection;
- *  rails and a tail source go with it when there), and wires drawn as given
+ *  rails and a tail source go with it when there; none for the cascode, two
+ *  stacked parts being too common to be a cell of their own), and wires drawn as given
  *  where the router would draw them otherwise (a net named by a pin on it).
  *  Rails stand one cell out from their pins, as g and v place them. */
 const CELLS = [
@@ -42,7 +43,7 @@ const CELLS = [
     'add nmos M1 --at 0 0', 'add nmos M2 --at 0 -240',
     'add ground --at 0 120',
     'connect M1.d M2.s', 'connect M1.s GROUND1.gnd',
-  ], { cell: ['M1', 'M2'] }],
+  ], {}],
   ['Five-transistor OTA', [
     'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0 --mirrorX',
     'add pmos M3 --at 0 -320 --mirrorX', 'add pmos M4 --at 400 -320',
@@ -71,7 +72,7 @@ let drawings = null;
 /** The built-in drawings, as `arrangementCandidates` sources. */
 export function builtInDrawings() {
   if (!drawings) {
-    drawings = CELLS.map(([name, lines, { cell, wires = {} }]) => {
+    drawings = CELLS.map(([name, lines, { cell = null, wires = {} }]) => {
       const circuit = new Circuit();
       for (const line of lines) runCommand(circuit, line);
       for (const [pin, paths] of Object.entries(wires)) {
@@ -91,5 +92,6 @@ export function builtInDrawings() {
 export function cellPatterns() {
   return builtInDrawings()
     .map(({ circuit, name, cell }, index) => ({ name, circuit, refs: cell, index }))
+    .filter((pattern) => pattern.refs)
     .sort((a, b) => b.refs.length - a.refs.length || a.index - b.index);
 }
