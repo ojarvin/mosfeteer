@@ -42987,6 +42987,7 @@ __exports.pruneAnalysisNetValues = pruneAnalysisNetValues;
 __exports.pruneAnalysisDeviceRegions = pruneAnalysisDeviceRegions;
 __exports.formatAnalysisDeviceRegions = formatAnalysisDeviceRegions;
 __exports.analysisFormDefaults = analysisFormDefaults;
+__exports.restoredAnalysisInput = restoredAnalysisInput;
 let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
 /**
  * Pure helpers for the small-signal analysis form.
@@ -43081,10 +43082,12 @@ function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetId
   const namedOutput = firstMatching(usable, (net) => /^(?:v_?\{?out\}?|output|out)$/i.test(String(net.name || '').trim()));
   const target = markedOutput || targetHint || componentOutput || namedOutput || usable[0] || null;
 
-  const markedInput = firstMatching(usable, (net) => net.analysis?.role === 'input', target?.id);
-  const componentInputIds = new Set(componentInputNetIds);
   // With a differential input pair, the non-inverting (…P / …+) side is the conventional drive.
-  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id) && /(?:p|\+|plus)\}?$/i.test(String(net.name || '')), target?.id)
+  const nonInverting = (net) => /(?:p|\+|plus)\}?$/i.test(String(net.name || ''));
+  const markedInputs = usable.filter((net) => net.id !== target?.id && net.analysis?.role === 'input');
+  const markedInput = markedInputs.find(nonInverting) || markedInputs[0];
+  const componentInputIds = new Set(componentInputNetIds);
+  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id) && nonInverting(net), target?.id)
     || firstMatching(usable, (net) => componentInputIds.has(net.id), target?.id);
   const namedInput = firstMatching(usable, (net) => /^(?:v_?\{?in\}?|input|in)$/i.test(String(net.name || '').trim()), target?.id);
   const firstAlternative = firstMatching(usable, () => true, target?.id);
@@ -43095,7 +43098,16 @@ function analysisFormDefaults(nets = [], { targetNetId = '', componentInputNetId
     input: input?.id || '',
     targetMarked: !!markedOutput,
     inputMarked: !!markedInput,
+    markedInputs: markedInputs.map((net) => net.id),
   };
+}
+
+/** The input the form shows: the saved one, unless a role marked on the
+ *  drawing says otherwise -- one of several marked inputs is a choice among
+ *  them, and the saved one stays. */
+function restoredAnalysisInput(defaults, saved) {
+  if (!defaults.inputMarked || !saved) return defaults.inputMarked || !saved ? defaults.input : saved;
+  return defaults.markedInputs.includes(saved) ? saved : defaults.input;
 }
 
 };
@@ -43123,7 +43135,7 @@ let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("sr
 let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/analysis/noise.js")); });
 let installBodeUi, renderBode; __bind(() => { ({ installBodeUi, renderBode } = __require("src/web/bode-ui.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } = __require("src/web/analysis-options.js")); });
-let analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
+let analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
 let installHintFolding; __bind(() => { ({ installHintFolding } = __require("src/web/hints.js")); });
 let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
@@ -43420,7 +43432,7 @@ function restoreAnalysisForm(defaults = {}) {
     el.value = value;
   };
   setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
-  setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
+  setSelect(analysisInput, restoredAnalysisInput(defaults, state.input));
   if (analysisLoopElement) analysisLoopElement.value = typeof saved.loopElement === 'string' ? saved.loopElement : '';
   if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
   if (analysisDeviceRegions) {

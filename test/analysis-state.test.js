@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
+import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
 
 const nets = [
   { id: 'N1', name: 'VIN', terminals: [{ comp: 'P1', term: 'p' }], analysis: { role: 'input' } },
@@ -28,7 +28,7 @@ test('analysis form drops net and device references that are absent from the cur
 
 test('explicit input/output net roles become analysis defaults', () => {
   const defaults = analysisFormDefaults(nets, { targetNetId: 'N1' });
-  assert.deepEqual(defaults, { target: 'N2', input: 'N1', targetMarked: true, inputMarked: true });
+  assert.deepEqual(defaults, { target: 'N2', input: 'N1', targetMarked: true, inputMarked: true, markedInputs: ['N1'] });
 });
 
 test('analysis defaults retain a selected target when no output role is marked', () => {
@@ -58,4 +58,23 @@ test('analysis node options show net names without label markup', () => {
   assert.equal(analysisNetOptionText({ id: 'N6', name: 'V_{OUT}^{+}' }), 'VOUT+ — N6');
   assert.equal(analysisNetOptionText({ id: 'N3', name: 'N3' }), 'N3');
   assert.equal(analysisNetOptionText({ id: 'N4', name: '' }), '(unnamed) — N4');
+});
+
+test('of several marked inputs, the saved choice stays; with none saved, the non-inverting side', () => {
+  const pair = [
+    { id: 'N2', name: 'V_{INN}', analysis: { role: 'input' } },
+    { id: 'N3', name: 'V_{INP}', analysis: { role: 'input' } },
+    { id: 'N16', name: 'V_{OUT}', analysis: { role: 'output' } },
+    { id: 'N19', name: 'V_{O1}', analysis: {} },
+  ];
+  const defaults = analysisFormDefaults(pair);
+  assert.equal(defaults.input, 'N3');
+  assert.equal(restoredAnalysisInput(defaults, 'N2'), 'N2');
+  assert.equal(restoredAnalysisInput(defaults, 'N3'), 'N3');
+  assert.equal(restoredAnalysisInput(defaults, ''), 'N3');
+  // A saved net no input role marks gives way to the marked one.
+  assert.equal(restoredAnalysisInput(defaults, 'N19'), 'N3');
+  // With no role marked, the saved choice is the user's.
+  const plain = analysisFormDefaults(pair.map((net) => ({ ...net, analysis: {} })));
+  assert.equal(restoredAnalysisInput(plain, 'N19'), 'N19');
 });

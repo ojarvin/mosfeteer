@@ -29,9 +29,23 @@ function commonGate() {
   return circuit.toJSON();
 }
 
+/** Two input ports, VA and VB, both nets marked as inputs, and the form
+ *  saved with VB as the input: the saved one is the choice. */
+function twoInputs() {
+  const circuit = Circuit.fromJSON(amplifier());
+  for (const line of ['add input VB --at -400 400', 'add resistor RB --at -200 400', 'connect VB.p RB.a', 'connect RB.b GND.gnd']) runCommand(circuit, line);
+  circuit.renameComponent('VIN', 'VA');
+  const data = circuit.toJSON();
+  const netOf = (refdes) => data.nets.find((net) => net.terminals.some((t) => t.comp === refdes && t.term === 'p')).id;
+  // Marked as inputs on the nets themselves, as older designs are.
+  for (const refdes of ['VA', 'VB']) data.nets.find((net) => net.id === netOf(refdes)).analysis = { role: 'input', acGround: false };
+  data.windows = { analysis: { input: netOf('VB'), output: netOf('VOUT'), acGrounds: '' } };
+  return { data, saved: netOf('VB') };
+}
+
 describe('small-signal analysis', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier(), cg: commonGate() }, width: 1500, height: 950 }); });
+  before(async () => { h = await start({ docs: { amp: amplifier(), other: amplifier(), miller: millerBuffer(), loaded: loadedAmplifier(), cg: commonGate(), pair: twoInputs().data }, width: 1500, height: 950 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
   // The analysis window's Annotate menu: open it, choose `label`.
   const annotate = async (label) => {
@@ -119,6 +133,13 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await checked('analysis-approx-body'), false);
     assert.match(await value('analysis-input'), /./);
     await h.click('#analysis-approx-body');
+  });
+
+  test('of two input ports, the input saved with the design stays chosen', async () => {
+    await h.open('pair');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    assert.equal(await value('analysis-input'), twoInputs().saved);
   });
 
   test('the model opens in a window that zooms like a reference window, Place puts it under the drawing, and placing again replaces it', async () => {

@@ -91,10 +91,12 @@ export function analysisFormDefaults(nets = [], { targetNetId = '', componentInp
   const namedOutput = firstMatching(usable, (net) => /^(?:v_?\{?out\}?|output|out)$/i.test(String(net.name || '').trim()));
   const target = markedOutput || targetHint || componentOutput || namedOutput || usable[0] || null;
 
-  const markedInput = firstMatching(usable, (net) => net.analysis?.role === 'input', target?.id);
-  const componentInputIds = new Set(componentInputNetIds);
   // With a differential input pair, the non-inverting (…P / …+) side is the conventional drive.
-  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id) && /(?:p|\+|plus)\}?$/i.test(String(net.name || '')), target?.id)
+  const nonInverting = (net) => /(?:p|\+|plus)\}?$/i.test(String(net.name || ''));
+  const markedInputs = usable.filter((net) => net.id !== target?.id && net.analysis?.role === 'input');
+  const markedInput = markedInputs.find(nonInverting) || markedInputs[0];
+  const componentInputIds = new Set(componentInputNetIds);
+  const componentInput = firstMatching(usable, (net) => componentInputIds.has(net.id) && nonInverting(net), target?.id)
     || firstMatching(usable, (net) => componentInputIds.has(net.id), target?.id);
   const namedInput = firstMatching(usable, (net) => /^(?:v_?\{?in\}?|input|in)$/i.test(String(net.name || '').trim()), target?.id);
   const firstAlternative = firstMatching(usable, () => true, target?.id);
@@ -105,5 +107,14 @@ export function analysisFormDefaults(nets = [], { targetNetId = '', componentInp
     input: input?.id || '',
     targetMarked: !!markedOutput,
     inputMarked: !!markedInput,
+    markedInputs: markedInputs.map((net) => net.id),
   };
+}
+
+/** The input the form shows: the saved one, unless a role marked on the
+ *  drawing says otherwise -- one of several marked inputs is a choice among
+ *  them, and the saved one stays. */
+export function restoredAnalysisInput(defaults, saved) {
+  if (!defaults.inputMarked || !saved) return defaults.inputMarked || !saved ? defaults.input : saved;
+  return defaults.markedInputs.includes(saved) ? saved : defaults.input;
 }

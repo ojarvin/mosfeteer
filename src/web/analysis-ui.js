@@ -15,7 +15,7 @@ import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
 import { installBodeUi, renderBode } from './bode-ui.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
-import { analysisFormDefaults, analysisFormStorageKey, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
+import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
@@ -282,7 +282,7 @@ function restoreAnalysisForm(defaults = {}) {
     el.value = value;
   };
   setSelect(analysisTarget, defaults.targetMarked ? defaults.target : state.output);
-  setSelect(analysisInput, defaults.inputMarked ? defaults.input : state.input);
+  setSelect(analysisInput, restoredAnalysisInput(defaults, state.input));
   if (analysisLoopElement) analysisLoopElement.value = typeof saved.loopElement === 'string' ? saved.loopElement : '';
   if (analysisAcGrounds) analysisAcGrounds.value = pruneAnalysisNetValues(state.acGrounds, visibleNets());
   if (analysisDeviceRegions) {
