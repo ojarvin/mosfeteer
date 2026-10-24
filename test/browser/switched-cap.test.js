@@ -34,6 +34,15 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.sc-phase-closed')].map((td) => td.textContent)`), ['S1, S3 closed', 'S2, S4 closed']);
   });
 
+  test('looking at a design in this mode leaves it as it was: the next design opened is not made unsaved', async () => {
+    await openWindow();
+    await h.open('unclocked');
+    await h.settle();
+    assert.equal(await h.evaluate(`${h.module('document-session.js')}.then((m) => m.hasUnsavedChanges())`), false);
+    assert.equal(await h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc ?? null)`), null);
+    await h.open('integrator');
+  });
+
   test('Derive gives the integrator, read at the end of the last phase or of the one picked, and plots it', async () => {
     await openWindow();
     await h.evaluate(`document.querySelector('.sc-derive').click()`);

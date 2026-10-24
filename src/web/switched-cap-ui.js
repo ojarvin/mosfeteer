@@ -33,7 +33,23 @@ import { annotateMathFigure } from './figure-annotate.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphActions } from './bode-actions.js';
 
-const settings = () => (editor.circuit.analysisValues.sc ||= { input: '', output: '', readout: '', values: {} });
+// A design this window never changed keeps no settings of its own: its
+// defaults are held aside, and join the design with its first change
+// (changed()), so looking at a design never makes it unsaved.
+const unsaved = new WeakMap(); // circuit -> its defaults, not yet the design's
+const settings = () => {
+  const circuit = editor.circuit;
+  if (circuit.analysisValues.sc) return circuit.analysisValues.sc;
+  if (!unsaved.has(circuit)) unsaved.set(circuit, { input: '', output: '', readout: '', values: {} });
+  return unsaved.get(circuit);
+};
+/** A setting changed: the settings are the design's from now on. */
+function changed() {
+  const circuit = editor.circuit;
+  if (!circuit.analysisValues.sc && unsaved.has(circuit)) circuit.analysisValues.sc = unsaved.get(circuit);
+  unsaved.delete(circuit);
+  markSettingsChanged();
+}
 
 let section = null;
 let latest = null; // { revision, result }
@@ -160,12 +176,12 @@ function numbered(value) {
 }
 
 /** Saved once a frame while a slider moves: one undo step a finished
- *  adjustment (markSettingsChanged), as the Bode graph's Values. */
+ *  adjustment (changed), as the Bode graph's Values. */
 function saveValues() {
   if (saveFrame) return;
   saveFrame = requestAnimationFrame(() => {
     saveFrame = 0;
-    markSettingsChanged();
+    changed();
   });
 }
 
@@ -334,7 +350,7 @@ function renderCalculatorFields() {
   const field = (label, value, placeholder, onInput, unit) => {
     const input = el('input', { type: 'text', class: 'sc-calc-field', value: value ?? '', placeholder, 'aria-label': plainTexText(label) });
     // Applied once entered; the fields stay as they are, focus too.
-    onFieldCommit(input, (text) => { onInput(text.trim()); markSettingsChanged(); calculatorResult(); });
+    onFieldCommit(input, (text) => { onInput(text.trim()); changed(); calculatorResult(); });
     return el('div', { class: 'sc-calc-row' }, [el('span', { class: 'signal-flow-source-name' }, [math(label)]), input, el('span', { class: 'sc-calc-unit', text: unit })]);
   };
   host.replaceChildren(
@@ -378,7 +394,7 @@ function readSizing() {
     read.push(name);
   }
   if (!read.length) { logLine('the sizing table has no number for these capacitors', 'error'); return; }
-  markSettingsChanged();
+  changed();
   runCalculator();
   logLine(`read ${read.join(', ')} from the sizing table`);
 }
@@ -563,7 +579,7 @@ function annotate() {
 // ----- install ---------------------------------------------------------------------------
 
 export function installSwitchedCapUi() {
-  const select = (id, key) => el('select', { id, onchange: (ev) => { settings()[key] = ev.target.value; markSettingsChanged(); } });
+  const select = (id, key) => el('select', { id, onchange: (ev) => { settings()[key] = ev.target.value; changed(); } });
   const row = (label, id, control) => el('div', { class: 'signal-flow-source' }, [el('label', { for: id, class: 'signal-flow-source-name', text: label }), control]);
   section = el('div', { id: 'analysis-switched-cap', class: 'signal-flow-section sc-section', hidden: true }, [
     el('p', { class: 'analysis-intro', text: 'Derive gives the exact H(z) from the timing diagram\'s phases, and the kT/C noise when asked.' }),
@@ -580,7 +596,7 @@ export function installSwitchedCapUi() {
     el('fieldset', { class: 'analysis-approximations sc-noise' }, [
       el('legend', { text: 'Noise' }),
       el('label', { class: 'sc-noise-toggle' }, [
-        el('input', { type: 'checkbox', id: 'sc-noise-on', onchange: (ev) => { settings().noise = ev.target.checked; markSettingsChanged(); if (ev.target.checked && latest?.result.ok && !latest.result.noise) derive(); else { renderNoise(); runCalculator(); } } }),
+        el('input', { type: 'checkbox', id: 'sc-noise-on', onchange: (ev) => { settings().noise = ev.target.checked; changed(); if (ev.target.checked && latest?.result.ok && !latest.result.noise) derive(); else { renderNoise(); runCalculator(); } } }),
         ' kT/C noise with each Derive',
       ]),
       el('div', { class: 'sc-noise-result' }),
