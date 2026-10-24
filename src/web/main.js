@@ -5216,6 +5216,9 @@ export function beginCopySource(startWorld, startClient) {
   // An existing selection is the source, not the object under the cursor.
   // This matters for mixed Ctrl+A/marquee selections and makes the source
   // click a confirmation gesture rather than an accidental selection change.
+  // A part picked by this click is copied alone: not the wires it holds
+  // whole, which a selection made first would carry.
+  let alone = false;
   if (!copySelectionExists()) {
     const label = pickLabel(startWorld);
     const annotation = annotationGeometryAt(startWorld);
@@ -5227,6 +5230,7 @@ export function beginCopySource(startWorld, startClient) {
       setLabelSelection([label.id]);
     } else if (label?.owner && circuit.components.has(label.owner)) {
       setSelection([label.owner]);
+      alone = true;
     } else if (label) {
       setLabelSelection([label.id]);
     } else if (wireHit) {
@@ -5236,12 +5240,13 @@ export function beginCopySource(startWorld, startClient) {
       selectedNets.clear();
     } else if (hit?.refdes) {
       setSelection([hit.refdes]);
+      alone = true;
     } else {
       hintLine('COPY: click a component, label, or wire source');
       return false;
     }
   }
-  if (!copySelection()) return false;
+  if (!copySelection({ alone })) return false;
   return startCopyGhost(startWorld, startClient);
 }
 /** A line or arrow vertex under `world` that Delete can remove on its own,

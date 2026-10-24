@@ -203,6 +203,26 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     assert.equal(await parts(), before, 'one undo for the pair');
   });
 
+  test('with nothing selected, the copy tool copies the part clicked alone, not the wire it holds whole', async () => {
+    const diode = new Circuit();
+    for (const line of ['add nmos M1 --at 0 0', 'connect M1.d M1.g', 'annotation add margin 1600 1000']) runCommand(diode, line);
+    await h.evaluate(`window.__load(${JSON.stringify(diode.toJSON())})`);
+    await h.evaluate(`${h.module('canvas-view.js')}.then((m) => m.fitView())`);
+    await h.key('c');
+    await press(-40, 20);
+    assert.equal(await ed('e.drag?.mode'), 'copyghost');
+    const p = await at(800, 0);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await until('e.cursor.x === 800 || e.drag?.moved');
+    await press(800, 0);
+    await h.key('Escape');
+    await h.key('Escape');
+    const copy = await ed(`[...c.components.values()].find((p) => p.type === 'nmos' && p.refdes !== 'M1')?.refdes`);
+    assert.ok(copy, 'a copy was placed');
+    assert.equal(await ed(`c.netOfTerminal({ comp: ${JSON.stringify(copy)}, term: 'g' })`), null, 'its gate is not wired to its drain');
+    assert.ok(await ed(`!!c.netOfTerminal({ comp: 'M1', term: 'g' })`), 'the original keeps its wire');
+  });
+
   test('with a selection, the copy and move tools start from a click on empty canvas', async () => {
     const resistors = () => ed(`[...c.components.values()].filter((p) => p.type === 'resistor').map((p) => p.transform.x + ',' + p.transform.y).sort()`);
     const before = await resistors();
