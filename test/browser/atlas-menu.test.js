@@ -55,6 +55,20 @@ describe('Atlas design menu', { skip: browserSkip() }, () => {
     await h.until(`document.querySelector('.component-context-menu').hidden`);
   });
 
+  test('the item under the pointer takes the keyboard\'s highlight: one item is lit, never two', async () => {
+    await rightClick('second');
+    await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))`);
+    const buttons = `[...document.querySelectorAll('.component-context-menu button')]`;
+    const lit = () => h.evaluate(`${buttons}.filter((b) => b.matches(':hover') || b.matches(':focus-visible')).map((b) => b.childNodes[0].textContent.trim())`);
+    assert.equal((await lit()).length, 1);
+    const last = await h.evaluate(`(() => { const r = ${buttons}.at(-1).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await h.mouse('mouseMoved', last.x, last.y, { button: 'none', buttons: 0 });
+    await h.settle();
+    assert.deepEqual(await lit(), ['Delete…']);
+    await h.key('Escape');
+    await h.until(`document.querySelector('.component-context-menu').hidden`);
+  });
+
   test('Tags… gives the design tags; Delete… asks first, and Cancel keeps it', async () => {
     await rightClick('second');
     await choose('Tags…');

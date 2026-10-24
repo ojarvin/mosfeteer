@@ -54236,6 +54236,11 @@ function installContextMenu() {
     const button = ev.target.closest?.('button');
     if (!button || button === contextHoverButton) return;
     contextHoverButton = button;
+    // The keyboard's place follows the pointer, as in a native menu: an
+    // item left focused by the arrows would stay lit beside the hovered one.
+    if (!button.disabled && document.activeElement !== button && componentContextMenuEl.contains(document.activeElement)) {
+      button.focus({ preventScroll: true });
+    }
     window.clearTimeout(contextHoverTimer);
     contextHoverTimer = window.setTimeout(() => closeStrayContextSubmenus(contextHoverButton), 150);
   });
