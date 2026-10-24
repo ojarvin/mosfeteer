@@ -119,8 +119,14 @@ function restoreCopyGhostGeometry(ghost) {
   editor.circuit.invalidateRoutingCache();
 }
 
-export function copySelection({ quiet = false } = {}) {
+/** `alone`: the parts without the nets they hold whole (a transistor's
+ *  gate-drain wire) -- what the copy tool picks with a click. */
+export function copySelection({ quiet = false, alone = false } = {}) {
   const parts = resolveCopySelection(editor.circuit, copySelectionSource());
+  if (alone) {
+    parts.nets = [];
+    parts.fragments = [];
+  }
   const { comps, freeLabels } = parts;
   if (!comps.length && !freeLabels.length && !parts.nets.length && !parts.fragments.length) {
     if (!parts.netLabels.length) {

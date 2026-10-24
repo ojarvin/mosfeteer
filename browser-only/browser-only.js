@@ -56161,8 +56161,14 @@ function restoreCopyGhostGeometry(ghost) {
   editor.circuit.invalidateRoutingCache();
 }
 
-function copySelection({ quiet = false } = {}) {
+/** `alone`: the parts without the nets they hold whole (a transistor's
+ *  gate-drain wire) -- what the copy tool picks with a click. */
+function copySelection({ quiet = false, alone = false } = {}) {
   const parts = resolveCopySelection(editor.circuit, copySelectionSource());
+  if (alone) {
+    parts.nets = [];
+    parts.fragments = [];
+  }
   const { comps, freeLabels } = parts;
   if (!comps.length && !freeLabels.length && !parts.nets.length && !parts.fragments.length) {
     if (!parts.netLabels.length) {
@@ -70593,6 +70599,9 @@ function beginCopySource(startWorld, startClient) {
   // An existing selection is the source, not the object under the cursor.
   // This matters for mixed Ctrl+A/marquee selections and makes the source
   // click a confirmation gesture rather than an accidental selection change.
+  // A part picked by this click is copied alone: not the wires it holds
+  // whole, which a selection made first would carry.
+  let alone = false;
   if (!copySelectionExists()) {
     const label = pickLabel(startWorld);
     const annotation = annotationGeometryAt(startWorld);
@@ -70604,6 +70613,7 @@ function beginCopySource(startWorld, startClient) {
       setLabelSelection([label.id]);
     } else if (label?.owner && circuit.components.has(label.owner)) {
       setSelection([label.owner]);
+      alone = true;
     } else if (label) {
       setLabelSelection([label.id]);
     } else if (wireHit) {
@@ -70613,12 +70623,13 @@ function beginCopySource(startWorld, startClient) {
       selectedNets.clear();
     } else if (hit?.refdes) {
       setSelection([hit.refdes]);
+      alone = true;
     } else {
       hintLine('COPY: click a component, label, or wire source');
       return false;
     }
   }
-  if (!copySelection()) return false;
+  if (!copySelection({ alone })) return false;
   return startCopyGhost(startWorld, startClient);
 }
 /** A line or arrow vertex under `world` that Delete can remove on its own,
