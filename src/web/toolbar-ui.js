@@ -675,7 +675,12 @@ export function installToolbarUi() {
     const open = toolbarMenus.find(([, menu]) => !menu.hidden);
     if (!open) return;
     ev.preventDefault();
-    closeToolbarMenu(open[0], open[1], true);
+    // A menu opened by a key from elsewhere (the Atlas's Shift+L) gives the
+    // keys back there, not to its button, which was never pressed.
+    const back = open[1].returnFocus;
+    delete open[1].returnFocus;
+    closeToolbarMenu(open[0], open[1], !back?.isConnected);
+    if (back?.isConnected) back.focus({ preventScroll: true });
   });
 
   scrollSchemeButton?.addEventListener('click', () => {

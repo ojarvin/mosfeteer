@@ -901,6 +901,11 @@ describe('a long Atlas listing scrolls with its keys', { skip: browserSkip() }, 
     }
     assert.equal(at.name, 'design-00');
     assert.equal(at.scrollTop, 0, 'all the way up');
+    // Esc closes it and gives the keys back to the desk: the List button,
+    // never pressed, takes no focus (and shows no focus ring).
+    await key('Escape');
+    await h.until(`document.getElementById('atlas-list-panel').hidden`);
+    assert.equal(await h.evaluate(`document.activeElement.id`), 'atlas');
   });
 });
 

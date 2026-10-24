@@ -1539,6 +1539,8 @@ function toggleList() {
   if (!listEl || listEl.closest('.atlas-list')?.hidden) return;
   listEl.click();
   if (!listPanelEl.hidden) {
+    // Esc gives the keys back to the desk.
+    listPanelEl.returnFocus = rootEl;
     listPanelEl.tabIndex = -1;
     listPanelEl.focus({ preventScroll: true });
   }
