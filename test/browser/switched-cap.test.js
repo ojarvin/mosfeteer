@@ -148,6 +148,8 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     assert.match(equations.text, /\\text\{Transfer function\} & /);
     assert.match(equations.text, /\\text\{kT\/C noise\} & /);
     assert.match(noise.text, /\\text\{Switches\} & \\text\{Capacitors\} & \\text\{Phase\} & \\text\{RMS\} & \\text\{Density\}/);
+    // The capacitors as the drawing names them: C_{S}, not CS.
+    assert.match(noise.text, /\\text\{S1, S3\} & C_\{S\} & /);
     assert.match(noise.text, /\\text\{Total\} &\s+&\s+& \\text\{45\.52 µV\}/);
     // Packed with the rest: clear of the circuit and of each other.
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.figure).every((l) => l.textMeasured()))`);

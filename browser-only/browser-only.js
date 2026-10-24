@@ -80936,7 +80936,7 @@ function annotateNoise() {
   const rows = [
     [words('Switches'), words('Capacitors'), words('Phase'), words('RMS'), words('Density')].join(' & '),
     '\\hline',
-    ...figures.contributors.map((row) => [words(row.switches.join(', ')), words(row.capacitors.join(', ')), phase(row.phaseName), ...cells(row)].join(' & ')),
+    ...figures.contributors.map((row) => [words(row.switches.join(', ')), row.capacitors.map(symbolText).join(',\\ '), phase(row.phaseName), ...cells(row)].join(' & ')),
     '\\hline',
     [words('Total'), '', '', ...cells(figures.total)].join(' & '),
   ];
