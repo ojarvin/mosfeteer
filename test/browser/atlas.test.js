@@ -87,6 +87,9 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await openDesk();
     assert.deepEqual((await snapshot()).tiles.map((t) => t.name).sort(), ['alpha', 'beta', 'child', 'top']);
     assert.equal(await inAtlas(), true, 'Settings in the Atlas top bar');
+    // The Atlas's top bar is the editor's: full width at the top.
+    const bars = await h.evaluate(`(() => { const a = document.querySelector('.atlas-head').getBoundingClientRect(); return { top: a.top, left: a.left, width: a.width, page: document.documentElement.clientWidth }; })()`);
+    assert.deepEqual([bars.top, bars.left, bars.width], [0, 0, bars.page], JSON.stringify(bars));
     // Opened there, the menu works as in the editor, and Esc closes it
     // without touching the desk.
     const menuOpen = () => h.evaluate(`!document.getElementById('settings-menu').hidden`);

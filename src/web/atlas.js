@@ -682,7 +682,7 @@ function draw() {
     // A search fades every design it does not find; what it finds in one is
     // marked under the drawing, like a highlighter, while the search box has
     // focus -- away from it, the marks step aside and the drawings read clean.
-    const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - 0.72 * dim);
+    const fade = (state.matches && !found ? 0.18 : 1) * alpha * (1 - DIMMED * dim);
     ctx.globalAlpha = alpha;
     if (found?.hits.length && document.activeElement === searchEl) drawHits(ctx, tile, entry, found.hits, palette);
     ctx.globalAlpha = (entry.current ? 1 : Math.min(1, reveal * 1.6)) * fade;
@@ -706,7 +706,7 @@ function draw() {
       const key = bitmapKey(entry, need);
       if (!state.bitmaps.has(key)) wanted.push({ entry, level: need, key, distance });
     }
-    ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6) * (1 - 0.6 * dim);
+    ctx.globalAlpha = alpha * Math.min(1, reveal * 1.6) * (1 - DIMMED * dim);
     if (!flying) drawCaption(ctx, tile, entry, placedRect, palette);
   }
   ctx.globalAlpha = 1;
@@ -736,6 +736,9 @@ const RELATED_LIFT = 0.3;
  *  -- each lower than the one above, so the chain reads as depth. */
 const LEVEL_LIFT = [1, RELATED_LIFT, 0.13, 0.055];
 const LEVEL_DIM = [0, 0, 0.25, 0.45];
+/** How much of a design a full dim takes away: the unrelated designs stay
+ *  legible beside the pick. */
+const DIMMED = 0.45;
 
 /** Every design's lift (0 flat .. 1 picked) and dim (0 .. 1), eased toward
  *  what the pick asks for; asks for frames while any is on its way. */
@@ -2154,7 +2157,7 @@ function syncVectorOverlays(list, moving = false) {
     el.style.width = `${rect.w}px`;
     el.style.height = `${rect.h}px`;
     const searched = state.matches && !state.matches.has(tile.id) ? 0.18 : 1;
-    el.style.opacity = String(searched * (1 - 0.72 * dim));
+    el.style.opacity = String(searched * (1 - DIMMED * dim));
   }
 }
 

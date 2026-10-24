@@ -5670,16 +5670,28 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
   height: 100%;
 }
 
+/* The Atlas's top bar is the editor's: full width, the same panel and
+   border, its way back at the right end. */
 .atlas-head {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 12px;
-  max-width: calc(100% - 24px);
-  padding: 6px 6px 6px 10px;
-  border-radius: var(--radius-lg);
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.atlas-head > .atlas-close {
+  margin-left: auto;
 }
 
 /* The workspace check: its button amber while something needs a look
