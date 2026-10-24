@@ -85,7 +85,7 @@ import { installRenumberUi } from './renumber-ui.js';
 import { installArrangeFigures } from './figure-annotate.js';
 import { installCalculator, toggleCalculator } from './calculator-window.js';
 import { installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } from './notes-window.js';
-import { historyDocumentShown, installHistory, renderHistoryWindow } from './history-window.js';
+import { historyDocumentShown, installHistory, renderHistoryWindow, toggleHistory } from './history-window.js';
 import { installAccent } from './accent.js';
 import { installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } from './sizing-window.js';
 import { togglePlots } from './plots-window.js';
@@ -6744,6 +6744,12 @@ function onNormalKey(key, shiftKey = false) {
   // Shift+W: the plots window (W for waveforms), open or closed.
   if (key === 'W') {
     togglePlots();
+    return;
+  }
+
+  // Shift+Y: the save history (Y for yesterday's drawing), open or closed.
+  if (key === 'Y') {
+    toggleHistory();
     return;
   }
 

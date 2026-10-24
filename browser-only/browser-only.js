@@ -60757,7 +60757,8 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
  * The history is the file's, read from it whenever the window shows it,
  * and every change to it is written at once -- pinning or removing never
  * makes the design unsaved, and leaves unsaved drawing edits as they are.
- * More → History, or `:history`, shows or hides it.
+ * The toolbar's History, More → History, Shift+Y, or `:history` shows or
+ * hides it.
  */
 
 
@@ -61054,7 +61055,7 @@ function build() {
   clear.addEventListener('click', () => void removeSavePoints());
   canvasEl.closest('.canvas-pane').append(node);
   // At the left, so a save point viewed (a reference window, at the right) sits beside it.
-  const chrome = floatingWindow(node, { key: 'history', onClose: hide, resizable: true, place: (pane, size) => ({ x: 64, y: 56 }) });
+  const chrome = floatingWindow(node, { key: 'history', onClose: hide, resizable: true, place: (pane, size) => ({ x: 64, y: 56 }), toggleKey: 'Y' });
   win = { el: node, list, message, checkpoint, clear, top, chrome };
 }
 
@@ -61064,6 +61065,7 @@ function historyShown() {
 
 function syncButton() {
   document.getElementById('btn-history')?.setAttribute('aria-checked', String(historyShown()));
+  document.getElementById('btn-window-history')?.setAttribute('aria-pressed', String(historyShown()));
 }
 
 function show() {
@@ -61092,6 +61094,7 @@ function toggleHistory() {
 
 function installHistory() {
   document.getElementById('btn-history')?.addEventListener('click', toggleHistory);
+  document.getElementById('btn-window-history')?.addEventListener('click', toggleHistory);
 }
 
 /** Another design shown: its own history. */
@@ -61299,7 +61302,7 @@ const ICON_PATHS = {
   line: '<path d="M6 18 18 6"/><circle cx="5" cy="19" r="2" fill="currentColor" stroke="none"/><circle cx="19" cy="5" r="2" fill="currentColor" stroke="none"/>',
   front: '<rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
-  beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
+  beats: '<rect x="2.5" y="7" width="5.5" height="10" rx="1"/><rect x="9.25" y="7" width="5.5" height="10" rx="1"/><rect x="16" y="7" width="5.5" height="10" rx="1"/>',
   timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
   plots: '<path d="M4 3.5v16.5h16.5"/><path d="M7 15.5c2.5-7 4.5-7 6.5-2.5s3 3 5.5-5"/>',
   history: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4l2.8 1.8"/>',
@@ -63494,7 +63497,7 @@ let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/we
 let installArrangeFigures; __bind(() => { ({ installArrangeFigures } = __require("src/web/figure-annotate.js")); });
 let installCalculator, toggleCalculator; __bind(() => { ({ installCalculator, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let installNotes, notesDocumentShown, renderNotesWindow, toggleNotes; __bind(() => { ({ installNotes, notesDocumentShown, renderNotesWindow, toggleNotes } = __require("src/web/notes-window.js")); });
-let historyDocumentShown, installHistory, renderHistoryWindow; __bind(() => { ({ historyDocumentShown, installHistory, renderHistoryWindow } = __require("src/web/history-window.js")); });
+let historyDocumentShown, installHistory, renderHistoryWindow, toggleHistory; __bind(() => { ({ historyDocumentShown, installHistory, renderHistoryWindow, toggleHistory } = __require("src/web/history-window.js")); });
 let installAccent; __bind(() => { ({ installAccent } = __require("src/web/accent.js")); });
 let installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing; __bind(() => { ({ installSizing, renderSizingWindow, sizingDocumentShown, toggleSizing } = __require("src/web/sizing-window.js")); });
 let togglePlots; __bind(() => { ({ togglePlots } = __require("src/web/plots-window.js")); });
@@ -70247,6 +70250,12 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  // Shift+Y: the save history (Y for yesterday's drawing), open or closed.
+  if (key === 'Y') {
+    toggleHistory();
+    return;
+  }
+
   // Shift+E: the calculator (E for evaluate), open or closed.
   if (key === 'E') {
     toggleCalculator();
@@ -75099,6 +75108,11 @@ function build() {
   win = { el: node, body, chrome };
 }
 
+/** The toolbar's Plots button shows whether the window is open. */
+function syncButton() {
+  document.getElementById('btn-window-plots')?.setAttribute('aria-pressed', String(plotsShown()));
+}
+
 function plotsShown() {
   return !!win && !win.el.hidden;
 }
@@ -75113,12 +75127,14 @@ function showPlots() {
     win.chrome.place();
   }
   current().shown();
+  syncButton();
 }
 
 function hidePlots() {
   if (!win || win.el.hidden) return;
   win.el.hidden = true;
   wanted = false;
+  syncButton();
   canvasEl.focus({ preventScroll: true });
 }
 
@@ -75136,6 +75152,7 @@ function offerPlots() {
 /** `view`: the element the window shows in analysis mode `mode`; `shown`:
  *  called whenever it opens on that view. */
 function installPlotsWindow({ mode: key = 'signal-flow', view, shown }) {
+  if (!views.size) document.getElementById('btn-window-plots')?.addEventListener('click', togglePlots);
   views.set(key, { view, shown });
 }
 
@@ -81784,6 +81801,7 @@ __exports.toolbarFits = toolbarFits;
  * least useful text first. Each stage adds one token to the toolbar's
  * `data-compact` list, and style.css keys its rules on the tokens:
  *
+ *   windows             the window toggles drop their names, icons only
  *   export, new         those file actions become icons
  *   fold                New, Export, and the window toggles move into More
  *   save                Save becomes an icon
@@ -81791,7 +81809,7 @@ __exports.toolbarFits = toolbarFits;
  * The editor picks the first stage count at which the row fits and the
  * document title still shows a comfortable amount of its name.
  */
-const TOOLBAR_STAGES = ['export', 'new', 'fold', 'save'];
+const TOOLBAR_STAGES = ['windows', 'export', 'new', 'fold', 'save'];
 
 /** How much of the title (px) must stay visible before buttons drop text. */
 const TITLE_COMFORT_PX = 224;
@@ -82829,11 +82847,12 @@ const EDITOR_KEYMAP = Object.freeze([
     ['Shift+G', 'toggle the spacing and alignment guides'],
     ['Shift+D', 'toggle dark mode'],
     ['Shift+P', 'show or hide the components, nets, and selection panel'],
-    ['Shift+S', 'show or hide the small-signal analysis window'],
+    ['Shift+S', 'show or hide the analysis window: circuit, signal flow, switched-cap'],
     ['Shift+V', 'show or hide reference windows: another design beside this one'],
     ['Shift+W', 'show or hide the plots; drag pans, right-drag zooms, double-click fits'],
     ['Shift+E', 'show or hide the calculator; Up/Down recall'],
     ['Shift+Z', 'show or hide the sizing window: transistor W, L, m and passive values'],
+    ['Shift+Y', 'show or hide the history: the last saves and pinned checkpoints'],
     ['Shift+N', 'show or hide the design\'s notes: Markdown with $math$, @M1 mentions, [[amp]] links; double-click edits, Esc finishes'],
     ['Shift+Backspace', 'Atlas: every design in the workspace; Enter opens the picked one'],
     ['Space+drag', 'pan the view'],

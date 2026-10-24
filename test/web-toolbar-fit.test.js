@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { TITLE_COMFORT_PX, TOOLBAR_STAGES, chooseToolbarStage, toolbarFits, toolbarStageTokens } from '../src/web/toolbar-fit.js';
 
 test('toolbar stages accumulate, least useful text first', () => {
-  assert.deepEqual(TOOLBAR_STAGES, ['export', 'new', 'fold', 'save']);
+  assert.deepEqual(TOOLBAR_STAGES, ['windows', 'export', 'new', 'fold', 'save']);
   assert.equal(toolbarStageTokens(0), '');
-  assert.equal(toolbarStageTokens(2), 'export new');
+  assert.equal(toolbarStageTokens(3), 'windows export new');
   assert.equal(toolbarStageTokens(99), TOOLBAR_STAGES.join(' '));
 });
 

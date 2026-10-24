@@ -39,14 +39,28 @@ describe('floating windows', { skip: browserSkip() }, () => {
 
   test('the toolbar groups the windows, and More lists them too, even when the toolbar folds them away', async () => {
     const group = await h.evaluate(`[...document.querySelectorAll('.window-cluster > button')].map((b) => b.id)`);
-    // Plots is the analysis window's own (its footer's Plots), not the toolbar's.
-    assert.deepEqual(group, ['btn-window-beats', 'btn-window-timing', 'btn-analysis', 'btn-window-reference', 'btn-window-calculator', 'btn-window-notes', 'btn-window-sizing']);
+    assert.deepEqual(group, ['btn-window-beats', 'btn-window-timing', 'btn-analysis', 'btn-window-plots', 'btn-window-reference', 'btn-window-calculator', 'btn-window-notes', 'btn-window-sizing', 'btn-window-history']);
     const more = await h.evaluate(`[...document.querySelectorAll('#document-menu [data-proxy-for]')].map((b) => b.dataset.proxyFor)`);
-    for (const id of ['btn-analysis', 'btn-window-reference', 'btn-window-calculator', 'btn-window-notes', 'btn-window-sizing']) assert.ok(more.includes(id), id);
-    assert.equal(await h.evaluate(`!!document.querySelector('#btn-window-plots, [data-proxy-for="btn-window-plots"]')`), false);
+    for (const id of ['btn-analysis', 'btn-window-plots', 'btn-window-reference', 'btn-window-calculator', 'btn-window-notes', 'btn-window-sizing']) assert.ok(more.includes(id), id);
     // Each tool's tooltip is its name and its key.
     const titles = await h.evaluate(`[...document.querySelectorAll('.window-cluster > button')].map((b) => b.title)`);
-    assert.deepEqual(titles, ['Beats (Shift+B)', 'Timing diagram (Shift+K)', 'Analysis (Shift+S)', 'Reference windows (Shift+V)', 'Calculator (Shift+E)', 'Notes (Shift+N)', 'Sizing (Shift+Z)']);
+    assert.deepEqual(titles, ['Beats (Shift+B)', 'Timing diagram (Shift+K)', 'Analysis (Shift+S)', 'Plots (Shift+W)', 'Reference windows (Shift+V)', 'Calculator (Shift+E)', 'Notes (Shift+N)', 'Sizing (Shift+Z)', 'History (Shift+Y)']);
+    // Plots and History open from the toolbar and from their keys, and the
+    // button shows the window open.
+    for (const [id, key, selector] of [['btn-window-plots', 'W', '.plots-window'], ['btn-window-history', 'Y', '.history-window']]) {
+      await h.click(`#${id}`);
+      await h.until(`!!document.querySelector('${selector}') && !document.querySelector('${selector}').hidden && document.getElementById('${id}').getAttribute('aria-pressed') === 'true'`);
+      await h.key(key, { shiftKey: true });
+      await h.until(`document.querySelector('${selector}').hidden && document.getElementById('${id}').getAttribute('aria-pressed') === 'false'`);
+    }
+    // With room to spare each toggle says its name; with less, icons only.
+    const named = () => h.evaluate(`getComputedStyle(document.getElementById('btn-window-notes')).fontSize !== '0px'`);
+    await h.send('Emulation.setDeviceMetricsOverride', { width: 1900, height: 900, deviceScaleFactor: 1, mobile: false });
+    await h.until(`!/windows/.test(document.querySelector('.toolbar').dataset.compact || '')`);
+    assert.equal(await named(), true);
+    await h.send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 900, deviceScaleFactor: 1, mobile: false });
+    await h.until(`/windows/.test(document.querySelector('.toolbar').dataset.compact || '')`);
+    assert.equal(await named(), false);
     // A narrow window folds the group; More still opens every one of them.
     await h.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 800, deviceScaleFactor: 1, mobile: false });
     await h.until(`getComputedStyle(document.querySelector('.window-cluster')).display === 'none'`);

@@ -9,7 +9,8 @@
  * The history is the file's, read from it whenever the window shows it,
  * and every change to it is written at once -- pinning or removing never
  * makes the design unsaved, and leaves unsaved drawing edits as they are.
- * More → History, or `:history`, shows or hides it.
+ * The toolbar's History, More → History, Shift+Y, or `:history` shows or
+ * hides it.
  */
 
 import {
@@ -308,7 +309,7 @@ function build() {
   clear.addEventListener('click', () => void removeSavePoints());
   canvasEl.closest('.canvas-pane').append(node);
   // At the left, so a save point viewed (a reference window, at the right) sits beside it.
-  const chrome = floatingWindow(node, { key: 'history', onClose: hide, resizable: true, place: (pane, size) => ({ x: 64, y: 56 }) });
+  const chrome = floatingWindow(node, { key: 'history', onClose: hide, resizable: true, place: (pane, size) => ({ x: 64, y: 56 }), toggleKey: 'Y' });
   win = { el: node, list, message, checkpoint, clear, top, chrome };
 }
 
@@ -318,6 +319,7 @@ export function historyShown() {
 
 function syncButton() {
   document.getElementById('btn-history')?.setAttribute('aria-checked', String(historyShown()));
+  document.getElementById('btn-window-history')?.setAttribute('aria-pressed', String(historyShown()));
 }
 
 function show() {
@@ -346,6 +348,7 @@ export function toggleHistory() {
 
 export function installHistory() {
   document.getElementById('btn-history')?.addEventListener('click', toggleHistory);
+  document.getElementById('btn-window-history')?.addEventListener('click', toggleHistory);
 }
 
 /** Another design shown: its own history. */

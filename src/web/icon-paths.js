@@ -69,7 +69,7 @@ export const ICON_PATHS = {
   line: '<path d="M6 18 18 6"/><circle cx="5" cy="19" r="2" fill="currentColor" stroke="none"/><circle cx="19" cy="5" r="2" fill="currentColor" stroke="none"/>',
   front: '<rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="9.5" y="9.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
   back: '<rect x="9.5" y="9.5" width="11" height="11" rx="2" stroke-dasharray="2.6 2.2"/><rect x="3.5" y="3.5" width="11" height="11" rx="2" fill="currentColor" fill-opacity=".45"/>',
-  beats: '<rect x="3.5" y="7.5" width="11" height="11" rx="1.5"/><path d="M7.5 5.5v-2h13v11h-2"/>',
+  beats: '<rect x="2.5" y="7" width="5.5" height="10" rx="1"/><rect x="9.25" y="7" width="5.5" height="10" rx="1"/><rect x="16" y="7" width="5.5" height="10" rx="1"/>',
   timing: '<path d="M3 16h4V8h6v8h6V8h2"/>',
   plots: '<path d="M4 3.5v16.5h16.5"/><path d="M7 15.5c2.5-7 4.5-7 6.5-2.5s3 3 5.5-5"/>',
   history: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4l2.8 1.8"/>',

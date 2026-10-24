@@ -38,6 +38,11 @@ function build() {
   win = { el: node, body, chrome };
 }
 
+/** The toolbar's Plots button shows whether the window is open. */
+function syncButton() {
+  document.getElementById('btn-window-plots')?.setAttribute('aria-pressed', String(plotsShown()));
+}
+
 export function plotsShown() {
   return !!win && !win.el.hidden;
 }
@@ -52,12 +57,14 @@ export function showPlots() {
     win.chrome.place();
   }
   current().shown();
+  syncButton();
 }
 
 export function hidePlots() {
   if (!win || win.el.hidden) return;
   win.el.hidden = true;
   wanted = false;
+  syncButton();
   canvasEl.focus({ preventScroll: true });
 }
 
@@ -75,6 +82,7 @@ export function offerPlots() {
 /** `view`: the element the window shows in analysis mode `mode`; `shown`:
  *  called whenever it opens on that view. */
 export function installPlotsWindow({ mode: key = 'signal-flow', view, shown }) {
+  if (!views.size) document.getElementById('btn-window-plots')?.addEventListener('click', togglePlots);
   views.set(key, { view, shown });
 }
 

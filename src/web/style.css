@@ -336,7 +336,8 @@ button:focus-visible {
 }
 
 /* The toolbar is always one row. As its space runs out, main.js adds stages
-   to data-compact (toolbar-fit.js): file actions drop their text one by one,
+   to data-compact (toolbar-fit.js): the window toggles drop their names,
+   file actions drop their text one by one,
    then New, Export, and the view toggles fold into the More menu
    (as proxies), and last Save becomes an icon. */
 .toolbar[data-compact~="export"] #btn-export,
@@ -357,6 +358,14 @@ button:focus-visible {
 
 .toolbar button {
   padding: 0 10px;
+}
+
+/* With room to spare, each window toggle says its name beside its icon. */
+.toolbar:not([data-compact~="windows"]) .window-cluster .icon-button {
+  width: auto;
+  padding: 0 8px !important;
+  gap: 5px !important;
+  font-size: var(--text-md) !important;
 }
 
 .icon-button {

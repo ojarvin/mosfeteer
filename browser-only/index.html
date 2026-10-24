@@ -53,7 +53,7 @@
           <span class="toolbar-menu-separator fold-only" role="separator"></span>
           <button id="btn-open-file" type="button" role="menuitem" data-icon="folder-open">Open… <kbd>Ctrl/Cmd+O</kbd></button>
           <button id="btn-save-as" type="button" role="menuitem" data-icon="save">Save as… <kbd>Ctrl/Cmd+Shift+S</kbd></button>
-          <button id="btn-history" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="history">History</button>
+          <button id="btn-history" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="history">History <kbd>Shift+Y</kbd></button>
           <button id="btn-rename-document" type="button" role="menuitem" data-icon="text" disabled>Rename…</button>
           <button id="btn-reveal-document" type="button" role="menuitem" data-icon="folder" disabled>Show in folder</button>
           <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace">Workspace folder…</button>
@@ -64,6 +64,7 @@
           <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats">Beats <kbd>Shift+B</kbd></button>
           <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats">Make beats from phases</button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="analysis" data-proxy-for="btn-analysis">Analysis <kbd>Shift+S</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="plots" data-proxy-for="btn-window-plots">Plots <kbd>Shift+W</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="reference" data-proxy-for="btn-window-reference">Reference windows <kbd>Shift+V</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="calculator" data-proxy-for="btn-window-calculator">Calculator <kbd>Shift+E</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="notes" data-proxy-for="btn-window-notes">Notes <kbd>Shift+N</kbd></button>
@@ -84,10 +85,12 @@
       <button id="btn-window-beats" class="icon-button" data-icon="beats" aria-pressed="false" aria-controls="beat-strip" aria-label="Beats" title="Beats (Shift+B)">Beats</button>
       <button id="btn-window-timing" class="icon-button" data-icon="timing" aria-pressed="false" aria-label="Timing diagram" title="Timing diagram (Shift+K)">Timing</button>
       <button id="btn-analysis" class="icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Analysis" title="Analysis (Shift+S)">Analysis</button>
+      <button id="btn-window-plots" class="icon-button" data-icon="plots" aria-pressed="false" aria-label="Plots" title="Plots (Shift+W)">Plots</button>
       <button id="btn-window-reference" class="icon-button" data-icon="reference" aria-pressed="false" aria-label="Reference windows" title="Reference windows (Shift+V)">Reference</button>
       <button id="btn-window-calculator" class="icon-button" data-icon="calculator" aria-pressed="false" aria-label="Calculator" title="Calculator (Shift+E)">Calculator</button>
       <button id="btn-window-notes" class="icon-button" data-icon="notes" aria-pressed="false" aria-label="Notes" title="Notes (Shift+N)">Notes</button>
       <button id="btn-window-sizing" class="icon-button" data-icon="sizing" data-doc-kind="schematic" aria-pressed="false" aria-label="Sizing" title="Sizing (Shift+Z)">Sizing</button>
+      <button id="btn-window-history" class="icon-button" data-icon="history" aria-pressed="false" aria-label="History" title="History (Shift+Y)">History</button>
     </div>
 
     <!-- Settings: choices that are set once rather than toggled while drawing.
