@@ -173,8 +173,6 @@ describe('timing diagram arrows, marks and spans', { skip: browserSkip() }, () =
     await h.evaluate(`(() => { const i = document.querySelector('.timing-note input[aria-label="Arrow text"]'); i.value = '$t_{d}$'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await h.until(specIs(`(t) => t.arrows[0].text === '$t_{d}$'`));
     await h.until(`window.__circuit().labels.some((l) => l.timing?.part === 'arrow-note' && l.text === '$t_{d}$')`);
-    // The list shows the text as math while it is not typed in.
-    await h.until(`!!document.querySelector('.timing-note input[aria-label="Arrow text"] + .rendered-field-view math')`);
     assert.equal((await parts()).find((p) => p.part === 'arrow').curve, true);
     // m marks the edge at the cursor, and again takes it away.
     await clickEdge(0, 1);

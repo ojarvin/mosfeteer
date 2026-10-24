@@ -458,10 +458,6 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await value('analysis-input'), twoInputs().saved);
     // The menus name nets as they read, with no net ids.
     assert.ok(await h.evaluate(`[...document.getElementById('analysis-input').options].every((o) => !/N\\d/.test(o.textContent))`));
-    // Typed names read as names while the field is not typed in.
-    await h.evaluate(`(() => { const f = document.getElementById('analysis-ac-grounds'); f.value = 'V_{BN}'; })()`);
-    assert.equal(await h.evaluate(`document.querySelector('#analysis-ac-grounds + .rendered-field-view sub')?.textContent`), 'BN');
-    await h.evaluate(`document.getElementById('analysis-ac-grounds').value = ''`);
     // VB reaches nothing: the Plots window says so rather than asking for a Derive.
     await derive();
     await h.key('W', { shiftKey: true });

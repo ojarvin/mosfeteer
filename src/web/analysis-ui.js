@@ -17,7 +17,6 @@ import { installBodeUi, renderBode } from './bode-ui.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
 import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, sharedNetNames, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
-import { renderedWhenIdle } from './rendered-field.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
@@ -1193,8 +1192,6 @@ function showDocumentAnalysis() {
 }
 
 export function installAnalysisUi() {
-  // The AC grounds read as names (V_{INN} as V with INN below) unless typed in.
-  if (analysisAcGrounds) renderedWhenIdle(analysisAcGrounds);
   onDocumentShown(showDocumentAnalysis);
   installBodeUi();
   installOptionsSummary();

@@ -5,7 +5,6 @@
  */
 
 import { element } from './dom.js';
-import { labelTextNode, renderedWhenIdle } from './rendered-field.js';
 import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
@@ -964,7 +963,7 @@ function openTimingDialog() {
         input.blur();
         grid.focus();
       });
-      return renderedWhenIdle(input, labelTextNode);
+      return input;
     };
     state.notes.arrows.forEach((arrow, index) => item('arrow', index, `${edgeName(arrow.from)} → ${edgeName(arrow.to)}`, [textField(arrow, 'text (optional)', 'Arrow text')]));
     state.notes.marks.forEach((mark, index) => item('mark', index, edgeName(mark)));
