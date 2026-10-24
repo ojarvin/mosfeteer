@@ -3285,7 +3285,7 @@ __exports.numericSmallSignal = numericSmallSignal;
 __exports.numericLoopGain = numericLoopGain;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 let MOS_TYPES, asList, firstDefined; __bind(() => { ({ MOS_TYPES, asList, firstDefined } = __require("src/core/analysis/shared.js")); });
-let analyzedCircuit; __bind(() => { ({ analyzedCircuit } = __require("src/core/model.js")); });
+let analyzedCircuit, canonicalNetName; __bind(() => { ({ analyzedCircuit, canonicalNetName } = __require("src/core/model.js")); });
 let feedbackParts, outputParts, resolveLoopBreak, returnRatio; __bind(() => { ({ feedbackParts, outputParts, resolveLoopBreak, returnRatio } = __require("src/core/analysis/loop-gain.js")); });
 let poleTimeConstants; __bind(() => { ({ poleTimeConstants } = __require("src/core/analysis/time-constants.js")); });
 let applyApproximations; __bind(() => { ({ applyApproximations } = __require("src/core/analysis/approximation.js")); });
@@ -3740,6 +3740,13 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, request, mainOps, m
     exact = loopGainReport(loopPipelineOptions, ops, options, approximationOptions);
   } catch (error) {
     exact = { ok: false, element, tooLarge: /budget/i.test(error.message), error: `the loop gain at ${where} did not solve: ${error.message}` };
+  }
+  // Nothing coming back with nets held at AC ground: they may be what cuts
+  // the loop (a half-circuit's tail or mirror node), so name them.
+  if (!exact.ok && /loop gain is zero/.test(exact.error || '')) {
+    const own = new Set(target.kind === 'break' ? [target.drive, target.ret].map((id) => canonicalNetName(circuit.nets.get(id)?.name || id)) : []);
+    const held = asList(pipelineOptions.acGrounds).filter((name) => !own.has(canonicalNetName(name)));
+    if (held.length) exact.error += `; ${held.join(', ')} ${held.length === 1 ? 'is' : 'are'} at AC ground and may cut it`;
   }
   if (exact.ok || !exact.tooLarge) return exact;
   // Too large to keep every symbol: solve it again with numbers for them --
@@ -4468,20 +4475,20 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       retainedOutputResistance = true;
     }
   }
-  if (!pipeline.ok) {
-    // A loop gain asked for still gets its own solve: the closed loop may be
-    // too large where the broken one is not.
-    const report = failureReport(pipeline, normalized);
-    if ((options.loopGain?.at || (options.loopGain?.element && pipeline.selectedMna))) {
+  // A loop gain asked for still gets its own solve when the port quantities
+  // fail: the closed loop may be too large where the broken one is not.
+  const withLoop = (report) => {
+    if (options.loopGain?.at || (options.loopGain?.element && pipeline.selectedMna)) {
       const loopOptions = { ...analysisOptions, parameters: analysisOptions.parameters || {}, rational: { maxOperations: options.maxOperations } };
       report.loop = analyzeLoopGain(circuit, pipeline, pipelineOptions, options.loopGain, ops, responseOptions(loopOptions), loopOptions, options);
     }
     return report;
-  }
-  if (ops.budget?.exceeded) return budgetFailureReport('exact solve', ops.budget, analysisOptions);
+  };
+  if (!pipeline.ok) return withLoop(failureReport(pipeline, normalized));
+  if (ops.budget?.exceeded) return withLoop(budgetFailureReport('exact solve', ops.budget, analysisOptions));
 
   const queries = pipeline.queries;
-  if (ops.budget?.exceeded) return budgetFailureReport('query extraction', ops.budget, analysisOptions);
+  if (ops.budget?.exceeded) return withLoop(budgetFailureReport('query extraction', ops.budget, analysisOptions));
   const transferFunctions = transferFunctionList(options.transferFunctions);
   const values = {
     Av: queries?.transfer?.value,
@@ -4523,15 +4530,15 @@ function analyzeSmallSignalV2(circuit, options = {}) {
       maxWork: EXACT_CANCELLATION_WORK,
     });
     exact[name] = canonicalResponseValue(reduced, withEquivalences(responseOptions(analysisOptions)));
-    if (ops.budget?.exceeded) return budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions);
+    if (ops.budget?.exceeded) return withLoop(budgetFailureReport(`${name} response normalization`, ops.budget, analysisOptions));
   }
-  if (ops.budget?.exceeded) return budgetFailureReport('response normalization', ops.budget, analysisOptions);
+  if (ops.budget?.exceeded) return withLoop(budgetFailureReport('response normalization', ops.budget, analysisOptions));
   const approximations = {};
   for (const [name, response] of Object.entries(exact)) {
     approximations[name] = response.expression?.kind === 'infinity'
       ? { exact: response.expression, selected: response.expression, changed: false, assumptions: [] }
       : applyApproximations(response.expression, approximationOptions);
-    if (ops.budget?.exceeded) return budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions);
+    if (ops.budget?.exceeded) return withLoop(budgetFailureReport(`${name} approximation`, ops.budget, analysisOptions));
   }
   const topology = buildTopologyIdentities(pipeline, analysisOptions);
   // A dominant-pole reduction acts on the whole transfer function; stage
@@ -4582,7 +4589,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
   // Only what the report shows lends it assumptions: an unselected A_v is
   // still solved, but its reductions say nothing about the rows displayed.
   const shown = ['Zin', 'Zout', ...transferFunctions];
-  if (ops.budget?.exceeded) return budgetFailureReport('report formatting', ops.budget, analysisOptions);
+  if (ops.budget?.exceeded) return withLoop(budgetFailureReport('report formatting', ops.budget, analysisOptions));
   const millerAssumptions = (pipeline.millerSubstitutions || []).map(({ device }) => `Miller approximation${device ? ` (${device})` : ''}`);
   const outputResistanceAssumptions = (pipeline.omittedOutputResistances || []).map((device) => `r_o -> infinity (${device})`);
   // One global statement when the option is global: the model dropped every
@@ -4613,7 +4620,7 @@ function analyzeSmallSignalV2(circuit, options = {}) {
   ]);
   const transfer = displayed.transfer.response;
   const roots = rootRows(transfer, responseOptions(analysisOptions));
-  if (ops.budget?.exceeded) return budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions);
+  if (ops.budget?.exceeded) return withLoop(budgetFailureReport('pole and zero extraction', ops.budget, analysisOptions));
   const netlist = describeSmallSignalNetlist(pipeline.selected, {
     ...normalized,
     equivalences,
@@ -5305,7 +5312,9 @@ function resolveLoopBreak(circuit, text, { parasitics = false } = {}) {
     for (const net of drive) {
       for (const t of net.terminals) {
         const component = circuit.components.get(t.comp);
-        if (component && !drawsNoCurrent(component, t.term, parasitics)) loading.push(`${t.comp}.${t.term}`);
+        // An input port there is where the loop's open input is driven
+        // from: the test source takes its place, so it loads nothing.
+        if (component && component.type !== 'input' && !drawsNoCurrent(component, t.term, parasitics)) loading.push(`${t.comp}.${t.term}`);
       }
     }
     // Nothing else drives it (gates and amplifier inputs only): the loop's

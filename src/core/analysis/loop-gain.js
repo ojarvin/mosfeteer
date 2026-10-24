@@ -188,7 +188,9 @@ export function resolveLoopBreak(circuit, text, { parasitics = false } = {}) {
     for (const net of drive) {
       for (const t of net.terminals) {
         const component = circuit.components.get(t.comp);
-        if (component && !drawsNoCurrent(component, t.term, parasitics)) loading.push(`${t.comp}.${t.term}`);
+        // An input port there is where the loop's open input is driven
+        // from: the test source takes its place, so it loads nothing.
+        if (component && component.type !== 'input' && !drawsNoCurrent(component, t.term, parasitics)) loading.push(`${t.comp}.${t.term}`);
       }
     }
     // Nothing else drives it (gates and amplifier inputs only): the loop's

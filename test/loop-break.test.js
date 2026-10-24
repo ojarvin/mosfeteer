@@ -4,7 +4,7 @@ import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { analyzeSmallSignalV2, numericLoopGain, numericSmallSignal } from '../src/core/analysis/engine.js';
 import { resolveLoopBreak } from '../src/core/analysis/loop-gain.js';
-import { numericCoefficients, polynomialRoots } from '../src/core/analysis/bode.js';
+import { expressionSymbols, numericCoefficients, polynomialRoots } from '../src/core/analysis/bode.js';
 
 function net(circuit, name, ...refs) {
   const result = circuit._createNet(name);
@@ -174,4 +174,19 @@ test('a loop too large for its symbols is solved at the same numbers wherever it
   const model = numericLoopGain(circuit, { input: 'VINP', output: 'VOUT', ignoreBodyEffect: true, loopGain: { at: 'M5.g' } });
   assert.equal(model.ok, true, model.error);
   assert.ok(model.outputComponents.has('CL') && !model.outputComponents.has('RM'));
+});
+
+test('a loop open at an input port breaks there though the port is held at AC ground for the gain', () => {
+  const circuit = millerOta();
+  const loop = (acGrounds, extra = {}) => analyzeSmallSignalV2(circuit, { input: 'VINP', output: 'VOUT', acGrounds, loopGain: { at: 'VOUT to VINN' }, ignoreBodyEffect: true, ...extra });
+  // VINN is quiet for VINP -> VOUT; for the loop it is the open input.
+  const open = loop(['VINN']).loop;
+  assert.equal(open.ok, true, open.error);
+  const values = Object.fromEntries([...open.exact.numeratorCoefficients, ...open.exact.denominatorCoefficients].flatMap(({ coefficient }) => [...expressionSymbols(coefficient)]).map((name) => [name, /^r/.test(name) ? 100 : 1]));
+  const dc = (list) => numericCoefficients(list, values)[0];
+  assert.ok(dc(open.exact.numeratorCoefficients) / dc(open.exact.denominatorCoefficients) > 1, 'negative feedback through the inverting input: T(0) > 0');
+  // Port quantities past their budget leave the loop gain to its own.
+  const tight = loop(['VINN'], { maxOperations: 200 });
+  assert.equal(tight.ok, false);
+  assert.equal(tight.loop?.ok, true, tight.loop?.error);
 });
