@@ -57,6 +57,19 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     assert.equal(await dark(), !was);
     await h.click('#btn-theme');
     assert.equal(await dark(), was);
+    // Chosen here, the theme no longer follows the system; asked to, it
+    // follows the system's again, and keeps following it as it changes.
+    const follows = () => h.evaluate(`document.getElementById('btn-theme-system').getAttribute('aria-checked')`);
+    assert.equal(await follows(), 'false');
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }, { name: 'prefers-color-scheme', value: 'dark' }] });
+    await h.click('#btn-theme-system');
+    assert.equal(await follows(), 'true');
+    await h.until(`document.documentElement.classList.contains('dark')`);
+    await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }, { name: 'prefers-color-scheme', value: 'light' }] });
+    await h.until(`!document.documentElement.classList.contains('dark')`);
+    await h.click('#btn-theme');
+    assert.equal(await follows(), 'false', 'a choice made here ends following');
+    await h.click('#btn-theme');
   });
 
   test('every card opens with the same header, headings inside a card are quieter, hints sit close', async () => {

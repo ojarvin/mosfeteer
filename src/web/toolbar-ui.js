@@ -463,7 +463,18 @@ function syncScrollSchemeButton() {
 
 const THEME_KEY = 'mosfeteer:theme';
 
-function applyTheme(dark) {
+// The system's light or dark, followed while no theme is chosen here.
+const systemDark = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+function followsSystem() {
+  try { return !localStorage.getItem(THEME_KEY); } catch { return true; }
+}
+
+function syncSystemThemeButton() {
+  document.getElementById('btn-theme-system')?.setAttribute('aria-checked', String(followsSystem()));
+}
+
+function applyTheme(dark, { store = true } = {}) {
   document.documentElement.classList.toggle('dark', dark);
   syncToolCursor();
   for (const button of themeButtons) {
@@ -477,9 +488,22 @@ function applyTheme(dark) {
     const icon = button.querySelector('.button-icon');
     if (icon) icon.innerHTML = ICON_PATHS[dark ? 'sun' : 'moon'];
   }
-  try {
-    localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
-  } catch { /* storage unavailable */ }
+  if (store) {
+    try {
+      localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
+    } catch { /* storage unavailable */ }
+  }
+  syncSystemThemeButton();
+}
+
+/** Follow the system's theme again, or keep the one shown as a choice. */
+function setFollowSystem(on) {
+  if (on) {
+    try { localStorage.removeItem(THEME_KEY); } catch { /* storage unavailable */ }
+    applyTheme(!!systemDark?.matches, { store: false });
+  } else applyTheme(document.documentElement.classList.contains('dark'));
+  render();
+  hintLine(on ? 'the theme follows the system' : 'the theme stays as it is');
 }
 
 export function toggleTheme() {
@@ -665,12 +689,19 @@ export function installToolbarUi() {
   });
   reduceMotionButton?.setAttribute('aria-checked', String(reduceMotionSetting()));
 
-  // Persist the theme across reloads; default to light unless the system prefers dark.
+  // The theme chosen here, kept across reloads; with none, the system's,
+  // followed as it changes.
   try {
     const saved = localStorage.getItem(THEME_KEY);
     if (saved) applyTheme(saved === 'dark');
-    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) applyTheme(true);
+    else applyTheme(!!systemDark?.matches, { store: false });
   } catch { /* storage unavailable */ }
+  systemDark?.addEventListener?.('change', (ev) => {
+    if (!followsSystem()) return;
+    applyTheme(ev.matches, { store: false });
+    render();
+  });
+  document.getElementById('btn-theme-system')?.addEventListener('click', () => setFollowSystem(!followsSystem()));
 
   for (const button of themeButtons) button.addEventListener('click', toggleTheme);
 

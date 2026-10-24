@@ -100,7 +100,8 @@ the active tool, focus) from the drawing's palette, or the default teal
 each theme, never part of a design or its exports.
 
 Settings → Display holds the view toggles: Grid (`#`), Placement guides
-(`Shift+G`), Crosshair (`Shift+C`), Dark theme, and Net beams
+(`Shift+G`), Crosshair (`Shift+C`), Dark theme, Theme follows the system (on until a theme is
+chosen here; it then follows the system's light or dark as it changes), and Net beams
 (`net-beams` on the command line). Every Settings choice is a browser
 preference, kept between visits (`localStorage`). With net
 beams on, while the pointer is over a net, or a port, supply, ground, or
