@@ -17789,6 +17789,7 @@ __exports.arrangeableRefs = arrangeableRefs;
 __exports.arrangementCandidates = arrangementCandidates;
 __exports.applyArrangement = applyArrangement;
 __exports.cellsIn = cellsIn;
+__exports.cellDrawing = cellDrawing;
 let applyTransform, rectsOverlap, segmentCrossesRect; __bind(() => { ({ applyTransform, rectsOverlap, segmentCrossesRect } = __require("src/core/geometry.js")); });
 let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
 let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
@@ -46334,7 +46335,240 @@ function joinSelectedLines() {
 
 };
 
+__modules["src/web/arrange-suggest.js"] = function (__require, __exports) {
+__exports.arrangeSuggestionsOn = arrangeSuggestionsOn;
+__exports.setArrangeSuggestions = setArrangeSuggestions;
+__exports.arrangeSuggestion = arrangeSuggestion;
+__exports.noteDrawingEdit = noteDrawingEdit;
+__exports.noteDrawingReplaced = noteDrawingReplaced;
+__exports.acceptArrangeSuggestion = acceptArrangeSuggestion;
+__exports.dismissArrangeSuggestion = dismissArrangeSuggestion;
+__exports.arrangeSuggestionHint = arrangeSuggestionHint;
+__exports.mountArrangeSuggestion = mountArrangeSuggestion;
+__exports.syncArrangeSuggestion = syncArrangeSuggestion;
+__exports.installArrangeSuggestions = installArrangeSuggestions;
+__exports.arrangeSuggestionState = arrangeSuggestionState;
+let applyArrangement, arrangeableRefs, cellDrawing, cellsIn; __bind(() => { ({ applyArrangement, arrangeableRefs, cellDrawing, cellsIn } = __require("src/core/arrange.js")); });
+let cellPatterns; __bind(() => { ({ cellPatterns } = __require("src/core/arrange-builtins.js")); });
+let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
+let componentShapeSvg; __bind(() => { ({ componentShapeSvg } = __require("src/core/render.js")); });
+let workspaceDesigns; __bind(() => { ({ workspaceDesigns } = __require("src/web/arrange-ui.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let arrangeSuggestionsButton; __bind(() => { ({ arrangeSuggestionsButton } = __require("src/web/elements.js")); });
+let markModelChanged, onDocumentShown, recordHistoryEntry, render, setSelection, snapshot; __bind(() => { ({ markModelChanged, onDocumentShown, recordHistoryEntry, render, setSelection, snapshot } = __require("src/web/main.js")); });
+let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
+/**
+ * Arrange suggestions (Settings → Arrange suggestions, off by default): when
+ * an edit completes a cell (core/arrange.js cellsIn: a mirror, a pair, the
+ * five-transistor OTA) that the user's own drawings draw otherwise, the cell
+ * is shown faintly as they draw it, and the status bar offers it: Tab draws
+ * it (one undo step), Escape or any other edit lets it go. Only cells the
+ * last edit completed are offered, only from the open design and the
+ * workspace's other designs (never the built-in drawings), and a cell let go
+ * is not offered again while the design is open. A browser preference.
+ */
+
+
+
+
+
+
+
+
+
+
+
+const SETTING_KEY = 'mosfeteer.arrangeSuggestions';
+/** Quiet time after an edit before looking: a burst of edits looks once. */
+const SETTLE_MS = 400;
+
+let on = (() => {
+  try { return globalThis.localStorage?.getItem(SETTING_KEY) === '1'; } catch { return false; }
+})();
+/** The cells there were at the last look (null before the first). */
+let seen = null;
+/** Cells offered and let go, while this design is open. */
+let dismissed = new Set();
+let timer = 0;
+let looking = 0;
+let suggestion = null;
+let layerEl = null;
+let layerKey = '';
+
+const cellKey = (cell) => `${cell.name}:${cell.refs.join(',')}`;
+
+function arrangeSuggestionsOn() {
+  return on;
+}
+
+function setArrangeSuggestions(next) {
+  on = !!next;
+  try { globalThis.localStorage?.setItem(SETTING_KEY, on ? '1' : ''); } catch { /* per-session only */ }
+  arrangeSuggestionsButton?.setAttribute('aria-checked', String(on));
+  hintLine(on ? 'arrange suggestions on' : 'arrange suggestions off');
+  if (!on) clearSuggestion();
+  rememberCells();
+}
+
+/** The cells there are now: none of them is offered, only those an edit
+ *  completes from here on. */
+function rememberCells() {
+  clearTimeout(timer);
+  looking += 1;
+  const circuit = editor.circuit;
+  seen = on && circuit ? new Set(cellsIn(circuit, arrangeableRefs(circuit, [...circuit.components.keys()]), cellPatterns()).map(cellKey)) : null;
+}
+
+/** The suggestion standing, while the drawing is as it was found on. */
+function arrangeSuggestion() {
+  if (suggestion && (suggestion.revision !== editor.modelRevision || suggestion.circuit !== editor.circuit)) clearSuggestion({ quiet: true });
+  return suggestion;
+}
+
+function clearSuggestion({ quiet = false } = {}) {
+  if (!suggestion) return;
+  dismissed.add(suggestion.key);
+  suggestion = null;
+  if (!quiet) render();
+}
+
+/** After an edit is committed: look again once the edits settle. Any
+ *  suggestion standing is let go. */
+function noteDrawingEdit() {
+  if (!on) return;
+  clearSuggestion({ quiet: true });
+  clearTimeout(timer);
+  timer = setTimeout(() => void look(), SETTLE_MS);
+}
+
+async function look() {
+  const ticket = ++looking;
+  const circuit = editor.circuit;
+  const revision = editor.modelRevision;
+  const cells = cellsIn(circuit, arrangeableRefs(circuit, [...circuit.components.keys()]), cellPatterns());
+  const fresh = seen ? cells.filter((cell) => !seen.has(cellKey(cell)) && !dismissed.has(cellKey(cell))) : [];
+  seen = new Set(cells.map(cellKey));
+  if (!fresh.length) return;
+  const sources = [{ circuit, name: 'this design' }, ...await workspaceDesigns()];
+  // The drawing changed while the workspace was read: that edit looks again.
+  if (ticket !== looking || circuit !== editor.circuit || revision !== editor.modelRevision) return;
+  for (const cell of fresh) {
+    const best = cellDrawing(circuit, cell, sources);
+    if (!best) continue;
+    // Only what can be drawn is offered: tried on a copy first.
+    const preview = loadDocument(circuit.toJSON());
+    try { applyArrangement(preview, best.refs, best.candidate); } catch { continue; }
+    const { candidate } = best;
+    // Named by its transistors, here and there; the rail symbols go along.
+    const own = new Set(cell.map.values());
+    const names = (list) => best.refs.map((ref, i) => [ref, list[i]]).filter(([ref]) => own.has(ref)).map(([, name]) => name).join(', ');
+    suggestion = {
+      key: cellKey(cell),
+      circuit,
+      revision,
+      refs: best.refs,
+      candidate,
+      preview,
+      text: `${names(best.refs)} make a ${cell.name.replace(/^(N|P)MOS /, '')}: like ${names(candidate.parts)} in ${candidate.source.current ? 'this design' : candidate.source.name}`,
+    };
+    render();
+    return;
+  }
+}
+
+/** After an undo or a redo: what is there now is not new, and a suggestion
+ *  standing goes (it is not let go: an edit may complete the cell again). */
+function noteDrawingReplaced() {
+  suggestion = null;
+  rememberCells();
+}
+
+/** Tab: draw the cell as suggested. */
+function acceptArrangeSuggestion() {
+  const standing = arrangeSuggestion();
+  if (!standing) return false;
+  suggestion = null;
+  const before = snapshot();
+  try {
+    applyArrangement(editor.circuit, standing.refs, standing.candidate);
+  } catch (error) {
+    logLine(`Could not arrange ${standing.refs.join(', ')}: ${error.message}`, 'error');
+    render();
+    return true;
+  }
+  recordHistoryEntry(before, true);
+  markModelChanged();
+  setSelection(standing.refs);
+  logLine(`${standing.refs.join(', ')} arranged ${standing.text.replace(/^.*?: /, '')}`);
+  render();
+  return true;
+}
+
+/** Escape: let the suggestion go. */
+function dismissArrangeSuggestion() {
+  if (!arrangeSuggestion()) return false;
+  clearSuggestion();
+  return true;
+}
+
+/** The status bar's line for the suggestion standing, or null. */
+function arrangeSuggestionHint() {
+  const standing = arrangeSuggestion();
+  return standing ? `SUGGESTION: ${standing.text} · Tab draws it · Esc lets it go` : null;
+}
+
+/** A fresh layer in a newly built canvas, under the editor overlay. */
+function mountArrangeSuggestion(svgEl) {
+  layerEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  layerEl.setAttribute('class', 'arrange-suggestion');
+  layerEl.setAttribute('pointer-events', 'none');
+  svgEl.appendChild(layerEl);
+  layerKey = '';
+}
+
+/** The suggested cell, faint: its parts and their wires as it draws them. */
+function suggestionSvg() {
+  const standing = arrangeSuggestion();
+  if (!standing) return '';
+  const { preview, refs } = standing;
+  const wanted = new Set(refs);
+  const parts = refs.map((ref) => preview.components.get(ref)).filter(Boolean).map((c) => componentShapeSvg(c)).join('');
+  const wires = [...preview.nets.values()]
+    .filter((net) => net.terminals.some((t) => wanted.has(t.comp)))
+    .flatMap((net) => net.paths())
+    .map((path) => `<polyline points="${path.map((p) => `${p.x},${p.y}`).join(' ')}"/>`)
+    .join('');
+  return `${parts}<g class="arrange-suggestion-wires">${wires}</g>`;
+}
+
+function syncArrangeSuggestion() {
+  if (!layerEl) return;
+  const svg = suggestionSvg();
+  if (svg === layerKey) return;
+  layerKey = svg;
+  layerEl.innerHTML = svg;
+}
+
+function installArrangeSuggestions() {
+  arrangeSuggestionsButton?.addEventListener('click', () => setArrangeSuggestions(!on));
+  arrangeSuggestionsButton?.setAttribute('aria-checked', String(on));
+  onDocumentShown(() => {
+    dismissed = new Set();
+    suggestion = null;
+    rememberCells();
+  });
+}
+
+/** For tests: the suggestion standing, as plain data. */
+function arrangeSuggestionState() {
+  const standing = arrangeSuggestion();
+  return standing ? { refs: [...standing.refs], parts: [...standing.candidate.parts], source: standing.candidate.source.name, text: standing.text } : null;
+}
+
+};
+
 __modules["src/web/arrange-ui.js"] = function (__require, __exports) {
+__exports.workspaceDesigns = workspaceDesigns;
 __exports.openArrangePicker = openArrangePicker;
 __exports.arrangePickerState = arrangePickerState;
 let applyArrangement, arrangeableRefs, arrangementCandidates; __bind(() => { ({ applyArrangement, arrangeableRefs, arrangementCandidates } = __require("src/core/arrange.js")); });
@@ -53849,6 +54083,7 @@ let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); 
 let applyLogDrawerEvent, hintLine, logCommand, logLine; __bind(() => { ({ applyLogDrawerEvent, hintLine, logCommand, logLine } = __require("src/web/status-bar-ui.js")); });
 let toggleTheme, setGrid, setCrosshair, setGuides; __bind(() => { ({ toggleTheme, setGrid, setCrosshair, setGuides } = __require("src/web/toolbar-ui.js")); });
 let netBeamsShown, setNetBeams; __bind(() => { ({ netBeamsShown, setNetBeams } = __require("src/web/net-beams.js")); });
+let arrangeSuggestionsOn, setArrangeSuggestions; __bind(() => { ({ arrangeSuggestionsOn, setArrangeSuggestions } = __require("src/web/arrange-suggest.js")); });
 let setSidePanelVisible, sidePanelVisible; __bind(() => { ({ setSidePanelVisible, sidePanelVisible } = __require("src/web/side-panel.js")); });
 let toggleAnalysisDock; __bind(() => { ({ toggleAnalysisDock } = __require("src/web/analysis-ui.js")); });
 let addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat; __bind(() => { ({ addBeatHere, flipSelectedSwitches, openPresenter, stepBeat, toggleBeatStrip, toggleSelectionInBeat } = __require("src/web/beats-ui.js")); });
@@ -53877,6 +54112,7 @@ let offerTutorial; __bind(() => { ({ offerTutorial } = __require("src/web/onboar
  * goes to the shared document command language through runLine. The
  * vocabulary and completion rules are command-line.js.
  */
+
 
 
 
@@ -53942,6 +54178,7 @@ const ACTIONS = {
   tips: (state) => toggleTo(state, checked(tipsButton), () => tipsButton?.click()),
   'reduce-motion': (state) => toggleTo(state, checked(reduceMotionButton), () => reduceMotionButton?.click()),
   'net-beams': (state) => setNetBeams(state ?? !netBeamsShown()),
+  'arrange-suggestions': (state) => setArrangeSuggestions(state ?? !arrangeSuggestionsOn()),
   trackpad: (state) => toggleTo(state, checked(scrollSchemeButton), () => scrollSchemeButton?.click()),
   'page-guide': (state) => (state
     ? document.querySelector(`[data-page-guide="${state === 'none' ? '' : state}"]`)?.click()
@@ -54225,6 +54462,7 @@ const EDITOR_COMMANDS = [
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beats window (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'reduce-motion', aliases: ['reduce-animations', 'reduced-motion'], toggle: true, help: 'reduce animations: no zooms, slides, or flashes (Settings)' },
+  { name: 'arrange-suggestions', aliases: ['suggestions', 'suggest'], toggle: true, help: 'offer to draw a cell an edit completes as your other drawings draw it (Settings)' },
   { name: 'net-beams', aliases: ['beams', 'flight-lines', 'net-flight-lines'], toggle: true, help: 'beams from a hovered net to the nets its name connects (Settings)' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
@@ -58838,6 +59076,7 @@ const sidePanelToggleEl = document.getElementById('btn-side-panel');
 const scrollSchemeButton = document.getElementById('btn-scroll-scheme');
 const reduceMotionButton = document.getElementById('btn-reduce-motion');
 const netBeamsButton = document.getElementById('btn-net-beams');
+const arrangeSuggestionsButton = document.getElementById('btn-arrange-suggestions');
 const themeBtn = document.getElementById('btn-theme');
 /** The theme toggles: Settings → Dark theme (in either top bar). */
 const themeButtons = [themeBtn].filter(Boolean);
@@ -58940,6 +59179,7 @@ __exports.sidePanelToggleEl = sidePanelToggleEl;
 __exports.scrollSchemeButton = scrollSchemeButton;
 __exports.reduceMotionButton = reduceMotionButton;
 __exports.netBeamsButton = netBeamsButton;
+__exports.arrangeSuggestionsButton = arrangeSuggestionsButton;
 __exports.themeBtn = themeBtn;
 __exports.themeButtons = themeButtons;
 __exports.gridBtn = gridBtn;
@@ -65118,6 +65358,7 @@ let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickA
 let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
+let acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion; __bind(() => { ({ acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } = __require("src/web/arrange-suggest.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
 let installRenumberUi; __bind(() => { ({ installRenumberUi } = __require("src/web/renumber-ui.js")); });
 let installArrangeFigures; __bind(() => { ({ installArrangeFigures } = __require("src/web/figure-annotate.js")); });
@@ -65146,6 +65387,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -65747,6 +65989,7 @@ function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now') {
   future.length = 0;
   queueCommitFeedback(startSnapshot, feedback);
   askNameForNewNetNameConflict(startSnapshot);
+  noteDrawingEdit();
 }
 
 // ----- commit feedback ----------------------------------------------------
@@ -65870,6 +66113,7 @@ function undo() {
   settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
+  noteDrawingReplaced();
   render();
 }
 
@@ -65896,6 +66140,7 @@ function redo() {
   settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
+  noteDrawingReplaced();
   render();
 }
 
@@ -68030,6 +68275,7 @@ function renderCanvas(modelKey) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
+    mountArrangeSuggestion(canvasSvgEl);
     mountNetBeams(canvasSvgEl);
     // The snap pulse lives outside the per-frame overlay so its animation
     // plays once per new target instead of restarting on every repaint.
@@ -68196,6 +68442,7 @@ function renderCanvas(modelKey) {
   syncLinkBubbles();
   syncSnapPulse();
   syncNetBeams();
+  syncArrangeSuggestion();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
@@ -72088,6 +72335,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  if (key === 'Tab' && acceptArrangeSuggestion()) return;
   if (key === 'Tab') {
     const comps = selectedComps();
     const labels = selectedLabels();
@@ -72129,6 +72377,9 @@ function onNormalKey(key, shiftKey = false) {
     }
     return;
   }
+
+  // Escape lets a standing arrange suggestion go before anything else.
+  if (key === 'Escape' && dismissArrangeSuggestion()) return;
 
   // Escape in Align to drops a picked source first, then leaves the tool with
   // the selection intact.
@@ -72563,6 +72814,7 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // above has been declared.
 installToolbarUi();
 installNetBeams();
+installArrangeSuggestions();
 
 // ----- narrow-window folding --------------------------------------------------
 
@@ -81492,6 +81744,7 @@ __exports.noteActionPrevented = noteActionPrevented;
 __exports.renderStatus = renderStatus;
 __exports.installStatusBar = installStatusBar;
 let contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent; __bind(() => { ({ contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent } = __require("src/web/status-bar.js")); });
+let arrangeSuggestionHint; __bind(() => { ({ arrangeSuggestionHint } = __require("src/web/arrange-suggest.js")); });
 let statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl; __bind(() => { ({ statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } = __require("src/web/elements.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
@@ -81502,6 +81755,7 @@ let keyHintContext, selectedComp, selectedComps, selectedLabel, selectedLabels, 
  * readouts, the message chip, and the log it opens. The fields' wording is
  * in status-bar.js.
  */
+
 
 
 
@@ -81628,6 +81882,8 @@ function renderStatus() {
   if (editor.lastCheckReport && (editor.diagnosticSelection.components.size || editor.diagnosticSelection.nets.size || editor.diagnosticSelection.labels.size)) {
     parts.push(`check focus ${editor.diagnosticSelection.components.size + editor.diagnosticSelection.nets.size + editor.diagnosticSelection.labels.size}`);
   }
+  const suggestion = arrangeSuggestionHint();
+  if (suggestion) parts.push(suggestion);
   if (editor.netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
   if (editor.circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
   if (editor.clipboardNotice) parts.unshift(editor.clipboardNotice);

@@ -101,8 +101,9 @@ each theme, never part of a design or its exports.
 
 Settings → Display holds the view toggles: Grid (`#`), Placement guides
 (`Shift+G`), Crosshair (`Shift+C`), Dark theme, Theme follows the system (on until a theme is
-chosen here; it then follows the system's light or dark as it changes), and Net beams
-(`net-beams` on the command line). Every Settings choice is a browser
+chosen here; it then follows the system's light or dark as it changes), Net beams
+(`net-beams` on the command line), and Arrange suggestions (off by default;
+[`docs/arrange.md`](arrange.md)). Every Settings choice is a browser
 preference, kept between visits (`localStorage`). With net
 beams on, while the pointer is over a net, or a port, supply, ground, or
 VCM on it, a beam arched over the top runs from the cursor (snapped to the

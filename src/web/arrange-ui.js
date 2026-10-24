@@ -28,7 +28,7 @@ let opening = false;
 
 /** The workspace's designs but the open one, newest first. One that cannot
  *  be read (a browser-only file without permission yet) is passed over. */
-async function workspaceDesigns() {
+export async function workspaceDesigns() {
   let workspace;
   try { workspace = await persistence.workspace(); } catch { return []; }
   const docs = (workspace.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked && !doc.missing && doc.path !== editor.currentDocumentPath);

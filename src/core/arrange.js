@@ -575,7 +575,7 @@ function pinPairs(pins, netOf) {
  * on the same pins there, where there are any.
  * Returns `{ refs, candidate }`, `refs` the parts it draws.
  */
-function cellDrawing(circuit, cell, sources) {
+export function cellDrawing(circuit, cell, sources) {
   const cellParts = [...cell.map.values()];
   const rails = cell.refs.filter((ref) => !cellParts.includes(ref));
   const nets = pinNets(circuit);

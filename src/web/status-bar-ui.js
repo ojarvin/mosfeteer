@@ -5,6 +5,7 @@
  */
 
 import { contextKeyHints, labelSummary, logDrawerTransition, statusFields, zoomPercent } from './status-bar.js';
+import { arrangeSuggestionHint } from './arrange-suggest.js';
 import { statusEl, statusKeysEl, accessibilityAnnouncementEl, logEl, cmdInput, consoleEl, statusModeEl, statusSelectionEl, statusCursorEl, statusZoomEl, statusMessageEl, logDrawerEl, logPinEl, logClearEl } from './elements.js';
 import { editor } from './editor-state.js';
 import { paneSize } from './canvas-view.js';
@@ -129,6 +130,8 @@ export function renderStatus() {
   if (editor.lastCheckReport && (editor.diagnosticSelection.components.size || editor.diagnosticSelection.nets.size || editor.diagnosticSelection.labels.size)) {
     parts.push(`check focus ${editor.diagnosticSelection.components.size + editor.diagnosticSelection.nets.size + editor.diagnosticSelection.labels.size}`);
   }
+  const suggestion = arrangeSuggestionHint();
+  if (suggestion) parts.push(suggestion);
   if (editor.netWarnings.length) parts.push('⚠ wire overlap with another net (highlighted)');
   if (editor.circuit.netNameWarnings?.length) parts.push('⚠ merged net names require reconciliation');
   if (editor.clipboardNotice) parts.unshift(editor.clipboardNotice);

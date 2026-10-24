@@ -4954,6 +4954,25 @@ button.off {
   font-size: var(--text-sm);
 }
 
+/* The cell an arrange suggestion would draw (arrange-suggest.js), faint. */
+.arrange-suggestion {
+  opacity: 0.5;
+}
+
+.arrange-suggestion * {
+  stroke: var(--accent);
+}
+
+.arrange-suggestion [fill]:not([fill="none"]) {
+  fill: var(--accent);
+}
+
+.arrange-suggestion-wires polyline {
+  fill: none;
+  stroke-width: 4;
+  stroke-dasharray: 12 8;
+}
+
 /* ----- gesture feedback on the canvas overlay -------------------- */
 
 .gesture-splice {

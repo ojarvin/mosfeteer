@@ -80,6 +80,23 @@ more candidate, last, "By cells" (`by cells:` on the command line).
   no cell staying put; all or nothing. The picker's card shows the parts as
   it draws them.
 
+## Suggestions
+
+Settings → Arrange suggestions (`:arrange-suggestions`), off by default, a
+browser preference (`src/web/arrange-suggest.js`).
+
+- After a committed edit (and a short quiet time), the cells of the whole
+  design are found (`cellsIn`); a cell that was not there before the edit
+  is offered when the open design or the workspace's other designs draw it
+  otherwise (`cellDrawing`; never from the built-in drawings), and only if
+  it can be drawn so (tried on a copy first).
+- The cell is shown faintly in the accent as it would be drawn, and the
+  status bar reads `SUGGESTION: MA, MB make a current mirror: like M1, M2 in
+  bias · Tab draws it · Esc lets it go`. Tab draws it as one undo step.
+- Escape, or any other edit, lets it go; a cell let go is not offered again
+  while the design is open. The cells there when a design opens, when the
+  setting is turned on, or after an undo or a redo are never offered.
+
 ## Applying one
 
 - The parts take the places, turns, and mirrors they have there, shifted

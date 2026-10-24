@@ -82,6 +82,7 @@ import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQ
 import { openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
+import { acceptArrangeSuggestion, dismissArrangeSuggestion, installArrangeSuggestions, mountArrangeSuggestion, noteDrawingEdit, noteDrawingReplaced, syncArrangeSuggestion } from './arrange-suggest.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
 import { installRenumberUi } from './renumber-ui.js';
 import { installArrangeFigures } from './figure-annotate.js';
@@ -618,6 +619,7 @@ export function recordHistoryEntry(startSnapshot, trim = true, feedback = 'now')
   future.length = 0;
   queueCommitFeedback(startSnapshot, feedback);
   askNameForNewNetNameConflict(startSnapshot);
+  noteDrawingEdit();
 }
 
 // ----- commit feedback ----------------------------------------------------
@@ -741,6 +743,7 @@ export function undo() {
   settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
+  noteDrawingReplaced();
   render();
 }
 
@@ -767,6 +770,7 @@ export function redo() {
   settingsRestored(current, target);
   restoreToolState(toolState);
   if (kept) kept();
+  noteDrawingReplaced();
   render();
 }
 
@@ -2901,6 +2905,7 @@ export function renderCanvas(modelKey) {
     overlayEl = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     overlayEl.setAttribute('class', 'editor-overlay');
     canvasSvgEl.appendChild(overlayEl);
+    mountArrangeSuggestion(canvasSvgEl);
     mountNetBeams(canvasSvgEl);
     // The snap pulse lives outside the per-frame overlay so its animation
     // plays once per new target instead of restarting on every repaint.
@@ -3067,6 +3072,7 @@ export function renderCanvas(modelKey) {
   syncLinkBubbles();
   syncSnapPulse();
   syncNetBeams();
+  syncArrangeSuggestion();
   flushPendingCommitFeedback();
   mountCommitFeedback(canvasRebuilt);
 }
@@ -6959,6 +6965,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
 
+  if (key === 'Tab' && acceptArrangeSuggestion()) return;
   if (key === 'Tab') {
     const comps = selectedComps();
     const labels = selectedLabels();
@@ -7000,6 +7007,9 @@ function onNormalKey(key, shiftKey = false) {
     }
     return;
   }
+
+  // Escape lets a standing arrange suggestion go before anything else.
+  if (key === 'Escape' && dismissArrangeSuggestion()) return;
 
   // Escape in Align to drops a picked source first, then leaves the tool with
   // the selection intact.
@@ -7434,6 +7444,7 @@ clearCheckButtonEl?.addEventListener('click', () => {
 // above has been declared.
 installToolbarUi();
 installNetBeams();
+installArrangeSuggestions();
 
 // ----- narrow-window folding --------------------------------------------------
 

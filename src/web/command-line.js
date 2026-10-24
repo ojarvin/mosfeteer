@@ -36,6 +36,7 @@ export const EDITOR_COMMANDS = [
   { name: 'beats', aliases: ['beat-strip', 'steps', 'slides'], toggle: true, help: 'show or hide the beats window (Shift+B)' },
   { name: 'tips', aliases: ['hints'], toggle: true, help: 'turn the corner tips on or off' },
   { name: 'reduce-motion', aliases: ['reduce-animations', 'reduced-motion'], toggle: true, help: 'reduce animations: no zooms, slides, or flashes (Settings)' },
+  { name: 'arrange-suggestions', aliases: ['suggestions', 'suggest'], toggle: true, help: 'offer to draw a cell an edit completes as your other drawings draw it (Settings)' },
   { name: 'net-beams', aliases: ['beams', 'flight-lines', 'net-flight-lines'], toggle: true, help: 'beams from a hovered net to the nets its name connects (Settings)' },
   { name: 'trackpad', aliases: ['scrolling', 'scroll', 'touchpad'], toggle: true, help: 'two-finger scroll pans and pinch zooms; off: the wheel zooms' },
   { name: 'page-guide', aliases: ['pageguide', 'column', 'ieee'], choices: ['none', 'ieee-1col', 'ieee-2col', 'a4'], help: 'frame the drawing for a page: none, ieee-1col, ieee-2col, or a4' },
