@@ -74,8 +74,6 @@ const LINKS_KEY = 'mosfeteer.atlas.links';
 const DRAWING_CACHE = 'svg-v4';
 const IMAGE_CACHE = 'v5';
 // The editor's Settings (theme, animations, scrolling, ...) and where they live.
-const settingsEl = document.getElementById('btn-settings')?.closest('.toolbar-popover') || null;
-const settingsHome = settingsEl?.parentElement || null;
 
 /** The workspace search outlives one visit, so a design found, opened, and
  *  left can be followed by the next match. Session state only. */
@@ -209,8 +207,9 @@ function editorEquivalentView(tile, entry, view = editor.view) {
  *  when fitting or packing, never per frame. */
 function chromeInsets() {
   const { h } = paneSize();
-  const head = rootEl.querySelector('.atlas-head');
-  const top = head?.offsetHeight ? head.offsetTop + head.offsetHeight + 8 : 0;
+  // The top bar is the editor's, standing over the desk's top edge.
+  const bar = document.querySelector('.toolbar');
+  const top = bar?.offsetHeight ? bar.getBoundingClientRect().bottom - rootEl.getBoundingClientRect().top + 8 : 0;
   const bottom = hintEl?.offsetHeight ? h - hintEl.offsetTop + 8 : 0;
   // A very short window keeps most of itself for the desk.
   return top + bottom < h / 2 ? { top, bottom } : { top: 0, bottom: 0 };
@@ -332,6 +331,7 @@ async function drawingFor(documentInfo, edited) {
 /** The symbol reference: one sheet, built from the registry on the spot. */
 function loadSymbols() {
   titleEl.textContent = 'Symbols';
+  scheduleToolbarFit();
   titleEl.title = '';
   const sheet = symbolSheet();
   const svg = drawingSvg(sheet);
@@ -351,6 +351,7 @@ async function loadWorkspace(generation) {
   const folder = workspace.workspace || '';
   state.folder = folder;
   titleEl.textContent = folder.split(/[\\/]/).filter(Boolean).pop() || 'Workspace';
+  scheduleToolbarFit();
   titleEl.title = folder;
   // A browser-only file waiting for permission again cannot be read yet.
   const documents = (workspace.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked && !doc.missing);
@@ -602,7 +603,8 @@ function syncBackButton() {
   const onDesk = state.tiles.some((tile) => state.entries.get(tile.id)?.current);
   const label = `Back to ${name}${onDesk || state.source === 'symbols' ? '' : ' (not in this workspace)'}`;
   if (backEl.textContent !== label) {
-    backEl.textContent = label;
+    // Its icon stays: only the words change.
+    backEl.replaceChildren(...backEl.querySelectorAll('.button-icon'), label);
     backEl.title = `Back to ${name} (Shift+Backspace)`;
   }
 }
@@ -2701,14 +2703,15 @@ async function reloadDesk({ quiet = false, pick = null } = {}) {
  * says up front when this browser cannot save in place. Else a new design,
  * a design file, or another folder (and the browser's permission again for
  * a folder it no longer may read), and back to the drawing on screen when it
- * has anything in it. The header's export and way back and the hint bar,
+ * has anything in it. The top bar's export and way back and the hint bar,
  * which have nothing to act on yet, step aside. Gone as soon as the desk has
  * a design.
  */
 function showEmptyDesk() {
   rootEl.querySelector('.atlas-empty')?.remove();
   const empty = !!state && state.source === 'workspace' && !state.tiles.length;
-  rootEl.classList.toggle('atlas-is-empty', empty);
+  // On the body: the way back and Export are in the top bar, not the desk.
+  document.body.classList.toggle('atlas-is-empty', empty);
   syncCheck();
   syncList();
   if (!empty) return;
@@ -2794,21 +2797,21 @@ async function openOntoDesk(kind) {
 }
 
 /** Shift+Backspace: step back from the drawing to the whole workspace. */
-/** The Atlas borrows the editor's Settings while it is open (`on`) and
- *  hands them back: what is set once -- the theme, animations, scrolling --
- *  is set from either view, in the same place at the end of its top bar. */
-function lendSettings(on) {
-  if (!settingsEl || !settingsHome) return;
+/** The top bar is one for the editor and the Atlas: open (`on`), the
+ *  Atlas's own controls take the places of the editor's equivalents (Back
+ *  for Atlas, its New and Export for the editor's) and the rest -- the mark,
+ *  Settings -- stays where it is (style.css body.atlas-mode). */
+function setBarMode(on) {
+  if (document.body.classList.contains('atlas-mode') === on) return;
   for (const [button, menu] of toolbarMenus) closeToolbarMenu(button, menu);
-  if (on) backEl.before(settingsEl);
-  else if (settingsEl.parentElement !== settingsHome) {
-    settingsHome.append(settingsEl);
-    scheduleToolbarFit();
-  }
+  document.body.classList.toggle('atlas-mode', on);
+  if (!on) document.body.classList.remove('atlas-is-empty');
+  scheduleToolbarFit();
 }
 
 export async function openAtlas({ source = 'workspace', animate = true, startup = false, focus = null } = {}) {
   if (state || !rootEl) return;
+  setBarMode(true);
   const generation = (openAtlas.generation = (openAtlas.generation || 0) + 1);
   state = deskState(generation, source, startup);
   // Until it has landed and its toolbars are back (inTransition).
@@ -2848,8 +2851,6 @@ export async function openAtlas({ source = 'workspace', animate = true, startup 
   const overDesk = choreographed && source === 'workspace';
   if (!overDesk) await Promise.race([slideChrome(document.body, true, { animate: choreographed }), hurried()]);
   if (state?.generation !== generation) return;
-  // Settings move over once the editor's toolbar is off screen: unseen.
-  if (!overDesk) lendSettings(true);
   void slideChrome(rootEl, choreographed, { animate: false });
   state.quiet = choreographed;
   if (reduced && !startup) rootEl.classList.add('preparing');
@@ -2923,7 +2924,7 @@ async function openDesk(generation, source, animate, startup) {
     rootEl.style.animation = '';
     draw();
     // The editor's toolbars slide off over it; the flight waits for them.
-    state.editorAway = slideChrome(document.body, true).then(() => { if (state?.generation === generation) lendSettings(true); });
+    state.editorAway = slideChrome(document.body, true);
   }
   let ready = false;
   try {
@@ -3082,9 +3083,9 @@ function finishClose({ animate = true } = {}) {
   state = null;
   if (keys.length) setTimeout(() => { if (!state) replayKeys(canvasEl, keys); });
   // From here the editor takes the pointer, though the desk still shows,
-  // and its Settings go back to its toolbar to slide in with it.
+  // and the top bar is the editor's again.
   rootEl.classList.add('passing');
-  lendSettings(false);
+  setBarMode(false);
   overlayEl.replaceChildren();
   rootEl.querySelector('.atlas-empty')?.remove();
   rootEl.style.animation = '';
@@ -3251,7 +3252,7 @@ export function onAtlasKey(ev) {
   if (ev.target.closest?.('dialog')) return;
   // A header button keeps focus after a click (or a dialog it opened hands
   // it back): it takes the keys that press or leave it, the desk the rest.
-  if (ev.target.closest?.('.atlas-head button, .atlas-empty button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
+  if (ev.target.closest?.('.toolbar button, .atlas-empty button') && (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Tab')) return;
   // An open menu (Settings) takes its own keys: arrows, and Esc to close it.
   if (ev.target.closest?.('[role="menu"]') || toolbarMenus.some(([, menu]) => !menu.hidden)) return;
   if (inTransition()) {
@@ -3339,7 +3340,7 @@ function onWheel(ev) {
 
 function onPointerDown(ev) {
   // The header, tag editor, and an empty desk's prompt take their own clicks.
-  if (!state || ev.target.closest?.('.atlas-head, .atlas-tags, .atlas-empty')) return;
+  if (!state || ev.target.closest?.('.atlas-tags, .atlas-empty')) return;
   if (inTransition()) {
     hurry();
     return;
@@ -3501,16 +3502,16 @@ export function installAtlas() {
     setView({ ...state.view, h: (state.view.w * h) / w });
   });
   backEl?.addEventListener('click', () => void closeAtlas());
-  document.getElementById('atlas-mark')?.addEventListener('click', () => void closeAtlas());
-  document.getElementById('app-mark')?.addEventListener('click', () => void openAtlas());
+  // The mark at the bar's start goes to the Atlas, and from it back.
+  document.getElementById('app-mark')?.addEventListener('click', () => void (state ? closeAtlas() : openAtlas()));
   document.getElementById('btn-atlas')?.addEventListener('click', () => void openAtlas());
   exportEl?.addEventListener('click', exportDesk);
   linksEl?.addEventListener('click', toggleLinks);
   syncLinksButton();
   // A click on a header button leaves the keys with the desk (and a dialog
   // it opens hands them back there); Tab still reaches the buttons.
-  rootEl.querySelector('.atlas-head')?.addEventListener('mousedown', (ev) => {
-    if (ev.target.closest('button')) ev.preventDefault();
+  document.querySelector('.toolbar')?.addEventListener('mousedown', (ev) => {
+    if (state && ev.target.closest('button')) ev.preventDefault();
   });
   openFolderEl?.addEventListener('click', () => void openOntoDesk('folder'));
   openFilesEl?.addEventListener('click', () => void openOntoDesk('files'));

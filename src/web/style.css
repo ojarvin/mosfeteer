@@ -339,8 +339,8 @@ button:focus-visible {
    to data-compact (toolbar-fit.js): file actions drop their text one by one,
    then New, Export, and the view toggles fold into the More menu
    (as proxies), and last Save becomes an icon. */
-.toolbar[data-compact~="export"] #btn-export,
-.toolbar[data-compact~="new"] #btn-new-document,
+.toolbar[data-compact~="export"] :is(#btn-export, #atlas-export, #atlas-open-folder),
+.toolbar[data-compact~="new"] :is(#btn-new-document, #atlas-new-circuit, #atlas-check, #atlas-list),
 .toolbar[data-compact~="save"] #btn-save {
   width: 30px;
   padding: 0;
@@ -374,7 +374,7 @@ button:focus-visible {
 
 .window-cluster .icon-button,
 .settings-cluster .icon-button,
-.atlas-head .icon-button,
+.atlas-view-cluster .icon-button,
 .segmented .icon-button {
   color: var(--text-dim);
   background: transparent;
@@ -382,7 +382,7 @@ button:focus-visible {
 }
 
 .window-cluster .icon-button:hover,
-.atlas-head .icon-button:hover,
+.atlas-view-cluster .icon-button:hover,
 .settings-cluster .icon-button:hover,
 .settings-cluster .icon-button[aria-expanded="true"],
 .segmented .icon-button:hover {
@@ -393,7 +393,7 @@ button:focus-visible {
 /* One shared "on" look for every toggle button: the window toggles, and the canvas-corner panel toggles -- an accent icon on
    a light accent tint. (A segmented control's choice is raised instead.) */
 .window-cluster .icon-button[aria-pressed="true"],
-.atlas-head .icon-button[aria-pressed="true"],
+.atlas-view-cluster .icon-button[aria-pressed="true"],
 .canvas-panel-toggle[aria-pressed="true"],
 .bode-add-toggle[aria-pressed="true"],
 .signal-flow-entry-actions button[aria-pressed="true"] {
@@ -5709,30 +5709,6 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
   height: 100%;
 }
 
-/* The Atlas's top bar is the editor's: full width, the same panel and
-   border, its way back at the right end. */
-.atlas-head {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 10px;
-  background: var(--bg-panel);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.atlas-head > .atlas-close {
-  margin-left: auto;
-}
-
 /* The workspace check: its button amber while something needs a look
    (its icon too, drawn in the text color), and a menu whose items may wrap
    (a design, its parts, and the link). */
@@ -5740,7 +5716,7 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
   display: none;
 }
 
-.atlas-head .atlas-check-findings {
+.toolbar .atlas-check-findings {
   color: var(--warn);
 }
 
@@ -5750,7 +5726,7 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
   overflow-y: auto;
 }
 
-.atlas-head .atlas-check-menu button {
+.toolbar .atlas-check-menu button {
   height: auto;
   min-height: 30px;
   padding: 5px 9px;
@@ -5829,7 +5805,7 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
 .atlas-list-table tbody tr td:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .atlas-list-table tbody tr td:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 
-.atlas-head .atlas-list-panel .atlas-list-sort {
+.toolbar .atlas-list-panel .atlas-list-sort {
   height: auto;
   padding: 0;
   border: 0;
@@ -5886,37 +5862,29 @@ th[aria-sort="descending"] .atlas-list-sort {
   font-weight: 600;
 }
 
-/* File actions together, then the view toggles, as in the editor toolbar. */
-.atlas-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+/* One top bar for the editor and the Atlas: what only one of them has
+   shows in its mode (body.atlas-mode, atlas.js), in the place the other's
+   equivalent has -- Atlas and Back, New, Export -- and the rest stays put. */
+body:not(.atlas-mode) .atlas-only,
+body.atlas-mode .editor-only {
+  display: none !important;
 }
 
-.atlas-group[hidden],
-.atlas-group:not(:has(> button:not([hidden]))) {
-  display: none;
-}
-
-/* The header's buttons match the editor toolbar's. */
-.atlas-head button {
-  height: 30px;
-  padding: 0 10px;
-  font-size: var(--text-md);
+/* The bar stands above the desk: the Atlas opens under it. */
+.toolbar {
+  position: relative;
+  z-index: 96;
 }
 
 /* Names the design the editor returns to; a long name gives way to an ellipsis. */
-.atlas-head .atlas-close {
+.toolbar .atlas-close {
   max-width: 22rem;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.atlas-head .atlas-mark {
-  margin-right: -6px;
-}
-
 .atlas-title {
+  padding: 0 6px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;

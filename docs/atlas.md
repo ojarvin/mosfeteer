@@ -7,7 +7,7 @@ a server, none) it starts in the editor. Launching a specific file opens that
 file in the editor instead. The restored drawing and any unsaved draft remain
 available behind the Atlas.
 
-An empty desk asks what to do. Browser-only with no folder yet (the header
+An empty desk asks what to do. Browser-only with no folder yet (the top bar
 says "No folder yet"), it leads with **Open folder…**: one folder for every
 design makes saving quiet and shows them all here next visit; a browser
 that cannot write files (Firefox, Safari) is told up front that Save
@@ -17,7 +17,7 @@ with a server, the workspace folder) leads with **New design**, which
 saves into it, then **Change folder…**. A folder the browser no longer may
 read asks to **Allow access** again first, and **Back to** returns to the
 drawing on screen when it has anything in it. While the desk is empty the
-header's Export and way back and the hint bar step aside.
+top bar's Export and way back and the hint bar step aside.
 At startup, a dark cover stays up while the drawings load, then fades as the
 Atlas zooms in from afar to fit the workspace. Later visits fly the open
 design back to the desk, as below. Reduced-motion preferences skip the startup animation.
@@ -109,11 +109,14 @@ hierarchy link says so outright; shared words in the names (`ota-folded`,
 of part types, and shared net names count a little. A search packs what it finds tight, and
 clearing it puts every design back in its place.
 
-The top bar mirrors the editor's: the Mosfeteer mark, the workspace name,
-the search, the file actions (**Folder…**, **Open…**, **New**, **Export**)
-together, then **Check** and **List** (below), then **Links**, then the editor's own **Settings** -- the theme,
-animations, scrolling, tips -- lent to the Atlas while it is open, at the
-same end of its top bar. **New** opens a blank
+The top bar is the editor's, staying in place while the Atlas opens and
+closes (body.atlas-mode, `editor-only` and `atlas-only` in index.html);
+only what differs changes, each in the place of its equivalent: the
+workspace name for the design's, **Back to …** for **Atlas**, the Atlas's
+**New** and **Export** for the editor's, then **Folder…**, **Open…**,
+**Check**, and **List** (below), and at the right, where the editor has its
+windows, the search and **Links**. The Mosfeteer mark (to the Atlas and
+back) and **Settings** stay where they are. **New** opens a blank
 schematic in the editor, with the name field focused. Unsaved changes in the
 current drawing trigger the usual discard prompt; canceling keeps the Atlas
 open. Name and save the new circuit to add it to the workspace. This button
@@ -159,7 +162,7 @@ marked, is where the keys go on from). With several picked, `#` (here or on
 the desk) adds the tags typed to each of them; a design that already has
 one keeps it once.
 
-The design open in the editor -- where Shift+Backspace and the header's **Back to …**
+The design open in the editor -- where Shift+Backspace and the top bar's **Back to …**
 button return -- carries an **OPEN** badge before its caption, and the
 button names it ("Back to amp", or "(not in this workspace)" for a new or
 unsaved drawing). The picked design, which Enter opens, is named in the

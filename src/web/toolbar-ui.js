@@ -37,13 +37,16 @@ function titleTextWidth() {
 function fitToolbar() {
   toolbarFitFrame = 0;
   if (!toolbarEl) return;
-  const wanted = titleTextWidth();
+  // In the Atlas the design's title steps aside for the workspace's.
+  const atlasTitle = document.body.classList.contains('atlas-mode') ? document.getElementById('atlas-title') : null;
+  const titleEl = atlasTitle || circuitNameEl;
+  const wanted = atlasTitle ? atlasTitle.scrollWidth : titleTextWidth();
   const stage = chooseToolbarStage((count) => {
     toolbarEl.dataset.compact = toolbarStageTokens(count);
     return toolbarFits({
       scrollWidth: toolbarEl.scrollWidth,
       clientWidth: toolbarEl.clientWidth,
-      titleWidth: circuitNameEl.getBoundingClientRect().width,
+      titleWidth: titleEl.getBoundingClientRect().width,
       titleTextWidth: wanted,
       spilled: [...toolbarEl.querySelectorAll(':scope > *, .toolbar-cluster, .circuit-picker')]
         .some((group) => group.offsetParent && group.scrollWidth > group.clientWidth + 1),

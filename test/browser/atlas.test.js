@@ -38,7 +38,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length > 0; })`, 10000);
   };
   const closeDesk = async () => {
-    if (await snapshot()) await h.click('#atlas-mark');
+    if (await snapshot()) await h.click('#app-mark');
     await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
   };
   const current = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => m.editor.currentCircuitName)`);
@@ -80,16 +80,22 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     await h.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   };
 
-  test("the toolbar's mark opens the Atlas and the Atlas's mark closes it; the editor's Settings come along", async () => {
+  test("one top bar for the editor and the Atlas: the mark goes there and back, the Atlas's buttons take the editor's places, Settings stays", async () => {
     await h.open('top');
-    const inAtlas = () => h.evaluate(`!!document.getElementById('btn-settings').closest('#atlas')`);
-    assert.equal(await inAtlas(), false);
+    const place = (id) => h.evaluate(`(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return r.width ? Math.round(r.left) : null; })()`);
+    const bar = () => h.evaluate(`(() => { const r = document.querySelector('.toolbar').getBoundingClientRect(); return [r.top, r.left, r.width]; })()`);
+    const before = { mark: await place('app-mark'), settings: await place('btn-settings'), atlas: await place('btn-atlas'), bar: await bar() };
     await openDesk();
     assert.deepEqual((await snapshot()).tiles.map((t) => t.name).sort(), ['alpha', 'beta', 'child', 'top']);
-    assert.equal(await inAtlas(), true, 'Settings in the Atlas top bar');
-    // The Atlas's top bar is the editor's: full width at the top.
-    const bars = await h.evaluate(`(() => { const a = document.querySelector('.atlas-head').getBoundingClientRect(); return { top: a.top, left: a.left, width: a.width, page: document.documentElement.clientWidth }; })()`);
-    assert.deepEqual([bars.top, bars.left, bars.width], [0, 0, bars.page], JSON.stringify(bars));
+    // The same bar, the mark and Settings where they were; Back where Atlas was.
+    assert.deepEqual(await bar(), before.bar);
+    assert.equal(await place('app-mark'), before.mark);
+    assert.equal(await place('btn-settings'), before.settings);
+    assert.equal(await place('btn-atlas'), null, 'the editor\'s Atlas steps aside');
+    // Back where Atlas is, after the title; New and Export where the editor's are.
+    const order = await h.evaluate(`[...document.querySelectorAll('.toolbar .document-cluster > *, .toolbar .file-cluster > *')].filter((el) => el.getBoundingClientRect().width).map((el) => el.id || el.querySelector('button')?.id || el.className)`);
+    assert.deepEqual(order.slice(0, 5), ['app-mark', 'atlas-title', 'atlas-close', 'atlas-new-circuit', 'atlas-export'], order.join(' '));
+    for (const id of ['btn-save', 'btn-document-menu', 'circuit-name']) assert.equal(await place(id), null, id);
     // Opened there, the menu works as in the editor, and Esc closes it
     // without touching the desk.
     const menuOpen = () => h.evaluate(`!document.getElementById('settings-menu').hidden`);
@@ -122,7 +128,8 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`document.activeElement.id`), 'btn-grid', 'the keyboard starts at the first item');
     await h.click('#btn-settings');
     await closeDesk();
-    assert.equal(await inAtlas(), false, 'and back in the editor toolbar');
+    assert.equal(await place('atlas-close'), null, 'the editor\'s bar again');
+    assert.equal(await place('btn-settings'), before.settings);
     assert.equal(await menuOpen(), false);
   });
 
@@ -456,7 +463,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
       if (settled) {
         assert.equal(settled.busy, false);
         assert.equal(settled.flight, null);
-        await h.click('#atlas-mark');
+        await h.click('#app-mark');
       }
       await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
       assert.equal(await h.evaluate(`!!document.getElementById('canvas').offsetParent`), true, 'the editor is back');
@@ -531,7 +538,7 @@ describe('the Atlas desk takes the window\'s shape', { skip: browserSkip() }, ()
         await h.click('#app-mark');
         await h.until(`${h.module('atlas.js')}.then((m) => { const s = m.atlasSnapshot(); return !!s && !s.busy && s.tiles.length === 9; })`, 15000);
         const tiles = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot().tiles)`);
-        await h.click('#atlas-mark');
+        await h.click('#app-mark');
         await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 15000);
         const x = Math.min(...tiles.map((t) => t.x)), y = Math.min(...tiles.map((t) => t.y));
         return { w: Math.max(...tiles.map((t) => t.x + t.w)) - x, h: Math.max(...tiles.map((t) => t.y + t.h)) - y };
@@ -576,7 +583,7 @@ describe('the workspace check', { skip: browserSkip() }, () => {
 
   test('in the editor, Design Check lists the open design\'s broken links and relinks the one it can', async () => {
     await h.open('system');
-    await h.evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-mark').click(); })()`);
+    await h.evaluate(`${h.module('atlas.js')}.then((m) => { if (m.atlasSnapshot()) document.getElementById('app-mark').click(); })`);
     await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
     const report = await h.evaluate(`${h.module('design-check-ui.js')}.then((m) => m.runCheck().brokenLinks)`);
     assert.deepEqual(report, ['OA1 → opamp', 'R1 → nothing']);
@@ -633,7 +640,7 @@ describe('the workspace check reads the notes\' links', { skip: browserSkip() },
 
   test('Design Check lists them, relinks the one it can in the notes, and shows the notes for the rest', async () => {
     await h.open('system');
-    await h.evaluate(`(() => { const a = document.getElementById('atlas'); if (a && !a.hidden) document.getElementById('atlas-mark').click(); })()`);
+    await h.evaluate(`${h.module('atlas.js')}.then((m) => { if (m.atlasSnapshot()) document.getElementById('app-mark').click(); })`);
     await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
     const report = await h.evaluate(`${h.module('design-check-ui.js')}.then((m) => m.runCheck().brokenLinks)`);
     assert.deepEqual(report, ['R1, notes → nowhere', 'notes → OpAmp']);
@@ -686,7 +693,7 @@ describe('a design keeps its place on the desk whether or not it is open', { ski
       await stillDesk(h);
     }
     const s = await h.evaluate(`${h.module('atlas.js')}.then((m) => m.atlasSnapshot())`);
-    await h.click('#atlas-mark');
+    await h.click('#app-mark');
     await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
     return Object.fromEntries(s.tiles.map((t) => [t.name, { x: t.x, y: t.y, w: t.w, h: t.h }]));
   };

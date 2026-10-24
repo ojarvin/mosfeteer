@@ -15,10 +15,12 @@
   </div>
   </div>
 
-  <header class="toolbar" data-editor-edge="top">
+  <header class="toolbar">
     <div class="toolbar-cluster document-cluster" role="group" aria-label="Document">
       <button type="button" id="app-mark" class="app-mark app-mark-button" aria-label="Atlas: every design in the workspace" aria-keyshortcuts="Shift+Backspace" title="Atlas (Shift+Backspace)"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -7.15 L 150 -5.53 L 184 0 L 150 5.53 L -56 7.15 Z" fill="var(--logo-blade)"/><path d="M -56 -7.15 L 150 -5.53 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></button>
-      <div class="circuit-picker" title="">
+      <!-- The Atlas's own (atlas-only) take the editor's places while it is open. -->
+      <span id="atlas-title" class="atlas-only atlas-title">Workspace</span>
+      <div class="circuit-picker editor-only" title="">
         <nav id="hierarchy-trail" class="hierarchy-trail" aria-label="Designs this one was opened from" hidden></nav>
         <input id="circuit-name" type="text" placeholder="Untitled" autocomplete="off" spellcheck="false" aria-label="Document name" title="Design name" />
         <span id="dirty-dot" class="dirty-dot" role="img" aria-label="Unsaved changes" title="Unsaved changes" hidden></span>
@@ -27,7 +29,7 @@
         </select>
       </div>
       <!-- The document's tags, by its name: the Atlas finds designs by them. -->
-      <div class="toolbar-popover tags-popover">
+      <div class="toolbar-popover tags-popover editor-only">
         <button id="btn-tags" type="button" class="tags-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tags-pop" title="Tags">#</button>
         <div id="tags-pop" class="toolbar-menu tags-menu" role="dialog" aria-label="Tags" hidden>
           <label for="panel-tags" class="toolbar-menu-heading">Tags</label>
@@ -35,14 +37,27 @@
           <p class="toolbar-menu-note">Separate with spaces. #tag finds them in the Atlas.</p>
         </div>
       </div>
-      <button id="btn-atlas" type="button" class="atlas-button" data-icon="atlas" aria-keyshortcuts="Shift+Backspace" title="Atlas (Shift+Backspace)">Atlas</button>
+      <button id="btn-atlas" type="button" class="atlas-button editor-only" data-icon="atlas" aria-keyshortcuts="Shift+Backspace" title="Atlas (Shift+Backspace)">Atlas</button>
+      <button id="atlas-close" type="button" class="atlas-only atlas-close atlas-button" data-icon="chevron-left" title="Back to the editor (Shift+Backspace)">Back to editor</button>
     </div>
 
     <div class="toolbar-cluster file-cluster" role="group" aria-label="File actions">
-      <button id="btn-new-document" data-icon="file-plus" title="New design">New</button>
-      <button id="btn-save" class="save-action" data-icon="save" data-action="save" title="Save (Ctrl/Cmd+S)">Save</button>
-      <button id="btn-export" data-icon="download" title="Export (Ctrl/Cmd+E)">Export</button>
-      <div class="toolbar-popover">
+      <button id="btn-new-document" class="editor-only" data-icon="file-plus" title="New design">New</button>
+      <button id="atlas-new-circuit" type="button" data-icon="file-plus" title="New design" class="atlas-only">New</button>
+      <button id="btn-save" class="save-action editor-only" data-icon="save" data-action="save" title="Save (Ctrl/Cmd+S)">Save</button>
+      <button id="btn-export" class="editor-only" data-icon="download" title="Export (Ctrl/Cmd+E)">Export</button>
+      <button id="atlas-export" type="button" data-icon="download" title="Export (Ctrl/Cmd+E)" class="atlas-only">Export</button>
+      <button id="atlas-open-folder" type="button" data-icon="workspace" title="Workspace folder" class="atlas-only">Folder…</button>
+      <button id="atlas-open-files" type="button" data-icon="folder-open" title="Add files (Ctrl/Cmd+O)" hidden class="atlas-only">Open…</button>
+      <div class="atlas-only toolbar-popover atlas-check" hidden>
+        <button id="atlas-check" type="button" data-icon="check" aria-haspopup="menu" aria-expanded="false" aria-controls="atlas-check-menu" title="Check the workspace">Check</button>
+        <div id="atlas-check-menu" class="toolbar-menu atlas-check-menu" role="menu" aria-label="Workspace check" hidden></div>
+      </div>
+      <div class="atlas-only toolbar-popover atlas-list" hidden>
+        <button id="atlas-list" type="button" data-icon="list" aria-haspopup="dialog" aria-expanded="false" aria-controls="atlas-list-panel" aria-keyshortcuts="Shift+L" title="List (Shift+L)">List</button>
+        <div id="atlas-list-panel" class="toolbar-menu atlas-list-panel" role="dialog" aria-label="Designs" hidden></div>
+      </div>
+      <div class="toolbar-popover editor-only">
         <button id="btn-document-menu" class="icon-button" data-icon="more" aria-haspopup="menu" aria-expanded="false" aria-controls="document-menu" aria-label="More document actions" title="More">More</button>
         <div id="document-menu" class="toolbar-menu" role="menu" aria-label="More document actions" hidden>
           <!-- A crowded toolbar folds these buttons into this menu; each item
@@ -80,7 +95,15 @@
 
     <!-- The floating windows over the drawing (floating-window.js); the
          side panel's own toggle stays in the canvas corner. -->
-    <div class="toolbar-cluster window-cluster" role="group" aria-label="Windows">
+    <!-- The Atlas's search, at the right: where the editor has its windows. -->
+    <div class="toolbar-cluster atlas-find-cluster atlas-only" role="group" aria-label="Find">
+      <span id="atlas-status" class="atlas-only atlas-status" aria-live="polite"></span>
+        <input id="atlas-search" class="atlas-only atlas-search" type="search" placeholder="Find parts, nets, text, #tags" title="Find (/ or Ctrl/Cmd+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
+    </div>
+    <div class="toolbar-cluster atlas-view-cluster atlas-only" role="group" aria-label="View">
+      <button id="atlas-links" type="button" class="icon-button" data-icon="hierarchy" aria-pressed="true" aria-label="Links" title="Links (l)">Links</button>
+    </div>
+    <div class="toolbar-cluster window-cluster editor-only" role="group" aria-label="Windows">
       <button id="btn-window-beats" class="icon-button" data-icon="beats" aria-pressed="false" aria-controls="beat-strip" aria-label="Beats" title="Beats (Shift+B)">Beats</button>
       <button id="btn-window-timing" class="icon-button" data-icon="timing" aria-pressed="false" aria-label="Timing diagram" title="Timing diagram (Shift+K)">Timing</button>
       <button id="btn-analysis" class="icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Analysis" title="Analysis (Shift+S)">Analysis</button>
@@ -249,35 +272,6 @@
   <section id="atlas" class="atlas" tabindex="-1" role="dialog" aria-label="Atlas view" hidden>
     <canvas id="atlas-desk" class="atlas-desk" aria-hidden="true"></canvas>
     <div id="atlas-overlays" class="atlas-overlays" aria-hidden="true"></div>
-    <header class="atlas-head glass" data-atlas-edge="top">
-      <button type="button" id="atlas-mark" class="app-mark app-mark-button atlas-mark" aria-label="Back to the editor" title="Back to the editor (Shift+Backspace)"><svg class="app-mark-art" viewBox="20 20 216 216" aria-hidden="true" focusable="false"><g transform="translate(128 128) rotate(-45) scale(.8) translate(-12 0)"><path d="M -56 -7.15 L 150 -5.53 L 184 0 L 150 5.53 L -56 7.15 Z" fill="var(--logo-blade)"/><path d="M -56 -7.15 L 150 -5.53 L 184 0 L -56 0 Z" fill="var(--logo-sheen)"/><path d="M -128 0 L -76.88 0 M -56.98 -27.91 L 0 -27.91 L 0 -80 M -56.98 27.91 L 0 27.91 L 0 80" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter"/><path d="M -87.21 -38.37 H -75.58 V 38.37 H -87.21 Z M -66.28 -50 H -54.64 V 50 H -66.28 Z M 0 27.91 L -34.88 11.63 L -34.88 44.19 Z" fill="currentColor"/><circle cx="-138" cy="0" r="10" fill="none" stroke="currentColor" stroke-width="8"/></g></svg></button>
-      <span id="atlas-title" class="atlas-title">Workspace</span>
-      <input id="atlas-search" class="atlas-search" type="search" placeholder="Find parts, nets, text, #tags" title="Find (/ or Ctrl/Cmd+F)" autocomplete="off" spellcheck="false" aria-label="Search the workspace's designs" aria-keyshortcuts="/ Control+F Meta+F" />
-      <span id="atlas-status" class="atlas-status" aria-live="polite"></span>
-      <div class="atlas-group" role="group" aria-label="Workspace files">
-        <button id="atlas-open-folder" type="button" data-icon="workspace" title="Workspace folder">Folder…</button>
-        <button id="atlas-open-files" type="button" data-icon="folder-open" title="Add files (Ctrl/Cmd+O)" hidden>Open…</button>
-        <button id="atlas-new-circuit" type="button" data-icon="file-plus" title="New design">New</button>
-        <button id="atlas-export" type="button" data-icon="download" title="Export (Ctrl/Cmd+E)">Export</button>
-      </div>
-      <!-- The workspace check: broken links and unsaved changes (atlas.js). -->
-      <div class="toolbar-popover atlas-check" hidden>
-        <button id="atlas-check" type="button" data-icon="check" aria-haspopup="menu" aria-expanded="false" aria-controls="atlas-check-menu" title="Check the workspace">Check</button>
-        <div id="atlas-check-menu" class="toolbar-menu atlas-check-menu" role="menu" aria-label="Workspace check" hidden></div>
-      </div>
-      <!-- Every design in a table: name, last saved, tags, what it holds; a
-           double-click renames (atlas.js). -->
-      <div class="toolbar-popover atlas-list" hidden>
-        <button id="atlas-list" type="button" data-icon="list" aria-haspopup="dialog" aria-expanded="false" aria-controls="atlas-list-panel" aria-keyshortcuts="Shift+L" title="List (Shift+L)">List</button>
-        <div id="atlas-list-panel" class="toolbar-menu atlas-list-panel" role="dialog" aria-label="Designs" hidden></div>
-      </div>
-      <div class="atlas-group" role="group" aria-label="View">
-        <button id="atlas-links" type="button" class="icon-button" data-icon="hierarchy" aria-pressed="true" aria-label="Links" title="Links (l)">Links</button>
-      </div>
-      <!-- The editor's Settings stand here while the Atlas is open (atlas.js
-           lendSettings): one menu, at the same end of either top bar. -->
-      <button id="atlas-close" type="button" class="atlas-close" title="Back to the editor (Shift+Backspace)">Back to editor</button>
-    </header>
     <p id="atlas-hint" class="atlas-hint glass" data-atlas-edge="bottom">Drag or scroll to move · right-drag zooms to a box · click picks · double-click or Enter opens · Z zooms to it · F fits all · Esc clears the pick · Shift+Backspace returns</p>
   </section>
   <div id="presenter" class="presenter" tabindex="-1" role="dialog" aria-label="Presenting beats" hidden>
