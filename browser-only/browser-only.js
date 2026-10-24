@@ -80758,7 +80758,7 @@ function noiseTable(headers, rows, total, cells) {
   const head = el('tr', {}, [th('Switches', { scope: 'col' }), th('Capacitors', { scope: 'col' }), th('Phase', { scope: 'col' }), ...headers.map((header) => th(header, { scope: 'col', class: 'sc-noise-value' }))]);
   const body = rows.map((row) => el('tr', { 'data-components': partsOf(row).join(' ') }, [
     th(row.switches.join(', '), { scope: 'row' }),
-    el('td', { text: row.capacitors.join(', ') }),
+    el('td', {}, [math(row.capacitors.map(symbolText).join(',\\ '))]),
     el('td', {}, [phaseName(row.phaseName)]),
     ...cells(row).map(value),
   ]));

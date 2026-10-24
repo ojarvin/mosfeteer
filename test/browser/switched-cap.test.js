@@ -118,6 +118,8 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.until(`!!document.querySelector('.sc-noise-result table')`, 10000);
     const rows = await h.evaluate(`[...document.querySelectorAll('.sc-noise-result tbody tr')].map((tr) => [tr.dataset.components || '', tr.firstChild.textContent])`);
     assert.deepEqual(rows, [['S1 S3 CS', 'S1, S3'], ['S2 S4 CS', 'S2, S4'], ['', 'Total']]);
+    // The capacitors as the drawing names them, in math: C_S.
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('.sc-noise-result tbody tr[data-components] td:first-of-type')].map((td) => [td.querySelector('msub')?.textContent ?? null, td.textContent])`), [['CS', 'CS'], ['CS', 'CS']]);
     // The calculator: 1 pF at 27 °C samples sqrt(kT/C) = 64.37 µV; two such.
     await h.until(`!!document.querySelector('.sc-calc-result table')`, 10000);
     const cells = () => h.evaluate(`[...document.querySelectorAll('.sc-calc-result tbody tr')].map((tr) => [...tr.querySelectorAll('.sc-noise-value')].map((td) => td.textContent).join(' | '))`);
