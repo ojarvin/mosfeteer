@@ -37,6 +37,7 @@ import { placeResponsePlot } from './signal-flow-ui.js';
 import { registerAnnotations } from './annotate-menu.js';
 import { bodeGraphActions } from './bode-actions.js';
 
+const EMPTY_TEXT = 'Derive in the analysis window (Shift+S) to plot its gain here.';
 const QUANTITIES = {
   transfer: { name: 'Voltage gain', tex: 'A_{v}' },
   transimpedance: { name: 'Transimpedance', tex: 'Z_{m}' },
@@ -222,6 +223,24 @@ function plottable(report, key) {
   return !!sketchOf({ report, key });
 }
 
+/** Why a derive's gain is not on the graph: it is zero, or the same at
+ *  every frequency. */
+function notPlottedText(report) {
+  const key = [...requestedKeys(report), 'transfer'][0];
+  const { name } = QUANTITIES[key] || QUANTITIES.transfer;
+  // Exactly zero when solved with its symbols; else at the sliders' numbers.
+  let zero = report.reports?.[key]?.exact?.numeratorCoefficients?.length === 0;
+  const parameters = parametersOf({ report, key });
+  const model = numericModelOf(report, key);
+  if (!zero && parameters && model?.ok) {
+    const result = numericAt(model, withDerivedValues(sketchValues(parameters.all, ratios), report.derivedSymbols));
+    zero = !!result.ok && !!result.quantities[key]?.zero;
+  }
+  return zero
+    ? `${name} is zero: nothing reaches the output. Check the input and the AC grounds.`
+    : `${name} is the same at every frequency: nothing to plot.`;
+}
+
 // ----- traces -------------------------------------------------------------------------
 
 /** A net's name for a trace's label, as signal flow writes its ratios. */
@@ -345,6 +364,7 @@ function renderPlots() {
   const empty = plotsEl.querySelector('.bode-plots-empty');
   const list = plotsEl.querySelector('.bode-corners');
   empty.hidden = traces.length > 0;
+  empty.textContent = latest ? notPlottedText(latest) : EMPTY_TEXT;
   head.hidden = !traces.length && !latest;
   head.replaceChildren(addButtons());
   if (sliding) list.style.minHeight = `${Math.max(parseFloat(list.style.minHeight) || 0, list.offsetHeight)}px`;
@@ -625,7 +645,7 @@ export function installBodeUi() {
     result.after(valuesEl);
   }
   plotsEl = el('div', { class: 'bode-plots-view' }, [
-    el('p', { class: 'field-hint bode-plots-empty', text: 'Derive in the analysis window (Shift+S) to plot its gain here.' }),
+    el('p', { class: 'field-hint bode-plots-empty', text: EMPTY_TEXT }),
     el('div', { class: 'signal-flow-graph-head bode-plots-head' }),
     el('div', { class: 'bode-plots-graph' }),
     el('div', { class: 'signal-flow-legend bode-legend' }),

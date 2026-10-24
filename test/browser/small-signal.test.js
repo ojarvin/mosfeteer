@@ -135,13 +135,6 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     await h.click('#analysis-approx-body');
   });
 
-  test('of two input ports, the input saved with the design stays chosen', async () => {
-    await h.open('pair');
-    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
-    await h.until(`!document.getElementById('analysis-dialog').hidden`);
-    assert.equal(await value('analysis-input'), twoInputs().saved);
-  });
-
   test('the model opens in a window that zooms like a reference window, Place puts it under the drawing, and placing again replaces it', async () => {
     await derive();
     // The Model tab opens it in a window; the Annotate menu places it.
@@ -456,5 +449,16 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
     await h.until(`!document.getElementById('analysis-dialog').hidden`);
     assert.equal(await checked('analysis-time-constants'), false, 'another design keeps its own form');
+  });
+
+  test('of two input ports, the input saved with the design stays chosen; a gain of zero says why nothing plots', async () => {
+    await h.open('pair');
+    if (await h.evaluate(`document.getElementById('analysis-dialog').hidden`)) await h.click('#btn-analysis');
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    assert.equal(await value('analysis-input'), twoInputs().saved);
+    // VB reaches nothing: the Plots window says so rather than asking for a Derive.
+    await derive();
+    await h.key('W', { shiftKey: true });
+    await h.until(`/Voltage gain is zero/.test(document.querySelector('.bode-plots-empty')?.textContent || '') && !document.querySelector('.bode-plots-empty').hidden`);
   });
 });
