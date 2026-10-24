@@ -79,6 +79,8 @@ test('window pointer forwarding ignores the insert menu overlay', () => {
   assert.equal(shouldForwardCanvasMove(canvasTarget, canvas), false, 'canvas events are already handled directly');
   assert.equal(shouldForwardCanvasMove(insertMenuTarget, canvas), false, 'insert-menu events stay in the menu');
   assert.equal(shouldForwardCanvasMove(windowTarget, canvas), false, 'a floating window keeps its moves (dragging it does not repaint the drawing)');
+  const menuTarget = { closest: (selector) => selector.includes('[role="menu"]') ? {} : null };
+  assert.equal(shouldForwardCanvasMove(menuTarget, canvas), false, 'a context or radial menu over the drawing keeps its moves');
   assert.equal(shouldForwardCanvasMove(otherOverlayTarget, canvas), true, 'other pane overlays still forward moves');
 });
 

@@ -79,6 +79,21 @@ describe('gestures', { skip: browserSkip() }, () => {
     assert.ok(await ed('e.view.w') < before * 0.8, 'zoomed into the box');
   });
 
+  test('the pointer on an open menu is not over the drawing: what lies under the menu is not hovered', async () => {
+    const p = await at(0, -320);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.tap(p.x, p.y, { button: 'right' });
+    await h.until(`!document.querySelector('.component-context-menu').hidden`);
+    const cursor = await ed('JSON.stringify(e.cursor)');
+    const box = await h.evaluate(`(() => { const r = document.querySelector('.component-context-menu').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+    for (const [fx, fy] of [[0.3, 0.2], [0.6, 0.5], [0.4, 0.8]]) {
+      await h.mouse('mouseMoved', box.x + box.w * fx, box.y + box.h * fy, { button: 'none', buttons: 0 });
+      await h.settle();
+      assert.equal(await ed('JSON.stringify(e.cursor)'), cursor, 'the drawing\'s cursor stays where the menu was opened');
+    }
+    await h.key('Escape');
+  });
+
   test('the radial menu fits what is under the press: the paper, a pin, a part, a wire', async () => {
     const items = async (x, y) => {
       const p = await at(x, y);
