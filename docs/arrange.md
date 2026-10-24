@@ -51,6 +51,31 @@ cells), `src/web/arrange-ui.js` (the picker); tests: `test/arrange.test.js`,
 - Nothing is stored apart from the designs: a drawing changed by hand is the
   newest drawing of its topology, so it is offered first next time.
 
+## Cells
+
+A selection larger than any drawing of it is arranged cell by cell: one
+more candidate, last, "By cells" (`by cells:` on the command line).
+
+- The cells are the built-in drawings' cells (`cell` in
+  `arrange-builtins.js`, `cellPatterns`): the five-transistor OTA, current
+  mirrors, differential pairs, the cascode, larger cells first, a mirror
+  before a pair. Found among the selected parts as drawn (`cellsIn`; parts
+  drawn among them do not matter here), a part in one cell at most; a
+  selected rail symbol goes with the cell it is wired to.
+- A cell is drawn like a drawing of its kind: the cell found there, so
+  only the connections that make the cell must agree (a pair whose output
+  feeds back is drawn like a pair). Of those, the one whose other
+  connections among the cell's pins agree best (the same pins joined, the
+  same pins on rails) goes first, then the newer source, then the one that
+  moves the parts least. Its rail symbols go to the rail symbols on the
+  same pins there.
+- A cell drawn in that drawing's shape already (the parts in the same order
+  along each axis, turned the same way; spacing aside) is left as it is.
+  With every cell so, the parts count as drawn like the others.
+- The cells are arranged one after another, each where it is, the parts in
+  no cell staying put; all or nothing. The picker's card shows the parts as
+  it draws them.
+
 ## Applying one
 
 - The parts take the places, turns, and mirrors they have there, shifted
@@ -63,6 +88,8 @@ cells), `src/web/arrange-ui.js` (the picker); tests: `test/arrange.test.js`,
   alignment there.
 - A net among the parts only takes the wires drawn there, pruned back to its
   pins (`wiresJoining`). A net that also reaches other parts keeps its wires
-  there and joins the copied ones by one routed leg. A net whose wires there
-  do not join its pins, or with no leg that routes, follows the parts as a
-  move would.
+  there and joins the copied ones by one routed leg; with no wires there
+  among its pins, each pin joins by a leg of its own. A net with no leg that
+  routes follows the parts as a move would, and is laid out afresh when that
+  leaves a pin off its wires; a net that still does not reach its pins
+  refuses the arrangement.

@@ -24,7 +24,7 @@ import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
 import { applyArrangement, arrangementCandidates } from './arrange.js';
-import { builtInDrawings } from './arrange-builtins.js';
+import { builtInDrawings, cellPatterns } from './arrange-builtins.js';
 import { arrangeFigures, figureBounds, listFigures } from './figures.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
 import { normalizeNotes, notesMarkdown } from './notes.js';
@@ -1077,17 +1077,23 @@ function dispatch(circuit, cmd, pos, flags, io) {
     if (pos.length < 2) throw new Error('usage: arrange <refdes> <refdes> ... [--list] [--pick N]');
     for (const refdes of pos) circuit.getComponent(refdes);
     const sources = [{ circuit, name: 'this design' }, ...(io?.designs || []), ...builtInDrawings()];
-    const { candidates, alike } = arrangementCandidates(circuit, pos, sources);
-    const none = alike ? `${pos.join(', ')} are drawn as every other drawing of them already` : `no other drawing of ${pos.join(', ')} with the same connections`;
-    const rows = candidates.map((c, i) => `${i + 1}. like ${c.parts.join(', ')} in ${c.source.name}${c.count > 1 ? ` (drawn so ${c.count} times)` : ''}`);
-    const listing = candidates.map((c) => ({ source: c.source.name, path: c.source.path, builtIn: c.source.builtIn, parts: c.parts, count: c.count }));
+    const { candidates, alike } = arrangementCandidates(circuit, pos, sources, { patterns: cellPatterns() });
+    const none = alike ? `${pos.join(', ')} are drawn like the other drawings of them already` : `no other drawing of ${pos.join(', ')} with the same connections`;
+    const like = (c) => `like ${c.parts.join(', ')} in ${c.source.name}`;
+    const describe = (c) => (c.cells
+      ? `by cells: ${c.cells.map((cell) => `${cell.refs.join(', ')} ${like(cell.like)}`).join('; ')}`
+      : `${like(c)}${c.count > 1 ? ` (drawn so ${c.count} times)` : ''}`);
+    const rows = candidates.map((c, i) => `${i + 1}. ${describe(c)}`);
+    const listing = candidates.map((c) => (c.cells
+      ? { cells: c.cells.map((cell) => ({ name: cell.name, refs: cell.refs, source: cell.like.source.name, parts: cell.like.parts })) }
+      : { source: c.source.name, path: c.source.path, builtIn: c.source.builtIn, parts: c.parts, count: c.count }));
     if (flags.list) return result(rows.join('\n') || none, listing);
     if (!candidates.length) throw new Error(none);
     const pick = flags.pick ? Number(flags.pick[0]) : 1;
     if (!Number.isInteger(pick) || pick < 1 || pick > candidates.length) throw new Error(`--pick is 1 to ${candidates.length}`);
     const chosen = candidates[pick - 1];
     applyArrangement(circuit, pos, chosen);
-    return result(`arranged ${pos.join(', ')} like ${chosen.parts.join(', ')} in ${chosen.source.name}`, listing[pick - 1], true);
+    return result(`arranged ${pos.join(', ')} ${describe(chosen)}`, listing[pick - 1], true);
   }
   if (cmd === 'figures') {
     if (flags.arrange) {

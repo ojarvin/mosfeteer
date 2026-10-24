@@ -20,9 +20,18 @@ const messy = () => build(['add nmos MA --at 0 0', 'add nmos MB --at 480 -160', 
 /** The same topology, drawn upright: unlike the built-in mirror. */
 const upright = () => build(['add nmos M1 --at 0 0', 'add nmos M2 --at 0 400', 'connect M1.g M2.g', 'connect M1.d M1.g']);
 
+/** A five-transistor OTA as a buffer, drawn anyhow, and a design with its
+ *  pair and mirror drawn neatly. */
+const buffer = () => build(['add nmos M1 --at 240 400', 'add nmos M2 --at -200 0', 'add nmos M3 --at 560 -80', 'add pmos M4 --at -120 -560', 'add pmos M5 --at 640 -480 --mirrorX',
+  'add supply --at -120 -800', 'add supply --at 640 -720', 'connect M4.s SUPPLY1.p', 'connect M5.s SUPPLY2.p',
+  'connect M4.g M5.g', 'connect M4.d M4.g', 'connect M4.d M2.d', 'connect M5.d M3.d', 'connect M3.g M3.d', 'connect M2.s M3.s M1.d']);
+const cells = () => build(['add nmos N1 --at 0 0', 'add nmos N2 --at 320 0 --mirrorX', 'add current_source I1 --at 160 280', 'connect N1.s N2.s I1.a',
+  'add pmos P1 --at 0 -320 --mirrorX', 'add pmos P2 --at 320 -320', 'add supply --at 0 -440', 'add supply --at 320 -440',
+  'connect P1.s SUPPLY1.p', 'connect P2.s SUPPLY2.p', 'connect P1.g P2.g', 'connect P1.d P1.g', 'connect P1.d N1.d', 'connect P2.d N2.d']);
+
 describe('arrange like', { skip: browserSkip() }, () => {
   let h;
-  before(async () => { h = await start({ docs: { amp: messy(), bias: upright() }, width: 1400, height: 900 }); });
+  before(async () => { h = await start({ docs: { amp: messy(), bias: upright(), buffer: buffer(), cells: cells() }, width: 1400, height: 900 }); });
   after(async () => { const errors = h.exceptions(); await h.stop(); assert.deepEqual(errors, []); });
 
   const ed = (expression) => h.evaluate(`${h.module('editor-state.js')}.then((m) => { const e = m.editor; const c = e.circuit; return ${expression}; })`);
@@ -77,6 +86,20 @@ describe('arrange like', { skip: browserSkip() }, () => {
     assert.ok(names.includes('NMOS current mirror') && names.includes('Five-transistor OTA'), names.join(', '));
     await h.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
     await h.until(`${h.module('atlas.js')}.then((m) => !m.atlasSnapshot())`, 10000);
+  });
+
+  test('a larger selection offers arranging by cells, drawn on its card as it would be', async () => {
+    await h.open('buffer');
+    await h.evaluate(`${h.module('main.js')}.then((m) => m.setSelection(['M1', 'M2', 'M3', 'M4', 'M5']))`);
+    await h.key('Q', { shiftKey: true });
+    await h.until(`${h.module('arrange-ui.js')}.then((m) => !!m.arrangePickerState())`);
+    const state = await picker();
+    const byCells = state.candidates.find((c) => c.cells);
+    assert.deepEqual(byCells?.cells, ['PMOS current mirror', 'NMOS differential pair']);
+    await h.until(`[...document.querySelectorAll('.arrange-picker-picture')].every((img) => img.src.startsWith('data:image/svg+xml'))`);
+    await pickerKey('Escape');
+    await h.until(`!document.querySelector('.arrange-picker')`);
+    await h.open('amp');
   });
 
   test('a single part is not arranged, and says how', async () => {

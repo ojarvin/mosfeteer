@@ -102,9 +102,11 @@ function searchOrder(target, refs, source) {
  * `refs` to `{ refdes, swapped }` there (`swapped`: a reversible part's pins
  * map the other way round). `exclude` lists parts there never mapped onto
  * (the parts themselves, when both are one circuit). Empty when a part of
- * `refs` is unknown or none of its shape is there.
+ * `refs` is unknown or none of its shape is there. `alone: false` keeps
+ * drawings with other parts among their parts (to find a cell in a drawing
+ * as it is, rather than one to draw like).
  */
-export function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [], limit = MATCH_LIMIT } = {}) {
+export function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [], limit = MATCH_LIMIT, alone: drawnAlone = true } = {}) {
   const parts = refs.filter((ref) => targetCircuit.components.get(ref)?.type !== 'solder');
   if (!parts.length || parts.some((ref) => !targetCircuit.components.has(ref))) return [];
   const target = topologyIndex(targetCircuit);
@@ -153,7 +155,7 @@ export function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [],
   const visit = (index) => {
     if (found.length >= limit || ++steps > STEP_LIMIT) return;
     if (index === order.length) {
-      if (alone(assigned)) found.push({ parts: new Map(assigned) });
+      if (!drawnAlone || alone(assigned)) found.push({ parts: new Map(assigned) });
       return;
     }
     const ref = order[index];

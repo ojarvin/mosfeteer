@@ -8,7 +8,7 @@
  */
 
 import { applyArrangement, arrangeableRefs, arrangementCandidates } from '../core/arrange.js';
-import { builtInDrawings } from '../core/arrange-builtins.js';
+import { builtInDrawings, cellPatterns } from '../core/arrange-builtins.js';
 import { loadDocument } from '../core/document.js';
 import { GRID } from '../core/grid.js';
 import { svgString } from '../core/render.js';
@@ -52,10 +52,16 @@ const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
 const dark = () => document.documentElement.classList.contains('dark');
 
 /** The drawing a candidate comes from, around the parts it draws, the rest
- *  of that drawing faint: `{ light, dark }` picture URLs. */
-async function candidatePicture(candidate) {
-  const circuit = candidate.sourceCircuit;
-  const shown = new Set(candidate.parts);
+ *  of that drawing faint: `{ light, dark }` picture URLs. Arranging by
+ *  cells comes from several: its picture is the parts as it draws them. */
+async function candidatePicture(candidate, refs, before) {
+  let circuit = candidate.sourceCircuit;
+  let shown = new Set(candidate.parts);
+  if (candidate.cells) {
+    circuit = loadDocument(JSON.parse(before));
+    try { applyArrangement(circuit, refs, candidate); } catch { return null; }
+    shown = new Set(refs);
+  }
   let box = null;
   const grow = (r) => {
     if (!r || !(r.w > 0 || r.h > 0)) return;
@@ -75,7 +81,15 @@ async function candidatePicture(candidate) {
 }
 
 function sourceName(candidate) {
+  if (candidate.cells) return 'By cells';
   return candidate.source.current ? 'this design' : candidate.source.name;
+}
+
+/** What a card says after its source: the parts there, or for cells each
+ *  cell's kind. */
+function partsText(candidate) {
+  if (candidate.cells) return candidate.cells.map((cell) => cell.name.replace(/^(N|P)MOS /, '')).join(', ');
+  return candidate.source.builtIn ? 'built-in' : candidate.parts.join(', ');
 }
 
 /** Draw the highlighted way on the canvas, from the drawing as it was. */
@@ -120,7 +134,9 @@ function choose(index = picker?.index) {
   recordHistoryEntry(before, true);
   setSelection(refs);
   rememberAction('arrange like', () => void openArrangePicker());
-  logLine(`${refs.join(', ')} arranged like ${chosen.parts.join(', ')} in ${sourceName(chosen)}`);
+  logLine(chosen.cells
+    ? `${refs.join(', ')} arranged by cells: ${chosen.cells.map((cell) => `${cell.refs.join(', ')} like ${cell.like.parts.join(', ')} in ${cell.like.source.current ? 'this design' : cell.like.source.name}`).join('; ')}`
+    : `${refs.join(', ')} arranged like ${chosen.parts.join(', ')} in ${sourceName(chosen)}`);
   render();
 }
 
@@ -134,7 +150,7 @@ function cancel() {
   render();
 }
 
-function buildPicker(candidates) {
+function buildPicker(refs, before, candidates) {
   const el = document.createElement('div');
   el.className = 'arrange-picker glass';
   el.setAttribute('role', 'dialog');
@@ -163,7 +179,7 @@ function buildPicker(candidates) {
     where.textContent = sourceName(candidate);
     const parts = document.createElement('span');
     parts.className = 'arrange-picker-parts';
-    parts.textContent = candidate.source.builtIn ? 'built-in' : candidate.parts.join(', ');
+    parts.textContent = partsText(candidate);
     caption.append(where, parts);
     if (candidate.count > 1) {
       const count = document.createElement('span');
@@ -176,7 +192,7 @@ function buildPicker(candidates) {
     item.append(key, picture, caption);
     item.addEventListener('mousemove', () => { if (picker && picker.index !== index) preview(index); });
     item.addEventListener('mousedown', (ev) => { ev.preventDefault(); choose(index); });
-    void candidatePicture(candidate).then((urls) => {
+    void candidatePicture(candidate, refs, before).then((urls) => {
       if (!urls) return;
       picture.dataset.light = urls.light;
       picture.dataset.dark = urls.dark;
@@ -233,18 +249,18 @@ export async function openArrangePicker() {
     const sources = [{ circuit, name: editor.currentCircuitName || 'this design' }, ...await workspaceDesigns(), ...builtInDrawings()];
     // The drawing may have changed while the workspace was read.
     if (circuit !== editor.circuit || refs.some((ref) => !circuit.components.has(ref))) return false;
-    found = arrangementCandidates(circuit, refs, sources);
+    found = arrangementCandidates(circuit, refs, sources, { patterns: cellPatterns() });
   } finally {
     opening = false;
   }
   if (!found.candidates.length) {
     hintLine(found.alike
-      ? `${refs.join(', ')} are drawn like every other drawing of them already`
+      ? `${refs.join(', ')} are drawn like the other drawings of them already`
       : `No other drawing has ${refs.join(', ')} with the same connections`);
     return false;
   }
   const before = snapshot();
-  const built = buildPicker(found.candidates);
+  const built = buildPicker(refs, before, found.candidates);
   picker = { refs, before, candidates: found.candidates, index: 0, failed: null, ...built };
   picker.outside = (ev) => { if (picker && !picker.el.contains(ev.target)) cancel(); };
   window.addEventListener('pointerdown', picker.outside, true);
@@ -260,6 +276,6 @@ export function arrangePickerState() {
     refs: [...picker.refs],
     index: picker.index,
     failed: picker.failed,
-    candidates: picker.candidates.map((c) => ({ source: sourceName(c), parts: [...c.parts], count: c.count, builtIn: c.source.builtIn })),
+    candidates: picker.candidates.map((c) => ({ source: sourceName(c), parts: [...c.parts], count: c.count, builtIn: c.source.builtIn, cells: c.cells?.map((cell) => cell.name) || null })),
   };
 }

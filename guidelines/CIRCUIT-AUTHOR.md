@@ -281,7 +281,9 @@ arrange <refdes> ... [--list] [--pick N]
                                draw the parts as another drawing with the same connections
                                draws them: places, turns, their labels, the wires among them
                                (this design, then the workspace's other designs newest
-                               first, then the built-in cells; docs/arrange.md); --list
+                               first, then the built-in cells; docs/arrange.md); last, by
+                               cells: each mirror, pair, cascode, or OTA among the parts
+                               drawn like a drawing of its kind, where it is; --list
                                lists the ways, --pick N draws the Nth (default the first)
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list

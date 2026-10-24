@@ -4916,6 +4916,8 @@ button.off {
 }
 
 .arrange-picker-source {
+  flex: none;
+  max-width: 65%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -4924,6 +4926,12 @@ button.off {
 .arrange-picker-count {
   color: var(--text-dim);
   font-size: var(--text-sm);
+}
+
+.arrange-picker-parts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .arrange-picker-count {

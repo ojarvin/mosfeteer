@@ -18,6 +18,7 @@ import { applyTransform, rectsOverlap, segmentCrossesRect } from './geometry.js'
 import { GRID, snap } from './grid.js';
 import { smartRoute } from './router.js';
 import { captureComponentTerminalPositions, componentTerminalMoves } from './part-moves.js';
+import { isReferenceMarker } from './model.js';
 import { findTopology, wiresJoining } from './topology-match.js';
 
 /** How far (in cells) an arrangement may shift from where the parts are to
@@ -175,9 +176,11 @@ export function arrangeableRefs(circuit, refs) {
  * (`circuit` itself among them for the open design, searched outside
  * `refs`). `parts` names the parts there, `count` how many drawings
  * (anywhere) draw them so; a way drawn like the parts already are is left
- * out. At most `limit`.
+ * out. At most `limit`. With `patterns` (arrange-builtins.js cellPatterns),
+ * one more candidate, last, arranges the cells found among the parts each
+ * on its own (cellsCandidate).
  */
-export function arrangementCandidates(circuit, refs, sources, { limit = 9 } = {}) {
+export function arrangementCandidates(circuit, refs, sources, { limit = 9, patterns = null } = {}) {
   const parts = arrangeableRefs(circuit, refs);
   if (parts.length < 2) return { candidates: [], alike: 0 };
   const context = searchContext(circuit, parts);
@@ -212,7 +215,13 @@ export function arrangementCandidates(circuit, refs, sources, { limit = 9 } = {}
       });
     }
   }
-  return { candidates: [...byKey.values()].slice(0, limit), alike };
+  const candidates = [...byKey.values()].slice(0, limit);
+  const cells = patterns ? cellsCandidate(circuit, parts, sources, patterns) : null;
+  if (cells?.candidate) candidates.push(cells.candidate);
+  // Cells found and all drawn as they are drawn elsewhere: the parts are
+  // drawn like the others too.
+  else if (cells?.found && !candidates.length) alike += 1;
+  return { candidates, alike };
 }
 
 /** Every grid point along a set of polylines. */
@@ -328,6 +337,25 @@ function farSide(circuit, net, refs) {
   return { points, paths: paths || null };
 }
 
+/** What arranging `parts` can change, saved: a function that puts it back
+ *  (their places, their labels' places, every net, the solder dots). */
+function checkpoint(circuit, parts) {
+  const saved = {
+    transforms: new Map(parts.map((ref) => [ref, { ...circuit.components.get(ref).transform }])),
+    labels: [...circuit.labels.values()].filter((l) => parts.includes(l.owner)).map((l) => ({ label: l, offset: l.offset && { ...l.offset }, align: l.align })),
+    topology: circuit._snapshotNetTopology(),
+    components: new Map(circuit.components),
+  };
+  return () => {
+    circuit.components.clear();
+    for (const [ref, component] of saved.components) circuit.components.set(ref, component);
+    for (const [ref, t] of saved.transforms) circuit.components.get(ref).transform = t;
+    for (const { label, offset: o, align } of saved.labels) { label.offset = o; label.align = align; }
+    circuit._restoreNetTopology(saved.topology);
+    circuit.invalidateRoutingCache();
+  };
+}
+
 /**
  * Draw the parts `refs` of `circuit` as `candidate` (one of arrangementCandidates')
  * does: their places and turns, their own labels' places, and the wires
@@ -337,6 +365,7 @@ function farSide(circuit, net, refs) {
  * clear place or a net cannot be routed.
  */
 export function applyArrangement(circuit, refs, candidate) {
+  if (candidate.cells) return applyCells(circuit, refs, candidate);
   const parts = arrangeableRefs(circuit, refs);
   const { drawing } = candidate;
   if (parts.length !== drawing.parts.size || parts.some((ref) => !drawing.parts.has(ref))) {
@@ -349,20 +378,8 @@ export function applyArrangement(circuit, refs, candidate) {
   });
   const offset = clearOffset(circuit, parts, drawing, reach);
   if (!offset) throw new Error('no clear place for the parts drawn this way');
-  const saved = {
-    transforms: new Map(parts.map((ref) => [ref, { ...circuit.components.get(ref).transform }])),
-    labels: [...circuit.labels.values()].filter((l) => parts.includes(l.owner)).map((l) => ({ label: l, offset: l.offset && { ...l.offset }, align: l.align })),
-    topology: circuit._snapshotNetTopology(),
-    components: new Map(circuit.components),
-  };
-  const restore = () => {
-    circuit.components.clear();
-    for (const [ref, component] of saved.components) circuit.components.set(ref, component);
-    for (const [ref, t] of saved.transforms) circuit.components.get(ref).transform = t;
-    for (const { label, offset: o, align } of saved.labels) { label.offset = o; label.align = align; }
-    circuit._restoreNetTopology(saved.topology);
-    circuit.invalidateRoutingCache();
-  };
+  const restore = checkpoint(circuit, parts);
+  const topology = circuit._snapshotNetTopology();
   try {
     const before = captureComponentTerminalPositions(circuit, parts);
     for (const ref of parts) {
@@ -381,36 +398,54 @@ export function applyArrangement(circuit, refs, candidate) {
     }
     circuit.invalidateRoutingCache();
     const moves = componentTerminalMoves(circuit, parts, before);
+    const reroutedFresh = (net) => {
+      if (circuit.rerouteNet(net, 'refresh') === false || !circuit._pathsConnectedToTerminals(net)) {
+        throw new Error(`unable to route ${net.name || net.id} to the arranged parts`);
+      }
+    };
+    // A net as it was, routed after the parts as a move routes it; laid out
+    // afresh when that leaves a pin off its wires.
     const followMove = (net) => {
-      const original = saved.topology.nets.find((n) => n.id === net.id);
+      const original = topology.nets.find((n) => n.id === net.id);
       net.allowDiagonal = original.allowDiagonal;
       net.route = original.route ? original.route.map((p) => ({ ...p })) : null;
       net.branches = original.branches ? original.branches.map((b) => b.map((p) => ({ ...p }))) : null;
       net.junctions = original.junctions.map((p) => ({ ...p }));
-      if (circuit.rerouteNet(net, moves) === false) throw new Error(`unable to route ${net.name || net.id} to the arranged parts`);
+      if (circuit.rerouteNet(net, moves) === false || (net.terminals.length > 1 && !circuit._pathsConnectedToTerminals(net))) reroutedFresh(net);
+    };
+    const installed = (net, paths) => {
+      circuit._installLiteralPaths(net, paths);
+      if (!circuit._pathsConnectedToTerminals(net)) { followMove(net); return; }
+      circuit._repairNetLabels(net);
     };
     for (const planned of drawing.nets) {
       const net = circuit.nets.get(planned.id);
       if (!net) continue;
       const inside = planned.paths ? shifted(planned.paths, offset) : null;
-      if (!inside || planned.pins.length < 2 && !planned.external) {
-        followMove(net);
+      if (!planned.external) {
+        if (inside && planned.pins.length >= 2) installed(net, inside);
+        else followMove(net);
         continue;
       }
-      let paths = inside;
-      if (planned.external) {
-        const outside = far.get(net.id);
-        if (!outside?.paths) { followMove(net); continue; }
-        const pinPoints = planned.pins.map((t) => circuit.components.get(t.comp).terminalWorld(t.term));
-        const from = inside.length ? gridPoints(inside) : pinPoints;
-        const to = outside.paths.length ? gridPoints(outside.paths) : outside.points;
-        const leg = joiningLeg(circuit, net, from, to);
-        if (!leg) { followMove(net); continue; }
-        paths = [...inside, ...outside.paths, leg];
+      // The wires to the rest stay; the drawing's own wires among the parts
+      // join them by one leg, or with none there, each pin by a leg of its own.
+      const outside = far.get(net.id);
+      if (!outside?.paths) { followMove(net); continue; }
+      const pinPoints = planned.pins.map((t) => circuit.components.get(t.comp).terminalWorld(t.term));
+      const paths = [...outside.paths];
+      const reached = () => (paths.length ? gridPoints(paths) : outside.points);
+      const legs = inside
+        ? [inside.length ? gridPoints(inside) : pinPoints]
+        : pinPoints.map((point) => [point]);
+      if (inside) paths.unshift(...inside);
+      let joined = true;
+      for (const from of legs) {
+        const leg = joiningLeg(circuit, net, from, inside ? (outside.paths.length ? gridPoints(outside.paths) : outside.points) : reached());
+        if (!leg) { joined = false; break; }
+        paths.push(leg);
       }
-      circuit._installLiteralPaths(net, paths);
-      if (!circuit._pathsConnectedToTerminals(net)) { followMove(net); continue; }
-      circuit._repairNetLabels(net);
+      if (joined) installed(net, paths);
+      else followMove(net);
     }
     circuit.reconnectCoincidentNets();
     circuit.syncJunctionSolders();
@@ -420,4 +455,198 @@ export function applyArrangement(circuit, refs, candidate) {
     throw error;
   }
   return { offset };
+}
+
+/**
+ * The cells among the parts `refs`: `[{ name, pattern, map, refs }]`, each a
+ * `patterns` cell found there (larger cells first, a part in one cell at
+ * most; `map` takes the pattern's parts to the parts here), `refs` its
+ * parts with the selected rail symbols wired to them.
+ */
+export function cellsIn(circuit, refs, patterns) {
+  const parts = arrangeableRefs(circuit, refs);
+  const inside = new Set(parts);
+  const outside = [...circuit.components.keys()].filter((ref) => !inside.has(ref));
+  const used = new Set();
+  const cells = [];
+  for (const pattern of patterns) {
+    const matches = findTopology(pattern.circuit, pattern.refs, circuit, { exclude: [...outside, ...used], alone: false });
+    for (const match of matches) {
+      const map = new Map([...match.parts].map(([from, to]) => [from, to.refdes]));
+      const found = [...map.values()];
+      if (found.some((ref) => used.has(ref))) continue;
+      for (const ref of found) used.add(ref);
+      cells.push({ name: pattern.name, pattern, map, refs: found });
+    }
+  }
+  // A rail symbol goes with the cell it is wired to.
+  const nets = pinNets(circuit);
+  for (const ref of parts) {
+    const component = circuit.components.get(ref);
+    if (used.has(ref) || !isReferenceMarker(component)) continue;
+    const net = nets.get(`${ref}.${component.terminalDefs[0]?.name}`);
+    const cell = net && cells.find((c) => net.terminals.some((t) => c.refs.includes(t.comp)));
+    if (!cell) continue;
+    cell.refs.push(ref);
+    used.add(ref);
+  }
+  for (const cell of cells) cell.refs.sort();
+  return cells;
+}
+
+/** How much two placements of `refs` differ in shape, spacing aside: the
+ *  parts in the same order along each axis and turned the same way. */
+function sameShape(refs, a, b) {
+  const sign = (n) => Math.sign(n);
+  for (const ref of refs) if (orientation(a(ref)) !== orientation(b(ref))) return false;
+  for (const u of refs) {
+    for (const v of refs) {
+      if (u >= v) continue;
+      const [pu, pv, qu, qv] = [a(u), a(v), b(u), b(v)];
+      if (sign(pv.x - pu.x) !== sign(qv.x - qu.x) || sign(pv.y - pu.y) !== sign(qv.y - qu.y)) return false;
+    }
+  }
+  return true;
+}
+
+/** The electrical nets of `circuit` a rail symbol is on. */
+function railGroups(circuit) {
+  const rails = new Set();
+  for (const net of circuit.nets.values()) {
+    if (net.terminals.some((t) => isReferenceMarker(circuit.components.get(t.comp)))) rails.add(circuit.netGroupKey(net));
+  }
+  return rails;
+}
+
+/** Of a cell's pins, the pairs on one net, as `a|b` keys, by `netOf`. */
+function pinPairs(pins, netOf) {
+  const pairs = new Set();
+  for (let i = 0; i < pins.length; i++) {
+    for (let k = i + 1; k < pins.length; k++) {
+      const a = netOf(pins[i]);
+      if (a && a === netOf(pins[k])) pairs.add(`${pins[i]}|${pins[k]}`);
+    }
+  }
+  return pairs;
+}
+
+/**
+ * The best way to draw one cell, or null. Its kind (the cell's pattern) is
+ * found in `sources`, so only the connections that make the cell must
+ * agree: a pair whose output feeds back is drawn like a pair. Of the
+ * drawings found, the one whose other connections among the cell's pins
+ * agree best with the cell's own (the same pins joined, the same pins on
+ * rails) goes first, then the newer source, then the
+ * one that moves the parts least. A cell drawn in that shape already
+ * (spacing aside) is left as it is. Its rail symbols go to the rail symbols
+ * on the same pins there, where there are any.
+ * Returns `{ refs, candidate }`, `refs` the parts it draws.
+ */
+function cellDrawing(circuit, cell, sources) {
+  const cellParts = [...cell.map.values()];
+  const rails = cell.refs.filter((ref) => !cellParts.includes(ref));
+  const nets = pinNets(circuit);
+  const pins = cellParts.flatMap((ref) => circuit.components.get(ref).terminalDefs.map((t) => `${ref}.${t.name}`));
+  const ownNet = (pin) => (nets.has(pin) ? circuit.netGroupKey(nets.get(pin)) : null);
+  const ownPairs = pinPairs(pins, ownNet);
+  const ownRails = railGroups(circuit);
+  const ways = [];
+  for (const [rank, source] of sources.entries()) {
+    const exclude = source.circuit === circuit ? cell.refs : [];
+    const sourceNets = pinNets(source.circuit);
+    const sourceRails = railGroups(source.circuit);
+    for (const match of findTopology(cell.pattern.circuit, cell.pattern.refs, source.circuit, { exclude })) {
+      const parts = new Map([...cell.map].map(([from, to]) => [to, match.parts.get(from)]));
+      const there = (pin) => {
+        const [ref, term] = pin.split('.');
+        const net = sourceNets.get(`${parts.get(ref).refdes}.${term}`);
+        return net ? source.circuit.netGroupKey(net) : null;
+      };
+      const theirPairs = pinPairs(pins, there);
+      // Pins joined here and not there, or there and not here, and pins on
+      // a rail on one side only (a pair's sources meet at a tail, a
+      // mirror's at a rail).
+      const disagree = [...ownPairs].filter((p) => !theirPairs.has(p)).length + [...theirPairs].filter((p) => !ownPairs.has(p)).length
+        + pins.filter((pin) => ownRails.has(ownNet(pin)) !== sourceRails.has(there(pin))).length;
+      const taken = new Set([...parts.values()].map((p) => p.refdes));
+      for (const rail of rails) {
+        const symbol = circuit.components.get(rail);
+        const pin = nets.get(`${rail}.${symbol.terminalDefs[0].name}`)?.terminals.find((t) => parts.has(t.comp));
+        if (!pin) continue;
+        const onNet = sourceNets.get(`${parts.get(pin.comp).refdes}.${pin.term}`);
+        const twin = onNet?.terminals.map((t) => source.circuit.components.get(t.comp))
+          .find((c) => c && c.type === symbol.type && !taken.has(c.refdes) && !exclude.includes(c.refdes));
+        if (!twin) continue;
+        parts.set(rail, { refdes: twin.refdes, swapped: false });
+        taken.add(twin.refdes);
+      }
+      const refs = [...parts.keys()].sort();
+      const drawing = drawingOf(circuit, refs, source.circuit, { parts }, searchContext(circuit, refs));
+      ways.push({ refs, drawing, parts, disagree, rank, source });
+    }
+  }
+  if (!ways.length) return null;
+  ways.sort((a, b) => a.disagree - b.disagree || a.rank - b.rank || b.refs.length - a.refs.length || a.drawing.cost - b.drawing.cost);
+  const [best] = ways;
+  const now = (ref) => circuit.components.get(ref).transform;
+  if (sameShape(cellParts, now, (ref) => best.drawing.parts.get(ref))) return null;
+  const { source } = best;
+  return {
+    refs: best.refs,
+    candidate: {
+      key: drawingKey(best.refs, best.drawing),
+      source: { name: source.name, path: source.path || null, builtIn: !!source.builtIn, current: source.circuit === circuit },
+      sourceCircuit: source.circuit,
+      parts: best.refs.map((ref) => best.parts.get(ref).refdes),
+      count: 1,
+      drawing: best.drawing,
+    },
+  };
+}
+
+/**
+ * Arranging the cells among the parts each on its own, as its best drawing
+ * draws it, where it is: a candidate `{ key, cells, source, parts, count }`,
+ * `cells` listing `{ name, refs, key, like }` (`like` the drawing's parts and
+ * source); null when the cells found are the parts whole, or each is drawn
+ * as its drawing draws it already. Returns `{ candidate, found }`, `found`
+ * the number of cells found.
+ */
+function cellsCandidate(circuit, parts, sources, patterns) {
+  const cells = cellsIn(circuit, parts, patterns);
+  if (!cells.length || (cells.length === 1 && cells[0].refs.length === parts.length)) return { candidate: null, found: 0 };
+  const plan = [];
+  for (const cell of cells) {
+    const best = cellDrawing(circuit, cell, sources);
+    if (!best) continue;
+    plan.push({ name: cell.name, cell, refs: best.refs, key: best.candidate.key, like: { parts: best.candidate.parts, source: best.candidate.source } });
+  }
+  if (!plan.length) return { candidate: null, found: cells.length };
+  return { found: cells.length, candidate: {
+    key: `cells:${plan.map((cell) => `${cell.refs.join(',')}=${cell.key}`).join('|')}`,
+    cells: plan,
+    // The drawing itself among them is whichever drawing it is applied to
+    // (the editor previews on a copy).
+    sources: sources.map((source) => (source.circuit === circuit ? { ...source, circuit: null, self: true } : source)),
+    source: { name: 'cells', builtIn: false, current: false, cells: true },
+    parts: plan.flatMap((cell) => cell.refs),
+    count: 1,
+  } };
+}
+
+/** Arrange each cell of a cells candidate in turn, finding its drawing again
+ *  as the drawing stands after the ones before. All or nothing. */
+function applyCells(circuit, refs, candidate) {
+  const restore = checkpoint(circuit, arrangeableRefs(circuit, refs));
+  const sources = candidate.sources.map((source) => (source.self ? { ...source, circuit } : source));
+  try {
+    for (const { cell } of candidate.cells) {
+      const best = cellDrawing(circuit, cell, sources);
+      if (best) applyArrangement(circuit, best.refs, best.candidate);
+    }
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  return { cells: candidate.cells.length };
 }

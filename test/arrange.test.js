@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { Circuit } from '../src/core/model.js';
 import { runCommand } from '../src/core/commands.js';
 import { findTopology, wiresJoining } from '../src/core/topology-match.js';
-import { applyArrangement, arrangementCandidates } from '../src/core/arrange.js';
-import { builtInDrawings } from '../src/core/arrange-builtins.js';
+import { applyArrangement, arrangementCandidates, cellsIn } from '../src/core/arrange.js';
+import { builtInDrawings, cellPatterns } from '../src/core/arrange-builtins.js';
 
 const run = (circuit, ...lines) => lines.map((line) => runCommand(circuit, line));
 
@@ -26,6 +26,11 @@ function messyMirror(circuit = new Circuit()) {
     'connect MA.g MB.g', 'connect MA.d MA.g', 'connect MB.d RL.b');
   return circuit;
 }
+
+/** Design Check's overlaps and crossings (its report says "no bbox
+ *  overlaps" when there are none). */
+const problems = (circuit) => runCommand(circuit, 'eval').text.split('\n')
+  .filter((line) => /overlap|crossing/i.test(line) && !/^\s*no /.test(line));
 
 const relative = (circuit, refs) => {
   const base = circuit.components.get(refs[0]).transform;
@@ -123,7 +128,7 @@ test('arranging draws the parts, their labels, and the wires among them as the e
   // The load is still wired to the output, from where it is.
   assert.deepEqual(circuit.components.get('RL').transform, { x: 480, y: -480, rotation: 90, mirrorX: false, mirrorY: false });
   assert.ok(circuit._pathsConnectedToTerminals(circuit.netOfTerminal({ comp: 'MB', term: 'd' })));
-  assert.ok(!runCommand(circuit, 'eval').text.match(/overlap|crossing/i));
+  assert.deepEqual(problems(circuit), []);
 });
 
 test('the open design comes first, a way drawn several times is counted once, and the parts\' own way is left out', () => {
@@ -186,7 +191,7 @@ test('arrange lists the ways and draws the one picked; with none it says so', ()
   assert.match(done.text, /arranged MA, MB like Q1, Q2 in this design/);
   assert.deepEqual(relative(circuit, ['MA', 'MB']), relative(circuit, ['Q1', 'Q2']));
   assert.throws(() => runCommand(circuit, 'arrange MA'), /usage: arrange/);
-  assert.throws(() => runCommand(circuit, 'arrange MA MB'), /MA, MB are drawn as every other drawing of them already/);
+  assert.throws(() => runCommand(circuit, 'arrange MA MB'), /MA, MB are drawn like the other drawings of them already/);
   run(circuit, 'add nmos U1 --at 0 1200', 'add nmos U2 --at 0 1600', 'connect U1.g U2.g', 'connect U1.d U1.g');
   assert.throws(() => runCommand(circuit, 'arrange MA MB --pick 9'), /--pick is 1 to 1/);
   const lone = new Circuit();
@@ -210,4 +215,92 @@ test('every built-in drawing is clean and recognizes itself drawn anyhow', () =>
     const refs = [...circuit.components.values()].filter((c) => c.type !== 'solder').map((c) => c.refdes);
     assert.ok(findTopology(circuit, refs, circuit).length >= 1, name);
   }
+});
+
+// ----- cells inside a larger selection ----------------------------------------
+
+/** Each pin's electrical net, as the sets of pins sharing one: what arranging
+ *  must never change. */
+const connectivity = (circuit) => {
+  const groups = new Map();
+  for (const net of circuit.nets.values()) {
+    const key = circuit.netGroupKey(net);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(...net.terminals.map((t) => `${t.comp}.${t.term}`));
+  }
+  return [...groups.values()].map((pins) => pins.sort().join(' ')).sort();
+};
+
+/** A five-transistor OTA wired as a buffer (M3's gate on the output), drawn
+ *  anyhow, with its ports. */
+function messyBuffer() {
+  const circuit = new Circuit();
+  run(circuit, 'add nmos M1 --at 240 400', 'add nmos M2 --at -200 0', 'add nmos M3 --at 560 -80', 'add pmos M4 --at -120 -560', 'add pmos M5 --at 640 -480 --mirrorX',
+    'add supply --at -120 -800', 'add supply --at 640 -720', 'add ground --at 240 640', 'add input VIP --at -560 0', 'add input VBN --at -120 400', 'add output VOUT --at 1000 -280',
+    'connect M4.g M5.g', 'connect M4.d M4.g', 'connect M4.d M2.d', 'connect M5.d M3.d', 'connect M3.g M3.d', 'connect M2.s M3.s M1.d', 'connect M1.s GROUND1.gnd',
+    'connect M4.s SUPPLY1.p', 'connect M5.s SUPPLY2.p', 'connect VIP.p M2.g', 'connect VBN.p M1.g', 'connect M3.d VOUT.p');
+  return circuit;
+}
+const BUFFER = ['M1', 'M2', 'M3', 'M4', 'M5', 'GROUND1', 'SUPPLY1', 'SUPPLY2'];
+
+/** A pair and its mirror load drawn neatly elsewhere, beside two grounded
+ *  transistors with tied gates (a mirror's legs: their sources also meet). */
+function neatCells() {
+  const circuit = new Circuit();
+  run(circuit, 'add nmos N1 --at 0 0', 'add nmos N2 --at 320 0 --mirrorX', 'add current_source I1 --at 160 280', 'add ground --at 160 400',
+    'connect N1.s N2.s I1.a', 'connect I1.b GROUND1.gnd',
+    'add pmos P1 --at 0 -320 --mirrorX', 'add pmos P2 --at 320 -320', 'add supply --at 0 -440', 'add supply --at 320 -440',
+    'connect P1.g P2.g', 'connect P1.d P1.g', 'connect P1.s SUPPLY1.p', 'connect P2.s SUPPLY2.p', 'connect P1.d N1.d', 'connect P2.d N2.d',
+    'add nmos L1 --at 1200 0', 'add nmos L2 --at 1520 0', 'add ground --at 1200 120', 'add ground --at 1520 120',
+    'connect L1.g L2.g', 'connect L1.s GROUND2.gnd', 'connect L2.s GROUND3.gnd');
+  return circuit;
+}
+
+test('the cells in a selection are found by kind, a part in one cell, with the rail symbols wired to them', () => {
+  const cells = cellsIn(messyBuffer(), BUFFER, cellPatterns());
+  assert.deepEqual(cells.map((c) => [c.name, c.refs]), [
+    ['PMOS current mirror', ['M4', 'M5', 'SUPPLY1', 'SUPPLY2']],
+    ['NMOS differential pair', ['M2', 'M3']],
+  ]);
+});
+
+test('by cells: each cell is drawn as its closest drawing draws it, a pair whose output feeds back like a pair', () => {
+  const circuit = messyBuffer();
+  const before = connectivity(circuit);
+  const source = neatCells();
+  const { candidates } = arrangementCandidates(circuit, BUFFER, [{ circuit: source, name: 'neat' }], { patterns: cellPatterns() });
+  const cells = candidates.find((c) => c.cells);
+  assert.deepEqual(cells.cells.map((cell) => [cell.refs, cell.like.parts]), [
+    [['M4', 'M5', 'SUPPLY1', 'SUPPLY2'], ['P1', 'P2', 'SUPPLY1', 'SUPPLY2']],
+    [['M2', 'M3'], ['N1', 'N2']],
+  ], 'the pair is drawn like N1, N2, not like the grounded L1, L2');
+  applyArrangement(circuit, BUFFER, cells);
+  assert.deepEqual(relative(circuit, ['M4', 'M5', 'SUPPLY1', 'SUPPLY2']), relative(source, ['P1', 'P2', 'SUPPLY1', 'SUPPLY2']));
+  assert.deepEqual(relative(circuit, ['M2', 'M3']), relative(source, ['N1', 'N2']));
+  assert.deepEqual(connectivity(circuit), before, 'the connections are as they were');
+  for (const net of circuit.nets.values()) {
+    if (net.terminals.length > 1) assert.ok(circuit._pathsConnectedToTerminals(net), `${net.name || net.id} reaches its pins`);
+  }
+  assert.deepEqual(problems(circuit), []);
+});
+
+test('by cells leaves a cell drawn in its drawing\'s shape as it is, spacing aside', () => {
+  const circuit = new Circuit();
+  // The pair and mirror of neatCells, wider apart: drawn alike.
+  run(circuit, 'add nmos M2 --at 0 0', 'add nmos M3 --at 480 0 --mirrorX', 'add nmos M1 --at 240 280', 'connect M2.s M3.s M1.d',
+    'add pmos M4 --at 0 -400 --mirrorX', 'add pmos M5 --at 480 -400', 'connect M4.g M5.g', 'connect M4.d M4.g', 'connect M4.d M2.d', 'connect M5.d M3.d', 'connect M3.g M3.d');
+  const found = arrangementCandidates(circuit, ['M1', 'M2', 'M3', 'M4', 'M5'], [{ circuit: neatCells(), name: 'neat' }], { patterns: cellPatterns() });
+  assert.deepEqual(found.candidates.filter((c) => c.cells), []);
+  assert.equal(found.alike, 1);
+});
+
+test('arrange lists arranging by cells, and draws it as one step', () => {
+  const circuit = messyBuffer();
+  const designs = [{ circuit: neatCells(), name: 'neat' }];
+  const listed = runCommand(circuit, `arrange ${BUFFER.join(' ')} --list`, { designs });
+  assert.match(listed.text, /by cells: M4, M5, SUPPLY1, SUPPLY2 like P1, P2, SUPPLY1, SUPPLY2 in neat; M2, M3 like N1, N2 in neat/);
+  const pick = listed.json.findIndex((c) => c.cells) + 1;
+  const done = runCommand(circuit, `arrange ${BUFFER.join(' ')} --pick ${pick}`, { designs });
+  assert.equal(done.mutated, true);
+  assert.match(done.text, /by cells/);
 });
