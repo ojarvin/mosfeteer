@@ -38,8 +38,9 @@ Core keyboard vocabulary:
 
 The side panel docks beside the drawing; the beats, timing diagram,
 analysis, and reference windows are floating windows over it
-(`src/web/floating-window.js`): one title bar to drag, a dock button and a
-close × at its right, toggled from the toolbar's window group, the More
+(`src/web/floating-window.js`): one title bar to drag, holding only its
+title, a dock button, and a close × at its right (its actions are in a
+footer), toggled from the toolbar's window group, the More
 menu, or their keys. Docked (the button, or a drag to the pane's right
 edge), a window becomes a section of the side panel that its title bar
 folds and its top edge resizes; dragging the title bar out floats it

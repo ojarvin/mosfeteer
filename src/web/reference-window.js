@@ -330,8 +330,14 @@ function createWindow(doc = null, { model = false } = {}) {
     title.removeAttribute('title');
     title.tabIndex = -1;
     close.setAttribute('aria-label', 'Close the small-signal model');
-    header.append(title, fitButton, copy, close);
-  } else header.append(title, fitButton, copy, swap, another, clear, close);
+    header.append(title, close);
+  } else header.append(title, close);
+  const footer = document.createElement('footer');
+  footer.className = 'window-footer';
+  const spacer = document.createElement('span');
+  spacer.className = 'window-footer-spacer';
+  if (model) footer.append(fitButton, copy);
+  else footer.append(fitButton, copy, swap, another, spacer, clear);
   const viewport = document.createElement('div');
   viewport.className = 'reference-viewport';
   const image = document.createElement('img');
@@ -345,7 +351,7 @@ function createWindow(doc = null, { model = false } = {}) {
   zoomBox.className = 'reference-zoom-box';
   zoomBox.hidden = true;
   viewport.append(image, message, zoomBox);
-  el.append(header, viewport);
+  el.append(header, viewport, footer);
   el.hidden = hidden;
   pane.appendChild(el);
 

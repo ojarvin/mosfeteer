@@ -122,8 +122,9 @@ function build() {
   const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
   const node = el('section', { class: 'floating-window calculator-window', 'aria-labelledby': 'calculator-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), clear, close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), close]),
     el('div', { class: 'calculator-body' }, [empty, list, input]),
+    el('footer', { class: 'window-footer' }, [clear]),
   ]);
   node.style.setProperty('--calculator-rows', String(SHOWN));
   input.addEventListener('keydown', onKey);

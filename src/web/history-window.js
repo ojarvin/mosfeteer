@@ -302,8 +302,9 @@ function build() {
   const message = el('p', { class: 'field-hint history-message' });
   const list = el('ul', { class: 'history-list' });
   const node = el('section', { class: 'floating-window history-window', 'aria-labelledby': 'history-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'history-title', class: 'floating-window-title', text: 'History' }), checkpoint, close]),
-    el('div', { class: 'history-body' }, [top, message, list, clear]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'history-title', class: 'floating-window-title', text: 'History' }), close]),
+    el('div', { class: 'history-body' }, [top, message, list]),
+    el('footer', { class: 'window-footer' }, [clear, el('span', { class: 'window-footer-spacer' }), checkpoint]),
   ]);
   checkpoint.addEventListener('click', () => { form = { id: null }; renderList(); });
   clear.addEventListener('click', () => void removeSavePoints());

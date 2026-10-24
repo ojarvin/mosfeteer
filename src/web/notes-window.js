@@ -253,8 +253,9 @@ function build() {
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: '# Bias\nM1 sets the tail current: see @M1, [[bias-gen]], $I_D = \\frac{1}{2}\\mu C_{ox} V_{ov}^2$' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), copy, edit, close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
+    el('footer', { class: 'window-footer' }, [copy, edit]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);

@@ -1054,6 +1054,23 @@ button:disabled {
   font-size: var(--text-xs);
 }
 
+/* A window's actions sit in its footer; its title bar holds only the title,
+   dock, and close. */
+.window-footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.window-footer-spacer {
+  flex: 1 1 auto;
+}
+
 .calculator-body {
   display: flex;
   flex: 1 1 auto;
@@ -1262,11 +1279,6 @@ button:disabled {
 .history-window {
   width: min(24rem, calc(100% - 16px));
   min-height: 0;
-}
-
-.history-clear {
-  align-self: flex-start;
-  margin-top: 8px;
 }
 
 .history-body {

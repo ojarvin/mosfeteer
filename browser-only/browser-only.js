@@ -51820,8 +51820,9 @@ function build() {
   const empty = el('p', { class: 'field-hint calculator-empty', text: 'Type a calculation and press Enter: 20*log(123), 1/(2pi*10k*1n), R = 4.7k, ans/2.' });
   const input = el('input', { type: 'text', class: 'calculator-line', 'aria-label': 'Calculation', placeholder: 'e.g. 20*log(123)', spellcheck: 'false', autocomplete: 'off' });
   const node = el('section', { class: 'floating-window calculator-window', 'aria-labelledby': 'calculator-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), clear, close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'calculator-title', class: 'floating-window-title', text: 'Calculator' }), close]),
     el('div', { class: 'calculator-body' }, [empty, list, input]),
+    el('footer', { class: 'window-footer' }, [clear]),
   ]);
   node.style.setProperty('--calculator-rows', String(SHOWN));
   input.addEventListener('keydown', onKey);
@@ -61072,8 +61073,9 @@ function build() {
   const message = el('p', { class: 'field-hint history-message' });
   const list = el('ul', { class: 'history-list' });
   const node = el('section', { class: 'floating-window history-window', 'aria-labelledby': 'history-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'history-title', class: 'floating-window-title', text: 'History' }), checkpoint, close]),
-    el('div', { class: 'history-body' }, [top, message, list, clear]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'history-title', class: 'floating-window-title', text: 'History' }), close]),
+    el('div', { class: 'history-body' }, [top, message, list]),
+    el('footer', { class: 'window-footer' }, [clear, el('span', { class: 'window-footer-spacer' }), checkpoint]),
   ]);
   checkpoint.addEventListener('click', () => { form = { id: null }; renderList(); });
   clear.addEventListener('click', () => void removeSavePoints());
@@ -72325,8 +72327,9 @@ function build() {
   const empty = el('p', { class: 'field-hint notes-empty', text: 'Double-click to write. Markdown with $math$; @M1 mentions a part or net, [[amp]] links a design.' });
   const source = el('textarea', { class: 'notes-source', 'aria-label': 'Notes (Markdown)', spellcheck: 'true', hidden: true, placeholder: '# Bias\nM1 sets the tail current: see @M1, [[bias-gen]], $I_D = \\frac{1}{2}\\mu C_{ox} V_{ov}^2$' });
   const node = el('section', { class: 'floating-window notes-window', 'aria-labelledby': 'notes-title', hidden: true }, [
-    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), copy, edit, close]),
+    el('header', { class: 'floating-window-header' }, [el('h2', { id: 'notes-title', class: 'floating-window-title', text: 'Notes' }), close]),
     el('div', { class: 'notes-body' }, [empty, view, source]),
+    el('footer', { class: 'window-footer' }, [copy, edit]),
   ]);
   edit.addEventListener('click', () => (editing ? stopEditing() : startEditing()));
   copy.addEventListener('click', copyMarkdown);
@@ -75919,8 +75922,14 @@ function createWindow(doc = null, { model = false } = {}) {
     title.removeAttribute('title');
     title.tabIndex = -1;
     close.setAttribute('aria-label', 'Close the small-signal model');
-    header.append(title, fitButton, copy, close);
-  } else header.append(title, fitButton, copy, swap, another, clear, close);
+    header.append(title, close);
+  } else header.append(title, close);
+  const footer = document.createElement('footer');
+  footer.className = 'window-footer';
+  const spacer = document.createElement('span');
+  spacer.className = 'window-footer-spacer';
+  if (model) footer.append(fitButton, copy);
+  else footer.append(fitButton, copy, swap, another, spacer, clear);
   const viewport = document.createElement('div');
   viewport.className = 'reference-viewport';
   const image = document.createElement('img');
@@ -75934,7 +75943,7 @@ function createWindow(doc = null, { model = false } = {}) {
   zoomBox.className = 'reference-zoom-box';
   zoomBox.hidden = true;
   viewport.append(image, message, zoomBox);
-  el.append(header, viewport);
+  el.append(header, viewport, footer);
   el.hidden = hidden;
   pane.appendChild(el);
 
@@ -79678,7 +79687,8 @@ function build() {
   const annotateButton = el('button', { type: 'button', class: 'sizing-annotate', title: 'Put a parts table on the drawing', text: 'Annotate', onclick: annotate });
   const node = el('section', { class: 'floating-window sizing-window', 'aria-labelledby': 'sizing-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'sizing-title', class: 'floating-window-title', text: 'Sizing' }), close]),
-    el('div', { class: 'sizing-body' }, [filter, grid, empty, status, hint, el('div', { class: 'dialog-actions' }, [annotateButton])]),
+    el('div', { class: 'sizing-body' }, [filter, grid, empty, status, hint]),
+    el('footer', { class: 'window-footer' }, [annotateButton]),
   ]);
   filter.addEventListener('input', redraw);
   filter.addEventListener('keydown', (ev) => {

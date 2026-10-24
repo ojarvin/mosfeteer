@@ -15,21 +15,21 @@ describe('floating windows', { skip: browserSkip() }, () => {
   const shown = (selector) => h.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return !!el && !el.hidden && !!el.offsetParent; })()`);
   const closeAll = () => h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden]) .floating-window-close')].forEach((b) => b.click())`);
 
-  test('every window has one title bar, a dock button and a close × at its right, and floats over the drawing', async () => {
+  test('every window has one title bar holding only its title, a dock button, and a close ×, and floats over the drawing', async () => {
     await h.open('beats');
-    for (const key of ['S', 'B', 'K', 'W', 'E']) await h.key(key, { shiftKey: true });
+    for (const key of ['S', 'B', 'K', 'W', 'E', 'Y', 'Z', 'V']) await h.key(key, { shiftKey: true });
     await h.key('N', { shiftKey: true });
     await h.settle();
     const windows = await h.evaluate(`[...document.querySelectorAll('.floating-window')].filter((w) => !w.hidden).map((w) => {
       const header = w.querySelector('.floating-window-header');
-      const buttons = [...header.querySelectorAll(':scope > button')].map((b) => b.className.split(' ')[0]);
-      return { cls: w.className.split(' ')[1], headers: w.querySelectorAll('.floating-window-header').length, title: !!header.querySelector('.floating-window-title'), last: buttons.slice(-2), close: header.querySelector('.floating-window-close')?.textContent, inPane: !!w.closest('.canvas-pane'), closeButtons: [...w.querySelectorAll('button')].filter((b) => /^close$/i.test(b.textContent.trim())).length };
+      const buttons = [...header.querySelectorAll(':scope > button:not(.floating-window-title)')].map((b) => b.className.split(' ')[0]);
+      return { cls: w.className.split(' ')[1], headers: w.querySelectorAll('.floating-window-header').length, title: !!header.querySelector('.floating-window-title'), buttons, close: header.querySelector('.floating-window-close')?.textContent, inPane: !!w.closest('.canvas-pane'), closeButtons: [...w.querySelectorAll('button')].filter((b) => /^close$/i.test(b.textContent.trim())).length };
     })`);
-    assert.ok(windows.length >= 5, JSON.stringify(windows));
+    assert.ok(windows.length >= 8, JSON.stringify(windows));
     for (const w of windows) {
       assert.equal(w.headers, 1, w.cls);
       assert.equal(w.title, true, w.cls);
-      assert.deepEqual(w.last, ['floating-window-dock', 'floating-window-close'], w.cls);
+      assert.deepEqual(w.buttons, ['floating-window-dock', 'floating-window-close'], `${w.cls}: its actions are in its footer`);
       assert.equal(w.close, '×', w.cls);
       assert.equal(w.inPane, true, w.cls);
       assert.equal(w.closeButtons, 0, `${w.cls}: no second Close at the bottom`);

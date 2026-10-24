@@ -631,7 +631,8 @@ function build() {
   const annotateButton = el('button', { type: 'button', class: 'sizing-annotate', title: 'Put a parts table on the drawing', text: 'Annotate', onclick: annotate });
   const node = el('section', { class: 'floating-window sizing-window', 'aria-labelledby': 'sizing-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'sizing-title', class: 'floating-window-title', text: 'Sizing' }), close]),
-    el('div', { class: 'sizing-body' }, [filter, grid, empty, status, hint, el('div', { class: 'dialog-actions' }, [annotateButton])]),
+    el('div', { class: 'sizing-body' }, [filter, grid, empty, status, hint]),
+    el('footer', { class: 'window-footer' }, [annotateButton]),
   ]);
   filter.addEventListener('input', redraw);
   filter.addEventListener('keydown', (ev) => {
