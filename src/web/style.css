@@ -443,6 +443,12 @@ button:focus-visible {
   text-overflow: ellipsis;
 }
 
+/* A segment that does something (Taller, Shorter) rather than chooses
+   something reads as a button, in the text color, not as a choice not made. */
+.segmented > button:not([aria-pressed], [aria-selected], [role="tab"], :disabled) {
+  color: var(--text);
+}
+
 .segmented > button:hover:not([aria-pressed="true"], [aria-selected="true"]) {
   color: var(--text);
   background: transparent;

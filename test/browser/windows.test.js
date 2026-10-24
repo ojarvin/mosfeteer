@@ -26,6 +26,13 @@ describe('floating windows', { skip: browserSkip() }, () => {
       return { cls: w.className.split(' ')[1], headers: w.querySelectorAll('.floating-window-header').length, title: !!header.querySelector('.floating-window-title'), buttons, close: header.querySelector('.floating-window-close')?.textContent, inPane: !!w.closest('.canvas-pane'), closeButtons: [...w.querySelectorAll('button')].filter((b) => /^close$/i.test(b.textContent.trim())).length };
     })`);
     assert.ok(windows.length >= 8, JSON.stringify(windows));
+    // At most one filled (primary) button in a window.
+    const primaries = await h.evaluate(`[...document.querySelectorAll('.floating-window:not([hidden])')].map((w) => [w.className.split(' ')[1], [...w.querySelectorAll('.primary-action')].filter((b) => b.offsetParent).length])`);
+    for (const [cls, count] of primaries) assert.ok(count <= 1, `${cls}: ${count} primary buttons`);
+    // The timing editor's Taller is a button to press, not a choice not made.
+    const color = (selector) => h.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).color`);
+    const action = await h.evaluate(`(() => { const b = [...document.querySelectorAll('.floating-window .segmented > button')].find((b) => ['Taller', 'Shorter'].includes(b.textContent.trim()) && !b.disabled && b.offsetParent); return b ? getComputedStyle(b).color : null; })()`);
+    if (action) assert.equal(action, await color('.floating-window-title'));
     for (const w of windows) {
       assert.equal(w.headers, 1, w.cls);
       assert.equal(w.title, true, w.cls);
