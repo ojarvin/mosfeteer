@@ -23,6 +23,8 @@ import { RENUMBER_ORDERS, renumberParts } from './renumber.js';
 import { swapCandidates, swapComponentType } from './swap.js';
 import { PIN_RAIL_TYPES, addPinRail } from './pin-rails.js';
 import { fixAllIssues, tidySelection } from './tidy.js';
+import { applyArrangement, arrangementCandidates } from './arrange.js';
+import { builtInDrawings } from './arrange-builtins.js';
 import { arrangeFigures, figureBounds, listFigures } from './figures.js';
 import { findInLabels, replaceInLabels } from './label-search.js';
 import { normalizeNotes, notesMarkdown } from './notes.js';
@@ -106,6 +108,8 @@ const FLAG_ARITY = {
   break: 1,
   clear: 1,
   arrange: 0,
+  list: 0,
+  pick: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -500,6 +504,9 @@ export function commandHelp() {
     '  history pin|unpin|remove|restore ENTRY [NAME] [--comment TEXT] - change an entry (its id, or a checkpoint\'s name);',
     '                                   pin also renames one, restore brings its drawing back (the one replaced stays a save point)',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
+    '  arrange <refdes> ... [--list] [--pick N] - draw the parts as they are drawn elsewhere with the same connections',
+    '                                   (this design, the workspace\'s other designs newest first, then the built-in drawings);',
+    '                                   --list lists the ways, --pick N draws the Nth (default the first)',
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
     '  fix                            - apply the safe Design Check repairs (reroute, snap to grid, move label)',
@@ -1066,6 +1073,22 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const { rerouted, moved } = tidySelection(circuit, { refs: pos });
     return result(`rerouted ${rerouted.length} net${rerouted.length === 1 ? '' : 's'}, moved ${moved.length} label${moved.length === 1 ? '' : 's'}`, { rerouted, moved }, rerouted.length + moved.length > 0);
   }
+  if (cmd === 'arrange') {
+    if (pos.length < 2) throw new Error('usage: arrange <refdes> <refdes> ... [--list] [--pick N]');
+    for (const refdes of pos) circuit.getComponent(refdes);
+    const sources = [{ circuit, name: 'this design' }, ...(io?.designs || []), ...builtInDrawings()];
+    const { candidates, alike } = arrangementCandidates(circuit, pos, sources);
+    const none = alike ? `${pos.join(', ')} are drawn as every other drawing of them already` : `no other drawing of ${pos.join(', ')} with the same connections`;
+    const rows = candidates.map((c, i) => `${i + 1}. like ${c.parts.join(', ')} in ${c.source.name}${c.count > 1 ? ` (drawn so ${c.count} times)` : ''}`);
+    const listing = candidates.map((c) => ({ source: c.source.name, path: c.source.path, builtIn: c.source.builtIn, parts: c.parts, count: c.count }));
+    if (flags.list) return result(rows.join('\n') || none, listing);
+    if (!candidates.length) throw new Error(none);
+    const pick = flags.pick ? Number(flags.pick[0]) : 1;
+    if (!Number.isInteger(pick) || pick < 1 || pick > candidates.length) throw new Error(`--pick is 1 to ${candidates.length}`);
+    const chosen = candidates[pick - 1];
+    applyArrangement(circuit, pos, chosen);
+    return result(`arranged ${pos.join(', ')} like ${chosen.parts.join(', ')} in ${chosen.source.name}`, listing[pick - 1], true);
+  }
   if (cmd === 'figures') {
     if (flags.arrange) {
       const moved = arrangeFigures(circuit);
@@ -1245,7 +1268,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.svg';
     const beat = flags.beat ? resolveBeat(circuit, beatIndex(circuit, flags.beat[0])) : null;
     const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat, timing: timingBeatBands(circuit, beat.index) } } : {}) });
-    if (io) {
+    if (io?.writeTextFile) {
       io.writeTextFile(file, svg);
       return result(`wrote ${file} (${svg.length} bytes)`, null);
     }
@@ -1254,14 +1277,14 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'save') {
     const file = flags.file ? flags.file[0] : pos[0];
     if (!file) throw new Error('usage: save <file>');
-    if (!io) return result('save requires CLI (file I/O)', null);
+    if (!io?.writeTextFile) return result('save requires CLI (file I/O)', null);
     io.writeTextFile(file, JSON.stringify(circuit.toJSON(), null, 2));
     return result(`saved state to ${file}`, null);
   }
   if (cmd === 'load') {
     const file = flags.file ? flags.file[0] : pos[0];
     if (!file) throw new Error('usage: load <file>');
-    if (!io) return result('load requires CLI (file I/O)', null);
+    if (!io?.readTextFile) return result('load requires CLI (file I/O)', null);
     const data = JSON.parse(io.readTextFile(file));
     const fresh = Circuit.fromJSON(data);
     circuit.components = fresh.components;

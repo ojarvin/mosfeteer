@@ -79,6 +79,7 @@ import { atlasOpen, installAtlas, onAtlasKey, openAtlas } from './atlas.js';
 import { revealStartup } from './startup.js';
 import { toggleSelectedLabelFont, updateStyleControls, installStyleControls } from './style-controls.js';
 import { onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } from './insert-menu.js';
+import { openArrangePicker } from './arrange-ui.js';
 import { toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } from './toolbar-ui.js';
 import { installNetBeams, mountNetBeams, syncNetBeams } from './net-beams.js';
 import { shortNetsAtPlacedSolder, askNameForNewNetNameConflict } from './net-names.js';
@@ -6771,6 +6772,13 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'T') {
     tidyNow();
+    return;
+  }
+
+  // Shift+Q: arrange the selection like another drawing of it (q changes a
+  // part's type; Shift+Q changes how a group is drawn).
+  if (key === 'Q') {
+    void openArrangePicker();
     return;
   }
 

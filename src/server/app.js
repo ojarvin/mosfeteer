@@ -459,6 +459,21 @@ export async function startApp({
     return { dir, paths: Object.values(paths), notes };
   }
 
+  /** The workspace's other designs, newest first, for `arrange` to search
+   *  (only read when a command needs them). A file that does not load as a
+   *  design is passed over. */
+  async function otherDesigns(path) {
+    const designs = [];
+    for (const document of await listDocuments(workspace())) {
+      if (document.path === path || document.kind !== 'circuit') continue;
+      try {
+        const circuit = loadDocument(await readDocumentFile(document.path));
+        designs.push({ circuit, name: document.name, path: document.path, time: (await stat(document.path)).mtimeMs });
+      } catch { /* unreadable: not searched */ }
+    }
+    return designs.sort((a, b) => b.time - a.time);
+  }
+
   async function runCircuitCommands(req, res, name, path) {
     const body = await requestBody(req);
     const rawCmd = body.cmd;
@@ -478,9 +493,10 @@ export async function startApp({
       }
       const results = [];
       let mutated = false;
+      const io = lines.some((line) => /^\s*arrange\b/i.test(line)) ? { designs: await otherDesigns(path) } : undefined;
       for (const line of lines) {
         try {
-          const result = runCommand(circuit, line);
+          const result = runCommand(circuit, line, io);
           results.push({ ok: true, text: result.text, json: result.json, mutated: !!result.mutated });
           if (result.mutated) mutated = true;
         } catch (error) {

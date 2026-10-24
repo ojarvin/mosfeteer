@@ -22,6 +22,7 @@ import { appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu } from './hier
 import { appendBeatContextItems, plainMarkup } from './beats-ui.js';
 import { copyAsImage } from './export-ui.js';
 import { openSwapPicker } from './insert-menu.js';
+import { openArrangePicker } from './arrange-ui.js';
 import { shortPlacementLabel } from './toolbar.js';
 import { swapCandidates } from '../core/swap.js';
 import { appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } from './side-panel.js';
@@ -717,6 +718,9 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl/Cmd+R' });
     if (swapCandidates(comp.type).length) {
       appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'q' });
+    }
+    if (selectedComps().length > 1 && selectedComps().includes(comp)) {
+      appendContextItem(group, 'Arrange like…', later(() => void openArrangePicker()), { shortcut: 'Shift+Q' });
     }
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
     appendLinkContextItems(group, comp);

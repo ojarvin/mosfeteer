@@ -112,10 +112,13 @@ annotation.
 
 ### State vs. file I/O
 
-`runCommand` accepts an optional `io` object (`writeTextFile`, `readTextFile`)
-used by `svg`, `save`, and `load`. Nothing in the app supplies one: the server
-saves every mutated result itself and the CLI is an HTTP client, so the seam
-exists only for an embedder that wants local file I/O. PNG export lives in the
+`runCommand` accepts an optional `io` object. `writeTextFile` and
+`readTextFile` are used by `svg`, `save`, and `load`; nothing in the app
+supplies them (the server saves mutated results itself and the CLI is an
+HTTP client), so that seam exists only for an embedder that wants local file
+I/O. `designs` (`{ circuit, name, path, time }`, newest first) is the
+workspace's other designs for `arrange`; the server reads them only for a
+batch that runs `arrange`. PNG export lives in the
 browser and `/api/export`, not here.
 
 ## Workflow

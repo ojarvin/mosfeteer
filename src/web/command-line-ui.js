@@ -27,6 +27,7 @@ import { enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkB
 import { copyAsImage } from './export-ui.js';
 import { pasteClipboard } from './copy-paste.js';
 import { openSwapPicker } from './insert-menu.js';
+import { openArrangePicker } from './arrange-ui.js';
 import { referenceWindowsShown, toggleReferenceWindows } from './reference-window.js';
 import { calculatorShown, toggleCalculator } from './calculator-window.js';
 import { notesShown, toggleNotes } from './notes-window.js';
@@ -128,6 +129,7 @@ export const ACTIONS = {
   'clear-highlights': () => removeAllNetHighlights(),
   stubs: () => stubSelection(),
   swap: () => openSwapPicker(swapTargets()),
+  'arrange-like': () => void openArrangePicker(),
   repeat: () => repeatLastAction(),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),

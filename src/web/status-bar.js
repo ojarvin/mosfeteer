@@ -122,7 +122,7 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
   }
   if (parts.length > 1) {
     add('m', 'move');
-    add('q', 'change type');
+    add('Shift+Q', 'arrange like');
     add('Shift+T', 'tidy');
     return hints;
   }

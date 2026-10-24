@@ -17679,6 +17679,508 @@ function buildTopologyIdentities(pipeline, options = {}) {
 
 };
 
+__modules["src/core/arrange-builtins.js"] = function (__require, __exports) {
+__exports.builtInDrawings = builtInDrawings;
+let Circuit; __bind(() => { ({ Circuit } = __require("src/core/model.js")); });
+let runCommand; __bind(() => { ({ runCommand } = __require("src/core/commands.js")); });
+/**
+ * The built-in drawings `arrange` offers when no design draws a topology:
+ * the common cells drawn as the style guide has them. They are drawings
+ * like any other, searched after the workspace's own, so a cell the user
+ * has drawn once is offered their way first.
+ */
+
+
+
+
+const CELLS = [
+  ['NMOS current mirror', [
+    'add nmos M1 --at 0 0 --mirrorX', 'add nmos M2 --at 400 0',
+    'add ground --at 0 160', 'add ground --at 400 160',
+    'connect M1.g M2.g', 'connect M1.d M1.g',
+    'connect M1.s GROUND1.gnd', 'connect M2.s GROUND2.gnd',
+  ]],
+  ['PMOS current mirror', [
+    'add pmos M1 --at 0 0 --mirrorX', 'add pmos M2 --at 400 0',
+    'add supply --at 0 -160', 'add supply --at 400 -160',
+    'connect M1.g M2.g', 'connect M1.d M1.g',
+    'connect M1.s SUPPLY1.p', 'connect M2.s SUPPLY2.p',
+  ]],
+  ['NMOS differential pair', [
+    'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0 --mirrorX',
+    'add current_source I1 --at 200 280', 'add ground --at 200 440',
+    'connect M1.s M2.s I1.a', 'connect I1.b GROUND1.gnd',
+  ]],
+  ['PMOS differential pair', [
+    'add pmos M1 --at 0 0', 'add pmos M2 --at 400 0 --mirrorX',
+    'add current_source I1 --at 200 -280', 'add supply --at 200 -440',
+    'connect M1.s M2.s I1.b', 'connect I1.a SUPPLY1.p',
+  ]],
+  ['NMOS cascode', [
+    'add nmos M1 --at 0 0', 'add nmos M2 --at 0 -240',
+    'add ground --at 0 160',
+    'connect M1.d M2.s', 'connect M1.s GROUND1.gnd',
+  ]],
+  ['Five-transistor OTA', [
+    'add nmos M1 --at 0 0', 'add nmos M2 --at 400 0 --mirrorX',
+    'add pmos M3 --at 0 -320 --mirrorX', 'add pmos M4 --at 400 -320',
+    'add nmos M5 --at 200 280',
+    'add supply --at 0 -480', 'add supply --at 400 -480', 'add ground --at 200 440',
+    'connect M1.d M3.d', 'connect M2.d M4.d',
+    'connect M3.g M4.g', 'connect M3.d M3.g',
+    'connect M3.s SUPPLY1.p', 'connect M4.s SUPPLY2.p',
+    'connect M1.s M2.s M5.d', 'connect M5.s GROUND1.gnd',
+  ]],
+];
+
+let drawings = null;
+
+/** The built-in drawings, as `arrangementCandidates` sources. */
+function builtInDrawings() {
+  if (!drawings) {
+    drawings = CELLS.map(([name, lines]) => {
+      const circuit = new Circuit();
+      for (const line of lines) runCommand(circuit, line);
+      return { circuit, name, builtIn: true };
+    });
+  }
+  return drawings;
+}
+
+};
+
+__modules["src/core/arrange.js"] = function (__require, __exports) {
+__exports.arrangeableRefs = arrangeableRefs;
+__exports.arrangementCandidates = arrangementCandidates;
+__exports.applyArrangement = applyArrangement;
+let applyTransform, rectsOverlap, segmentCrossesRect; __bind(() => { ({ applyTransform, rectsOverlap, segmentCrossesRect } = __require("src/core/geometry.js")); });
+let GRID, snap; __bind(() => { ({ GRID, snap } = __require("src/core/grid.js")); });
+let smartRoute; __bind(() => { ({ smartRoute } = __require("src/core/router.js")); });
+let captureComponentTerminalPositions, componentTerminalMoves; __bind(() => { ({ captureComponentTerminalPositions, componentTerminalMoves } = __require("src/core/part-moves.js")); });
+let findTopology, wiresJoining; __bind(() => { ({ findTopology, wiresJoining } = __require("src/core/topology-match.js")); });
+/**
+ * Arrange parts like an earlier drawing of their topology. The topology
+ * recognizer (topology-match.js) finds where else the selected parts are
+ * drawn with the same connections: elsewhere in the same design, in the
+ * other designs of the workspace, or in the built-in drawings
+ * (arrange-builtins.js). Each distinct way they are drawn is a candidate;
+ * applying one gives the parts the places and turns they have there, their
+ * own labels the places they have there, and the wires among them the
+ * wires drawn there. Wires to the rest of the drawing keep their far side
+ * and join the arranged parts by a fresh leg.
+ *
+ * What is learnt is only what is drawn: the candidates come from the
+ * designs themselves, the open one first and then the others by when they
+ * were last saved, so a drawing changed by hand is the next one offered.
+ */
+
+
+
+
+
+
+
+/** How far (in cells) an arrangement may shift from where the parts are to
+ *  keep clear of the rest of the drawing. */
+const CLEAR_REACH = 16;
+
+const pointKey = (p) => `${p.x},${p.y}`;
+
+/** A transform's linear part, as the images of the unit vectors. */
+function orientation(t) {
+  const o = applyTransform({ ...t, x: 0, y: 0 }, 0, 0);
+  const a = applyTransform({ ...t, x: 0, y: 0 }, 1, 0);
+  const b = applyTransform({ ...t, x: 0, y: 0 }, 0, 1);
+  return `${a.x - o.x},${a.y - o.y},${b.x - o.x},${b.y - o.y}`;
+}
+
+function ownedLabels(circuit) {
+  const byOwner = new Map();
+  for (const label of circuit.labels.values()) {
+    if (!label.owner) continue;
+    if (!byOwner.has(label.owner)) byOwner.set(label.owner, []);
+    byOwner.get(label.owner).push(label);
+  }
+  return byOwner;
+}
+
+/** A pin's net in `circuit`, or null. */
+function pinNets(circuit) {
+  const nets = new Map();
+  for (const net of circuit.nets.values()) {
+    for (const t of net.terminals) if (!nets.has(`${t.comp}.${t.term}`)) nets.set(`${t.comp}.${t.term}`, net);
+  }
+  return nets;
+}
+
+/**
+ * How a match draws the parts `refs`: `{ parts, labels, nets, offset, cost }`.
+ * `parts` maps each part to its transform there, `labels` each part to its
+ * own labels' `{ role, offset, align }` there, and `nets` lists each net of
+ * `circuit` the parts touch with its pins among them and the wires joining
+ * those pins there (null when the wires there do not join them). All in the
+ * source's coordinates; `offset` moves them onto the parts where they are,
+ * and `cost` is how far the parts would then move.
+ */
+function drawingOf(circuit, refs, source, match, context) {
+  const parts = new Map();
+  const labels = new Map();
+  const sourceLabels = context.labelsOf(source);
+  for (const ref of refs) {
+    const { refdes, swapped } = match.parts.get(ref);
+    const t = source.components.get(refdes).transform;
+    parts.set(ref, { ...t, rotation: swapped ? (t.rotation + 180) % 360 : t.rotation });
+    labels.set(ref, (sourceLabels.get(refdes) || []).map((label) => ({
+      role: label.role || null,
+      offset: label.offset ? (swapped ? { x: -label.offset.x || 0, y: -label.offset.y || 0 } : { ...label.offset }) : null,
+      align: label.align,
+    })));
+  }
+  const pinOf = (ref, term) => {
+    const { refdes, swapped } = match.parts.get(ref);
+    const component = source.components.get(refdes);
+    const names = component.terminalDefs.map((d) => d.name);
+    const mapped = swapped ? names[1 - names.indexOf(term)] : term;
+    return { refdes, term: mapped, point: component.terminalWorld(mapped) };
+  };
+  const sourceNets = context.netsOf(source);
+  const nets = [];
+  const wanted = new Set(refs);
+  for (const net of context.targetNets) {
+    const pins = net.terminals.filter((t) => wanted.has(t.comp));
+    const images = pins.map((t) => pinOf(t.comp, t.term));
+    const there = sourceNets.get(`${images[0].refdes}.${images[0].term}`);
+    const paths = there ? wiresJoining(there.paths(), images.map((p) => p.point)) : (pins.length > 1 ? null : []);
+    nets.push({ id: net.id, pins, external: pins.length < net.terminals.length, paths });
+  }
+  // The shift that best lays the drawing over the parts where they are.
+  let dx = 0;
+  let dy = 0;
+  for (const ref of refs) {
+    const now = circuit.components.get(ref).transform;
+    dx += now.x - parts.get(ref).x;
+    dy += now.y - parts.get(ref).y;
+  }
+  const offset = { x: snap(dx / refs.length), y: snap(dy / refs.length) };
+  let cost = 0;
+  for (const ref of refs) {
+    const now = circuit.components.get(ref).transform;
+    const t = parts.get(ref);
+    cost += Math.hypot(now.x - t.x - offset.x, now.y - t.y - offset.y);
+  }
+  return { parts, labels, nets, offset, cost };
+}
+
+/** What a drawing looks like, wherever it is: two drawings with one key
+ *  draw the parts alike. */
+function drawingKey(refs, drawing) {
+  const base = drawing.parts.get(refs[0]);
+  const rel = (p) => `${p.x - base.x},${p.y - base.y}`;
+  const parts = refs.map((ref) => {
+    const t = drawing.parts.get(ref);
+    const labels = drawing.labels.get(ref)
+      .map((l) => `${l.role || ''}:${l.offset ? pointKey(l.offset) : ''}:${l.align}`).sort().join('/');
+    return `${ref}@${rel(t)}#${orientation(t)}[${labels}]`;
+  });
+  const nets = drawing.nets.map((net) => {
+    if (!net.paths) return '?';
+    const steps = [];
+    for (const path of net.paths) {
+      for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1];
+        const b = path[i];
+        if (a.x !== b.x && a.y !== b.y) { steps.push([rel(a), rel(b)].sort().join('-')); continue; }
+        const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / GRID;
+        const sx = Math.sign(b.x - a.x) * GRID;
+        const sy = Math.sign(b.y - a.y) * GRID;
+        for (let k = 0; k < n; k++) {
+          const p = { x: a.x + k * sx, y: a.y + k * sy };
+          const q = { x: p.x + sx, y: p.y + sy };
+          steps.push([rel(p), rel(q)].sort().join('-'));
+        }
+      }
+    }
+    return [...new Set(steps)].sort().join(' ');
+  });
+  return `${parts.join(';')}|${nets.join('|')}`;
+}
+
+function searchContext(circuit, refs) {
+  const labelCache = new Map();
+  const netCache = new Map();
+  const wanted = new Set(refs);
+  return {
+    labelsOf: (c) => { if (!labelCache.has(c)) labelCache.set(c, ownedLabels(c)); return labelCache.get(c); },
+    netsOf: (c) => { if (!netCache.has(c)) netCache.set(c, pinNets(c)); return netCache.get(c); },
+    targetNets: [...circuit.nets.values()].filter((net) => net.terminals.some((t) => wanted.has(t.comp))),
+  };
+}
+
+/** The parts of `refs` that arrange: every part but solder dots, in name order. */
+function arrangeableRefs(circuit, refs) {
+  return [...new Set(refs)].filter((ref) => {
+    const c = circuit.components.get(ref);
+    return c && c.type !== 'solder';
+  }).sort();
+}
+
+/**
+ * The ways the parts `refs` of `circuit` are drawn elsewhere, best first:
+ * `{ candidates, alike }`, each candidate `{ key, source, parts, count,
+ * drawing }`, and `alike` the number of drawings that draw them as they are. `sources` lists
+ * `{ circuit, name, path?, time?, builtIn? }` in the order to prefer them
+ * (`circuit` itself among them for the open design, searched outside
+ * `refs`). `parts` names the parts there, `count` how many drawings
+ * (anywhere) draw them so; a way drawn like the parts already are is left
+ * out. At most `limit`.
+ */
+function arrangementCandidates(circuit, refs, sources, { limit = 9 } = {}) {
+  const parts = arrangeableRefs(circuit, refs);
+  if (parts.length < 2) return { candidates: [], alike: 0 };
+  const context = searchContext(circuit, parts);
+  const identity = { parts: new Map(parts.map((ref) => [ref, { refdes: ref, swapped: false }])) };
+  const current = drawingKey(parts, drawingOf(circuit, parts, circuit, identity, context));
+  const byKey = new Map();
+  let alike = 0;
+  for (const source of sources) {
+    const matches = findTopology(circuit, parts, source.circuit, { exclude: source.circuit === circuit ? parts : [] });
+    // One drawing per set of parts there: of the ways to map onto them (a
+    // pair maps either way round), the one that moves the parts least.
+    const best = new Map();
+    for (const match of matches) {
+      const image = [...match.parts.values()].map((p) => p.refdes).sort().join(',');
+      const drawing = drawingOf(circuit, parts, source.circuit, match, context);
+      const known = best.get(image);
+      if (!known || drawing.cost < known.drawing.cost) best.set(image, { match, drawing });
+    }
+    const ranked = [...best.values()].sort((a, b) => a.drawing.cost - b.drawing.cost);
+    for (const { match, drawing } of ranked) {
+      const key = drawingKey(parts, drawing);
+      if (key === current) { alike += 1; continue; }
+      const known = byKey.get(key);
+      if (known) { known.count += 1; continue; }
+      byKey.set(key, {
+        key,
+        source: { name: source.name, path: source.path || null, builtIn: !!source.builtIn, current: source.circuit === circuit },
+        sourceCircuit: source.circuit,
+        parts: parts.map((ref) => match.parts.get(ref).refdes),
+        count: 1,
+        drawing,
+      });
+    }
+  }
+  return { candidates: [...byKey.values()].slice(0, limit), alike };
+}
+
+/** Every grid point along a set of polylines. */
+function gridPoints(paths) {
+  const out = new Map();
+  for (const path of paths) {
+    if (path.length === 1) out.set(pointKey(path[0]), path[0]);
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) / GRID;
+      if (a.x !== b.x && a.y !== b.y) { out.set(pointKey(a), a); out.set(pointKey(b), b); continue; }
+      for (let k = 0; k <= n; k++) {
+        const p = { x: a.x + Math.sign(b.x - a.x) * GRID * k, y: a.y + Math.sign(b.y - a.y) * GRID * k };
+        out.set(pointKey(p), p);
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+const shifted = (paths, d) => paths.map((path) => path.map((p) => ({ x: p.x + d.x, y: p.y + d.y })));
+
+/** Within this many cells of where the parts are, the drawing goes where
+ *  most of its wires to the rest of the drawing run straight. */
+const ALIGN_REACH = 4;
+
+/** The shift near `offset` at which the drawing keeps clear of the rest:
+ *  no body on another, no pin on another part's pin, no wire through
+ *  another body. Close by, the one that lines up the most pins with where
+ *  their nets go on (`far`: `{ pins, points }` per net to the rest), so
+ *  those legs run straight; else the nearest. Null when none is within
+ *  reach. */
+function clearOffset(circuit, refs, drawing, far = []) {
+  const moving = new Set(refs);
+  const others = [...circuit.components.values()].filter((c) => c.type !== 'solder' && !moving.has(c.refdes));
+  const otherBodies = others.map((c) => c.bboxWorld());
+  const otherPins = new Set(others.flatMap((c) => c.worldTerminals().map(pointKey)));
+  const saved = new Map(refs.map((ref) => [ref, circuit.components.get(ref).transform]));
+  // Each pin of a net to the rest at no shift, and where that net goes on.
+  const reaches = far.flatMap(({ pins, points }) => pins.map((t) => {
+    const c = circuit.components.get(t.comp);
+    const p = applyTransform(drawing.parts.get(t.comp), c.localTerminal(t.term).x, c.localTerminal(t.term).y);
+    return { p, points };
+  }));
+  const aligned = (d) => reaches.filter(({ p, points }) => points.some((q) => q.x === p.x + d.x || q.y === p.y + d.y)).length;
+  const fits = (d) => {
+    try {
+      for (const ref of refs) {
+        const t = drawing.parts.get(ref);
+        circuit.components.get(ref).transform = { ...t, x: t.x + d.x, y: t.y + d.y };
+      }
+      for (const ref of refs) {
+        const c = circuit.components.get(ref);
+        const body = c.bboxWorld();
+        if (otherBodies.some((r) => rectsOverlap(body, r))) return false;
+        if (c.worldTerminals().some((p) => otherPins.has(pointKey(p)))) return false;
+      }
+      for (const net of drawing.nets) {
+        for (const path of shifted(net.paths || [], d)) {
+          for (let i = 1; i < path.length; i++) {
+            if (otherBodies.some((r) => segmentCrossesRect(path[i - 1], path[i], r))) return false;
+          }
+        }
+      }
+      return true;
+    } finally {
+      for (const [ref, t] of saved) circuit.components.get(ref).transform = t;
+    }
+  };
+  const tries = [];
+  for (let x = -CLEAR_REACH; x <= CLEAR_REACH; x++) {
+    for (let y = -CLEAR_REACH; y <= CLEAR_REACH; y++) tries.push({ x, y });
+  }
+  tries.sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y) || a.y - b.y || a.x - b.x);
+  const at = (step) => ({ x: drawing.offset.x + step.x * GRID, y: drawing.offset.y + step.y * GRID });
+  let best = null;
+  for (const step of tries) {
+    const near = Math.max(Math.abs(step.x), Math.abs(step.y)) <= ALIGN_REACH;
+    if (!near && best) return best.d;
+    const d = at(step);
+    if (!fits(d)) continue;
+    if (!near) return d;
+    const score = aligned(d);
+    if (!best || score > best.score) best = { d, score };
+  }
+  return best?.d || null;
+}
+
+/** The wire from one set of points to another that a net needs to join
+ *  them, shortest first among the nearest pairs; null when none routes. */
+function joiningLeg(circuit, net, from, to) {
+  const env = circuit._routingEnv(net.id);
+  const pairs = [];
+  for (const a of from) for (const b of to) pairs.push({ a, b, d: Math.abs(a.x - b.x) + Math.abs(a.y - b.y) });
+  pairs.sort((u, v) => u.d - v.d);
+  for (const { a, b } of pairs.slice(0, 24)) {
+    const leg = smartRoute(a, b, env);
+    if (leg && leg.length >= 2) return leg;
+  }
+  return null;
+}
+
+/** The part of a net still drawn to pins other than `refs`' (wires pruned
+ *  back from the parts that move), as polylines; the pins' points when the
+ *  net has just one there. */
+function farSide(circuit, net, refs) {
+  const moving = new Set(refs);
+  const points = net.terminals.filter((t) => !moving.has(t.comp))
+    .map((t) => circuit.components.get(t.comp)?.terminalWorld(t.term)).filter(Boolean);
+  if (!points.length) return null;
+  const paths = wiresJoining(net.paths(), points);
+  return { points, paths: paths || null };
+}
+
+/**
+ * Draw the parts `refs` of `circuit` as `candidate` (one of arrangementCandidates')
+ * does: their places and turns, their own labels' places, and the wires
+ * among them. Each net to the rest of the drawing keeps its wires there and
+ * joins the parts by a fresh leg; one that cannot is routed as a move
+ * would. Throws, leaving the circuit as it was, when the drawing finds no
+ * clear place or a net cannot be routed.
+ */
+function applyArrangement(circuit, refs, candidate) {
+  const parts = arrangeableRefs(circuit, refs);
+  const { drawing } = candidate;
+  if (parts.length !== drawing.parts.size || parts.some((ref) => !drawing.parts.has(ref))) {
+    throw new Error('the parts changed since the drawing was found');
+  }
+  const far = new Map(drawing.nets.filter((n) => n.external).map((n) => [n.id, farSide(circuit, circuit.nets.get(n.id), parts)]));
+  const reach = drawing.nets.filter((n) => far.get(n.id)).map((n) => {
+    const side = far.get(n.id);
+    return { pins: n.pins, points: side.paths?.length ? side.paths.flat() : side.points };
+  });
+  const offset = clearOffset(circuit, parts, drawing, reach);
+  if (!offset) throw new Error('no clear place for the parts drawn this way');
+  const saved = {
+    transforms: new Map(parts.map((ref) => [ref, { ...circuit.components.get(ref).transform }])),
+    labels: [...circuit.labels.values()].filter((l) => parts.includes(l.owner)).map((l) => ({ label: l, offset: l.offset && { ...l.offset }, align: l.align })),
+    topology: circuit._snapshotNetTopology(),
+    components: new Map(circuit.components),
+  };
+  const restore = () => {
+    circuit.components.clear();
+    for (const [ref, component] of saved.components) circuit.components.set(ref, component);
+    for (const [ref, t] of saved.transforms) circuit.components.get(ref).transform = t;
+    for (const { label, offset: o, align } of saved.labels) { label.offset = o; label.align = align; }
+    circuit._restoreNetTopology(saved.topology);
+    circuit.invalidateRoutingCache();
+  };
+  try {
+    const before = captureComponentTerminalPositions(circuit, parts);
+    for (const ref of parts) {
+      const t = drawing.parts.get(ref);
+      circuit.components.get(ref).transform = { ...t, x: t.x + offset.x, y: t.y + offset.y };
+    }
+    const owned = ownedLabels(circuit);
+    for (const ref of parts) {
+      const there = drawing.labels.get(ref);
+      for (const label of owned.get(ref) || []) {
+        const like = there.find((l) => l.role === (label.role || null));
+        if (!like) continue;
+        if (like.offset) label.offset = { ...like.offset };
+        label.align = like.align;
+      }
+    }
+    circuit.invalidateRoutingCache();
+    const moves = componentTerminalMoves(circuit, parts, before);
+    const followMove = (net) => {
+      const original = saved.topology.nets.find((n) => n.id === net.id);
+      net.allowDiagonal = original.allowDiagonal;
+      net.route = original.route ? original.route.map((p) => ({ ...p })) : null;
+      net.branches = original.branches ? original.branches.map((b) => b.map((p) => ({ ...p }))) : null;
+      net.junctions = original.junctions.map((p) => ({ ...p }));
+      if (circuit.rerouteNet(net, moves) === false) throw new Error(`unable to route ${net.name || net.id} to the arranged parts`);
+    };
+    for (const planned of drawing.nets) {
+      const net = circuit.nets.get(planned.id);
+      if (!net) continue;
+      const inside = planned.paths ? shifted(planned.paths, offset) : null;
+      if (!inside || planned.pins.length < 2 && !planned.external) {
+        followMove(net);
+        continue;
+      }
+      let paths = inside;
+      if (planned.external) {
+        const outside = far.get(net.id);
+        if (!outside?.paths) { followMove(net); continue; }
+        const pinPoints = planned.pins.map((t) => circuit.components.get(t.comp).terminalWorld(t.term));
+        const from = inside.length ? gridPoints(inside) : pinPoints;
+        const to = outside.paths.length ? gridPoints(outside.paths) : outside.points;
+        const leg = joiningLeg(circuit, net, from, to);
+        if (!leg) { followMove(net); continue; }
+        paths = [...inside, ...outside.paths, leg];
+      }
+      circuit._installLiteralPaths(net, paths);
+      if (!circuit._pathsConnectedToTerminals(net)) { followMove(net); continue; }
+      circuit._repairNetLabels(net);
+    }
+    circuit.reconnectCoincidentNets();
+    circuit.syncJunctionSolders();
+    circuit.invalidateRoutingCache();
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  return { offset };
+}
+
+};
+
 __modules["src/core/beats.js"] = function (__require, __exports) {
 __exports.switchState = switchState;
 __exports.switchPhase = switchPhase;
@@ -19851,10 +20353,14 @@ let RENUMBER_ORDERS, renumberParts; __bind(() => { ({ RENUMBER_ORDERS, renumberP
 let swapCandidates, swapComponentType; __bind(() => { ({ swapCandidates, swapComponentType } = __require("src/core/swap.js")); });
 let PIN_RAIL_TYPES, addPinRail; __bind(() => { ({ PIN_RAIL_TYPES, addPinRail } = __require("src/core/pin-rails.js")); });
 let fixAllIssues, tidySelection; __bind(() => { ({ fixAllIssues, tidySelection } = __require("src/core/tidy.js")); });
+let applyArrangement, arrangementCandidates; __bind(() => { ({ applyArrangement, arrangementCandidates } = __require("src/core/arrange.js")); });
+let builtInDrawings; __bind(() => { ({ builtInDrawings } = __require("src/core/arrange-builtins.js")); });
 let arrangeFigures, figureBounds, listFigures; __bind(() => { ({ arrangeFigures, figureBounds, listFigures } = __require("src/core/figures.js")); });
 let findInLabels, replaceInLabels; __bind(() => { ({ findInLabels, replaceInLabels } = __require("src/core/label-search.js")); });
 let normalizeNotes, notesMarkdown; __bind(() => { ({ normalizeNotes, notesMarkdown } = __require("src/core/notes.js")); });
 let checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry; __bind(() => { ({ checkpointHistory, historyEntries, historyEntryState, historyText, pinHistoryEntry, removeHistoryEntry, settledHistory, unpinHistoryEntry } = __require("src/core/save-history.js")); });
+
+
 
 
 
@@ -19963,6 +20469,8 @@ const FLAG_ARITY = {
   break: 1,
   clear: 1,
   arrange: 0,
+  list: 0,
+  pick: 1,
 };
 
 /** Split a command line into array honoring double-quoted strings. */
@@ -20357,6 +20865,9 @@ function commandHelp() {
     '  history pin|unpin|remove|restore ENTRY [NAME] [--comment TEXT] - change an entry (its id, or a checkpoint\'s name);',
     '                                   pin also renames one, restore brings its drawing back (the one replaced stays a save point)',
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
+    '  arrange <refdes> ... [--list] [--pick N] - draw the parts as they are drawn elsewhere with the same connections',
+    '                                   (this design, the workspace\'s other designs newest first, then the built-in drawings);',
+    '                                   --list lists the ways, --pick N draws the Nth (default the first)',
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
     '  fix                            - apply the safe Design Check repairs (reroute, snap to grid, move label)',
@@ -20923,6 +21434,22 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const { rerouted, moved } = tidySelection(circuit, { refs: pos });
     return result(`rerouted ${rerouted.length} net${rerouted.length === 1 ? '' : 's'}, moved ${moved.length} label${moved.length === 1 ? '' : 's'}`, { rerouted, moved }, rerouted.length + moved.length > 0);
   }
+  if (cmd === 'arrange') {
+    if (pos.length < 2) throw new Error('usage: arrange <refdes> <refdes> ... [--list] [--pick N]');
+    for (const refdes of pos) circuit.getComponent(refdes);
+    const sources = [{ circuit, name: 'this design' }, ...(io?.designs || []), ...builtInDrawings()];
+    const { candidates, alike } = arrangementCandidates(circuit, pos, sources);
+    const none = alike ? `${pos.join(', ')} are drawn as every other drawing of them already` : `no other drawing of ${pos.join(', ')} with the same connections`;
+    const rows = candidates.map((c, i) => `${i + 1}. like ${c.parts.join(', ')} in ${c.source.name}${c.count > 1 ? ` (drawn so ${c.count} times)` : ''}`);
+    const listing = candidates.map((c) => ({ source: c.source.name, path: c.source.path, builtIn: c.source.builtIn, parts: c.parts, count: c.count }));
+    if (flags.list) return result(rows.join('\n') || none, listing);
+    if (!candidates.length) throw new Error(none);
+    const pick = flags.pick ? Number(flags.pick[0]) : 1;
+    if (!Number.isInteger(pick) || pick < 1 || pick > candidates.length) throw new Error(`--pick is 1 to ${candidates.length}`);
+    const chosen = candidates[pick - 1];
+    applyArrangement(circuit, pos, chosen);
+    return result(`arranged ${pos.join(', ')} like ${chosen.parts.join(', ')} in ${chosen.source.name}`, listing[pick - 1], true);
+  }
   if (cmd === 'figures') {
     if (flags.arrange) {
       const moved = arrangeFigures(circuit);
@@ -21102,7 +21629,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const file = flags.file ? flags.file[0] : pos[0] || 'data/preview.svg';
     const beat = flags.beat ? resolveBeat(circuit, beatIndex(circuit, flags.beat[0])) : null;
     const svg = svgString(circuit, { grid: !!flags.grid, terminals: false, junctions: false, background: true, ...(beat ? { beat: { view: beat, timing: timingBeatBands(circuit, beat.index) } } : {}) });
-    if (io) {
+    if (io?.writeTextFile) {
       io.writeTextFile(file, svg);
       return result(`wrote ${file} (${svg.length} bytes)`, null);
     }
@@ -21111,14 +21638,14 @@ function dispatch(circuit, cmd, pos, flags, io) {
   if (cmd === 'save') {
     const file = flags.file ? flags.file[0] : pos[0];
     if (!file) throw new Error('usage: save <file>');
-    if (!io) return result('save requires CLI (file I/O)', null);
+    if (!io?.writeTextFile) return result('save requires CLI (file I/O)', null);
     io.writeTextFile(file, JSON.stringify(circuit.toJSON(), null, 2));
     return result(`saved state to ${file}`, null);
   }
   if (cmd === 'load') {
     const file = flags.file ? flags.file[0] : pos[0];
     if (!file) throw new Error('usage: load <file>');
-    if (!io) return result('load requires CLI (file I/O)', null);
+    if (!io?.readTextFile) return result('load requires CLI (file I/O)', null);
     const data = JSON.parse(io.readTextFile(file));
     const fresh = Circuit.fromJSON(data);
     circuit.components = fresh.components;
@@ -40847,6 +41374,298 @@ __exports.MAX_EDGE_SHIFT = MAX_EDGE_SHIFT;
 __exports.bipolar = bipolar;
 };
 
+__modules["src/core/topology-match.js"] = function (__require, __exports) {
+__exports.topologyIndex = topologyIndex;
+__exports.findTopology = findTopology;
+__exports.wiresJoining = wiresJoining;
+/**
+ * The topology recognizer: where else a set of parts is drawn with the same
+ * connections. A topology is the parts' types and shapes and which of their
+ * pins share a physical net; a drawing of it in another circuit (or elsewhere
+ * in the same one) is a one-to-one map of the parts onto parts there of the
+ * same shape, under which two pins share a net exactly when their images
+ * do. The parts there may connect to more than the parts mapped (a mirror
+ * inside a larger amplifier is still a mirror); the map never joins or
+ * splits a net among the parts it maps.
+ *
+ * A two-pin part drawn the same turned half round (a resistor, a capacitor)
+ * may map its pins either way, so a resistor wired the other way round still
+ * matches. Solder dots are drawing, not parts, and are never mapped.
+ */
+
+/** Two-pin symbols that draw the same turned half round, pins swapped. */
+const REVERSIBLE = new Set(['resistor', 'capacitor']);
+
+/** The most drawings one search reports, and the most partial maps it tries:
+ *  enough for any real workspace, bounded for a selection of many like parts. */
+const MATCH_LIMIT = 400;
+const STEP_LIMIT = 200000;
+
+/** A part's shape: its type and where its pins are (a block's or a transfer
+ *  function's size moves them), so a map keeps every pin's place. */
+function shapeKey(component) {
+  const pins = component.terminalDefs.map((t) => {
+    const p = component.localTerminal(t.name);
+    return `${t.name}@${p.x},${p.y}`;
+  });
+  return `${component.type}|${pins.join(';')}`;
+}
+
+/** The ways a part's pins may map onto a part of its shape: identity, and
+ *  for a reversible part the two pins swapped. */
+function pinMaps(component) {
+  const names = component.terminalDefs.map((t) => t.name);
+  const identity = new Map(names.map((n) => [n, n]));
+  if (!REVERSIBLE.has(component.type) || names.length !== 2) return [{ pins: identity, swapped: false }];
+  return [{ pins: identity, swapped: false }, { pins: new Map([[names[0], names[1]], [names[1], names[0]]]), swapped: true }];
+}
+
+/** A circuit's parts by shape and every pin's net, for searching it. A pin on
+ *  no net gets a net of its own (`~ref.pin`), which no other pin shares. */
+function topologyIndex(circuit) {
+  const pinNet = new Map();
+  const netPins = new Map();
+  for (const net of circuit.nets.values()) {
+    for (const t of net.terminals) {
+      const key = `${t.comp}.${t.term}`;
+      if (pinNet.has(key)) continue;
+      pinNet.set(key, net.id);
+      if (!netPins.has(net.id)) netPins.set(net.id, []);
+      netPins.get(net.id).push(t);
+    }
+  }
+  const byShape = new Map();
+  const shapes = new Map();
+  for (const component of circuit.components.values()) {
+    if (component.type === 'solder') continue;
+    const shape = shapeKey(component);
+    shapes.set(component.refdes, shape);
+    if (!byShape.has(shape)) byShape.set(shape, []);
+    byShape.get(shape).push(component.refdes);
+  }
+  const netOf = (refdes, term) => pinNet.get(`${refdes}.${term}`) ?? `~${refdes}.${term}`;
+  return { circuit, byShape, shapes, netPins, netOf };
+}
+
+/** The parts of `refs` in the order a search maps them: each after one it
+ *  shares a net with where there is one, starting from the part whose
+ *  shape `source` has fewest of. */
+function searchOrder(target, refs, source) {
+  const remaining = new Set(refs);
+  const order = [];
+  const rarity = (ref) => source.byShape.get(target.shapes.get(ref))?.length ?? 0;
+  const netsOf = (ref) => target.circuit.components.get(ref).terminalDefs.map((t) => target.netOf(ref, t.name));
+  while (remaining.size) {
+    const placedNets = new Set(order.flatMap(netsOf));
+    const linked = [...remaining].filter((ref) => netsOf(ref).some((n) => placedNets.has(n)));
+    const pool = linked.length ? linked : [...remaining];
+    pool.sort((a, b) => rarity(a) - rarity(b) || a.localeCompare(b));
+    order.push(pool[0]);
+    remaining.delete(pool[0]);
+  }
+  return order;
+}
+
+/**
+ * Every drawing in `sourceCircuit` of the topology the parts `refs` of
+ * `targetCircuit` have: a list of `{ parts }`, each a Map from a part of
+ * `refs` to `{ refdes, swapped }` there (`swapped`: a reversible part's pins
+ * map the other way round). `exclude` lists parts there never mapped onto
+ * (the parts themselves, when both are one circuit). Empty when a part of
+ * `refs` is unknown or none of its shape is there.
+ */
+function findTopology(targetCircuit, refs, sourceCircuit, { exclude = [], limit = MATCH_LIMIT } = {}) {
+  const parts = refs.filter((ref) => targetCircuit.components.get(ref)?.type !== 'solder');
+  if (!parts.length || parts.some((ref) => !targetCircuit.components.has(ref))) return [];
+  const target = topologyIndex(targetCircuit);
+  const source = sourceCircuit === targetCircuit ? target : topologyIndex(sourceCircuit);
+  if (parts.some((ref) => !source.byShape.has(target.shapes.get(ref)))) return [];
+  const excluded = new Set(exclude);
+  const order = searchOrder(target, parts, source);
+  const pins = new Map(order.map((ref) => [ref, targetCircuit.components.get(ref).terminalDefs.map((t) => t.name)]));
+  const maps = new Map(order.map((ref) => [ref, pinMaps(targetCircuit.components.get(ref))]));
+  const netMap = new Map();
+  const netBack = new Map();
+  const assigned = new Map();
+  const used = new Set();
+  const found = [];
+  let steps = 0;
+
+  // Parts there of the shape that have a pin on a net already mapped onto,
+  // else every part of the shape.
+  const candidatesFor = (ref) => {
+    const shaped = source.byShape.get(target.shapes.get(ref)) || [];
+    for (const term of pins.get(ref)) {
+      const mapped = netMap.get(target.netOf(ref, term));
+      if (mapped === undefined) continue;
+      const shape = target.shapes.get(ref);
+      const onNet = (source.netPins.get(mapped) || []).map((t) => t.comp);
+      return [...new Set(onNet)].filter((comp) => source.shapes.get(comp) === shape);
+    }
+    return shaped;
+  };
+
+  const visit = (index) => {
+    if (found.length >= limit || ++steps > STEP_LIMIT) return;
+    if (index === order.length) {
+      found.push({ parts: new Map(assigned) });
+      return;
+    }
+    const ref = order[index];
+    for (const candidate of candidatesFor(ref)) {
+      if (used.has(candidate) || excluded.has(candidate)) continue;
+      for (const map of maps.get(ref)) {
+        const bound = [];
+        let fits = true;
+        for (const term of pins.get(ref)) {
+          const from = target.netOf(ref, term);
+          const to = source.netOf(candidate, map.pins.get(term));
+          const known = netMap.get(from);
+          if (known !== undefined) {
+            if (known !== to) { fits = false; break; }
+            continue;
+          }
+          if (netBack.has(to)) { fits = false; break; }
+          netMap.set(from, to);
+          netBack.set(to, from);
+          bound.push(from);
+        }
+        if (fits) {
+          assigned.set(ref, { refdes: candidate, swapped: map.swapped });
+          used.add(candidate);
+          visit(index + 1);
+          used.delete(candidate);
+          assigned.delete(ref);
+        }
+        for (const from of bound) {
+          netBack.delete(netMap.get(from));
+          netMap.delete(from);
+        }
+        if (found.length >= limit || steps > STEP_LIMIT) return;
+      }
+    }
+  };
+  visit(0);
+  return found;
+}
+
+const pointKey = (p) => `${p.x},${p.y}`;
+
+function onSegment(p, a, b) {
+  if (a.x === b.x) return p.x === a.x && p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+  if (a.y === b.y) return p.y === a.y && p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x);
+  // A diagonal: on the line between the ends.
+  const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+  return cross === 0 && p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x)
+    && p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y);
+}
+
+/**
+ * The part of a net's drawn wires that joins the points `keep` (pins): the
+ * wires pruned back from every end that reaches none of them, as polylines.
+ * Null when the wires do not join every kept point, else a list (empty when
+ * the points coincide or there is just one).
+ */
+function wiresJoining(paths, keep) {
+  const kept = new Map(keep.map((p) => [pointKey(p), p]));
+  if (kept.size <= 1) return [];
+  // Split every segment where a vertex of another path, or a kept point, lies
+  // on it: branches meet mid-segment, and a pin may sit on a straight run.
+  const marks = [...kept.values(), ...paths.flat()];
+  const adjacency = new Map();
+  const node = (p) => {
+    const key = pointKey(p);
+    if (!adjacency.has(key)) adjacency.set(key, { point: { x: p.x, y: p.y }, next: new Set() });
+    return adjacency.get(key);
+  };
+  for (const path of paths) {
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      if (a.x === b.x && a.y === b.y) continue;
+      const stops = [a, b, ...marks.filter((p) => onSegment(p, a, b))];
+      const unique = [...new Map(stops.map((p) => [pointKey(p), p])).values()];
+      unique.sort((u, v) => Math.hypot(u.x - a.x, u.y - a.y) - Math.hypot(v.x - a.x, v.y - a.y));
+      for (let k = 1; k < unique.length; k++) {
+        const u = node(unique[k - 1]);
+        const v = node(unique[k]);
+        u.next.add(pointKey(v.point));
+        v.next.add(pointKey(u.point));
+      }
+    }
+  }
+  for (const key of kept.keys()) if (!adjacency.has(key)) return null;
+  // Prune ends that reach no kept point.
+  const leaves = [...adjacency.keys()].filter((key) => adjacency.get(key).next.size <= 1 && !kept.has(key));
+  while (leaves.length) {
+    const key = leaves.pop();
+    const entry = adjacency.get(key);
+    if (!entry) continue;
+    for (const other of entry.next) {
+      const neighbour = adjacency.get(other);
+      neighbour.next.delete(key);
+      if (neighbour.next.size <= 1 && !kept.has(other)) leaves.push(other);
+    }
+    adjacency.delete(key);
+  }
+  // Every kept point reached from the first.
+  const start = kept.keys().next().value;
+  const seen = new Set([start]);
+  const queue = [start];
+  while (queue.length) {
+    for (const other of adjacency.get(queue.pop()).next) if (!seen.has(other)) { seen.add(other); queue.push(other); }
+  }
+  for (const key of kept.keys()) if (!seen.has(key)) return null;
+  // Walk the remaining graph into polylines between stops: kept points and
+  // nodes of any degree but two.
+  const isStop = (key) => kept.has(key) || adjacency.get(key).next.size !== 2;
+  const walked = new Set();
+  const edge = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const polylines = [];
+  const walkFrom = (from, first) => {
+    const line = [adjacency.get(from).point];
+    let previous = from;
+    let current = first;
+    walked.add(edge(from, first));
+    while (true) {
+      line.push(adjacency.get(current).point);
+      if (isStop(current)) break;
+      const next = [...adjacency.get(current).next].find((key) => key !== previous && !walked.has(edge(current, key)));
+      if (!next) break;
+      walked.add(edge(current, next));
+      previous = current;
+      current = next;
+    }
+    polylines.push(straightened(line));
+  };
+  const keys = [...adjacency.keys()].sort();
+  for (const key of keys) {
+    if (!isStop(key)) continue;
+    for (const other of [...adjacency.get(key).next].sort()) if (!walked.has(edge(key, other))) walkFrom(key, other);
+  }
+  // A loop with no stop on it.
+  for (const key of keys) {
+    for (const other of [...adjacency.get(key).next].sort()) if (!walked.has(edge(key, other))) walkFrom(key, other);
+  }
+  return polylines;
+}
+
+/** A polyline without the points where it runs straight on. */
+function straightened(line) {
+  const out = [line[0]];
+  for (let i = 1; i < line.length - 1; i++) {
+    const a = out.at(-1);
+    const b = line[i];
+    const c = line[i + 1];
+    if ((b.x - a.x) * (c.y - b.y) === (b.y - a.y) * (c.x - b.x)) continue;
+    out.push(b);
+  }
+  out.push(line.at(-1));
+  return out;
+}
+
+};
+
 __modules["src/core/transfer-function.js"] = function (__require, __exports) {
 __exports.isTransferFunction = isTransferFunction;
 __exports.isCoefficientBlock = isCoefficientBlock;
@@ -45165,6 +45984,290 @@ function joinSelectedLines() {
   setLabelSelection([joined.id]);
   logLine(`joined ${lines.length} lines into one with ${joined.points.length} points`);
   render();
+}
+
+};
+
+__modules["src/web/arrange-ui.js"] = function (__require, __exports) {
+__exports.openArrangePicker = openArrangePicker;
+__exports.arrangePickerState = arrangePickerState;
+let applyArrangement, arrangeableRefs, arrangementCandidates; __bind(() => { ({ applyArrangement, arrangeableRefs, arrangementCandidates } = __require("src/core/arrange.js")); });
+let builtInDrawings; __bind(() => { ({ builtInDrawings } = __require("src/core/arrange-builtins.js")); });
+let loadDocument; __bind(() => { ({ loadDocument } = __require("src/core/document.js")); });
+let GRID; __bind(() => { ({ GRID } = __require("src/core/grid.js")); });
+let svgString; __bind(() => { ({ svgString } = __require("src/core/render.js")); });
+let DRAWING_EXPORT_OPTIONS; __bind(() => { ({ DRAWING_EXPORT_OPTIONS } = __require("src/core/selection-drawing.js")); });
+let persistence; __bind(() => { ({ persistence } = __require("src/web/document-session.js")); });
+let applyExportDarkTheme, withEmbeddedMathFont; __bind(() => { ({ applyExportDarkTheme, withEmbeddedMathFont } = __require("src/web/drawing-export.js")); });
+let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
+let canvasEl; __bind(() => { ({ canvasEl } = __require("src/web/elements.js")); });
+let applyJson, recordHistoryEntry, rememberAction, render, selectedComps, setSelection, snapshot; __bind(() => { ({ applyJson, recordHistoryEntry, rememberAction, render, selectedComps, setSelection, snapshot } = __require("src/web/main.js")); });
+let revisionTime; __bind(() => { ({ revisionTime } = __require("src/web/modified-time.js")); });
+let hintLine, logLine; __bind(() => { ({ hintLine, logLine } = __require("src/web/status-bar-ui.js")); });
+/**
+ * Arrange like (Shift+Q): the selected parts drawn as an earlier drawing of
+ * the same topology draws them (core/arrange.js). The picker lists each way
+ * they are drawn, with the drawing it comes from; the one highlighted is
+ * shown on the canvas as it would be, and Enter (or a click) keeps it as
+ * one undo step. The open design is searched first, then the workspace's
+ * other designs by when they were saved, then the built-in drawings.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/** The workspace's designs as last read: path -> { revision, circuit }. */
+const designs = new Map();
+let picker = null;
+let opening = false;
+
+/** The workspace's designs but the open one, newest first. One that cannot
+ *  be read (a browser-only file without permission yet) is passed over. */
+async function workspaceDesigns() {
+  let workspace;
+  try { workspace = await persistence.workspace(); } catch { return []; }
+  const docs = (workspace.documents || []).filter((doc) => doc.kind === 'circuit' && !doc.locked && !doc.missing && doc.path !== editor.currentDocumentPath);
+  const out = [];
+  for (const doc of docs) {
+    let entry = designs.get(doc.path);
+    if (!entry || !doc.revision || entry.revision !== doc.revision) {
+      try {
+        entry = { revision: doc.revision, circuit: loadDocument((await persistence.load(doc.path)).state) };
+      } catch {
+        continue;
+      }
+      if (doc.revision) designs.set(doc.path, entry);
+    }
+    out.push({ circuit: entry.circuit, name: doc.name, path: doc.path, time: revisionTime(doc.revision) ?? 0 });
+  }
+  return out.sort((a, b) => b.time - a.time);
+}
+
+const dataUrl = (svg) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+const dark = () => document.documentElement.classList.contains('dark');
+
+/** The drawing a candidate comes from, around the parts it draws, the rest
+ *  of that drawing faint: `{ light, dark }` picture URLs. */
+async function candidatePicture(candidate) {
+  const circuit = candidate.sourceCircuit;
+  const shown = new Set(candidate.parts);
+  let box = null;
+  const grow = (r) => {
+    if (!r || !(r.w > 0 || r.h > 0)) return;
+    if (!box) { box = { ...r }; return; }
+    const x = Math.min(box.x, r.x);
+    const y = Math.min(box.y, r.y);
+    box = { x, y, w: Math.max(box.x + box.w, r.x + r.w) - x, h: Math.max(box.y + box.h, r.y + r.h) - y };
+  };
+  for (const ref of shown) grow(circuit.components.get(ref)?.bboxWorld());
+  for (const label of circuit.labels.values()) if (shown.has(label.owner)) grow(label.bbox());
+  if (!box) return null;
+  const viewport = { x: box.x - GRID, y: box.y - GRID, w: box.w + 2 * GRID, h: box.h + 2 * GRID };
+  const ghostRefs = [...circuit.components.keys()].filter((ref) => !shown.has(ref));
+  const svg = svgString(circuit, { ...DRAWING_EXPORT_OPTIONS, background: false, emptyHint: false, viewport, ghostRefs });
+  const [light, darkSvg] = await Promise.all([withEmbeddedMathFont(svg), withEmbeddedMathFont(applyExportDarkTheme(svg))]);
+  return { light: dataUrl(light), dark: dataUrl(darkSvg) };
+}
+
+function sourceName(candidate) {
+  return candidate.source.current ? 'this design' : candidate.source.name;
+}
+
+/** Draw the highlighted way on the canvas, from the drawing as it was. */
+function preview(index) {
+  if (!picker) return;
+  picker.index = index;
+  applyJson(picker.before);
+  picker.failed = null;
+  try {
+    applyArrangement(editor.circuit, picker.refs, picker.candidates[index]);
+  } catch (error) {
+    applyJson(picker.before);
+    picker.failed = error.message;
+  }
+  setSelection(picker.refs);
+  render();
+  for (const [i, item] of picker.items.entries()) {
+    item.classList.toggle('active', i === index);
+    item.setAttribute('aria-selected', String(i === index));
+  }
+  picker.items[index]?.scrollIntoView?.({ block: 'nearest' });
+  picker.note.textContent = picker.failed ? `Cannot draw it here: ${picker.failed}` : '';
+  picker.note.hidden = !picker.failed;
+}
+
+function close() {
+  if (!picker) return;
+  picker.el.remove();
+  window.removeEventListener('pointerdown', picker.outside, true);
+  picker = null;
+  canvasEl.focus({ preventScroll: true });
+}
+
+/** Keep the highlighted way: one undo step. */
+function choose(index = picker?.index) {
+  if (!picker) return;
+  if (index !== picker.index || picker.failed) preview(index);
+  if (picker.failed) return;
+  const { before, refs, candidates } = picker;
+  const chosen = candidates[index];
+  close();
+  recordHistoryEntry(before, true);
+  setSelection(refs);
+  rememberAction('arrange like', () => void openArrangePicker());
+  logLine(`${refs.join(', ')} arranged like ${chosen.parts.join(', ')} in ${sourceName(chosen)}`);
+  render();
+}
+
+/** Leave the parts as they were. */
+function cancel() {
+  if (!picker) return;
+  const { before, refs } = picker;
+  close();
+  applyJson(before);
+  setSelection(refs);
+  render();
+}
+
+function buildPicker(candidates) {
+  const el = document.createElement('div');
+  el.className = 'arrange-picker glass';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-label', 'Arrange like');
+  el.tabIndex = -1;
+  const heading = document.createElement('p');
+  heading.className = 'arrange-picker-heading';
+  heading.textContent = 'Arrange like';
+  const list = document.createElement('div');
+  list.className = 'arrange-picker-list';
+  list.setAttribute('role', 'listbox');
+  const note = document.createElement('p');
+  note.className = 'arrange-picker-note';
+  note.hidden = true;
+  const items = candidates.map((candidate, index) => {
+    const item = document.createElement('div');
+    item.className = 'arrange-picker-item';
+    item.setAttribute('role', 'option');
+    const picture = document.createElement('img');
+    picture.className = 'arrange-picker-picture';
+    picture.alt = '';
+    const caption = document.createElement('span');
+    caption.className = 'arrange-picker-caption';
+    const where = document.createElement('span');
+    where.className = 'arrange-picker-source';
+    where.textContent = sourceName(candidate);
+    const parts = document.createElement('span');
+    parts.className = 'arrange-picker-parts';
+    parts.textContent = candidate.source.builtIn ? 'built-in' : candidate.parts.join(', ');
+    caption.append(where, parts);
+    if (candidate.count > 1) {
+      const count = document.createElement('span');
+      count.className = 'arrange-picker-count';
+      count.textContent = `×${candidate.count}`;
+      caption.append(count);
+    }
+    const key = document.createElement('kbd');
+    key.textContent = index < 9 ? String(index + 1) : '';
+    item.append(key, picture, caption);
+    item.addEventListener('mousemove', () => { if (picker && picker.index !== index) preview(index); });
+    item.addEventListener('mousedown', (ev) => { ev.preventDefault(); choose(index); });
+    void candidatePicture(candidate).then((urls) => {
+      if (!urls) return;
+      picture.dataset.light = urls.light;
+      picture.dataset.dark = urls.dark;
+      picture.src = dark() ? urls.dark : urls.light;
+    });
+    return item;
+  });
+  list.append(...items);
+  el.append(heading, list, note);
+  el.addEventListener('keydown', (ev) => {
+    if (!picker) return;
+    ev.stopPropagation();
+    const n = picker.candidates.length;
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      preview((picker.index + (ev.key === 'ArrowDown' ? 1 : -1) + n) % n);
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      choose();
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      cancel();
+    } else if (/^[1-9]$/.test(ev.key) && Number(ev.key) <= n) {
+      ev.preventDefault();
+      choose(Number(ev.key) - 1);
+    }
+  });
+  document.body.appendChild(el);
+  // In the drawing's top right corner: beside the selection it would cover
+  // the parts it moves.
+  const pane = canvasEl.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  el.style.left = `${Math.max(8, pane.right - rect.width - 12)}px`;
+  el.style.top = `${Math.max(8, pane.top + 12)}px`;
+  return { el, items, note };
+}
+
+/**
+ * Open the picker for the selected parts (two or more). Says so on the
+ * status bar instead when no other drawing has their topology, or every
+ * one draws them as they are.
+ */
+async function openArrangePicker() {
+  if (picker || opening) return false;
+  const refs = arrangeableRefs(editor.circuit, selectedComps().map((c) => c.refdes));
+  if (refs.length < 2) {
+    hintLine('Shift+Q arranges parts like another drawing of them: select two or more');
+    return false;
+  }
+  opening = true;
+  let found;
+  try {
+    const circuit = editor.circuit;
+    const sources = [{ circuit, name: editor.currentCircuitName || 'this design' }, ...await workspaceDesigns(), ...builtInDrawings()];
+    // The drawing may have changed while the workspace was read.
+    if (circuit !== editor.circuit || refs.some((ref) => !circuit.components.has(ref))) return false;
+    found = arrangementCandidates(circuit, refs, sources);
+  } finally {
+    opening = false;
+  }
+  if (!found.candidates.length) {
+    hintLine(found.alike
+      ? `${refs.join(', ')} are drawn like every other drawing of them already`
+      : `No other drawing has ${refs.join(', ')} with the same connections`);
+    return false;
+  }
+  const before = snapshot();
+  const built = buildPicker(found.candidates);
+  picker = { refs, before, candidates: found.candidates, index: 0, failed: null, ...built };
+  picker.outside = (ev) => { if (picker && !picker.el.contains(ev.target)) cancel(); };
+  window.addEventListener('pointerdown', picker.outside, true);
+  preview(0);
+  picker.el.focus({ preventScroll: true });
+  return true;
+}
+
+/** The picker as it stands, for tests: null when closed. */
+function arrangePickerState() {
+  if (!picker) return null;
+  return {
+    refs: [...picker.refs],
+    index: picker.index,
+    failed: picker.failed,
+    candidates: picker.candidates.map((c) => ({ source: sourceName(c), parts: [...c.parts], count: c.count, builtIn: c.source.builtIn })),
+  };
 }
 
 };
@@ -52365,6 +53468,7 @@ let enterLinkedDesign, leaveLinkedDesign, toggleAllLinkBubbles, toggleLinkBubble
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let pasteClipboard; __bind(() => { ({ pasteClipboard } = __require("src/web/copy-paste.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
+let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let referenceWindowsShown, toggleReferenceWindows; __bind(() => { ({ referenceWindowsShown, toggleReferenceWindows } = __require("src/web/reference-window.js")); });
 let calculatorShown, toggleCalculator; __bind(() => { ({ calculatorShown, toggleCalculator } = __require("src/web/calculator-window.js")); });
 let notesShown, toggleNotes; __bind(() => { ({ notesShown, toggleNotes } = __require("src/web/notes-window.js")); });
@@ -52378,6 +53482,7 @@ let offerTutorial; __bind(() => { ({ offerTutorial } = __require("src/web/onboar
  * goes to the shared document command language through runLine. The
  * vocabulary and completion rules are command-line.js.
  */
+
 
 
 
@@ -52500,6 +53605,7 @@ const ACTIONS = {
   'clear-highlights': () => removeAllNetHighlights(),
   stubs: () => stubSelection(),
   swap: () => openSwapPicker(swapTargets()),
+  'arrange-like': () => void openArrangePicker(),
   repeat: () => repeatLastAction(),
   tidy: () => tidyNow(),
   edit: () => editSelectionText(),
@@ -52784,6 +53890,7 @@ const EDITOR_COMMANDS = [
   { name: 'clear-highlights', aliases: ['uncolor', 'remove-highlights'], canvas: true, help: 'remove all net highlights (8)' },
   { name: 'stubs', aliases: ['wire-stubs'], canvas: true, help: 'labeled wire stubs on the selected parts\' unconnected pins (Space)' },
   { name: 'swap', aliases: ['change-type', 'replace-part'], canvas: true, help: 'change the selected parts\' type, keeping their wiring (q)' },
+  { name: 'arrange-like', aliases: ['arrange-as', 'draw-like', 'redraw-like'], canvas: true, help: 'draw the selected parts as another drawing of them does (Shift+Q)' },
   { name: 'tidy', aliases: ['clean-up', 'cleanup', 'neaten', 'straighten'], canvas: true, help: 're-lay the selection\'s nets and move its crowded labels clear (Shift+T)' },
   { name: 'repeat', aliases: ['again'], canvas: true, help: 'repeat the last rotate, mirror, swap, rail, or stubs (.)' },
   { name: 'edit', aliases: ['edit-text', 'rename-selection'], canvas: true, help: 'edit the selected label or part name (t, =, F2)' },
@@ -52816,6 +53923,7 @@ const DOCUMENT_COMMANDS = [
   { name: 'cross', help: 'cross A1 A2 B1 B2 (cross-coupled routes)' },
   { name: 'stubs', aliases: ['stub'], help: 'stubs <refdes> ... (labeled wire stubs)' },
   { name: 'swap', help: 'swap <refdes> [type] (change a part\'s type, keeping its wiring)' },
+  { name: 'arrange', help: 'arrange <refdes> ... [--list] [--pick N] (draw the parts as another drawing of them does)' },
   { name: 'notes', help: 'notes set|append TEXT, notes clear (the design\'s notes, Markdown)' },
   { name: 'tag', aliases: ['tags', 'label-design'], help: 'tag add|rm|set NAME ... (the document\'s tags, searched in the Atlas)' },
   { name: 'fix', aliases: ['autofix', 'repair'], help: 'fix (apply the safe Design Check repairs)' },
@@ -53371,6 +54479,7 @@ let appendLinkContextItems, linkBubbleAt, openLinkBubbleMenu; __bind(() => { ({ 
 let appendBeatContextItems, plainMarkup; __bind(() => { ({ appendBeatContextItems, plainMarkup } = __require("src/web/beats-ui.js")); });
 let copyAsImage; __bind(() => { ({ copyAsImage } = __require("src/web/export-ui.js")); });
 let openSwapPicker; __bind(() => { ({ openSwapPicker } = __require("src/web/insert-menu.js")); });
+let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let shortPlacementLabel; __bind(() => { ({ shortPlacementLabel } = __require("src/web/toolbar.js")); });
 let swapCandidates; __bind(() => { ({ swapCandidates } = __require("src/core/swap.js")); });
 let appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename; __bind(() => { ({ appendMarkupText, componentDisplayName, setPanelCollapsed, startComponentRename, startNetRename } = __require("src/web/side-panel.js")); });
@@ -53383,6 +54492,7 @@ let noteTip; __bind(() => { ({ noteTip } = __require("src/web/onboarding.js")); 
  * selection, style, switch, signal-flow, and small-signal submenus, and the
  * panel rows' renames it offers.
  */
+
 
 
 
@@ -54097,6 +55207,9 @@ function appendContextActions(menu, target) {
     appendContextItem(group, 'Mirror vertically', () => selectedTransform('mirror-y'), { shortcut: 'Ctrl/Cmd+R' });
     if (swapCandidates(comp.type).length) {
       appendContextItem(group, 'Change type…', later(() => openSwapPicker(selectedComps().length ? selectedComps() : [comp])), { shortcut: 'q' });
+    }
+    if (selectedComps().length > 1 && selectedComps().includes(comp)) {
+      appendContextItem(group, 'Arrange like…', later(() => void openArrangePicker()), { shortcut: 'Shift+Q' });
     }
     if (comp.type === 'supply') appendSupplyBarItem(group, comp);
     appendLinkContextItems(group, comp);
@@ -63604,6 +64717,7 @@ let atlasOpen, installAtlas, onAtlasKey, openAtlas; __bind(() => { ({ atlasOpen,
 let revealStartup; __bind(() => { ({ revealStartup } = __require("src/web/startup.js")); });
 let toggleSelectedLabelFont, updateStyleControls, installStyleControls; __bind(() => { ({ toggleSelectedLabelFont, updateStyleControls, installStyleControls } = __require("src/web/style-controls.js")); });
 let onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker; __bind(() => { ({ onInsertKey, rememberInsertType, updateInsertMenu, openQuickAdd, closeQuickAdd, openSwapPicker } = __require("src/web/insert-menu.js")); });
+let openArrangePicker; __bind(() => { ({ openArrangePicker } = __require("src/web/arrange-ui.js")); });
 let toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi; __bind(() => { ({ toggleRouteMode, toggleTheme, setGrid, setCrosshair, setGuides, syncModeToolbarOverflow, installToolbarUi } = __require("src/web/toolbar-ui.js")); });
 let installNetBeams, mountNetBeams, syncNetBeams; __bind(() => { ({ installNetBeams, mountNetBeams, syncNetBeams } = __require("src/web/net-beams.js")); });
 let shortNetsAtPlacedSolder, askNameForNewNetNameConflict; __bind(() => { ({ shortNetsAtPlacedSolder, askNameForNewNetNameConflict } = __require("src/web/net-names.js")); });
@@ -63634,6 +64748,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -70388,6 +71503,13 @@ function onNormalKey(key, shiftKey = false) {
 
   if (key === 'T') {
     tidyNow();
+    return;
+  }
+
+  // Shift+Q: arrange the selection like another drawing of it (q changes a
+  // part's type; Shift+Q changes how a group is drawn).
+  if (key === 'Q') {
+    void openArrangePicker();
     return;
   }
 
@@ -80328,7 +81450,7 @@ function contextKeyHints({ tool = null, selection = {}, hover = {}, repeat = nul
   }
   if (parts.length > 1) {
     add('m', 'move');
-    add('q', 'change type');
+    add('Shift+Q', 'arrange like');
     add('Shift+T', 'tidy');
     return hints;
   }
@@ -83088,6 +84210,7 @@ const EDITOR_KEYMAP = Object.freeze([
     ['dd', 'delete the selected object set'],
     ['q', 'change the type of the selected parts (nmos to pmos, R to C); wiring stays'],
     ['g / v (on a pin)', 'wire a ground / supply to the unconnected pin under the cursor'],
+    ['Shift+Q', 'arrange the selected parts like another drawing of them: this design, the workspace, or a built-in one'],
     ['Shift+T', 'tidy the selection: re-lay its nets fresh and move its crowded labels clear, as one undo'],
     ['o', 'show or hide the selected part\'s linked design beside the drawing'],
     ['Shift+O', 'show or hide the designs of all linked parts beside the drawing'],

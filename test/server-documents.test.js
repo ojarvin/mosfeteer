@@ -448,3 +448,18 @@ serverTest('history commands read and change the file\'s history, and a restore 
   assert.equal(missing.results[0].ok, false);
   assert.match(missing.results[0].error, /no history entry/);
 });
+
+serverTest('arrange over HTTP searches the workspace\'s other designs', async (t) => {
+  const app = await startServer();
+  t.after(() => app.stop());
+  // An upright mirror in another design: drawn unlike the built-in one.
+  await command(app, 'bias', ['add nmos M1 --at 0 0', 'add nmos M2 --at 0 400', 'connect M1.g M2.g', 'connect M1.d M1.g'].join('\n'));
+  await command(app, 'amp', ['add nmos MA --at 0 0', 'add nmos MB --at 480 -160', 'connect MA.g MB.g', 'connect MA.d MA.g'].join('\n'));
+  const listed = await command(app, 'amp', 'arrange MA MB --list');
+  assert.deepEqual(listed.results[0].json.map((c) => c.source), ['bias', 'NMOS current mirror']);
+  const done = await command(app, 'amp', 'arrange MA MB');
+  assert.equal(done.mutated, true);
+  const parts = new Map(done.state.components.map((c) => [c.refdes, c]));
+  assert.equal(parts.get('MB').transform.x - parts.get('MA').transform.x, 0);
+  assert.equal(parts.get('MB').transform.y - parts.get('MA').transform.y, 400);
+});

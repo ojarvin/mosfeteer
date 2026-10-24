@@ -277,6 +277,12 @@ timing [ROW=WAVE ...] [--add NAME,...] [--rm NAME,...] [--slot N] [--beats] [--g
                                --height ROW=4 makes a row taller (even cells); a --mark on an analog
                                point between 0 and full is a threshold, dashed at its level
 box ID... [--text TEXT]        a dashed box one cell around parts, nets, and labels (a functional block)
+arrange <refdes> ... [--list] [--pick N]
+                               draw the parts as another drawing with the same connections
+                               draws them: places, turns, their labels, the wires among them
+                               (this design, then the workspace's other designs newest
+                               first, then the built-in cells; docs/arrange.md); --list
+                               lists the ways, --pick N draws the Nth (default the first)
 svg [file] [--grid] [--beat N] render the drawing, or one beat of it
 help                           full command list
 ```
