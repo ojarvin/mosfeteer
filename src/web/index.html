@@ -58,7 +58,7 @@
           <button id="btn-workspace" type="button" role="menuitem" data-icon="workspace">Workspace folder…</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-renumber" type="button" role="menuitem" data-icon="renumber">Renumber parts…</button>
-          <button id="btn-arrange-figures" type="button" role="menuitem" data-icon="align">Arrange annotations</button>
+          <button id="btn-arrange-figures" type="button" role="menuitem" data-icon="align">Arrange figures</button>
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats">Beats <kbd>Shift+B</kbd></button>
           <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats">Make beats from phases</button>
@@ -289,7 +289,7 @@
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-net-label" class="mode-control label-control net-label-control" data-icon="tag" data-action="net-label" data-label-kind="net" aria-pressed="false" title="Net label (l)" aria-label="Place a label on a physical wire">Net label <kbd>l</kbd></button>
         <button id="btn-mode-highlight" class="mode-control" data-icon="highlight" data-action="highlight" aria-pressed="false" aria-haspopup="menu" title="Highlight nets (9)" aria-label="Highlight nets">Highlight <kbd>9</kbd></button>
-        <button id="btn-rail-annotate" class="mode-control annotation-control rail-flyout-proxy" data-icon="text" data-flyout-proxy="annotate" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="rail-flyout" title="Annotations" aria-label="Annotation tools">Annotate</button>
+        <button id="btn-rail-annotate" class="mode-control annotation-control rail-flyout-proxy" data-icon="text" data-flyout-proxy="annotate" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="rail-flyout" title="Annotations" aria-label="Annotation tools">Annotations</button>
       </div>
       <div id="wire-flyout" class="rail-flyout glass" data-editor-edge="left" role="group" aria-label="Wire shape" hidden>
         <button id="btn-route-orthogonal" class="mode-control" data-icon="wire" data-route-mode="orthogonal" aria-pressed="false" title="Orthogonal (F3)" aria-label="Orthogonal wire">Orthogonal <kbd>F3</kbd></button>
@@ -455,7 +455,7 @@
           </div>
           <div class="dialog-actions">
             <button id="analysis-show-plots" type="button" data-icon="plots" title="Plots (Shift+W)">Plots</button>
-            <button id="analysis-annotate" type="button" data-icon="text" aria-haspopup="menu" title="Annotate">Annotate…</button>
+            <button id="analysis-annotate" type="button" aria-haspopup="menu" title="Put results on the drawing">Annotate…</button>
             <button id="analysis-submit" type="submit" data-icon="check" class="primary-action" title="Derive (Enter)">Derive</button>
           </div>
         </form>

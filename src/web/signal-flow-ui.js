@@ -418,7 +418,7 @@ function renderLocus() {
   host.append(view.el);
   view.set(locusSpec(locus.plot));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate locus', title: 'Annotate the locus', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
   ]));
 }
 
@@ -483,7 +483,7 @@ function renderLoop() {
     view.set(graphSpec({ ...data.phase, role: 'loop', markers }, detailed('phase', { role: 'loop', markers })));
   }
   body.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate loop', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
   ]));
 }
 
@@ -692,7 +692,7 @@ function renderSwing() {
     };
   }), (key, on) => { if (on) swingShown.add(key); else swingShown.delete(key); renderSwing(); }));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate swing', title: 'Annotate the plot', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the plot on the drawing', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
   ]));
 }
 
@@ -1134,7 +1134,7 @@ function renderGraph() {
   host.append(legend);
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderCoefficients(); renderGraph(); renderResults(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: annotateGraph }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the graph on the drawing', disabled: !plot, onclick: annotateGraph }),
   ]));
 }
 

@@ -62,7 +62,7 @@ somewhere stays there.
 A table is placed from its estimated size; once the browser has measured
 it, it and the packed figures are packed again.
 
-**More → Arrange annotations** (`figures --arrange`, `arrangeFigures`)
+**More → Arrange figures** (`figures --arrange`, `arrangeFigures`)
 packs every figure, those moved by hand too, one undo step. `figures`
 lists them.
 

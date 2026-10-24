@@ -50649,7 +50649,7 @@ function openTimingDialog() {
   // Annotate draws the diagram; once drawn it follows every change where it
   // stands, and Move under drawing puts it where the drawing has room again
   // (after the drawing grew into it, say).
-  const annotateButton = button('Annotate diagram', 'Annotate the timing diagram', () => annotate(), { className: 'timing-annotate' });
+  const annotateButton = button('Annotate', 'Put the timing diagram on the drawing', () => annotate(), { className: 'timing-annotate' });
   const replace = button('Move under drawing', 'Move under the drawing', () => annotate(true), { className: 'timing-place' });
   const syncAnnotate = () => {
     const drawn = !!drawnTimingDiagram(editor.circuit);
@@ -50984,7 +50984,7 @@ let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
 function bodeGraphActions({ clear, annotate, ready, state }) {
   return [
     el('button', { type: 'button', text: 'Clear graph', onclick: clear }),
-    el('button', { type: 'button', class: 'bode-annotate-graph', text: 'Annotate graph', title: 'Annotate the graph', disabled: !ready, onclick: () => annotate({ magnitude: true, phase: state.phase }) }),
+    el('button', { type: 'button', class: 'bode-annotate-graph', text: 'Annotate', title: 'Put the graph on the drawing', disabled: !ready, onclick: () => annotate({ magnitude: true, phase: state.phase }) }),
     el('label', { class: 'bode-phase-toggle' }, [
       Object.assign(el('input', { type: 'checkbox', 'aria-label': 'Annotate the phase too' }), { checked: state.phase, onchange: (ev) => { state.phase = ev.target.checked; } }),
       ' with phase',
@@ -57946,7 +57946,7 @@ function annotateMathFigure({ kind, source, key = null, text, columns = null }) 
   return { label, updated: !!target };
 }
 
-/** More → Arrange annotations: every figure where a new one goes
+/** More → Arrange figures: every figure where a new one goes
  *  (figures.js arrangeFigures), one undo step. */
 function installArrangeFigures() {
   document.getElementById('btn-arrange-figures')?.addEventListener('click', () => {
@@ -77746,7 +77746,7 @@ function renderLocus() {
   host.append(view.el);
   view.set(locusSpec(locus.plot));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate locus', title: 'Annotate the locus', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the locus on the drawing', onclick: () => placePlot(locus.plot, [{ label: locus.plot.label, color: locus.plot.color }], currentSymbols()) }),
   ]));
 }
 
@@ -77811,7 +77811,7 @@ function renderLoop() {
     view.set(graphSpec({ ...data.phase, role: 'loop', markers }, detailed('phase', { role: 'loop', markers })));
   }
   body.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate loop', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the loop gain\'s magnitude, its crossover and margin marked, on the drawing', disabled: !data.magnitude, onclick: () => placePlot(data.annotated, data.shown, currentSymbols()) }),
   ]));
 }
 
@@ -78020,7 +78020,7 @@ function renderSwing() {
     };
   }), (key, on) => { if (on) swingShown.add(key); else swingShown.delete(key); renderSwing(); }));
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
-    el('button', { type: 'button', text: 'Annotate swing', title: 'Annotate the plot', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the plot on the drawing', disabled: !shown.length, onclick: () => placePlot(swingPlotOf(shown), shown, currentSymbols()) }),
   ]));
 }
 
@@ -78462,7 +78462,7 @@ function renderGraph() {
   host.append(legend);
   host.append(el('div', { class: 'signal-flow-graph-actions' }, [
     el('button', { type: 'button', text: 'Clear graph', onclick: () => { traces = []; renderCoefficients(); renderGraph(); renderResults(); } }),
-    el('button', { type: 'button', text: 'Annotate graph', title: 'Annotate the graph', disabled: !plot, onclick: annotateGraph }),
+    el('button', { type: 'button', text: 'Annotate', title: 'Put the graph on the drawing', disabled: !plot, onclick: annotateGraph }),
   ]));
 }
 
@@ -79573,7 +79573,7 @@ function build() {
   const empty = el('p', { class: 'field-hint sizing-empty', hidden: true });
   const status = el('p', { class: 'field-hint sizing-status', role: 'status' });
   const hint = el('p', { class: 'field-hint sizing-hint', text: 'Type to fill the selected cells. Ctrl+C and Ctrl+V work with spreadsheets.' });
-  const annotateButton = el('button', { type: 'button', class: 'primary-action', title: 'Put a parts table on the drawing', text: 'Annotate', onclick: annotate });
+  const annotateButton = el('button', { type: 'button', class: 'sizing-annotate', title: 'Put a parts table on the drawing', text: 'Annotate', onclick: annotate });
   const node = el('section', { class: 'floating-window sizing-window', 'aria-labelledby': 'sizing-title', hidden: true }, [
     el('header', { class: 'floating-window-header' }, [el('h2', { id: 'sizing-title', class: 'floating-window-title', text: 'Sizing' }), close]),
     el('div', { class: 'sizing-body' }, [filter, grid, empty, status, hint, el('div', { class: 'dialog-actions' }, [annotateButton])]),
@@ -80967,7 +80967,6 @@ function calculatorResult() {
   const host = section?.querySelector('.sc-calc-result');
   if (!host) return;
   const numbers = calculatorNumbers();
-  section.querySelector('.sc-calc-annotate').disabled = !numbers?.figures.ok;
   if (!numbers) { host.replaceChildren(); return; }
   const { figures } = numbers;
   if (!figures.ok) { host.replaceChildren(el('p', { class: 'field-hint', role: 'status', text: figures.error })); return; }
@@ -81144,9 +81143,6 @@ function installSwitchedCapUi() {
         el('button', { type: 'button', class: 'sc-calc-write', text: 'To sizing', title: 'Write the capacitances to the sizing table', onclick: writeSizing }),
       ]),
       el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
-      el('div', { class: 'signal-flow-graph-actions' }, [
-        el('button', { type: 'button', class: 'sc-calc-annotate', text: 'Annotate table', title: 'Annotate the noise table', disabled: true, onclick: annotateNoise }),
-      ]),
       el('p', { class: 'field-hint', text: 'Input-referred RMS over the band to f_s/2, and its white-noise density.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
@@ -81379,7 +81375,7 @@ function timeSection() {
     [256, 1024, 4096, 16384].map((n) => el('option', { value: String(n), text: `${n}` })));
   const status = el('p', { class: 'field-hint time-status', 'aria-live': 'polite' });
   const nets = el('div', { class: 'time-nets' });
-  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Annotate the waveforms', disabled: true, onclick: () => annotate() });
+  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing', disabled: true, onclick: () => annotate() });
   const node = el('div', { class: 'signal-flow-time', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
       el('label', { text: 'Sine into' }), input,
@@ -83219,7 +83215,7 @@ const SC_STEPS = Object.freeze([
   {
     id: 'clock',
     title: 'Draw the clock',
-    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. Then under **Non-overlap** tick φ1 against φ2, and press **Annotate diagram**: the clock goes under the drawing, a one-cell gap between the phases, as a non-overlapping clock has.',
+    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. Then under **Non-overlap** tick φ1 against φ2, and press **Annotate**: the clock goes under the drawing, a one-cell gap between the phases, as a non-overlapping clock has.',
     done: (circuit) => {
       const phases = scPhases(circuit);
       const states = phases && timingStates(circuit);
@@ -83322,7 +83318,7 @@ const SDM_STEPS = Object.freeze([
   {
     id: 'annotate',
     title: 'Put the graph on the drawing',
-    text: 'Back on **Magnitude**, press **Annotate graph**: the responses go under the drawing, named in their colors.',
+    text: 'Back on **Magnitude**, press **Annotate**: the responses go under the drawing, named in their colors.',
     done: (circuit) => [...circuit.labels.values()].some((label) => label.plot?.kind === 'response'),
   },
 ]);

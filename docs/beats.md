@@ -132,7 +132,7 @@ early, it rises early. Every change is the design's timing at once
 (`Circuit#timing`, set by `setTimingDiagram`): the clock the switched-cap
 analysis and Make beats read, saved with the design. An editing session is
 one undo entry. It goes on the drawing when asked, as a plot is
-annotated: **Annotate diagram** draws it (`annotateTimingDiagram`, one undo
+annotated: **Annotate** draws it (`annotateTimingDiagram`, one undo
 step), and from then on every change redraws it in place. Opening
 the editor changes nothing. A design saved before keeps only its drawn
 diagram, which is its timing until the editor first changes it. A complement follows its phase inverted until one of its own

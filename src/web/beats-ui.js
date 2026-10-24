@@ -1195,7 +1195,7 @@ function openTimingDialog() {
   // Annotate draws the diagram; once drawn it follows every change where it
   // stands, and Move under drawing puts it where the drawing has room again
   // (after the drawing grew into it, say).
-  const annotateButton = button('Annotate diagram', 'Annotate the timing diagram', () => annotate(), { className: 'timing-annotate' });
+  const annotateButton = button('Annotate', 'Put the timing diagram on the drawing', () => annotate(), { className: 'timing-annotate' });
   const replace = button('Move under drawing', 'Move under the drawing', () => annotate(true), { className: 'timing-place' });
   const syncAnnotate = () => {
     const drawn = !!drawnTimingDiagram(editor.circuit);

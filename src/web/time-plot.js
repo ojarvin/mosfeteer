@@ -58,7 +58,7 @@ export function timeSection() {
     [256, 1024, 4096, 16384].map((n) => el('option', { value: String(n), text: `${n}` })));
   const status = el('p', { class: 'field-hint time-status', 'aria-live': 'polite' });
   const nets = el('div', { class: 'time-nets' });
-  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Annotate the waveforms', disabled: true, onclick: () => annotate() });
+  const annotateButton = el('button', { type: 'button', class: 'time-annotate', text: 'Annotate', title: 'Put the waveforms on the drawing', disabled: true, onclick: () => annotate() });
   const node = el('div', { class: 'signal-flow-time', hidden: true }, [
     el('div', { class: 'signal-flow-swing-controls time-controls' }, [
       el('label', { text: 'Sine into' }), input,

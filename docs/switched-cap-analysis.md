@@ -127,7 +127,7 @@ the capacitances' numbers, and adds it to the Plots window's graph (`Shift+W`)
 as each Derive adds its gain to the Bode graph: magnitude over phase on one
 f/f_s axis, a legend naming each trace by its ratio (V_OUT/V_IN, as the
 signal-flow graph's) to show or take off, **Clear graph**, and
-**Annotate graph** to put it on the drawing (`placeResponsePlot`), and
+**Annotate** to put it on the drawing (`placeResponsePlot`), and
 **with phase** its phase too, as a plot of its own -- the Bode graph's own
 row of actions (`bode-actions.js`). The Annotate menu offers Bode magnitude
 and Bode phase.
@@ -145,7 +145,7 @@ sizing** reads those values into the fields, **To sizing** writes the
 fields into the parts' values (one undo step).
 **Annotate… → Equations** puts the mode's table on the drawing, right of the
 circuit: the transfer function, the phase it is read at, and the kT/C noise
-when worked out. The calculator's **Annotate table** puts its numbers there
+when worked out. **Annotate… → kT/C noise table** puts the calculator's numbers there
 as the noise table -- a row per contributor, the total under a rule, and the
 values they were worked out at. Each is rewritten in place when annotated
 again ([`figures.md`](figures.md)). The choices and

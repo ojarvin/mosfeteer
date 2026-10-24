@@ -353,13 +353,13 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await pressed('Output impedance'), 'false');
     await plotsButton('Output impedance');
     assert.deepEqual((await bode()).traces.map((t) => t.key), ['transfer', 'transfer', 'output']);
-    // One trace removed, one hidden, then shown again: Annotate graph puts
+    // One trace removed, one hidden, then shown again: Annotate puts
     // the two curves on the drawing, named. There is no plain sketch to place.
     await h.evaluate(`document.querySelectorAll('.plots-window .bode-legend .signal-flow-legend-remove')[2].click()`);
     await h.evaluate(`(() => { const c = document.querySelectorAll('.plots-window .bode-legend input[type=checkbox]')[1]; c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     assert.equal(await h.evaluate(`[...document.querySelectorAll('.plots-window button')].some((b) => /sketch/i.test(b.textContent))`), false);
     await h.evaluate(`(() => { const c = document.querySelectorAll('.plots-window .bode-legend input[type=checkbox]')[1]; c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    assert.equal(await plotsButton('Annotate graph'), true);
+    assert.equal(await plotsButton('Annotate'), true);
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.plot?.kind === 'response' && l.plot.traces.length === 2))`);
     await plotsButton('Clear graph');
     assert.deepEqual((await bode()).traces, []);
@@ -382,7 +382,7 @@ describe('small-signal analysis', { skip: browserSkip() }, () => {
     assert.equal(await pressed('Voltage gain'), 'false');
     assert.equal((await bode()).traces[0].label, 'Z_{m}');
     // One trace annotated: its corners marked on the drawing's graph.
-    assert.equal(await plotsButton('Annotate graph'), true);
+    assert.equal(await plotsButton('Annotate'), true);
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.plot?.markers?.length))`);
     const markers = await h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].find((l) => l.plot?.markers).plot.markers.map((x) => x.label))`);
     assert.ok(markers.includes('ω_{p1}'), JSON.stringify(markers));

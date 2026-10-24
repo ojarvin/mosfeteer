@@ -176,7 +176,7 @@ result puts the whole graph there. The choice is saved with the document
 (`analysisValues.sAxis`); `z` always plots over `f/fs` from `10^-4` to
 `1/2`. Traces stay across derives, so responses from different settings or
 outputs can be compared; each can be hidden or removed, and each result's
-**On the graph** switch takes its response off the graph or puts it back. **Annotate graph**
+**On the graph** switch takes its response off the graph or puts it back. **Annotate**
 puts it under the drawing at its left edge, as a plot annotation
 (`plot.kind: 'response'`, `responseFigure` in `bode-figure.js`) with the
 traces' names as math labels in their colors against its right edge, children of its
@@ -253,7 +253,7 @@ the input by more than 3 dB over the preceding 3 dB of sweep, or the run
 overloads -- a net tracking the input never trips it, and a quantizer's
 output, stepping between levels, is left out. The integrators' outputs, the quantizer's input, the
 output, and its tone are shown at first; any net can be checked. It runs at
-the coefficients' numbers and again as they move, and **Annotate swing**
+the coefficients' numbers and again as they move, and **Annotate**
 puts it on the drawing like the graph (`plot.kind: 'swing'`,
 `swingFigure`).
 

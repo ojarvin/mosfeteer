@@ -65,7 +65,7 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     await h.evaluate(`(() => { const i = document.querySelector('.sc-values .signal-flow-coefficient-value[aria-label="CS: value"]'); i.value = '4'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.analysisValues.sc.values.CS === 4)`);
     assert.equal(await text('.sc-equation'), 'VOUTVIN=CSCFz−11−z−1');
-    // The Bode graph's own actions: Annotate graph puts the graph on the
+    // The Bode graph's own actions: Annotate puts the graph on the
     // drawing, and with phase its phase as a plot of its own.
     const plots = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.kind === 'box' && l.plot).map((l) => l.plot.quantity || 'magnitude').sort())`);
     const before = (await plots()).length;
@@ -151,8 +151,7 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     const figures = () => h.evaluate(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].filter((l) => l.figure).map((l) => ({ kind: l.figure.kind, source: l.figure.source, text: l.text, x: l.bbox().x, y: l.bbox().y })))`);
     await annotate('Equations');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'equations'))`);
-    await h.until(`!document.querySelector('.sc-calc-annotate').disabled`);
-    await h.evaluate(`document.querySelector('.sc-calc-annotate').click()`);
+    await annotate('kT/C noise table');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'noise'))`);
     const [equations, noise] = await figures();
     assert.equal(equations.source, 'switched-cap');
@@ -171,7 +170,7 @@ describe('switched-capacitor analysis', { skip: browserSkip() }, () => {
     // A new number, annotated again: the same table, rewritten.
     await h.evaluate(`(() => { const i = document.querySelectorAll('.sc-calc-field')[2]; i.value = '127'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await h.until(`document.querySelector('.sc-calc-result tbody tr .sc-noise-value')?.textContent !== '32.19 µV'`, 10000);
-    await h.evaluate(`document.querySelector('.sc-calc-annotate').click()`);
+    await annotate('kT/C noise table');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.figure?.kind === 'noise' && l.text.includes('127 °C')))`);
     assert.equal((await figures()).length, 2);
   });

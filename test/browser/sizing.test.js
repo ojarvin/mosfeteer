@@ -165,7 +165,7 @@ describe('sizing window', { skip: browserSkip() }, () => {
 
   test('Annotate puts a parts table right of the drawing that follows the sizes', async () => {
     await pickCell('M1', 'w');
-    await h.click('.sizing-window .primary-action');
+    await h.click('.sizing-window .sizing-annotate');
     await h.until(`${h.module('editor-state.js')}.then((m) => [...m.editor.circuit.labels.values()].some((l) => l.table))`);
     const svg = () => h.evaluate(`document.querySelector('#canvas g.parts-table')?.textContent || ''`);
     await h.until(`(document.querySelector('#canvas g.parts-table')?.textContent || '').includes('10\u2009µm')`);

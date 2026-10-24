@@ -403,7 +403,7 @@ the magnitude is drawn over the phase, the two on one frequency axis
 (they pan and zoom along it together, and only the phase numbers it); one
 trace shown is drawn as a
 textbook sketch, its asymptote and corners marked, several as their curves
-together over the range they span. **Annotate graph** puts the graph on the
+together over the range they span. **Annotate** puts the graph on the
 drawing as a signal-flow graph is (`plot.kind: 'response'`, its traces
 named beside it, against its box; one trace's corners marked, `ω_{p1}`, a
 label close to the one before a line lower), and **with phase** checked its phase as

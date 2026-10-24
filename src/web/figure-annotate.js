@@ -77,7 +77,7 @@ export function annotateMathFigure({ kind, source, key = null, text, columns = n
   return { label, updated: !!target };
 }
 
-/** More → Arrange annotations: every figure where a new one goes
+/** More → Arrange figures: every figure where a new one goes
  *  (figures.js arrangeFigures), one undo step. */
 export function installArrangeFigures() {
   document.getElementById('btn-arrange-figures')?.addEventListener('click', () => {

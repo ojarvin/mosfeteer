@@ -38,6 +38,11 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.open('amplifier');
     assert.equal(await h.evaluate(`document.getElementById('btn-mode-place').title`), 'Insert (i)');
     assert.equal(await h.evaluate(`document.getElementById('btn-analysis').title`), 'Analysis (Shift+S)');
+    // What puts a figure on the drawing is Annotate (Annotate… where it offers
+    // a choice); the rail's text, arrows, and boxes are Annotations.
+    assert.equal(await h.evaluate(`document.getElementById('analysis-annotate').textContent.trim()`), 'Annotate…');
+    assert.equal(await h.evaluate(`document.getElementById('btn-rail-annotate').textContent.trim()`), 'Annotations');
+    assert.equal(await h.evaluate(`document.getElementById('btn-arrange-figures').textContent.trim()`), 'Arrange figures');
     await h.key('i');
     await h.until(`document.getElementById('status-mode').textContent === 'INSERT'`);
     await h.key('Escape');

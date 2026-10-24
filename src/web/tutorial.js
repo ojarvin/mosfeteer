@@ -215,7 +215,7 @@ const SC_STEPS = Object.freeze([
   {
     id: 'clock',
     title: 'Draw the clock',
-    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. Then under **Non-overlap** tick φ1 against φ2, and press **Annotate diagram**: the clock goes under the drawing, a one-cell gap between the phases, as a non-overlapping clock has.',
+    text: 'Press **Shift+K** for the timing editor, a row per phase. Make φ1 high in the first slot and φ2 in the second: click a slot to flip it. Then under **Non-overlap** tick φ1 against φ2, and press **Annotate**: the clock goes under the drawing, a one-cell gap between the phases, as a non-overlapping clock has.',
     done: (circuit) => {
       const phases = scPhases(circuit);
       const states = phases && timingStates(circuit);
@@ -318,7 +318,7 @@ const SDM_STEPS = Object.freeze([
   {
     id: 'annotate',
     title: 'Put the graph on the drawing',
-    text: 'Back on **Magnitude**, press **Annotate graph**: the responses go under the drawing, named in their colors.',
+    text: 'Back on **Magnitude**, press **Annotate**: the responses go under the drawing, named in their colors.',
     done: (circuit) => [...circuit.labels.values()].some((label) => label.plot?.kind === 'response'),
   },
 ]);

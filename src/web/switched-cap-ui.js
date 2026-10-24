@@ -433,7 +433,6 @@ function calculatorResult() {
   const host = section?.querySelector('.sc-calc-result');
   if (!host) return;
   const numbers = calculatorNumbers();
-  section.querySelector('.sc-calc-annotate').disabled = !numbers?.figures.ok;
   if (!numbers) { host.replaceChildren(); return; }
   const { figures } = numbers;
   if (!figures.ok) { host.replaceChildren(el('p', { class: 'field-hint', role: 'status', text: figures.error })); return; }
@@ -610,9 +609,6 @@ export function installSwitchedCapUi() {
         el('button', { type: 'button', class: 'sc-calc-write', text: 'To sizing', title: 'Write the capacitances to the sizing table', onclick: writeSizing }),
       ]),
       el('div', { class: 'sc-calc-result', 'aria-live': 'polite' }),
-      el('div', { class: 'signal-flow-graph-actions' }, [
-        el('button', { type: 'button', class: 'sc-calc-annotate', text: 'Annotate table', title: 'Annotate the noise table', disabled: true, onclick: annotateNoise }),
-      ]),
       el('p', { class: 'field-hint', text: 'Input-referred RMS over the band to f_s/2, and its white-noise density.' }),
     ]),
     el('fieldset', { class: 'analysis-approximations signal-flow-coefficients sc-values', hidden: true }, [
