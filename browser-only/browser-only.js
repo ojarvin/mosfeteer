@@ -75584,7 +75584,7 @@ let buttonIcon; __bind(() => { ({ buttonIcon } = __require("src/web/icons.js"));
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
 let persistence, openDocumentPath; __bind(() => { ({ persistence, openDocumentPath } = __require("src/web/document-session.js")); });
 let appendDesignChoices, workspaceDesigns; __bind(() => { ({ appendDesignChoices, workspaceDesigns } = __require("src/web/hierarchy.js")); });
-let openMenuAt; __bind(() => { ({ openMenuAt } = __require("src/web/context-menu.js")); });
+let closeComponentContextMenu, openMenuAt; __bind(() => { ({ closeComponentContextMenu, openMenuAt } = __require("src/web/context-menu.js")); });
 let storedImage, takePastedPictures; __bind(() => { ({ storedImage, takePastedPictures } = __require("src/web/copy-paste.js")); });
 let logLine; __bind(() => { ({ logLine } = __require("src/web/status-bar-ui.js")); });
 let markSettingsChanged, onDocumentShown; __bind(() => { ({ markSettingsChanged, onDocumentShown } = __require("src/web/main.js")); });
@@ -76195,9 +76195,15 @@ function copyHoveredReference() {
   return true;
 }
 
+/** A window that goes takes its design picker with it. */
+function closePicker() {
+  if (document.querySelector('#component-context-menu:not([hidden]) .reference-picker')) closeComponentContextMenu();
+}
+
 function closeWindow(win) {
   const index = windows.indexOf(win);
   if (index < 0) return;
+  closePicker();
   windows.splice(index, 1);
   if (modelWindow === win) modelWindow = null;
   if (hovered === win) hovered = null;
@@ -76277,6 +76283,7 @@ function toggleReferenceWindows() {
 /** Hide the reference windows, keeping what they show, or show them again. */
 function setHidden(on) {
   hidden = on;
+  if (hidden) closePicker();
   for (const win of windows) {
     win.el.hidden = hidden;
     if (!hidden) {

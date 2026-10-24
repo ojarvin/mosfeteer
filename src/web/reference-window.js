@@ -30,7 +30,7 @@ import { buttonIcon } from './icons.js';
 import { editor } from './editor-state.js';
 import { persistence, openDocumentPath } from './document-session.js';
 import { appendDesignChoices, workspaceDesigns } from './hierarchy.js';
-import { openMenuAt } from './context-menu.js';
+import { closeComponentContextMenu, openMenuAt } from './context-menu.js';
 import { storedImage, takePastedPictures } from './copy-paste.js';
 import { logLine } from './status-bar-ui.js';
 import { markSettingsChanged, onDocumentShown } from './main.js';
@@ -603,9 +603,15 @@ export function copyHoveredReference() {
   return true;
 }
 
+/** A window that goes takes its design picker with it. */
+function closePicker() {
+  if (document.querySelector('#component-context-menu:not([hidden]) .reference-picker')) closeComponentContextMenu();
+}
+
 function closeWindow(win) {
   const index = windows.indexOf(win);
   if (index < 0) return;
+  closePicker();
   windows.splice(index, 1);
   if (modelWindow === win) modelWindow = null;
   if (hovered === win) hovered = null;
@@ -685,6 +691,7 @@ export function toggleReferenceWindows() {
 /** Hide the reference windows, keeping what they show, or show them again. */
 function setHidden(on) {
   hidden = on;
+  if (hidden) closePicker();
   for (const win of windows) {
     win.el.hidden = hidden;
     if (!hidden) {

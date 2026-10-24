@@ -25,6 +25,13 @@ describe('reference windows', { skip: browserSkip() }, () => {
     })()`);
     assert.ok(sizes.scrolls, 'the list is long enough to scroll');
     assert.ok(sizes.search >= sizes.item, JSON.stringify(sizes));
+    // Closing the window closes its picker: no menu is left over the drawing.
+    await h.click('.reference-window .floating-window-close');
+    await h.until(`!document.querySelector('#component-context-menu:not([hidden]) .reference-picker')`);
+    await h.key('V', { shiftKey: true });
+    await h.until(`!!document.querySelector('.reference-window:not([hidden])')`);
+    await h.click('.reference-window .reference-title');
+    await h.until(`!!document.querySelector('#component-context-menu:not([hidden]) .reference-picker')`);
   });
 
   test('closed and shown again it keeps its design; pressed, f fits it and Shift+V hides it', async () => {
