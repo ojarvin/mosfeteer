@@ -67,7 +67,8 @@ import { syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysi
 import { closeComponentContextMenu, openContextMenuAt, installContextMenu } from './context-menu.js';
 import { boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } from './label-editor.js';
 import { activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } from './beats-ui.js';
-import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
+import { formatModifiedTime, revisionTime } from './modified-time.js';
+import { persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } from './document-session.js';
 import { copyAsImage, exportCircuit, installExportUi } from './export-ui.js';
 import { queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } from './commit-flash.js';
 import { renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts } from './side-panel.js';
@@ -2447,10 +2448,42 @@ function syncEmptyState() {
   card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial;
   if (card.hidden) return;
   card.querySelector('.empty-state-title').textContent = 'Empty schematic';
+  syncRecentDesigns(card);
   card.querySelector('[data-empty-action="wire"] .empty-state-text').textContent = 'Draw a wire';
   card.querySelector('[data-empty-action="place"] .empty-state-text').textContent = 'Insert a component';
 }
 
+
+const RECENT_SHOWN = 4;
+
+/** The empty card's recent designs: the workspace's last saved, newest
+ *  first, a click opening one. */
+function syncRecentDesigns(card) {
+  const list = card.querySelector('.empty-state-recent');
+  if (!list) return;
+  const designs = (editor.workspaceState?.documents || [])
+    .filter((doc) => doc.kind === 'circuit' && doc.path !== editor.currentDocumentPath)
+    .map((doc) => ({ doc, time: revisionTime(doc.revision) ?? 0 }))
+    .sort((a, b) => b.time - a.time)
+    .slice(0, RECENT_SHOWN);
+  const key = designs.map(({ doc }) => doc.path).join('\n');
+  if (list.dataset.key === key) return;
+  list.dataset.key = key;
+  list.hidden = !designs.length;
+  list.replaceChildren(
+    ...(designs.length ? [Object.assign(document.createElement('p'), { className: 'empty-state-heading', textContent: 'Recent designs' })] : []),
+    ...designs.map(({ doc, time }) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.recentPath = doc.path;
+      button.title = doc.path;
+      const name = Object.assign(document.createElement('span'), { className: 'empty-state-text', textContent: doc.name });
+      const when = Object.assign(document.createElement('span'), { className: 'empty-state-when', textContent: time ? formatModifiedTime(time) : '' });
+      button.append(name, when);
+      return button;
+    }),
+  );
+}
 
 /** Call `handler()` whenever another document is shown, after it is in place. */
 export function onDocumentShown(handler) {
@@ -7394,6 +7427,8 @@ installNetBeams();
 // ----- side panel ----------------------------------------------------------------
 
 document.getElementById('empty-state')?.addEventListener('click', (ev) => {
+  const recent = ev.target.closest?.('[data-recent-path]')?.dataset.recentPath;
+  if (recent) { void openDocumentPath(recent); return; }
   const action = ev.target.closest?.('[data-empty-action]')?.dataset.emptyAction;
   if (action === 'place') activatePlace();
   else if (action === 'wire') activateWire();

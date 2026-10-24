@@ -2848,6 +2848,44 @@ button.app-mark-button:active {
   font: 600 var(--text-xs)/1.4 var(--font-mono);
 }
 
+/* The recent designs, under the empty card's actions: a name and when it
+   was last saved. */
+.empty-state-recent {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.empty-state-recent[hidden] {
+  display: none;
+}
+
+.empty-state-heading {
+  margin: 0 0 4px 6px;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.empty-state .empty-state-recent button {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.empty-state-recent .empty-state-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-state-when {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
 /* ----- side panel ---------------------------------------------- */
 
 /* A persistently highlighted net shows its color beside its name. */

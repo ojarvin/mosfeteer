@@ -49,6 +49,16 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test('a new design\'s empty card lists the latest designs, and a click opens one', async () => {
+    await h.open('amplifier');
+    await h.click('#btn-new-document');
+    await h.until(`!document.getElementById('empty-state').hidden && !document.querySelector('.empty-state-recent').hidden`);
+    const names = await h.evaluate(`[...document.querySelectorAll('.empty-state-recent [data-recent-path] .empty-state-text')].map((n) => n.textContent)`);
+    assert.deepEqual([...names].sort(), ['amplifier', 'edit', 'modulator']);
+    await h.evaluate(`[...document.querySelectorAll('.empty-state-recent [data-recent-path]')].find((b) => b.textContent.includes('modulator')).click()`);
+    await h.untilDiscarding(`${h.module('editor-state.js')}.then((m) => m.editor.currentDocumentPath?.endsWith('modulator.json'))`);
+  });
+
   test('the theme is a setting: its menu item switches the drawing dark and back', async () => {
     assert.ok(await h.evaluate(`!!document.querySelector('#settings-menu #btn-theme[role="menuitemcheckbox"]')`));
     const dark = () => h.evaluate(`document.documentElement.classList.contains('dark')`);

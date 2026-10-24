@@ -63588,7 +63588,8 @@ let syncAnalysisDock, setAnalysisPick, completeAnalysisPick, installAnalysisUi, 
 let closeComponentContextMenu, openContextMenuAt, installContextMenu; __bind(() => { ({ closeComponentContextMenu, openContextMenuAt, installContextMenu } = __require("src/web/context-menu.js")); });
 let boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel; __bind(() => { ({ boxState, restoreBoxState, openComponentChildLabelEditor, inlineEditLabel } = __require("src/web/label-editor.js")); });
 let activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor; __bind(() => { ({ activeBeatIndex, activeBeatView, rememberBeatObjects, introduceNewBeatObjects, stepBeat, toggleBeatStrip, addBeatHere, deleteBeats, selectedBeatIndices, toggleSelectionInBeat, flipSelectedSwitches, renderBeatStrip, openPresenter, toggleTimingDialog, onPresenterKey, installBeatsUi, syncTimingEditor } = __require("src/web/beats-ui.js")); });
-let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
+let formatModifiedTime, revisionTime; __bind(() => { ({ formatModifiedTime, revisionTime } = __require("src/web/modified-time.js")); });
+let persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession; __bind(() => { ({ persistDraft, flushDraft, restoreDraft, restoreStartup, saveCircuit, openDocumentDialog, openDocumentPath, renderSaveState, syncActiveCircuit, startSessionHeartbeat, installDocumentSession } = __require("src/web/document-session.js")); });
 let copyAsImage, exportCircuit, installExportUi; __bind(() => { ({ copyAsImage, exportCircuit, installExportUi } = __require("src/web/export-ui.js")); });
 let queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback; __bind(() => { ({ queueCommitFeedback, flushPendingCommitFeedback, mountCommitFeedback } = __require("src/web/commit-flash.js")); });
 let renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts; __bind(() => { ({ renderComponents, renderNets, renderDetail, toggleSidePanel, installSidePanel, installMarkupShortcuts } = __require("src/web/side-panel.js")); });
@@ -63629,6 +63630,7 @@ let syncSnapPulse, annotationReach, cutAlong, withGestureOverlay; __bind(() => {
  *   VISUAL   arrows grow a selection box, Enter commits it (like a marquee).
  *   WIRE     terminal letters pick/complete connections.
  */
+
 
 
 
@@ -66059,10 +66061,42 @@ function syncEmptyState() {
   card.hidden = !empty || mode === 'insert' || !!wire || !!labelMode || !!tutorial;
   if (card.hidden) return;
   card.querySelector('.empty-state-title').textContent = 'Empty schematic';
+  syncRecentDesigns(card);
   card.querySelector('[data-empty-action="wire"] .empty-state-text').textContent = 'Draw a wire';
   card.querySelector('[data-empty-action="place"] .empty-state-text').textContent = 'Insert a component';
 }
 
+
+const RECENT_SHOWN = 4;
+
+/** The empty card's recent designs: the workspace's last saved, newest
+ *  first, a click opening one. */
+function syncRecentDesigns(card) {
+  const list = card.querySelector('.empty-state-recent');
+  if (!list) return;
+  const designs = (editor.workspaceState?.documents || [])
+    .filter((doc) => doc.kind === 'circuit' && doc.path !== editor.currentDocumentPath)
+    .map((doc) => ({ doc, time: revisionTime(doc.revision) ?? 0 }))
+    .sort((a, b) => b.time - a.time)
+    .slice(0, RECENT_SHOWN);
+  const key = designs.map(({ doc }) => doc.path).join('\n');
+  if (list.dataset.key === key) return;
+  list.dataset.key = key;
+  list.hidden = !designs.length;
+  list.replaceChildren(
+    ...(designs.length ? [Object.assign(document.createElement('p'), { className: 'empty-state-heading', textContent: 'Recent designs' })] : []),
+    ...designs.map(({ doc, time }) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.recentPath = doc.path;
+      button.title = doc.path;
+      const name = Object.assign(document.createElement('span'), { className: 'empty-state-text', textContent: doc.name });
+      const when = Object.assign(document.createElement('span'), { className: 'empty-state-when', textContent: time ? formatModifiedTime(time) : '' });
+      button.append(name, when);
+      return button;
+    }),
+  );
+}
 
 /** Call `handler()` whenever another document is shown, after it is in place. */
 function onDocumentShown(handler) {
@@ -71006,6 +71040,8 @@ installNetBeams();
 // ----- side panel ----------------------------------------------------------------
 
 document.getElementById('empty-state')?.addEventListener('click', (ev) => {
+  const recent = ev.target.closest?.('[data-recent-path]')?.dataset.recentPath;
+  if (recent) { void openDocumentPath(recent); return; }
   const action = ev.target.closest?.('[data-empty-action]')?.dataset.emptyAction;
   if (action === 'place') activatePlace();
   else if (action === 'wire') activateWire();
