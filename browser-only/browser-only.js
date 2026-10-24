@@ -3286,7 +3286,7 @@ __exports.numericLoopGain = numericLoopGain;
 __exports.analyzeSmallSignalV2 = analyzeSmallSignalV2;
 let MOS_TYPES, asList, firstDefined; __bind(() => { ({ MOS_TYPES, asList, firstDefined } = __require("src/core/analysis/shared.js")); });
 let analyzedCircuit; __bind(() => { ({ analyzedCircuit } = __require("src/core/model.js")); });
-let feedbackParts, resolveLoopBreak, returnRatio; __bind(() => { ({ feedbackParts, resolveLoopBreak, returnRatio } = __require("src/core/analysis/loop-gain.js")); });
+let feedbackParts, outputParts, resolveLoopBreak, returnRatio; __bind(() => { ({ feedbackParts, outputParts, resolveLoopBreak, returnRatio } = __require("src/core/analysis/loop-gain.js")); });
 let poleTimeConstants; __bind(() => { ({ poleTimeConstants } = __require("src/core/analysis/time-constants.js")); });
 let applyApproximations; __bind(() => { ({ applyApproximations } = __require("src/core/analysis/approximation.js")); });
 let cancelCommonPolynomialFactor; __bind(() => { ({ cancelCommonPolynomialFactor } = __require("src/core/analysis/polynomial-gcd.js")); });
@@ -3754,7 +3754,10 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, request, mainOps, m
     if (!model.ok) return exact;
     const provenance = symbolProvenance(model.primitives, model.conversion?.primitives, []);
     const outputNode = model.context.output?.node;
-    const outputComponents = new Set([...solved.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
+    // A break is solved to its return net; its loads are the design's output's.
+    const outputComponents = target.kind === 'break'
+      ? outputParts(solved, pipelineOptions.output)
+      : new Set([...solved.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
     const values = sketchValues(sketchParameters(new Set(Object.keys(provenance)), provenance, { outputComponents }), rawOptions.sketchRatios || {});
     const numericPipelineOptions = { ...symbolicOptions, valueOf: (value, primitive) => symbolicValue(value, primitive, { ...rawOptions, values }, numericOps) };
     const numericOptions = { ...mainOptions, budget: numericOps.budget };
@@ -4351,6 +4354,7 @@ function numericLoopGain(circuit, options = {}) {
   });
   return {
     ...model,
+    outputComponents: outputParts(target.circuit, options.output),
     at: (values) => {
       const result = model.at(values);
       return result.ok ? { ok: true, quantities: { loop: negated(result.quantities.transfer) } } : result;
@@ -5105,6 +5109,7 @@ function locusPlot(locus, { parameter, label, color = COLOR_PALETTE.cobalt } = {
 __modules["src/core/analysis/loop-gain.js"] = function (__require, __exports) {
 __exports.returnRatio = returnRatio;
 __exports.feedbackParts = feedbackParts;
+__exports.outputParts = outputParts;
 __exports.resolveLoopBreak = resolveLoopBreak;
 let buildMNA; __bind(() => { ({ buildMNA } = __require("src/core/analysis/mna.js")); });
 let solveMNA; __bind(() => { ({ solveMNA } = __require("src/core/analysis/solve.js")); });
@@ -5259,6 +5264,13 @@ function netsNamed(circuit, name) {
   if (byId) return [byId];
   const key = canonicalNetName(name);
   return key ? [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === key) : [];
+}
+
+/** The parts on the design's output net (and every net of its name): the
+ *  loads the Bode sketch's values make ten units. A broken loop is solved
+ *  to its return net, but its loads are still the design's. */
+function outputParts(circuit, output) {
+  return new Set((output ? netsNamed(circuit, output) : []).flatMap((net) => net.terminals.map((t) => t.comp)));
 }
 
 /** How a break point is written: `U1`, `M2.g`, `V_{out}`, `V_{fb} to V_{inn}`. */

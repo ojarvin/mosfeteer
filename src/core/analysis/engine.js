@@ -1,6 +1,6 @@
 import { MOS_TYPES, asList, firstDefined } from './shared.js';
 import { analyzedCircuit } from '../model.js';
-import { feedbackParts, resolveLoopBreak, returnRatio } from './loop-gain.js';
+import { feedbackParts, outputParts, resolveLoopBreak, returnRatio } from './loop-gain.js';
 import { poleTimeConstants } from './time-constants.js';
 import { applyApproximations } from './approximation.js';
 import { cancelCommonPolynomialFactor } from './polynomial-gcd.js';
@@ -465,7 +465,10 @@ function analyzeLoopGain(circuit, pipeline, pipelineOptions, request, mainOps, m
     if (!model.ok) return exact;
     const provenance = symbolProvenance(model.primitives, model.conversion?.primitives, []);
     const outputNode = model.context.output?.node;
-    const outputComponents = new Set([...solved.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
+    // A break is solved to its return net; its loads are the design's output's.
+    const outputComponents = target.kind === 'break'
+      ? outputParts(solved, pipelineOptions.output)
+      : new Set([...solved.nets.values()].filter((net) => net.id === outputNode || model.context.nodeAliases.get(net.id) === outputNode).flatMap((net) => net.terminals.map((t) => t.comp)));
     const values = sketchValues(sketchParameters(new Set(Object.keys(provenance)), provenance, { outputComponents }), rawOptions.sketchRatios || {});
     const numericPipelineOptions = { ...symbolicOptions, valueOf: (value, primitive) => symbolicValue(value, primitive, { ...rawOptions, values }, numericOps) };
     const numericOptions = { ...mainOptions, budget: numericOps.budget };
@@ -1062,6 +1065,7 @@ export function numericLoopGain(circuit, options = {}) {
   });
   return {
     ...model,
+    outputComponents: outputParts(target.circuit, options.output),
     at: (values) => {
       const result = model.at(values);
       return result.ok ? { ok: true, quantities: { loop: negated(result.quantities.transfer) } } : result;

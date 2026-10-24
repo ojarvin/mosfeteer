@@ -149,6 +149,13 @@ function netsNamed(circuit, name) {
   return key ? [...circuit.nets.values()].filter((net) => canonicalNetName(net.name) === key) : [];
 }
 
+/** The parts on the design's output net (and every net of its name): the
+ *  loads the Bode sketch's values make ten units. A broken loop is solved
+ *  to its return net, but its loads are still the design's. */
+export function outputParts(circuit, output) {
+  return new Set((output ? netsNamed(circuit, output) : []).flatMap((net) => net.terminals.map((t) => t.comp)));
+}
+
 /** How a break point is written: `U1`, `M2.g`, `V_{out}`, `V_{fb} to V_{inn}`. */
 export const LOOP_BREAK_HINT = 'an opamp (U1), a terminal (M2.g), the net that closes the loop (V_{out}), or two nets when it is not drawn closed (V_{fb} to V_{inn})';
 

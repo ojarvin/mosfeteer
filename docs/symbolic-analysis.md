@@ -188,7 +188,10 @@ stamps. A loop broken at a terminal or a net is also built in numbers
 (`numericLoopGain`, as `numericSmallSignal` for the port quantities: the
 lifted copy solved at each frequency), so its curve, crossover, and phase
 margin follow the sliders; the equations stay at the values of the Derive.
-An opamp's numeric T is re-solved by the next Derive.
+An opamp's numeric T is re-solved by the next Derive. Wherever the loop
+breaks, its loads (ten units) are the parts on the design's output net,
+never on the return net it is solved to, so one loop broken at two places
+is solved at the same numbers.
 
 ## Exact and displayed results
 
