@@ -483,7 +483,7 @@ export function renderDetail() {
     const rows = [['Role', role], ['Align', label.align], ['Anchor', `${a.x}, ${a.y}`]];
     if (label.owner) rows.push(['Owner', label.owner]);
     if (label.netId) rows.push(['Net', editor.circuit.nets.get(label.netId)?.name || label.netId]);
-    if (label.table) rows.push(['Lists', label.table.parts ? label.table.parts.join(', ') : 'every sized or valued part']);
+    if (label.table) rows.push(['Lists', label.table.parts ? label.table.parts.join(', ') : 'all sized or valued parts']);
     detailEl.appendChild(label.table
       ? detailHeader('Parts table', 'sizes and values')
       : label.plot

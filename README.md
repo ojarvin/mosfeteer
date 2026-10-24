@@ -52,7 +52,7 @@ A design is one `.json` file in a folder.
   clock phases, and beats that step through the circuit phase by phase,
   with open switches drawn open and what they cut off dimmed. Useful for
   checking a switched-capacitor circuit, and for presenting it.
-- **History.** Every save is kept inside the file. Pin the one that works
+- **History.** Saves are kept inside the file. Pin the one that works
   as a checkpoint and go back to it later.
 - **Links.** A part can stand for another design: an op-amp for its
   transistor-level circuit. Peek at it, open it, or keep it beside you in a
@@ -64,7 +64,7 @@ A design is one `.json` file in a folder.
 
 ## The workspace
 
-The **Atlas** (`Shift+Backspace`) lays out every design in the folder on
+The **Atlas** (`Shift+Backspace`) lays out all designs in the folder on
 one sheet. Search it for parts, nets, text, or `#tags`. Pick a design and
 the ones it links to are drawn joined to it. Open one with a double-click.
 
@@ -86,7 +86,7 @@ constants, one per capacitor. Pick the input and output on the drawing; an
 ambiguous pick gets an explanation, not a guess.
 
 **Signal flow.** For block diagrams: gains, sums, H(s) and H(z) blocks,
-samplers, and quantizers. Every source's transfer function to the output
+samplers, and quantizers. The transfer function from each source to the output
 comes from one solve, so a delta-sigma modulator's STF and NTF come out
 together. Symbols like `a_1` stay symbolic in the equations and get sliders
 in the plots.
@@ -136,7 +136,7 @@ The editor opens in its own window and quits when you close it.
 | `Shift+E` · `x` | calculator · design check |
 | `Shift+Backspace` | the Atlas |
 | `Esc` | let go of the selection, then close windows one by one |
-| `?` | every other key, the tutorials, and the symbols |
+| `?` | all other keys, the tutorials, and the symbols |
 
 ## More
 

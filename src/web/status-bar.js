@@ -153,11 +153,11 @@ export function contextKeyHints({ tool = null, selection = {}, hover = {}, repea
   if (empty) {
     add('i', 'insert a part');
     add('double-click', 'insert here');
-    add('?', 'every key');
+    add('?', 'all keys');
     return hints;
   }
   add('i', 'insert');
   add('w', 'wire');
-  add('?', 'every key');
+  add('?', 'all keys');
   return hints;
 }

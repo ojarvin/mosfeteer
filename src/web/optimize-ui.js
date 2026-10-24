@@ -71,7 +71,7 @@ function specText(spec, sources) {
     return `${action} the poles' ${spec.measure === 'q' ? 'highest Q' : 'largest radius'} of H from ${source ? plainName(source.name) : spec.input}${spec.value !== undefined ? ` (${spec.value})` : ''}`;
   }
   const measure = { average: 'average', peak: 'peak', lowest: 'lowest' }[spec.measure];
-  const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'over every frequency' : `from ${spec.f1Text ?? spec.f1} to ${spec.f2Text ?? spec.f2}`;
+  const band = spec.band === 'signal' ? 'in the signal band' : spec.band === 'outside' ? 'outside the signal band' : spec.band === 'all' ? 'at all frequencies' : `from ${spec.f1Text ?? spec.f1} to ${spec.f2Text ?? spec.f2}`;
   return `${action} the ${measure} |H| from ${source ? plainName(source.name) : spec.input} ${band}${spec.value !== undefined ? ` (${spec.value} dB)` : ''}`;
 }
 
@@ -96,7 +96,7 @@ export function renderOptimize() {
   const { sources } = signalFlowGraph(circuit);
   const current = setup();
   body.replaceChildren(
-    el('p', { class: 'field-hint', text: 'Searches the free coefficients for the best goal that meets every limit: specs on |H| in dB, and the simulated swing test. It uses CMA-ES, starting from the coefficients\' current values. Works on any diagram, a modulator or a plain filter.' }),
+    el('p', { class: 'field-hint', text: 'Searches the free coefficients for the best goal that meets all limits: specs on |H| in dB, and the simulated swing test. It uses CMA-ES, starting from the coefficients\' current values. Works on any diagram, a modulator or a plain filter.' }),
     coefficientTable(circuit, current),
     specList(current, sources),
     constraintsBlock(current),
@@ -176,7 +176,7 @@ function specList(current, sources) {
       select('measure', [['average', 'average'], ['peak', 'peak'], ['lowest', 'lowest'], ['q', 'pole Q'], ['radius', 'pole radius']], 'Measure: |H| over a band, or the poles (highest pair Q, largest |z|)'),
       el('span', { class: 'signal-flow-optimize-word', text: poles ? 'of H from' : '|H| from' }),
       select('input', inputs.length ? inputs : [['', '(no source)']], 'Source'),
-      ...(poles ? [] : [select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'over every frequency'], ['custom', 'from f1 to f2']], 'Band')]),
+      ...(poles ? [] : [select('band', [['signal', 'in the signal band'], ['outside', 'outside the band'], ['all', 'at all frequencies'], ['custom', 'from f1 to f2']], 'Band')]),
       ...(!poles && spec.band === 'custom' ? [field('f1', 'f1/fs', 'Band start, f/fs'), field('f2', 'f2/fs', 'Band end, f/fs')] : []),
       ...(limit ? [field('value', poles ? (spec.measure === 'q' ? 'Q' : '|z|') : 'dB', poles ? 'Limit' : 'Limit, dB'), ...(poles ? [] : [el('span', { class: 'signal-flow-optimize-word', text: 'dB' })])] : []),
       el('button', { type: 'button', class: 'signal-flow-legend-remove', text: '×', title: 'Remove this spec', 'aria-label': 'Remove this spec', onclick: () => { current.specs.splice(index, 1); changed(); renderOptimize(); } }),
@@ -196,7 +196,7 @@ function specList(current, sources) {
     el('div', { class: 'signal-flow-optimize-heading', text: 'Specs' }),
     ...(rows.length ? rows : [el('p', { class: 'field-hint', text: 'No specs: add one, or use the swing test alone.' })]),
     el('div', { class: 'signal-flow-graph-actions' }, [el('button', { type: 'button', text: 'Add spec', onclick: add })]),
-    el('p', { class: 'field-hint', text: '|H| runs from the source to the output picked above, in dB over f/fs (s in units of 1/Ts). The band is the signal band set above the plots. Average is the power average (in-band noise); peak and lowest are the extremes. Every transfer function a spec reads must stay stable. Lee\'s rule for a modulator: NTF peak below 3.5 dB (1.5).' }),
+    el('p', { class: 'field-hint', text: '|H| runs from the source to the output picked above, in dB over f/fs (s in units of 1/Ts). The band is the signal band set above the plots. Average is the power average (in-band noise); peak and lowest are the extremes. The transfer functions the specs read must stay stable. Lee\'s rule for a modulator: NTF peak below 3.5 dB (1.5).' }),
     el('p', { class: 'field-hint', text: 'Pole Q is the highest Q of any pole pair (a z pole read as s = ln z): how much it rings. 0.5 is real poles, 0.707 a Butterworth pair. Pole radius is the largest |z|; at the same radius, a higher frequency rings more. A loop\'s NTF and STF share their poles.' }),
   ]);
 }
@@ -262,7 +262,7 @@ function swingBlock(circuit, current, sources) {
       })));
     }
     const sources = [...api.circuit().components.values()].filter((c) => c.type === 'dither').map((c) => c.refdes);
-    const ditherText = sources.length ? ` Dither sources (${sources.join(', ')}) draw new numbers in every run.` : ' No dither: add a dither source with a gain after it for some.';
+    const ditherText = sources.length ? ` Dither sources (${sources.join(', ')}) draw new numbers in each run.` : ' No dither: add a dither source with a gain after it for some.';
     children.push(el('p', { class: 'field-hint', text: `Each candidate is simulated with a sine of this amplitude, rounding at each quantizer. It must stay stable at this amplitude and 1 dB above, and each limited net must stay under its limit by its ${MEASURE_TEXT[swing.measure]} (dBFS of the quantizer's full scale; blank: no limit). Candidates are ranked on four runs of 4096 samples; each new best is verified on eight runs of 16384 plus two 1 dB above, which must all hold. The numbers shown are from the verification. A 3-sigma level is exceeded 0.27% of the time (4 sigma: 0.006%); sigma names how rare, as the swing is not Gaussian. The highest peak is strict but scatters by dBs near overload.${ditherText}` }));
   }
   return el('div', { class: 'signal-flow-optimize-group' }, children);
@@ -382,7 +382,7 @@ function resultBlock(sources) {
   const host = el('div', { class: 'signal-flow-optimize-result' });
   if (!found) return host;
   host.append(
-    el('div', { class: 'signal-flow-optimize-heading', text: `${found.fractions ? 'Found, as fractions' : 'Found'}: ${found.feasible ? 'every limit met' : 'the best compromise, missing a limit'}` }),
+    el('div', { class: 'signal-flow-optimize-heading', text: `${found.fractions ? 'Found, as fractions' : 'Found'}: ${found.feasible ? 'all limits met' : 'the best compromise, missing a limit'}` }),
     ...(found.fractions ? fractionsTable(found) : []),
     ...scoreRows(found, sources, ['Start', found.fractions ? 'Fractions' : 'Found']),
     el('div', { class: 'signal-flow-graph-actions' }, [
@@ -390,10 +390,10 @@ function resultBlock(sources) {
       el('button', { type: 'button', class: 'primary-action', text: 'Apply', title: found.fractions ? 'Apply the fractions exactly' : 'Apply, rounded to 4 digits', onclick: apply }),
     ]),
   );
-  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No fraction candidate met every limit. Allow a larger n, turn off one n per block, loosen a limit, or run again.' : 'No candidate met every limit. Loosen one, widen a coefficient\'s range, free another, or run again (each run starts from the current values).' }));
+  if (!found.feasible) host.append(el('p', { class: 'field-hint', text: found.fractions ? 'No fraction candidate met all limits. Allow a larger n, turn off one n per block, loosen a limit, or run again.' : 'No candidate met all limits. Loosen one, widen a coefficient\'s range, free another, or run again (each run starts from the current values).' }));
   if (found.zeroed?.length) {
     host.append(el('p', { class: 'field-hint signal-flow-optimize-zeroed' }, [
-      el('span', { text: 'Set to zero, every limit still met: ' }),
+      el('span', { text: 'Set to zero, all limits still met: ' }),
       ...found.zeroed.flatMap((name, i) => [...(i ? [el('span', { text: ', ' })] : []), math(symbolText(name))]),
       el('span', { text: '. Apply fixes them at zero; set one to Free to bring it back.' }),
     ]));
@@ -521,7 +521,7 @@ function fractionsBlock(current) {
   ];
   if (options.on) {
     const [kind, field] = nControls({ n: options.denominator, fixed: options.fixed }, {
-      placeholder: '32', label: 'Every block',
+      placeholder: '32', label: 'All blocks',
       onChange: ({ n, fixed }) => { if (n) options.denominator = n; options.fixed = fixed; changed(); renderOptimize(); },
     });
     // Each free coefficient's own n, beside the setting it overrides.
@@ -809,7 +809,7 @@ function run() {
         const best = optimizer.best;
         const goalText = objectiveSpecs.map((spec, i) => (spec.action === 'minimize' || spec.action === 'maximize') && Number.isFinite(best?.score?.specs?.[i]) ? `${best.score.specs[i].toFixed(1)} dB` : null).filter(Boolean).join(', ');
         const verifying = batch.some((c) => c.request?.verify);
-        say(`${optimizer.evaluations} of ${optimizer.budget} candidates${pool.count ? ` on ${pool.count} threads` : ''}${optimizer.restarts ? `, restart ${optimizer.restarts}` : ''}${optimizer.verified ? `, ${optimizer.verified} verified at length` : ''}${verifying ? ' (verifying a new best)' : ''} -- best: ${!best ? 'none verified yet' : isFeasible(best) ? `every limit met${goalText ? `, goal ${goalText}` : ''}` : 'still missing a limit'}`);
+        say(`${optimizer.evaluations} of ${optimizer.budget} candidates${pool.count ? ` on ${pool.count} threads` : ''}${optimizer.restarts ? `, restart ${optimizer.restarts}` : ''}${optimizer.verified ? `, ${optimizer.verified} verified at length` : ''}${verifying ? ' (verifying a new best)' : ''} -- best: ${!best ? 'none verified yet' : isFeasible(best) ? `all limits met${goalText ? `, goal ${goalText}` : ''}` : 'still missing a limit'}`);
       }
       const best = optimizer.best;
       if (!best) return { text: 'Stopped before any candidate was verified.', error: true };
@@ -856,8 +856,8 @@ function run() {
         ...(fractioned ? { fractions: fractioned.fractions, groups: fractioned.groups, shared: current.rounding.shared } : {}),
       };
       const zeroedText = final.zeroed.length ? `; ${final.zeroed.length === 1 ? 'one coefficient' : `${final.zeroed.length} coefficients`} set to zero` : '';
-      const fractionText = snap ? ', every one on fractions' : '';
-      return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${fractionText}${feasible ? zeroedText : ': no candidate met every limit'}.`, error: !feasible };
+      const fractionText = snap ? ', all on fractions' : '';
+      return { text: `${stopped() ? 'Stopped' : 'Done'} after ${optimizer.evaluations} candidates${fractionText}${feasible ? zeroedText : ': no candidate met all limits'}.`, error: !feasible };
     },
   });
 }

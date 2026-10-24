@@ -39,7 +39,7 @@ export const TIPS = Object.freeze([
     trigger: 'delete-click',
     after: 4,
     retiredBy: 'knife',
-    text: 'In Delete, Shift-drag a stroke to remove every wire and part it crosses.',
+    text: 'In Delete, Shift-drag a stroke to remove the wires and parts it crosses.',
   },
   {
     id: 'net-highlight',

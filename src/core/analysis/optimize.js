@@ -625,7 +625,7 @@ export const isFeasible = (best) => !!best && best.fitness < INFEASIBLE;
  */
 export function runOptimization(circuit, problem, options = {}) {
   const parameters = optimizationParameters(circuit, { values: problem.ownValues || problem.values, links: problem.links, setup: problem.setup });
-  if (!parameters.free.length) return failure('no coefficient is free to optimize: every one is fixed or linked');
+  if (!parameters.free.length) return failure('no coefficient is free to optimize: all are fixed or linked');
   const objective = prepareObjective(circuit, problem);
   if (!objective.ok) return objective;
   const setup = normalizeOptimizeSetup(problem.setup);

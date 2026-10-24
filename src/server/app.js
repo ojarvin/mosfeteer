@@ -133,7 +133,7 @@ export async function startApp({
   // the edit as its local draft until the app is relaunched.
   const assertCurrentCode = () => {
     if (codeVersion() !== version) {
-      throw httpError('Mosfeteer was updated since this server started; relaunch it (close every editor window, then start it again) and save again', 409, 'server-outdated');
+      throw httpError('Mosfeteer was updated since this server started; relaunch it (close all editor windows, then start it again) and save again', 409, 'server-outdated');
     }
   };
   const settings = createSettingsStore(join(dataRoot, 'settings.json'));
@@ -422,7 +422,7 @@ export async function startApp({
     const pdfPages = Array.isArray(body.pdfPages) ? body.pdfPages : null;
     if (pdfPages && (!pdfPages.length || !pdfPages.every((page) => typeof page === 'string' && /^\s*<svg\b/i.test(page)))) throw httpError('every PDF page must be an SVG rendering');
     const pdfPngPages = Array.isArray(body.pdfPngPages) ? body.pdfPngPages.map(pngData) : null;
-    if (pdfPngPages && (pdfPngPages.length !== pdfPages?.length || pdfPngPages.some((page) => !page))) throw httpError('every PDF page needs its PNG rendering');
+    if (pdfPngPages && (pdfPngPages.length !== pdfPages?.length || pdfPngPages.some((page) => !page))) throw httpError('each PDF page needs its PNG rendering');
     if (formats.includes('png') && !png) throw httpError('export is missing its PNG rendering');
 
     const paths = Object.fromEntries(formats.map((format) => [format, join(dir, `${name}.${format}`)]));

@@ -84,7 +84,7 @@ export const TUTORIAL_STEPS = Object.freeze([
   {
     id: 'tail',
     title: 'Place the tail transistor',
-    text: 'Press **i**, type **nmos**, and click the marked spot at the bottom. Press **?** any time to see every key.',
+    text: 'Press **i**, type **nmos**, and click the marked spot at the bottom. Press **?** any time to see all keys.',
     targets: 'tail',
     done: (circuit, roles) => roles.nmos.length >= 1,
   },
@@ -286,7 +286,7 @@ const SDM_STEPS = Object.freeze([
   {
     id: 'feedback',
     title: 'Close the loop, negatively',
-    text: 'Wire the output back into the sum\'s south (lower) input. A sum adds every input, so the feedback must be made negative: right-click the sum, **Input polarity → s input: positive** flips it, and a − appears beside it.',
+    text: 'Wire the output back into the sum\'s south (lower) input. A sum adds its inputs, so the feedback must be made negative: right-click the sum, **Input polarity → s input: positive** flips it, and a − appears beside it.',
     done: (circuit) => {
       const quantizer = circuit.components.get('QZ1');
       const sum = circuit.components.get('S1');
@@ -337,7 +337,7 @@ export const TUTORIALS = Object.freeze([
     targets: TUTORIAL_TARGETS,
     roles: tutorialRoles,
     done: 'You drew a 5T OTA!',
-    finish: 'Next, press **x** for a design check. Before the **Analysis** (Shift+S) can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.',
+    finish: 'Next, press **x** for a design check. Before the **Analysis** (Shift+S) can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists all keys.',
   },
   {
     id: 'switched-cap',

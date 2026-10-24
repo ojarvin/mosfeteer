@@ -25,7 +25,7 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
   // Derive works as the click runs; what it draws follows in a frame or two.
   const derive = async () => { await h.click('.signal-flow-derive'); await h.settle(); };
 
-  test('the window reads setup, results, the plots card, then coefficients and the optimizer; Annotate and Derive close its footer, Annotate offering the equations, the graph, and an update of every plot', async () => {
+  test('the window reads setup, results, the plots card, then coefficients and the optimizer; Annotate and Derive close its footer, Annotate offering the equations, the graph, and an update of all plots', async () => {
     await openAnalysis('modulator');
     assert.equal(await h.evaluate(`document.getElementById('analysis-dialog-title').textContent`), 'Signal-flow analysis');
     const order = await h.evaluate(`[...document.getElementById('analysis-signal-flow').children].map((c) => c.className.split(' ').find((n) => n.startsWith('signal-flow-')) || c.tagName.toLowerCase())`);
@@ -40,7 +40,7 @@ describe('signal-flow analysis and plots', { skip: browserSkip() }, () => {
     assert.ok(footer.indexOf('Annotate…') >= 0 && footer.indexOf('Annotate…') < footer.length - 1);
     await h.click('#analysis-annotate');
     await h.until(`!document.getElementById('component-context-menu').hidden`);
-    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].map((b) => b.textContent)`), ['Everything', 'Equations', 'Graph', 'Update every plot']);
+    assert.deepEqual(await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].map((b) => b.textContent)`), ['Everything', 'Equations', 'Graph', 'Update all plots']);
     await h.evaluate(`${h.module('context-menu.js')}.then((m) => m.closeComponentContextMenu())`);
   });
 

@@ -81,8 +81,8 @@ let lastQuery = '';
 
 const HINTS = {
   // The few keys that get around; Learn (?) lists them all.
-  workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? every key',
-  symbols: 'Every symbol · drag to move · F fits all · Esc returns · ? every key',
+  workspace: 'Drag to move · double-click opens · / searches · F fits all · Shift+Backspace returns · ? lists the keys',
+  symbols: 'All symbols · drag to move · F fits all · Esc returns · ? lists the keys',
 };
 
 /** Live SVGs at most at once; the rest stay on their large images. */

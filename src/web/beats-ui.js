@@ -221,7 +221,7 @@ function beginBeatChipDrag(index, chip, ev) {
     setTimeout(() => { chipDragged = false; }, 0);
     if (target === null || target === index) return;
     commit(() => moveBeat(editor.circuit, index, target));
-    logLine(`moved beat ${index + 1} to ${target + 1}; every beat looks as before`);
+    logLine(`moved beat ${index + 1} to ${target + 1}; the beats look as before`);
     editor.beatStripKey = '';
     render();
   };
@@ -702,7 +702,7 @@ function openTimingDialog() {
     state.seen = { circuit: editor.circuit, revision: editor.modelRevision };
     if (first && drawnTimingDiagram(editor.circuit)) fitView({ animate: true });
     render();
-    logLine(first ? 'drew the timing diagram on the drawing; it follows every change from now on' : 'moved the timing diagram under the drawing');
+    logLine(first ? 'drew the timing diagram on the drawing; it now follows the timing editor' : 'moved the timing diagram under the drawing');
   };
 
   // Which pairs (of phase keys) are kept apart now: the explicit list, or
@@ -1281,7 +1281,7 @@ function openTimingDialog() {
       grid,
       element('details', { class: 'timing-keys' }, [
         element('summary', { text: 'Keyboard' }),
-        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in every row (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through every row, again through each row, again not at all.' }),
+        element('p', { text: 'Arrows move the cursor; 1 and 0 set a slot and step on; Space flips it. + repeats the slot at the cursor in all rows (a state held one slot longer), Delete removes it, * repeats the whole sequence. Ctrl+Z undoes. In a signal\'s row . or - begins an analog value (.35, -.5) and the next key sets it; F2 edits the slot\'s value. [ ] move the cursor row\'s falling edges a cell earlier or later, { } its rising edges; Alt+↑/↓ move the row. The edge at the cursor is the one at the left of its slot: a begins an arrow there and a again at another edge ends it, s does the same for a span, m marks it (or unmarks it); Esc cancels. b breaks the cursor\'s slot through all rows, again through each row, again not at all.' }),
       ]),
       section('Slots', [
         segmented('Slots', [

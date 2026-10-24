@@ -469,8 +469,8 @@ function appendCorners(list, { trace, sketch, corners }, named) {
     // Too large for every symbol, the loop was solved at these values' numbers.
     if (trace.report.reports?.loop?.numeric) {
       list.append(el('li', { class: 'bode-canceled', text: trace.report.loopNumericModel?.ok
-        ? 'Too large to solve with every symbol: the equations are at the values of its Derive; the curve follows the values.'
-        : 'Too large to solve with every symbol: T was solved at the values as they were at its Derive; derive again after changing one.' }));
+        ? 'Too large to solve symbolically: the equations are at the values of its Derive; the curve follows the values.'
+        : 'Too large to solve symbolically: T was solved at the values as they were at its Derive; derive again after changing one.' }));
     }
   }
   if (sketch.unityGain && trace.key === 'transfer') {
@@ -554,7 +554,7 @@ function renderValues({ force = false } = {}) {
     }),
     ...(parasitic ? [valueRow({
       name: 'Parasitic capacitance', tex: 'C_{par}/C', value: ratios.parasiticRatio, min: -2 * PER_DECADE, max: PER_DECADE,
-      title: 'Every MOS C_gs and C_gd, in units of C',
+      title: 'All MOS C_gs and C_gd, in units of C',
       onValue: (value) => { ratios.parasiticRatio = value; changed(); },
     })] : []),
     ...own.map((parameter) => valueRow({

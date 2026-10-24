@@ -165,7 +165,7 @@ export function mixedPeriods(samplers, periods) {
   const keys = periods.map((period) => keyOf(period));
   if (keys.every((key) => key === keys[0])) return null;
   const named = samplers.map((component) => `${component.refdes} at ${component.value || 'T'}`).join(', ');
-  return failure('mixed-periods', `the samplers run at different periods (${named}): one rate is supported, so give every sampler the same period`);
+  return failure('mixed-periods', `the samplers run at different periods (${named}): one rate is supported, so give all samplers the same period`);
 }
 
 // ----- delays -------------------------------------------------------------------------

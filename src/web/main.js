@@ -7046,7 +7046,7 @@ function onNormalKey(key, shiftKey = false) {
     return;
   }
   // Every bound key has returned by now: say so rather than doing nothing.
-  if (key.length === 1 && key !== ' ') hintLine(`${key} does nothing here; ? lists every key`);
+  if (key.length === 1 && key !== ' ') hintLine(`${key} does nothing here; ? lists the keys`);
 }
 
 installHelp();
@@ -7804,7 +7804,7 @@ try {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) syncActiveCircuit();
   });
-  logLine('Ready. Press ? for every key.');
+  logLine('Ready. Press ? for the keys.');
 } catch (err) {
   const b = banner();
   if (b) {

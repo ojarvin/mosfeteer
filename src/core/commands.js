@@ -481,12 +481,12 @@ export function commandHelp() {
     '                                   replace puts the label in place of the name label, beside under it, hide draws none (a parts table shows it);',
     '                                   size <refdes> off removes the size; no size prints it; a comma list sets several parts at once',
     '  partstable [refdes ...] [--at X Y] - put a parts table on the drawing: W, L, m of the transistors, values of passives and sources,',
-    '                                   drawn from the parts (it follows their sizes); no names lists every sized or valued part; right of the drawing by default',
+    '                                   drawn from the parts (it follows their sizes); no names lists all sized or valued parts; right of the drawing by default',
     '  rename <refdes> <new>          - rename a component',
     '  renumber [--order ALONG-THEN] [refdes ...] - renumber automatically named parts (M1, R2): along each row/column, then row by row; ALONG and THEN are right|left|up|down, crosswise (default right-down, reading order; up-right: each column bottom up, columns left to right); listed parts trade only their own numbers',
     '  rm <refdes>                    - remove a component',
     '  supplybar on|off <refdes> ...  - join supply bars with aligned same-rail neighbors (visual only)',
-    '  supplybar name <NAME|-> <refdes> ... - name every supply of a bar at once (- clears)',
+    '  supplybar name <NAME|-> <refdes> ... - name all supplies of a bar at once (- clears)',
     '  connect REF.TERM REF.TERM ... [--name N] [--explain]  (alias wire)',
     '  cross A1 A2 B1 B2             - two protected diagonal cross-coupled routes',
     '  disconnect REF.TERM            - detach one terminal from its net',
@@ -502,11 +502,11 @@ export function commandHelp() {
     '  tidy <refdes> ...              - re-lay the parts\' nets fresh and move their crowded labels clear',
     '  figures [--arrange]            - list what the tools annotated (tables, equations, plots, models, the timing diagram);',
     '                                   --arrange puts each where a new one goes: tables right of the circuit, the rest below',
-    '  fix                            - apply every safe Design Check repair (reroute, snap to grid, move label)',
+    '  fix                            - apply the safe Design Check repairs (reroute, snap to grid, move label)',
     '  rail REF.TERM ground|supply|vcm - a ground, supply, or VCM wired one cell out from an unconnected pin',
     '  box ID... [--text TEXT]        - a dashed box annotation one cell around parts, nets, and labels (with the parts\' and nets\' own labels)',
-    '  stubs <refdes> ...             - a labeled wire stub (net1, net2, ...) on every unconnected terminal; stubs that would short are skipped',
-    '  find TEXT [--case] [--regex]   - list every label (nets, parts, switch phases, rails, annotations), block caption, and unlabeled net name containing TEXT;',
+    '  stubs <refdes> ...             - a labeled wire stub (net1, net2, ...) on each unconnected terminal; stubs that would short are skipped',
+    '  find TEXT [--case] [--regex]   - list the labels (nets, parts, switch phases, rails, annotations), block captions, and unlabeled net names containing TEXT;',
     '                                   without markup TEXT looks through it (M1 finds M_{1}); --regex matches the text as written',
     '  replace FIND WITH [--case] [--regex] - replace FIND in all of them, through each one\'s own rename; all or nothing ("" for WITH deletes; $1 with --regex)',
     '  nets                           - list nets with terminals and length',
@@ -568,10 +568,10 @@ export function commandHelp() {
     '                                   a mark on a point between 0 and full is a threshold, dashed at its level.',
     '                                   On the edges (ROW:N, the row\'s edge at the start of slot N; N = slots+1 is the one',
     '                                   after the last): --arrow CLK:2>Q:2,... draws a curved arrow from an edge to the',
-    '                                   transition it causes ("CLK:2>Q:2=TEXT;..." labels it); --mark ROW:N,... a dashed line through every row; --span',
+    '                                   transition it causes ("CLK:2>Q:2=TEXT;..." labels it); --mark ROW:N,... a dashed line through all rows; --span',
     '                                   "A:N>B:M=TEXT;..." dashed lines at two edges and an arrow between them below the',
     '                                   waves, TEXT under it. --break N,... leaves time out of slot N: two S curves through',
-    '                                   every row (N:rows, through each row). --clear arrows,marks,spans,breaks (or all) takes them away first.',
+    '                                   all rows (N:rows, through each row). --clear arrows,marks,spans,breaks (or all) takes them away first.',
     '                                   They follow their edges as the waves change; one whose edge has gone waits for it',
     '  svg [file] [--grid] [--beat N] - export SVG (default data/preview.svg), optionally one beat',
     '  save <file> | load <file>      - JSON snapshot I/O',
@@ -1195,7 +1195,7 @@ function dispatch(circuit, cmd, pos, flags, io) {
     const cut = (text) => {
       const [slotText, how, ...rest] = text.split(':').map((part) => part.trim());
       const slotNumber = Number(slotText);
-      if (!Number.isInteger(slotNumber) || slotNumber < 1 || rest.length || (how !== undefined && how !== 'rows')) throw new Error(`--break takes slots as N (through every row) or N:rows (through each row), not "${text}"`);
+      if (!Number.isInteger(slotNumber) || slotNumber < 1 || rest.length || (how !== undefined && how !== 'rows')) throw new Error(`--break takes slots as N (through all rows) or N:rows (through each row), not "${text}"`);
       return { at: slotNumber - 1, ...(how ? { rows: true } : {}) };
     };
     const need = [];

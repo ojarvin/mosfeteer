@@ -537,7 +537,7 @@ export function cycleBeatHighlight(circuit, index, net, colors) {
   const now = current.get(key);
   const from = now ? colors.indexOf(now) + 1 : 0;
   const next = colors.slice(from).find((color) => !taken.has(color)) || null;
-  if (!now && !next) throw new Error('every highlight color is already in use');
+  if (!now && !next) throw new Error('all highlight colors are in use');
   setHighlightFrom(circuit, index, key, next);
   return next;
 }

@@ -432,7 +432,7 @@ function loopSection() {
       el('label', { text: 'Break the loop at' }),
       el('select', { class: 'signal-flow-loop-signal', 'aria-label': 'Signal to break the loop at', onchange: (ev) => { flow().loopAt = ev.target.value; markSettingsChanged(); loop = null; renderLoop(); } }),
     ]),
-    el('p', { class: 'field-hint', text: 'T is minus what returns for 1 injected at the break, every source at zero. A quantizer\'s NTF is then 1/(1 + T).' }),
+    el('p', { class: 'field-hint', text: 'T is minus what returns for 1 injected at the break, all sources at zero. A quantizer\'s NTF is then 1/(1 + T).' }),
     el('div', { class: 'signal-flow-loop-body' }),
   ]);
 }
@@ -1543,7 +1543,7 @@ export function installSignalFlowUi() {
     { label: 'Equations', identity: { kind: 'equations', source: 'signal-flow' }, available: !!latest?.ok, run: annotate },
     { label: 'Graph', identity: { kind: 'plot', source: 'signal-flow' }, available: !!graphPlot(shownTraces()), run: annotateGraph },
     // Not a figure of its own: every plot on the drawing at the numbers now.
-    { label: 'Update every plot', identity: null, available: [...editor.circuit.labels.values()].some((label) => label.plot), run: () => updatePlots() },
+    { label: 'Update all plots', identity: null, available: [...editor.circuit.labels.values()].some((label) => label.plot), run: () => updatePlots() },
   ]);
   actions = [
     el('button', { type: 'button', class: 'primary-action signal-flow-derive', 'data-icon': 'check', text: 'Derive', title: 'Derive (Enter)', onclick: derive }),

@@ -75,7 +75,7 @@ export function poleTimeConstants(pipeline, ops, s, { pairs: wantPairs = true } 
   // sees no resistance: its time constant is zero, and it adds nothing to
   // any coefficient. Shorting it again would only short the source.
   const live = named.map((cap, index) => ({ cap, index })).filter(({ cap }) => !ops.isZero(cap.resistance));
-  if (!live.length) return { ok: false, error: 'every capacitor sits across a source: the response has no poles' };
+  if (!live.length) return { ok: false, error: 'all capacitors sit across a source: the response has no poles' };
   const tau = (cap, r = cap.resistance) => ops.mul(cap.capacitance, r);
   const capacitorsLeft = live.map(({ cap }) => cap);
   const dropped = named.filter((cap) => !capacitorsLeft.includes(cap));

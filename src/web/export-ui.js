@@ -249,7 +249,7 @@ function syncExportBeatChoice() {
   };
   option('', 'Whole drawing');
   editor.circuit.beats.forEach((_, index) => option(String(index), beatLabel(index)));
-  if (editor.circuit.beats.length) option('all', `Every beat (a ${editor.circuit.beats.length}-page PDF; numbered SVG and PNG files)`);
+  if (editor.circuit.beats.length) option('all', `All beats (a ${editor.circuit.beats.length}-page PDF; numbered SVG and PNG files)`);
   const active = activeBeatIndex();
   select.value = active === null ? '' : String(active);
   syncExportSelectionForBeat();

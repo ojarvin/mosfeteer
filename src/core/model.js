@@ -3903,7 +3903,7 @@ export class Circuit {
     const current = this.netHighlights.get(key);
     const from = current ? NET_HIGHLIGHT_COLORS.indexOf(current) + 1 : 0;
     const next = NET_HIGHLIGHT_COLORS.slice(from).find((color) => !taken.has(color)) || null;
-    if (!current && !next) throw new Error('every highlight color is already in use');
+    if (!current && !next) throw new Error('all highlight colors are in use');
     applyNetProbe(this.netHighlights, key, next);
     return next;
   }
