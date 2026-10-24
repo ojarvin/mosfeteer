@@ -3518,7 +3518,7 @@ function carriedJunctions(netIds) {
 }
 
 /** Ids of every net that touches any of the given components. */
-export function netsTouching(refs) {
+function netsTouching(refs) {
   return netsTouchingIn(circuit, refs);
 }
 

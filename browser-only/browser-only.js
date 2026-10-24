@@ -59040,7 +59040,7 @@ let logLine, hintLine; __bind(() => { ({ logLine, hintLine } = __require("src/we
 let paneSize; __bind(() => { ({ paneSize } = __require("src/web/canvas-view.js")); });
 let netMarkerRefs; __bind(() => { ({ netMarkerRefs } = __require("src/web/hover-preview.js")); });
 let editor; __bind(() => { ({ editor } = __require("src/web/editor-state.js")); });
-let deleteSelection, nearestTerminal, wireSegmentAt, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire; __bind(() => { ({ deleteSelection, nearestTerminal, wireSegmentAt, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } = __require("src/web/main.js")); });
+let deleteSelection, nearestTerminal, wireSegmentAt, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire; __bind(() => { ({ deleteSelection, nearestTerminal, wireSegmentAt, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } = __require("src/web/main.js")); });
 /**
  * The canvas's gesture layer: pin handles, the snap pulse on the terminal a
  * wire will land on, and the Delete tool's knife stroke with the cuts it
@@ -59154,14 +59154,6 @@ function cutAlong(stroke) {
 /** Gesture feedback appended to the editor overlay's elements, in world units. */
 function withGestureOverlay(svg, ghost) {
   const parts = [];
-  // Nets attached to the selected parts carry a faint tint of the selection.
-  if (editor.multi.size && !editor.drag) {
-    for (const id of netsTouching([...editor.multi])) {
-      for (const pts of editor.circuit.nets.get(id)?.paths() || []) {
-        if (pts.length > 1) parts.push(`<polyline class="selection-net-tint" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
-      }
-    }
-  }
   if (editor.hoverTarget?.kind === 'net' && !editor.drag) {
     for (const id of editor.hoverTarget.ids) {
       for (const pts of editor.circuit.nets.get(id)?.paths() || []) {
@@ -63506,7 +63498,6 @@ __exports.pickAt = pickAt;
 __exports.supplyBarGroup = supplyBarGroup;
 __exports.supplyBarHit = supplyBarHit;
 __exports.pickWire = pickWire;
-__exports.netsTouching = netsTouching;
 __exports.startWireFromPoint = startWireFromPoint;
 __exports.commitWireAtCursor = commitWireAtCursor;
 __exports.connectWireToTerminal = connectWireToTerminal;

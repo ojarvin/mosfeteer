@@ -12,7 +12,7 @@ import { logLine, hintLine } from './status-bar-ui.js';
 import { paneSize } from './canvas-view.js';
 import { netMarkerRefs } from './hover-preview.js';
 import { editor } from './editor-state.js';
-import { deleteSelection, nearestTerminal, wireSegmentAt, netsTouching, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } from './main.js';
+import { deleteSelection, nearestTerminal, wireSegmentAt, placementJoinPoints, setLabelSelection, setSelection, splicePreviewTarget, syncSelectedWire } from './main.js';
 
 /** A wire end that lands on a pin gets one small ripple at that pin; so does
  *  every pin of a part being placed, moved, or copied that will join a pin or
@@ -111,14 +111,6 @@ export function cutAlong(stroke) {
 /** Gesture feedback appended to the editor overlay's elements, in world units. */
 export function withGestureOverlay(svg, ghost) {
   const parts = [];
-  // Nets attached to the selected parts carry a faint tint of the selection.
-  if (editor.multi.size && !editor.drag) {
-    for (const id of netsTouching([...editor.multi])) {
-      for (const pts of editor.circuit.nets.get(id)?.paths() || []) {
-        if (pts.length > 1) parts.push(`<polyline class="selection-net-tint" points="${pts.map((p) => `${p.x},${p.y}`).join(' ')}" vector-effect="non-scaling-stroke"/>`);
-      }
-    }
-  }
   if (editor.hoverTarget?.kind === 'net' && !editor.drag) {
     for (const id of editor.hoverTarget.ids) {
       for (const pts of editor.circuit.nets.get(id)?.paths() || []) {

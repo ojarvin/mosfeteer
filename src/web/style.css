@@ -5196,15 +5196,6 @@ html.dark .net-beam-mid { stop-opacity: 0.26; }
   display: none;
 }
 
-.selection-net-tint {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 7;
-  stroke-opacity: 0.12;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 /* ----- snap pulse and theme crossfade ------------------------------ */
 
 .snap-ring {

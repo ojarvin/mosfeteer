@@ -333,6 +333,18 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('R1').value === '10k')`);
   });
 
+  test('a selected part glows on its own: the nets it touches are not lit', async () => {
+    const p = await at(600, 0);
+    await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
+    await h.tap(p.x, p.y);
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.selected === 'R2')`);
+    const far = await at(600, 800);
+    await h.mouse('mouseMoved', far.x, far.y, { button: 'none', buttons: 0 });
+    await h.settle();
+    assert.equal(await h.evaluate(`!!document.querySelector('#canvas .selection-glow')`), true);
+    assert.equal(await h.evaluate(`document.querySelectorAll('#canvas .editor-overlay polyline').length`), 0);
+  });
+
   test('a double-click on a part edits its name in place', async () => {
     const p = await at(600, 0); // R2's body, nothing over it
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });
