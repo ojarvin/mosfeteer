@@ -431,95 +431,110 @@ function appendContextSmallSignalMenu(menu, target) {
     });
     return;
   }
+  if (!hasComponentAttributes(component)) return;
+  appendContextSubmenu(menu, 'Small-signal attributes', (submenu) => appendComponentAttributes(submenu, component));
+}
+
+/** Whether a part has small-signal attributes to set. */
+export function hasComponentAttributes(component) {
+  return [SMALL_SIGNAL_TRANSISTOR_TYPES, SMALL_SIGNAL_RESISTOR_TYPES, SMALL_SIGNAL_PORT_TYPES, SMALL_SIGNAL_OPAMP_TYPES].some((types) => types.has(component.type)) || component.type === 'diode';
+}
+
+/** A part's small-signal attributes, as menu items in `submenu`: the
+ *  context menu's, and the side panel's Attributes… opens them too. */
+function appendComponentAttributes(submenu, component) {
   const transistor = SMALL_SIGNAL_TRANSISTOR_TYPES.has(component.type);
   const resistor = SMALL_SIGNAL_RESISTOR_TYPES.has(component.type);
   const port = SMALL_SIGNAL_PORT_TYPES.has(component.type);
   const opamp = SMALL_SIGNAL_OPAMP_TYPES.has(component.type);
   const diode = component.type === 'diode';
-  if (!transistor && !resistor && !port && !opamp && !diode) return;
-  appendContextSubmenu(menu, 'Small-signal attributes', (submenu) => {
-    if (transistor) {
-      const transistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type));
-      appendContextSubmenu(submenu, 'Device model', (modelMenu) => {
-        appendContextItem(modelMenu, 'Triode device (r_ds resistor)', () => applyComponentAnalysis(component, { model: 'triode' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.model, 'triode'));
-        appendContextItem(modelMenu, 'Clear device model', () => applyComponentAnalysis(component, { model: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
-          disabled: !transistorTargets.some((candidate) => candidate.analysis?.model),
-        });
+  if (transistor) {
+    const transistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type));
+    appendContextSubmenu(submenu, 'Device model', (modelMenu) => {
+      appendContextItem(modelMenu, 'Triode device (r_ds resistor)', () => applyComponentAnalysis(component, { model: 'triode' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.model, 'triode'));
+      appendContextItem(modelMenu, 'Clear device model', () => applyComponentAnalysis(component, { model: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+        disabled: !transistorTargets.some((candidate) => candidate.analysis?.model),
       });
-      appendContextSubmenu(submenu, 'Output resistance', (roMenu) => {
-        appendContextItem(roMenu, 'Ignore channel-length modulation (r_o → ∞)', () => applyComponentAnalysis(component, { channelLengthModulation: 'ignore' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.channelLengthModulation, 'ignore'));
-        appendContextItem(roMenu, 'Retain finite r_o', () => applyComponentAnalysis(component, { channelLengthModulation: 'finite' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.channelLengthModulation, 'finite'));
-        appendContextItem(roMenu, 'Clear r_o override', () => applyComponentAnalysis(component, { channelLengthModulation: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
-          disabled: !transistorTargets.some((candidate) => candidate.analysis?.channelLengthModulation),
-        });
+    });
+    appendContextSubmenu(submenu, 'Output resistance', (roMenu) => {
+      appendContextItem(roMenu, 'Ignore channel-length modulation (r_o → ∞)', () => applyComponentAnalysis(component, { channelLengthModulation: 'ignore' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.channelLengthModulation, 'ignore'));
+      appendContextItem(roMenu, 'Retain finite r_o', () => applyComponentAnalysis(component, { channelLengthModulation: 'finite' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.channelLengthModulation, 'finite'));
+      appendContextItem(roMenu, 'Clear r_o override', () => applyComponentAnalysis(component, { channelLengthModulation: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+        disabled: !transistorTargets.some((candidate) => candidate.analysis?.channelLengthModulation),
       });
-      appendContextSubmenu(submenu, 'Intrinsic gain', (gmroMenu) => {
-        appendContextItem(gmroMenu, 'Assume g_m r_o ≫ 1', () => applyComponentAnalysis(component, { gmroLarge: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.gmroLarge, true));
-        appendContextItem(gmroMenu, 'Retain finite g_m r_o', () => applyComponentAnalysis(component, { gmroLarge: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.gmroLarge, false));
-        appendContextItem(gmroMenu, 'Clear g_m r_o override', () => applyComponentAnalysis(component, { gmroLarge: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
-          disabled: !transistorTargets.some((candidate) => candidate.analysis?.gmroLarge !== null && candidate.analysis?.gmroLarge !== undefined),
-        });
+    });
+    appendContextSubmenu(submenu, 'Intrinsic gain', (gmroMenu) => {
+      appendContextItem(gmroMenu, 'Assume g_m r_o ≫ 1', () => applyComponentAnalysis(component, { gmroLarge: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.gmroLarge, true));
+      appendContextItem(gmroMenu, 'Retain finite g_m r_o', () => applyComponentAnalysis(component, { gmroLarge: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.gmroLarge, false));
+      appendContextItem(gmroMenu, 'Clear g_m r_o override', () => applyComponentAnalysis(component, { gmroLarge: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+        disabled: !transistorTargets.some((candidate) => candidate.analysis?.gmroLarge !== null && candidate.analysis?.gmroLarge !== undefined),
       });
-      appendContextSubmenu(submenu, 'Body effect', (bodyMenu) => {
-        appendContextItem(bodyMenu, 'Ignore body effect (V_BS = 0)', () => applyComponentAnalysis(component, { ignoreBodyEffect: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.ignoreBodyEffect, true));
-        appendContextItem(bodyMenu, 'Retain body effect', () => applyComponentAnalysis(component, { ignoreBodyEffect: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.ignoreBodyEffect, false));
-        appendContextItem(bodyMenu, 'Clear body-effect override', () => applyComponentAnalysis(component, { ignoreBodyEffect: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
-          disabled: !transistorTargets.some((candidate) => candidate.analysis?.ignoreBodyEffect !== null && candidate.analysis?.ignoreBodyEffect !== undefined),
-        });
+    });
+    appendContextSubmenu(submenu, 'Body effect', (bodyMenu) => {
+      appendContextItem(bodyMenu, 'Ignore body effect (V_BS = 0)', () => applyComponentAnalysis(component, { ignoreBodyEffect: true }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.ignoreBodyEffect, true));
+      appendContextItem(bodyMenu, 'Retain body effect', () => applyComponentAnalysis(component, { ignoreBodyEffect: false }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.ignoreBodyEffect, false));
+      appendContextItem(bodyMenu, 'Clear body-effect override', () => applyComponentAnalysis(component, { ignoreBodyEffect: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+        disabled: !transistorTargets.some((candidate) => candidate.analysis?.ignoreBodyEffect !== null && candidate.analysis?.ignoreBodyEffect !== undefined),
       });
-      // The device's own capacitances, per device: the analysis form carries
-      // the same choice for the whole circuit.
-      appendContextSubmenu(submenu, 'Device capacitances', (capMenu) => {
-        appendContextItem(capMenu, 'Include C_gs and C_gd', () => applyComponentAnalysis(component, { parasitics: 'include' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.parasitics, 'include'));
-        appendContextItem(capMenu, 'Omit device capacitances', () => applyComponentAnalysis(component, { parasitics: 'omit' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.parasitics, 'omit'));
-        appendContextItem(capMenu, 'Follow the analysis form', () => applyComponentAnalysis(component, { parasitics: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
-          disabled: !transistorTargets.some((candidate) => candidate.analysis?.parasitics),
-        });
+    });
+    // The device's own capacitances, per device: the analysis form carries
+    // the same choice for the whole circuit.
+    appendContextSubmenu(submenu, 'Device capacitances', (capMenu) => {
+      appendContextItem(capMenu, 'Include C_gs and C_gd', () => applyComponentAnalysis(component, { parasitics: 'include' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.parasitics, 'include'));
+      appendContextItem(capMenu, 'Omit device capacitances', () => applyComponentAnalysis(component, { parasitics: 'omit' }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), analysisChoiceState(transistorTargets, (candidate) => candidate.analysis?.parasitics, 'omit'));
+      appendContextItem(capMenu, 'Follow the analysis form', () => applyComponentAnalysis(component, { parasitics: null }, (candidate) => SMALL_SIGNAL_TRANSISTOR_TYPES.has(candidate.type)), {
+        disabled: !transistorTargets.some((candidate) => candidate.analysis?.parasitics),
       });
-    }
-    if (resistor) {
-      const resistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type));
-      appendContextSubmenu(submenu, 'Resistance', (resistanceMenu) => {
-        appendContextItem(resistanceMenu, 'Treat as R = ∞', () => applyComponentAnalysis(component, { resistance: 'infinite' }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), analysisChoiceState(resistorTargets, (candidate) => candidate.analysis?.resistance, 'infinite'));
-        appendContextItem(resistanceMenu, 'Retain finite R', () => applyComponentAnalysis(component, { resistance: 'finite' }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), analysisChoiceState(resistorTargets, (candidate) => candidate.analysis?.resistance, 'finite'));
-        appendContextItem(resistanceMenu, 'Clear resistance override', () => applyComponentAnalysis(component, { resistance: null }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), {
-          disabled: !resistorTargets.some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
-        });
+    });
+  }
+  if (resistor) {
+    const resistorTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type));
+    appendContextSubmenu(submenu, 'Resistance', (resistanceMenu) => {
+      appendContextItem(resistanceMenu, 'Treat as R = ∞', () => applyComponentAnalysis(component, { resistance: 'infinite' }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), analysisChoiceState(resistorTargets, (candidate) => candidate.analysis?.resistance, 'infinite'));
+      appendContextItem(resistanceMenu, 'Retain finite R', () => applyComponentAnalysis(component, { resistance: 'finite' }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), analysisChoiceState(resistorTargets, (candidate) => candidate.analysis?.resistance, 'finite'));
+      appendContextItem(resistanceMenu, 'Clear resistance override', () => applyComponentAnalysis(component, { resistance: null }, (candidate) => SMALL_SIGNAL_RESISTOR_TYPES.has(candidate.type)), {
+        disabled: !resistorTargets.some((candidate) => candidate.analysis?.resistance !== null && candidate.analysis?.resistance !== undefined),
       });
-    }
-    if (diode) {
-      // Forward biased, a diode is r_d; reverse biased (a clamp), it is open.
-      const isDiode = (candidate) => candidate.type === 'diode';
-      const diodeTargets = analysisComponentTargets(component, isDiode);
-      const off = (candidate) => (candidate.analysis?.resistance === 'infinite' ? 'off' : 'on');
-      appendContextSubmenu(submenu, 'Diode bias', (biasMenu) => {
-        appendContextItem(biasMenu, 'Forward biased (r_d)', () => applyComponentAnalysis(component, { resistance: null }, isDiode), analysisChoiceState(diodeTargets, off, 'on'));
-        appendContextItem(biasMenu, 'Off (open)', () => applyComponentAnalysis(component, { resistance: 'infinite' }, isDiode), analysisChoiceState(diodeTargets, off, 'off'));
+    });
+  }
+  if (diode) {
+    // Forward biased, a diode is r_d; reverse biased (a clamp), it is open.
+    const isDiode = (candidate) => candidate.type === 'diode';
+    const diodeTargets = analysisComponentTargets(component, isDiode);
+    const off = (candidate) => (candidate.analysis?.resistance === 'infinite' ? 'off' : 'on');
+    appendContextSubmenu(submenu, 'Diode bias', (biasMenu) => {
+      appendContextItem(biasMenu, 'Forward biased (r_d)', () => applyComponentAnalysis(component, { resistance: null }, isDiode), analysisChoiceState(diodeTargets, off, 'on'));
+      appendContextItem(biasMenu, 'Off (open)', () => applyComponentAnalysis(component, { resistance: 'infinite' }, isDiode), analysisChoiceState(diodeTargets, off, 'off'));
+    });
+  }
+  if (opamp) {
+    // Ideal (inputs held equal) unless a finite gain A or one pole, A = omega_t / s.
+    const isOpamp = (candidate) => SMALL_SIGNAL_OPAMP_TYPES.has(candidate.type);
+    const opampTargets = analysisComponentTargets(component, isOpamp);
+    const modelOf = (candidate) => candidate.analysis?.model || 'ideal';
+    appendContextSubmenu(submenu, 'Opamp model', (opampMenu) => {
+      appendContextItem(opampMenu, 'Ideal (infinite gain)', () => applyComponentAnalysis(component, { model: null }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'ideal'));
+      appendContextItem(opampMenu, 'Finite gain A', () => applyComponentAnalysis(component, { model: 'finite-gain' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'finite-gain'));
+      appendContextItem(opampMenu, 'Single pole (A = ω_t / s)', () => applyComponentAnalysis(component, { model: 'gbw' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'gbw'));
+    });
+  }
+  if (port) {
+    const portTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type));
+    appendContextSubmenu(submenu, 'Port role', (roleMenu) => {
+      appendContextItem(roleMenu, 'DC bias / AC ground', () => applyComponentAnalysis(component, { role: 'dc-bias' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'dc-bias'));
+      appendContextItem(roleMenu, 'Input node', () => applyComponentAnalysis(component, { role: 'input' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'input'));
+      appendContextItem(roleMenu, 'Output node', () => applyComponentAnalysis(component, { role: 'output' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'output'));
+      appendContextItem(roleMenu, 'Clear port role', () => applyComponentAnalysis(component, { role: null }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), {
+        disabled: !portTargets.some((candidate) => candidate.analysis?.role),
       });
-    }
-    if (opamp) {
-      // Ideal (inputs held equal) unless a finite gain A or one pole, A = omega_t / s.
-      const isOpamp = (candidate) => SMALL_SIGNAL_OPAMP_TYPES.has(candidate.type);
-      const opampTargets = analysisComponentTargets(component, isOpamp);
-      const modelOf = (candidate) => candidate.analysis?.model || 'ideal';
-      appendContextSubmenu(submenu, 'Opamp model', (opampMenu) => {
-        appendContextItem(opampMenu, 'Ideal (infinite gain)', () => applyComponentAnalysis(component, { model: null }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'ideal'));
-        appendContextItem(opampMenu, 'Finite gain A', () => applyComponentAnalysis(component, { model: 'finite-gain' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'finite-gain'));
-        appendContextItem(opampMenu, 'Single pole (A = ω_t / s)', () => applyComponentAnalysis(component, { model: 'gbw' }, isOpamp), analysisChoiceState(opampTargets, modelOf, 'gbw'));
-      });
-    }
-    if (port) {
-      const portTargets = analysisComponentTargets(component, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type));
-      appendContextSubmenu(submenu, 'Port role', (roleMenu) => {
-        appendContextItem(roleMenu, 'DC bias / AC ground', () => applyComponentAnalysis(component, { role: 'dc-bias' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'dc-bias'));
-        appendContextItem(roleMenu, 'Input node', () => applyComponentAnalysis(component, { role: 'input' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'input'));
-        appendContextItem(roleMenu, 'Output node', () => applyComponentAnalysis(component, { role: 'output' }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), analysisChoiceState(portTargets, (candidate) => candidate.analysis?.role, 'output'));
-        appendContextItem(roleMenu, 'Clear port role', () => applyComponentAnalysis(component, { role: null }, (candidate) => SMALL_SIGNAL_PORT_TYPES.has(candidate.type)), {
-          disabled: !portTargets.some((candidate) => candidate.analysis?.role),
-        });
-      });
-    }
-  });
+    });
+  }
+}
+
+/** The part's small-signal attributes in a menu of their own at (x, y). */
+export function openComponentAttributesMenu(component, x, y) {
+  const menu = openMenuAt(x, y, 'Small-signal attributes');
+  if (menu) appendComponentAttributes(menu, component);
 }
 
 /** The side panel's style controls, laid out inline at the top of the context

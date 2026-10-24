@@ -302,6 +302,37 @@ describe('selection and editing', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test('the selected part\'s size, value, and small-signal attributes are edited in the panel, each one undo step', async () => {
+    await h.evaluate(`window.__run('add nmos M1 --at -800 0')`);
+    const select = (refdes) => h.evaluate(`${h.module('main.js')}.then((m) => { m.setSelection([${JSON.stringify(refdes)}]); m.render(); })`);
+    const type = (selector, text) => h.evaluate(`(() => { const i = document.querySelector(${JSON.stringify(selector)}); i.focus(); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await select('M1');
+    await h.until(`!!document.querySelector('.detail-properties .detail-field')`);
+    const history = await ed('e.history.length');
+    await type('.detail-properties .detail-field', '2u/180n x4');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('M1').size?.m === 4)`);
+    assert.deepEqual(await ed(`(({ w, l, m }) => ({ w, l, m }))(c.components.get('M1').size)`), { w: '2u', l: '180n', m: 4 });
+    assert.equal(await ed('e.history.length'), history + 1, 'one undo step');
+    // A size that does not read is refused, and the field shows the size again.
+    await type('.detail-properties .detail-field', '2u');
+    await h.settle();
+    assert.equal(await ed(`c.components.get('M1').size.w`), '2u');
+    assert.equal(await h.evaluate(`document.querySelector('.detail-properties .detail-field').value`), '2u/180n x4');
+    // The attributes: the context menu's, from the panel; the button says what is set.
+    assert.equal(await h.evaluate(`document.querySelector('.detail-attributes').textContent`), 'Defaults');
+    await h.click('.detail-attributes');
+    await h.until(`[...document.querySelectorAll('#component-context-menu button')].some((b) => b.textContent.startsWith('Output resistance'))`);
+    await h.evaluate(`[...document.querySelectorAll('#component-context-menu button')].find((b) => b.textContent.startsWith('Output resistance')).click()`);
+    await h.until(`[...document.querySelectorAll('.context-submenu button')].some((b) => b.textContent.startsWith('Ignore channel-length'))`);
+    await h.evaluate(`[...document.querySelectorAll('.context-submenu button')].find((b) => b.textContent.startsWith('Ignore channel-length')).click()`);
+    await h.until(`document.querySelector('.detail-attributes')?.textContent === 'r_o → ∞'`);
+    // A resistor's value.
+    await select('R1');
+    await h.until(`document.querySelector('.detail-properties .detail-field')?.getAttribute('aria-label') === 'R1 value'`);
+    await type('.detail-properties .detail-field', '10k');
+    await h.until(`${h.module('editor-state.js')}.then((m) => m.editor.circuit.components.get('R1').value === '10k')`);
+  });
+
   test('a double-click on a part edits its name in place', async () => {
     const p = await at(600, 0); // R2's body, nothing over it
     await h.mouse('mouseMoved', p.x, p.y, { button: 'none', buttons: 0 });

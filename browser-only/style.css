@@ -3287,6 +3287,27 @@ button.app-mark-button:active {
   overflow-wrap: anywhere;
 }
 
+/* The selected part's size, value, and attributes, edited in place. */
+.detail-properties {
+  align-items: center;
+  margin: 6px 0 8px;
+  gap: 4px 10px;
+}
+
+.detail-properties .detail-field {
+  width: 100%;
+  min-height: 26px;
+}
+
+.detail-properties .detail-attributes {
+  min-height: 26px;
+  max-width: 100%;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
 .detail .pin-name {
   font-weight: 600;
 }

@@ -126,6 +126,14 @@ until both make a size; nothing else is kept there, so the grid redraws
 from the design on every change. Annotate adds a
 parts table to the drawing ([`model.md`](model.md)).
 
+The side panel's Selection shows one selected part's properties to edit in
+place (`detailProperties`, `src/web/side-panel.js`): a transistor's Size
+(`2u/180n x4`, as the sizing window reads it), a passive's or source's
+Value, each applied on Enter or leaving the field as one undo step (a text
+that does not read is refused and the field shows the part again), and its
+small-signal attributes, summed up on a button that opens the context
+menu's Small-signal attributes.
+
 The toolbar's History, More → History, or `Shift+Y` (`:history`) lists the design's save points and checkpoints,
 kept in its file ([`docs/notes-and-history.md`](notes-and-history.md)).
 

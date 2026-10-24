@@ -9,11 +9,15 @@ import { switchPhase } from '../core/beats.js';
 import { resolveColor } from '../core/style.js';
 import { texToLabelMarkup } from '../core/render.js';
 import { GRID } from '../core/grid.js';
+import { MOS_SIZE_TYPES, formatMosSize } from '../core/mos-size.js';
+import { VALUE_TYPES } from '../core/part-value.js';
+import { setPartValue } from '../core/part-moves.js';
+import { element as el, onFieldCommit } from './dom.js';
 import { componentPaletteItems, shortPlacementLabel } from './toolbar.js';
 import { canvasEl, componentsListEl, netsListEl, detailEl, panelFilterEl, sidePanelEl, sidePanelToggleEl } from './elements.js';
 import { logLine } from './status-bar-ui.js';
 import { clearDiagnosticFocus } from './design-check-ui.js';
-import { openComponentContextMenu, selectContextTarget } from './context-menu.js';
+import { hasComponentAttributes, openComponentAttributesMenu, openComponentContextMenu, selectContextTarget } from './context-menu.js';
 import { bindInlineEditorKeys, inlineEditSchematicBlock, openReferenceMarkerEditor } from './label-editor.js';
 import { plainMarkup } from './beats-ui.js';
 import { editor } from './editor-state.js';
@@ -509,6 +513,8 @@ export function renderDetail() {
   }
 
   detailEl.appendChild(detailHeader(componentDisplayName(comp), comp.value ? `${shortPlacementLabel(comp.type)} · ${switchPhase(comp) ? `phase ${plainMarkup(comp.value)}` : comp.value}` : shortPlacementLabel(comp.type)));
+  const properties = detailProperties(comp);
+  if (properties) detailEl.appendChild(properties);
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   thead.innerHTML = '<tr><th>Pin</th><th>Net</th><th>Position</th></tr>';
@@ -540,6 +546,56 @@ export function renderDetail() {
   }
   table.appendChild(tbody);
   detailEl.appendChild(table);
+}
+
+/** What a part's small-signal attributes set, in short; empty for none. */
+export function attributeSummary(analysis = {}) {
+  const words = {
+    model: { triode: 'triode', 'finite-gain': 'finite gain', gbw: 'single pole' },
+    channelLengthModulation: { ignore: 'r_o → ∞', finite: 'finite r_o' },
+    gmroLarge: { true: 'g_m r_o ≫ 1', false: 'finite g_m r_o' },
+    ignoreBodyEffect: { true: 'no body effect', false: 'body effect' },
+    parasitics: { include: 'with C_gs, C_gd', omit: 'no device capacitances' },
+    resistance: { infinite: 'R = ∞', finite: 'finite R' },
+    role: { 'dc-bias': 'AC ground', input: 'input', output: 'output' },
+  };
+  return Object.entries(words).map(([key, names]) => names[String(analysis?.[key])]).filter(Boolean).join(', ');
+}
+
+/** The selected part's properties to edit in place: a transistor's size, a
+ *  passive's or source's value (each applied on Enter, one undo step), and
+ *  its small-signal attributes (the context menu's, opened from here). */
+function detailProperties(comp) {
+  const rows = [];
+  const field = (name, value, placeholder, apply) => {
+    const input = el('input', { type: 'text', class: 'detail-field', value, placeholder, spellcheck: false, autocomplete: 'off', 'aria-label': `${comp.refdes} ${name.toLowerCase()}` });
+    onFieldCommit(input, (text) => {
+      if (commit(() => apply(text.trim())) === false) input.value = value;
+      render();
+    });
+    input.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Escape') { input.value = value; canvasEl.focus({ preventScroll: true }); }
+    });
+    rows.push([name, input]);
+  };
+  if (MOS_SIZE_TYPES.has(comp.type)) {
+    field('Size', formatMosSize(comp.size), 'W/L, e.g. 2u/180n x4', (text) => editor.circuit.setComponentSize(comp.refdes, text || null));
+  }
+  if (VALUE_TYPES.has(comp.type)) {
+    field('Value', String(comp.value ?? ''), 'e.g. 10k, 1p', (text) => setPartValue(editor.circuit, comp.refdes, text));
+  }
+  if (hasComponentAttributes(comp)) {
+    const summary = attributeSummary(comp.analysis);
+    const button = el('button', { type: 'button', class: 'detail-attributes', text: summary || 'Defaults', title: 'Small-signal attributes' });
+    button.addEventListener('click', () => {
+      const r = button.getBoundingClientRect();
+      openComponentAttributesMenu(comp, r.left, r.bottom + 2);
+    });
+    rows.push(['Small-signal', button]);
+  }
+  if (!rows.length) return null;
+  return el('dl', { class: 'detail-props detail-properties' }, rows.flatMap(([name, control]) => [el('dt', { text: name }), el('dd', {}, [control])]));
 }
 
 function detailHeader(name, kind) {
