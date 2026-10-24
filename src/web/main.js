@@ -306,6 +306,9 @@ let activePlacementGuides = [];
 let activeSymmetryCells = null;
 let cursor = { x: 0, y: 0 };
 let cursorInCanvas = false;
+// Whether the cursor has been put anywhere yet (by the pointer or a key): till
+// then its ring would stand at the origin, where nothing put it.
+let cursorPlaced = false;
 // The grid, guides, and crosshair are kept between visits, as the other
 // Settings are (toolbar-ui.js setGrid and the rest write them).
 function storedViewToggle(name, fallback) {
@@ -1963,6 +1966,7 @@ export function stubSelection() {
   render();
 }
 export function moveCursor(cellsX, cellsY) {
+  cursorPlaced = true;
   const next = { x: snap(cursor.x + cellsX * 40), y: snap(cursor.y + cellsY * 40) };
   cursor = wire && terminalSnap ? terminalSnapWorld(next) : next;
   followCursor();
@@ -3002,7 +3006,7 @@ export function renderCanvas(modelKey) {
     beatView: activeBeatView(previewTransaction ? `${modelRevision}:preview:${previewRevision}` : modelRevision),
     tutorialTargets: tutorialTargetRects(),
     pageGuide: pageGuide ? { frame: circuitPageGuideFrame(circuit, pageGuide), view, caption: pageGuideCaption(pageGuide) } : null,
-    cursor,
+    cursor: cursorPlaced || wire ? cursor : null,
     netLabelPaste: netLabelPastePreview(cursor),
     selection: [...multi],
     // Hovered, selected, or carried (a move's or copy's ghost) parts show their signals' directions.
@@ -6220,6 +6224,7 @@ function finishCanvasMouseUp(ev) {
 canvasEl.addEventListener('mousedown', canvasMouseDown);
 const isCompatibilityMove = compatibilityMoveFilter();
 function canvasPointerMove(ev) {
+  cursorPlaced = true;
   if (!isCompatibilityMove(ev)) canvasMouseMove(ev);
 }
 canvasEl.addEventListener('mousemove', canvasPointerMove);

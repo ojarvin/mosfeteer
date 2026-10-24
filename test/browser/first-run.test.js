@@ -32,6 +32,12 @@ describe('first visit, browser-only', { skip: browserSkip() }, () => {
     await h.evaluate(`[...document.querySelectorAll('.atlas-empty button')].find((b) => b.textContent === 'New design').click()`);
     await h.until(`document.getElementById('atlas').hidden && document.activeElement?.id === 'circuit-name'`, 10000);
     assert.match(await status(), /^New design: name it and press Enter, then choose where it goes/);
+    // No cursor ring before the cursor is anywhere: it would stand at the origin.
+    const ring = () => h.evaluate(`!!document.querySelector('#canvas .editor-overlay circle')`);
+    assert.equal(await ring(), false);
+    const r = await h.evaluate(`(() => { const b = document.getElementById('canvas').getBoundingClientRect(); return { x: b.x + b.width * 0.7, y: b.y + b.height * 0.7 }; })()`);
+    await h.mouse('mouseMoved', r.x, r.y, { button: 'none', buttons: 0 });
+    await h.until(`!!document.querySelector('#canvas .editor-overlay circle')`);
   });
 
   test('Ctrl+S before naming opens the save picker with a name to change, not an error', async () => {

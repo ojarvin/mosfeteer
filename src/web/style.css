@@ -3643,6 +3643,10 @@ button.status-chip:hover {
 .status-message {
   flex: 0 1 auto;
   min-width: 0;
+  /* A rule after it: what comes and goes, apart from what stays. */
+  margin-right: 6px;
+  border-right: 1px solid var(--border);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   max-width: min(34vw, 420px);
   overflow: hidden;
   text-overflow: ellipsis;
