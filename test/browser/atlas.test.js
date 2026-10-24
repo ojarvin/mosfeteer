@@ -116,7 +116,7 @@ describe('Atlas and linked designs', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`!!document.querySelector('#settings-menu :focus-visible')`), false, 'no item looks chosen');
     await h.click('#btn-settings');
     await h.click('#btn-settings');
-    assert.equal(await h.evaluate(`document.activeElement.getAttribute('data-page-guide')`), '', 'the keyboard starts at the first item');
+    assert.equal(await h.evaluate(`document.activeElement.id`), 'btn-grid', 'the keyboard starts at the first item');
     await h.click('#btn-settings');
     await closeDesk();
     assert.equal(await inAtlas(), false, 'and back in the editor toolbar');

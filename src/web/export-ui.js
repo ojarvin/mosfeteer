@@ -327,6 +327,9 @@ export function exportCircuit() {
     input.checked = supported && (Array.isArray(saved?.formats) ? saved.formats.includes(input.value) : input.defaultChecked);
   }
   syncExportBeatChoice();
+  // The page guide is the Settings one: shown here, where it pads the export.
+  const pageGuideSelect = document.getElementById('export-page-guide');
+  if (pageGuideSelect) pageGuideSelect.value = editor.pageGuide?.preset || '';
   const documentKey = editor.currentDocumentPath || '';
   const defaultFolder = defaultExportDirectory(editor.workspaceState, { browserOnly: persistence.browserOnly });
   exportFolder = (saved?.folders && saved.folders[documentKey]) || defaultFolder;
@@ -405,6 +408,10 @@ export function installExportUi() {
     renderExportLocation();
   });
 
+  // Choosing a page guide here chooses it in Settings: one preference.
+  document.getElementById('export-page-guide')?.addEventListener('change', (event) => {
+    document.querySelector(`#settings-menu [data-page-guide="${event.target.value}"]`)?.click();
+  });
   exportForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     const formats = [...exportForm.querySelectorAll('input[name="format"]:checked')].map((input) => input.value);

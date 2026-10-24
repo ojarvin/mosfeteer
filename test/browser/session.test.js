@@ -220,7 +220,7 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
     await h.until(`/^edited just now$/.test(document.getElementById('status-modified').textContent)`);
   });
 
-  test('an export is the width of the page guide chosen in Settings', async () => {
+  test('an export is the width of the page guide chosen in Settings or in the Export dialog', async () => {
     await h.open('amp');
     // As first written: other tests widen it past the guide.
     await h.evaluate(`window.__load(${JSON.stringify(amplifier())})`);
@@ -232,6 +232,17 @@ describe('documents and sessions', { skip: browserSkip() }, () => {
       const [guided] = await exportWith('guided', svgOnly);
       assert.ok(Math.abs(width(guided.svg) - pageGuideWidth(normalizePageGuide('ieee-1col'))) < 0.01, `${width(plain.svg)} -> ${width(guided.svg)}`);
       assert.notEqual(width(guided.svg), width(plain.svg));
+    } finally {
+      await h.evaluate(`document.querySelector('[data-page-guide=""]').click()`);
+    }
+    // The Export dialog shows the same choice, and choosing it there is
+    // choosing it in Settings.
+    assert.equal(await h.evaluate(`(async () => { document.getElementById('btn-export').click(); await new Promise(requestAnimationFrame); const v = document.getElementById('export-page-guide').value; document.getElementById('export-dialog').close(); return v; })()`), '', 'the dialog shows the guide in use');
+    const pickA4 = `(form) => { for (const box of form.querySelectorAll('[name=format]')) box.checked = box.value === 'svg'; const s = form.querySelector('#export-page-guide'); s.value = 'a4'; s.dispatchEvent(new Event('change', { bubbles: true })); }`;
+    try {
+      const [a4] = await exportWith('a4', pickA4);
+      assert.ok(Math.abs(width(a4.svg) - pageGuideWidth(normalizePageGuide('a4'))) < 0.01, `${width(a4.svg)}`);
+      assert.equal(await h.evaluate(`document.querySelector('#settings-menu [data-page-guide="a4"]').getAttribute('aria-checked')`), 'true');
     } finally {
       await h.evaluate(`document.querySelector('[data-page-guide=""]').click()`);
     }

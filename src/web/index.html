@@ -99,15 +99,6 @@
       <div class="toolbar-popover">
         <button id="btn-settings" class="icon-button" data-icon="sliders" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu" aria-label="Settings" title="Settings">Settings</button>
         <div id="settings-menu" class="toolbar-menu settings-menu" role="menu" aria-label="Settings" hidden>
-          <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
-          <p class="toolbar-menu-note">The width at which a full-width figure has 8 pt text. Export pads to it.</p>
-          <div role="group" aria-labelledby="settings-page-heading">
-            <button type="button" role="menuitemradio" aria-checked="true" data-page-guide="">No page guide</button>
-            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-1col">IEEE single column (3.5 in)</button>
-            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-2col">IEEE double column (7.16 in)</button>
-            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="a4">A4 page (16 cm)</button>
-          </div>
-          <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Display</p>
           <button id="btn-grid" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="grid">Grid <kbd>#</kbd></button>
           <button id="btn-guides" type="button" role="menuitemcheckbox" aria-checked="true" data-icon="guides">Placement guides <kbd>Shift+G</kbd></button>
@@ -117,6 +108,15 @@
           <button id="btn-net-beams" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="highlight">Net beams</button>
           <p class="toolbar-menu-heading" id="settings-accent-heading">Accent color</p>
           <div id="settings-accent" class="settings-accent" role="group" aria-labelledby="settings-accent-heading"></div>
+          <span class="toolbar-menu-separator" role="separator"></span>
+          <p class="toolbar-menu-heading" id="settings-page-heading">Page guide</p>
+          <p class="toolbar-menu-note">The width at which a full-width figure has 8 pt text. Export pads to it.</p>
+          <div role="group" aria-labelledby="settings-page-heading">
+            <button type="button" role="menuitemradio" aria-checked="true" data-page-guide="">No page guide</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-1col">IEEE single column (3.5 in)</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="ieee-2col">IEEE double column (7.16 in)</button>
+            <button type="button" role="menuitemradio" aria-checked="false" data-page-guide="a4">A4 page (16 cm)</button>
+          </div>
           <span class="toolbar-menu-separator" role="separator"></span>
           <p class="toolbar-menu-heading">Input</p>
           <button id="btn-scroll-scheme" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="trackpad" title="Scroll pans, pinch zooms">Trackpad scrolling</button>
@@ -185,6 +185,14 @@
         <legend>Appearance</legend>
         <label><input type="checkbox" name="grid" /> Include grid</label>
         <label><input type="checkbox" name="dark" /> Dark theme</label>
+        <label class="export-page-guide-row" title="The width at which a full-width figure has 8 pt text: the export is padded to it">Page guide
+          <select id="export-page-guide" name="pageGuide">
+            <option value="">None</option>
+            <option value="ieee-1col">IEEE single column (3.5 in)</option>
+            <option value="ieee-2col">IEEE double column (7.16 in)</option>
+            <option value="a4">A4 page (16 cm)</option>
+          </select>
+        </label>
       </fieldset>
       <fieldset>
         <legend>Content</legend>
