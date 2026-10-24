@@ -49,7 +49,11 @@ Each window has a default place (its `place` option, `PLACE` in
 `floating-window.js`): beats bottom center, the optimizer's run top center,
 history and reference windows top left (each further reference window a
 step lower and to the right), the calculator bottom left, the rest top
-right. A window stays where it
+right. A window not yet placed by hand opens clear of the windows already
+open (`clearOfOthers`): beside the one its place would cover (the plots
+beside the analysis), else a step down and left; one wider than half the
+drawing opens docked instead, until there is room to float it (a window
+floated by hand stays floating). A window stays where it
 is dragged (per window, in this browser); double-clicking its title bar
 puts it back in its default place, keeping its size. The window with the
 keyboard focus in it has its border and title bar in the accent. Pressing

@@ -38,6 +38,36 @@ export function floatingWindowPosition(pane, size, stored, place, avoid = null) 
   return { x: Math.round(x), y: Math.round(y) };
 }
 
+/** The area two rectangles ({ x, y, w, h }) share. */
+const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+
+/** Where a window of `size` opening at `at` goes so that it covers none of
+ *  the windows already open (`others`, rects): `at` when it is clear, else
+ *  beside the window it would cover (left of it, then right of it), else a
+ *  step down and left at a time; with no clear place, the least covered.
+ *  Every candidate stays in `pane`. */
+export function clearOfOthers(pane, size, at, others) {
+  const fits = (p) => p.x >= MARGIN && p.y >= MARGIN && p.x + size.w <= pane.w - MARGIN && p.y + size.h <= pane.h - MARGIN;
+  const covered = (p) => others.reduce((sum, other) => sum + overlap({ ...p, ...size }, other), 0);
+  if (!covered(at)) return at;
+  const candidates = [];
+  for (const other of others) {
+    if (!overlap({ ...at, ...size }, other)) continue;
+    candidates.push({ x: other.x - size.w - MARGIN, y: at.y }, { x: other.x + other.w + MARGIN, y: at.y });
+  }
+  for (let step = 1; step <= 8; step += 1) candidates.push({ x: at.x - step * CASCADE, y: at.y + step * CASCADE });
+  const inside = candidates.filter(fits);
+  const clear = inside.find((p) => !covered(p));
+  if (clear) return clear;
+  return inside.reduce((best, p) => (covered(p) < covered(best) ? p : best), at);
+}
+
+/** A window opens docked when floating it would cover more than this share
+ *  of the drawing's width. */
+const DOCK_SHARE = 0.5;
+/** Each cascaded window steps this far down and left of the one before. */
+const CASCADE = 32;
+
 /** Default placements. */
 export const PLACE = Object.freeze({
   topRight: (pane, size) => ({ x: pane.w - size.w - 52, y: MARGIN }),
@@ -126,12 +156,17 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
   const railRect = () => (rail && rail.offsetWidth
     ? { x: rail.offsetLeft, y: rail.offsetTop, w: rail.offsetWidth, h: rail.offsetHeight }
     : null);
+  // Where it opened this time, clear of the windows already open, when it
+  // has no place of its own (not remembered: it opens there again only if
+  // the others are still there).
+  let opened = null;
+  const placed = () => Number.isFinite(stored?.x) && Number.isFinite(stored?.y);
   const apply = () => {
     if (el.hidden || docked()) return;
     const room = `${Math.max(0, paneSize().w - 2 * MARGIN)}px`;
     if (el.style.maxWidth !== room) el.style.maxWidth = room;
     const size = { w: el.offsetWidth, h: el.offsetHeight };
-    const at = floatingWindowPosition(paneSize(), size, stored, place, railRect());
+    const at = floatingWindowPosition(paneSize(), size, placed() ? stored : opened, place, railRect());
     el.style.left = `${at.x}px`;
     el.style.top = `${at.y}px`;
   };
@@ -214,7 +249,11 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
     dockHeight();
   });
 
-  const setDocked = (on, { remember = true } = {}) => {
+  // Docked only for want of room: not remembered, and floated again when
+  // the drawing has room for it.
+  let autoDocked = false;
+  const setDocked = (on, { remember = true, announce = remember } = {}) => {
+    autoDocked = false;
     if (!panel || on === docked()) return;
     if (on) {
       el.classList.add('docked');
@@ -227,11 +266,12 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
       sizeFromStore();
     }
     dockHeight();
-    stored = { ...stored, docked: on || undefined };
+    // Floated by hand, it stays floating: it is not docked again for want of room.
+    stored = { ...stored, docked: on ? true : (remember ? false : undefined) };
     if (remember) writePlace(key, stored);
     syncDockButton();
     // The side panel shows what is docked in it (not when restoring a dock).
-    if (remember) el.dispatchEvent(new CustomEvent('floating-window-dock', { bubbles: true, detail: { docked: on } }));
+    if (announce) el.dispatchEvent(new CustomEvent('floating-window-dock', { bubbles: true, detail: { docked: on } }));
     apply();
   };
   dockButton.addEventListener('click', () => setDocked(!docked()));
@@ -424,6 +464,7 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
   header?.addEventListener('dblclick', (ev) => {
     if (docked() || ev.target.closest('button, input, select, textarea, a')) return;
     stored = resizable && stored?.w ? { w: stored.w, h: stored.h } : null;
+    opened = null;
     writePlace(key, stored);
     apply();
   });
@@ -460,7 +501,26 @@ export function floatingWindow(el, { key, onClose, place = PLACE.topRight, resiz
     ], { duration: 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
   };
   return {
-    place: () => { raise(); apply(); arrive(); },
+    place: () => {
+      raise();
+      if (autoDocked && el.offsetWidth && (stored?.w || el.offsetWidth) <= paneSize().w * DOCK_SHARE) setDocked(false, { remember: false });
+      if (!placed() && !docked() && stored?.docked !== false) {
+        const size = { w: el.offsetWidth, h: el.offsetHeight };
+        if (panel && size.w > paneSize().w * DOCK_SHARE) {
+          // Too wide to float beside the drawing: in the side panel.
+          setDocked(true, { remember: false, announce: true });
+          autoDocked = true;
+          return;
+        }
+        const others = [...pane.querySelectorAll(':scope > .floating-window')]
+          .filter((other) => other !== el && !other.hidden && other.offsetParent)
+          .map((other) => ({ x: other.offsetLeft, y: other.offsetTop, w: other.offsetWidth, h: other.offsetHeight }));
+        opened = null;
+        opened = clearOfOthers(paneSize(), size, floatingWindowPosition(paneSize(), size, null, place, railRect()), others);
+      }
+      apply();
+      arrive();
+    },
     docked,
     dispose: () => {
       observers.forEach((observer) => observer.disconnect());

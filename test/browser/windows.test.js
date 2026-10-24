@@ -73,6 +73,32 @@ describe('floating windows', { skip: browserSkip() }, () => {
     await h.settle();
   });
 
+  test('a window opening where another is goes beside it; with too little room for it, it opens docked', async () => {
+    await h.open('child');
+    await closeAll();
+    const rect = (selector) => h.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+    await h.key('S', { shiftKey: true });
+    await h.until(`!document.getElementById('analysis-dialog').hidden`);
+    await h.key('W', { shiftKey: true });
+    await h.until(`!!document.querySelector('.plots-window:not([hidden])')`);
+    await h.settle();
+    const [analysis, plots] = [await rect('#analysis-dialog'), await rect('.plots-window')];
+    const apart = analysis.x >= plots.x + plots.w || plots.x >= analysis.x + analysis.w || analysis.y >= plots.y + plots.h || plots.y >= analysis.y + analysis.h;
+    assert.ok(apart, JSON.stringify({ analysis, plots }));
+    await closeAll();
+    // A pane too narrow to float it beside the drawing: docked, for now.
+    await h.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 800, deviceScaleFactor: 1, mobile: false });
+    await h.settle();
+    await h.key('Z', { shiftKey: true });
+    await h.until(`document.querySelector('.sizing-window:not([hidden])')?.classList.contains('docked')`);
+    await closeAll();
+    await h.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 950, deviceScaleFactor: 1, mobile: false });
+    await h.settle();
+    await h.key('Z', { shiftKey: true });
+    await h.until(`!!document.querySelector('.sizing-window:not([hidden])') && !document.querySelector('.sizing-window').classList.contains('docked')`);
+    await closeAll();
+  });
+
   test('a window docks into the side panel and floats out again; docked, its title bar folds it', async () => {
     await h.key('E', { shiftKey: true });
     await h.until(`!!document.querySelector('.calculator-window:not([hidden])')`);
