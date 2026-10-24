@@ -60,14 +60,21 @@ describe('floating windows', { skip: browserSkip() }, () => {
       await h.key(key, { shiftKey: true });
       await h.until(`document.querySelector('${selector}').hidden && document.getElementById('${id}').getAttribute('aria-pressed') === 'false'`);
     }
-    // With room to spare each toggle says its name; with less, icons only.
-    const named = () => h.evaluate(`getComputedStyle(document.getElementById('btn-window-notes')).fontSize !== '0px'`);
-    await h.send('Emulation.setDeviceMetricsOverride', { width: 1900, height: 900, deviceScaleFactor: 1, mobile: false });
-    await h.until(`!/windows/.test(document.querySelector('.toolbar').dataset.compact || '')`);
-    assert.equal(await named(), true);
-    await h.send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 900, deviceScaleFactor: 1, mobile: false });
-    await h.until(`/windows/.test(document.querySelector('.toolbar').dataset.compact || '')`);
-    assert.equal(await named(), false);
+    // At any width nothing in the row runs over its neighbor: the title, the
+    // tags, the file buttons, and the windows give way in turn instead.
+    for (const width of [1263, 1100, 900, 700]) {
+      await h.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+      await h.settle();
+      await h.settle();
+      const runs = await h.evaluate(`(() => {
+        const shown = [...document.querySelectorAll('.toolbar #circuit-name, .toolbar #circuit-select, .toolbar #btn-tags, .toolbar > .toolbar-cluster > button, .toolbar > .toolbar-cluster > .toolbar-popover > button, .toolbar .window-cluster > button')]
+          .filter((el) => el.offsetParent && getComputedStyle(el).display !== 'none').map((el) => [el.id || el.className, el.getBoundingClientRect()]);
+        shown.sort((a, b) => a[1].left - b[1].left);
+        return shown.slice(1).filter(([, r], i) => r.left < shown[i][1].right - 1).map(([id], i) => shown[i][0] + ' / ' + id);
+      })()`);
+      assert.deepEqual(runs, [], `at ${width}px`);
+    }
+    await h.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 950, deviceScaleFactor: 1, mobile: false });
     // A narrow window folds the group; More still opens every one of them.
     await h.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 800, deviceScaleFactor: 1, mobile: false });
     await h.until(`getComputedStyle(document.querySelector('.window-cluster')).display === 'none'`);

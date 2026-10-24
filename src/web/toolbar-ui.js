@@ -45,6 +45,8 @@ function fitToolbar() {
       clientWidth: toolbarEl.clientWidth,
       titleWidth: circuitNameEl.getBoundingClientRect().width,
       titleTextWidth: wanted,
+      spilled: [...toolbarEl.querySelectorAll(':scope > *, .toolbar-cluster, .circuit-picker')]
+        .some((group) => group.offsetParent && group.scrollWidth > group.clientWidth + 1),
     });
   });
   toolbarEl.dataset.compact = toolbarStageTokens(stage);
