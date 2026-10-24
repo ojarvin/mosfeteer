@@ -48,6 +48,13 @@ describe('Atlas design menu', { skip: browserSkip() }, () => {
     assert.ok(existsSync(join(h.workspace, 'renamed.json')) && !existsSync(join(h.workspace, 'first.json')));
   });
 
+  test('a click on the desk outside the menu closes it', async () => {
+    await rightClick('second');
+    const p = center(await tile('third'));
+    await h.tap(p.x, p.y);
+    await h.until(`document.querySelector('.component-context-menu').hidden`);
+  });
+
   test('Tags… gives the design tags; Delete… asks first, and Cancel keeps it', async () => {
     await rightClick('second');
     await choose('Tags…');

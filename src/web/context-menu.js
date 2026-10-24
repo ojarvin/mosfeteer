@@ -846,7 +846,9 @@ export function installContextMenu() {
   window.addEventListener('contextmenu', (ev) => {
     if (Date.now() < editor.suppressContextMenuUntil || componentContextMenuEl?.contains(ev.target) || editor.radialMenuEl?.contains(ev.target)) ev.preventDefault();
   }, true);
-  window.addEventListener('mousedown', (ev) => {
+  // A pointer press, not a mouse one: the Atlas desk prevents the default of
+  // its pointer presses, and with it the mouse events that follow them.
+  window.addEventListener('pointerdown', (ev) => {
     if (componentContextMenuEl?.hidden || componentContextMenuEl.contains(ev.target)) return;
     closeComponentContextMenu();
   });
