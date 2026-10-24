@@ -253,9 +253,19 @@ function expand(value, work) {
       return new Map([[`${node.name}^1`, { powers: new Map([[node.name, 1]]), num: 1n, den: 1n }]]);
     }
     if (node.kind === 'power') {
-      if (!Number.isInteger(node.exponent) || node.exponent < 0 || node.exponent > 12) throw new WorkLimit();
-      let result = one();
+      if (!Number.isInteger(node.exponent) || node.exponent < 0) throw new WorkLimit();
       const base = walk(node.base);
+      // A monomial (s^17) is one term at any power; a sum's power swells.
+      if (base.size === 1) {
+        const [term] = base.values();
+        return new Map([[monomialKey(new Map([...term.powers].map(([name, e]) => [name, e * node.exponent]))), {
+          powers: new Map([...term.powers].map(([name, e]) => [name, e * node.exponent])),
+          num: term.num ** BigInt(node.exponent),
+          den: term.den ** BigInt(node.exponent),
+        }]]);
+      }
+      if (node.exponent > 12) throw new WorkLimit();
+      let result = one();
       for (let i = 0; i < node.exponent; i++) result = product(result, base);
       return result;
     }

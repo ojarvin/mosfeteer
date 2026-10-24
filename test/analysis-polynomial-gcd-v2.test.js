@@ -79,3 +79,18 @@ test('a high-degree common factor comes out the same by remainders down to its d
   assert.deepEqual([response.numeratorDegree, response.denominatorDegree], [1, 2]);
   assert.equal(valueAt(canceled), valueAt(value));
 });
+
+test('a factor still cancels when the polynomials run past s^12', () => {
+  // (s + 2)(s^13 + 1) / ((s + 2)(s + 5)), expanded: a numeric loop gain's
+  // uncanceled factors take its degree this high.
+  const value = rationalFunction(
+    add(power(s, 14), multiply(integer(2), power(s, 13)), s, integer(2)),
+    add(power(s, 2), multiply(integer(7), s), integer(10)),
+  );
+  const canceled = cancelCommonPolynomialFactor(value);
+  assert.notEqual(canceled, value);
+  assert.equal(valueAt(canceled), valueAt(value));
+  const response = analyzeResponse(canceled);
+  assert.equal(response.numeratorDegree, 13);
+  assert.equal(response.denominatorDegree, 1);
+});
