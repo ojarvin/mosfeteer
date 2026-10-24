@@ -46,7 +46,7 @@ describe('floating windows', { skip: browserSkip() }, () => {
     assert.equal(await h.evaluate(`!!document.querySelector('#btn-window-plots, [data-proxy-for="btn-window-plots"]')`), false);
     // Each tool's tooltip is its name and its key.
     const titles = await h.evaluate(`[...document.querySelectorAll('.window-cluster > button')].map((b) => b.title)`);
-    assert.deepEqual(titles, ['Beats (Shift+B)', 'Timing diagram (Shift+K)', 'Small-signal analysis (Shift+S)', 'Reference windows (Shift+V)', 'Calculator (Shift+E)', 'Notes (Shift+N)', 'Sizing (Shift+Z)']);
+    assert.deepEqual(titles, ['Beats (Shift+B)', 'Timing diagram (Shift+K)', 'Analysis (Shift+S)', 'Reference windows (Shift+V)', 'Calculator (Shift+E)', 'Notes (Shift+N)', 'Sizing (Shift+Z)']);
     // A narrow window folds the group; More still opens every one of them.
     await h.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 800, deviceScaleFactor: 1, mobile: false });
     await h.until(`getComputedStyle(document.querySelector('.window-cluster')).display === 'none'`);

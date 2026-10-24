@@ -34,6 +34,16 @@ describe('editor chrome', { skip: browserSkip() }, () => {
     await h.key('Escape');
   });
 
+  test('the insert tool is called Insert wherever it shows: its button, its mode, the analysis is Analysis', async () => {
+    await h.open('amplifier');
+    assert.equal(await h.evaluate(`document.getElementById('btn-mode-place').title`), 'Insert (i)');
+    assert.equal(await h.evaluate(`document.getElementById('btn-analysis').title`), 'Analysis (Shift+S)');
+    await h.key('i');
+    await h.until(`document.getElementById('status-mode').textContent === 'INSERT'`);
+    await h.key('Escape');
+    await h.key('Escape');
+  });
+
   test('the theme is a setting: its menu item switches the drawing dark and back', async () => {
     assert.ok(await h.evaluate(`!!document.querySelector('#settings-menu #btn-theme[role="menuitemcheckbox"]')`));
     const dark = () => h.evaluate(`document.documentElement.classList.contains('dark')`);

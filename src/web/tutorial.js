@@ -337,7 +337,7 @@ export const TUTORIALS = Object.freeze([
     targets: TUTORIAL_TARGETS,
     roles: tutorialRoles,
     done: 'You drew a 5T OTA!',
-    finish: 'Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.',
+    finish: 'Next, press **x** for a design check. Before the **Analysis** (Shift+S) can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.',
   },
   {
     id: 'switched-cap',

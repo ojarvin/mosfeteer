@@ -28,7 +28,7 @@ export const EDITOR_COMMANDS = [
   { name: 'history', aliases: ['checkpoints', 'checkpoint', 'save-points', 'savepoints', 'versions', 'revisions', 'snapshots'], toggle: true, help: 'show or hide the design\'s history: its last ten saves and pinned checkpoints, to view, restore, or remove' },
   { name: 'sizing', aliases: ['sizes', 'parts', 'device-sizes', 'values'], toggle: true, help: 'show or hide the sizing window: W, L, m of the transistors and values of the passives (Shift+Z)' },
   { name: 'notes', aliases: ['note', 'notebook', 'design-notes', 'memo'], toggle: true, help: 'show or hide the design\'s notes: Markdown with $math$, @M1 mentions a part, [[amp]] links a design (Shift+N)' },
-  { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
+  { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
   { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },
   { name: 'crosshair', aliases: ['cursor'], toggle: true, help: 'show or hide the crosshair (Shift+C)' },

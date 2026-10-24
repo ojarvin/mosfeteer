@@ -196,7 +196,7 @@ const WIRE_RING = [
 
 /** The ring for a press (radial.kind), and the hub's caption. */
 function ringFor(radial) {
-  if (radial.kind === 'paper') return { items: PALETTE, hub: 'Place' };
+  if (radial.kind === 'paper') return { items: PALETTE, hub: 'Insert' };
   if (radial.kind === 'pin') return { items: PIN_RING, hub: `${radial.refdes}.${radial.term}` };
   if (radial.kind === 'wire') {
     const net = editor.circuit.nets.get(radial.netId);

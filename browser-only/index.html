@@ -63,7 +63,7 @@
           <span class="toolbar-menu-separator" role="separator"></span>
           <button id="btn-beats" type="button" role="menuitemcheckbox" aria-checked="false" data-icon="beats">Beats <kbd>Shift+B</kbd></button>
           <button id="btn-phase-beats" type="button" role="menuitem" data-icon="beats">Make beats from phases</button>
-          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="analysis" data-proxy-for="btn-analysis">Small-signal analysis <kbd>Shift+S</kbd></button>
+          <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="analysis" data-proxy-for="btn-analysis">Analysis <kbd>Shift+S</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="reference" data-proxy-for="btn-window-reference">Reference windows <kbd>Shift+V</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="calculator" data-proxy-for="btn-window-calculator">Calculator <kbd>Shift+E</kbd></button>
           <button type="button" role="menuitemcheckbox" aria-checked="false" data-icon="notes" data-proxy-for="btn-window-notes">Notes <kbd>Shift+N</kbd></button>
@@ -83,7 +83,7 @@
     <div class="toolbar-cluster window-cluster" role="group" aria-label="Windows">
       <button id="btn-window-beats" class="icon-button" data-icon="beats" aria-pressed="false" aria-controls="beat-strip" aria-label="Beats" title="Beats (Shift+B)">Beats</button>
       <button id="btn-window-timing" class="icon-button" data-icon="timing" aria-pressed="false" aria-label="Timing diagram" title="Timing diagram (Shift+K)">Timing</button>
-      <button id="btn-analysis" class="icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Small-signal analysis" title="Small-signal analysis (Shift+S)">Analyze</button>
+      <button id="btn-analysis" class="icon-button" data-icon="analysis" data-doc-kind="schematic" aria-controls="analysis-dialog" aria-pressed="false" aria-label="Analysis" title="Analysis (Shift+S)">Analysis</button>
       <button id="btn-window-reference" class="icon-button" data-icon="reference" aria-pressed="false" aria-label="Reference windows" title="Reference windows (Shift+V)">Reference</button>
       <button id="btn-window-calculator" class="icon-button" data-icon="calculator" aria-pressed="false" aria-label="Calculator" title="Calculator (Shift+E)">Calculator</button>
       <button id="btn-window-notes" class="icon-button" data-icon="notes" aria-pressed="false" aria-label="Notes" title="Notes (Shift+N)">Notes</button>
@@ -279,7 +279,7 @@
       <div class="mode-group mode-toolbar" aria-labelledby="mode-heading" data-control-group="mode" data-editor-edge="left">
         <span class="toolbar-group-label" id="mode-heading">Edit tools</span>
         <button id="btn-mode-select" class="mode-control" data-icon="cursor" data-mode="select" aria-pressed="true" title="Select (Esc)" aria-label="Select and edit objects">Select <kbd>Esc</kbd></button>
-        <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" data-doc-kind="schematic" aria-pressed="false" title="Place (i)" aria-label="Place a schematic component or label">Place <kbd>i</kbd></button>
+        <button id="btn-mode-place" class="mode-control" data-icon="plus" data-mode="place" data-doc-kind="schematic" aria-pressed="false" title="Insert (i)" aria-label="Insert a schematic component or label">Insert <kbd>i</kbd></button>
         <button id="btn-mode-wire" class="mode-control rail-flyout-proxy" data-icon="wire" data-mode="wire" data-doc-kind="schematic" aria-pressed="false" aria-haspopup="true" aria-expanded="false" aria-controls="wire-flyout" title="Wire (w)" aria-label="Draw an electrical wire">Wire <kbd>w</kbd></button>
         <span class="mode-separator" role="separator" aria-hidden="true"></span>
         <button id="btn-mode-move" class="mode-control" data-icon="move" data-action="move" aria-pressed="false" title="Move (m)" aria-label="Move selected objects">Move <kbd>m</kbd></button>

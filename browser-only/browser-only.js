@@ -52686,7 +52686,7 @@ const EDITOR_COMMANDS = [
   { name: 'history', aliases: ['checkpoints', 'checkpoint', 'save-points', 'savepoints', 'versions', 'revisions', 'snapshots'], toggle: true, help: 'show or hide the design\'s history: its last ten saves and pinned checkpoints, to view, restore, or remove' },
   { name: 'sizing', aliases: ['sizes', 'parts', 'device-sizes', 'values'], toggle: true, help: 'show or hide the sizing window: W, L, m of the transistors and values of the passives (Shift+Z)' },
   { name: 'notes', aliases: ['note', 'notebook', 'design-notes', 'memo'], toggle: true, help: 'show or hide the design\'s notes: Markdown with $math$, @M1 mentions a part, [[amp]] links a design (Shift+N)' },
-  { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the small-signal analysis window (Shift+S)' },
+  { name: 'analysis', aliases: ['analyze', 'analyse', 'small-signal', 'smallsignal', 'equations'], toggle: true, help: 'show or hide the analysis window (Shift+S)' },
   { name: 'grid', toggle: true, help: 'show or hide the placement grid (#)' },
   { name: 'guides', aliases: ['placement-guides', 'alignment-guides', 'spacing'], toggle: true, help: 'show or hide the spacing and alignment guides (Shift+G)' },
   { name: 'crosshair', aliases: ['cursor'], toggle: true, help: 'show or hide the crosshair (Shift+C)' },
@@ -63925,7 +63925,7 @@ function deriveInteractionState({ mode = 'normal', labelMode = null, wire = null
   if (labelMode === 'line') return { key: 'line', canvasClass: 'mode-annotation', toolbar: 'line', label: 'LINE' };
   if (labelMode === 'arrow') return { key: 'arrow', canvasClass: 'mode-annotation', toolbar: 'arrow', label: 'ARROW' };
   if (labelMode === 'box') return { key: 'box', canvasClass: 'mode-annotation', toolbar: 'box', label: 'BOX' };
-  if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'PLACE' };
+  if (mode === 'insert') return { key: 'place', canvasClass: 'mode-place', toolbar: 'place', label: 'INSERT' };
   if (copyMode) return { key: 'copy', canvasClass: 'mode-copy', toolbar: 'copy', label: 'COPY' };
   if (deleteMode) return { key: 'delete', canvasClass: 'mode-delete', toolbar: 'delete', label: 'DELETE' };
   if (alignMode) return { key: 'align', canvasClass: 'mode-align', toolbar: 'align', label: 'ALIGN' };
@@ -75370,7 +75370,7 @@ const WIRE_RING = [
 
 /** The ring for a press (radial.kind), and the hub's caption. */
 function ringFor(radial) {
-  if (radial.kind === 'paper') return { items: PALETTE, hub: 'Place' };
+  if (radial.kind === 'paper') return { items: PALETTE, hub: 'Insert' };
   if (radial.kind === 'pin') return { items: PIN_RING, hub: `${radial.refdes}.${radial.term}` };
   if (radial.kind === 'wire') {
     const net = editor.circuit.nets.get(radial.netId);
@@ -83341,7 +83341,7 @@ const TUTORIALS = Object.freeze([
     targets: TUTORIAL_TARGETS,
     roles: tutorialRoles,
     done: 'You drew a 5T OTA!',
-    finish: 'Next, press **x** for a design check. Before **Analyze** can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.',
+    finish: 'Next, press **x** for a design check. Before the **Analysis** (Shift+S) can find the gain and output impedance, mark the tail node and the mirror node as AC ground: right-click each wire, then **Small-signal attributes → DC bias / AC ground**. **?** lists every key.',
   },
   {
     id: 'switched-cap',
