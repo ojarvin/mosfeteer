@@ -17,25 +17,27 @@ let logHoverTimer = 0;
 
 let pointerInConsole = false;
 
-function setStatusMessage(text, cls) {
+function setStatusMessage(text, cls, full = text) {
   if (!statusMessageEl) return;
   const lines = String(text).split('\n');
   statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
   statusMessageEl.dataset.kind = cls || 'info';
-  statusMessageEl.title = text;
+  statusMessageEl.title = full;
   // Restart the fade: a fresh message is bright, then settles to dim.
   statusMessageEl.classList.remove('fresh');
   void statusMessageEl.offsetWidth;
   statusMessageEl.classList.add('fresh');
 }
 
-export function logLine(text, cls, { peek = true } = {}) {
+/** `status`: what the status bar says instead, shorter (a design's name
+ *  where the log has its path); its tooltip is the log's line. */
+export function logLine(text, cls, { peek = true, status = null } = {}) {
   const line = document.createElement('div');
   if (cls) line.className = cls;
   line.textContent = text;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
-  if (cls !== 'cmd') setStatusMessage(text, cls);
+  if (cls !== 'cmd') setStatusMessage(status ?? text, cls, text);
   if (cls === 'error' && peek) applyLogDrawerEvent({ type: 'error' });
   if (cls === 'error' || cls === 'status') announce(text);
 }

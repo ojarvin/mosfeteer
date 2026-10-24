@@ -15,8 +15,9 @@ import { componentsOfSymbols } from '../core/analysis/provenance.js';
 import { noiseCandidates } from '../core/analysis/noise.js';
 import { installBodeUi, renderBode } from './bode-ui.js';
 import { analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } from './analysis-options.js';
-import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
+import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, sharedNetNames, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from './analysis-state.js';
 import { installHintFolding } from './hints.js';
+import { renderedWhenIdle } from './rendered-field.js';
 import { canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate } from './elements.js';
 import { logLine, renderStatus } from './status-bar-ui.js';
 import { fitView } from './canvas-view.js';
@@ -105,10 +106,11 @@ function fillAnalysisDialog(targetNetId) {
     componentOutputNetIds: portNetIds(nets, 'output', 'output'),
   });
   analysisTarget.replaceChildren();
+  const shared = sharedNetNames(nets);
   for (const net of nets) {
     const option = document.createElement('option');
     option.value = net.id;
-    option.textContent = analysisNetOptionText(net);
+    option.textContent = analysisNetOptionText(net, { shared: shared.has(net.name) });
     analysisTarget.appendChild(option);
   }
   if (defaults.target) analysisTarget.value = defaults.target;
@@ -118,7 +120,7 @@ function fillAnalysisDialog(targetNetId) {
     for (const net of nets) {
       const option = document.createElement('option');
       option.value = net.id;
-      option.textContent = analysisNetOptionText(net);
+      option.textContent = analysisNetOptionText(net, { shared: shared.has(net.name) });
       analysisInput.appendChild(option);
     }
     if (defaults.input) analysisInput.value = defaults.input;
@@ -1191,6 +1193,8 @@ function showDocumentAnalysis() {
 }
 
 export function installAnalysisUi() {
+  // The AC grounds read as names (V_{INN} as V with INN below) unless typed in.
+  if (analysisAcGrounds) renderedWhenIdle(analysisAcGrounds);
   onDocumentShown(showDocumentAnalysis);
   installBodeUi();
   installOptionsSummary();

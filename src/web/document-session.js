@@ -421,7 +421,7 @@ export async function saveCircuit({ saveAs = false } = {}) {
     await refreshCircuitList();
     logLine(data.downloaded
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
-      : `Saved ${displayPath(data.path)}.`);
+      : `Saved ${displayPath(data.path)}.`, undefined, data.downloaded ? {} : { status: `Saved ${data.name}.` });
     if (!data.downloaded) folderTipOnce();
     // What follows the file (the history window's save points) reads it again.
     render();
@@ -476,7 +476,7 @@ async function loadCircuit(path, quiet = false, options = {}) {
     fitView();
     renderSaveState();
     void refreshCircuitList();
-    logLine(`Opened ${displayPath(data.path)}.`);
+    logLine(`Opened ${displayPath(data.path)}.`, undefined, { status: `Opened ${data.name}.` });
     return true;
   } catch (err) {
     // A transient load failure (active circuit whose file does not exist yet)

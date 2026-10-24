@@ -10,10 +10,21 @@ import { parseLabelRuns } from '../core/model.js';
 
 /** Native <option> text cannot render sub/superscripts, so node choices show
  * the net name without `_{…}`/`^{…}` markup, followed by its physical id. */
-export function analysisNetOptionText(net) {
+/** A net as the analysis menus list it: its name as read (V_{IN} as VIN);
+ *  its id only where the name does not tell it apart -- no name, or a name
+ *  `shared` with another net listed. */
+export function analysisNetOptionText(net, { shared = false } = {}) {
   const name = net?.name ? parseLabelRuns(net.name).map((run) => run.text).join('') : '';
-  if (!name) return `(unnamed) — ${net.id}`;
-  return name === net.id ? name : `${name} — ${net.id}`;
+  if (!name) return `unnamed net ${net.id}`;
+  return name === net.id || !shared ? name : `${name} (${net.id})`;
+}
+
+/** The names more than one of `nets` has, as analysisNetOptionText's
+ *  `shared` reads them. */
+export function sharedNetNames(nets) {
+  const seen = new Map();
+  for (const net of nets) if (net?.name) seen.set(net.name, (seen.get(net.name) || 0) + 1);
+  return new Set([...seen].filter(([, count]) => count > 1).map(([name]) => name));
 }
 
 const ANALYSIS_FORM_KEY = 'mosfeteer:analysis-form';

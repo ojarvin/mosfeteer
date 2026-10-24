@@ -5,6 +5,7 @@
  */
 
 import { element } from './dom.js';
+import { labelTextNode, renderedWhenIdle } from './rendered-field.js';
 import { DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } from '../core/timing-diagram.js';
 import { addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } from '../core/beats.js';
 import { plainTexText, svgString, texToLabelMarkup } from '../core/render.js';
@@ -963,7 +964,7 @@ function openTimingDialog() {
         input.blur();
         grid.focus();
       });
-      return input;
+      return renderedWhenIdle(input, labelTextNode);
     };
     state.notes.arrows.forEach((arrow, index) => item('arrow', index, `${edgeName(arrow.from)} → ${edgeName(arrow.to)}`, [textField(arrow, 'text (optional)', 'Arrow text')]));
     state.notes.marks.forEach((mark, index) => item('mark', index, edgeName(mark)));
@@ -1209,7 +1210,7 @@ function openTimingDialog() {
     if (!editor.circuit.timing && rows.length) redraw();
     addPhaseBeats();
   }, { icon: null, className: 'confirm-action' });
-  const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
+  const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, φs …', 'aria-label': 'New signal name', spellcheck: 'false' });
   const addButton = button('Add signal', 'Add a signal', () => {
     if (addSignal(signalInput.value)) signalInput.value = '';
   }, { icon: 'add' });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
+import { analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, sharedNetNames, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } from '../src/web/analysis-state.js';
 
 const nets = [
   { id: 'N1', name: 'VIN', terminals: [{ comp: 'P1', term: 'p' }], analysis: { role: 'input' } },
@@ -54,10 +54,14 @@ test('analysis defaults prefer output ports and the non-inverting input port ove
 });
 
 test('analysis node options show net names without label markup', () => {
-  assert.equal(analysisNetOptionText({ id: 'N15', name: 'V_{IN}' }), 'VIN — N15');
-  assert.equal(analysisNetOptionText({ id: 'N6', name: 'V_{OUT}^{+}' }), 'VOUT+ — N6');
+  assert.equal(analysisNetOptionText({ id: 'N15', name: 'V_{IN}' }), 'VIN');
+  assert.equal(analysisNetOptionText({ id: 'N6', name: 'V_{OUT}^{+}' }), 'VOUT+');
   assert.equal(analysisNetOptionText({ id: 'N3', name: 'N3' }), 'N3');
-  assert.equal(analysisNetOptionText({ id: 'N4', name: '' }), '(unnamed) — N4');
+  assert.equal(analysisNetOptionText({ id: 'N4', name: '' }), 'unnamed net N4');
+  // The id only where the name does not tell two nets apart.
+  const nets = [{ id: 'N1', name: 'V_{SS}' }, { id: 'N5', name: 'V_{SS}' }, { id: 'N2', name: 'V_{IN}' }];
+  assert.deepEqual([...sharedNetNames(nets)], ['V_{SS}']);
+  assert.equal(analysisNetOptionText(nets[1], { shared: true }), 'VSS (N5)');
 });
 
 test('of several marked inputs, the saved choice stays; with none saved, the non-inverting side', () => {

@@ -42982,6 +42982,7 @@ __exports.ANALYSIS_OPTION_DEFAULTS = ANALYSIS_OPTION_DEFAULTS;
 
 __modules["src/web/analysis-state.js"] = function (__require, __exports) {
 __exports.analysisNetOptionText = analysisNetOptionText;
+__exports.sharedNetNames = sharedNetNames;
 __exports.analysisFormStorageKey = analysisFormStorageKey;
 __exports.pruneAnalysisNetValues = pruneAnalysisNetValues;
 __exports.pruneAnalysisDeviceRegions = pruneAnalysisDeviceRegions;
@@ -43001,10 +43002,21 @@ let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/mod
 
 /** Native <option> text cannot render sub/superscripts, so node choices show
  * the net name without `_{…}`/`^{…}` markup, followed by its physical id. */
-function analysisNetOptionText(net) {
+/** A net as the analysis menus list it: its name as read (V_{IN} as VIN);
+ *  its id only where the name does not tell it apart -- no name, or a name
+ *  `shared` with another net listed. */
+function analysisNetOptionText(net, { shared = false } = {}) {
   const name = net?.name ? parseLabelRuns(net.name).map((run) => run.text).join('') : '';
-  if (!name) return `(unnamed) — ${net.id}`;
-  return name === net.id ? name : `${name} — ${net.id}`;
+  if (!name) return `unnamed net ${net.id}`;
+  return name === net.id || !shared ? name : `${name} (${net.id})`;
+}
+
+/** The names more than one of `nets` has, as analysisNetOptionText's
+ *  `shared` reads them. */
+function sharedNetNames(nets) {
+  const seen = new Map();
+  for (const net of nets) if (net?.name) seen.set(net.name, (seen.get(net.name) || 0) + 1);
+  return new Set([...seen].filter(([, count]) => count > 1).map(([name]) => name));
 }
 
 const ANALYSIS_FORM_KEY = 'mosfeteer:analysis-form';
@@ -43135,8 +43147,9 @@ let componentsOfSymbols; __bind(() => { ({ componentsOfSymbols } = __require("sr
 let noiseCandidates; __bind(() => { ({ noiseCandidates } = __require("src/core/analysis/noise.js")); });
 let installBodeUi, renderBode; __bind(() => { ({ installBodeUi, renderBode } = __require("src/web/bode-ui.js")); });
 let analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState; __bind(() => { ({ analysisNoiseRequest, analysisOptionDefaults, annotationAssumptions, normalizeAnalysisOptions, readAnalysisFormState } = __require("src/web/analysis-options.js")); });
-let analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
+let analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, sharedNetNames, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues; __bind(() => { ({ analysisFormDefaults, analysisFormStorageKey, restoredAnalysisInput, analysisNetOptionText, sharedNetNames, formatAnalysisDeviceRegions, pruneAnalysisDeviceRegions, pruneAnalysisNetValues } = __require("src/web/analysis-state.js")); });
 let installHintFolding; __bind(() => { ({ installHintFolding } = __require("src/web/hints.js")); });
+let renderedWhenIdle; __bind(() => { ({ renderedWhenIdle } = __require("src/web/rendered-field.js")); });
 let canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate; __bind(() => { ({ canvasEl, analysisButton, analysisDialog, analysisForm, analysisTarget, analysisInput, analysisAcGrounds, analysisDeviceRegions, analysisApproxRo, analysisApproxBody, analysisApproxMiller, analysisParasitics, analysisApproxGmRo, analysisApproxDominantPole, analysisTimeConstants, analysisNameSubexpressions, analysisNoiseThermal, analysisNoiseFlicker, analysisNoiseOutput, analysisNoiseSources, analysisResult, analysisEquation, analysisDetails, analysisNetlistPanel, analysisNetlist, analysisModelPanel, analysisModelEl, analysisCancel, analysisAnnotate } = __require("src/web/elements.js")); });
 let logLine, renderStatus; __bind(() => { ({ logLine, renderStatus } = __require("src/web/status-bar-ui.js")); });
 let fitView; __bind(() => { ({ fitView } = __require("src/web/canvas-view.js")); });
@@ -43154,6 +43167,7 @@ let arriving; __bind(() => { ({ arriving } = __require("src/web/motion.js")); })
  * target on the canvas, and annotating results into the drawing. The form's
  * option rules are in analysis-options.js and analysis-state.js.
  */
+
 
 
 
@@ -43255,10 +43269,11 @@ function fillAnalysisDialog(targetNetId) {
     componentOutputNetIds: portNetIds(nets, 'output', 'output'),
   });
   analysisTarget.replaceChildren();
+  const shared = sharedNetNames(nets);
   for (const net of nets) {
     const option = document.createElement('option');
     option.value = net.id;
-    option.textContent = analysisNetOptionText(net);
+    option.textContent = analysisNetOptionText(net, { shared: shared.has(net.name) });
     analysisTarget.appendChild(option);
   }
   if (defaults.target) analysisTarget.value = defaults.target;
@@ -43268,7 +43283,7 @@ function fillAnalysisDialog(targetNetId) {
     for (const net of nets) {
       const option = document.createElement('option');
       option.value = net.id;
-      option.textContent = analysisNetOptionText(net);
+      option.textContent = analysisNetOptionText(net, { shared: shared.has(net.name) });
       analysisInput.appendChild(option);
     }
     if (defaults.input) analysisInput.value = defaults.input;
@@ -44341,6 +44356,8 @@ function showDocumentAnalysis() {
 }
 
 function installAnalysisUi() {
+  // The AC grounds read as names (V_{INN} as V with INN below) unless typed in.
+  if (analysisAcGrounds) renderedWhenIdle(analysisAcGrounds);
   onDocumentShown(showDocumentAnalysis);
   installBodeUi();
   installOptionsSummary();
@@ -49436,6 +49453,7 @@ __exports.openPresenter = openPresenter;
 __exports.onPresenterKey = onPresenterKey;
 __exports.installBeatsUi = installBeatsUi;
 let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
+let labelTextNode, renderedWhenIdle; __bind(() => { ({ labelTextNode, renderedWhenIdle } = __require("src/web/rendered-field.js")); });
 let DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources; __bind(() => { ({ DEFAULT_SLOT_CELLS, MAX_EDGE_SHIFT, MAX_ROW_CELLS, annotateTimingDiagram, parseTimingValue, timingStates, beatTimingBits, defaultTimingPairs, drawnTimingDiagram, existingTimingDiagram, removeTimingDiagram, setTimingDiagram, timingBeatBands, timingMissing, timingPhases, timingRowSources } = __require("src/core/timing-diagram.js")); });
 let addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases; __bind(() => { ({ addBeat, beatTargetId, beatTitle, introduceAt, mergeBeats, moveBeat, removeBeat, renameBeat, resolveBeat, setPresenceAt, setPresenceFrom, setSwitchFrom, switchGroupKey, switchPhase, switchState, switchStateAt, phaseBeats, samePhase, complementKey, phaseKey, switchPhases } = __require("src/core/beats.js")); });
 let plainTexText, svgString, texToLabelMarkup; __bind(() => { ({ plainTexText, svgString, texToLabelMarkup } = __require("src/core/render.js")); });
@@ -49457,6 +49475,7 @@ let reducedMotion; __bind(() => { ({ reducedMotion } = __require("src/web/motion
  * or dimming the selection from a beat on, switch flips, and the full-screen
  * presenter. The beat model is core/beats.js.
  */
+
 
 
 
@@ -50417,7 +50436,7 @@ function openTimingDialog() {
         input.blur();
         grid.focus();
       });
-      return input;
+      return renderedWhenIdle(input, labelTextNode);
     };
     state.notes.arrows.forEach((arrow, index) => item('arrow', index, `${edgeName(arrow.from)} → ${edgeName(arrow.to)}`, [textField(arrow, 'text (optional)', 'Arrow text')]));
     state.notes.marks.forEach((mark, index) => item('mark', index, edgeName(mark)));
@@ -50663,7 +50682,7 @@ function openTimingDialog() {
     if (!editor.circuit.timing && rows.length) redraw();
     addPhaseBeats();
   }, { icon: null, className: 'confirm-action' });
-  const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, $\\varphi_{s}$ …', 'aria-label': 'New signal name', spellcheck: 'false' });
+  const signalInput = element('input', { type: 'text', placeholder: 'CLK, EN, φs …', 'aria-label': 'New signal name', spellcheck: 'false' });
   const addButton = button('Add signal', 'Add a signal', () => {
     if (addSignal(signalInput.value)) signalInput.value = '';
   }, { icon: 'add' });
@@ -55971,7 +55990,7 @@ async function saveCircuit({ saveAs = false } = {}) {
     await refreshCircuitList();
     logLine(data.downloaded
       ? `Downloaded ${data.name}.json. This browser cannot write to files in place, so the download is the saved version; open it from there next time.`
-      : `Saved ${displayPath(data.path)}.`);
+      : `Saved ${displayPath(data.path)}.`, undefined, data.downloaded ? {} : { status: `Saved ${data.name}.` });
     if (!data.downloaded) folderTipOnce();
     // What follows the file (the history window's save points) reads it again.
     render();
@@ -56026,7 +56045,7 @@ async function loadCircuit(path, quiet = false, options = {}) {
     fitView();
     renderSaveState();
     void refreshCircuitList();
-    logLine(`Opened ${displayPath(data.path)}.`);
+    logLine(`Opened ${displayPath(data.path)}.`, undefined, { status: `Opened ${data.name}.` });
     return true;
   } catch (err) {
     // A transient load failure (active circuit whose file does not exist yet)
@@ -76385,6 +76404,83 @@ function installReferenceWindows() {
 
 };
 
+__modules["src/web/rendered-field.js"] = function (__require, __exports) {
+__exports.markupNode = markupNode;
+__exports.labelTextNode = labelTextNode;
+__exports.renderedWhenIdle = renderedWhenIdle;
+let parseLabelRuns; __bind(() => { ({ parseLabelRuns } = __require("src/core/model.js")); });
+let texToMathML; __bind(() => { ({ texToMathML } = __require("src/core/render.js")); });
+let el; __bind(() => { ({ element: el } = __require("src/web/dom.js")); });
+/**
+ * A text field that shows what its text reads as -- V_{INN} as V with INN
+ * below, $t_\text{su}$ as math -- while it is not being typed in, and its
+ * source while it is: the field itself is unchanged, its rendering is laid
+ * over it. A field whose text has no markup shows as it is.
+ */
+
+
+
+
+
+/** Label markup (V_{IN}, x^{2}) as text with subscripts and superscripts;
+ *  null when there is none to show. */
+function markupNode(text) {
+  const runs = parseLabelRuns(String(text));
+  if (!runs.some((run) => run.sub || run.super)) return null;
+  const span = el('span');
+  for (const run of runs) span.append(run.sub || run.super ? el(run.sub ? 'sub' : 'sup', { text: run.text }) : run.text);
+  return span;
+}
+
+/** A label's text: its $math$ as math, the rest as label markup; null when
+ *  there is neither. */
+function labelTextNode(text) {
+  const source = String(text);
+  if (!/\$[^$]+\$/.test(source)) return markupNode(source);
+  const span = el('span');
+  for (const part of source.split(/(\$[^$]+\$)/)) {
+    if (!part) continue;
+    if (/^\$[^$]+\$$/.test(part)) {
+      const math = el('span', { class: 'rendered-field-math' });
+      math.innerHTML = texToMathML(part.slice(1, -1)).replace('display="block"', 'display="inline"');
+      span.append(math);
+    } else span.append(markupNode(part) || part);
+  }
+  return span;
+}
+
+/** Show `input`'s text rendered by `render` (text -> node or null) while it
+ *  is not focused. Follows typing and values set by code alike. Returns the
+ *  field's wrapper, which takes the input's place (if it has one). */
+function renderedWhenIdle(input, render = markupNode) {
+  const view = el('span', { class: 'rendered-field-view', 'aria-hidden': 'true' });
+  const wrap = el('span', { class: 'rendered-field' });
+  if (input.parentNode) input.replaceWith(wrap);
+  wrap.append(input, view);
+  const sync = () => {
+    const node = input.value.trim() ? render(input.value.trim()) : null;
+    view.replaceChildren(...(node ? [node] : []));
+    wrap.classList.toggle('rendered', !!node);
+  };
+  // A value set by code (a form restored) shows too.
+  const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  Object.defineProperty(input, 'value', {
+    configurable: true,
+    get() { return own.get.call(this); },
+    set(value) { own.set.call(this, value); sync(); },
+  });
+  input.addEventListener('input', sync);
+  // A press on the rendering types in the field.
+  view.addEventListener('mousedown', (ev) => {
+    ev.preventDefault();
+    input.focus();
+  });
+  sync();
+  return wrap;
+}
+
+};
+
 __modules["src/web/renumber-ui.js"] = function (__require, __exports) {
 __exports.installRenumberUi = installRenumberUi;
 let element; __bind(() => { ({ element } = __require("src/web/dom.js")); });
@@ -79929,25 +80025,27 @@ let logHoverTimer = 0;
 
 let pointerInConsole = false;
 
-function setStatusMessage(text, cls) {
+function setStatusMessage(text, cls, full = text) {
   if (!statusMessageEl) return;
   const lines = String(text).split('\n');
   statusMessageEl.textContent = lines.length > 1 ? `${lines[0]} …` : lines[0];
   statusMessageEl.dataset.kind = cls || 'info';
-  statusMessageEl.title = text;
+  statusMessageEl.title = full;
   // Restart the fade: a fresh message is bright, then settles to dim.
   statusMessageEl.classList.remove('fresh');
   void statusMessageEl.offsetWidth;
   statusMessageEl.classList.add('fresh');
 }
 
-function logLine(text, cls, { peek = true } = {}) {
+/** `status`: what the status bar says instead, shorter (a design's name
+ *  where the log has its path); its tooltip is the log's line. */
+function logLine(text, cls, { peek = true, status = null } = {}) {
   const line = document.createElement('div');
   if (cls) line.className = cls;
   line.textContent = text;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
-  if (cls !== 'cmd') setStatusMessage(text, cls);
+  if (cls !== 'cmd') setStatusMessage(status ?? text, cls, text);
   if (cls === 'error' && peek) applyLogDrawerEvent({ type: 'error' });
   if (cls === 'error' || cls === 'status') announce(text);
 }
